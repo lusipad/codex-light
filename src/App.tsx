@@ -878,6 +878,9 @@ export const App: React.FC = () => {
         {turns.length === 0 ? (
           /* ── 2A. Authentic Centered Hero Home Screen ── */
           <div className="home-hero-container">
+            <div className="home-hero-logo-wrap">
+              <OpenAIIcon size={42} />
+            </div>
             <h1 className="home-greeting-title">今天要构建什么？</h1>
 
             {/* Centered Large Hero Composer */}
