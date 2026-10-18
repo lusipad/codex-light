@@ -1,0 +1,197 @@
+export interface AppServerStatus {
+  connected: boolean;
+  connecting: boolean;
+  binaryPath: string;
+  appServerVersion: string | null;
+  userAgent: string | null;
+  lastError: string | null;
+}
+
+export interface PendingServerRequest {
+  id: string | number;
+  method: string;
+  params: any;
+}
+
+export interface WorkspaceRootItem {
+  id: string;
+  path: string;
+  label: string;
+  active: boolean;
+  hasAgentsMd: boolean;
+}
+
+export interface DirectoryEntryItem {
+  name: string;
+  path: string;
+  isDirectory: boolean;
+  size: number;
+  mtimeMs: number;
+}
+
+export interface FilePreviewResult {
+  path: string;
+  isBinary: boolean;
+  isImage: boolean;
+  content: string | null;
+  base64DataUrl: string | null;
+  sizeBytes: number;
+  mtimeMs: number;
+}
+
+export interface GitFileEntry {
+  status: string;
+  path: string;
+  staged: boolean;
+  unstaged: boolean;
+  untracked: boolean;
+}
+
+export interface GitStatusInfo {
+  isGitRepo: boolean;
+  root: string | null;
+  branch: string | null;
+  defaultBranch: string | null;
+  upstreamRef: string | null;
+  commitsAhead: number;
+  clean: boolean;
+  additions: number;
+  deletions: number;
+  filesChanged: number;
+  entries: GitFileEntry[];
+}
+
+export interface GitWorktreeInfo {
+  path: string;
+  gitDir: string;
+  head: string | null;
+  branch: string | null;
+  detached: boolean;
+  isCodexManaged: boolean;
+  ownerThreadId: string | null;
+  hasUncommittedChanges: boolean;
+}
+
+export interface ModelReasoningOption {
+  reasoningEffort: string;
+  description?: string;
+}
+
+export interface ModelInfo {
+  id: string;
+  model?: string;
+  displayName?: string;
+  description?: string;
+  hidden?: boolean;
+  tags?: string[];
+  contextWindow?: number;
+  defaultReasoningEffort?: string;
+  supportedReasoningEfforts?: ModelReasoningOption[];
+  additionalSpeedTiers?: string[];
+}
+
+export interface ThreadSummary {
+  id: string;
+  name?: string | null;
+  preview?: string | null;
+  cwd?: string | null;
+  createdAt?: number;
+  updatedAt?: number;
+  model?: string | null;
+  status?: { type: string } | string;
+}
+
+export interface TurnItem {
+  id?: string;
+  type: string;
+  text?: string;
+  content?: any;
+  summary?: any;
+  command?: string | string[];
+  cwd?: string;
+  exitCode?: number | null;
+  stdout?: string;
+  stderr?: string;
+  aggregatedOutput?: string;
+  status?: string;
+  changes?: any[];
+  toolName?: string;
+  serverName?: string;
+  arguments?: any;
+  result?: any;
+  durationMs?: number;
+  [key: string]: any;
+}
+
+export interface TurnData {
+  id: string;
+  status?: string;
+  startedAt?: number | null;
+  completedAt?: number | null;
+  durationMs?: number | null;
+  error?: any;
+  items: TurnItem[];
+}
+
+export interface ModelProviderConfig {
+  id: string;
+  name: string;
+  baseUrl: string;
+  envKey?: string | null;
+  wireApi?: string | null;
+}
+
+export interface McpServerConfigItem {
+  id: string;
+  command?: string | null;
+  args: string[];
+  url?: string | null;
+  env: Record<string, string>;
+  enabled: boolean;
+}
+
+export interface CodexConfigOverview {
+  configPath: string;
+  rawToml: string;
+  model: string | null;
+  modelProvider: string | null;
+  modelReasoningEffort: string | null;
+  approvalPolicy: string | null;
+  sandboxMode: string | null;
+  modelCatalogJson: string | null;
+  providers: ModelProviderConfig[];
+  mcpServers: McpServerConfigItem[];
+}
+
+export interface SkillInfoItem {
+  id: string;
+  name: string;
+  description: string;
+  path: string;
+  dirPath: string;
+  installed: boolean;
+  content: string;
+}
+
+export interface AutomationItem {
+  id: string;
+  kind: string;
+  name: string;
+  prompt: string;
+  status: string;
+  rrule: string;
+  cwds: string[];
+  executionEnvironment: string;
+  model: string | null;
+  reasoningEffort: string | null;
+  targetThreadId: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type ActiveNavTab =
+  | "chat"
+  | "worktrees"
+  | "automations"
+  | "skills"
+  | "settings";
