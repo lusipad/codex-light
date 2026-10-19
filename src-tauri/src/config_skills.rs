@@ -39,6 +39,15 @@ pub struct CodexConfigOverview {
     pub approval_policy: Option<String>,
     pub sandbox_mode: Option<String>,
     pub model_catalog_json: Option<String>,
+    pub temperature: Option<f64>,
+    pub top_p: Option<f64>,
+    pub max_output_tokens: Option<u32>,
+    pub context_window: Option<u32>,
+    pub web_search_mode: Option<String>,
+    pub allow_network: Option<bool>,
+    pub max_parallel_tools: Option<u32>,
+    pub subagent_concurrency: Option<u32>,
+    pub output_verbosity: Option<String>,
     pub providers: Vec<ModelProviderConfig>,
     pub mcp_servers: Vec<McpServerConfigItem>,
 }
@@ -52,6 +61,15 @@ pub struct CodexConfigUpdatePayload {
     pub approval_policy: Option<String>,
     pub sandbox_mode: Option<String>,
     pub model_catalog_json: Option<String>,
+    pub temperature: Option<f64>,
+    pub top_p: Option<f64>,
+    pub max_output_tokens: Option<u32>,
+    pub context_window: Option<u32>,
+    pub web_search_mode: Option<String>,
+    pub allow_network: Option<bool>,
+    pub max_parallel_tools: Option<u32>,
+    pub subagent_concurrency: Option<u32>,
+    pub output_verbosity: Option<String>,
     pub providers: Option<Vec<ModelProviderConfig>>,
     pub mcp_servers: Option<Vec<McpServerConfigItem>>,
 }
@@ -142,6 +160,21 @@ pub fn read_config_overview() -> Result<CodexConfigOverview, String> {
             .map(|s| s.to_string())
     };
 
+    let get_f64 = |key: &str| -> Option<f64> {
+        doc.get(key)
+            .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+    };
+
+    let get_u32 = |key: &str| -> Option<u32> {
+        doc.get(key)
+            .and_then(|v| v.as_integer())
+            .map(|i| i as u32)
+    };
+
+    let get_bool = |key: &str| -> Option<bool> {
+        doc.get(key).and_then(|v| v.as_bool())
+    };
+
     let mut providers = Vec::new();
     if let Some(prov_table) = doc.get("model_providers").and_then(|i| i.as_table_like()) {
         for (id, item) in prov_table.iter() {
@@ -229,6 +262,15 @@ pub fn read_config_overview() -> Result<CodexConfigOverview, String> {
         approval_policy: get_str("approval_policy"),
         sandbox_mode: get_str("sandbox_mode"),
         model_catalog_json: get_str("model_catalog_json"),
+        temperature: get_f64("temperature"),
+        top_p: get_f64("top_p"),
+        max_output_tokens: get_u32("max_output_tokens"),
+        context_window: get_u32("context_window"),
+        web_search_mode: get_str("web_search_mode"),
+        allow_network: get_bool("allow_network"),
+        max_parallel_tools: get_u32("max_parallel_tools"),
+        subagent_concurrency: get_u32("subagent_concurrency"),
+        output_verbosity: get_str("output_verbosity"),
         providers,
         mcp_servers,
     })
@@ -271,6 +313,33 @@ pub fn update_structured_config(payload: CodexConfigUpdatePayload) -> Result<Cod
         }
     };
 
+    let set_or_remove_f64 = |doc: &mut DocumentMut, key: &str, val: Option<f64>| {
+        match val {
+            Some(v) => {
+                doc[key] = toml_edit::value(v);
+            }
+            None => {}
+        }
+    };
+
+    let set_or_remove_u32 = |doc: &mut DocumentMut, key: &str, val: Option<u32>| {
+        match val {
+            Some(v) => {
+                doc[key] = toml_edit::value(v as i64);
+            }
+            None => {}
+        }
+    };
+
+    let set_or_remove_bool = |doc: &mut DocumentMut, key: &str, val: Option<bool>| {
+        match val {
+            Some(v) => {
+                doc[key] = toml_edit::value(v);
+            }
+            None => {}
+        }
+    };
+
     set_or_remove_str(&mut doc, "model", payload.model);
     set_or_remove_str(&mut doc, "model_provider", payload.model_provider);
     set_or_remove_str(
@@ -281,6 +350,15 @@ pub fn update_structured_config(payload: CodexConfigUpdatePayload) -> Result<Cod
     set_or_remove_str(&mut doc, "approval_policy", payload.approval_policy);
     set_or_remove_str(&mut doc, "sandbox_mode", payload.sandbox_mode);
     set_or_remove_str(&mut doc, "model_catalog_json", payload.model_catalog_json);
+    set_or_remove_f64(&mut doc, "temperature", payload.temperature);
+    set_or_remove_f64(&mut doc, "top_p", payload.top_p);
+    set_or_remove_u32(&mut doc, "max_output_tokens", payload.max_output_tokens);
+    set_or_remove_u32(&mut doc, "context_window", payload.context_window);
+    set_or_remove_str(&mut doc, "web_search_mode", payload.web_search_mode);
+    set_or_remove_bool(&mut doc, "allow_network", payload.allow_network);
+    set_or_remove_u32(&mut doc, "max_parallel_tools", payload.max_parallel_tools);
+    set_or_remove_u32(&mut doc, "subagent_concurrency", payload.subagent_concurrency);
+    set_or_remove_str(&mut doc, "output_verbosity", payload.output_verbosity);
 
     if let Some(providers) = payload.providers {
         let mut prov_root = doc
@@ -723,6 +801,122 @@ pub fn generate_sample_models_api_catalog() -> Result<String, String> {
     Ok(normalize_fs_path(&target.to_string_lossy()))
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageStatsOverview {
+    pub codex_home: String,
+    pub total_bytes: u64,
+    pub sessions_bytes: u64,
+    pub worktrees_bytes: u64,
+    pub skills_bytes: u64,
+    pub automations_bytes: u64,
+    pub config_bytes: u64,
+    pub worktree_count: usize,
+    pub skill_count: usize,
+    pub automation_count: usize,
+}
+
+fn dir_size_bytes(path: &Path, max_depth: usize) -> u64 {
+    if max_depth == 0 || !path.exists() {
+        return 0;
+    }
+    if path.is_file() {
+        return fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    }
+    let mut sum = 0u64;
+    if let Ok(entries) = fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                sum += dir_size_bytes(&p, max_depth - 1);
+            } else {
+                sum += entry.metadata().map(|m| m.len()).unwrap_or(0);
+            }
+        }
+    }
+    sum
+}
+
+pub fn compute_storage_stats() -> StorageStatsOverview {
+    let home = codex_home_dir();
+    let sessions_bytes = dir_size_bytes(&home.join("sessions"), 5)
+        + dir_size_bytes(&home.join("rollouts"), 5)
+        + dir_size_bytes(&home.join("log"), 3);
+    let worktrees_bytes = dir_size_bytes(&home.join("worktrees"), 5);
+    let skills_bytes = dir_size_bytes(&home.join("skills"), 4);
+    let automations_bytes = dir_size_bytes(&home.join("automations"), 4);
+    let config_bytes = dir_size_bytes(&home.join("config.toml"), 1)
+        + dir_size_bytes(&home.join("desktop-state.json"), 1)
+        + dir_size_bytes(&home.join("models-api.json"), 1);
+    let total_bytes =
+        sessions_bytes + worktrees_bytes + skills_bytes + automations_bytes + config_bytes;
+
+    let worktree_count = crate::git::list_worktrees(None).len();
+    let skill_count = list_local_and_recommended_skills(None)
+        .iter()
+        .filter(|s| s.installed)
+        .count();
+    let automation_count = list_automations().len();
+
+    StorageStatsOverview {
+        codex_home: normalize_fs_path(&home.to_string_lossy()),
+        total_bytes,
+        sessions_bytes,
+        worktrees_bytes,
+        skills_bytes,
+        automations_bytes,
+        config_bytes,
+        worktree_count,
+        skill_count,
+        automation_count,
+    }
+}
+
+pub fn read_local_environment_toml(cwd: &str) -> Result<serde_json::Value, String> {
+    let norm = normalize_fs_path(cwd);
+    if norm.is_empty() {
+        return Err("Workspace path is empty".to_string());
+    }
+    let env_path = Path::new(&norm)
+        .join(".codex")
+        .join("environments")
+        .join("default.toml");
+    if env_path.is_file() {
+        let content = fs::read_to_string(&env_path).map_err(|e| e.to_string())?;
+        Ok(json!({
+            "exists": true,
+            "path": normalize_fs_path(&env_path.to_string_lossy()),
+            "content": content
+        }))
+    } else {
+        let default_template = "# Codex Local Environment Configuration (.codex/environments/default.toml)\nname = \"Default Environment\"\nsetup_script = \"\"\n\n[actions.run]\nlabel = \"Run\"\ncommand = \"npm run dev\"\n\n[actions.test]\nlabel = \"Test\"\ncommand = \"npm test\"\n\n[actions.build]\nlabel = \"Build\"\ncommand = \"npm run build\"\n";
+        Ok(json!({
+            "exists": false,
+            "path": normalize_fs_path(&env_path.to_string_lossy()),
+            "content": default_template
+        }))
+    }
+}
+
+pub fn save_local_environment_toml(cwd: &str, content: &str) -> Result<String, String> {
+    let norm = normalize_fs_path(cwd);
+    if norm.is_empty() {
+        return Err("Workspace path is empty".to_string());
+    }
+    content
+        .parse::<DocumentMut>()
+        .map_err(|e| format!("Invalid TOML syntax: {}", e))?;
+    let env_path = Path::new(&norm)
+        .join(".codex")
+        .join("environments")
+        .join("default.toml");
+    if let Some(parent) = env_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    fs::write(&env_path, content).map_err(|e| e.to_string())?;
+    Ok(normalize_fs_path(&env_path.to_string_lossy()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -742,6 +936,32 @@ mod tests {
             parsed.get("model_catalog_json").and_then(|v| v.as_str()),
             Some("C:\\Users\\test\\.codex\\models-api.json")
         );
+    }
+
+    #[test]
+    fn parses_and_serializes_hyperparameters_correctly() {
+        let toml_sample = r#"
+model = "gpt-5.4"
+temperature = 0.35
+top_p = 0.95
+max_output_tokens = 16384
+context_window = 200000
+web_search_mode = "live"
+allow_network = true
+max_parallel_tools = 12
+subagent_concurrency = 6
+output_verbosity = "high"
+"#;
+        let doc: DocumentMut = toml_sample.parse().expect("valid TOML");
+        assert_eq!(doc.get("temperature").and_then(|v| v.as_float()), Some(0.35));
+        assert_eq!(doc.get("top_p").and_then(|v| v.as_float()), Some(0.95));
+        assert_eq!(doc.get("max_output_tokens").and_then(|v| v.as_integer()), Some(16384));
+        assert_eq!(doc.get("context_window").and_then(|v| v.as_integer()), Some(200000));
+        assert_eq!(doc.get("web_search_mode").and_then(|v| v.as_str()), Some("live"));
+        assert_eq!(doc.get("allow_network").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(doc.get("max_parallel_tools").and_then(|v| v.as_integer()), Some(12));
+        assert_eq!(doc.get("subagent_concurrency").and_then(|v| v.as_integer()), Some(6));
+        assert_eq!(doc.get("output_verbosity").and_then(|v| v.as_str()), Some("high"));
     }
 }
 

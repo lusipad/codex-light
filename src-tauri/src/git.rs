@@ -57,6 +57,16 @@ pub struct GhCliStatus {
     pub version: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitCommitInfo {
+    pub hash: String,
+    pub short_hash: String,
+    pub subject: String,
+    pub author: String,
+    pub relative_time: String,
+}
+
 fn run_git(cwd: &str, args: &[&str]) -> Result<String, String> {
     let mut cmd = Command::new("git");
     cmd.arg("-C").arg(cwd).args(args);
@@ -685,3 +695,86 @@ pub fn check_gh_cli_status() -> GhCliStatus {
         version,
     }
 }
+
+pub fn list_commits(target_path: &str, limit: usize) -> Result<Vec<GitCommitInfo>, String> {
+    let git_root = find_git_root(target_path).ok_or("Not a git repository")?;
+    let limit_arg = format!("-n{}", limit.clamp(1, 200));
+    let raw = run_git(
+        &git_root,
+        &[
+            "log",
+            &limit_arg,
+            "--pretty=format:%H%x1f%h%x1f%s%x1f%an%x1f%cr",
+        ],
+    )?;
+    let mut commits = Vec::new();
+    for line in raw.lines() {
+        let parts: Vec<&str> = line.split('\x1f').collect();
+        if parts.len() >= 5 {
+            commits.push(GitCommitInfo {
+                hash: parts[0].trim().to_string(),
+                short_hash: parts[1].trim().to_string(),
+                subject: parts[2].trim().to_string(),
+                author: parts[3].trim().to_string(),
+                relative_time: parts[4].trim().to_string(),
+            });
+        }
+    }
+    Ok(commits)
+}
+
+pub fn commit_diff(target_path: &str, commit_hash: &str) -> Result<String, String> {
+    let git_root = find_git_root(target_path).ok_or("Not a git repository")?;
+    let h = commit_hash.trim();
+    if h.is_empty() {
+        return Err("Commit hash cannot be empty".to_string());
+    }
+    run_git(&git_root, &["show", "--patch", "--format=medium", h])
+}
+
+pub fn push_changes(target_path: &str, force_with_lease: bool) -> Result<String, String> {
+    let git_root = find_git_root(target_path).ok_or("Not a git repository")?;
+    let branch = current_branch(&git_root).unwrap_or_else(|| "HEAD".to_string());
+    if force_with_lease {
+        run_git(&git_root, &["push", "--force-with-lease", "-u", "origin", &branch])
+    } else {
+        run_git(&git_root, &["push", "-u", "origin", &branch])
+    }
+}
+
+pub fn create_pull_request(
+    target_path: &str,
+    title: &str,
+    body: &str,
+    base_branch: Option<String>,
+    draft: bool,
+) -> Result<String, String> {
+    let git_root = find_git_root(target_path).ok_or("Not a git repository")?;
+    if title.trim().is_empty() {
+        return Err("PR title cannot be empty".to_string());
+    }
+    let mut cmd = Command::new("gh");
+    cmd.current_dir(&git_root)
+        .args(["pr", "create", "--title", title.trim(), "--body", body]);
+    if let Some(base) = base_branch.filter(|b| !b.trim().is_empty()) {
+        cmd.args(["--base", base.trim()]);
+    }
+    if draft {
+        cmd.arg("--draft");
+    }
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+
+    let output = cmd.output().map_err(|e| format!("Failed to invoke gh CLI: {}", e))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        Err(if !stderr.is_empty() { stderr } else { stdout })
+    }
+}
+

@@ -4,4 +4,9 @@ src-tauri/target/
 src-tauri/gen/
 *.log
 *.exe
+*.dll
+*.pdb
+*.so
+*.dylib
+.cargo/
 .DS_Store

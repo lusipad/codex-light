@@ -1,217 +1,328 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Plus, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
+import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
-import { tauriInvoke, tauriListen } from "../bridge";
+import { PlusIcon, TerminalIcon, TrashIcon, XIcon } from "./Icons";
 
 interface TerminalDockProps {
+  open?: boolean;
   cwd: string;
-  pendingCommand: { id: number; command: string } | null;
   onClose: () => void;
+  pendingCommand?: { id: number; command: string } | null;
 }
 
-interface TermTab {
+interface SessionTab {
   id: string;
   title: string;
+  cwd: string;
+  shell: string;
 }
 
+const SHELL_OPTIONS = [
+  { id: "powershell.exe", label: "PowerShell" },
+  { id: "cmd.exe", label: "CMD" },
+  { id: "bash.exe", label: "Git Bash" },
+  { id: "wsl.exe", label: "WSL" },
+];
+
 export const TerminalDock: React.FC<TerminalDockProps> = ({
+  open = true,
   cwd,
-  pendingCommand,
   onClose,
+  pendingCommand,
 }) => {
-  const [tabs, setTabs] = useState<TermTab[]>([
-    { id: "term-1", title: "PowerShell 1" },
+  const [selectedShell, setSelectedShell] = useState<string>("powershell.exe");
+  const [fontSize, setFontSize] = useState<number>(13);
+  const [tabs, setTabs] = useState<SessionTab[]>([
+    {
+      id: "term-1",
+      title: "PowerShell 1",
+      cwd: cwd || ".",
+      shell: "powershell.exe",
+    },
   ]);
   const [activeTabId, setActiveTabId] = useState<string>("term-1");
+
   const containerRef = useRef<HTMLDivElement | null>(null);
   const xtermMapRef = useRef<
-    Map<string, { term: Terminal; fit: FitAddon; opened: boolean }>
+    Map<string, { term: Terminal; fit: FitAddon; el: HTMLDivElement }>
   >(new Map());
 
-  // Listen to global terminal:data events from Rust portable-pty
   useEffect(() => {
-    let unlistenData: (() => void) | null = null;
-    tauriListen<{ sessionId: string; data: string }>(
-      "terminal:data",
-      (payload) => {
-        const entry = xtermMapRef.current.get(payload.sessionId);
-        if (entry) {
-          entry.term.write(payload.data);
-        }
+    let unlistenData: UnlistenFn | null = null;
+    let unlistenExit: UnlistenFn | null = null;
+
+    listen<{ sessionId: string; data: string }>("terminal:data", (event) => {
+      const entry = xtermMapRef.current.get(event.payload.sessionId);
+      if (entry) {
+        entry.term.write(event.payload.data);
       }
-    ).then((fn) => {
+    }).then((fn) => {
       unlistenData = fn;
+    });
+
+    listen<{ sessionId: string }>("terminal:exit", (event) => {
+      const entry = xtermMapRef.current.get(event.payload.sessionId);
+      if (entry) {
+        entry.term.writeln("\r\n\x1b[33m[进程已退出 Process exited]\x1b[0m");
+      }
+    }).then((fn) => {
+      unlistenExit = fn;
     });
 
     return () => {
       if (unlistenData) unlistenData();
+      if (unlistenExit) unlistenExit();
     };
   }, []);
 
-  // Mount and attach active terminal tab
+  // Update font size on all existing terminals
   useEffect(() => {
-    const host = containerRef.current;
-    if (!host || !activeTabId) return;
+    xtermMapRef.current.forEach((entry) => {
+      entry.term.options.fontSize = fontSize;
+      try {
+        entry.fit.fit();
+      } catch {
+        // ignore
+      }
+    });
+  }, [fontSize]);
 
-    host.innerHTML = "";
-    let entry = xtermMapRef.current.get(activeTabId);
+  // Execute pending toolbar command (e.g. Run / Test / Build)
+  const lastExecutedCmdId = useRef<number | null>(null);
+  useEffect(() => {
+    if (!open || !pendingCommand || pendingCommand.id === lastExecutedCmdId.current) {
+      return;
+    }
+    lastExecutedCmdId.current = pendingCommand.id;
+    const timer = setTimeout(() => {
+      invoke("terminal_write", {
+        sessionId: activeTabId,
+        data: `${pendingCommand.command}\r`,
+      }).catch(() => {});
+    }, 180);
+    return () => clearTimeout(timer);
+  }, [open, pendingCommand, activeTabId]);
+
+  useEffect(() => {
+    if (!open || !containerRef.current) return;
+    const activeTab = tabs.find((t) => t.id === activeTabId) ?? tabs[0];
+    if (!activeTab) return;
+
+    xtermMapRef.current.forEach((val, key) => {
+      val.el.style.display = key === activeTab.id ? "block" : "none";
+    });
+
+    let entry = xtermMapRef.current.get(activeTab.id);
     if (!entry) {
+      const el = document.createElement("div");
+      el.style.width = "100%";
+      el.style.height = "100%";
+      containerRef.current.appendChild(el);
+
       const term = new Terminal({
         cursorBlink: true,
-        fontFamily: "'Cascadia Mono', 'Consolas', 'JetBrains Mono', monospace",
-        fontSize: 13,
-        lineHeight: 1.25,
+        fontSize,
+        fontFamily:
+          "'JetBrains Mono', 'Cascadia Mono', 'Consolas', monospace",
         theme: {
-          background: "#0d1117",
-          foreground: "#e6edf3",
-          cursor: "#58a6ff",
-          selectionBackground: "rgba(88, 166, 255, 0.3)",
+          background: "#0d0f12",
+          foreground: "#e5e7eb",
+          cursor: "#60a5fa",
+          selectionBackground: "rgba(96, 165, 250, 0.28)",
         },
       });
       const fit = new FitAddon();
       term.loadAddon(fit);
+      term.open(el);
+      setTimeout(() => {
+        try {
+          fit.fit();
+        } catch {
+          // ignore
+        }
+      }, 30);
+
       term.onData((data) => {
-        tauriInvoke("terminal_write", {
-          sessionId: activeTabId,
-          data,
-        }).catch(() => {});
+        invoke("terminal_write", { sessionId: activeTab.id, data }).catch(
+          () => {}
+        );
       });
-      entry = { term, fit, opened: false };
-      xtermMapRef.current.set(activeTabId, entry);
+
+      entry = { term, fit, el };
+      xtermMapRef.current.set(activeTab.id, entry);
+
+      invoke("terminal_create_or_attach", {
+        sessionId: activeTab.id,
+        cwd: activeTab.cwd || cwd || ".",
+        cols: term.cols || 100,
+        rows: term.rows || 24,
+        shell: activeTab.shell || selectedShell,
+      }).catch((err) => {
+        term.writeln(`\x1b[31m无法启动终端会话: ${String(err)}\x1b[0m`);
+      });
+    } else {
+      setTimeout(() => {
+        try {
+          entry!.fit.fit();
+          invoke("terminal_resize", {
+            sessionId: activeTab.id,
+            cols: entry!.term.cols,
+            rows: entry!.term.rows,
+          }).catch(() => {});
+        } catch {
+          // ignore
+        }
+      }, 30);
     }
 
-    const mountDiv = document.createElement("div");
-    mountDiv.style.width = "100%";
-    mountDiv.style.height = "100%";
-    host.appendChild(mountDiv);
-
-    entry.term.open(mountDiv);
-    entry.opened = true;
-    setTimeout(() => {
-      try {
-        entry?.fit.fit();
-        const cols = entry?.term.cols || 100;
-        const rows = entry?.term.rows || 24;
-        tauriInvoke("terminal_create_or_attach", {
-          sessionId: activeTabId,
-          cwd,
-          cols,
-          rows,
-        }).catch((err) => {
-          entry?.term.writeln(`\r\n\x1b[31m[PTY Error] ${String(err)}\x1b[0m`);
-        });
-      } catch {}
-    }, 50);
-
     const handleResize = () => {
+      const curr = xtermMapRef.current.get(activeTab.id);
+      if (!curr) return;
       try {
-        entry?.fit.fit();
-        if (entry?.term.cols && entry?.term.rows) {
-          tauriInvoke("terminal_resize", {
-            sessionId: activeTabId,
-            cols: entry.term.cols,
-            rows: entry.term.rows,
-          }).catch(() => {});
-        }
-      } catch {}
+        curr.fit.fit();
+        invoke("terminal_resize", {
+          sessionId: activeTab.id,
+          cols: curr.term.cols,
+          rows: curr.term.rows,
+        }).catch(() => {});
+      } catch {
+        // ignore
+      }
     };
+
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
-  }, [activeTabId, cwd]);
+  }, [open, activeTabId, tabs, cwd, fontSize, selectedShell]);
 
-  // Execute command sent from chat code block
-  useEffect(() => {
-    if (!pendingCommand || !activeTabId) return;
-    tauriInvoke("terminal_create_or_attach", {
-      sessionId: activeTabId,
-      cwd,
-      cols: 100,
-      rows: 24,
-    })
-      .then(() =>
-        tauriInvoke("terminal_write", {
-          sessionId: activeTabId,
-          data: `${pendingCommand.command}\r`,
-        })
-      )
-      .catch(() => {});
-  }, [pendingCommand, activeTabId, cwd]);
-
-  const handleAddTab = () => {
-    const nextNum = tabs.length + 1;
+  const addNewTerminal = () => {
+    const idx = tabs.length + 1;
     const id = `term-${Date.now()}`;
-    setTabs((prev) => [...prev, { id, title: `PowerShell ${nextNum}` }]);
+    const shellMeta =
+      SHELL_OPTIONS.find((s) => s.id === selectedShell) || SHELL_OPTIONS[0];
+    const next: SessionTab = {
+      id,
+      title: `${shellMeta.label} ${idx}`,
+      cwd: cwd || ".",
+      shell: selectedShell,
+    };
+    setTabs((prev) => [...prev, next]);
     setActiveTabId(id);
   };
 
-  const handleCloseTab = (id: string) => {
-    tauriInvoke("terminal_close", { sessionId: id }).catch(() => {});
+  const clearActiveTerminal = () => {
+    const entry = xtermMapRef.current.get(activeTabId);
+    if (entry) {
+      entry.term.clear();
+    }
+  };
+
+  const closeTerminalTab = (id: string) => {
+    invoke("terminal_close", { sessionId: id }).catch(() => {});
     const entry = xtermMapRef.current.get(id);
     if (entry) {
       entry.term.dispose();
+      entry.el.remove();
       xtermMapRef.current.delete(id);
     }
     const remaining = tabs.filter((t) => t.id !== id);
     if (remaining.length === 0) {
       onClose();
-      return;
-    }
-    setTabs(remaining);
-    if (activeTabId === id) {
-      setActiveTabId(remaining[0].id);
+      setTabs([
+        {
+          id: `term-${Date.now()}`,
+          title: "PowerShell 1",
+          cwd: cwd || ".",
+          shell: selectedShell,
+        },
+      ]);
+    } else {
+      setTabs(remaining);
+      if (activeTabId === id) {
+        setActiveTabId(remaining[remaining.length - 1].id);
+      }
     }
   };
+
+  if (!open) return null;
 
   return (
     <div className="terminal-dock">
       <div className="terminal-dock-header">
         <div className="terminal-tabs">
-          {tabs.map((tab) => (
+          {tabs.map((t) => (
             <div
-              key={tab.id}
-              className={`terminal-tab ${tab.id === activeTabId ? "active" : ""}`}
-              onClick={() => setActiveTabId(tab.id)}
+              key={t.id}
+              className={`terminal-tab ${t.id === activeTabId ? "active" : ""}`}
+              onClick={() => setActiveTabId(t.id)}
             >
-              <TerminalIcon size={13} />
-              <span>{tab.title}</span>
+              <TerminalIcon size={12} />
+              <span>{t.title}</span>
               <button
-                type="button"
-                className="icon-btn-xs"
+                className="terminal-tab-close"
                 onClick={(e) => {
                   e.stopPropagation();
-                  handleCloseTab(tab.id);
+                  closeTerminalTab(t.id);
                 }}
+                title="关闭终端会话"
               >
-                <Trash2 size={11} />
+                <XIcon size={11} />
               </button>
             </div>
           ))}
+          <select
+            className="terminal-shell-select"
+            value={selectedShell}
+            onChange={(e) => setSelectedShell(e.target.value)}
+            title="选择新建终端的默认 Shell"
+          >
+            {SHELL_OPTIONS.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.label}
+              </option>
+            ))}
+          </select>
           <button
-            type="button"
-            className="icon-btn-xs"
-            onClick={handleAddTab}
+            className="icon-btn"
+            onClick={addNewTerminal}
             title="新建终端标签页"
           >
-            <Plus size={14} />
+            <PlusIcon size={13} />
           </button>
         </div>
-        <div className="terminal-header-right">
+        <div className="terminal-dock-actions">
           <span className="terminal-cwd-badge" title={cwd}>
             {cwd}
           </span>
           <button
-            type="button"
             className="icon-btn"
-            onClick={onClose}
-            title="隐藏终端面板"
+            onClick={() => setFontSize((f) => Math.max(10, f - 1))}
+            title="缩小终端字号"
           >
-            <X size={14} />
+            A-
+          </button>
+          <button
+            className="icon-btn"
+            onClick={() => setFontSize((f) => Math.min(20, f + 1))}
+            title="放大终端字号"
+          >
+            A+
+          </button>
+          <button
+            className="icon-btn"
+            onClick={clearActiveTerminal}
+            title="清空当前终端屏幕"
+          >
+            <TrashIcon size={13} />
+          </button>
+          <button className="icon-btn" onClick={onClose} title="隐藏底部终端面板">
+            <XIcon size={14} />
           </button>
         </div>
       </div>
-      <div ref={containerRef} className="terminal-canvas-host" />
+      <div className="terminal-xterm-wrapper" ref={containerRef} />
     </div>
   );
 };

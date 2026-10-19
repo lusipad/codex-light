@@ -7,12 +7,14 @@ pub mod terminal;
 use app_server::{AppServerManager, AppServerStatus, PendingServerRequest};
 use config_skills::{
     AutomationItem, CodexConfigOverview, CodexConfigUpdatePayload, SkillInfoItem,
+    StorageStatsOverview,
 };
-use git::{GhCliStatus, GitStatusInfo, GitWorktreeInfo};
+use git::{GhCliStatus, GitCommitInfo, GitStatusInfo, GitWorktreeInfo};
 use serde_json::{json, Value};
 use state::{
-    find_agents_md, list_directory_entries, read_file_preview, DesktopStateManager,
-    DirectoryEntryItem, FilePreviewResult, WorkspaceRootItem,
+    find_agents_md, list_directory_entries, read_file_preview, search_workspace_files,
+    DesktopStateManager, DirectoryEntryItem, FilePreviewResult, WorkspaceFileHit,
+    WorkspaceRootItem,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -181,6 +183,40 @@ fn fs_write_file(path: String, content: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn fs_search_files(
+    cwd: String,
+    query: Option<String>,
+    limit: Option<usize>,
+) -> Result<Vec<WorkspaceFileHit>, String> {
+    Ok(search_workspace_files(
+        &cwd,
+        query.as_deref(),
+        limit.unwrap_or(60),
+    ))
+}
+
+#[tauri::command]
+fn desktop_state_get(state: State<'_, AppState>, key: String) -> Result<Value, String> {
+    Ok(state.desktop_state.get_value(&key))
+}
+
+#[tauri::command]
+fn desktop_state_set(state: State<'_, AppState>, key: String, value: Value) -> Result<(), String> {
+    state.desktop_state.set_value(&key, value);
+    Ok(())
+}
+
+#[tauri::command]
+fn thread_record_workspace(
+    state: State<'_, AppState>,
+    thread_id: String,
+    cwd: String,
+) -> Result<(), String> {
+    state.desktop_state.record_thread_workspace(&thread_id, &cwd);
+    Ok(())
+}
+
+#[tauri::command]
 fn threads_meta_get(state: State<'_, AppState>) -> Result<Value, String> {
     let pinned: Vec<String> = state.desktop_state.list_pinned_threads();
     let archived: Vec<Value> = state.desktop_state.list_archived_threads();
@@ -322,6 +358,47 @@ fn gh_status() -> Result<GhCliStatus, String> {
 }
 
 #[tauri::command]
+fn git_log_commits(cwd: String, limit: Option<usize>) -> Result<Vec<GitCommitInfo>, String> {
+    git::list_commits(&cwd, limit.unwrap_or(50))
+}
+
+#[tauri::command]
+fn git_commit_diff(cwd: String, commit_hash: String) -> Result<String, String> {
+    git::commit_diff(&cwd, &commit_hash)
+}
+
+#[tauri::command]
+fn git_push_changes(cwd: String, force_with_lease: Option<bool>) -> Result<String, String> {
+    git::push_changes(&cwd, force_with_lease.unwrap_or(false))
+}
+
+#[tauri::command]
+fn git_create_pr(
+    cwd: String,
+    title: String,
+    body: String,
+    base_branch: Option<String>,
+    draft: Option<bool>,
+) -> Result<String, String> {
+    git::create_pull_request(&cwd, &title, &body, base_branch, draft.unwrap_or(false))
+}
+
+#[tauri::command]
+fn storage_stats_get() -> Result<StorageStatsOverview, String> {
+    Ok(config_skills::compute_storage_stats())
+}
+
+#[tauri::command]
+fn local_environment_read(cwd: String) -> Result<Value, String> {
+    config_skills::read_local_environment_toml(&cwd)
+}
+
+#[tauri::command]
+fn local_environment_save(cwd: String, content: String) -> Result<String, String> {
+    config_skills::save_local_environment_toml(&cwd, &content)
+}
+
+#[tauri::command]
 fn terminal_create_or_attach(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -358,6 +435,43 @@ fn terminal_resize(
     rows: u16,
 ) -> Result<(), String> {
     state.terminal.resize(&session_id, cols, rows)
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct ShellExecResult {
+    pub exit_code: i32,
+    pub stdout: String,
+    pub stderr: String,
+    pub success: bool,
+}
+
+#[tauri::command]
+async fn exec_shell_command(cwd: String, command: String) -> Result<ShellExecResult, String> {
+    tokio::task::spawn_blocking(move || {
+        #[cfg(target_os = "windows")]
+        let mut cmd = std::process::Command::new("powershell");
+        #[cfg(target_os = "windows")]
+        cmd.args(["-NoProfile", "-NonInteractive", "-Command", &command]);
+
+        #[cfg(not(target_os = "windows"))]
+        let mut cmd = std::process::Command::new("sh");
+        #[cfg(not(target_os = "windows"))]
+        cmd.args(["-c", &command]);
+
+        cmd.current_dir(&cwd);
+        let output = cmd.output().map_err(|e| e.to_string())?;
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let exit_code = output.status.code().unwrap_or(-1);
+        Ok(ShellExecResult {
+            exit_code,
+            stdout,
+            stderr,
+            success: output.status.success(),
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -456,6 +570,10 @@ pub fn run() {
             fs_list_dir,
             fs_read_preview,
             fs_write_file,
+            fs_search_files,
+            desktop_state_get,
+            desktop_state_set,
+            thread_record_workspace,
             threads_meta_get,
             thread_toggle_pin,
             thread_archive_toggle,
@@ -473,6 +591,13 @@ pub fn run() {
             git_worktree_delete,
             git_worktree_set_owner,
             gh_status,
+            git_log_commits,
+            git_commit_diff,
+            git_push_changes,
+            git_create_pr,
+            storage_stats_get,
+            local_environment_read,
+            local_environment_save,
             terminal_create_or_attach,
             terminal_write,
             terminal_resize,
@@ -487,6 +612,7 @@ pub fn run() {
             automations_list,
             automation_save,
             automation_delete,
+            exec_shell_command,
         ])
         .run(tauri::generate_context!())
         .expect("error while running codex-tauri application");

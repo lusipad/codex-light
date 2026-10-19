@@ -46,6 +46,16 @@ pub struct FilePreviewResult {
     pub mtime_ms: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceFileHit {
+    pub name: String,
+    pub rel_path: String,
+    pub rel_dir: String,
+    pub abs_path: String,
+    pub is_directory: bool,
+}
+
 pub fn codex_home_dir() -> PathBuf {
     if let Ok(env_home) = std::env::var("CODEX_HOME") {
         if !env_home.trim().is_empty() {
@@ -523,3 +533,94 @@ pub fn read_file_preview(file_path: &str, max_bytes: usize) -> Result<FilePrevie
         mtime_ms,
     })
 }
+
+pub fn search_workspace_files(
+    root_dir: &str,
+    query: Option<&str>,
+    limit: usize,
+) -> Vec<WorkspaceFileHit> {
+    let normalized_root = normalize_fs_path(root_dir);
+    let root_path = Path::new(&normalized_root);
+    if !root_path.is_dir() {
+        return Vec::new();
+    }
+    let q = query.unwrap_or("").trim().to_lowercase();
+    let max_items = limit.clamp(1, 200);
+    let mut results = Vec::new();
+    let mut queue = std::collections::VecDeque::new();
+    queue.push_back((root_path.to_path_buf(), 0usize));
+
+    let ignored_dirs = [
+        ".git",
+        "node_modules",
+        "target",
+        "dist",
+        "build",
+        ".next",
+        ".turbo",
+        "__pycache__",
+        ".venv",
+        "venv",
+    ];
+
+    let mut visited_dirs = 0usize;
+    while let Some((curr_dir, depth)) = queue.pop_front() {
+        if depth > 4 || visited_dirs > 250 {
+            break;
+        }
+        visited_dirs += 1;
+        let Ok(entries) = fs::read_dir(&curr_dir) else {
+            continue;
+        };
+        let mut dir_entries: Vec<_> = entries.flatten().collect();
+        dir_entries.sort_by_key(|e| e.file_name());
+
+        for entry in dir_entries {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') && name != ".env" && name != ".gitignore" {
+                continue;
+            }
+            let entry_path = entry.path();
+            let is_dir = entry_path.is_dir();
+            if is_dir && ignored_dirs.contains(&name.as_str()) {
+                continue;
+            }
+            let rel_path = entry_path
+                .strip_prefix(root_path)
+                .unwrap_or(&entry_path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            let rel_dir = entry_path
+                .parent()
+                .and_then(|p| p.strip_prefix(root_path).ok())
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_default();
+
+            let matches = if q.is_empty() {
+                true
+            } else {
+                name.to_lowercase().contains(&q) || rel_path.to_lowercase().contains(&q)
+            };
+
+            if matches && !is_dir {
+                results.push(WorkspaceFileHit {
+                    name: name.clone(),
+                    rel_path: rel_path.clone(),
+                    rel_dir,
+                    abs_path: normalize_fs_path(&entry_path.to_string_lossy()),
+                    is_directory: false,
+                });
+                if results.len() >= max_items {
+                    return results;
+                }
+            }
+
+            if is_dir && depth < 4 {
+                queue.push_back((entry_path, depth + 1));
+            }
+        }
+    }
+
+    results
+}
+

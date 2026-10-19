@@ -159,8 +159,33 @@ export interface CodexConfigOverview {
   approvalPolicy: string | null;
   sandboxMode: string | null;
   modelCatalogJson: string | null;
+  temperature?: number | null;
+  topP?: number | null;
+  maxOutputTokens?: number | null;
+  contextWindow?: number | null;
+  webSearchMode?: string | null;
+  allowNetwork?: boolean | null;
+  maxParallelTools?: number | null;
+  subagentConcurrency?: number | null;
+  outputVerbosity?: string | null;
   providers: ModelProviderConfig[];
   mcpServers: McpServerConfigItem[];
+}
+
+export interface SessionModelParameters {
+  model?: string;
+  reasoningEffort?: string;
+  temperature?: number;
+  topP?: number;
+  maxOutputTokens?: number;
+  contextWindow?: number;
+  webSearchMode?: "disabled" | "cached" | "live";
+  allowNetwork?: boolean;
+  sandboxMode?: "dangerously-skip" | "workspace-write" | "read-only";
+  approvalPolicy?: "untrusted" | "on-demand" | "never";
+  maxParallelTools?: number;
+  subagentConcurrency?: number;
+  outputVerbosity?: "low" | "medium" | "high";
 }
 
 export interface SkillInfoItem {
@@ -189,9 +214,137 @@ export interface AutomationItem {
   updatedAt: number;
 }
 
+export interface WorkspaceFileHit {
+  name: string;
+  relPath: string;
+  relDir: string;
+  absPath: string;
+  isDirectory: boolean;
+}
+
+export interface AttachedFileItem {
+  id: string;
+  name: string;
+  path: string;
+  kind: "file" | "image" | "mention";
+}
+
+export interface ShellExecResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  success: boolean;
+}
+
+export interface GoalStepItem {
+  id: string;
+  title: string;
+  status: "pending" | "running" | "completed" | "failed";
+}
+
+export interface ActiveGoalSession {
+  id: string;
+  threadId: string;
+  objective: string;
+  status: "running" | "paused" | "completed" | "aborted";
+  currentTurn: number;
+  maxTurns: number;
+  autoVerifyCommand: string;
+  verificationStatus: "idle" | "running" | "passed" | "failed";
+  verificationOutput?: string;
+  steps: GoalStepItem[];
+  autoContinue: boolean;
+  countdownRemaining: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface InboxNotificationItem {
+  id: string;
+  title: string;
+  subtitle: string;
+  kind: "automation" | "approval" | "thread_done" | "mention" | "goal";
+  threadId?: string;
+  createdAt: number;
+  read: boolean;
+}
+
+export type MainViewRoute =
+  | "home"
+  | "thread"
+  | "projects"
+  | "inbox"
+  | "scheduled"
+  | "plugins"
+  | "worktrees"
+  | "settings";
+
+export type SettingsSectionSlug =
+  | "general-settings"
+  | "import"
+  | "appearance"
+  | "archived-chats"
+  | "voice"
+  | "storage"
+  | "agent"
+  | "personalization"
+  | "pets"
+  | "keyboard-shortcuts"
+  | "plugins-settings"
+  | "computer-use"
+  | "appshots"
+  | "browser-use"
+  | "hooks-settings"
+  | "connections"
+  | "git-settings"
+  | "local-environments"
+  | "worktrees"
+  | "providers-models";
+
 export type ActiveNavTab =
   | "chat"
   | "worktrees"
   | "automations"
   | "skills"
   | "settings";
+
+export interface GitCommitInfo {
+  hash: string;
+  shortHash: string;
+  subject: string;
+  author: string;
+  relativeTime: string;
+}
+
+export interface StorageStatsOverview {
+  codexHome: string;
+  totalBytes: number;
+  sessionsBytes: number;
+  worktreesBytes: number;
+  skillsBytes: number;
+  automationsBytes: number;
+  configBytes: number;
+  worktreeCount: number;
+  skillCount: number;
+  automationCount: number;
+}
+
+export interface QueuedFollowupPrompt {
+  id: string;
+  text: string;
+  mode: "queue" | "steer";
+  createdAt: number;
+}
+
+export type PetSpeciesId =
+  | "codex"
+  | "rocky"
+  | "hoots"
+  | "seedy"
+  | "stacky"
+  | "fireball"
+  | "bsod"
+  | "dewey"
+  | "null-signal";
+
+
