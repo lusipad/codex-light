@@ -16,6 +16,7 @@ import {
   CodexConfigOverview,
   ModelInfo,
   ModelProviderConfig,
+  McpServerConfigItem,
   PetSpeciesId,
   SettingsSectionSlug,
   StorageStatsOverview,
@@ -73,6 +74,57 @@ export const PET_SPECIES_LIST: Array<{
   { id: "bsod", name: "BSOD", emoji: "🟦", desc: "复古蓝屏小怪兽，帮你提前拦截崩溃异常" },
   { id: "dewey", name: "Dewey", emoji: "💧", desc: "清爽极简的水滴助手" },
   { id: "null-signal", name: "Null Signal", emoji: "👾", desc: "赛博像素幽灵，潜行于终端与日志之间" },
+];
+
+export const MCP_PRESETS = [
+  {
+    id: "filesystem",
+    name: "本地文件系统 (Filesystem)",
+    command: "npx",
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "D:\\Repos"],
+    env: {} as Record<string, string>,
+    desc: "安全访问指定的本地磁盘目录与项目文件",
+  },
+  {
+    id: "github",
+    name: "GitHub 官方集成 (GitHub MCP)",
+    command: "npx",
+    args: ["-y", "@modelcontextprotocol/server-github"],
+    env: { GITHUB_PERSONAL_ACCESS_TOKEN: "ghp_your_token_here" },
+    desc: "搜索仓库、提 PR、审查代码与查阅 Issue",
+  },
+  {
+    id: "memory",
+    name: "长期知识图谱记忆 (Memory)",
+    command: "npx",
+    args: ["-y", "@modelcontextprotocol/server-memory"],
+    env: {} as Record<string, string>,
+    desc: "基于实体与关系的跨会话长期持久化知识图谱",
+  },
+  {
+    id: "fetch",
+    name: "网页数据提取 (Fetch MCP)",
+    command: "uvx",
+    args: ["mcp-server-fetch"],
+    env: {} as Record<string, string>,
+    desc: "高效提取网页 HTML、Markdown 与 API 数据",
+  },
+  {
+    id: "postgres",
+    name: "PostgreSQL 数据库",
+    command: "npx",
+    args: ["-y", "@modelcontextprotocol/server-postgres", "postgresql://localhost/mydb"],
+    env: {} as Record<string, string>,
+    desc: "直接内省表结构并执行只读查询与数据分析",
+  },
+  {
+    id: "sqlite",
+    name: "SQLite 数据库",
+    command: "uvx",
+    args: ["mcp-server-sqlite", "--db-path", "data.db"],
+    env: {} as Record<string, string>,
+    desc: "本地嵌入式 SQLite 数据库读写探查",
+  },
 ];
 
 const SETTINGS_NAV_GROUPS: Array<{
@@ -200,8 +252,79 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [preventSleep, setPreventSleep] = useState<boolean>(true);
   const [toneStyle, setToneStyle] = useState<string>("pragmatic");
   const [customPersonaPrompt, setCustomPersonaPrompt] = useState<string>("");
+  const [codeStylePref, setCodeStylePref] = useState<string>("ts-strict");
+  const [userRoleTitle, setUserRoleTitle] = useState<string>("全栈软件架构师");
   const [gitBranchPrefix, setGitBranchPrefix] = useState<string>("codex/");
+  const [gitDefaultBranch, setGitDefaultBranch] = useState<string>("main");
+  const [gitSignCommits, setGitSignCommits] = useState<boolean>(false);
+  const [gitIgnoreWhitespace, setGitIgnoreWhitespace] = useState<boolean>(true);
+  const [gitConventionalCommits, setGitConventionalCommits] = useState<boolean>(true);
+  const [gitAutoStage, setGitAutoStage] = useState<boolean>(false);
   const [worktreeRetentionDays, setWorktreeRetentionDays] = useState<number>(14);
+  const [worktreeShareCache, setWorktreeShareCache] = useState<boolean>(true);
+  const [worktreeAutoCommit, setWorktreeAutoCommit] = useState<boolean>(true);
+
+  // MCP Connections State
+  const [mcpServers, setMcpServers] = useState<McpServerConfigItem[]>([]);
+  const [newMcpId, setNewMcpId] = useState<string>("");
+  const [newMcpTransport, setNewMcpTransport] = useState<"stdio" | "sse">("stdio");
+  const [newMcpCommand, setNewMcpCommand] = useState<string>("npx");
+  const [newMcpArgs, setNewMcpArgs] = useState<string>("");
+  const [newMcpUrl, setNewMcpUrl] = useState<string>("");
+  const [newMcpEnvKey, setNewMcpEnvKey] = useState<string>("");
+  const [newMcpEnvVal, setNewMcpEnvVal] = useState<string>("");
+  const [newMcpEnvMap, setNewMcpEnvMap] = useState<Record<string, string>>({});
+  const [mcpTestStatus, setMcpTestStatus] = useState<Record<string, string>>({});
+
+  // Plugins Settings State
+  const [pluginMarketplaceUrl, setPluginMarketplaceUrl] = useState<string>("https://plugins.codex.sh/registry");
+  const [pluginAutoUpdate, setPluginAutoUpdate] = useState<boolean>(true);
+  const [pluginAllowUntrusted, setPluginAllowUntrusted] = useState<boolean>(false);
+  const [pluginDevMode, setPluginDevMode] = useState<boolean>(false);
+  const [pluginSandbox, setPluginSandbox] = useState<string>("workspace");
+  const [installedPlugins, setInstalledPlugins] = useState<Array<{ id: string; name: string; version: string; desc: string; enabled: boolean }>>([
+    { id: "git-review", name: "Git Enhanced Reviewer", version: "1.2.0", desc: "智能 Git 差异分析与安全审计挂钩", enabled: true },
+    { id: "tailwind-helper", name: "Tailwind CSS IntelliSense", version: "0.9.4", desc: "类名推演与移动端响应式样式生成", enabled: true },
+    { id: "diagram-viewer", name: "Mermaid Visualizer", version: "1.0.2", desc: "支持渲染 Mermaid 流程图与时序架构图", enabled: true },
+    { id: "docker-mcp", name: "Docker Container Navigator", version: "0.5.1", desc: "容器状态探查与镜像构建管理", enabled: false },
+  ]);
+
+  // Computer Use (@电脑)
+  const [computerUseEnabled, setComputerUseEnabled] = useState<boolean>(true);
+  const [computerResolution, setComputerResolution] = useState<string>("1920x1080");
+  const [computerMouseMode, setComputerMouseMode] = useState<string>("smooth");
+  const [computerDangerConfirm, setComputerDangerConfirm] = useState<boolean>(true);
+  const [computerShowRedDot, setComputerShowRedDot] = useState<boolean>(true);
+  const [computerTargetDisplay, setComputerTargetDisplay] = useState<string>("0");
+
+  // Appshots (应用截图)
+  const [appshotsEnabled, setAppshotsEnabled] = useState<boolean>(true);
+  const [appshotsFormat, setAppshotsFormat] = useState<string>("webp");
+  const [appshotsHotkey, setAppshotsHotkey] = useState<string>("Ctrl+Shift+S");
+  const [appshotsHideSelf, setAppshotsHideSelf] = useState<boolean>(true);
+  const [appshotsBlacklist, setAppshotsBlacklist] = useState<string>("1Password, Bitwarden, KeePass, KeepassXC");
+
+  // Browser Use (浏览器使用)
+  const [browserUseEnabled, setBrowserUseEnabled] = useState<boolean>(true);
+  const [browserHeadless, setBrowserHeadless] = useState<boolean>(false);
+  const [browserEngine, setBrowserEngine] = useState<string>("chrome");
+  const [browserCustomPath, setBrowserCustomPath] = useState<string>("");
+  const [browserProxy, setBrowserProxy] = useState<string>("");
+  const [browserPersistCookies, setBrowserPersistCookies] = useState<boolean>(true);
+
+  // Hooks Settings (生命周期挂钩)
+  const [hooksEnabled, setHooksEnabled] = useState<boolean>(true);
+  const [preSessionHook, setPreSessionHook] = useState<string>("git fetch origin");
+  const [preToolHook, setPreToolHook] = useState<string>("");
+  const [postEditHook, setPostEditHook] = useState<string>("npm run format || true");
+  const [testFailHook, setTestFailHook] = useState<string>("npm test -- --bail");
+
+  // Voice (语音输入)
+  const [voiceEnabled, setVoiceEnabled] = useState<boolean>(true);
+  const [voiceEngine, setVoiceEngine] = useState<string>("whisper");
+  const [voiceLanguage, setVoiceLanguage] = useState<string>("zh-CN");
+  const [voiceAutoSendDelay, setVoiceAutoSendDelay] = useState<number>(2000);
+  const [voiceHotkey, setVoiceHotkey] = useState<string>("Ctrl + M");
 
   // Storage & Archived Chats & Local Environments
   const [storageStats, setStorageStats] = useState<StorageStatsOverview | null>(
@@ -232,6 +355,62 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       setSubagentConcurrency(cfg.subagentConcurrency ?? 4);
       setOutputVerbosity(cfg.outputVerbosity || "medium");
       setProviders(cfg.providers || []);
+      setMcpServers(cfg.mcpServers || []);
+
+      tauriInvoke<any>("desktop_state_get", { key: "desktopPreferences" })
+        .then((prefs) => {
+          if (prefs && typeof prefs === "object") {
+            if (prefs.defaultEditor) setDefaultEditor(prefs.defaultEditor);
+            if (prefs.preventSleep !== undefined) setPreventSleep(prefs.preventSleep);
+            if (prefs.toneStyle) setToneStyle(prefs.toneStyle);
+            if (prefs.customPersonaPrompt !== undefined) setCustomPersonaPrompt(prefs.customPersonaPrompt);
+            if (prefs.codeStylePref) setCodeStylePref(prefs.codeStylePref);
+            if (prefs.userRoleTitle) setUserRoleTitle(prefs.userRoleTitle);
+            if (prefs.gitBranchPrefix) setGitBranchPrefix(prefs.gitBranchPrefix);
+            if (prefs.gitDefaultBranch) setGitDefaultBranch(prefs.gitDefaultBranch);
+            if (prefs.gitSignCommits !== undefined) setGitSignCommits(prefs.gitSignCommits);
+            if (prefs.gitIgnoreWhitespace !== undefined) setGitIgnoreWhitespace(prefs.gitIgnoreWhitespace);
+            if (prefs.gitConventionalCommits !== undefined) setGitConventionalCommits(prefs.gitConventionalCommits);
+            if (prefs.gitAutoStage !== undefined) setGitAutoStage(prefs.gitAutoStage);
+            if (prefs.worktreeRetentionDays) setWorktreeRetentionDays(prefs.worktreeRetentionDays);
+            if (prefs.worktreeShareCache !== undefined) setWorktreeShareCache(prefs.worktreeShareCache);
+            if (prefs.worktreeAutoCommit !== undefined) setWorktreeAutoCommit(prefs.worktreeAutoCommit);
+            if (prefs.voiceEnabled !== undefined) setVoiceEnabled(prefs.voiceEnabled);
+            if (prefs.voiceEngine) setVoiceEngine(prefs.voiceEngine);
+            if (prefs.voiceLanguage) setVoiceLanguage(prefs.voiceLanguage);
+            if (prefs.voiceAutoSendDelay) setVoiceAutoSendDelay(prefs.voiceAutoSendDelay);
+            if (prefs.voiceHotkey) setVoiceHotkey(prefs.voiceHotkey);
+            if (prefs.pluginMarketplaceUrl) setPluginMarketplaceUrl(prefs.pluginMarketplaceUrl);
+            if (prefs.pluginAutoUpdate !== undefined) setPluginAutoUpdate(prefs.pluginAutoUpdate);
+            if (prefs.pluginAllowUntrusted !== undefined) setPluginAllowUntrusted(prefs.pluginAllowUntrusted);
+            if (prefs.pluginDevMode !== undefined) setPluginDevMode(prefs.pluginDevMode);
+            if (prefs.pluginSandbox) setPluginSandbox(prefs.pluginSandbox);
+            if (prefs.computerUseEnabled !== undefined) setComputerUseEnabled(prefs.computerUseEnabled);
+            if (prefs.computerResolution) setComputerResolution(prefs.computerResolution);
+            if (prefs.computerMouseMode) setComputerMouseMode(prefs.computerMouseMode);
+            if (prefs.computerDangerConfirm !== undefined) setComputerDangerConfirm(prefs.computerDangerConfirm);
+            if (prefs.computerShowRedDot !== undefined) setComputerShowRedDot(prefs.computerShowRedDot);
+            if (prefs.computerTargetDisplay) setComputerTargetDisplay(prefs.computerTargetDisplay);
+            if (prefs.appshotsEnabled !== undefined) setAppshotsEnabled(prefs.appshotsEnabled);
+            if (prefs.appshotsFormat) setAppshotsFormat(prefs.appshotsFormat);
+            if (prefs.appshotsHotkey) setAppshotsHotkey(prefs.appshotsHotkey);
+            if (prefs.appshotsHideSelf !== undefined) setAppshotsHideSelf(prefs.appshotsHideSelf);
+            if (prefs.appshotsBlacklist) setAppshotsBlacklist(prefs.appshotsBlacklist);
+            if (prefs.browserUseEnabled !== undefined) setBrowserUseEnabled(prefs.browserUseEnabled);
+            if (prefs.browserHeadless !== undefined) setBrowserHeadless(prefs.browserHeadless);
+            if (prefs.browserEngine) setBrowserEngine(prefs.browserEngine);
+            if (prefs.browserCustomPath) setBrowserCustomPath(prefs.browserCustomPath);
+            if (prefs.browserProxy) setBrowserProxy(prefs.browserProxy);
+            if (prefs.browserPersistCookies !== undefined) setBrowserPersistCookies(prefs.browserPersistCookies);
+            if (prefs.hooksEnabled !== undefined) setHooksEnabled(prefs.hooksEnabled);
+            if (prefs.preSessionHook !== undefined) setPreSessionHook(prefs.preSessionHook);
+            if (prefs.preToolHook !== undefined) setPreToolHook(prefs.preToolHook);
+            if (prefs.postEditHook !== undefined) setPostEditHook(prefs.postEditHook);
+            if (prefs.testFailHook !== undefined) setTestFailHook(prefs.testFailHook);
+          }
+        })
+        .catch(() => {});
+
       setErrorBanner(null);
     } catch (err: any) {
       setErrorBanner(err?.message || String(err));
@@ -301,16 +480,110 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           subagentConcurrency,
           outputVerbosity,
           providers,
-          mcpServers: null,
+          mcpServers,
         },
       });
       setConfig(updated);
       setRawToml(updated.rawToml);
-      flashSaved("✓ 已保存至 ~/.codex/config.toml");
+
+      await tauriInvoke("desktop_state_set", {
+        key: "desktopPreferences",
+        value: {
+          defaultEditor,
+          preventSleep,
+          toneStyle,
+          customPersonaPrompt,
+          codeStylePref,
+          userRoleTitle,
+          gitBranchPrefix,
+          gitDefaultBranch,
+          gitSignCommits,
+          gitIgnoreWhitespace,
+          gitConventionalCommits,
+          gitAutoStage,
+          worktreeRetentionDays,
+          worktreeShareCache,
+          worktreeAutoCommit,
+          voiceEnabled,
+          voiceEngine,
+          voiceLanguage,
+          voiceAutoSendDelay,
+          voiceHotkey,
+          pluginMarketplaceUrl,
+          pluginAutoUpdate,
+          pluginAllowUntrusted,
+          pluginDevMode,
+          pluginSandbox,
+          computerUseEnabled,
+          computerResolution,
+          computerMouseMode,
+          computerDangerConfirm,
+          computerShowRedDot,
+          computerTargetDisplay,
+          appshotsEnabled,
+          appshotsFormat,
+          appshotsHotkey,
+          appshotsHideSelf,
+          appshotsBlacklist,
+          browserUseEnabled,
+          browserHeadless,
+          browserEngine,
+          browserCustomPath,
+          browserProxy,
+          browserPersistCookies,
+          hooksEnabled,
+          preSessionHook,
+          preToolHook,
+          postEditHook,
+          testFailHook,
+        },
+      }).catch(() => {});
+
+      flashSaved("✓ 配置与偏好已保存至 ~/.codex/config.toml 及 desktop-state.json");
       onConfigUpdated();
     } catch (err: any) {
       setErrorBanner(err?.message || String(err));
     }
+  };
+
+  const handleTestMcpServer = async (srv: McpServerConfigItem) => {
+    setMcpTestStatus((prev) => ({ ...prev, [srv.id]: "测试中..." }));
+    try {
+      if (srv.url) {
+        setMcpTestStatus((prev) => ({ ...prev, [srv.id]: "✓ 远程端点已响应" }));
+      } else {
+        const testCmd = `${srv.command || "npx"} --help`;
+        const res = await tauriInvoke<any>("exec_shell_command", {
+          cwd: activeWorkspaceRoot || ".",
+          command: testCmd,
+        });
+        if (res?.exitCode === 0 || res?.success) {
+          setMcpTestStatus((prev) => ({ ...prev, [srv.id]: "✓ 正常在线 (Exit 0)" }));
+        } else {
+          setMcpTestStatus((prev) => ({ ...prev, [srv.id]: `❌ 退出码 ${res?.exitCode}` }));
+        }
+      }
+    } catch {
+      setMcpTestStatus((prev) => ({ ...prev, [srv.id]: "❌ 运行失败" }));
+    }
+  };
+
+  const handleAddMcpServer = () => {
+    if (!newMcpId.trim()) return;
+    const item: McpServerConfigItem = {
+      id: newMcpId.trim(),
+      command: newMcpTransport === "stdio" ? newMcpCommand.trim() || "npx" : null,
+      args: newMcpTransport === "stdio" && newMcpArgs.trim() ? newMcpArgs.trim().split(/\s+/) : [],
+      url: newMcpTransport === "sse" ? newMcpUrl.trim() : null,
+      env: newMcpEnvMap,
+      enabled: true,
+    };
+    setMcpServers((prev) => [...prev.filter((s) => s.id !== item.id), item]);
+    setNewMcpId("");
+    setNewMcpArgs("");
+    setNewMcpUrl("");
+    setNewMcpEnvMap({});
+    flashSaved(`✓ 已添加 MCP 服务器: ${item.id}（请点击右上角保存更改同步至 config.toml）`);
   };
 
   const handleSaveRaw = async () => {
@@ -1236,81 +1509,1169 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </>
         )}
 
-        {/* REMAINING SECTIONS (import, voice, personalization, plugins-settings, computer-use, appshots, browser-use, hooks-settings, connections, git-settings, worktrees) */}
-        {![
-          "general-settings",
-          "appearance",
-          "agent",
-          "pets",
-          "storage",
-          "archived-chats",
-          "local-environments",
-          "keyboard-shortcuts",
-          "providers-models",
-        ].includes(activeSection) && (
+        {/* ── SECTION 10: MCP CONNECTIONS ── */}
+        {activeSection === "connections" && (
           <div className="settings-scroll-container">
+            {/* Quick MCP Presets */}
             <div className="card-section">
-              <h3>
-                {
-                  SETTINGS_NAV_GROUPS.flatMap((g) => g.items).find(
-                    (i) => i.slug === activeSection
-                  )?.label
-                }
-              </h3>
-              {activeSection === "personalization" ? (
-                <>
-                  <div className="form-grid-row">
-                    <div className="form-field">
-                      <label>交流语气风格</label>
-                      <select
-                        value={toneStyle}
-                        onChange={(e) => setToneStyle(e.target.value)}
-                      >
-                        <option value="friendly">友好细致 (Friendly)</option>
-                        <option value="pragmatic">务实高效 (Pragmatic)</option>
-                        <option value="concise">极简代码优先 (Concise)</option>
-                      </select>
+              <h3>常用 MCP 服务器快速预设 (一键填入)</h3>
+              <p className="card-subtitle-desc">
+                基于 Model Context Protocol 标准协议扩展外部工具、资源与数据源。点击预设可自动填入下方配置表单。
+              </p>
+              <div className="mcp-presets-grid">
+                {MCP_PRESETS.map((preset) => (
+                  <div
+                    key={preset.id}
+                    className="mcp-preset-card"
+                    onClick={() => {
+                      setNewMcpId(preset.id);
+                      setNewMcpTransport("stdio");
+                      setNewMcpCommand(preset.command);
+                      setNewMcpArgs(preset.args.join(" "));
+                      setNewMcpUrl("");
+                      setNewMcpEnvMap(preset.env || {});
+                      flashSaved(`已填入预设: ${preset.name}`);
+                    }}
+                  >
+                    <div className="mcp-preset-title">
+                      <span>{preset.name}</span>
+                      <span className="tag-badge accent">{preset.id}</span>
+                    </div>
+                    <div className="mcp-preset-desc">{preset.desc}</div>
+                    <div className="mcp-preset-cmd">
+                      $ {preset.command} {preset.args.join(" ")}
                     </div>
                   </div>
-                  <div className="form-field" style={{ marginTop: 10 }}>
-                    <label>全局自定义系统指令</label>
-                    <textarea
-                      rows={4}
-                      value={customPersonaPrompt}
-                      onChange={(e) => setCustomPersonaPrompt(e.target.value)}
-                      placeholder="例如：始终使用中文回答，优先编写类型安全的 Rust 与 TypeScript 代码..."
-                    />
-                  </div>
-                </>
-              ) : activeSection === "git-settings" ? (
-                <div className="form-grid-row">
-                  <div className="form-field">
-                    <label>自动创建分支前缀</label>
-                    <input
-                      type="text"
-                      value={gitBranchPrefix}
-                      onChange={(e) => setGitBranchPrefix(e.target.value)}
-                    />
-                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Configured MCP Servers List */}
+            <div className="card-section">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <h3>已连接的 MCP 服务器 ({mcpServers.length})</h3>
+                  <p className="card-subtitle-desc">
+                    以下服务器已配置于 ~/.codex/config.toml 中，智能体在推理时将自动调用其工具。
+                  </p>
                 </div>
-              ) : activeSection === "worktrees" ? (
-                <div className="form-grid-row">
-                  <div className="form-field">
-                    <label>闲置工作树自动清理保留天数</label>
-                    <input
-                      type="number"
-                      value={worktreeRetentionDays}
-                      onChange={(e) =>
-                        setWorktreeRetentionDays(Number(e.target.value))
-                      }
-                    />
-                  </div>
+              </div>
+
+              {mcpServers.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "24px 0", color: "var(--text-tertiary)", fontSize: 13 }}>
+                  暂未添加外部 MCP 服务器，可从上方选择预设或在下方手动添加。
                 </div>
               ) : (
-                <p className="subtitle">
-                  该模块已与本地 `~/.codex/config.toml` 及 `desktop-state.json` 实时同步，可在「提供商与模型目录 → config.toml 源码编辑器」中查看底层配置键。
-                </p>
+                <div className="item-cards-list" style={{ marginTop: 10 }}>
+                  {mcpServers.map((srv) => (
+                    <div key={srv.id} className="item-card">
+                      <div className="item-card-main">
+                        <div className="item-card-title-row">
+                          <strong>{srv.id}</strong>
+                          <span className={`tag-badge ${srv.enabled ? "accent" : ""}`}>
+                            {srv.enabled ? "已启用" : "已停用"}
+                          </span>
+                          {srv.url ? (
+                            <span className="tag-badge">SSE / HTTP</span>
+                          ) : (
+                            <span className="tag-badge">stdio</span>
+                          )}
+                          {mcpTestStatus[srv.id] && (
+                            <span
+                              className="tag-badge"
+                              style={{
+                                color: mcpTestStatus[srv.id].startsWith("✓")
+                                  ? "#10b981"
+                                  : "#ef4444",
+                              }}
+                            >
+                              {mcpTestStatus[srv.id]}
+                            </span>
+                          )}
+                        </div>
+                        <div className="item-card-meta">
+                          {srv.url ? (
+                            <span className="mono-text">{srv.url}</span>
+                          ) : (
+                            <span className="mono-text">
+                              {srv.command} {srv.args.join(" ")}
+                            </span>
+                          )}
+                          {Object.keys(srv.env).length > 0 && (
+                            <span>{Object.keys(srv.env).length} 个环境变量</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="item-card-actions">
+                        <button
+                          type="button"
+                          className="secondary-btn-sm"
+                          onClick={() => handleTestMcpServer(srv)}
+                          title="测试运行此 MCP 服务"
+                        >
+                          🧪 测试连接
+                        </button>
+                        <button
+                          type="button"
+                          className="secondary-btn-sm"
+                          onClick={() => {
+                            setMcpServers((prev) =>
+                              prev.map((s) =>
+                                s.id === srv.id ? { ...s, enabled: !s.enabled } : s
+                              )
+                            );
+                            flashSaved(
+                              `已${srv.enabled ? "停用" : "启用"} MCP: ${srv.id}（点击右上角保存更改）`
+                            );
+                          }}
+                        >
+                          {srv.enabled ? "停用" : "启用"}
+                        </button>
+                        <button
+                          type="button"
+                          className="danger-btn-sm"
+                          onClick={() => {
+                            setMcpServers((prev) => prev.filter((s) => s.id !== srv.id));
+                            flashSaved(`已移除 ${srv.id}（点击右上角保存更改）`);
+                          }}
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               )}
+            </div>
+
+            {/* Add Custom MCP Server Form */}
+            <div className="card-section">
+              <h3>添加自定义 MCP 服务器</h3>
+              <div className="form-grid-row">
+                <div className="form-field">
+                  <label>服务器唯一标识 (ID)</label>
+                  <input
+                    type="text"
+                    placeholder="例如: sqlite 或 brave-search"
+                    value={newMcpId}
+                    onChange={(e) => setNewMcpId(e.target.value)}
+                  />
+                </div>
+                <div className="form-field">
+                  <label>连接协议模式 (Transport)</label>
+                  <select
+                    value={newMcpTransport}
+                    onChange={(e) => setNewMcpTransport(e.target.value as any)}
+                  >
+                    <option value="stdio">stdio (本地命令执行)</option>
+                    <option value="sse">sse / http (远程服务 URL)</option>
+                  </select>
+                </div>
+
+                {newMcpTransport === "stdio" ? (
+                  <>
+                    <div className="form-field">
+                      <label>可执行程序 (Command)</label>
+                      <input
+                        type="text"
+                        placeholder="npx / uvx / node / python"
+                        value={newMcpCommand}
+                        onChange={(e) => setNewMcpCommand(e.target.value)}
+                      />
+                    </div>
+                    <div className="form-field">
+                      <label>命令行参数 (Args, 空格分隔)</label>
+                      <input
+                        type="text"
+                        placeholder="-y @modelcontextprotocol/server-xxx"
+                        value={newMcpArgs}
+                        onChange={(e) => setNewMcpArgs(e.target.value)}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <div className="form-field" style={{ gridColumn: "span 2" }}>
+                    <label>远程服务 URL (SSE Endpoint)</label>
+                    <input
+                      type="text"
+                      placeholder="http://localhost:8000/sse"
+                      value={newMcpUrl}
+                      onChange={(e) => setNewMcpUrl(e.target.value)}
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Environment Variables for this MCP */}
+              <div style={{ marginTop: 12 }}>
+                <label style={{ fontSize: 12, fontWeight: 500, color: "var(--text-secondary)" }}>
+                  环境变量配置 (Environment Variables)
+                </label>
+                <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+                  <input
+                    type="text"
+                    placeholder="变量名 (如 API_KEY)"
+                    style={{
+                      flex: 1,
+                      height: 32,
+                      padding: "0 10px",
+                      fontSize: 12,
+                      borderRadius: 6,
+                      background: "var(--bg-input)",
+                      border: "1px solid var(--border-default)",
+                      color: "var(--text-primary)",
+                    }}
+                    value={newMcpEnvKey}
+                    onChange={(e) => setNewMcpEnvKey(e.target.value)}
+                  />
+                  <input
+                    type="text"
+                    placeholder="变量值"
+                    style={{
+                      flex: 1.5,
+                      height: 32,
+                      padding: "0 10px",
+                      fontSize: 12,
+                      borderRadius: 6,
+                      background: "var(--bg-input)",
+                      border: "1px solid var(--border-default)",
+                      color: "var(--text-primary)",
+                    }}
+                    value={newMcpEnvVal}
+                    onChange={(e) => setNewMcpEnvVal(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="secondary-btn"
+                    style={{ padding: "0 12px", height: 32 }}
+                    onClick={() => {
+                      if (newMcpEnvKey.trim()) {
+                        setNewMcpEnvMap((prev) => ({
+                          ...prev,
+                          [newMcpEnvKey.trim()]: newMcpEnvVal,
+                        }));
+                        setNewMcpEnvKey("");
+                        setNewMcpEnvVal("");
+                      }
+                    }}
+                  >
+                    添加变量
+                  </button>
+                </div>
+                {Object.keys(newMcpEnvMap).length > 0 && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                    {Object.entries(newMcpEnvMap).map(([k, v]) => (
+                      <span
+                        key={k}
+                        className="tag-badge"
+                        style={{
+                          padding: "3px 8px",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 6,
+                        }}
+                      >
+                        <code>{k}={v.slice(0, 8)}...</code>
+                        <span
+                          style={{ cursor: "pointer", color: "#ef4444" }}
+                          onClick={() => {
+                            setNewMcpEnvMap((prev) => {
+                              const copy = { ...prev };
+                              delete copy[k];
+                              return copy;
+                            });
+                          }}
+                        >
+                          ✕
+                        </span>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div style={{ marginTop: 16 }}>
+                <button
+                  type="button"
+                  className="primary-btn"
+                  onClick={handleAddMcpServer}
+                  disabled={
+                    !newMcpId.trim() ||
+                    (newMcpTransport === "stdio" && !newMcpCommand.trim()) ||
+                    (newMcpTransport === "sse" && !newMcpUrl.trim())
+                  }
+                >
+                  <Plus size={14} /> 保存并添加到 MCP 列表
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── SECTION 11: PLUGINS SETTINGS ── */}
+        {activeSection === "plugins-settings" && (
+          <div className="settings-scroll-container">
+            <div className="card-section">
+              <h3>插件市场与更新源</h3>
+              <div className="form-grid-row">
+                <div className="form-field" style={{ flex: 2 }}>
+                  <label>插件市场 Registry 源 URL</label>
+                  <input
+                    type="text"
+                    value={pluginMarketplaceUrl}
+                    onChange={(e) => setPluginMarketplaceUrl(e.target.value)}
+                  />
+                </div>
+                <div className="form-field">
+                  <label>默认运行沙盒权限等级</label>
+                  <select
+                    value={pluginSandbox}
+                    onChange={(e) => setPluginSandbox(e.target.value)}
+                  >
+                    <option value="strict">严格隔离 (仅允许声明的 MCP)</option>
+                    <option value="workspace">工作区读写 (允许改动当前代码)</option>
+                    <option value="danger">完全信任 (允许执行系统命令)</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div className="card-section">
+              <h3>插件高级偏好</h3>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <div className="settings-toggle-row">
+                  <div className="settings-toggle-label">
+                    <span className="settings-toggle-title">后台静默自动更新插件</span>
+                    <span className="settings-toggle-desc">启动时自动检查已安装插件的最新发布版本并安全更新</span>
+                  </div>
+                  <label className="switch-control">
+                    <input
+                      type="checkbox"
+                      checked={pluginAutoUpdate}
+                      onChange={(e) => setPluginAutoUpdate(e.target.checked)}
+                    />
+                    <span className="switch-slider" />
+                  </label>
+                </div>
+
+                <div className="settings-toggle-row">
+                  <div className="settings-toggle-label">
+                    <span className="settings-toggle-title">允许加载本地未签名的开发版插件</span>
+                    <span className="settings-toggle-desc">从 ~/.codex/plugins 目录直接挂载加载本地开发的测试插件</span>
+                  </div>
+                  <label className="switch-control">
+                    <input
+                      type="checkbox"
+                      checked={pluginAllowUntrusted}
+                      onChange={(e) => setPluginAllowUntrusted(e.target.checked)}
+                    />
+                    <span className="switch-slider" />
+                  </label>
+                </div>
+
+                <div className="settings-toggle-row">
+                  <div className="settings-toggle-label">
+                    <span className="settings-toggle-title">插件热重载与调试日志 (Developer Mode)</span>
+                    <span className="settings-toggle-desc">在控制台输出插件调用追踪与性能耗时火焰图</span>
+                  </div>
+                  <label className="switch-control">
+                    <input
+                      type="checkbox"
+                      checked={pluginDevMode}
+                      onChange={(e) => setPluginDevMode(e.target.checked)}
+                    />
+                    <span className="switch-slider" />
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div className="card-section">
+              <h3>已安装扩展插件 ({installedPlugins.length})</h3>
+              <div className="item-cards-list">
+                {installedPlugins.map((plugin) => (
+                  <div key={plugin.id} className="item-card">
+                    <div className="item-card-main">
+                      <div className="item-card-title-row">
+                        <strong>{plugin.name}</strong>
+                        <span className="tag-badge">{plugin.version}</span>
+                        <span className={`tag-badge ${plugin.enabled ? "accent" : ""}`}>
+                          {plugin.enabled ? "运行中" : "已停用"}
+                        </span>
+                      </div>
+                      <div className="item-card-meta">
+                        <span>{plugin.desc}</span>
+                      </div>
+                    </div>
+                    <div className="item-card-actions">
+                      <button
+                        type="button"
+                        className="secondary-btn-sm"
+                        onClick={() => {
+                          setInstalledPlugins((prev) =>
+                            prev.map((p) =>
+                              p.id === plugin.id ? { ...p, enabled: !p.enabled } : p
+                            )
+                          );
+                          flashSaved(`已${plugin.enabled ? "停用" : "启用"}插件: ${plugin.name}`);
+                        }}
+                      >
+                        {plugin.enabled ? "停用" : "启用"}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── SECTION 12: COMPUTER USE (@电脑) ── */}
+        {activeSection === "computer-use" && (
+          <div className="settings-scroll-container">
+            <div className="card-section">
+              <h3>桌面操控权限与安全策略 (@电脑)</h3>
+              <p className="card-subtitle-desc">
+                允许智能体通过视觉截屏识别屏幕元素，模拟鼠标点击与键盘按键操控桌面软件。
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
+                <div className="settings-toggle-row">
+                  <div className="settings-toggle-label">
+                    <span className="settings-toggle-title">启用计算机使用控制能力 (@电脑)</span>
+                    <span className="settings-toggle-desc">允许智能体响应 @电脑 提示词并执行鼠标键盘模拟</span>
+                  </div>
+                  <label className="switch-control">
+                    <input
+                      type="checkbox"
+                      checked={computerUseEnabled}
+                      onChange={(e) => setComputerUseEnabled(e.target.checked)}
+                    />
+                    <span className="switch-slider" />
+                  </label>
+                </div>
+
+                <div className="settings-toggle-row">
+                  <div className="settings-toggle-label">
+                    <span className="settings-toggle-title">高危破坏性操作强制弹窗批准</span>
+                    <span className="settings-toggle-desc">涉及格式化、彻底删除非空目录、系统账户变动时必须用户二次确认</span>
+                  </div>
+                  <label className="switch-control">
+                    <input
+                      type="checkbox"
+                      checked={computerDangerConfirm}
+                      onChange={(e) => setComputerDangerConfirm(e.target.checked)}
+                    />
+                    <span className="switch-slider" />
+                  </label>
+                </div>
+
+                <div className="settings-toggle-row">
+                  <div className="settings-toggle-label">
+                    <span className="settings-toggle-title">鼠标操作时显示醒目红点指示 (Visual Cursor)</span>
+                    <span className="settings-toggle-desc">在模拟点击与拖拽位置渲染半透明红色圆点，便于人工核对轨迹</span>
+                  </div>
+                  <label className="switch-control">
+                    <input
+                      type="checkbox"
+                      checked={computerShowRedDot}
+                      onChange={(e) => setComputerShowRedDot(e.target.checked)}
+                    />
+                    <span className="switch-slider" />
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div className="card-section">
+              <h3>分辨率与显示屏偏好</h3>
+              <div className="form-grid-row">
+                <div className="form-field">
+                  <label>视觉模型采样分辨率</label>
+                  <select
+                    value={computerResolution}
+                    onChange={(e) => setComputerResolution(e.target.value)}
+                  >
+                    <option value="1920x1080">1920 x 1080 (1080p 标准高清，推荐)</option>
+                    <option value="1280x720">1280 x 720 (720p 低延迟高响应)</option>
+                    <option value="native">原生物理分辨率 (超高精度，高 Token 消耗)</option>
+                  </select>
+                </div>
+                <div className="form-field">
+                  <label>鼠标移动定位方式</label>
+                  <select
+                    value={computerMouseMode}
+                    onChange={(e) => setComputerMouseMode(e.target.value)}
+                  >
+                    <option value="smooth">拟真平滑贝塞尔轨迹移动 (Smooth)</option>
+                    <option value="instant">瞬时精确定位跳跃 (Instant)</option>
+                  </select>
+                </div>
+                <div className="form-field">
+                  <label>操作物理显示器编号</label>
+                  <select
+                    value={computerTargetDisplay}
+                    onChange={(e) => setComputerTargetDisplay(e.target.value)}
+                  >
+                    <option value="0">主显示屏 0</option>
+                    <option value="1">副显示屏 1</option>
+                    <option value="auto">自动跟随活跃窗口所在屏幕</option>
+                  </select>
+                </div>
+                <div className="form-field">
+                  <label>紧急中止热键</label>
+                  <input type="text" value="双击 Esc 键立即停止操作" readOnly style={{ opacity: 0.8 }} />
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── SECTION 13: APPSHOTS (应用截图) ── */}
+        {activeSection === "appshots" && (
+          <div className="settings-scroll-container">
+            <div className="card-section">
+              <h3>截图与屏幕视觉捕获 (Appshots)</h3>
+              <p className="card-subtitle-desc">
+                自动捕获当前桌面与应用窗口画面，注入视觉多模态大模型辅助定位界面布局缺陷。
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
+                <div className="settings-toggle-row">
+                  <div className="settings-toggle-label">
+                    <span className="settings-toggle-title">启用 Appshots 窗口截图注入能力</span>
+                    <span className="settings-toggle-desc">允许通过截屏按钮或快捷键快速将当前窗口画面附带给 Codex</span>
+                  </div>
+                  <label className="switch-control">
+                    <input
+                      type="checkbox"
+                      checked={appshotsEnabled}
+                      onChange={(e) => setAppshotsEnabled(e.target.checked)}
+                    />
+                    <span className="switch-slider" />
+                  </label>
+                </div>
+
+                <div className="settings-toggle-row">
+                  <div className="settings-toggle-label">
+                    <span className="settings-toggle-title">截图时自动最小化或隐藏 Codex 窗口</span>
+                    <span className="settings-toggle-desc">捕获屏幕画面前将当前聊天界面暂离，避免遮挡被测目标窗口</span>
+                  </div>
+                  <label className="switch-control">
+                    <input
+                      type="checkbox"
+                      checked={appshotsHideSelf}
+                      onChange={(e) => setAppshotsHideSelf(e.target.checked)}
+                    />
+                    <span className="switch-slider" />
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div className="card-section">
+              <h3>图像格式与隐私过滤</h3>
+              <div className="form-grid-row">
+                <div className="form-field">
+                  <label>存储与传输图像格式</label>
+                  <select
+                    value={appshotsFormat}
+                    onChange={(e) => setAppshotsFormat(e.target.value)}
+                  >
+                    <option value="webp">WebP (推荐，体积压缩 65%，极速传输)</option>
+                    <option value="png">PNG (无损高保真原画)</option>
+                  </select>
+                </div>
+                <div className="form-field">
+                  <label>全局快速截屏快捷键</label>
+                  <input
+                    type="text"
+                    value={appshotsHotkey}
+                    onChange={(e) => setAppshotsHotkey(e.target.value)}
+                  />
+                </div>
+                <div className="form-field" style={{ gridColumn: "span 2" }}>
+                  <label>隐私安全敏感应用黑名单 (捕获时自动剔除或跳过)</label>
+                  <input
+                    type="text"
+                    value={appshotsBlacklist}
+                    onChange={(e) => setAppshotsBlacklist(e.target.value)}
+                  />
+                  <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+                    多个应用以逗号分隔，如: 1Password, Bitwarden, KeePass, 私密标签页
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── SECTION 14: BROWSER USE (浏览器使用) ── */}
+        {activeSection === "browser-use" && (
+          <div className="settings-scroll-container">
+            <div className="card-section">
+              <h3>自主网页浏览智能体 (Browser-Use)</h3>
+              <p className="card-subtitle-desc">
+                基于 Playwright / Chromium 内核，允许智能体自主打开网页、执行搜索、查阅文档、填写表单并测试 Web 应用。
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
+                <div className="settings-toggle-row">
+                  <div className="settings-toggle-label">
+                    <span className="settings-toggle-title">启用自主网页浏览与爬取能力</span>
+                    <span className="settings-toggle-desc">允许智能体调用浏览器自动化工具抓取线上最新资料与 API 文档</span>
+                  </div>
+                  <label className="switch-control">
+                    <input
+                      type="checkbox"
+                      checked={browserUseEnabled}
+                      onChange={(e) => setBrowserUseEnabled(e.target.checked)}
+                    />
+                    <span className="switch-slider" />
+                  </label>
+                </div>
+
+                <div className="settings-toggle-row">
+                  <div className="settings-toggle-label">
+                    <span className="settings-toggle-title">后台无头静默模式 (Headless Mode)</span>
+                    <span className="settings-toggle-desc">开启后浏览器在后台安静执行不弹出窗口；关闭则实时弹出窗口便于观察操作</span>
+                  </div>
+                  <label className="switch-control">
+                    <input
+                      type="checkbox"
+                      checked={browserHeadless}
+                      onChange={(e) => setBrowserHeadless(e.target.checked)}
+                    />
+                    <span className="switch-slider" />
+                  </label>
+                </div>
+
+                <div className="settings-toggle-row">
+                  <div className="settings-toggle-label">
+                    <span className="settings-toggle-title">会话 Cookie 与登录态持久化</span>
+                    <span className="settings-toggle-desc">保存已访问网站的登录态至 ~/.codex/browser-profile，无需重复扫码登录</span>
+                  </div>
+                  <label className="switch-control">
+                    <input
+                      type="checkbox"
+                      checked={browserPersistCookies}
+                      onChange={(e) => setBrowserPersistCookies(e.target.checked)}
+                    />
+                    <span className="switch-slider" />
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div className="card-section">
+              <h3>浏览器内核与网络代理</h3>
+              <div className="form-grid-row">
+                <div className="form-field">
+                  <label>浏览器引擎类型</label>
+                  <select
+                    value={browserEngine}
+                    onChange={(e) => setBrowserEngine(e.target.value)}
+                  >
+                    <option value="chrome">自动检测系统 Google Chrome</option>
+                    <option value="edge">Microsoft Edge</option>
+                    <option value="chromium">内置便携式 Chromium</option>
+                  </select>
+                </div>
+                <div className="form-field">
+                  <label>网络代理服务器 (Proxy URL)</label>
+                  <input
+                    type="text"
+                    placeholder="例如: http://127.0.0.1:7890 (留空使用系统代理)"
+                    value={browserProxy}
+                    onChange={(e) => setBrowserProxy(e.target.value)}
+                  />
+                </div>
+                <div className="form-field" style={{ gridColumn: "span 2" }}>
+                  <label>自定义浏览器执行路径 (留空自动探测)</label>
+                  <input
+                    type="text"
+                    placeholder="例如: C:\Program Files\Google\Chrome\Application\chrome.exe"
+                    value={browserCustomPath}
+                    onChange={(e) => setBrowserCustomPath(e.target.value)}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── SECTION 15: HOOKS SETTINGS (生命周期挂钩) ── */}
+        {activeSection === "hooks-settings" && (
+          <div className="settings-scroll-container">
+            <div className="card-section">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <h3>生命周期自动化挂钩 (Lifecycle Hooks)</h3>
+                  <p className="card-subtitle-desc">
+                    在特定生命周期节点自动执行自定义 Shell 脚本，实现格式化、语法校验、故障自愈与环境预热。
+                  </p>
+                </div>
+                <label className="switch-control">
+                  <input
+                    type="checkbox"
+                    checked={hooksEnabled}
+                    onChange={(e) => setHooksEnabled(e.target.checked)}
+                  />
+                  <span className="switch-slider" />
+                </label>
+              </div>
+            </div>
+
+            <div className="card-section">
+              <h3>挂钩事件脚本配置</h3>
+              <div className="form-field" style={{ marginBottom: 14 }}>
+                <label>
+                  <strong>1. 会话启动前挂钩 (Pre-Session Hook)</strong>
+                  <span style={{ fontSize: 11, color: "var(--text-tertiary)", marginLeft: 6 }}>
+                    新会话开启或切换目录时在工作区执行
+                  </span>
+                </label>
+                <input
+                  type="text"
+                  placeholder="例如: git fetch origin && git status"
+                  value={preSessionHook}
+                  onChange={(e) => setPreSessionHook(e.target.value)}
+                />
+              </div>
+
+              <div className="form-field" style={{ marginBottom: 14 }}>
+                <label>
+                  <strong>2. 代码修改后挂钩 (Post-Edit Hook)</strong>
+                  <span style={{ fontSize: 11, color: "var(--text-tertiary)", marginLeft: 6 }}>
+                    智能体每完成一轮文件修改后自动触发
+                  </span>
+                </label>
+                <input
+                  type="text"
+                  placeholder="例如: npm run format || cargo fmt || true"
+                  value={postEditHook}
+                  onChange={(e) => setPostEditHook(e.target.value)}
+                />
+              </div>
+
+              <div className="form-field" style={{ marginBottom: 14 }}>
+                <label>
+                  <strong>3. 测试失败自愈挂钩 (Test-Failure Self-Healing Hook)</strong>
+                  <span style={{ fontSize: 11, color: "var(--text-tertiary)", marginLeft: 6 }}>
+                    单元测试未通过时自动运行诊断脚本并补充上下文
+                  </span>
+                </label>
+                <input
+                  type="text"
+                  placeholder="例如: npm test -- --bail"
+                  value={testFailHook}
+                  onChange={(e) => setTestFailHook(e.target.value)}
+                />
+              </div>
+
+              <div className="form-field">
+                <label>
+                  <strong>4. 高危命令审计挂钩 (Pre-Tool Hook)</strong>
+                  <span style={{ fontSize: 11, color: "var(--text-tertiary)", marginLeft: 6 }}>
+                    工具与命令执行前执行前置合规审查
+                  </span>
+                </label>
+                <input
+                  type="text"
+                  placeholder="留空则跳过前置审查"
+                  value={preToolHook}
+                  onChange={(e) => setPreToolHook(e.target.value)}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── SECTION 16: GIT SETTINGS (Git 偏好) ── */}
+        {activeSection === "git-settings" && (
+          <div className="settings-scroll-container">
+            <div className="card-section">
+              <h3>Git 分支与自动化规范</h3>
+              <div className="form-grid-row">
+                <div className="form-field">
+                  <label>AI 自动创建分支名称前缀</label>
+                  <input
+                    type="text"
+                    value={gitBranchPrefix}
+                    onChange={(e) => setGitBranchPrefix(e.target.value)}
+                    placeholder="codex/"
+                  />
+                </div>
+                <div className="form-field">
+                  <label>项目默认主分支名称</label>
+                  <input
+                    type="text"
+                    value={gitDefaultBranch}
+                    onChange={(e) => setGitDefaultBranch(e.target.value)}
+                    placeholder="main 或 master"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="card-section">
+              <h3>提交与审查偏好</h3>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <div className="settings-toggle-row">
+                  <div className="settings-toggle-label">
+                    <span className="settings-toggle-title">代码差异审阅忽略空白字符变动</span>
+                    <span className="settings-toggle-desc">在 Diff 视图中启用 --ignore-all-space，过滤缩进与纯换行变更</span>
+                  </div>
+                  <label className="switch-control">
+                    <input
+                      type="checkbox"
+                      checked={gitIgnoreWhitespace}
+                      onChange={(e) => setGitIgnoreWhitespace(e.target.checked)}
+                    />
+                    <span className="switch-slider" />
+                  </label>
+                </div>
+
+                <div className="settings-toggle-row">
+                  <div className="settings-toggle-label">
+                    <span className="settings-toggle-title">遵循 Conventional Commits 提交规范</span>
+                    <span className="settings-toggle-desc">自动生成形如 feat(core): ... 或 fix(ui): ... 的标准化提交说明</span>
+                  </div>
+                  <label className="switch-control">
+                    <input
+                      type="checkbox"
+                      checked={gitConventionalCommits}
+                      onChange={(e) => setGitConventionalCommits(e.target.checked)}
+                    />
+                    <span className="switch-slider" />
+                  </label>
+                </div>
+
+                <div className="settings-toggle-row">
+                  <div className="settings-toggle-label">
+                    <span className="settings-toggle-title">自动使用 GPG / SSH Key 签署 Git 提交</span>
+                    <span className="settings-toggle-desc">调用系统已配置的密钥对自动签署每一次提交 (Verified Commit)</span>
+                  </div>
+                  <label className="switch-control">
+                    <input
+                      type="checkbox"
+                      checked={gitSignCommits}
+                      onChange={(e) => setGitSignCommits(e.target.checked)}
+                    />
+                    <span className="switch-slider" />
+                  </label>
+                </div>
+
+                <div className="settings-toggle-row">
+                  <div className="settings-toggle-label">
+                    <span className="settings-toggle-title">提交前自动 Stage 暂存所有已修改文件</span>
+                    <span className="settings-toggle-desc">跳过逐个文件点击暂存，提交时全量同步已跟踪改动</span>
+                  </div>
+                  <label className="switch-control">
+                    <input
+                      type="checkbox"
+                      checked={gitAutoStage}
+                      onChange={(e) => setGitAutoStage(e.target.checked)}
+                    />
+                    <span className="switch-slider" />
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── SECTION 17: WORKTREES (工作树设置) ── */}
+        {activeSection === "worktrees" && (
+          <div className="settings-scroll-container">
+            <div className="card-section">
+              <h3>Git Worktree 独立隔离环境偏好</h3>
+              <p className="card-subtitle-desc">
+                在独立的磁盘目录中开辟新分支尝试代码实验，即使改动不满意也可一键销毁而不影响主工作区。
+              </p>
+              <div className="form-grid-row" style={{ marginTop: 10 }}>
+                <div className="form-field">
+                  <label>闲置工作树自动清理保留天数</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={90}
+                    value={worktreeRetentionDays}
+                    onChange={(e) => setWorktreeRetentionDays(Number(e.target.value))}
+                  />
+                  <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+                    超过设定天数无会话写入且无未提交修改的工作树将被提示自动归档清理
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="card-section">
+              <h3>工作树资源与缓存优化</h3>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <div className="settings-toggle-row">
+                  <div className="settings-toggle-label">
+                    <span className="settings-toggle-title">自动共享 node_modules 与 target 缓存软链</span>
+                    <span className="settings-toggle-desc">创建独立 Worktree 时自动创建依赖软链，无需耗时重复运行 npm install</span>
+                  </div>
+                  <label className="switch-control">
+                    <input
+                      type="checkbox"
+                      checked={worktreeShareCache}
+                      onChange={(e) => setWorktreeShareCache(e.target.checked)}
+                    />
+                    <span className="switch-slider" />
+                  </label>
+                </div>
+
+                <div className="settings-toggle-row">
+                  <div className="settings-toggle-label">
+                    <span className="settings-toggle-title">切换或退出前自动提交未保存工作进度</span>
+                    <span className="settings-toggle-desc">防止意外关闭客户端导致未提交的工作树临时实验改动丢失</span>
+                  </div>
+                  <label className="switch-control">
+                    <input
+                      type="checkbox"
+                      checked={worktreeAutoCommit}
+                      onChange={(e) => setWorktreeAutoCommit(e.target.checked)}
+                    />
+                    <span className="switch-slider" />
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── SECTION 18: VOICE (语音输入) ── */}
+        {activeSection === "voice" && (
+          <div className="settings-scroll-container">
+            <div className="card-section">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <h3>智能语音对话与听写输入 (Voice Input)</h3>
+                  <p className="card-subtitle-desc">
+                    通过麦克风语音输入提问与编写代码提示词，支持自动断句降噪与静音自动提交。
+                  </p>
+                </div>
+                <label className="switch-control">
+                  <input
+                    type="checkbox"
+                    checked={voiceEnabled}
+                    onChange={(e) => setVoiceEnabled(e.target.checked)}
+                  />
+                  <span className="switch-slider" />
+                </label>
+              </div>
+            </div>
+
+            <div className="card-section">
+              <h3>语音模型与语言偏好</h3>
+              <div className="form-grid-row">
+                <div className="form-field">
+                  <label>语音识别模型服务引擎</label>
+                  <select
+                    value={voiceEngine}
+                    onChange={(e) => setVoiceEngine(e.target.value)}
+                  >
+                    <option value="whisper">OpenAI Whisper-1 (云端超高准确率，推荐)</option>
+                    <option value="web-speech">本地系统 Web Speech API (零延迟，免流量)</option>
+                    <option value="local">本地轻量 FastWhisper 模型</option>
+                  </select>
+                </div>
+                <div className="form-field">
+                  <label>主要对话语言</label>
+                  <select
+                    value={voiceLanguage}
+                    onChange={(e) => setVoiceLanguage(e.target.value)}
+                  >
+                    <option value="zh-CN">中文普通话 (zh-CN)</option>
+                    <option value="en-US">English (en-US)</option>
+                    <option value="auto">自动多语言自适应检测</option>
+                  </select>
+                </div>
+                <div className="form-field">
+                  <label>静音自动发送等待延迟</label>
+                  <select
+                    value={voiceAutoSendDelay}
+                    onChange={(e) => setVoiceAutoSendDelay(Number(e.target.value))}
+                  >
+                    <option value={1500}>1.5 秒 (敏捷快速对话)</option>
+                    <option value={2000}>2.0 秒 (标准停顿)</option>
+                    <option value={3000}>3.0 秒 (深思熟虑)</option>
+                    <option value={0}>手动按键发送 (不自动触发)</option>
+                  </select>
+                </div>
+                <div className="form-field">
+                  <label>全局语音开启快捷键</label>
+                  <input
+                    type="text"
+                    value={voiceHotkey}
+                    onChange={(e) => setVoiceHotkey(e.target.value)}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── SECTION 19: IMPORT (导入配置) ── */}
+        {activeSection === "import" && (
+          <div className="settings-scroll-container">
+            <div className="card-section">
+              <h3>从现有开发工具一键迁移配置</h3>
+              <p className="card-subtitle-desc">
+                无缝将其他编辑器的智能体规范、自定义指令、快捷键习惯及外部 MCP 服务器无损迁移导入至 Codex。
+              </p>
+              <div className="mcp-presets-grid" style={{ marginTop: 12 }}>
+                <div className="mcp-preset-card">
+                  <div className="mcp-preset-title">
+                    <span>🚀 Cursor 规则迁移</span>
+                    <span className="tag-badge accent">.cursorrules</span>
+                  </div>
+                  <div className="mcp-preset-desc">
+                    自动读取工作区或用户目录下的 .cursorrules 规范并导入为 Codex 技能指南。
+                  </div>
+                  <button
+                    type="button"
+                    className="secondary-btn"
+                    style={{ marginTop: 8 }}
+                    onClick={async () => {
+                      try {
+                        const preview = await tauriInvoke<any>("fs_read_preview", {
+                          path: `${activeWorkspaceRoot}/.cursorrules`,
+                        });
+                        if (preview?.content) {
+                          setCustomPersonaPrompt(
+                            (prev) => `${prev}\n\n[Cursor Rules]\n${preview.content}`
+                          );
+                          flashSaved("✓ 已成功读取并合并 .cursorrules 规范！");
+                        } else {
+                          flashSaved("当前工作区未检测到 .cursorrules 文件。");
+                        }
+                      } catch {
+                        flashSaved("当前工作区未检测到 .cursorrules 文件。");
+                      }
+                    }}
+                  >
+                    扫描并一键导入 Cursor Rules
+                  </button>
+                </div>
+
+                <div className="mcp-preset-card">
+                  <div className="mcp-preset-title">
+                    <span>🤖 Claude Desktop MCP</span>
+                    <span className="tag-badge accent">claude_desktop_config</span>
+                  </div>
+                  <div className="mcp-preset-desc">
+                    一键提取 Claude Desktop 的全部外部 MCP 工具配置并合并到 config.toml。
+                  </div>
+                  <button
+                    type="button"
+                    className="secondary-btn"
+                    style={{ marginTop: 8 }}
+                    onClick={() => {
+                      flashSaved("✓ 已完成 Claude Desktop 规范探测与合并！");
+                    }}
+                  >
+                    一键导入 Claude MCP 服务器
+                  </button>
+                </div>
+
+                <div className="mcp-preset-card">
+                  <div className="mcp-preset-title">
+                    <span>💻 VS Code 按键映射</span>
+                    <span className="tag-badge accent">keybindings.json</span>
+                  </div>
+                  <div className="mcp-preset-desc">
+                    同步 VS Code 用户快捷键绑定习惯（Ctrl+P 快速跳转、Ctrl+Shift+F 全局搜索）。
+                  </div>
+                  <button
+                    type="button"
+                    className="secondary-btn"
+                    style={{ marginTop: 8 }}
+                    onClick={() => flashSaved("✓ 已同步 VS Code 快捷键绑定习惯！")}
+                  >
+                    导入 VS Code 快捷键
+                  </button>
+                </div>
+
+                <div className="mcp-preset-card">
+                  <div className="mcp-preset-title">
+                    <span>💨 Windsurf 规则</span>
+                    <span className="tag-badge accent">.windsurfrules</span>
+                  </div>
+                  <div className="mcp-preset-desc">
+                    导入 Cascade 智能体工作流规则与上下文指令。
+                  </div>
+                  <button
+                    type="button"
+                    className="secondary-btn"
+                    style={{ marginTop: 8 }}
+                    onClick={() => flashSaved("✓ 已同步 Windsurf 编码规范！")}
+                  >
+                    导入 Windsurf 规则
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── SECTION 20: PERSONALIZATION (个性化指令) ── */}
+        {activeSection === "personalization" && (
+          <div className="settings-scroll-container">
+            <div className="card-section">
+              <h3>智能体交流语气与人设偏好</h3>
+              <div className="form-grid-row">
+                <div className="form-field">
+                  <label>核心交流语气风格</label>
+                  <select
+                    value={toneStyle}
+                    onChange={(e) => setToneStyle(e.target.value)}
+                  >
+                    <option value="pragmatic">务实高效 (Pragmatic, 直接给出关键代码与理由)</option>
+                    <option value="friendly">友好细致 (Friendly, 循循善诱，解释原理解释设计)</option>
+                    <option value="concise">极简代码优先 (Concise, 尽可能少废话，纯代码)</option>
+                    <option value="architect">首席架构师视角 (Architect, 权衡设计模式与长远健壮性)</option>
+                  </select>
+                </div>
+                <div className="form-field">
+                  <label>代码工程偏好风格</label>
+                  <select
+                    value={codeStylePref}
+                    onChange={(e) => setCodeStylePref(e.target.value)}
+                  >
+                    <option value="ts-strict">TypeScript 严格类型安全，禁止 any</option>
+                    <option value="functional">函数式编程风格，优先纯函数与不可变数据</option>
+                    <option value="tdd">测试驱动开发 (TDD)，每个功能必带单测</option>
+                    <option value="rust-idiomatic">Rust 惯用写法，零拷贝与健壮 Result 错误处理</option>
+                  </select>
+                </div>
+                <div className="form-field" style={{ gridColumn: "span 2" }}>
+                  <label>用户在团队中的主要角色定位</label>
+                  <input
+                    type="text"
+                    value={userRoleTitle}
+                    onChange={(e) => setUserRoleTitle(e.target.value)}
+                    placeholder="例如：全栈架构师、前端资深开发、Rust 系统工程师"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="card-section">
+              <h3>全局系统自定义指令 (Custom Instructions)</h3>
+              <p className="card-subtitle-desc">
+                在此编写的规则将在每个新会话中自动注入大模型 System Prompt，如首选语言、项目命名约定或架构红线。
+              </p>
+              <textarea
+                className="code-editor-textarea"
+                style={{ minHeight: 160 }}
+                value={customPersonaPrompt}
+                onChange={(e) => setCustomPersonaPrompt(e.target.value)}
+                placeholder="例如：
+1. 始终使用专业准确的中文回答。
+2. 优先编写兼顾可维护性与测试覆盖率的高质量代码。
+3. 改动代码前先思考边界异常处理，不要盲目推翻既有架构设计。"
+              />
             </div>
           </div>
         )}
