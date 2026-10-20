@@ -1,0 +1,118 @@
+name: CI Build & Release
+
+on:
+  push:
+    branches:
+      - master
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - master
+      - main
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Publish build as GitHub Release'
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-and-test:
+    name: Windows x64 Build & Test
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'src-tauri -> target'
+
+      - name: Install Frontend Dependencies
+        run: npm ci
+
+      - name: Frontend Type-Check & Build
+        run: npm run build
+
+      - name: Run Backend Unit Tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --verbose
+
+      - name: Build Tauri Application & Installers
+        run: npm run tauri build -- --ci
+
+      - name: Collect Dist Artifacts
+        id: collect_artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "dist-artifacts" | Out-Null
+          
+          # Find and copy the main executable
+          $mainExe = Get-ChildItem -Path "src-tauri/target", "target" -Recurse -Filter "codex-tauri.exe" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -like "*release*" -and $_.FullName -notlike "*deps*" } |
+            Select-Object -First 1
+
+          if ($mainExe) {
+            Write-Host "Found standalone executable at: $($mainExe.FullName)"
+            Copy-Item $mainExe.FullName -Destination "dist-artifacts/codex-tauri.exe" -Force
+          } else {
+            Write-Warning "Standalone codex-tauri.exe not found directly in target directory."
+          }
+
+          # Find and copy bundle installers (MSI / NSIS / EXE)
+          $bundles = Get-ChildItem -Path "src-tauri/target", "target" -Recurse -Include *.msi,*.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -like "*bundle*" }
+
+          if ($bundles) {
+            foreach ($b in $bundles) {
+              Write-Host "Found installer bundle: $($b.FullName)"
+              Copy-Item $b.FullName -Destination "dist-artifacts/" -Force
+            }
+          }
+
+          Write-Host "`nCollected files in dist-artifacts:"
+          Get-ChildItem -Path "dist-artifacts" | Select-Object Name, Length, LastWriteTime | Format-Table -AutoSize
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-desktop-windows-x64
+          path: dist-artifacts/*
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.create_release == true
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist-artifacts/*
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

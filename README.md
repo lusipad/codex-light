@@ -1,5 +1,7 @@
 # Codex Native (Tauri v2 + React 19 + Rust)
 
+[![CI Build & Release](https://github.com/lusipad/codex-desktop-native/actions/workflows/ci.yml/badge.svg)](https://github.com/lusipad/codex-desktop-native/actions/workflows/ci.yml)
+
 基于 [`codex-app-offline`](../README.md) 协议与能力契约重写的全功能、轻量化原生 **Codex 桌面客户端**。
 
 ## 核心特性

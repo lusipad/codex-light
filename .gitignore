@@ -9,4 +9,6 @@ src-tauri/gen/
 *.so
 *.dylib
 .cargo/
+src-tauri/.cargo/
+dist-artifacts/
 .DS_Store
