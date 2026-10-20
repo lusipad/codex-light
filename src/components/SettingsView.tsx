@@ -568,22 +568,70 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }
   };
 
-  const handleAddMcpServer = () => {
+  const handleAddMcpServer = async () => {
     if (!newMcpId.trim()) return;
     const item: McpServerConfigItem = {
       id: newMcpId.trim(),
       command: newMcpTransport === "stdio" ? newMcpCommand.trim() || "npx" : null,
-      args: newMcpTransport === "stdio" && newMcpArgs.trim() ? newMcpArgs.trim().split(/\s+/) : [],
+      args:
+        newMcpTransport === "stdio" && newMcpArgs.trim()
+          ? newMcpArgs.trim().split(/\s+/)
+          : [],
       url: newMcpTransport === "sse" ? newMcpUrl.trim() : null,
       env: newMcpEnvMap,
       enabled: true,
     };
-    setMcpServers((prev) => [...prev.filter((s) => s.id !== item.id), item]);
+    const nextServers = [...mcpServers.filter((s) => s.id !== item.id), item];
+    setMcpServers(nextServers);
     setNewMcpId("");
     setNewMcpArgs("");
     setNewMcpUrl("");
     setNewMcpEnvMap({});
-    flashSaved(`✓ 已添加 MCP 服务器: ${item.id}（请点击右上角保存更改同步至 config.toml）`);
+    try {
+      const updated = await tauriInvoke<CodexConfigOverview>("config_update", {
+        payload: { mcpServers: nextServers },
+      });
+      setConfig(updated);
+      setRawToml(updated.rawToml);
+      flashSaved(`✓ 已添加并保存 MCP 服务器: ${item.id}`);
+      onConfigUpdated();
+    } catch (e: any) {
+      setErrorBanner(`保存 MCP 失败: ${String(e)}`);
+    }
+  };
+
+  const handleToggleMcpServer = async (srv: McpServerConfigItem) => {
+    const nextServers = mcpServers.map((s) =>
+      s.id === srv.id ? { ...s, enabled: !s.enabled } : s
+    );
+    setMcpServers(nextServers);
+    try {
+      const updated = await tauriInvoke<CodexConfigOverview>("config_update", {
+        payload: { mcpServers: nextServers },
+      });
+      setConfig(updated);
+      setRawToml(updated.rawToml);
+      flashSaved(`✓ 已${!srv.enabled ? "启用" : "停用"} MCP: ${srv.id}`);
+      onConfigUpdated();
+    } catch (e: any) {
+      setErrorBanner(`更新 MCP 状态失败: ${String(e)}`);
+    }
+  };
+
+  const handleDeleteMcpServer = async (srv: McpServerConfigItem) => {
+    const nextServers = mcpServers.filter((s) => s.id !== srv.id);
+    setMcpServers(nextServers);
+    try {
+      const updated = await tauriInvoke<CodexConfigOverview>("config_update", {
+        payload: { mcpServers: nextServers },
+      });
+      setConfig(updated);
+      setRawToml(updated.rawToml);
+      flashSaved(`✓ 已移除 MCP 服务器: ${srv.id}`);
+      onConfigUpdated();
+    } catch (e: any) {
+      setErrorBanner(`移除 MCP 失败: ${String(e)}`);
+    }
   };
 
   const handleSaveRaw = async () => {
@@ -649,6 +697,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
     return `${(b / (1024 * 1024)).toFixed(2)} MB`;
   };
+
+  const renderBottomBar = () => (
+    <div className="settings-section-bottom-bar">
+      <button type="button" className="primary-btn" onClick={handleSaveVisual}>
+        <Save size={14} /> 保存当前配置
+      </button>
+      <button type="button" className="secondary-btn" onClick={loadConfig}>
+        <RefreshCw size={14} /> 放弃未保存修改
+      </button>
+    </div>
+  );
 
   return (
     <div className="settings-center-shell">
@@ -788,6 +847,49 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </div>
               </div>
             </div>
+
+            <div className="card-section" style={{ borderColor: "rgba(239, 68, 68, 0.25)" }}>
+              <h3 style={{ color: "#ef4444" }}>⚠️ 恢复出厂设置与清理状态</h3>
+              <p className="card-subtitle-desc">
+                重置桌面端偏好设置（编辑器偏好、个性化指令、代理设置），不影响本地仓库代码与 Git 记录。
+              </p>
+              <div style={{ marginTop: 10 }}>
+                <button
+                  type="button"
+                  className="danger-btn-sm"
+                  onClick={async () => {
+                    if (
+                      !confirm(
+                        "确定要将桌面端偏好设置恢复为默认值吗？"
+                      )
+                    )
+                      return;
+                    await tauriInvoke("desktop_state_set", {
+                      key: "desktopPreferences",
+                      value: {},
+                    });
+                    await tauriInvoke("desktop_state_set", {
+                      key: "colorTheme",
+                      value: "codex",
+                    });
+                    applyColorTheme("codex");
+                    loadConfig();
+                    flashSaved("✓ 已恢复桌面端默认偏好设置");
+                  }}
+                >
+                  恢复出厂默认偏好
+                </button>
+              </div>
+            </div>
+
+            <div className="settings-section-bottom-bar">
+              <button type="button" className="primary-btn" onClick={handleSaveVisual}>
+                <Save size={14} /> 保存当前配置
+              </button>
+              <button type="button" className="secondary-btn" onClick={loadConfig}>
+                <RefreshCw size={14} /> 放弃未保存修改
+              </button>
+            </div>
           </div>
         )}
 
@@ -859,6 +961,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </div>
               </div>
             </div>
+
+            {renderBottomBar()}
           </div>
         )}
 
@@ -1159,6 +1263,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </div>
               </div>
             </div>
+
+            <div className="settings-section-bottom-bar">
+              <button type="button" className="primary-btn" onClick={handleSaveVisual}>
+                <Save size={14} /> 保存模型与超参数配置
+              </button>
+              <button type="button" className="secondary-btn" onClick={loadConfig}>
+                <RefreshCw size={14} /> 放弃未保存修改
+              </button>
+            </div>
           </div>
         )}
 
@@ -1198,6 +1311,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 ))}
               </div>
             </div>
+
+            {renderBottomBar()}
           </div>
         )}
 
@@ -1384,6 +1499,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 ))}
               </div>
             </div>
+
+            {renderBottomBar()}
           </div>
         )}
 
@@ -1656,26 +1773,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                         <button
                           type="button"
                           className="secondary-btn-sm"
-                          onClick={() => {
-                            setMcpServers((prev) =>
-                              prev.map((s) =>
-                                s.id === srv.id ? { ...s, enabled: !s.enabled } : s
-                              )
-                            );
-                            flashSaved(
-                              `已${srv.enabled ? "停用" : "启用"} MCP: ${srv.id}（点击右上角保存更改）`
-                            );
-                          }}
+                          onClick={() => handleToggleMcpServer(srv)}
                         >
                           {srv.enabled ? "停用" : "启用"}
                         </button>
                         <button
                           type="button"
                           className="danger-btn-sm"
-                          onClick={() => {
-                            setMcpServers((prev) => prev.filter((s) => s.id !== srv.id));
-                            flashSaved(`已移除 ${srv.id}（点击右上角保存更改）`);
-                          }}
+                          onClick={() => handleDeleteMcpServer(srv)}
                         >
                           <Trash2 size={12} />
                         </button>
@@ -1847,6 +1952,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </button>
               </div>
             </div>
+
+            {renderBottomBar()}
           </div>
         )}
 
@@ -1965,6 +2072,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 ))}
               </div>
             </div>
+
+            {renderBottomBar()}
           </div>
         )}
 
@@ -2065,6 +2174,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </div>
               </div>
             </div>
+
+            {renderBottomBar()}
           </div>
         )}
 
@@ -2143,6 +2254,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </div>
               </div>
             </div>
+
+            {renderBottomBar()}
           </div>
         )}
 
@@ -2236,6 +2349,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </div>
               </div>
             </div>
+
+            {renderBottomBar()}
           </div>
         )}
 
@@ -2417,6 +2532,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </div>
               </div>
             </div>
+
+            {renderBottomBar()}
           </div>
         )}
 
@@ -2479,6 +2596,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </div>
               </div>
             </div>
+
+            {renderBottomBar()}
           </div>
         )}
 
@@ -2551,6 +2670,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </div>
               </div>
             </div>
+
+            {renderBottomBar()}
           </div>
         )}
 
@@ -2577,19 +2698,25 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     style={{ marginTop: 8 }}
                     onClick={async () => {
                       try {
-                        const preview = await tauriInvoke<any>("fs_read_preview", {
-                          path: `${activeWorkspaceRoot}/.cursorrules`,
+                        const res = await tauriInvoke<any>("import_external_tool_config", {
+                          kind: "cursor",
+                          cwd: activeWorkspaceRoot,
                         });
-                        if (preview?.content) {
-                          setCustomPersonaPrompt(
-                            (prev) => `${prev}\n\n[Cursor Rules]\n${preview.content}`
-                          );
-                          flashSaved("✓ 已成功读取并合并 .cursorrules 规范！");
+                        if (res?.found && res.content) {
+                          setCustomPersonaPrompt((prev) => {
+                            const merged = `${prev}\n\n[Cursor Rules (${res.path})]\n${res.content}`.trim();
+                            tauriInvoke("desktop_state_set", {
+                              key: "desktopPreferences",
+                              value: { customPersonaPrompt: merged },
+                            }).catch(() => {});
+                            return merged;
+                          });
+                          flashSaved(`✓ 已从 ${res.path} 成功读取并合并 .cursorrules 规范！`);
                         } else {
-                          flashSaved("当前工作区未检测到 .cursorrules 文件。");
+                          flashSaved(`未在当前工作区检测到 .cursorrules 文件 (${res?.path || ".cursorrules"})`);
                         }
-                      } catch {
-                        flashSaved("当前工作区未检测到 .cursorrules 文件。");
+                      } catch (e: any) {
+                        setErrorBanner(`读取 Cursor 规范失败: ${String(e)}`);
                       }
                     }}
                   >
@@ -2609,8 +2736,33 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     type="button"
                     className="secondary-btn"
                     style={{ marginTop: 8 }}
-                    onClick={() => {
-                      flashSaved("✓ 已完成 Claude Desktop 规范探测与合并！");
+                    onClick={async () => {
+                      try {
+                        const res = await tauriInvoke<any>("import_external_tool_config", {
+                          kind: "claude",
+                          cwd: activeWorkspaceRoot,
+                        });
+                        if (res?.found && Array.isArray(res.mcpServers) && res.mcpServers.length > 0) {
+                          const merged = [...mcpServers];
+                          for (const s of res.mcpServers) {
+                            if (!merged.some((x) => x.id === s.id)) {
+                              merged.push(s);
+                            }
+                          }
+                          setMcpServers(merged);
+                          const updated = await tauriInvoke<CodexConfigOverview>("config_update", {
+                            payload: { mcpServers: merged },
+                          });
+                          setConfig(updated);
+                          setRawToml(updated.rawToml);
+                          flashSaved(`✓ 已从 ${res.path} 成功导入 ${res.count} 个 Claude MCP 服务器并持久化保存！`);
+                          onConfigUpdated();
+                        } else {
+                          flashSaved(`未在系统中检测到 Claude Desktop 配置文件 (${res?.path || "claude_desktop_config.json"})`);
+                        }
+                      } catch (e: any) {
+                        setErrorBanner(`导入 Claude MCP 失败: ${String(e)}`);
+                      }
                     }}
                   >
                     一键导入 Claude MCP 服务器
@@ -2629,7 +2781,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     type="button"
                     className="secondary-btn"
                     style={{ marginTop: 8 }}
-                    onClick={() => flashSaved("✓ 已同步 VS Code 快捷键绑定习惯！")}
+                    onClick={async () => {
+                      try {
+                        const res = await tauriInvoke<any>("import_external_tool_config", {
+                          kind: "vscode",
+                          cwd: activeWorkspaceRoot,
+                        });
+                        if (res?.found) {
+                          flashSaved(`✓ 已从 ${res.path} 成功检测到 ${res.count} 项 VS Code 快捷键绑定习惯并兼容生效！`);
+                        } else {
+                          flashSaved(`未在系统中找到 VS Code 快捷键配置文件 (${res?.path || "keybindings.json"})`);
+                        }
+                      } catch (e: any) {
+                        setErrorBanner(`导入 VS Code 快捷键失败: ${String(e)}`);
+                      }
+                    }}
                   >
                     导入 VS Code 快捷键
                   </button>
@@ -2647,13 +2813,37 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     type="button"
                     className="secondary-btn"
                     style={{ marginTop: 8 }}
-                    onClick={() => flashSaved("✓ 已同步 Windsurf 编码规范！")}
+                    onClick={async () => {
+                      try {
+                        const res = await tauriInvoke<any>("import_external_tool_config", {
+                          kind: "windsurf",
+                          cwd: activeWorkspaceRoot,
+                        });
+                        if (res?.found && res.content) {
+                          setCustomPersonaPrompt((prev) => {
+                            const merged = `${prev}\n\n[Windsurf Rules (${res.path})]\n${res.content}`.trim();
+                            tauriInvoke("desktop_state_set", {
+                              key: "desktopPreferences",
+                              value: { customPersonaPrompt: merged },
+                            }).catch(() => {});
+                            return merged;
+                          });
+                          flashSaved(`✓ 已从 ${res.path} 成功读取并合并 Windsurf 规则！`);
+                        } else {
+                          flashSaved(`未在当前工作区检测到 Windsurf 规则文件 (${res?.path || ".windsurfrules"})`);
+                        }
+                      } catch (e: any) {
+                        setErrorBanner(`导入 Windsurf 规则失败: ${String(e)}`);
+                      }
+                    }}
                   >
                     导入 Windsurf 规则
                   </button>
                 </div>
               </div>
             </div>
+
+            {renderBottomBar()}
           </div>
         )}
 
@@ -2715,6 +2905,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 3. 改动代码前先思考边界异常处理，不要盲目推翻既有架构设计。"
               />
             </div>
+
+            {renderBottomBar()}
           </div>
         )}
       </div>

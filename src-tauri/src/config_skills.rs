@@ -951,6 +951,152 @@ pub fn save_local_environment_toml(cwd: &str, content: &str) -> Result<String, S
     Ok(normalize_fs_path(&env_path.to_string_lossy()))
 }
 
+pub fn import_external_tool_config(kind: &str, cwd: Option<&str>) -> Result<serde_json::Value, String> {
+    match kind {
+        "claude" => {
+            let mut candidates: Vec<PathBuf> = Vec::new();
+            if let Some(appdata) = std::env::var_os("APPDATA") {
+                candidates.push(PathBuf::from(appdata).join("Claude").join("claude_desktop_config.json"));
+            }
+            if let Some(home) = dirs::home_dir() {
+                candidates.push(home.join(".config").join("Claude").join("claude_desktop_config.json"));
+                candidates.push(home.join("Library").join("Application Support").join("Claude").join("claude_desktop_config.json"));
+            }
+            for candidate in candidates {
+                if candidate.is_file() {
+                    let content = fs::read_to_string(&candidate).map_err(|e| e.to_string())?;
+                    let parsed: serde_json::Value = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+                    let mut imported_servers = Vec::new();
+                    if let Some(servers) = parsed.get("mcpServers").and_then(|v| v.as_object()) {
+                        for (key, val) in servers {
+                            let command = val.get("command").and_then(|v| v.as_str()).map(|s| s.to_string());
+                            let args = val.get("args").and_then(|v| v.as_array())
+                                .map(|arr| arr.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
+                                .unwrap_or_default();
+                            let env = val.get("env").and_then(|v| v.as_object())
+                                .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect())
+                                .unwrap_or_default();
+                            imported_servers.push(McpServerConfigItem {
+                                id: key.clone(),
+                                command,
+                                args,
+                                url: val.get("url").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                                env,
+                                enabled: true,
+                            });
+                        }
+                    }
+                    return Ok(json!({
+                        "found": true,
+                        "path": normalize_fs_path(&candidate.to_string_lossy()),
+                        "mcpServers": imported_servers,
+                        "count": imported_servers.len()
+                    }));
+                }
+            }
+            let default_path = if cfg!(target_os = "windows") {
+                format!("{}\\Claude\\claude_desktop_config.json", std::env::var("APPDATA").unwrap_or_default())
+            } else {
+                "~/.config/Claude/claude_desktop_config.json".to_string()
+            };
+            Ok(json!({
+                "found": false,
+                "path": default_path,
+                "mcpServers": [],
+                "count": 0
+            }))
+        }
+        "cursor" => {
+            let mut candidates: Vec<PathBuf> = Vec::new();
+            if let Some(root) = cwd.filter(|s| !s.trim().is_empty()) {
+                let p = Path::new(root);
+                candidates.push(p.join(".cursorrules"));
+                candidates.push(p.join(".cursor").join("rules"));
+            }
+            if let Some(home) = dirs::home_dir() {
+                candidates.push(home.join(".cursorrules"));
+            }
+            for candidate in candidates {
+                if candidate.is_file() {
+                    let content = fs::read_to_string(&candidate).map_err(|e| e.to_string())?;
+                    return Ok(json!({
+                        "found": true,
+                        "path": normalize_fs_path(&candidate.to_string_lossy()),
+                        "content": content
+                    }));
+                }
+            }
+            Ok(json!({
+                "found": false,
+                "path": ".cursorrules",
+                "content": ""
+            }))
+        }
+        "windsurf" => {
+            let mut candidates: Vec<PathBuf> = Vec::new();
+            if let Some(root) = cwd.filter(|s| !s.trim().is_empty()) {
+                let p = Path::new(root);
+                candidates.push(p.join(".windsurfrules"));
+                candidates.push(p.join(".windsurf").join("rules"));
+            }
+            if let Some(home) = dirs::home_dir() {
+                candidates.push(home.join(".codeium").join("windsurf").join("memories").join("global_rules.md"));
+                candidates.push(home.join(".windsurfrules"));
+            }
+            for candidate in candidates {
+                if candidate.is_file() {
+                    let content = fs::read_to_string(&candidate).map_err(|e| e.to_string())?;
+                    return Ok(json!({
+                        "found": true,
+                        "path": normalize_fs_path(&candidate.to_string_lossy()),
+                        "content": content
+                    }));
+                }
+            }
+            Ok(json!({
+                "found": false,
+                "path": ".windsurfrules",
+                "content": ""
+            }))
+        }
+        "vscode" => {
+            let mut candidates: Vec<PathBuf> = Vec::new();
+            if let Some(appdata) = std::env::var_os("APPDATA") {
+                candidates.push(PathBuf::from(appdata).join("Code").join("User").join("keybindings.json"));
+            }
+            if let Some(home) = dirs::home_dir() {
+                candidates.push(home.join(".config").join("Code").join("User").join("keybindings.json"));
+                candidates.push(home.join("Library").join("Application Support").join("Code").join("User").join("keybindings.json"));
+            }
+            for candidate in candidates {
+                if candidate.is_file() {
+                    let content = fs::read_to_string(&candidate).map_err(|e| e.to_string())?;
+                    let count = serde_json::from_str::<serde_json::Value>(&content)
+                        .ok()
+                        .and_then(|v| v.as_array().map(|a| a.len()))
+                        .unwrap_or(0);
+                    return Ok(json!({
+                        "found": true,
+                        "path": normalize_fs_path(&candidate.to_string_lossy()),
+                        "count": count
+                    }));
+                }
+            }
+            let default_path = if cfg!(target_os = "windows") {
+                format!("{}\\Code\\User\\keybindings.json", std::env::var("APPDATA").unwrap_or_default())
+            } else {
+                "~/.config/Code/User/keybindings.json".to_string()
+            };
+            Ok(json!({
+                "found": false,
+                "path": default_path,
+                "count": 0
+            }))
+        }
+        _ => Err(format!("Unknown import kind: {}", kind)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
