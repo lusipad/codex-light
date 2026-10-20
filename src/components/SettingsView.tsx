@@ -1229,6 +1229,48 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       </div>
                     </div>
                   </div>
+
+                  <div style={{ marginTop: 14, display: "flex", gap: 10 }}>
+                    <button
+                      type="button"
+                      className="primary-btn"
+                      onClick={async () => {
+                        try {
+                          const freed = await tauriInvoke<number>(
+                            "storage_clean_cache"
+                          );
+                          const updated = await tauriInvoke<StorageStatsOverview>(
+                            "storage_stats_get"
+                          );
+                          setStorageStats(updated);
+                          flashSaved(
+                            `✓ 已释放 ${formatBytes(freed)} 临时日志与历史缓存`
+                          );
+                        } catch (e: any) {
+                          setErrorBanner(`清理失败: ${String(e)}`);
+                        }
+                      }}
+                    >
+                      🧹 一键清理日志与临时缓存
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-btn"
+                      onClick={async () => {
+                        try {
+                          const updated = await tauriInvoke<StorageStatsOverview>(
+                            "storage_stats_get"
+                          );
+                          setStorageStats(updated);
+                          flashSaved("✓ 已刷新存储占用统计");
+                        } catch (e: any) {
+                          setErrorBanner(`刷新失败: ${String(e)}`);
+                        }
+                      }}
+                    >
+                      <RefreshCw size={14} /> 刷新统计
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <div className="empty-hint">正在统计本地存储占用...</div>

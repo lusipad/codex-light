@@ -872,6 +872,40 @@ pub fn compute_storage_stats() -> StorageStatsOverview {
     }
 }
 
+pub fn clean_storage_cache() -> Result<u64, String> {
+    let home = codex_home_dir();
+    let mut cleaned: u64 = 0;
+    let log_dir = home.join("log");
+    if log_dir.is_dir() {
+        if let Ok(entries) = fs::read_dir(&log_dir) {
+            for entry in entries.flatten() {
+                if let Ok(meta) = entry.metadata() {
+                    cleaned += meta.len();
+                }
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+    }
+    let rollouts_dir = home.join("rollouts");
+    if rollouts_dir.is_dir() {
+        if let Ok(entries) = fs::read_dir(&rollouts_dir) {
+            for entry in entries.flatten() {
+                if let Ok(meta) = entry.metadata() {
+                    if let Ok(modified) = meta.modified() {
+                        if let Ok(elapsed) = modified.elapsed() {
+                            if elapsed.as_secs() > 3 * 86400 {
+                                cleaned += meta.len();
+                                let _ = fs::remove_file(entry.path());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(cleaned)
+}
+
 pub fn read_local_environment_toml(cwd: &str) -> Result<serde_json::Value, String> {
     let norm = normalize_fs_path(cwd);
     if norm.is_empty() {

@@ -211,7 +211,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       setSelectedSkill(saved);
       notify(`✓ 已保存技能 ${saved.id}`);
     } catch (err: any) {
-      alert(err?.message || String(err));
+      notify(`保存技能失败: ${err?.message || String(err)}`);
     }
   };
 
@@ -229,7 +229,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       await refreshAll();
       notify(`✓ 已安装技能 ${skill.name}`);
     } catch (err: any) {
-      alert(err?.message || String(err));
+      notify(`安装技能失败: ${err?.message || String(err)}`);
     }
   };
 
@@ -241,7 +241,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       await refreshAll();
       notify(`已卸载技能 ${skill.name}`);
     } catch (err: any) {
-      alert(err?.message || String(err));
+      notify(`卸载技能失败: ${err?.message || String(err)}`);
     }
   };
 
@@ -291,7 +291,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       setMcpEnvText("");
       notify(`✓ 已连接 MCP 服务器: ${nextItem.id}`);
     } catch (err: any) {
-      alert(err?.message || String(err));
+      notify(`连接 MCP 失败: ${err?.message || String(err)}`);
     }
   };
 

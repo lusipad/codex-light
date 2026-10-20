@@ -27,6 +27,12 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
   const [selectedBranch, setSelectedBranch] = useState<string>("HEAD");
   const [creating, setCreating] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+
+  const notify = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 3200);
+  };
 
   const refresh = async () => {
     try {
@@ -76,8 +82,9 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
         gitDir: wt.gitDir,
       });
       await refresh();
+      notify(`✓ 已移除工作树: ${wt.path}`);
     } catch (err: any) {
-      alert(`删除失败: ${err?.message || String(err)}`);
+      notify(`删除失败: ${err?.message || String(err)}`);
     }
   };
 
@@ -94,6 +101,12 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
           <RefreshCw size={14} /> 刷新列表
         </button>
       </div>
+
+      {toast && (
+        <div className="workbench-toast-banner" style={{ borderRadius: 8, marginBottom: 12 }}>
+          {toast}
+        </div>
+      )}
 
       {/* Create Worktree Card */}
       <div className="card-section">

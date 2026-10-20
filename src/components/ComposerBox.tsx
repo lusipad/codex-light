@@ -60,6 +60,7 @@ export interface ComposerBoxProps {
   // Attachments & Autocomplete
   attachedFiles: AttachedFileItem[];
   onAttachFiles: () => void;
+  onAddAttachedFiles?: (files: AttachedFileItem[]) => void;
   onRemoveAttachedFile: (id: string) => void;
   workspaceFiles: string[];
   workspaceFileHits: WorkspaceFileHit[];
@@ -163,6 +164,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
   onTogglePlanMode,
   attachedFiles,
   onAttachFiles,
+  onAddAttachedFiles,
   onRemoveAttachedFile,
   workspaceFiles,
   workspaceFileHits,
@@ -179,6 +181,110 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
   const [newBranchInput, setNewBranchInput] = useState("");
   const [modelSearch, setModelSearch] = useState("");
   const [isDictating, setIsDictating] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const recognitionRef = useRef<any>(null);
+
+  // Toggle real Speech Recognition
+  const toggleDictation = () => {
+    const SpeechRec =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
+
+    if (!SpeechRec) {
+      alert("当前环境不支持 Web Speech 语音听写，请在支持麦克风权限的浏览器/WebView中使用。");
+      return;
+    }
+
+    if (isDictating) {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch {}
+        recognitionRef.current = null;
+      }
+      setIsDictating(false);
+      return;
+    }
+
+    try {
+      const rec = new SpeechRec();
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.lang = "zh-CN";
+
+      let accumulated = promptInput ? promptInput + " " : "";
+
+      rec.onresult = (event: any) => {
+        let interim = "";
+        let finalTrans = "";
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            finalTrans += event.results[i][0].transcript;
+          } else {
+            interim += event.results[i][0].transcript;
+          }
+        }
+        const spoken = (accumulated + finalTrans + interim).trim();
+        if (spoken) {
+          onPromptInputChange(spoken);
+        }
+      };
+
+      rec.onerror = (e: any) => {
+        console.warn("Speech recognition error:", e);
+        setIsDictating(false);
+      };
+
+      rec.onend = () => {
+        setIsDictating(false);
+      };
+
+      rec.start();
+      recognitionRef.current = rec;
+      setIsDictating(true);
+    } catch (err) {
+      console.warn("Failed to start speech recognition:", err);
+      setIsDictating(false);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const droppedItems: AttachedFileItem[] = [];
+      for (let i = 0; i < e.dataTransfer.files.length; i++) {
+        const file = e.dataTransfer.files[i];
+        const filePath = (file as any).path || file.name;
+        const isImage = /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(file.name);
+        droppedItems.push({
+          id: `${file.name}-${Date.now()}-${i}`,
+          name: file.name,
+          path: filePath,
+          kind: isImage ? "image" : "file",
+        });
+      }
+      if (droppedItems.length > 0) {
+        if (onAddAttachedFiles) {
+          onAddAttachedFiles(droppedItems);
+        }
+      }
+    }
+  };
 
   // Autocomplete (@ and /)
   const [autocompleteMode, setAutocompleteMode] = useState<"slash" | "mention" | null>(null);
@@ -306,7 +412,19 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
   const currentBranch = gitStatus?.branch || "main";
 
   return (
-    <div className={`codex-two-tier-composer ${variant}`} ref={boxRef}>
+    <div
+      className={`codex-two-tier-composer ${variant} ${isDragging ? "dragging-over" : ""}`}
+      ref={boxRef}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      style={{ position: "relative" }}
+    >
+      {isDragging && (
+        <div className="composer-drag-drop-overlay">
+          <span>📎 释放鼠标以附带文件或图像至当前对话</span>
+        </div>
+      )}
       {/* ── Tier 1: Attached Top Context Bar (Matches ref-1-home.png) ── */}
       <div className="composer-context-topbar">
         <div className="composer-context-left">
@@ -799,8 +917,8 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
             <button
               type="button"
               className={`composer-icon-circle-btn ${isDictating ? "dictating" : ""}`}
-              onClick={() => setIsDictating((v) => !v)}
-              title={isDictating ? "正在听写... 点击结束" : "语音输入 (Dictation)"}
+              onClick={toggleDictation}
+              title={isDictating ? "正在听写... 点击停止并插入文字" : "语音输入 (实时语音识别听写)"}
             >
               <MicIcon size={15} />
             </button>

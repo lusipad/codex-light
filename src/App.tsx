@@ -267,6 +267,26 @@ export const App: React.FC = () => {
   const [selectedPetSpecies, setSelectedPetSpecies] = useState<PetSpeciesId>("codex");
   const [showQuickSearch, setShowQuickSearch] = useState<boolean>(false);
 
+  // Global Toast & Header inline rename
+  const [appToast, setAppToast] = useState<{
+    id: number;
+    message: string;
+    type?: "info" | "success" | "error";
+  } | null>(null);
+  const [editingThreadTitle, setEditingThreadTitle] = useState(false);
+  const [threadTitleInput, setThreadTitleInput] = useState("");
+
+  const showAppToast = useCallback(
+    (message: string, type: "info" | "success" | "error" = "info") => {
+      const id = Date.now();
+      setAppToast({ id, message, type });
+      setTimeout(() => {
+        setAppToast((prev) => (prev?.id === id ? null : prev));
+      }, 3200);
+    },
+    []
+  );
+
   // Autonomous Goal Runner Engine State
   const [activeGoal, setActiveGoal] = useState<ActiveGoalSession | null>(null);
   const [showGoalModal, setShowGoalModal] = useState<boolean>(false);
@@ -1457,11 +1477,45 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
           <div className="top-nav-left">
             {activeRoute === "thread" && turns.length > 0 ? (
               <>
-                <span className="thread-header-title">
-                  {activeThreadObj?.name ||
-                    activeThreadObj?.preview ||
-                    "本地聊天"}
-                </span>
+                {editingThreadTitle ? (
+                  <input
+                    className="thread-header-rename-input"
+                    value={threadTitleInput}
+                    onChange={(e) => setThreadTitleInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && threadTitleInput.trim() && activeThreadId) {
+                        handleRenameThread(activeThreadId, threadTitleInput.trim());
+                        setEditingThreadTitle(false);
+                      }
+                      if (e.key === "Escape") setEditingThreadTitle(false);
+                    }}
+                    onBlur={() => {
+                      if (threadTitleInput.trim() && activeThreadId) {
+                        handleRenameThread(activeThreadId, threadTitleInput.trim());
+                      }
+                      setEditingThreadTitle(false);
+                    }}
+                    autoFocus
+                  />
+                ) : (
+                  <span
+                    className="thread-header-title clickable"
+                    onClick={() => {
+                      setThreadTitleInput(
+                        activeThreadObj?.name ||
+                          activeThreadObj?.preview ||
+                          "本地聊天"
+                      );
+                      setEditingThreadTitle(true);
+                    }}
+                    title="点击重命名当前会话"
+                  >
+                    {activeThreadObj?.name ||
+                      activeThreadObj?.preview ||
+                      "本地聊天"}
+                    <span className="thread-title-edit-hint"> ✏️</span>
+                  </span>
+                )}
                 <div
                   className="project-branch-pill clickable"
                   onClick={() => setShowGitMenu((v) => !v)}
@@ -1496,9 +1550,9 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
                               forceWithLease: false,
                             });
                             refreshGitStatus();
-                            alert("✓ 已推送到远程分支");
+                            showAppToast("✓ 已成功推送到远程分支", "success");
                           } catch (e) {
-                            alert(`推送失败: ${String(e)}`);
+                            showAppToast(`推送失败: ${String(e)}`, "error");
                           }
                           setShowGitMenu(false);
                         }}
@@ -2002,6 +2056,9 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
               onTogglePlanMode={() => setPlanMode((v) => !v)}
               attachedFiles={attachedFiles}
               onAttachFiles={handleAttachFiles}
+              onAddAttachedFiles={(newFiles) =>
+                setAttachedFiles((prev) => [...prev, ...newFiles])
+              }
               onRemoveAttachedFile={(id) =>
                 setAttachedFiles((prev) => prev.filter((f) => f.id !== id))
               }
@@ -2066,6 +2123,31 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
                         className="user-turn-block"
                       >
                         <div className="user-bubble">{text}</div>
+                        <div className="turn-action-buttons-row right">
+                          <button
+                            type="button"
+                            className="turn-action-mini-btn"
+                            title="复制提问内容"
+                            onClick={() => {
+                              navigator.clipboard.writeText(text);
+                              showAppToast("✓ 已复制提问内容", "success");
+                            }}
+                          >
+                            📋 复制
+                          </button>
+                          <button
+                            type="button"
+                            className="turn-action-mini-btn"
+                            title="重新填入输入框编辑"
+                            onClick={() => {
+                              setPromptInput(text);
+                              composerTextareaRef.current?.focus();
+                              showAppToast("已载入输入框以重新编辑", "info");
+                            }}
+                          >
+                            ✏️ 编辑
+                          </button>
+                        </div>
                       </div>
                     );
                   }
@@ -2210,6 +2292,37 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
                           content={extractTextFromItem(msg)}
                         />
                       ))}
+
+                      {messages.length > 0 && !isStreaming && (
+                        <div className="turn-action-buttons-row left">
+                          <button
+                            type="button"
+                            className="turn-action-mini-btn"
+                            title="复制全部回答 Markdown"
+                            onClick={() => {
+                              const ans = messages
+                                .map(extractTextFromItem)
+                                .join("\n\n");
+                              navigator.clipboard.writeText(ans);
+                              showAppToast("✓ 已复制回答 Markdown 内容", "success");
+                            }}
+                          >
+                            📋 复制回答
+                          </button>
+                          <button
+                            type="button"
+                            className="turn-action-mini-btn"
+                            title="重新审视并生成回答"
+                            onClick={() => {
+                              handleSendMessage(
+                                "请重新思考当前任务并重新生成一份更完善的解答。"
+                              );
+                            }}
+                          >
+                            🔄 重新生成
+                          </button>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -2415,6 +2528,9 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
                   onTogglePlanMode={() => setPlanMode((v) => !v)}
                   attachedFiles={attachedFiles}
                   onAttachFiles={handleAttachFiles}
+                  onAddAttachedFiles={(newFiles) =>
+                    setAttachedFiles((prev) => [...prev, ...newFiles])
+                  }
                   onRemoveAttachedFile={(id) =>
                     setAttachedFiles((prev) => prev.filter((f) => f.id !== id))
                   }
@@ -2513,6 +2629,13 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
         workspacePath={activeWorkspace?.path}
         onLaunchGoal={handleLaunchGoal}
       />
+
+      {/* ── 9. Global In-App Toast Banner ── */}
+      {appToast && (
+        <div className={`app-global-toast ${appToast.type || "info"}`}>
+          <span>{appToast.message}</span>
+        </div>
+      )}
     </div>
   );
 };

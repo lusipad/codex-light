@@ -323,7 +323,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
       setEditedContent(res.content ?? "");
       setIsDirty(false);
     } catch (e) {
-      alert(String(e));
+      showToast(`读取文件失败: ${String(e)}`);
     }
   };
 
@@ -339,7 +339,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
       onRefreshGit();
       showToast("✓ 文件已保存");
     } catch (e) {
-      alert(String(e));
+      showToast(`保存文件失败: ${String(e)}`);
     } finally {
       setSavingFile(false);
     }

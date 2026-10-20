@@ -389,6 +389,11 @@ fn storage_stats_get() -> Result<StorageStatsOverview, String> {
 }
 
 #[tauri::command]
+fn storage_clean_cache() -> Result<u64, String> {
+    config_skills::clean_storage_cache()
+}
+
+#[tauri::command]
 fn local_environment_read(cwd: String) -> Result<Value, String> {
     config_skills::read_local_environment_toml(&cwd)
 }
@@ -596,6 +601,7 @@ pub fn run() {
             git_push_changes,
             git_create_pr,
             storage_stats_get,
+            storage_clean_cache,
             local_environment_read,
             local_environment_save,
             terminal_create_or_attach,
