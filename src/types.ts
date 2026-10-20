@@ -168,6 +168,7 @@ export interface CodexConfigOverview {
   maxParallelTools?: number | null;
   subagentConcurrency?: number | null;
   outputVerbosity?: string | null;
+  instructions?: string | null;
   providers: ModelProviderConfig[];
   mcpServers: McpServerConfigItem[];
 }
@@ -334,6 +335,13 @@ export interface QueuedFollowupPrompt {
   text: string;
   mode: "queue" | "steer";
   createdAt: number;
+}
+
+export interface ProjectScriptCommands {
+  runCommand: string;
+  testCommand: string;
+  buildCommand: string;
+  projectType: string;
 }
 
 export type PetSpeciesId =

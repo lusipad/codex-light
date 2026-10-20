@@ -370,6 +370,25 @@ impl DesktopStateManager {
         Self::save_locked(&guard);
     }
 
+    pub fn remove_thread_record(&self, thread_id: &str) {
+        if thread_id.trim().is_empty() {
+            return;
+        }
+        let mut pinned = self.list_pinned_threads();
+        pinned.retain(|id| id != thread_id);
+        self.set_value(PINNED_THREAD_IDS_KEY, json!(pinned));
+
+        let mut archived = self.list_archived_threads();
+        archived.retain(|item| item.get("id").and_then(|v| v.as_str()) != Some(thread_id));
+        self.set_archived_threads(archived);
+
+        let mut guard = self.state_map.lock().unwrap();
+        if let Some(hints) = guard.get_mut(THREAD_WORKSPACE_HINTS_KEY).and_then(|v| v.as_object_mut()) {
+            hints.remove(thread_id);
+        }
+        Self::save_locked(&guard);
+    }
+
     pub fn get_thread_workspace_hints(&self) -> HashMap<String, String> {
         let guard = self.state_map.lock().unwrap();
         guard

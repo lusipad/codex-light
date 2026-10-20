@@ -48,6 +48,7 @@ pub struct CodexConfigOverview {
     pub max_parallel_tools: Option<u32>,
     pub subagent_concurrency: Option<u32>,
     pub output_verbosity: Option<String>,
+    pub instructions: Option<String>,
     pub providers: Vec<ModelProviderConfig>,
     pub mcp_servers: Vec<McpServerConfigItem>,
 }
@@ -70,6 +71,7 @@ pub struct CodexConfigUpdatePayload {
     pub max_parallel_tools: Option<u32>,
     pub subagent_concurrency: Option<u32>,
     pub output_verbosity: Option<String>,
+    pub instructions: Option<String>,
     pub providers: Option<Vec<ModelProviderConfig>>,
     pub mcp_servers: Option<Vec<McpServerConfigItem>>,
 }
@@ -271,6 +273,7 @@ pub fn read_config_overview() -> Result<CodexConfigOverview, String> {
         max_parallel_tools: get_u32("max_parallel_tools"),
         subagent_concurrency: get_u32("subagent_concurrency"),
         output_verbosity: get_str("output_verbosity"),
+        instructions: get_str("instructions"),
         providers,
         mcp_servers,
     })
@@ -359,6 +362,7 @@ pub fn update_structured_config(payload: CodexConfigUpdatePayload) -> Result<Cod
     set_or_remove_u32(&mut doc, "max_parallel_tools", payload.max_parallel_tools);
     set_or_remove_u32(&mut doc, "subagent_concurrency", payload.subagent_concurrency);
     set_or_remove_str(&mut doc, "output_verbosity", payload.output_verbosity);
+    set_or_remove_str(&mut doc, "instructions", payload.instructions);
 
     if let Some(providers) = payload.providers {
         let mut prov_root = doc

@@ -20,6 +20,7 @@ export interface ProjectsIndexViewProps {
   onSelectThread: (threadId: string) => void;
   onPickNewFolder: () => void;
   onRemoveWorkspace: (path: string, e: React.MouseEvent) => void;
+  onRevealPath?: (path: string) => void;
 }
 
 function normPath(p?: string | null): string {
@@ -37,6 +38,7 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
   onSelectThread,
   onPickNewFolder,
   onRemoveWorkspace,
+  onRevealPath,
 }) => {
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -156,6 +158,16 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
                       className="project-col-actions"
                       onClick={(e) => e.stopPropagation()}
                     >
+                      {onRevealPath && (
+                        <button
+                          type="button"
+                          className="secondary-pill-action-btn"
+                          onClick={() => onRevealPath(ws.path)}
+                          title="在系统文件管理器中打开此文件夹"
+                        >
+                          📂 <span>打开目录</span>
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="secondary-pill-action-btn"

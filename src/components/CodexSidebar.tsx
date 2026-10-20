@@ -40,7 +40,9 @@ export interface CodexSidebarProps {
   onSelectThread: (threadId: string) => void;
   onTogglePinThread: (threadId: string, e: React.MouseEvent) => void;
   onArchiveThread: (thread: ThreadSummary, e: React.MouseEvent) => void;
+  onDeleteThread?: (thread: ThreadSummary, e: React.MouseEvent) => void;
   onRenameThread: (threadId: string, newName: string) => void;
+  onRevealPath?: (path: string, e: React.MouseEvent) => void;
   onOpenAgentsMd: () => void;
   onOpenQuickSearch?: () => void;
 }
@@ -69,7 +71,9 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
   onSelectThread,
   onTogglePinThread,
   onArchiveThread,
+  onDeleteThread,
   onRenameThread,
+  onRevealPath,
   onOpenAgentsMd,
   onOpenQuickSearch,
 }) => {
@@ -214,6 +218,16 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
           >
             <PinIcon size={12} />
           </button>
+          {onDeleteThread && (
+            <button
+              type="button"
+              className="thread-icon-btn danger"
+              title="彻底删除聊天"
+              onClick={(e) => onDeleteThread(t, e)}
+            >
+              🗑️
+            </button>
+          )}
         </div>
       </div>
     );
@@ -443,6 +457,19 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
                   </div>
 
                   <div className="sidebar-project-actions">
+                    {onRevealPath && (
+                      <button
+                        type="button"
+                        className="thread-icon-btn"
+                        title="在系统文件管理器中打开文件夹"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onRevealPath(ws.path, e);
+                        }}
+                      >
+                        📂
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="thread-icon-btn"

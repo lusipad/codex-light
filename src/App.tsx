@@ -37,6 +37,7 @@ import {
   ActiveGoalSession,
   GoalStepItem,
   ShellExecResult,
+  ProjectScriptCommands,
 } from "./types";
 import { MarkdownView } from "./components/MarkdownView";
 import { DiffDrawer } from "./components/DiffDrawer";
@@ -253,7 +254,18 @@ export const App: React.FC = () => {
   const [showGitMenu, setShowGitMenu] = useState<boolean>(false);
   const [showUsagePopover, setShowUsagePopover] = useState<boolean>(false);
   const [showSessionParamsPopover, setShowSessionParamsPopover] = useState<boolean>(false);
+  const [showExportPopover, setShowExportPopover] = useState<boolean>(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsSectionSlug>("general-settings");
+
+  // Project Script Commands Detection
+  const [projectScripts, setProjectScripts] = useState<ProjectScriptCommands>({
+    runCommand: "npm run dev",
+    testCommand: "npm test",
+    buildCommand: "npm run build",
+    projectType: "node",
+  });
+  const [customInstructions, setCustomInstructions] = useState<string>("");
+  const [toneStyle, setToneStyle] = useState<string>("pragmatic");
 
   // In-session Hyperparameters
   const [sessionTemperature, setSessionTemperature] = useState<number>(0.2);
@@ -403,6 +415,15 @@ export const App: React.FC = () => {
     } catch {
       // ignore
     }
+
+    try {
+      const scripts = await tauriInvoke<ProjectScriptCommands>("detect_project_scripts", {
+        cwd: activeWorkspace.path,
+      });
+      if (scripts) setProjectScripts(scripts);
+    } catch {
+      // ignore
+    }
   }, [activeWorkspace?.path]);
 
   // 4. Refresh Threads & Models from codex app-server
@@ -461,6 +482,9 @@ export const App: React.FC = () => {
         if (overview.outputVerbosity) {
           setSessionVerbosity(overview.outputVerbosity as any);
         }
+        if (overview.instructions) {
+          setCustomInstructions(overview.instructions);
+        }
       }
     } catch (e) {
       console.warn("config_read failed:", e);
@@ -471,6 +495,17 @@ export const App: React.FC = () => {
   useEffect(() => {
     refreshWorkspacesAndMeta();
     refreshConfigOverview();
+
+    tauriInvoke<any>("desktop_state_get", { key: "desktopPreferences" })
+      .then((prefs) => {
+        if (prefs && typeof prefs === "object") {
+          if (prefs.customPersonaPrompt) setCustomInstructions(prefs.customPersonaPrompt);
+          if (prefs.toneStyle) setToneStyle(prefs.toneStyle);
+          if (prefs.petVisible !== undefined) setPetVisible(prefs.petVisible);
+          if (prefs.selectedPetSpecies) setSelectedPetSpecies(prefs.selectedPetSpecies);
+        }
+      })
+      .catch(() => {});
 
     // Ensure app-server is connected
     tauriInvoke<AppServerStatus>("app_server_connect")
@@ -1400,6 +1435,156 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
     [activeThreadId, startNewThread]
   );
 
+  const handleDeleteThread = useCallback(
+    async (thread: ThreadSummary, e: React.MouseEvent) => {
+      e.stopPropagation();
+      const confirmDelete = window.confirm(
+        `确定要彻底删除聊天 "${thread.name || thread.preview || thread.id}" 吗？此操作无法撤销。`
+      );
+      if (!confirmDelete) return;
+      try {
+        await tauriInvoke("thread_delete", {
+          threadId: thread.id,
+        });
+        setThreads((prev) => prev.filter((t) => t.id !== thread.id));
+        setPinnedThreadIds((prev) => prev.filter((id) => id !== thread.id));
+        showAppToast("✓ 聊天已彻底删除", "success");
+        if (activeThreadId === thread.id) {
+          startNewThread();
+        }
+      } catch (err) {
+        console.warn("thread_delete failed:", err);
+        showAppToast("删除失败: " + String(err), "error");
+      }
+    },
+    [activeThreadId, startNewThread, showAppToast]
+  );
+
+  const handleRevealPath = useCallback(
+    async (path: string, e?: React.MouseEvent) => {
+      if (e) e.stopPropagation();
+      try {
+        await tauriInvoke("reveal_path_in_explorer", { path });
+        showAppToast("✓ 已在系统文件管理器中打开文件夹", "info");
+      } catch (err) {
+        showAppToast(`打开文件夹失败: ${String(err)}`, "error");
+      }
+    },
+    [showAppToast]
+  );
+
+  const activeThreadObj = useMemo(
+    () => threads.find((t) => t.id === activeThreadId) || null,
+    [threads, activeThreadId]
+  );
+
+  const handleExportMarkdown = useCallback(() => {
+    if (turns.length === 0) {
+      showAppToast("当前会话暂无消息内容可导出", "info");
+      return;
+    }
+    const threadTitle = activeThreadObj?.name || activeThreadObj?.preview || "Codex-Conversation";
+    let md = `# ${threadTitle}\n\n`;
+    md += `- **会话 ID**: \`${activeThreadId || "local"}\`\n`;
+    md += `- **模型**: \`${selectedModelId}\`\n`;
+    md += `- **导出时间**: ${new Date().toLocaleString()}\n`;
+    if (activeWorkspace?.path) {
+      md += `- **工作区**: \`${activeWorkspace.path}\`\n`;
+    }
+    md += `\n---\n\n`;
+
+    turns.forEach((turn, idx) => {
+      turn.items.forEach((item) => {
+        if (item.type === "userMessage") {
+          md += `### 👤 用户 (Turn ${idx + 1})\n\n${item.text || ""}\n\n`;
+        } else if (item.type === "agentMessage") {
+          md += `### 🤖 Codex (Turn ${idx + 1})\n\n${item.text || ""}\n\n`;
+        } else if (item.type === "thought") {
+          md += `<details><summary>💭 思考过程</summary>\n\n${item.text || ""}\n\n</details>\n\n`;
+        } else if (item.type === "command") {
+          const cmdStr = Array.isArray(item.command) ? item.command.join(" ") : item.command || "";
+          md += `> 💻 **执行命令**: \`${cmdStr}\`\n`;
+          if (item.stdout || item.aggregatedOutput) {
+            md += `\`\`\`bash\n${item.stdout || item.aggregatedOutput}\n\`\`\`\n\n`;
+          }
+        } else if (item.type === "fileChange") {
+          md += `> 📝 **修改文件**: \`${item.cwd || ""}\`\n\n`;
+        }
+      });
+    });
+
+    const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${threadTitle.replace(/[/\\?%*:|"<>]/g, "_")}-${Date.now()}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setShowExportPopover(false);
+    showAppToast("✓ 对话已成功导出为 Markdown 文件", "success");
+  }, [turns, activeThreadObj, activeThreadId, selectedModelId, activeWorkspace, showAppToast]);
+
+  const handleExportJson = useCallback(() => {
+    if (turns.length === 0) {
+      showAppToast("当前会话暂无消息内容可导出", "info");
+      return;
+    }
+    const threadTitle = activeThreadObj?.name || activeThreadObj?.preview || "Codex-Conversation";
+    const data = {
+      threadId: activeThreadId,
+      title: threadTitle,
+      model: selectedModelId,
+      reasoningEffort,
+      workspace: activeWorkspace?.path,
+      exportedAt: new Date().toISOString(),
+      turns,
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${threadTitle.replace(/[/\\?%*:|"<>]/g, "_")}-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setShowExportPopover(false);
+    showAppToast("✓ 对话已成功导出为 JSON 文件", "success");
+  }, [turns, activeThreadObj, activeThreadId, selectedModelId, reasoningEffort, activeWorkspace, showAppToast]);
+
+  const handleCopyAllConversation = useCallback(() => {
+    if (turns.length === 0) {
+      showAppToast("当前会话暂无消息内容", "info");
+      return;
+    }
+    let fullText = "";
+    turns.forEach((turn) => {
+      turn.items.forEach((item) => {
+        if (item.type === "userMessage") {
+          fullText += `[用户]:\n${item.text || ""}\n\n`;
+        } else if (item.type === "agentMessage") {
+          fullText += `[Codex]:\n${item.text || ""}\n\n`;
+        } else if (item.type === "command") {
+          const cmdStr = Array.isArray(item.command) ? item.command.join(" ") : item.command || "";
+          fullText += `[执行命令]: ${cmdStr}\n\n`;
+        }
+      });
+    });
+    navigator.clipboard.writeText(fullText.trim()).then(() => {
+      setShowExportPopover(false);
+      showAppToast("✓ 已复制全部对话内容到剪贴板", "success");
+    }).catch((err) => {
+      showAppToast("复制失败: " + String(err), "error");
+    });
+  }, [turns, showAppToast]);
+
+  const handleClearCurrentThread = useCallback(() => {
+    if (turns.length === 0) return;
+    const ok = window.confirm("确定要清空当前会话的消息内容并重置为新对话吗？");
+    if (!ok) return;
+    setShowExportPopover(false);
+    startNewThread();
+    showAppToast("✓ 已重置并开启全新会话", "info");
+  }, [turns.length, startNewThread, showAppToast]);
+
   const handleSlashAction = useCallback((action: string) => {
     if (action === "open_goal_dialog") {
       setShowGoalModal(true);
@@ -1425,11 +1610,6 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
     activeWorkspace?.label ||
     activeWorkspace?.path?.split(/[/\\]/).pop() ||
     "codex-app-offline";
-
-  const activeThreadObj = useMemo(
-    () => threads.find((t) => t.id === activeThreadId) || null,
-    [threads, activeThreadId]
-  );
 
   return (
     <div className="codex-app-layout">
@@ -1465,7 +1645,9 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
         onSelectThread={selectThread}
         onTogglePinThread={handleTogglePinThread}
         onArchiveThread={handleArchiveThread}
+        onDeleteThread={handleDeleteThread}
         onRenameThread={handleRenameThread}
+        onRevealPath={handleRevealPath}
         onOpenAgentsMd={() => setShowAgentsMdModal(true)}
         onOpenQuickSearch={() => setShowQuickSearch(true)}
       />
@@ -1613,10 +1795,10 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
                     setShowTerminal(true);
                     setPendingTermCommand({
                       id: Date.now(),
-                      command: "npm run dev",
+                      command: projectScripts.runCommand,
                     });
                   }}
-                  title="在终端运行本地启动服务 (npm run dev)"
+                  title={`在终端运行启动服务 (${projectScripts.runCommand})`}
                 >
                   <PlayIcon size={11} />
                   <span>运行</span>
@@ -1629,10 +1811,10 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
                     setShowTerminal(true);
                     setPendingTermCommand({
                       id: Date.now(),
-                      command: "npm test",
+                      command: projectScripts.testCommand,
                     });
                   }}
-                  title="在终端运行单元测试套件 (npm test)"
+                  title={`在终端运行单元测试套件 (${projectScripts.testCommand})`}
                 >
                   <span>🧪 测试</span>
                 </button>
@@ -1644,10 +1826,10 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
                     setShowTerminal(true);
                     setPendingTermCommand({
                       id: Date.now(),
-                      command: "npm run build",
+                      command: projectScripts.buildCommand,
                     });
                   }}
-                  title="在终端运行生产编译构建 (npm run build)"
+                  title={`在终端运行构建编译 (${projectScripts.buildCommand})`}
                 >
                   <span>🔨 构建</span>
                 </button>
@@ -1818,6 +2000,76 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
                     </div>
                   )}
                 </div>
+
+                <div style={{ position: "relative" }}>
+                  <button
+                    type="button"
+                    className="window-chrome-icon-btn with-label"
+                    onClick={() => {
+                      setShowExportPopover((v) => !v);
+                      setShowUsagePopover(false);
+                      setShowSessionParamsPopover(false);
+                    }}
+                    title="会话导出与快捷操作 (Markdown, JSON, 复制, 重置)"
+                  >
+                    <span>📤 导出</span>
+                  </button>
+
+                  {showExportPopover && (
+                    <div
+                      className="usage-popover-card"
+                      style={{ minWidth: 230, right: 0 }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="usage-popover-header">
+                        <strong>会话导出与操作</strong>
+                        <button
+                          type="button"
+                          className="icon-btn"
+                          onClick={() => setShowExportPopover(false)}
+                        >
+                          ✕
+                        </button>
+                      </div>
+
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
+                        <button
+                          type="button"
+                          className="git-menu-item"
+                          onClick={handleExportMarkdown}
+                          style={{ textAlign: "left", padding: "8px 10px", borderRadius: 6 }}
+                        >
+                          <span>📄 导出为 Markdown (.md)</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="git-menu-item"
+                          onClick={handleExportJson}
+                          style={{ textAlign: "left", padding: "8px 10px", borderRadius: 6 }}
+                        >
+                          <span>🗂️ 导出为 JSON (.json)</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="git-menu-item"
+                          onClick={handleCopyAllConversation}
+                          style={{ textAlign: "left", padding: "8px 10px", borderRadius: 6 }}
+                        >
+                          <span>📋 复制全部对话内容</span>
+                        </button>
+                        <hr style={{ border: "none", borderTop: "1px solid var(--border-subtle)", margin: "4px 0" }} />
+                        <button
+                          type="button"
+                          className="git-menu-item"
+                          onClick={handleClearCurrentThread}
+                          style={{ textAlign: "left", padding: "8px 10px", borderRadius: 6, color: "#ef4444" }}
+                        >
+                          <span>🧹 清空并重置当前对话</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </>
             )}
 
@@ -1920,6 +2172,7 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
             onSelectThread={selectThread}
             onPickNewFolder={handlePickNewFolder}
             onRemoveWorkspace={handleRemoveWorkspace}
+            onRevealPath={handleRevealPath}
           />
         ) : activeRoute === "inbox" ? (
           <InboxView

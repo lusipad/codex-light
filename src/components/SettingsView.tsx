@@ -479,6 +479,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           maxParallelTools,
           subagentConcurrency,
           outputVerbosity,
+          instructions: customPersonaPrompt.trim() || undefined,
           providers,
           mcpServers,
         },
@@ -1426,6 +1427,25 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                           }}
                         >
                           取消归档
+                        </button>
+                        <button
+                          type="button"
+                          className="icon-danger-btn"
+                          title="彻底删除此会话记录"
+                          style={{ padding: "4px 8px", fontSize: 12, borderRadius: 6 }}
+                          onClick={async () => {
+                            const ok = window.confirm(`确定要彻底删除已归档会话 "${t.name || t.preview || t.id}" 吗？此操作无法撤销。`);
+                            if (!ok) return;
+                            try {
+                              await tauriInvoke("thread_delete", { threadId: t.id });
+                              setArchivedThreads((prev: any[]) => prev.filter((item: any) => item.id !== t.id));
+                              flashSaved("已彻底删除会话记录");
+                            } catch (e: any) {
+                              setErrorBanner("删除失败: " + String(e));
+                            }
+                          }}
+                        >
+                          🗑️ 彻底删除
                         </button>
                       </div>
                     </div>

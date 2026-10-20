@@ -10,6 +10,7 @@ use config_skills::{
     StorageStatsOverview,
 };
 use git::{GhCliStatus, GitCommitInfo, GitStatusInfo, GitWorktreeInfo};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use state::{
     find_agents_md, list_directory_entries, read_file_preview, search_workspace_files,
@@ -266,6 +267,174 @@ async fn thread_archive_toggle(
     }
     state.desktop_state.set_archived_threads(archived.clone());
     Ok(archived)
+}
+
+#[tauri::command]
+async fn thread_delete(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    thread_id: String,
+) -> Result<(), String> {
+    state.desktop_state.remove_thread_record(&thread_id);
+    let _ = state
+        .app_server
+        .call(&app, "thread/delete", Some(json!({ "threadId": &thread_id })))
+        .await;
+    let _ = state
+        .app_server
+        .call(&app, "thread/archive", Some(json!({ "threadId": &thread_id })))
+        .await;
+    Ok(())
+}
+
+#[tauri::command]
+fn reveal_path_in_explorer(path: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    if !p.exists() {
+        return Err(format!("路径不存在: {}", path));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if p.is_dir() {
+            std::process::Command::new("explorer")
+                .arg(&path)
+                .spawn()
+                .map_err(|e| e.to_string())?;
+        } else {
+            std::process::Command::new("explorer")
+                .args(["/select,", &path])
+                .spawn()
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("-R")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let target = if p.is_dir() { p } else { p.parent().unwrap_or(p) };
+        std::process::Command::new("xdg-open")
+            .arg(target)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectScriptCommands {
+    pub run_command: String,
+    pub test_command: String,
+    pub build_command: String,
+    pub project_type: String,
+}
+
+#[tauri::command]
+fn detect_project_scripts(cwd: String) -> ProjectScriptCommands {
+    let root = std::path::Path::new(&cwd);
+    let pkg_json_path = root.join("package.json");
+    if pkg_json_path.is_file() {
+        let pm = if root.join("pnpm-lock.yaml").exists() {
+            "pnpm"
+        } else if root.join("yarn.lock").exists() {
+            "yarn"
+        } else if root.join("bun.lockb").exists() || root.join("bun.lock").exists() {
+            "bun"
+        } else {
+            "npm"
+        };
+
+        let mut run_cmd = format!("{} run dev", pm);
+        let mut test_cmd = format!("{} test", pm);
+        let mut build_cmd = format!("{} run build", pm);
+
+        if let Ok(content) = std::fs::read_to_string(&pkg_json_path) {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
+                if let Some(scripts) = parsed.get("scripts").and_then(|s| s.as_object()) {
+                    if scripts.contains_key("dev") {
+                        run_cmd = format!("{} run dev", pm);
+                    } else if scripts.contains_key("start") {
+                        run_cmd = if pm == "npm" { "npm start".to_string() } else { format!("{} start", pm) };
+                    } else if scripts.contains_key("serve") {
+                        run_cmd = format!("{} run serve", pm);
+                    }
+
+                    if !scripts.contains_key("test") {
+                        test_cmd = format!("{} test", pm);
+                    }
+
+                    if scripts.contains_key("build") {
+                        build_cmd = format!("{} run build", pm);
+                    }
+                }
+            }
+        }
+
+        return ProjectScriptCommands {
+            run_command: run_cmd,
+            test_command: test_cmd,
+            build_command: build_cmd,
+            project_type: "node".to_string(),
+        };
+    }
+
+    if root.join("Cargo.toml").is_file() {
+        return ProjectScriptCommands {
+            run_command: "cargo run".to_string(),
+            test_command: "cargo test".to_string(),
+            build_command: "cargo build".to_string(),
+            project_type: "rust".to_string(),
+        };
+    }
+
+    if root.join("pyproject.toml").is_file() || root.join("requirements.txt").is_file() || root.join("Pipfile").is_file() {
+        let run_cmd = if root.join("main.py").is_file() {
+            "python main.py".to_string()
+        } else if root.join("app.py").is_file() {
+            "python app.py".to_string()
+        } else if root.join("manage.py").is_file() {
+            "python manage.py runserver".to_string()
+        } else {
+            "python main.py".to_string()
+        };
+        return ProjectScriptCommands {
+            run_command: run_cmd,
+            test_command: "pytest".to_string(),
+            build_command: "python -m build".to_string(),
+            project_type: "python".to_string(),
+        };
+    }
+
+    if root.join("go.mod").is_file() {
+        return ProjectScriptCommands {
+            run_command: "go run .".to_string(),
+            test_command: "go test ./...".to_string(),
+            build_command: "go build".to_string(),
+            project_type: "go".to_string(),
+        };
+    }
+
+    if root.join("Makefile").is_file() {
+        return ProjectScriptCommands {
+            run_command: "make run".to_string(),
+            test_command: "make test".to_string(),
+            build_command: "make build".to_string(),
+            project_type: "make".to_string(),
+        };
+    }
+
+    ProjectScriptCommands {
+        run_command: "npm run dev".to_string(),
+        test_command: "npm test".to_string(),
+        build_command: "npm run build".to_string(),
+        project_type: "generic".to_string(),
+    }
 }
 
 #[tauri::command]
@@ -587,6 +756,9 @@ pub fn run() {
             threads_meta_get,
             thread_toggle_pin,
             thread_archive_toggle,
+            thread_delete,
+            reveal_path_in_explorer,
+            detect_project_scripts,
             git_status,
             git_diff,
             git_stage,
