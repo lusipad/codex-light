@@ -17,7 +17,9 @@ default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# `tray-icon` enables the system tray APIs (tauri::tray) used by `src/menu.rs`;
+# `image-png` lets us decode `icons/icon.png` into a tray icon via Image::from_bytes.
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["process", "io-util", "io-std", "sync", "time", "rt-multi-thread", "macros", "fs"] }

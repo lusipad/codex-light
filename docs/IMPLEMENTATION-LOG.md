@@ -108,3 +108,33 @@
 - 官方 `thread/start` 无 `projectId` 参数，`thread/metadata/update` 也不含项目字段 → 新建会话暂不能挂到项目实体（项目聊天数只统计已有的 `projectId`）。
 - 已分区会话同时仍出现在「最近」列表（官方行为差异），后续可加过滤开关。
 - `app/list` 在当前账号必 403（ChatGPT 连接器接口），已降级为提示 + 本地快照。
+
+## Round 5 — 批次 4：原生菜单 / 托盘 / 快捷键 / Hooks 真实化
+
+### 原生菜单 + 系统托盘（Rust）
+- 新增 `src-tauri/src/menu.rs`（281 行）与 `src/nativeShell.ts`（92 行）：
+  - File（new-chat Ctrl+N / open-workspace Ctrl+O / settings Ctrl+, / quit Ctrl+Q）、Edit（系统原生 undo/redo/cut/copy/paste/select-all）、View（toggle-sidebar Ctrl+B、toggle-terminal Ctrl+J、toggle-changes Ctrl+Alt+B、command-palette Ctrl+K、file-search Ctrl+P、toggle-theme、reload Ctrl+R、toggle-devtools F12、zoom-in/out/reset、toggle-fullscreen F11）、Window、Help（about / open-config-toml）
+  - 菜单点击 → `native-menu {id,payload?}` 事件；`open-config-toml` 附带 config.toml 绝对路径
+  - 系统托盘：左键唤起主窗口，右键菜单 Open / New Chat / Quit（复用 `icons/icon.png`，Quit 由 Rust 直接退出）；`native-tray {id}` 事件
+  - 新增并注册 Rust 命令 `open_path_external(path)`（explorer/notepad/open/xdg-open）
+  - `Cargo.toml` 增加 `tray-icon`、`image-png` features；capabilities 显式加 `core:menu:default`、`core:tray:default`
+- 前端 App 接线：菜单/托盘事件 → 统一 `runShortcutAction` 分发（**250ms 去重**，解决菜单 accelerator 与 webview keydown 双触发导致 toggle 互相抵消）；zoom 用 `getCurrentWebview().setZoom`；全屏/退出用 window API；`toggle-theme` 循环官方主题并持久化；启动时应用已保存主题。
+
+### 快捷键注册表
+- 新增 `src/shortcuts.ts`：13 组快捷键（新建会话、侧栏、终端、变更面板、设置、命令面板 ×2、文件搜索、重命名、置顶、归档、复制最后代码块、派生会话、代码审查、Esc），`matchShortcut` / `matchRecentThreadIndex`（Alt+1..9 跳转最近会话）。
+- App 用稳定的 keydown 监听 + 动作 ref 分发，避免闭包/声明顺序问题。
+
+### Hooks 设置页真实化
+- 新增 `src/hooksClient.ts`（445 行）：`hooks/list` 归一化（HookInfo/HookGroup/warnings/errors）、`subscribeHookEvents`（hook/started + hook/completed → HookLiveEvent 含耗时/状态/输出摘要）。
+- SettingsView hooks-settings 分区：真实按 cwd 分组列表（事件/命令/启用/source/trust 状态/是否托管）、warnings/errors 提示条、刷新+loading、空态与「打开配置位置」（reveal_path_in_explorer 回退 config.toml）、**实时运行记录**（最近 20 条、运行中标记、started→completed 原地合并、可清空）；删除 4 个只写本地 prefs 的假命令输入框，保留本地开关并标注。
+
+### 验证
+- `npm run build` ✅（index 972KB + 动态拆分 window.js；CSS 114KB）
+- `cargo check --manifest-path src-tauri/Cargo.toml` ✅（新依赖 tray-icon/image 编译通过，0 error；复跑 1.72s）
+- `npx tsc --noEmit` ✅
+- 队友验证：菜单/托盘 API 编译通过并给出事件协议；hooks 用隔离 CODEX_HOME 实测 hooks/list 字段与 hook/started|completed 归一化单测通过。
+
+### 已知限制
+- 快捷键与菜单 accelerator 采用 250ms 去重；极快的重复按同一 toggle 会被合并一次。
+- `toggle-devtools` 仅在 debug 构建由 Rust 直接生效（release 无 devtools feature 时仅发事件）。
+- Hooks 运行记录仅存在于设置页打开期间（未做跨路由持久化）；未信任 hook 会被 codex 上游跳过（UI 已标注 trustStatus）。

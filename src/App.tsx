@@ -16,6 +16,8 @@ import {
   SparklesIcon,
 } from "./components/Icons";
 import { callAppServer, tauriInvoke, tauriListen } from "./bridge";
+import { matchShortcut, matchRecentThreadIndex } from "./shortcuts";
+import { installNativeMenuHandler, installTrayHandler } from "./nativeShell";
 import {
   AppServerStatus,
   AttachedFileItem,
@@ -1264,32 +1266,45 @@ export const App: React.FC = () => {
       .catch(() => setGitCommits([]));
   }, [activeRoute, activeWorkspace?.path]);
 
-  // Global keyboard shortcuts (Ctrl+N new chat, Ctrl+B toggle sidebar, Ctrl+J toggle terminal)
+  // Global keyboard shortcuts（注册表见 src/shortcuts.ts，与原生菜单 accelerator 对齐）
+  // 实际动作绑定在下方 shortcutHandlersRef，避免闭包/声明顺序问题。
+  const shortcutHandlersRef = useRef<Record<string, (arg?: any) => void>>({});
+  const shortcutTimestampsRef = useRef<Record<string, number>>({});
+  const threadsRef = useRef<ThreadSummary[]>([]);
+  threadsRef.current = threads;
+
+  /**
+   * 统一分发快捷键动作，并去重：原生菜单 accelerator 与 webview keydown
+   * 可能对同一次按键各触发一次（toggle 类动作会互相抵消）。
+   */
+  const runShortcutAction = useCallback((id: string, arg?: any) => {
+    const now = Date.now();
+    const last = shortcutTimestampsRef.current[id] || 0;
+    if (now - last < 250) return;
+    shortcutTimestampsRef.current[id] = now;
+    shortcutHandlersRef.current[id]?.(arg);
+  }, []);
+
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "n") {
-        e.preventDefault();
-        setActiveThreadId(null);
-        setTurns([]);
-        setActiveRoute("home");
-        setTimeout(() => composerTextareaRef.current?.focus(), 50);
-      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
-        e.preventDefault();
-        setSidebarCollapsed((v) => !v);
-      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "j") {
-        e.preventDefault();
-        setShowTerminal((v) => !v);
-      } else if ((e.ctrlKey || e.metaKey) && e.key === ",") {
-        e.preventDefault();
-        setActiveRoute((r) => (r === "settings" ? "home" : "settings"));
-      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        setShowQuickSearch((v) => !v);
+      const recentIndex = matchRecentThreadIndex(e);
+      if (recentIndex !== null) {
+        const target = threadsRef.current[recentIndex];
+        if (target) {
+          e.preventDefault();
+          runShortcutAction("open-recent-thread", target.id);
+        }
+        return;
       }
+
+      const shortcutId = matchShortcut(e);
+      if (!shortcutId) return;
+      e.preventDefault();
+      runShortcutAction(shortcutId);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [runShortcutAction]);
 
   // Auto-scroll timeline
   useEffect(() => {
@@ -2307,6 +2322,182 @@ export const App: React.FC = () => {
     () => threads.find((t) => t.id === activeThreadId) || null,
     [threads, activeThreadId]
   );
+
+  // 快捷键动作绑定（每次渲染刷新，键盘监听器稳定注册一次）
+  shortcutHandlersRef.current = {
+    "open-recent-thread": (threadId?: any) => {
+      if (threadId) void selectThread(String(threadId));
+    },
+    "new-chat": () => startNewThread(),
+    "toggle-sidebar": () => setSidebarCollapsed((v) => !v),
+    "toggle-terminal": () => setShowTerminal((v) => !v),
+    "toggle-changes": () => setShowRightDrawer((v) => !v),
+    "open-settings": () =>
+      setActiveRoute((r) => (r === "settings" ? "home" : "settings")),
+    "command-palette": () => setShowQuickSearch(true),
+    "command-palette-alt": () => setShowQuickSearch(true),
+    "file-search": () => setShowQuickSearch(true),
+    "rename-thread": () => {
+      if (activeThreadObj) {
+        setThreadTitleInput(
+          activeThreadObj.name || activeThreadObj.preview || "本地聊天"
+        );
+        setEditingThreadTitle(true);
+      }
+    },
+    "pin-thread": () => {
+      if (activeThreadId) void handleTogglePinThread(activeThreadId, {} as any);
+    },
+    "archive-thread": () => {
+      if (activeThreadObj) void handleArchiveThread(activeThreadObj, {} as any);
+    },
+    "fork-thread": () => void handleForkThread(),
+    "open-review": () => setActiveRoute("review"),
+    "copy-last-code-block": () => {
+      const blocks: string[] = [];
+      for (const turn of turns) {
+        for (const item of turn.items) {
+          const text = extractTextFromItem(item);
+          const regex = /```[a-zA-Z0-9_-]*\r?\n([\s\S]*?)```/g;
+          let m: RegExpExecArray | null;
+          while ((m = regex.exec(text)) !== null) blocks.push(m[1]);
+        }
+      }
+      const last = blocks[blocks.length - 1];
+      if (last) {
+        navigator.clipboard.writeText(last);
+        showAppToast("✓ 已复制最后一段代码块", "success");
+      } else {
+        showAppToast("当前会话没有代码块可复制", "info");
+      }
+    },
+    escape: () => {
+      setShowQuickSearch(false);
+      setShowGitMenu(false);
+      setShowUsagePopover(false);
+      setShowSessionParamsPopover(false);
+      setShowExportPopover(false);
+      setShowGoalModal(false);
+    },
+  };
+
+  // ── 原生菜单 / 托盘 事件接线（与快捷键共用 runShortcutAction 去重）──
+  useEffect(() => {
+    let disposed = false;
+    let offMenu: (() => void) | null = null;
+    let offTray: (() => void) | null = null;
+    let zoom = 1;
+
+    const applyZoom = async (next: number) => {
+      zoom = next === 0 ? 1 : Math.min(3, Math.max(0.5, next));
+      try {
+        const { getCurrentWebview } = await import("@tauri-apps/api/webview");
+        await getCurrentWebview().setZoom(zoom);
+      } catch {
+        // 非 Tauri 环境忽略
+      }
+    };
+
+    const cycleTheme = async () => {
+      try {
+        const { OFFICIAL_COLOR_THEMES } = await import("./components/SettingsView");
+        const themes = (OFFICIAL_COLOR_THEMES || []).map((t: any) => t.id);
+        if (!themes.length) return;
+        const current =
+          (await tauriInvoke<string | null>("desktop_state_get", {
+            key: "colorTheme",
+          })) || "codex";
+        const idx = Math.max(0, themes.indexOf(current));
+        const next = themes[(idx + 1) % themes.length];
+        applyColorTheme(next);
+        await tauriInvoke("desktop_state_set", { key: "colorTheme", value: next });
+        showAppToast(`🎨 主题已切换：${next}`, "info");
+      } catch (e) {
+        console.warn("toggle-theme failed:", e);
+      }
+    };
+
+    (async () => {
+      offMenu = await installNativeMenuHandler({
+        "new-chat": () => runShortcutAction("new-chat"),
+        "open-workspace": () => handlePickNewFolder(),
+        settings: () => setActiveRoute("settings"),
+        "toggle-sidebar": () => runShortcutAction("toggle-sidebar"),
+        "toggle-terminal": () => runShortcutAction("toggle-terminal"),
+        "toggle-changes": () => runShortcutAction("toggle-changes"),
+        "command-palette": () => runShortcutAction("command-palette"),
+        "file-search": () => runShortcutAction("file-search"),
+        "toggle-theme": () => void cycleTheme(),
+        reload: () => window.location.reload(),
+        "zoom-in": () => void applyZoom(zoom + 0.1),
+        "zoom-out": () => void applyZoom(zoom - 0.1),
+        "zoom-reset": () => void applyZoom(0),
+        "toggle-fullscreen": async () => {
+          try {
+            const { getCurrentWindow } = await import("@tauri-apps/api/window");
+            const win = getCurrentWindow();
+            await win.setFullscreen(!(await win.isFullscreen()));
+          } catch {
+            // ignore
+          }
+        },
+        about: () =>
+          showAppToast("Codex Native · Tauri v2 + React 19 · 对标官方 Codex App", "info"),
+        "open-config-toml": async (payload?: any) => {
+          let path = payload?.path as string | undefined;
+          if (!path) {
+            try {
+              const cfg = await tauriInvoke<any>("config_read");
+              path = cfg?.configPath;
+            } catch {
+              // ignore
+            }
+          }
+          if (path) {
+            void tauriInvoke("open_path_external", { path }).catch(() =>
+              showAppToast("打开 config.toml 失败", "error")
+            );
+          }
+        },
+        quit: async () => {
+          try {
+            const { getCurrentWindow } = await import("@tauri-apps/api/window");
+            await getCurrentWindow().close();
+          } catch {
+            window.close();
+          }
+        },
+      });
+      offTray = await installTrayHandler({
+        click: () => {},
+        open: () => {},
+        "new-chat": () => runShortcutAction("new-chat"),
+        quit: () => {},
+      });
+      if (disposed) {
+        offMenu?.();
+        offTray?.();
+        offMenu = null;
+        offTray = null;
+      }
+    })();
+
+    return () => {
+      disposed = true;
+      offMenu?.();
+      offTray?.();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 启动时应用已保存的配色主题
+  useEffect(() => {
+    tauriInvoke<string | null>("desktop_state_get", { key: "colorTheme" })
+      .then((theme) => {
+        if (theme) applyColorTheme(theme);
+      })
+      .catch(() => {});
+  }, []);
 
   const handleExportMarkdown = useCallback(() => {
     if (turns.length === 0) {

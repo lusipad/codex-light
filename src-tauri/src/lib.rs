@@ -1,6 +1,7 @@
 pub mod app_server;
 pub mod config_skills;
 pub mod git;
+pub mod menu;
 pub mod state;
 pub mod terminal;
 
@@ -320,6 +321,53 @@ fn reveal_path_in_explorer(path: String) -> Result<(), String> {
         let target = if p.is_dir() { p } else { p.parent().unwrap_or(p) };
         std::process::Command::new("xdg-open")
             .arg(target)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Opens a file or directory with the OS native handler.
+///
+/// Used by the native Help → "Open config.toml" menu item (the frontend
+/// invokes it with the path sent in the `native-menu` payload) and available to
+/// any other frontend feature that needs "open externally".
+///
+/// * Windows: directories via `explorer`, files via `notepad` (no console window).
+/// * macOS: `open`; other unix: `xdg-open`.
+#[tauri::command]
+fn open_path_external(path: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    if !p.exists() {
+        return Err(format!("路径不存在: {}", path));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let mut cmd = if p.is_dir() {
+            let mut c = std::process::Command::new("explorer");
+            c.arg(&path);
+            c
+        } else {
+            let mut c = std::process::Command::new("notepad");
+            c.arg(&path);
+            c
+        };
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        cmd.spawn().map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&path)
             .spawn()
             .map_err(|e| e.to_string())?;
     }
@@ -729,6 +777,23 @@ pub fn run() {
                 let _ = window.show();
                 let _ = window.set_focus();
             }
+
+            // Native application menu (File / Edit / View / Window / Help).
+            // Menu item clicks are forwarded to the webview as `native-menu`
+            // events and consumed by `src/nativeShell.ts`.
+            let app_menu = menu::build_app_menu(app.handle())?;
+            app.set_menu(app_menu)?;
+            app.on_menu_event(|handle, event| {
+                menu::handle_menu_event(handle, event.id().as_ref());
+            });
+
+            // System tray icon + context menu (Open / New Chat / Quit).
+            // A failure here must not prevent the app from starting (e.g. on
+            // environments without a tray), so it is only logged.
+            if let Err(err) = menu::build_tray(app.handle()) {
+                eprintln!("[menu] failed to build system tray: {err}");
+            }
+
             Ok(())
         })
         .manage(app_state)
@@ -758,6 +823,7 @@ pub fn run() {
             thread_archive_toggle,
             thread_delete,
             reveal_path_in_explorer,
+            open_path_external,
             detect_project_scripts,
             git_status,
             git_diff,

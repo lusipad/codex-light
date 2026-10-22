@@ -38,6 +38,13 @@ import {
   type ExperimentalFeatureStage,
 } from "../config";
 import {
+  listHooks,
+  subscribeHookEvents,
+  type HookInfo,
+  type HookLiveEvent,
+  type HooksListResult,
+} from "../hooksClient";
+import {
   AppServerStatus,
   CodexConfigOverview,
   ModelInfo,
@@ -210,6 +217,82 @@ const EXPERIMENTAL_STAGE_ORDER: ExperimentalFeatureStage[] = [
   "removed",
 ];
 
+const HOOK_EVENT_LABELS: Record<string, string> = {
+  preToolUse: "preToolUse · 工具执行前",
+  permissionRequest: "permissionRequest · 审批请求",
+  postToolUse: "postToolUse · 工具执行后",
+  preCompact: "preCompact · 压缩前",
+  postCompact: "postCompact · 压缩后",
+  sessionStart: "sessionStart · 会话开始",
+  sessionEnd: "sessionEnd · 会话结束",
+  userPromptSubmit: "userPromptSubmit · 提交提示词",
+  subagentStart: "subagentStart · 子智能体开始",
+  subagentStop: "subagentStop · 子智能体结束",
+  stop: "stop · 回合结束",
+  interrupt: "interrupt · 中断",
+};
+
+const HOOK_HANDLER_LABELS: Record<string, string> = {
+  command: "command",
+  mcpTool: "mcpTool",
+  prompt: "prompt",
+  agent: "agent",
+};
+
+const HOOK_RUN_STATUS_LABELS: Record<string, string> = {
+  running: "运行中",
+  completed: "已完成",
+  failed: "失败",
+  blocked: "已阻止",
+  stopped: "已停止",
+};
+
+const HOOK_SOURCE_LABELS: Record<string, string> = {
+  system: "系统",
+  user: "用户 ~/.codex",
+  project: "项目 .codex",
+  mdm: "MDM 托管",
+  sessionFlags: "会话参数",
+  plugin: "插件",
+  cloudRequirements: "云端要求",
+  cloudManagedConfig: "云端托管",
+  legacyManagedConfigFile: "旧版托管文件",
+  legacyManagedConfigMdm: "旧版托管 MDM",
+  unknown: "未知",
+};
+
+const HOOK_TRUST_LABELS: Record<string, string> = {
+  managed: "托管",
+  untrusted: "未信任",
+  trusted: "已信任",
+  modified: "已修改",
+};
+
+/** Merge a hook live notification into the recent-run list (max 20, started→completed in place). */
+function mergeHookRunRecords(
+  previous: HookLiveEvent[],
+  event: HookLiveEvent
+): HookLiveEvent[] {
+  const next = [...previous];
+  let index = event.hookId
+    ? next.findIndex((run) => run.hookId === event.hookId)
+    : -1;
+  if (index < 0 && event.kind === "completed") {
+    // Some runs report a different id on completion: bind to the running placeholder.
+    index = next.findIndex(
+      (run) =>
+        (run.status === "running" || run.kind === "started") &&
+        run.eventName === event.eventName &&
+        run.sourcePath === event.sourcePath
+    );
+  }
+  if (index >= 0) {
+    next[index] = { ...next[index], ...event };
+    return next;
+  }
+  return [event, ...next].slice(0, 20);
+}
+
 const SETTINGS_NAV_GROUPS: Array<{
   groupTitle: string;
   items: Array<{ slug: SettingsSectionSlug; label: string; keywords: string }>;
@@ -243,7 +326,7 @@ const SETTINGS_NAV_GROUPS: Array<{
     groupTitle: "编码 (Coding)",
     items: [
       { slug: "experimental", label: "实验特性", keywords: "experimental features flags beta stage 实验 特性 开关" },
-      { slug: "hooks-settings", label: "生命周期挂钩 (Hooks)", keywords: "hooks pretooluse posttooluse stop" },
+      { slug: "hooks-settings", label: "生命周期挂钩 (Hooks)", keywords: "hooks hooks.json preToolUse postToolUse stop 运行 实时 生命周期 挂钩" },
       { slug: "connections", label: "MCP 连接", keywords: "connections mcp servers" },
       { slug: "git-settings", label: "Git 偏好", keywords: "git branch prefix force lease pr" },
       { slug: "local-environments", label: "本地环境 (.codex)", keywords: "local environments default.toml run test" },
@@ -411,12 +494,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [browserProxy, setBrowserProxy] = useState<string>("");
   const [browserPersistCookies, setBrowserPersistCookies] = useState<boolean>(true);
 
-  // Hooks Settings (生命周期挂钩)
+  // Hooks Settings (生命周期挂钩) — real data via hooks/list + live hook/* notifications
   const [hooksEnabled, setHooksEnabled] = useState<boolean>(true);
-  const [preSessionHook, setPreSessionHook] = useState<string>("git fetch origin");
-  const [preToolHook, setPreToolHook] = useState<string>("");
-  const [postEditHook, setPostEditHook] = useState<string>("npm run format || true");
-  const [testFailHook, setTestFailHook] = useState<string>("npm test -- --bail");
+  const [hooksListResult, setHooksListResult] = useState<HooksListResult | null>(null);
+  const [hooksLoading, setHooksLoading] = useState<boolean>(false);
+  const [hooksError, setHooksError] = useState<string | null>(null);
+  const [hookRuns, setHookRuns] = useState<HookLiveEvent[]>([]);
 
   // Voice (语音输入)
   const [voiceEnabled, setVoiceEnabled] = useState<boolean>(true);
@@ -553,10 +636,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             if (prefs.browserProxy) setBrowserProxy(prefs.browserProxy);
             if (prefs.browserPersistCookies !== undefined) setBrowserPersistCookies(prefs.browserPersistCookies);
             if (prefs.hooksEnabled !== undefined) setHooksEnabled(prefs.hooksEnabled);
-            if (prefs.preSessionHook !== undefined) setPreSessionHook(prefs.preSessionHook);
-            if (prefs.preToolHook !== undefined) setPreToolHook(prefs.preToolHook);
-            if (prefs.postEditHook !== undefined) setPostEditHook(prefs.postEditHook);
-            if (prefs.testFailHook !== undefined) setTestFailHook(prefs.testFailHook);
           }
         })
         .catch(() => {});
@@ -631,6 +710,69 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setAccountLoading(false);
   };
 
+  const loadHooks = async () => {
+    setHooksLoading(true);
+    setHooksError(null);
+    try {
+      const result = await listHooks(
+        activeWorkspaceRoot ? [activeWorkspaceRoot] : []
+      );
+      setHooksListResult(result);
+    } catch (err) {
+      setHooksListResult(null);
+      setHooksError(
+        `无法读取 Hooks（hooks/list，app-server 可能未连接）: ${toErrorMessage(err)}`
+      );
+    } finally {
+      setHooksLoading(false);
+    }
+  };
+
+  const revealHooksConfigLocation = async () => {
+    const configPath = config?.configPath;
+    if (!configPath) {
+      setErrorBanner("尚未获取到 ~/.codex 配置路径，请先刷新配置后重试。");
+      return;
+    }
+    const separator = configPath.includes("\\") ? "\\" : "/";
+    const configDir = configPath.replace(/[\\/][^\\/]+$/, "");
+    const hooksJsonPath = `${configDir}${separator}hooks.json`;
+    try {
+      await tauriInvoke("reveal_path_in_explorer", { path: hooksJsonPath });
+      flashSaved("✓ 已在文件管理器中定位 ~/.codex/hooks.json");
+    } catch {
+      try {
+        await tauriInvoke("reveal_path_in_explorer", { path: configPath });
+        flashSaved("✓ 已在文件管理器中定位 config.toml（[hooks] 定义位置）");
+      } catch (err) {
+        setErrorBanner(`打开配置位置失败: ${toErrorMessage(err)}`);
+      }
+    }
+  };
+
+  useEffect(() => {
+    let disposed = false;
+    let unsubscribe: (() => void) | null = null;
+    subscribeHookEvents((event) => {
+      if (disposed) return;
+      setHookRuns((previous) => mergeHookRunRecords(previous, event));
+    })
+      .then((fn) => {
+        if (disposed) {
+          fn();
+        } else {
+          unsubscribe = fn;
+        }
+      })
+      .catch((err) => {
+        console.warn("订阅 hook 运行事件失败（实时运行记录不可用）:", err);
+      });
+    return () => {
+      disposed = true;
+      unsubscribe?.();
+    };
+  }, []);
+
   useEffect(() => {
     loadConfig();
     tauriInvoke<string | null>("desktop_state_get", { key: "colorTheme" })
@@ -671,6 +813,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       void loadExperimentalFeatures();
     } else if (activeSection === "account") {
       void loadAccountData();
+    } else if (activeSection === "hooks-settings") {
+      void loadHooks();
     }
   }, [activeSection, activeWorkspaceRoot]);
 
@@ -769,10 +913,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         browserProxy,
         browserPersistCookies,
         hooksEnabled,
-        preSessionHook,
-        preToolHook,
-        postEditHook,
-        testFailHook,
       },
     }).catch(() => {});
   };
@@ -1194,6 +1334,42 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     accountInfo?.account && accountInfo.account.type === "chatgpt"
       ? accountInfo.account
       : null;
+
+  const hookGroups = hooksListResult?.groups ?? [];
+  const hookTotalCount = hooksListResult?.hooks.length ?? 0;
+  const hookEnabledCount =
+    hooksListResult?.hooks.filter((hook) => hook.enabled).length ?? 0;
+
+  const resolveHookName = (event: HookLiveEvent): string => {
+    const matched: HookInfo | undefined = event.hookId
+      ? hooksListResult?.hooks.find((hook) => hook.id === event.hookId)
+      : undefined;
+    if (matched?.name) return matched.name;
+    if (event.hookName) return event.hookName;
+    if (event.statusMessage && event.statusMessage.trim()) {
+      return event.statusMessage.trim();
+    }
+    if (event.eventName) {
+      return `${HOOK_EVENT_LABELS[event.eventName] || event.eventName} hook`;
+    }
+    return "hook";
+  };
+
+  const formatClockTime = (epochMs: number | null | undefined): string => {
+    if (!epochMs) return "—";
+    try {
+      return new Date(epochMs).toLocaleTimeString();
+    } catch {
+      return "—";
+    }
+  };
+
+  const formatDurationMs = (ms: number | null | undefined): string => {
+    if (ms == null || !Number.isFinite(ms)) return "—";
+    if (ms < 1000) return `${Math.round(ms)} ms`;
+    if (ms < 10000) return `${(ms / 1000).toFixed(1)} s`;
+    return `${Math.round(ms / 1000)} s`;
+  };
 
   const renderBottomBar = () => (
     <div className="settings-section-bottom-bar">
@@ -2852,16 +3028,411 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         )}
 
-        {/* ── SECTION 15: HOOKS SETTINGS (生命周期挂钩) ── */}
+        {/* ── SECTION 15: HOOKS SETTINGS (生命周期挂钩 · hooks/list + 实时运行) ── */}
         {activeSection === "hooks-settings" && (
           <div className="settings-scroll-container">
             <div className="card-section">
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
+                  gap: 12,
+                }}
+              >
                 <div>
-                  <h3>生命周期自动化挂钩 (Lifecycle Hooks)</h3>
+                  <h3>生命周期挂钩 (Lifecycle Hooks)</h3>
                   <p className="card-subtitle-desc">
-                    在特定生命周期节点自动执行自定义 Shell 脚本，实现格式化、语法校验、故障自愈与环境预热。
+                    Hooks 由 codex app-server 从 `~/.codex/hooks.json`、`~/.codex/config.toml`
+                    的 `[hooks]` 表、项目 `.codex/` 层或托管配置加载。本分区通过协议
+                    `hooks/list` 只读展示真实配置，并在下方实时展示 hook/started ·
+                    hook/completed 运行状态。
                   </p>
+                </div>
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  onClick={() => void loadHooks()}
+                  disabled={hooksLoading}
+                >
+                  <RefreshCw size={14} /> {hooksLoading ? "读取中..." : "刷新 Hooks"}
+                </button>
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 8,
+                  marginTop: 10,
+                }}
+              >
+                <span className="tag-badge accent">共 {hookTotalCount} 个 Hook</span>
+                <span className="tag-badge">已启用 {hookEnabledCount}</span>
+                <span className="tag-badge">分组 {hookGroups.length}</span>
+                <span className="tag-badge">运行记录 {hookRuns.length}/20</span>
+              </div>
+              {hooksError && (
+                <div className="error-banner" style={{ marginTop: 10 }}>
+                  {hooksError}
+                  <button
+                    type="button"
+                    className="secondary-btn-sm"
+                    style={{ marginLeft: 10 }}
+                    onClick={() => void loadHooks()}
+                  >
+                    重试
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="card-section">
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 12,
+                }}
+              >
+                <h3>已配置的 Hooks（按工作目录分组）</h3>
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  onClick={() => void revealHooksConfigLocation()}
+                >
+                  <FileCode size={14} /> 打开配置位置 (~/.codex/hooks.json)
+                </button>
+              </div>
+
+              {hooksLoading && hookGroups.length === 0 ? (
+                <div className="empty-hint" style={{ marginTop: 12 }}>
+                  正在从 app-server 读取 hooks/list...
+                </div>
+              ) : hookTotalCount === 0 ? (
+                <div className="empty-hint" style={{ marginTop: 12 }}>
+                  <div>
+                    {hooksError
+                      ? "无法从 app-server 读取 Hooks 配置，请确认 App-Server 已连接后点击「重新读取」。"
+                      : "当前工作区没有配置 Hooks（可在 ~/.codex/hooks.json 或 config.toml 的 [hooks] 中配置）。"}
+                  </div>
+                  <div
+                    style={{
+                      marginTop: 10,
+                      display: "flex",
+                      justifyContent: "center",
+                      gap: 8,
+                    }}
+                  >
+                    <button
+                      type="button"
+                      className="secondary-btn"
+                      onClick={() => void revealHooksConfigLocation()}
+                    >
+                      <FileCode size={14} /> 打开配置位置
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-btn"
+                      onClick={() => void loadHooks()}
+                    >
+                      <RefreshCw size={14} /> 重新读取
+                    </button>
+                  </div>
+                  {(hooksListResult?.warnings.length ?? 0) > 0 && (
+                    <div style={{ marginTop: 10, textAlign: "left" }}>
+                      {hooksListResult?.warnings.map((warning, index) => (
+                        <div
+                          key={`hook-warning-${warning.cwd}-${index}`}
+                          className="tag-badge"
+                          style={{
+                            display: "block",
+                            color: "#f59e0b",
+                            marginTop: 6,
+                            whiteSpace: "normal",
+                            fontFamily: "inherit",
+                            lineHeight: 1.5,
+                          }}
+                        >
+                          ⚠️ [{warning.cwd}] {warning.message}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 16,
+                    marginTop: 12,
+                  }}
+                >
+                  {hookGroups.map((group) => (
+                    <div key={group.cwd || "(default-cwd)"}>
+                      <div className="item-card-meta" style={{ marginBottom: 8 }}>
+                        <strong className="mono-text">
+                          {group.cwd || "(app-server 默认 cwd)"}
+                        </strong>
+                        <span>{group.hooks.length} 个 Hook</span>
+                      </div>
+                      {group.warnings.map((warning, index) => (
+                        <div
+                          key={`group-warning-${index}`}
+                          className="tag-badge"
+                          style={{
+                            display: "block",
+                            color: "#f59e0b",
+                            marginBottom: 6,
+                            whiteSpace: "normal",
+                            fontFamily: "inherit",
+                            lineHeight: 1.5,
+                          }}
+                        >
+                          ⚠️ {warning}
+                        </div>
+                      ))}
+                      {group.errors.map((error, index) => (
+                        <div
+                          key={`group-error-${index}`}
+                          className="tag-badge"
+                          style={{
+                            display: "block",
+                            color: "#ef4444",
+                            marginBottom: 6,
+                            whiteSpace: "normal",
+                            fontFamily: "inherit",
+                            lineHeight: 1.5,
+                          }}
+                        >
+                          ❌ {error.message}
+                          {error.path ? ` (${error.path})` : ""}
+                        </div>
+                      ))}
+                      {group.hooks.length === 0 ? (
+                        <div className="empty-hint">该目录下没有解析出的 Hook。</div>
+                      ) : (
+                        <div className="item-cards-list">
+                          {group.hooks.map((hook) => (
+                            <div
+                              key={hook.id}
+                              className="item-card"
+                              style={{ opacity: hook.enabled ? 1 : 0.6 }}
+                            >
+                              <div className="item-card-main">
+                                <div className="item-card-title-row">
+                                  <strong>{hook.name}</strong>
+                                  <span className="tag-badge accent">
+                                    {HOOK_EVENT_LABELS[hook.event] || hook.event || "unknown event"}
+                                  </span>
+                                  {hook.handlerType && (
+                                    <span className="tag-badge">
+                                      {HOOK_HANDLER_LABELS[hook.handlerType] || hook.handlerType}
+                                    </span>
+                                  )}
+                                  <span
+                                    className={`tag-badge ${
+                                      hook.enabled ? "accent" : ""
+                                    }`}
+                                  >
+                                    {hook.enabled ? "已启用" : "已停用"}
+                                  </span>
+                                  {hook.source && (
+                                    <span className="tag-badge">
+                                      {HOOK_SOURCE_LABELS[hook.source] || hook.source}
+                                    </span>
+                                  )}
+                                  {hook.trustStatus &&
+                                    hook.trustStatus !== "trusted" &&
+                                    hook.trustStatus !== "managed" && (
+                                      <span
+                                        className="tag-badge"
+                                        style={{ color: "#f59e0b" }}
+                                      >
+                                        {HOOK_TRUST_LABELS[hook.trustStatus] ||
+                                          hook.trustStatus}
+                                      </span>
+                                    )}
+                                  {hook.isManaged && (
+                                    <span className="tag-badge">托管</span>
+                                  )}
+                                </div>
+                                {hook.command && (
+                                  <div className="item-card-meta">
+                                    <span
+                                      className="mono-text"
+                                      style={{ wordBreak: "break-all" }}
+                                    >
+                                      {hook.command}
+                                    </span>
+                                  </div>
+                                )}
+                                <div className="item-card-meta">
+                                  <span>
+                                    matcher: {hook.matcher ? hook.matcher : "全部"}
+                                  </span>
+                                  {typeof hook.timeoutSec === "number" && (
+                                    <span>超时: {hook.timeoutSec}s</span>
+                                  )}
+                                  {hook.async && <span>async</span>}
+                                  {hook.pluginId && (
+                                    <span>plugin: {hook.pluginId}</span>
+                                  )}
+                                  {hook.statusMessage && (
+                                    <span>{hook.statusMessage}</span>
+                                  )}
+                                </div>
+                                {hook.sourcePath && (
+                                  <div className="item-card-meta">
+                                    <span>
+                                      来源: <code>{hook.sourcePath}</code>
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="card-section">
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
+                  gap: 12,
+                }}
+              >
+                <div>
+                  <h3>实时运行状态 (hook/started · hook/completed)</h3>
+                  <p className="card-subtitle-desc">
+                    通过 app-server 通知实时记录最近 20 次 Hook 运行；运行中的记录会在
+                    hook/completed 到达时原地更新为最终状态与耗时。
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  onClick={() => setHookRuns([])}
+                  disabled={hookRuns.length === 0}
+                >
+                  <Trash2 size={14} /> 清空记录
+                </button>
+              </div>
+              {hookRuns.length === 0 ? (
+                <div className="empty-hint" style={{ marginTop: 12 }}>
+                  暂无 Hook 运行记录：Hooks 会在智能体会话生命周期事件（如 sessionStart /
+                  preToolUse / postToolUse / stop）触发时运行。
+                </div>
+              ) : (
+                <div className="item-cards-list" style={{ marginTop: 12 }}>
+                  {hookRuns.map((run, index) => {
+                    const running =
+                      run.status === "running" || run.kind === "started";
+                    const statusColor =
+                      run.status === "failed" || run.status === "blocked"
+                        ? "#ef4444"
+                        : run.status === "stopped"
+                          ? "#f59e0b"
+                          : running
+                            ? "#3b82f6"
+                            : "#10b981";
+                    return (
+                      <div
+                        key={`${run.hookId || run.eventName || "run"}-${
+                          run.receivedAt
+                        }-${index}`}
+                        className="item-card"
+                      >
+                        <div className="item-card-main">
+                          <div className="item-card-title-row">
+                            <strong>{resolveHookName(run)}</strong>
+                            <span className="tag-badge accent">
+                              {HOOK_EVENT_LABELS[run.eventName || ""] ||
+                                run.eventName ||
+                                "event"}
+                            </span>
+                            <span
+                              className="tag-badge"
+                              style={{ color: statusColor }}
+                            >
+                              {running
+                                ? "⏳ 运行中"
+                                : HOOK_RUN_STATUS_LABELS[run.status || ""] ||
+                                  run.status ||
+                                  "已完成"}
+                            </span>
+                            {run.handlerType && (
+                              <span className="tag-badge">
+                                {HOOK_HANDLER_LABELS[run.handlerType] ||
+                                  run.handlerType}
+                              </span>
+                            )}
+                            {run.source && (
+                              <span className="tag-badge">
+                                {HOOK_SOURCE_LABELS[run.source] || run.source}
+                              </span>
+                            )}
+                            <span className="tag-badge">
+                              {formatClockTime(run.receivedAt)}
+                            </span>
+                            <span className="tag-badge">
+                              耗时: {formatDurationMs(run.durationMs)}
+                            </span>
+                          </div>
+                          {(run.statusMessage ||
+                            (run.entries && run.entries.length > 0)) && (
+                            <div className="item-card-meta">
+                              {run.statusMessage && (
+                                <span>{run.statusMessage}</span>
+                              )}
+                              {(run.entries || []).slice(0, 3).map((entry, entryIndex) => (
+                                <span
+                                  key={`entry-${entryIndex}`}
+                                  style={{
+                                    color:
+                                      entry.kind === "error"
+                                        ? "#ef4444"
+                                        : undefined,
+                                  }}
+                                >
+                                  [{entry.kind}]{" "}
+                                  {entry.text.length > 180
+                                    ? `${entry.text.slice(0, 180)}…`
+                                    : entry.text}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="card-section">
+              <h3>Hook 执行开关（本地桌面偏好）</h3>
+              <p className="card-subtitle-desc">
+                Hooks 的实际启用由 codex config 的 `[features].hooks` 与 hooks.json
+                定义控制（默认启用）。此开关仅保存桌面端本地偏好，不会写入 codex 配置。
+              </p>
+              <div className="settings-toggle-row">
+                <div className="settings-toggle-label">
+                  <span className="settings-toggle-title">
+                    启用生命周期挂钩提醒（本地偏好）
+                  </span>
+                  <span className="settings-toggle-desc">
+                    保留原有开关状态；实际 Hooks 执行仍以 app-server 配置为准
+                  </span>
                 </div>
                 <label className="switch-control">
                   <input
@@ -2874,68 +3445,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </div>
             </div>
 
-            <div className="card-section">
-              <h3>挂钩事件脚本配置</h3>
-              <div className="form-field" style={{ marginBottom: 14 }}>
-                <label>
-                  <strong>1. 会话启动前挂钩 (Pre-Session Hook)</strong>
-                  <span style={{ fontSize: 11, color: "var(--text-tertiary)", marginLeft: 6 }}>
-                    新会话开启或切换目录时在工作区执行
-                  </span>
-                </label>
-                <input
-                  type="text"
-                  placeholder="例如: git fetch origin && git status"
-                  value={preSessionHook}
-                  onChange={(e) => setPreSessionHook(e.target.value)}
-                />
-              </div>
-
-              <div className="form-field" style={{ marginBottom: 14 }}>
-                <label>
-                  <strong>2. 代码修改后挂钩 (Post-Edit Hook)</strong>
-                  <span style={{ fontSize: 11, color: "var(--text-tertiary)", marginLeft: 6 }}>
-                    智能体每完成一轮文件修改后自动触发
-                  </span>
-                </label>
-                <input
-                  type="text"
-                  placeholder="例如: npm run format || cargo fmt || true"
-                  value={postEditHook}
-                  onChange={(e) => setPostEditHook(e.target.value)}
-                />
-              </div>
-
-              <div className="form-field" style={{ marginBottom: 14 }}>
-                <label>
-                  <strong>3. 测试失败自愈挂钩 (Test-Failure Self-Healing Hook)</strong>
-                  <span style={{ fontSize: 11, color: "var(--text-tertiary)", marginLeft: 6 }}>
-                    单元测试未通过时自动运行诊断脚本并补充上下文
-                  </span>
-                </label>
-                <input
-                  type="text"
-                  placeholder="例如: npm test -- --bail"
-                  value={testFailHook}
-                  onChange={(e) => setTestFailHook(e.target.value)}
-                />
-              </div>
-
-              <div className="form-field">
-                <label>
-                  <strong>4. 高危命令审计挂钩 (Pre-Tool Hook)</strong>
-                  <span style={{ fontSize: 11, color: "var(--text-tertiary)", marginLeft: 6 }}>
-                    工具与命令执行前执行前置合规审查
-                  </span>
-                </label>
-                <input
-                  type="text"
-                  placeholder="留空则跳过前置审查"
-                  value={preToolHook}
-                  onChange={(e) => setPreToolHook(e.target.value)}
-                />
-              </div>
-            </div>
+            {renderBottomBar()}
           </div>
         )}
 
