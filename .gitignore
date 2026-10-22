@@ -12,3 +12,4 @@ src-tauri/gen/
 src-tauri/.cargo/
 dist-artifacts/
 .DS_Store
+.ref/

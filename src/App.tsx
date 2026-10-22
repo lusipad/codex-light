@@ -57,6 +57,8 @@ import { MiniPetWidget } from "./components/MiniPetWidget";
 import { QuickSearchModal } from "./components/QuickSearchModal";
 import { GoalSetupModal, GoalSetupConfig } from "./components/GoalSetupModal";
 import { GoalProgressBanner } from "./components/GoalProgressBanner";
+import { ApprovalCenter } from "./components/ApprovalCenter";
+import { TokenUsageSnapshot, mergeTokenUsage, NOTIFICATION } from "./protocol";
 
 const STARTER_PROMPTS = [
   {
@@ -214,9 +216,11 @@ export const App: React.FC = () => {
   const [pinnedThreadIds, setPinnedThreadIds] = useState<string[]>([]);
   const [workspaceHints, setWorkspaceHints] = useState<Record<string, string>>({});
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const [activeTurnId, setActiveTurnId] = useState<string | null>(null);
   const [turns, setTurns] = useState<TurnData[]>([]);
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
   const [pendingRequests, setPendingRequests] = useState<PendingServerRequest[]>([]);
+  const [tokenUsage, setTokenUsage] = useState<TokenUsageSnapshot | null>(null);
   const [inboxItems, setInboxItems] = useState<InboxNotificationItem[]>([]);
 
   // Composer State
@@ -310,6 +314,10 @@ export const App: React.FC = () => {
 
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const timelineScrollRef = useRef<HTMLDivElement | null>(null);
+  const activeThreadIdRef = useRef<string | null>(null);
+  activeThreadIdRef.current = activeThreadId;
+  const activeTurnIdRef = useRef<string | null>(null);
+  activeTurnIdRef.current = activeTurnId;
 
   const activeWorkspace = useMemo(() => {
     return workspaces.find((w) => w.active) || workspaces[0] || null;
@@ -455,6 +463,15 @@ export const App: React.FC = () => {
     }
   }, []);
 
+  const refreshPendingRequests = useCallback(async () => {
+    try {
+      const list = await tauriInvoke<PendingServerRequest[]>("app_server_pending_requests");
+      if (Array.isArray(list)) setPendingRequests(list);
+    } catch (e) {
+      console.warn("app_server_pending_requests failed:", e);
+    }
+  }, []);
+
   const refreshConfigOverview = useCallback(async () => {
     try {
       const overview = await tauriInvoke<CodexConfigOverview>("config_read");
@@ -514,6 +531,7 @@ export const App: React.FC = () => {
         if (st.connected) {
           refreshModels();
           refreshThreads();
+          refreshPendingRequests();
         }
       })
       .catch((err) => {
@@ -532,6 +550,7 @@ export const App: React.FC = () => {
         if (status.connected) {
           refreshModels();
           refreshThreads();
+          refreshPendingRequests();
         }
       }
     );
@@ -545,6 +564,7 @@ export const App: React.FC = () => {
         if (method === "turn/started") {
           setIsStreaming(true);
           const turnId = params?.turn?.id || params?.turnId || `turn-${Date.now()}`;
+          setActiveTurnId(turnId);
           setTurns((prev) => {
             if (prev.some((t) => t.id === turnId)) return prev;
             return [
@@ -561,6 +581,9 @@ export const App: React.FC = () => {
           setIsStreaming(false);
           playNotificationChime("done");
           const turnId = params?.turn?.id || params?.turnId;
+          if (!turnId || turnId === activeTurnIdRef.current) {
+            setActiveTurnId(null);
+          }
           const duration = params?.turn?.durationMs || params?.turnDurationMs;
           setTurns((prev) =>
             prev.map((t) =>
@@ -695,6 +718,47 @@ export const App: React.FC = () => {
             lastTurn.items = items;
             return list;
           });
+        } else if (method === NOTIFICATION.SERVER_REQUEST_RESOLVED) {
+          const resolvedId = params?.requestId ?? params?.id ?? params?.request_id;
+          if (resolvedId !== undefined && resolvedId !== null) {
+            setPendingRequests((prev) =>
+              prev.filter((r) => String(r.id) !== String(resolvedId))
+            );
+          }
+        } else if (method === NOTIFICATION.THREAD_TOKEN_USAGE) {
+          setTokenUsage((prev) => mergeTokenUsage(prev, params));
+        } else if (method === NOTIFICATION.THREAD_NAME_UPDATED) {
+          const tid = params?.threadId ?? params?.thread_id;
+          const name = params?.name ?? params?.threadName ?? null;
+          if (tid) {
+            setThreads((prev) =>
+              prev.map((t) => (t.id === tid ? { ...t, name } : t))
+            );
+          }
+        } else if (
+          method === NOTIFICATION.THREAD_ARCHIVED ||
+          method === NOTIFICATION.THREAD_DELETED
+        ) {
+          const tid = params?.threadId ?? params?.thread_id ?? params?.thread?.id;
+          if (tid) {
+            setThreads((prev) => prev.filter((t) => t.id !== tid));
+            if (activeThreadIdRef.current === tid) {
+              setActiveThreadId(null);
+              setTurns([]);
+              setActiveRoute("home");
+            }
+          }
+        } else if (method === NOTIFICATION.THREAD_UNARCHIVED) {
+          refreshThreads();
+        } else if (
+          method === NOTIFICATION.WARNING ||
+          method === NOTIFICATION.CONFIG_WARNING ||
+          method === NOTIFICATION.DEPRECATION_NOTICE ||
+          method === NOTIFICATION.GUARDIAN_WARNING
+        ) {
+          console.warn(`[${method}]`, params?.message ?? params);
+        } else if (method === NOTIFICATION.ERROR) {
+          console.error("[app-server error]", params?.message ?? params);
         }
       }
     );
@@ -973,6 +1037,7 @@ export const App: React.FC = () => {
       try {
         await callAppServer("turn/steer", {
           threadId: activeThreadId,
+          expectedTurnId: activeTurnIdRef.current,
           input: [{ type: "text", text }],
         });
         return;
@@ -1010,12 +1075,16 @@ export const App: React.FC = () => {
         permissionMode === "full"
           ? "danger-full-access"
           : "workspace-write";
+      // AskForApproval: untrusted | on-request | granular | never
       const approvalPolicy =
-        permissionMode === "ask"
-          ? "on-request"
-          : permissionMode === "full"
-          ? "never"
-          : "on-failure";
+        permissionMode === "full" ? "never" : "on-request";
+      // ApprovalsReviewer: user | auto_review | guardian_subagent
+      const approvalsReviewer =
+        permissionMode === "auto" ? "auto_review" : "user";
+      const sandboxPolicy =
+        permissionMode === "full"
+          ? { type: "dangerFullAccess" }
+          : { type: "workspaceWrite", networkAccess: sessionAllowNetwork };
 
       let currentThreadId = activeThreadId;
       if (!currentThreadId) {
@@ -1023,6 +1092,7 @@ export const App: React.FC = () => {
           cwd: targetCwd || undefined,
           model: selectedModelId,
           approvalPolicy,
+          approvalsReviewer,
           sandbox: sandboxMode,
         });
         currentThreadId =
@@ -1037,20 +1107,20 @@ export const App: React.FC = () => {
         refreshThreads();
       }
 
-      await callAppServer("turn/start", {
+      const turnRes = await callAppServer<any>("turn/start", {
         threadId: currentThreadId,
+        cwd: targetCwd || undefined,
         input: [{ type: "text", text }],
         model: selectedModelId,
         effort: reasoningEffort === "extra_high" ? "xhigh" : reasoningEffort,
-        temperature: sessionTemperature,
-        topP: sessionTopP,
-        maxTokens: sessionMaxTokens,
-        webSearch: sessionWebSearch,
-        allowNetwork: sessionAllowNetwork,
-        outputVerbosity: sessionVerbosity,
         approvalPolicy,
-        serviceTier: fastMode ? "priority" : undefined,
+        approvalsReviewer,
+        sandboxPolicy,
+        serviceTier: fastMode ? "priority" : null,
       });
+      const startedTurnId =
+        turnRes?.turn?.id || turnRes?.turnId || turnRes?.id || null;
+      if (startedTurnId) setActiveTurnId(String(startedTurnId));
     } catch (err: any) {
       console.error("Turn start failed:", err);
       setIsStreaming(false);
@@ -1295,12 +1365,17 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
       return;
     }
     try {
-      await callAppServer("turn/interrupt", { threadId: activeThreadId });
-    } catch {
-      // ignore
-    } finally {
-      setIsStreaming(false);
+      const turnId = activeTurnIdRef.current;
+      if (turnId) {
+        await callAppServer("turn/interrupt", {
+          threadId: activeThreadId,
+          turnId,
+        });
+      }
+    } catch (e) {
+      console.warn("turn/interrupt failed:", e);
     }
+    // 不在这里强制 setIsStreaming(false)：真实状态由 turn/completed 通知驱动
   }, [activeThreadId]);
 
   const handleSteerTurn = useCallback(
@@ -1309,7 +1384,8 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
       try {
         await callAppServer("turn/steer", {
           threadId: activeThreadId,
-          text: text.trim(),
+          expectedTurnId: activeTurnIdRef.current,
+          input: [{ type: "text", text: text.trim() }],
         });
         setTurns((prev) => [
           ...prev,
@@ -1340,36 +1416,37 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
     [activeThreadId]
   );
 
-  const handleRespondUserInput = useCallback(
-    async (requestId: any, responseValue: any) => {
-      setPendingRequests((prev) => prev.filter((r) => r.id !== requestId));
+  const handleRespondServerRequest = useCallback(
+    async (requestId: any, result: any) => {
+      setPendingRequests((prev) =>
+        prev.filter((r) => String(r.id) !== String(requestId))
+      );
       try {
         await tauriInvoke("app_server_respond", {
           id: requestId,
-          result: responseValue,
+          result,
           error: null,
         });
       } catch (e) {
-        console.error("Failed to respond to requestUserInput:", e);
+        console.error("Failed to respond to server request:", e);
       }
     },
     []
   );
 
-  const handleApprovalDecision = useCallback(
-    async (
-      requestId: any,
-      decision: "accept" | "acceptForSession" | "decline"
-    ) => {
-      setPendingRequests((prev) => prev.filter((r) => r.id !== requestId));
+  const handleRespondServerRequestError = useCallback(
+    async (requestId: any, message: string) => {
+      setPendingRequests((prev) =>
+        prev.filter((r) => String(r.id) !== String(requestId))
+      );
       try {
         await tauriInvoke("app_server_respond", {
           id: requestId,
-          result: { decision },
-          error: null,
+          result: null,
+          error: { code: -32000, message },
         });
       } catch (e) {
-        console.error("Failed to respond to server request:", e);
+        console.error("Failed to reject server request:", e);
       }
     },
     []
@@ -2618,138 +2695,12 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
                   );
                 })}
 
-                {/* Pending Server Requests (Both Approvals & Interactive AskUserInput) */}
-                {pendingRequests.map((req) => {
-                  const isUserInput =
-                    req.method === "item/tool/requestUserInput" ||
-                    req.method === "tool/requestUserInput" ||
-                    req.method === "ask_user" ||
-                    Boolean(req.params?.question || req.params?.questions);
-
-                  if (isUserInput) {
-                    const questionText =
-                      req.params?.question ||
-                      (Array.isArray(req.params?.questions)
-                        ? req.params.questions[0]?.question
-                        : "Codex 需要您的选择或输入以继续：");
-                    const options = Array.isArray(req.params?.options)
-                      ? req.params.options
-                      : Array.isArray(req.params?.questions?.[0]?.options)
-                        ? req.params.questions[0].options
-                        : [];
-
-                    return (
-                      <div key={req.id} className="approval-card question-card">
-                        <div className="approval-header">
-                          <OpenAIIcon size={18} />
-                          <strong>Codex 提问询问</strong>
-                        </div>
-                        <div className="question-text">{questionText}</div>
-                        {options.length > 0 && (
-                          <div className="question-options-list">
-                            {options.map((opt: any, oIdx: number) => {
-                              const optVal =
-                                typeof opt === "string" ? opt : opt?.label || opt?.text || "";
-                              return (
-                                <button
-                                  key={oIdx}
-                                  type="button"
-                                  className="question-opt-btn"
-                                  onClick={() =>
-                                    handleRespondUserInput(req.id, {
-                                      answers: [optVal],
-                                      selected: optVal,
-                                    })
-                                  }
-                                >
-                                  {optVal}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        )}
-                        <div className="question-input-row">
-                          <input
-                            type="text"
-                            placeholder="输入自定义答复并发送..."
-                            value={userInputAnswers[String(req.id)] || ""}
-                            onChange={(e) =>
-                              setUserInputAnswers((prev) => ({
-                                ...prev,
-                                [String(req.id)]: e.target.value,
-                              }))
-                            }
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                const ans =
-                                  userInputAnswers[String(req.id)]?.trim() || "";
-                                if (ans) {
-                                  handleRespondUserInput(req.id, {
-                                    answers: [ans],
-                                    selected: ans,
-                                  });
-                                }
-                              }
-                            }}
-                          />
-                          <button
-                            type="button"
-                            className="primary-btn compact"
-                            onClick={() => {
-                              const ans =
-                                userInputAnswers[String(req.id)]?.trim() || "";
-                              handleRespondUserInput(req.id, {
-                                answers: [ans],
-                                selected: ans,
-                              });
-                            }}
-                          >
-                            发送答复
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  }
-
-                  return (
-                    <div key={req.id} className="approval-card">
-                      <div className="approval-header">
-                        <ShieldIcon size={18} />
-                        <span>需要批准操作 ({req.method})</span>
-                      </div>
-                      <div className="approval-details">
-                        {req.params?.command
-                          ? `$ ${req.params.command}`
-                          : JSON.stringify(req.params, null, 2)}
-                      </div>
-                      <div className="approval-btn-group">
-                        <button
-                          type="button"
-                          className="btn-approve"
-                          onClick={() => handleApprovalDecision(req.id, "accept")}
-                        >
-                          允许一次
-                        </button>
-                        <button
-                          type="button"
-                          className="btn-session"
-                          onClick={() =>
-                            handleApprovalDecision(req.id, "acceptForSession")
-                          }
-                        >
-                          本会话始终允许
-                        </button>
-                        <button
-                          type="button"
-                          className="btn-decline"
-                          onClick={() => handleApprovalDecision(req.id, "decline")}
-                        >
-                          拒绝
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
+                {/* Pending Server Requests: approvals / permissions / user input / option picker */}
+                <ApprovalCenter
+                  requests={pendingRequests}
+                  onRespond={handleRespondServerRequest}
+                  onRespondError={handleRespondServerRequestError}
+                />
               </div>
             </div>
 

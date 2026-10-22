@@ -1,0 +1,1536 @@
+{
+  "generatedFrom": "Codex Desktop Electron 26.928.21956 (C:\\Users\\lus\\Codex\\_internal\\app\\resources\\app.asar)",
+  "generatedAt": "2026-10-22T22:58:24.857Z",
+  "modules": [
+    {
+      "id": "app-shell",
+      "title": "应用外壳：窗口 / 顶栏 / 托盘 / 更新 / About",
+      "items": [
+        {
+          "name": "主窗口 + 多窗口",
+          "text": "New Window（File 菜单，无默认快捷键）; Open in New Window; 支持独立标签页窗口与 Popout Window",
+          "status": "in-scope",
+          "evidence": "codex.command.newWindow / openThreadInNewWindow; main-DkWgQSQe.js MJe() 菜单构建器; appShell.tabs.dragNewWindowCue"
+        },
+        {
+          "name": "应用顶栏更新入口",
+          "text": "Update available / Downloading {percent}% / Restart to update；确认文案 \"Update {appName} now?\"",
+          "status": "in-scope",
+          "evidence": "appHeader.updateAndRestart, appHeader.installingUpdate (app-initial)"
+        },
+        {
+          "name": "更新安装进度与重启提示",
+          "text": "Installing update / {appName} will restart when installation finishes; Restart required in N days",
+          "status": "in-scope",
+          "evidence": "appUpdate.installProgress.title, appUpdate.relaunchNotice.titleDays (appUpdate 组)"
+        },
+        {
+          "name": "关于对话框",
+          "text": "About {appName} / Version {version} • Released {releaseDate} / Build information",
+          "status": "in-scope",
+          "evidence": "main-DkWgQSQe.js about 对话框 (codex.aboutDialog.*); asar-files/native-menu-zh-CN.json"
+        },
+        {
+          "name": "退出确认",
+          "text": "Quit；文案区分进行中本地会话 / 启用中的计划任务 / 待处理 worktree 聊天",
+          "status": "in-scope",
+          "evidence": "main-DkWgQSQe.js dJe() 退出确认组装 (desktop.quitConfirmation)"
+        },
+        {
+          "name": "系统托盘/菜单栏",
+          "text": "Tray tooltip = app name；托盘菜单: 打开主窗口 / 新会话 / 最近会话 / 发送反馈；macOS 菜单栏常驻设置",
+          "status": "in-scope",
+          "evidence": "main-DkWgQSQe.js cQe() Tray 构建; settings.general.macMenuBar.*"
+        },
+        {
+          "name": "Deep link",
+          "text": "codex://settings/connections 等深链；从剪贴板打开 Deeplink（Debug 菜单）",
+          "status": "in-scope",
+          "evidence": "main-DkWgQSQe.js r8=`codex://settings/connections`; mt=Open Deeplink from Clipboard"
+        },
+        {
+          "name": "文件/文件夹拖拽",
+          "text": "codex_desktop:start-file-drag / start-link-drag IPC",
+          "status": "in-scope",
+          "evidence": ".vite/build/preload.js codex_desktop:start-file-drag"
+        },
+        {
+          "name": "Popout Window（实验性）",
+          "text": "Popout Window hotkey；独立小窗首页/线程页；projectless 默认",
+          "status": "in-scope",
+          "evidence": "settings.general.popoutWindow / experimentalFeatures.hotoutWindowHotkey; hotkeyWindow.* 组"
+        },
+        {
+          "name": "Mini 悬浮窗与宠物",
+          "text": "Show Mini (Alt+Space)；Wake/Tuck Away Mini；Mini 管理线程并提示需要关注的内容；宠物可选/可自制/尺寸/可见性",
+          "status": "in-scope",
+          "evidence": "codex.command.showMiniOverlay (Alt+Space); settings.pets.* / settings.mini.*"
+        }
+      ]
+    },
+    {
+      "id": "sidebar-ia",
+      "title": "左侧栏 IA：导航项 / 会话分组 / 项目 / 归档 / 活动视图",
+      "items": [
+        {
+          "name": "产品模式切换",
+          "text": "ChatGPT / ChatGPT Work / Codex / Home；Codex 描述 \"Build, debug, and ship\"，Work 描述 \"Create, learn, and explore\"",
+          "status": "in-scope",
+          "evidence": "sidebarElectron.productMode.*"
+        },
+        {
+          "name": "搜索入口",
+          "text": "Search（打开命令菜单/会话搜索）",
+          "status": "in-scope",
+          "evidence": "sidebarElectron.search; codex.commandMenu.*"
+        },
+        {
+          "name": "新建聊天",
+          "text": "New chat；Start new task in {connection}；Start new chat in {folder}",
+          "status": "in-scope",
+          "evidence": "sidebarElectron.newThread / newThreadInConnection / newThreadInGroup"
+        },
+        {
+          "name": "会话分组",
+          "text": "Pinned / Chats / Priority（活动视图） / Unreads ；分组菜单 Sort chats by: Created / Last updated / Manual order",
+          "status": "in-scope",
+          "evidence": "sidebarElectron.pinnedThreads, recentChats, priorityThreads.*, unreads.*, chatsSortMenu.title, sortMenu.*"
+        },
+        {
+          "name": "活动视图（Activity）",
+          "text": "View activity；显示 unread / active / awaiting；过滤 Chat / Work / Cloud / Codex；Mark all as read；Clear read chats",
+          "status": "in-scope",
+          "evidence": "sidebarElectron.activityNavigation / priorityThreads.*"
+        },
+        {
+          "name": "项目列表",
+          "text": "Projects；项目 hover card: active/unread/waiting 计数、Pin project、Edit project、Open in Finder/Explorer/File Manager、Remove project；缺失目录提示 \"This project folder was deleted or moved\"",
+          "status": "in-scope",
+          "evidence": "sidebarElectron.projectsNavLink / projectHoverCard.* / removeProject.* / missingWorkspaceRoot"
+        },
+        {
+          "name": "自定义分区",
+          "text": "Custom sections: New section / Edit section / Group chats and projects however you like；Mark all as read / Archive chats；支持 section 内 New chat",
+          "status": "in-scope",
+          "evidence": "sidebarElectron.customSections.*"
+        },
+        {
+          "name": "连接分组",
+          "text": "By connection；Local / Remote（SSH/WSL）/ Cloud (Legacy)；连接状态: Connection failed / Reconnecting…；Edit connection…",
+          "status": "in-scope",
+          "evidence": "sidebarElectron.connectionGroup.* / connectionStatus.*"
+        },
+        {
+          "name": "侧边栏导航链接",
+          "text": "Home、Scheduled、Projects、Skills、Plugins、Code Review、Pull requests、Archive、Connections、Debug",
+          "status": "in-scope",
+          "evidence": "sidebarElectron.homeNavigation / inboxRouteNavLink / projectsNavLink / skillsRouteNavLink / skillsAppsRouteNavLink / codeReviewRouteNavLink / pullRequestsRouteNavLink / archiveNavLink / connectionsNavLink / debugNavLink"
+        },
+        {
+          "name": "会话行操作",
+          "text": "Rename chat（标题+emoji）/ Pin / Unpin / Mark as read/unread / Archive chat / Permanently delete（\"This permanently deletes the task and its subagent tasks. This cannot be undone.\"）/ Copy 路径类操作",
+          "status": "in-scope",
+          "evidence": "sidebarElectron.renameThread* / pinThread* / markThreadUnread / archiveThread / deleteThreadDialog.* / changeThreadEmoji"
+        },
+        {
+          "name": "批量操作",
+          "text": "Archive chats / Pin chats / Unpin chats；归档确认含运行中与计划任务告警",
+          "status": "in-scope",
+          "evidence": "codex.sidebarBulkContextMenu.*; sidebarElectron.archiveSelectedThreads.*"
+        }
+      ]
+    },
+    {
+      "id": "home",
+      "title": "Home 首页",
+      "items": [
+        {
+          "name": "问候语/主标题",
+          "text": "Let’s build / What should we build? / What should we work on? / What should we build in {projectName}?",
+          "status": "in-scope",
+          "evidence": "home.hero.* (app-primary)"
+        },
+        {
+          "name": "首页 Composer",
+          "text": "完整 composer 嵌入首页；空状态为 Working… / Work with ChatGPT",
+          "status": "in-scope",
+          "evidence": "home-composer-route-e1c5f7c975ae.js; composer.placeholder.*"
+        },
+        {
+          "name": "快捷建议",
+          "text": "Automate routine and recurring work / Automate my morning prep / Automate a recurring report / Automate triage / Figure out next steps… / Create a new document/presentation/spreadsheet/website；可 Dismiss / Refresh suggestions",
+          "status": "in-scope",
+          "evidence": "home.newChatPageSuggestions.* / home.starterPrompts.* / home.ambientSuggestions.*"
+        },
+        {
+          "name": "最近项目/线程",
+          "text": "首页通过侧边栏 Pinned/Recent 与 command menu 的 Recent chats 提供最近入口；command menu 空态 \"Create a chat to get started!\"",
+          "status": "in-scope",
+          "evidence": "codex.commandMenu.recentThreadsGroup / noChatsEmptyState"
+        }
+      ]
+    },
+    {
+      "id": "projects",
+      "title": "项目页 / 项目创建",
+      "items": [
+        {
+          "name": "项目列表",
+          "text": "Projects；列 Name/Updated；空态 \"Create a project to organize chats and give ChatGPT access to folders on your computer.\"；搜索 projects",
+          "status": "in-scope",
+          "evidence": "projectsIndex.title / column.name / column.modified / empty.subtitle / search.placeholder"
+        },
+        {
+          "name": "创建项目",
+          "text": "Create project：Local（Edit, run, and test files on your computer）/ Remote（Choose a folder on a connected machine）/ Cloud（Work through ideas and tasks without setup）；多 source folders + Primary folder（primary 用于 AGENTS.md/config.toml/skills）",
+          "status": "in-scope",
+          "evidence": "projectSetup.createProject.* / createLocalProject.*"
+        },
+        {
+          "name": "文件夹信任",
+          "text": "Trust this folder?（\"ChatGPT can read, edit, and execute files here. Folder settings can also run code automatically…\"）；untrusted 在 config.toml 中标记",
+          "status": "in-scope",
+          "evidence": "projectSetup.consent.*"
+        },
+        {
+          "name": "项目编辑/移除",
+          "text": "Edit project / Edit remote project；Remove project 仅从 app 移除，不动本地文件",
+          "status": "in-scope",
+          "evidence": "projectSetup.editLocalProject.* / sidebarElectron.removeProject.dialog.*"
+        },
+        {
+          "name": "项目内动作",
+          "text": "Project actions: 新建会话、Pin、Edit、Archive chats、Open in Finder/Explorer",
+          "status": "in-scope",
+          "evidence": "projectsIndex.projectActions / sidebarElectron.archiveProjectThreads.*"
+        }
+      ]
+    },
+    {
+      "id": "thread-view",
+      "title": "线程视图：turn/item、工具卡片、diff、审批、终端、侧面板",
+      "items": [
+        {
+          "name": "Turn/item 类型",
+          "text": "Codex app-server 协议 item：userMessage / agentMessage / reasoning / commandExecution / fileChange / mcpToolCall / webSearch / plan(todo-list) / contextCompaction",
+          "status": "in-scope",
+          "evidence": "app-shared-a906948d8868.js 字符串计数: commandExecution 65, fileChange 43, mcpToolCall 45, webSearch 10, agentMessage 62, userMessage 58, reasoning 243, todo-list 11, contextCompaction 15"
+        },
+        {
+          "name": "工具调用活动文案",
+          "text": "工具卡片按 state 显示 active/completed/following/failed 四态文案（如 \"Ran JavaScript\"、\"Created file\"、\"Searched design system\"、\"Opened pull request\"）；MCP 工具 900+ 条活动标签",
+          "status": "in-scope",
+          "evidence": "localConversation.mcpToolActivity.* / codexTool.*（mcp-tool-activity-label-9399bdb55cb6.js）"
+        },
+        {
+          "name": "子代理/后台任务面板",
+          "text": "Subagents / Background processes；is working / # working / # done；Open subagents；Stop all background terminals；Background terminal 标签",
+          "status": "in-scope",
+          "evidence": "localConversation.backgroundAgents.* / backgroundTasks.* / backgroundTerminals.*"
+        },
+        {
+          "name": "Plan 面板",
+          "text": "Plan（todo list 渲染）；thread goal（/goal）Up next / goal status",
+          "status": "in-scope",
+          "evidence": "codex.localConversation.plan.title; composer.threadGoal.*; turn/plan/updated 事件"
+        },
+        {
+          "name": "Changes（diff）面板",
+          "text": "Changes tab：Staged / Unstaged / Uncommitted；source: Last Turn / Branch / Commits / Branch comparison / Selected commit / Cloud changes；Expand/Collapse all diffs、Mark as viewed、Word wrap、Word diffs、Hide whitespace、Auto/split/unified diff、Diff markers、rich preview、Copy git apply command、Revert file/hunk/section",
+          "status": "in-scope",
+          "evidence": "codex.review.* / review.* / thread.sidePanel.diffTab"
+        },
+        {
+          "name": "文件树/文件查看器",
+          "text": "Hide/Show files、Filter changed files、Filter generated files、Jump to file；文件预览支持图片/PDF/Markdown/代码；Go to definition/implementations/references；Copy path（absolute/project/repo/relative）；Git blame；Open in GitHub",
+          "status": "in-scope",
+          "evidence": "codex.review.fileTree.* / review.fileSource.* / review.fileLanguage.*"
+        },
+        {
+          "name": "审批 UI",
+          "text": "Approval options: Allow once / Allow this conversation / Always allow / Deny；Reason 输入；Esc 拒绝 Enter 通过；Auto-review nudge \"Want fewer approval prompts?\" -> Approve for me / Keep manual approvals",
+          "status": "in-scope",
+          "evidence": "approvalRequestCard.* / approvalRequest.autoReviewNudge.*; codex.command.approval.approve|decline (Enter/Escape)"
+        },
+        {
+          "name": "提问 UI（ask user input）",
+          "text": "Request input panel: Question/Next/Previous/Skip/Submit；Recommended；free-form \"Type here\"；Continue/Dismiss 倒计时",
+          "status": "in-scope",
+          "evidence": "requestInputPanel.* (app-primary)"
+        },
+        {
+          "name": "终端",
+          "text": "Open terminal (CmdOrCtrl+J bottom panel / right panel)；terminal tabs；Default terminal location: Bottom/Right；Background terminal；Alt+Number 切换 source directory",
+          "status": "in-scope",
+          "evidence": "codex.command.toggleTerminal; settings.general.defaultTerminalLocation; codex.terminal.workspaceRootPromptHint.*; thread.bottomPanel.*"
+        },
+        {
+          "name": "右侧面板 / 多标签",
+          "text": "New tab / Files / Changes / Terminal / Browser / Side chat / page；拖拽 tab 到 left/right/bottom/new window、pin tab；tab 右键: Close/Close other tabs/Close tabs to the right/Pin to sidebar/Rename",
+          "status": "in-scope",
+          "evidence": "thread.sidePanel.* / appShell.tabs.* / codex.tabs.contextMenu.* / threadWorkspace.*"
+        },
+        {
+          "name": "线程顶栏操作",
+          "text": "Chat actions：Rename chat、Pin、Archive、Mark unread、Open in new window、New side chat、Copy（Copy as Markdown / Copy working directory / Copy deeplink）、Fork（Fork chat / Fork in same worktree / Fork in new worktree）",
+          "status": "in-scope",
+          "evidence": "threadHeader.moreActions / copyActions / forkActions; codex.command.*"
+        },
+        {
+          "name": "线程内查找",
+          "text": "Find (CmdOrCtrl+F)；Search chat / Search diffs / Search browser page；{active}/{matches} results",
+          "status": "in-scope",
+          "evidence": "codex.threadFindBar.*"
+        },
+        {
+          "name": "归档状态",
+          "text": "Archived chat（Undo/View）；继续需 unarchive：\"This chat is archived. To continue, unarchive it first\"",
+          "status": "in-scope",
+          "evidence": "codex.archiveInfo.* / localConversation.archived.*"
+        },
+        {
+          "name": "上下文用量/token 统计",
+          "text": "/status：Thread/Session/Context/Rate limit；Context: {used} used / {total}，{remaining}% left；Show context window usage 设置",
+          "status": "in-scope",
+          "evidence": "composer.statusPlain.* / composer.statusSlashCommand; settings.general.contextUsageIndicator.*"
+        },
+        {
+          "name": "自动滚动与渲染错误",
+          "text": "Scroll to bottom；Tab content couldn't render / Try again；Couldn't load messages",
+          "status": "in-scope",
+          "evidence": "localConversation.scrollToBottomButton / appShell.tabPanelRenderError / localConversation.historyLoadFailed"
+        },
+        {
+          "name": "消息编辑",
+          "text": "Edit last user message（失败提示 \"Failed to edit message\"）；编辑后重新发送",
+          "status": "in-scope",
+          "evidence": "localConversation.editLastMessageFailed"
+        },
+        {
+          "name": "报告/反馈",
+          "text": "Report response / Report a conversation / Report app；Send Feedback 对话框 + 诊断日志上传 + Feedback ID",
+          "status": "in-scope",
+          "evidence": "codexThreadReportDialog.* / feedback.dialog.*"
+        }
+      ]
+    },
+    {
+      "id": "composer",
+      "title": "Composer：模型/推理/速度/权限/沙箱/计划模式/附件/环境/提交",
+      "items": [
+        {
+          "name": "模型选择器",
+          "text": "Select model；Matching models / Default（Recommended set of models）/ Custom；recent models；locked 模型 \"Locked, opens access options\"；Daybreak 安全模型开关",
+          "status": "in-scope",
+          "evidence": "composer.modelPicker.* / composer.intelligenceDropdown.* / codex.command.composer.openModelPicker (Ctrl+Shift+M)"
+        },
+        {
+          "name": "Reasoning effort",
+          "text": "Reasoning（/reasoning）；档位 None / Minimal / Light / Medium / High / Extra High / Max / Ultra / Persistent；Extended/Standard（Work 模式）",
+          "status": "in-scope",
+          "evidence": "composer.mode.local.reasoning.*; composer.reasoningSlashCommand.title; codex.command.composer.cycleReasoningEffort/increase/decrease"
+        },
+        {
+          "name": "Speed tier",
+          "text": "Speed: Standard（Default speed）/ Fast（1.5x speed, increased usage）/ Ultrafast（fastest responses for latency-sensitive work）；Cycle speed 快捷键",
+          "status": "in-scope",
+          "evidence": "serviceTier.*; codex.command.composer.toggleFastMode"
+        },
+        {
+          "name": "Approval policy",
+          "text": "Approval policy: On request / On failure / Never ask for approval / Untrusted；Definition \"Choose when ChatGPT asks for approval\"",
+          "status": "in-scope",
+          "evidence": "settings.agent.configuration.approval.*（app-primary）"
+        },
+        {
+          "name": "Sandbox",
+          "text": "Sandbox settings: Read only / Workspace write / Full access；Allow network access（workspace write 时）；Windows Agent sandbox setup/update 提示",
+          "status": "in-scope",
+          "evidence": "settings.agent.configuration.sandbox.* / network.*; composer.submit.windowsSandbox*"
+        },
+        {
+          "name": "Permissions 菜单（composer）",
+          "text": "Default permissions / Full access（Show Full access in composer，二次确认 \"Make Full Access available?\"）；ultra + full access 二次确认",
+          "status": "in-scope",
+          "evidence": "settings.agent.permissionsMode.*; composer.mode.agentMode.ultraFullAccessConfirm.*"
+        },
+        {
+          "name": "Plan mode",
+          "text": "Toggle plan mode；/plan \"Turn plan mode on/off\"；placeholder \"Describe your task to generate a plan...\"；Plan 指示器",
+          "status": "in-scope",
+          "evidence": "composer.planSlashCommand.* / composer.planModeIndicator / codex.command.composer.togglePlanMode"
+        },
+        {
+          "name": "工作位置/运行目标",
+          "text": "Work in：This computer / Worktree / Remote / Cloud；Run location: On your computer（\"This chat stays on this computer\"）/ In the cloud（\"Continue across devices\"）；/local /worktree /cloud 斜杠命令",
+          "status": "in-scope",
+          "evidence": "composer.newTask.* / composer.runLocation.* / composer.mode.*SlashCommand"
+        },
+        {
+          "name": "项目选择器",
+          "text": "Change the project for this chat / Don't work in a project / New project / Search projects",
+          "status": "in-scope",
+          "evidence": "composer.localCwdDropdown.*；codex.command.composer.openProjectPicker"
+        },
+        {
+          "name": "环境选择（worktree）",
+          "text": "Environment / Default environment / Work without environment / Set up project / Environment settings",
+          "status": "in-scope",
+          "evidence": "composer.worktreeEnvironment.*"
+        },
+        {
+          "name": "附件",
+          "text": "Attach files and folders (CmdOrCtrl+U)；Add photos；Appshot capture；Paste text attachment；文件大小/类型限制提示",
+          "status": "in-scope",
+          "evidence": "codex.command.composer.addFiles/addPhotos/captureAppshot; composer.pastedTextAttachment / appshotCapture / fileAttachment"
+        },
+        {
+          "name": "@ mention",
+          "text": "Files / Folders / Chats / Apps / Agents / Plugins / Skills / MCP servers / Browser tabs / Pages / Sites / ChatGPT conversations；\"Tab for more\"",
+          "status": "in-scope",
+          "evidence": "composer.atMentionList.*"
+        },
+        {
+          "name": "Skills 提及/调用",
+          "text": "Skills 分组；slash commands 的 Skills 组；Skill mention list",
+          "status": "in-scope",
+          "evidence": "composer.skillMentionList.* / composer.slashCommands.skillsGroup"
+        },
+        {
+          "name": "斜杠命令",
+          "text": "/plan /goal /review /fork /side /new /compact /init /mcp /status /usage /model /reasoning /speed /project /chat /local /worktree /cloud /ide /memories /rename /archive /pin /feedback /pet /share /approve(auto-review-denials)",
+          "status": "in-scope",
+          "evidence": "composer.*SlashCommand.title/description（app-primary）"
+        },
+        {
+          "name": "提交 / 排队 / steer",
+          "text": "Send / Queue / Steer / Stop / Resume；Follow-up behavior: Queue or Steer（\"Press {shortcut} to do the opposite for one message\"）；Send message in background",
+          "status": "in-scope",
+          "evidence": "composer.submitButtonTooltip.* / composer.followUpQueueMode? settings.general.followUpQueueMode.* / codex.command.composer.submit|queue|steer"
+        },
+        {
+          "name": "输入框增强",
+          "text": "Format toolbar（bold/italic/…）、slash 菜单、rich link popover、代码块插入、plain text composer 设置、Enter 行为设置",
+          "status": "in-scope",
+          "evidence": "composer.formatToolbar.* / composer.richLinkPopover.* / settings.general.composer.plainTextMode / enterBehavior.*"
+        },
+        {
+          "name": "语音/听写",
+          "text": "Start dictation（Ctrl+Shift+D）/ Dictation shortcut（hold, double-tap hands-free）/ 单按听写 / 麦克风选择 / Voice chat（Ctrl+Shift+V）",
+          "status": "in-scope",
+          "evidence": "codex.command.composer.startDictation; settings.general.globalDictationHotkey.* / microphoneInput.*; realtimeVoice.*"
+        },
+        {
+          "name": "上下文/状态条",
+          "text": "Composer 底部状态：Context {n}K、Rate limit {remaining}% left、Thread/Session、Model limit；Show context window usage 开关",
+          "status": "in-scope",
+          "evidence": "composer.statusPlain.* / composer.statusSlashCommand"
+        },
+        {
+          "name": "提交预检错误",
+          "text": "Select a project to continue / This chat's working directory no longer exists / Restore the worktree to continue / Files uploading… / Remote connection is disconnected 等",
+          "status": "in-scope",
+          "evidence": "composer.submit.*"
+        },
+        {
+          "name": "页面按钮/toast",
+          "text": "Sending disabled while publishing / Steer / Queue / Stop / Resume tooltips",
+          "status": "in-scope",
+          "evidence": "composer.submitButtonTooltip.*"
+        }
+      ]
+    },
+    {
+      "id": "settings-nav",
+      "title": "设置导航（全局 IA）",
+      "items": [
+        {
+          "name": "设置入口",
+          "text": "Settings… (CmdOrCtrl+,)；设置页左侧导航 + 设置搜索",
+          "status": "in-scope",
+          "evidence": "codex.command.settings; settings-page-b0141d46c881.js"
+        },
+        {
+          "name": "导航分组",
+          "text": "Personal / Teams / Integrations / Coding / Archived 五组；每项可折叠侧栏、搜索定位",
+          "status": "in-scope",
+          "evidence": "settings-page-b0141d46c881.js mi 数组: Personal, teams, integrations, coding, archived"
+        },
+        {
+          "name": "设置搜索",
+          "text": "Search settings；占位 \"Search\"；无结果 \"No results found\"；结果 aria \"{destination}, {panel}\"",
+          "status": "in-scope",
+          "evidence": "settings.search.*"
+        },
+        {
+          "name": "未保存修改",
+          "text": "You have unsaved settings changes. Leave without saving? -> Discard changes / Keep editing",
+          "status": "in-scope",
+          "evidence": "settings.unsavedChanges.*"
+        },
+        {
+          "name": "新增/移除页面（本版）",
+          "text": "官方本版设置分区含：General、Notifications、Import、Profile、Appearance、Security、Account、Ads controls、Parental controls、Trusted contact、Safety & wellbeing、Voice、Storage、Agent(Configuration)、Personalization、Mini & Pets、Keyboard shortcuts、Usage & billing、Billing、Analytics、Debug、Agreements、Teams、Plugins、File type handlers、Passwords、Computer use、Computer history、Appshots、Codex Micro、MCP servers、Skills、Browser、Cloud computer、Browser extension、Hooks、Connections、Cloud preferences、Codex Cloud、Cloud environments、Code review、Git、Environments、Worktrees、Archived chats",
+          "status": "in-scope",
+          "evidence": "app-initial-fd3c4b862660.js HDa/RDa 数组 + settings-page mi 分组（版本 26.928.21956）"
+        }
+      ]
+    },
+    {
+      "id": "settings-general",
+      "title": "设置 · General（General）",
+      "items": [
+        {
+          "name": "标题/分组",
+          "text": "General；包含 Appearance、Composer、Notifications、Voice chat、Dictation、Popout Window、Toys 等子组",
+          "status": "in-scope",
+          "evidence": "settings.general.groupTitle / settings.section.general-settings"
+        },
+        {
+          "name": "外观（Appearance 子组）",
+          "text": "Theme: Light/Dark/System；Separate light and dark modes；Accent（Default/Black/White/Blue/Green/Orange/Pink/Purple/Yellow/Custom）；UI font size、Code font size、Content font size；UI/content/code font family 与 font style；Translucent sidebar；Contrast；Diff markers: Color / +/-；Dock icon: ChatGPT/Codex/Space；Reduced motion: On/Off/System；Use pointer cursors；Font smoothing",
+          "status": "in-scope",
+          "evidence": "settings.general.appearance.*（general-settings-cbce7da152c5.js / app-primary）"
+        },
+        {
+          "name": "Composer",
+          "text": "Plain text composer（Keep code, Markdown, and links as literal text）；Send shortcut（Enter / Cmd+Enter always / Cmd+Enter for multiline）；Follow-up behavior: Queue / Steer",
+          "status": "in-scope",
+          "evidence": "settings.general.composer.* / enterBehavior.* / followUpQueueMode.*"
+        },
+        {
+          "name": "输入/发送细节",
+          "text": "Confirm before closing a window: Never / Close shortcut only / Always；Show context window usage；Bottom panel；Full view by default；Default terminal location: Bottom/Right",
+          "status": "in-scope",
+          "evidence": "settings.general.confirmBeforeClose.* / contextUsageIndicator.* / bottomPanel.* / defaultWorkspaceFullView.* / defaultTerminalLocation.*"
+        },
+        {
+          "name": "应用行为",
+          "text": "In-app updates；Show in menu bar；Desktop app beta features；Prevent sleep while running；Compress local chat history；Projectless task folder（Change/Reset）；Restart 提示",
+          "status": "in-scope",
+          "evidence": "settings.general.inAppUpdates / macMenuBar / desktopAppBeta / power.preventSleepWhileRunning / rolloutCompression / projectlessChatFolder"
+        },
+        {
+          "name": "Experimental features (Beta)",
+          "text": "Request user input（\"Allow Codex to ask questions outside Plan mode. Changes apply only to new threads\"）；Popout Window hotkey；Restart 生效",
+          "status": "in-scope",
+          "evidence": "settings.general.experimentalFeatures.*"
+        },
+        {
+          "name": "链接打开目标",
+          "text": "Web URL and link open destination: Codex（in-app browser）/ ChatGPT / Default browser",
+          "status": "in-scope",
+          "evidence": "settings.general.openLinkInTargetPreference.*"
+        },
+        {
+          "name": "Windows sandbox 相关",
+          "text": "（Debug/设置项隐含）Agent sandbox 状态；Windows 沙箱横幅与重试 setup",
+          "status": "in-scope",
+          "evidence": "codex.windowsSandboxBanner.*; composer.submit.windowsSandbox*"
+        }
+      ]
+    },
+    {
+      "id": "settings-appearance",
+      "title": "设置 · Appearance（独立分区）",
+      "items": [
+        {
+          "name": "页面结构",
+          "text": "Mode（主题）、Visual style、Separate light and dark modes、UI font size/style、Content font size、Pages smart punctuation、Accent color、Advanced、Reset to default",
+          "status": "in-scope",
+          "evidence": "settings.appearance.*（appearance-settings-4c0a59978faa.js）"
+        },
+        {
+          "name": "页码/内容",
+          "text": "Content font size（pages.fontSize \"Adjust the base size used for pages\"）；Smart punctuation（quotes, dashes, ellipses, arrows, math symbols）",
+          "status": "in-scope",
+          "evidence": "settings.appearance.pages.fontSize.* / pages.smartPunctuation.*"
+        }
+      ]
+    },
+    {
+      "id": "settings-agent",
+      "title": "设置 · Agent / Configuration（Agent 与权限）",
+      "items": [
+        {
+          "name": "标题/副标题",
+          "text": "Configuration；\"Configure permissions, web access, and agent responses for new chats\"",
+          "status": "in-scope",
+          "evidence": "settings.section.agent / settings.agent.configuration.subtitle.summary.electron"
+        },
+        {
+          "name": "Agent defaults",
+          "text": "Agent defaults 区：Model default、Output detail（Low/Medium/High）、Reasoning summary（None/Concise/Detailed/Auto）、Speed（Standard/Fast/Ultrafast）",
+          "status": "in-scope",
+          "evidence": "settings.agent.agentDefaults.sectionTitle / configuration.modelDefault / modelVerbosity.* / reasoningSummary.* / speed.*"
+        },
+        {
+          "name": "权限 - Approval policy",
+          "text": "Approval policy：On request / On failure / Never ask for approval / Untrusted；restricted 提示",
+          "status": "in-scope",
+          "evidence": "settings.agent.configuration.approval.*"
+        },
+        {
+          "name": "权限 - Sandbox",
+          "text": "Sandbox settings：Read only / Workspace write / Full access；Allow network access；inline sandbox 冲突提示",
+          "status": "in-scope",
+          "evidence": "settings.agent.configuration.sandbox.* / network.* / inlineSandboxWriteError"
+        },
+        {
+          "name": "权限 - Full access",
+          "text": "Full access 开关（Show Full access in the composer）；风险说明与确认弹窗；\"Make Full Access available?\"",
+          "status": "in-scope",
+          "evidence": "settings.agent.permissionsMode.*"
+        },
+        {
+          "name": "Web search",
+          "text": "Web search：Disabled / Cached（OpenAI maintained index）/ Indexed / Live（unrestricted, current web access）",
+          "status": "in-scope",
+          "evidence": "settings.agent.configuration.webSearch.*"
+        },
+        {
+          "name": "Model features",
+          "text": "Available reasoning efforts（按模型可选档位）；Selected count",
+          "status": "in-scope",
+          "evidence": "settings.agent.modelFeatures.*"
+        },
+        {
+          "name": "config.toml",
+          "text": "User config / Project config / Admin config 作用域；Open config.toml；Restart 生效；Custom config.toml settings",
+          "status": "in-scope",
+          "evidence": "settings.agent.configuration.configToml.* / scope.* / customConfig.sectionTitle"
+        },
+        {
+          "name": "Workspace Dependencies",
+          "text": "Codex dependencies 开关（bundled Node.js/Python tools）；Diagnose / Reinstall；Current version",
+          "status": "in-scope",
+          "evidence": "settings.agent.dependencies.*"
+        },
+        {
+          "name": "Suggested prompts",
+          "text": "Ambient suggestions：Suggest what to do next by searching project files and connected apps",
+          "status": "in-scope",
+          "evidence": "settings.agent.ambientSuggestions.*"
+        },
+        {
+          "name": "Import（嵌入）",
+          "text": "Import external agent config：Detected setup / Import from another AI app",
+          "status": "in-scope",
+          "evidence": "settings.agent.importSettings.*"
+        }
+      ]
+    },
+    {
+      "id": "settings-personalization",
+      "title": "设置 · Personalization",
+      "items": [
+        {
+          "name": "Codex instructions",
+          "text": "Codex custom instructions 编辑器；AGENTS.override.md 覆盖提示；Save/Loading/Errors",
+          "status": "in-scope",
+          "evidence": "settings.personalization.agents.*（personalization-settings-214ae9a2e5d9.js）"
+        },
+        {
+          "name": "About you",
+          "text": "Nickname / Occupation / More about you（ChatGPT 侧个性化）",
+          "status": "in-scope",
+          "evidence": "settings.personalization.aboutYou.*"
+        },
+        {
+          "name": "Custom rules",
+          "text": "Custom rules / Default rules：哪些动作无需询问、哪些需审批；插件权限入口",
+          "status": "in-scope",
+          "evidence": "settings.personalization? / settings.userRules.*"
+        },
+        {
+          "name": "Codex memory",
+          "text": "Codex memory：Enable Codex memories；Allow memories from tool-assisted chats；Delete Codex memories",
+          "status": "in-scope",
+          "evidence": "settings.memory.*"
+        },
+        {
+          "name": "Mini",
+          "text": "Wake Mini / Tuck Away Mini",
+          "status": "in-scope",
+          "evidence": "settings.personalization.mini.*"
+        }
+      ]
+    },
+    {
+      "id": "settings-pets",
+      "title": "设置 · Mini & Pets",
+      "items": [
+        {
+          "name": "宠物选择",
+          "text": "Pick a pet / My pets / None / Create your own pet / Custom pets / Update",
+          "status": "in-scope",
+          "evidence": "settings.pets.* / settings.mini.pets.*"
+        },
+        {
+          "name": "外观与可见性",
+          "text": "Appearance、Pet size、Visibility: Always visible（Keep your Mini on your desktop）或 On demand（Show with {shortcut}. Hide when you click away）",
+          "status": "in-scope",
+          "evidence": "settings.pets.appearance/size/visibility"
+        },
+        {
+          "name": "Mini 描述",
+          "text": "\"Mini manages threads and surfaces what needs attention\" / \"The lightweight codex companion\"",
+          "status": "in-scope",
+          "evidence": "settings.pets.pickPet.miniDescription / settings.mini.pets.barOnly.description"
+        }
+      ]
+    },
+    {
+      "id": "settings-keyboard",
+      "title": "设置 · Keyboard shortcuts",
+      "items": [
+        {
+          "name": "编辑快捷键",
+          "text": "Search shortcuts / Search by keystrokes；分组 App / Composer / Chat；Capture 输入框 \"Press key sequence\"；冲突提示 \"Already used by {shortcut}\"；Restore defaults / Reset all",
+          "status": "in-scope",
+          "evidence": "settings.keyboardShortcuts.*（keyboard-shortcuts-settings-*.js）"
+        },
+        {
+          "name": "数字快捷键",
+          "text": "Number shortcuts：Use ⌘1–9 to switch chats and ⌥1–9 to switch tabs（可反转）；冲突提示",
+          "status": "in-scope",
+          "evidence": "settings.keyboardShortcuts.numberTarget.*"
+        },
+        {
+          "name": "外链点击",
+          "text": "Open web link in default browser：⌘+Click / ⇧⌘+Click（macOS），Ctrl+Click / Ctrl+Shift+Click（其他）",
+          "status": "in-scope",
+          "evidence": "settings.keyboardShortcuts.externalBrowserLinkShortcut.*"
+        },
+        {
+          "name": "听写",
+          "text": "Dictation shortcut 高级设置：\"Works in any app. Press Esc to cancel a recording.\"",
+          "status": "in-scope",
+          "evidence": "settings.keyboardShortcuts.dictation.*"
+        }
+      ]
+    },
+    {
+      "id": "settings-plugins",
+      "title": "设置 · Plugins / File type handlers",
+      "items": [
+        {
+          "name": "Plugins",
+          "text": "Plugins 设置页副标题 \"Manage plugins, skills, and MCPs\"；Browse directory；与 Skills/Plugins 页面共享目录（Plugins/Skills 两个 tab，Manage: Plugins/Skills/Apps/MCPs/Marketplace）",
+          "status": "in-scope",
+          "evidence": "settings.section.plugins-settings.* / skills.appsPage.manageTab.*"
+        },
+        {
+          "name": "File type handlers",
+          "text": "File type handlers：Select which plugins should open specific types of files；Built-in / 无插件支持提示",
+          "status": "in-scope",
+          "evidence": "settings.fileTypeHandlers.*"
+        }
+      ]
+    },
+    {
+      "id": "settings-mcp",
+      "title": "设置 · MCP servers",
+      "items": [
+        {
+          "name": "服务器列表",
+          "text": "MCP servers（subtitle \"Connect external tools and data sources\"）；Servers / From plugins；Add MCP server",
+          "status": "in-scope",
+          "evidence": "settings.section.mcp-settings.* / settings.mcp.myServers / addServer"
+        },
+        {
+          "name": "服务器配置",
+          "text": "Type: STDIO / Streamable HTTP；Command/Args/CWD/Env/Headers/Bearer token；OAuth client registration: Automatic / DCR / CIMD；Enable/Authenticate/Uninstall",
+          "status": "in-scope",
+          "evidence": "settings.mcp.detail.* / server.clientRegistration.*"
+        },
+        {
+          "name": "MCP Apps",
+          "text": "MCP Apps 数据管理：Clear all app data",
+          "status": "in-scope",
+          "evidence": "settings.mcp.apps.*"
+        }
+      ]
+    },
+    {
+      "id": "settings-computer-use",
+      "title": "设置 · Computer use",
+      "items": [
+        {
+          "name": "开关与权限",
+          "text": "Any App / Always-allowed apps / Locked use（macOS 锁屏使用）/ sounds（foreground clicks etc.）",
+          "status": "in-scope",
+          "evidence": "settings.computerUse.*"
+        },
+        {
+          "name": "浏览器控制",
+          "text": "Google Chrome / Microsoft Edge / Safari（coming soon）插件安装、权限；Messages 读写权限（Read access / Send access / per-chat approvals）",
+          "status": "in-scope",
+          "evidence": "settings.computerUse.chrome.* / browser.* / messages.*"
+        },
+        {
+          "name": "Office 集成",
+          "text": "Microsoft Excel / Word / PowerPoint live control 开关",
+          "status": "in-scope",
+          "evidence": "settings.computerUse.microsoftExcel/PowerPoint/Word.*"
+        }
+      ]
+    },
+    {
+      "id": "settings-appshots",
+      "title": "设置 · Appshots",
+      "items": [
+        {
+          "name": "主文案",
+          "text": "\"Take an appshot to show ChatGPT your frontmost window\"（含滚屏外文本）",
+          "status": "in-scope",
+          "evidence": "settings.appshots.hero.*"
+        },
+        {
+          "name": "目标与声音",
+          "text": "Appshot destination: Automatic（recent chat else new）/ Current chat / New chat；Play sound effect；Use Mini when visible",
+          "status": "in-scope",
+          "evidence": "settings.appshots.destination.* / soundEffect.* / alwaysSendToMini.*"
+        },
+        {
+          "name": "快捷键",
+          "text": "Appshot hotkey（Appshots 设置内录制）",
+          "status": "in-scope",
+          "evidence": "settings.appshotHotkey.*"
+        }
+      ]
+    },
+    {
+      "id": "settings-browser",
+      "title": "设置 · Browser（Browser use）",
+      "items": [
+        {
+          "name": "浏览器使用",
+          "text": "Browser 设置：站点权限（Requires approval / Always allow）、approval 行为、可见性；browser-use-settings chunks",
+          "status": "in-scope",
+          "evidence": "settings.browserUse.* / settings.nav.browser-use"
+        },
+        {
+          "name": "扩展",
+          "text": "Browser extension 设置；Chrome/Edge 扩展安装与权限",
+          "status": "in-scope",
+          "evidence": "settings.browserUse.* / settings.nav.browser-extension"
+        }
+      ]
+    },
+    {
+      "id": "settings-hooks",
+      "title": "设置 · Hooks",
+      "items": [
+        {
+          "name": "副标题",
+          "text": "\"Manage lifecycle hooks from config and enabled plugins.\"",
+          "status": "in-scope",
+          "evidence": "settings.hooks.subtitle"
+        },
+        {
+          "name": "事件类型",
+          "text": "PreToolUse / PostToolUse / PermissionRequest / UserPromptSubmit / Stop / SubagentStart / SubagentStop / SessionStart / SessionEnd / PreCompact / PostCompact",
+          "status": "in-scope",
+          "evidence": "settings.hooks.event.*"
+        },
+        {
+          "name": "来源与信任",
+          "text": "Sources: User config / Project config / Admin config / Plugin / Other；Trust all / Disabled until hook is trusted；Reload hooks",
+          "status": "in-scope",
+          "evidence": "settings.hooks.source.* / trustAll / event.disabledUntilTrustedTooltip"
+        }
+      ]
+    },
+    {
+      "id": "settings-connections",
+      "title": "设置 · Connections（远程连接/设备）",
+      "items": [
+        {
+          "name": "连接类型",
+          "text": "Add SSH Connection / WSL / 已登录设备；Hostname/Port/Identity/Alias/Display name；auth mode Identity/No Auth",
+          "status": "in-scope",
+          "evidence": "settings.remoteConnections.dialog.* / deviceConnections.*"
+        },
+        {
+          "name": "设备控制",
+          "text": "Control other devices from this Mac/PC（授权弹窗）；Available from signed-in devices；Keep this Mac awake；Add remote project",
+          "status": "in-scope",
+          "evidence": "settings.remoteConnections.accessOtherDevices.* / authorizationDialog.* / localHost.keepLive.*"
+        },
+        {
+          "name": "远程 Codex CLI 状态",
+          "text": "Login required / Codex CLI not installed / Update required / Restart required；Install Codex CLI",
+          "status": "in-scope",
+          "evidence": "threadPage.remoteConnectionStatusBadge.* / sidebarElectron.connectionStatus.*"
+        }
+      ]
+    },
+    {
+      "id": "settings-git",
+      "title": "设置 · Git",
+      "items": [
+        {
+          "name": "分支",
+          "text": "Branch prefix（默认 codex/）；Worktree root；Disable Git-based diffs（Only show \"Last Turn\"）",
+          "status": "in-scope",
+          "evidence": "settings.git.branchPrefix.* / worktreeRoot.* / reviewMode.*"
+        },
+        {
+          "name": "提交/PR 生成",
+          "text": "Commit instructions；Pull request instructions；Create draft pull requests；Pull request merge method: Merge / Squash",
+          "status": "in-scope",
+          "evidence": "settings.git.commitInstructions.* / prInstructions.* / createDraftPullRequest.* / pullRequestMergeMethod.*"
+        },
+        {
+          "name": "推送与 PR 守护",
+          "text": "Always force push（--force-with-lease）；Auto-merge when ready；Watch and fix pull requests（instructions 例 \"Comment /merge after checks pass\"）",
+          "status": "in-scope",
+          "evidence": "settings.git.forcePush.* / pullRequestWatch.*"
+        }
+      ]
+    },
+    {
+      "id": "settings-local-environments",
+      "title": "设置 · Environments（Local environments）",
+      "items": [
+        {
+          "name": "目的",
+          "text": "\"Local environments tell ChatGPT how to set up worktrees for a project.\"；按项目配置",
+          "status": "in-scope",
+          "evidence": "settings.localEnvironments.workspaceSelect.*"
+        },
+        {
+          "name": "脚本",
+          "text": "Setup script（runs on worktree creation，可设平台 override、env vars ${sourcePath}/${worktreePath}）；Cleanup script；Actions（多个命令+图标 run/test/debug/tool）",
+          "status": "in-scope",
+          "evidence": "settings.localEnvironments.environment.setup.* / cleanup.* / actions.*"
+        },
+        {
+          "name": "编辑器",
+          "text": "Create local environment / Edit；Advanced options；Save 冲突提示（changed on disk）；Published/Inherited environments（from parent folder）",
+          "status": "in-scope",
+          "evidence": "settings.localEnvironments.createDialog.* / editor.* / preview.* / workspaceSelect.inherited*"
+        }
+      ]
+    },
+    {
+      "id": "settings-worktrees",
+      "title": "设置 · Worktrees",
+      "items": [
+        {
+          "name": "页签",
+          "text": "Worktrees settings tabs：General / Environments",
+          "status": "in-scope",
+          "evidence": "settings.worktrees.tabs / general / environments"
+        },
+        {
+          "name": "自动清理",
+          "text": "Automatically delete old worktrees；Auto-delete limit（保留数量，删除前 snapshot 可恢复）；确认关闭弹窗",
+          "status": "in-scope",
+          "evidence": "settings.worktrees.autoCleanup.* / keepCount.*"
+        },
+        {
+          "name": "行为",
+          "text": "Always fetch upstream before creating worktrees；Worktree 列表：Conversations / New chat in this worktree / Delete；Refresh",
+          "status": "in-scope",
+          "evidence": "settings.worktrees.upstreamRefresh.* / row.*"
+        }
+      ]
+    },
+    {
+      "id": "settings-code-review",
+      "title": "设置 · Code review",
+      "items": [
+        {
+          "name": "个人偏好",
+          "text": "Automatic review / Automatic security review；Review trigger: On PR open / On every push / Smart detect（Experimental）/ When code review runs；Exhaustive code review；Use credits for reviews；Minimum severity（Critical/High/Medium/Low）",
+          "status": "in-scope",
+          "evidence": "settings.codeReview.personal.* / security.*"
+        },
+        {
+          "name": "仓库配置",
+          "text": "Repositories 搜索；provider（GitHub / GitLab beta）；Automatic（Off/All PRs/Team PRs/Follow personal）；Minimum auto/manual severity；Merge protection（blocking severity + GitHub check）；Path-based severity override；Threat model source（Codex Security / repo file）；Review instructions（AGENTS.md）",
+          "status": "in-scope",
+          "evidence": "settings.codeReview.repositories.* / repository.*"
+        }
+      ]
+    },
+    {
+      "id": "settings-codex-micro",
+      "title": "设置 · Codex Micro（硬件）",
+      "items": [
+        {
+          "name": "设备连接",
+          "text": "Connected / Detected / Connection failed；Battery；Agent keys（六个按键映射 chat/shortcut/keycap/skill）；Analog stick 方向映射；Codex Micro setup",
+          "status": "in-scope",
+          "evidence": "settings.codexMicro.connection.* / agentKeys.* / analog.*; codex.command.codexMicroSettings"
+        }
+      ]
+    },
+    {
+      "id": "settings-chronicle",
+      "title": "设置 · Computer history（原 Chronicle）",
+      "items": [
+        {
+          "name": "开关/许可",
+          "text": "Computer history 开关；Connect Computer History 权限弹窗；与 Memories 联动",
+          "status": "in-scope",
+          "evidence": "settings.chronicle.enable* / connect.* / consent.*"
+        },
+        {
+          "name": "历史管理",
+          "text": "Ask about your history；Clear last 10 minutes/hour/day/all；history 列表；Create skill/automation from suggestions",
+          "status": "in-scope",
+          "evidence": "settings.chronicle.history.*"
+        }
+      ]
+    },
+    {
+      "id": "settings-import",
+      "title": "设置 · Import",
+      "items": [
+        {
+          "name": "导入来源",
+          "text": "Import from another AI app（Claude Code / Cursor 等）；Detected setup / projects / recent chats",
+          "status": "in-scope",
+          "evidence": "settings.import.subtitle.v2 / empty.* / history.*"
+        },
+        {
+          "name": "自动同步",
+          "text": "Keep imports in sync；Content to sync 分类：Agents / Chats / Commands / Hooks / Instructions / MCP servers / Memory / Plugins / Settings / Skills",
+          "status": "in-scope",
+          "evidence": "settings.import.autosync.* / syncCategory.*"
+        },
+        {
+          "name": "导入历史",
+          "text": "Import history；Needs attention（server needs authentication）；Open hooks/MCP/skills/plugin 条目；Converted into Codex skills",
+          "status": "in-scope",
+          "evidence": "settings.import.history.* / attention.*"
+        }
+      ]
+    },
+    {
+      "id": "settings-archived",
+      "title": "设置 · Archived chats（Archived）",
+      "items": [
+        {
+          "name": "列表",
+          "text": "Archived chats：Search archived chats；Filter All chats/Local/Cloud、Project、Type（Chats/Scheduled tasks）、Sort by Created/Updated/Alphabetical；Group by Project",
+          "status": "in-scope",
+          "evidence": "settings.dataControls.archivedChats.*"
+        },
+        {
+          "name": "操作",
+          "text": "Unarchive / View now / Delete / Delete all / Delete all in project；Unsupported host 提示",
+          "status": "in-scope",
+          "evidence": "settings.dataControls.archivedChats.unarchive / delete*"
+        }
+      ]
+    },
+    {
+      "id": "settings-voice",
+      "title": "设置 · Voice",
+      "items": [
+        {
+          "name": "听写设置",
+          "text": "Dictation sounds；Dictionary（Words or phrases dictation should recognize）；All recordings；Language",
+          "status": "in-scope",
+          "evidence": "settings.voice.*"
+        },
+        {
+          "name": "语音聊天（General 内）",
+          "text": "Choose a voice：Arbor/Breeze/Cove/Ember/Juniper/Maple/Sol/Spruce/Vale（各带 description）；Screen context；Voice chat hotkey",
+          "status": "in-scope",
+          "evidence": "settings.general.realtimeVoice.* / realtimeVoiceHotkey.*"
+        }
+      ]
+    },
+    {
+      "id": "settings-notifications",
+      "title": "设置 · Notifications",
+      "items": [
+        {
+          "name": "通知类型",
+          "text": "Turn completion notifications: Always / Only when unfocused / Never；Permission notifications；Question notifications；Dot notifications；Notification sound: Default/Basso/Classic/Glass/Ping/Pop/Purr/Tink/None/Choose custom（mp3/wav/flac/ogg <30s <10MB）",
+          "status": "in-scope",
+          "evidence": "notifications.* / settings.notifications.*"
+        },
+        {
+          "name": "系统权限",
+          "text": "Notifications are off -> Open System Settings",
+          "status": "in-scope",
+          "evidence": "notifications.systemSettings.*"
+        }
+      ]
+    },
+    {
+      "id": "settings-storage",
+      "title": "设置 · Storage",
+      "items": [
+        {
+          "name": "存储",
+          "text": "Storage 分区（ChatGPT library storage；本版对 Codex 侧隐藏，visible:false）",
+          "status": "in-scope",
+          "evidence": "settings.section.storage; use-visible-settings-sections.jt case storage"
+        }
+      ]
+    },
+    {
+      "id": "settings-out-of-scope",
+      "title": "设置 · 超出范围（ChatGPT 账号/云端专属）",
+      "items": [
+        {
+          "name": "Account / Profile / Security / Billing / Usage & billing / Analytics / Consumer analytics",
+          "text": "ChatGPT 账号、订阅、用量计费",
+          "status": "out-of-scope",
+          "evidence": "settings.chatGpt.* / settings.usage.* / settings.analytics / settings.section.account|billing|usage|security|profile"
+        },
+        {
+          "name": "Teams / Workspace / Ads controls / Parental controls / Trusted contact / Safety & wellbeing / Data controls(ChatGPT)",
+          "text": "ChatGPT 团队与合规",
+          "status": "out-of-scope",
+          "evidence": "settings.teams.* / settings.ads.* / settings.dataControls.*"
+        },
+        {
+          "name": "Cloud environments / Codex Cloud / Cloud preferences / Legacy Codex Cloud / Cloud computer / Browser extension / Passwords",
+          "text": "云端执行环境与 ChatGPT 云端代理",
+          "status": "out-of-scope",
+          "evidence": "settings.cloudEnvironments.* / settings.codexCloud.* / legacyCodexCloud.* / browserUse 云端部分"
+        },
+        {
+          "name": "Agreements / Age / Import CHATGPT / ChatGPT notification settings",
+          "text": "账号协议与 ChatGPT 专属导入",
+          "status": "out-of-scope",
+          "evidence": "settings.chatGpt.* / settings.agreements"
+        }
+      ]
+    },
+    {
+      "id": "scheduled-tasks",
+      "title": "Scheduled tasks（原 Automations / Inbox）",
+      "items": [
+        {
+          "name": "入口",
+          "text": "侧边栏 Scheduled；页面标题 Scheduled tasks；副标题 \"Ask ChatGPT to schedule tasks, set reminders, or monitor for updates\"",
+          "status": "in-scope",
+          "evidence": "sidebarElectron.inboxRouteNavLink=Scheduled; inbox.automations.subtitle / inbox.mode.automations"
+        },
+        {
+          "name": "列表",
+          "text": "Search scheduled tasks；Status filter: Active/Paused/All；Ownership: Personal/Team/All；Next run；Paused；Run now；Pause/Resume；Delete",
+          "status": "in-scope",
+          "evidence": "inbox.automations.search/statusFilter.* / pauseTooltip / resumeTooltip / runNowError"
+        },
+        {
+          "name": "创建/编辑",
+          "text": "Create with ChatGPT / Create with Codex / Set up manually；Name、Prompt、Project、Model、Reasoning、Runs on: This device / Cloud / Desktop、Notifications（Important updates / Failed runs only / All runs）、Repeat（Hourly/Daily/Weekly/Monthly/Yearly + interval + weekdays + month days + time + end repeat Never/On date）、Advanced schedule（RRULE）",
+          "status": "in-scope",
+          "evidence": "inbox.automations.create* / customFrequency.* / customInterval.* / repeat.* / endRepeat.* / scheduleRule.* / notifications.*"
+        },
+        {
+          "name": "目标",
+          "text": "Runs in：New chat each run / New chat for this task / specific chat；heartbeat（周期心跳任务）行摘要",
+          "status": "in-scope",
+          "evidence": "inbox.automations.destination.* / targetThread.* / rowSummary.heartbeat"
+        },
+        {
+          "name": "运行历史",
+          "text": "Previous runs；Run status: Running now / Run failed / Run completed / No update；Archive all / Mark all read / Unarchive",
+          "status": "in-scope",
+          "evidence": "inbox.automations.history.* / automations.runs.status"
+        },
+        {
+          "name": "插件来源",
+          "text": "From Plugins；plugin template；plugin disabled/uninstalled 警告",
+          "status": "in-scope",
+          "evidence": "inbox.automations.fromPlugins / pluginSource.* / pluginTemplate.*"
+        },
+        {
+          "name": "同步到账号",
+          "text": "Sync your local automations（habitat migration）：schedules/execution stay on device；prompts/paths encrypted in cloud",
+          "status": "in-scope",
+          "evidence": "inbox.automations.habitatMigration.*"
+        }
+      ]
+    },
+    {
+      "id": "worktrees-page",
+      "title": "Worktrees（运行与页面）",
+      "items": [
+        {
+          "name": "Composer 中新建",
+          "text": "Worktree / New local worktree / New {repoName} worktree / New remote worktree；tooltip \"Create a copy of {repoName} to work in parallel.\"；submodule 警告",
+          "status": "in-scope",
+          "evidence": "composer.worktree*/ mode.worktree* / worktreeInitV2.*"
+        },
+        {
+          "name": "切换/交接",
+          "text": "Thread 可 Move to local / Move to worktree / Hand off to remote；分支名输入、变更带回、冲突/失败态",
+          "status": "in-scope",
+          "evidence": "localConversation.moveToLocal.* / moveToWorktree.* / moveToHostWorktree.*"
+        },
+        {
+          "name": "恢复提示",
+          "text": "Worktree ready / Creating worktree… / Restoring worktree / Worktree no longer exists -> Restore",
+          "status": "in-scope",
+          "evidence": "localConversation.environmentSummary.* / worktreeRestoreBanner.* / composer.submitToast.*"
+        },
+        {
+          "name": "设置",
+          "text": "Worktree root；auto cleanup；fetch upstream；列表管理（见 settings-worktrees）",
+          "status": "in-scope",
+          "evidence": "settings.worktrees.* / settings.git.worktreeRoot.*"
+        }
+      ]
+    },
+    {
+      "id": "skills-page",
+      "title": "Skills 页面",
+      "items": [
+        {
+          "name": "入口与标题",
+          "text": "Skills；subheading \"Add reusable workflows with Skills.\"；顶部 New skill；Refresh",
+          "status": "in-scope",
+          "evidence": "skills.page.heading / subheading / createSkill / refreshSkills"
+        },
+        {
+          "name": "分类",
+          "text": "Installed / Recommended / Created by you / Shared with you；scope: Personal / Repo / Team / User / Admin / System",
+          "status": "in-scope",
+          "evidence": "skills.section.* / skills.scope.*"
+        },
+        {
+          "name": "Skill 卡片",
+          "text": "Open（查看 SKILL.md）/ Details / Try now / Enable 或 Disable / Uninstall / Copy Markdown / Reveal in Finder|Explorer|File Manager",
+          "status": "in-scope",
+          "evidence": "skills.card.*"
+        },
+        {
+          "name": "创建/录制",
+          "text": "Create skill / Record a skill；可从 Computer history 建议生成（Based on your Computer History）",
+          "status": "in-scope",
+          "evidence": "skills.appsPage.createSkill / recordSkill; skills.computerHistorySuggestions.*"
+        },
+        {
+          "name": "设置内 Skills",
+          "text": "Settings > Skills（settings.skills-settings）",
+          "status": "in-scope",
+          "evidence": "settings.section.skills-settings"
+        }
+      ]
+    },
+    {
+      "id": "plugins-page",
+      "title": "Plugins 页面 / 目录",
+      "items": [
+        {
+          "name": "入口与标题",
+          "text": "Plugins；browseToggle Plugins/Skills；browseIntro \"Connect plugins to let Codex work across your tools\"",
+          "status": "in-scope",
+          "evidence": "sidebarElectron.skillsAppsRouteNavLink / skills.appsPage.browseIntro.* / browseTabs.*"
+        },
+        {
+          "name": "Manage 页签",
+          "text": "Plugins / Skills / Apps / MCPs / Marketplace；Directory tabs: Personal / Public / Workspace；Search plugins/skills/apps/MCPs/marketplaces",
+          "status": "in-scope",
+          "evidence": "skills.appsPage.manageTab.* / directoryTabs.* / search.*"
+        },
+        {
+          "name": "Marketplace",
+          "text": "Add plugin marketplace（Source: GitHub repo/Git URL/local folder、Git ref、Sparse paths）；Upgrade / Remove marketplace（会卸载插件）；Built-in 不能移除",
+          "status": "in-scope",
+          "evidence": "skills.appsPage.addMarketplace.* / marketplace.*"
+        },
+        {
+          "name": "插件/App 操作",
+          "text": "Connect / Connected / Disconnect / Enable / Disable / Reconnect；Tools dialog（Tools for this app、Try now）；Request a plugin；Create plugin",
+          "status": "in-scope",
+          "evidence": "skills.appsPage.apps.* / toolsDialog.* / pluginRequest.* / createPlugin"
+        },
+        {
+          "name": "设置内 Plugins",
+          "text": "Settings > Plugins（副标题 Manage plugins, skills, and MCPs；Browse directory）；File type handlers",
+          "status": "in-scope",
+          "evidence": "settings.section.plugins-settings.* / fileTypeHandlers"
+        }
+      ]
+    },
+    {
+      "id": "code-review-page",
+      "title": "Code Review 页面（PR/MR 审阅）",
+      "items": [
+        {
+          "name": "入口",
+          "text": "侧边栏 Code Review（Pull requests 另入口）；空态 onboarding \"Review code, catch issues, and make fixes with Codex\"",
+          "status": "in-scope",
+          "evidence": "sidebarElectron.codeReviewRouteNavLink / codeReview.onboarding.*"
+        },
+        {
+          "name": "列表分组",
+          "text": "Pinned / Authored by me / Needs my review / Needs my team's review / Recently merged / Recents；搜索或粘贴 PR/MR 链接；badges: Approved / Changes requested / Draft / Merged / Closed / Waiting for review",
+          "status": "in-scope",
+          "evidence": "codeReview.sidebar.*"
+        },
+        {
+          "name": "Provider",
+          "text": "GitHub；GitLab (beta)；Review provider 设置；GitLab MR 搜索",
+          "status": "in-scope",
+          "evidence": "codeReview.settings.* / sidebar.gitlab.*"
+        },
+        {
+          "name": "PR 操作菜单",
+          "text": "Review with Codex / Copy link / Open in GitHub|GitLab / Convert to draft / Mark ready for review / Close / Reopen / Pin / Unpin",
+          "status": "in-scope",
+          "evidence": "codeReview.menu.*"
+        },
+        {
+          "name": "审阅详情",
+          "text": "diff 面板（同 Changes）：file tree、viewed 标记、revert、rich preview；PR 附件与检查（checks）；提交 commit/push/PR 流程",
+          "status": "in-scope",
+          "evidence": "codex.review.* / review.commit.* / pullRequestDetail 相关 chunk"
+        },
+        {
+          "name": "设置",
+          "text": "见 settings-code-review（个人偏好 + 仓库级配置 + security review）",
+          "status": "in-scope",
+          "evidence": "settings.codeReview.*"
+        }
+      ]
+    },
+    {
+      "id": "search-command-menu",
+      "title": "搜索 / 命令面板",
+      "items": [
+        {
+          "name": "打开方式",
+          "text": "Command menu（CmdOrCtrl+K 或 CmdOrCtrl+Shift+P）；Search Chats…；Search Files…（CmdOrCtrl+P）",
+          "status": "in-scope",
+          "evidence": "codex.command.openCommandMenu / searchChats / searchFiles; main 菜单 built"
+        },
+        {
+          "name": "对话框",
+          "text": "Title \"Command menu\"；描述 \"Search commands and past chats.\"；统一占位 \"Search chats or run a command\"；Back to commands",
+          "status": "in-scope",
+          "evidence": "codex.commandMenu.title / .dialogDescription / .unifiedSearchPlaceholder / .backToCommands"
+        },
+        {
+          "name": "分组",
+          "text": "Quick actions（Suggested）/ Chats / Pinned chats / Recent chats / Recently viewed chats / Files / Browser tabs / Settings / Color themes / Switch project",
+          "status": "in-scope",
+          "evidence": "codex.commandMenu.suggestedGroup / chatResultsGroup / pinnedThreadsGroup / recentThreadsGroup / recentlyViewedThreadsGroup / fileSearchPlaceholder / browserTabs / settingsGroup / colorThemesGroup / switchWorkspace"
+        },
+        {
+          "name": "空态/错误",
+          "text": "No matches / Create a chat to get started! / Search chats failed -> Retry",
+          "status": "in-scope",
+          "evidence": "codex.commandMenu.noResults / noChatsEmptyState / chatGptSearchFailed / retryChatGptSearch"
+        },
+        {
+          "name": "文件搜索",
+          "text": "Search files（CmdOrCtrl+P）；Opened recently / Files 分组；No matching files",
+          "status": "in-scope",
+          "evidence": "thread.fileCommandMenu.* / codex.command.searchFiles"
+        },
+        {
+          "name": "设置搜索",
+          "text": "Settings 内独立搜索，定位到设置项",
+          "status": "in-scope",
+          "evidence": "settings.search.* / _virtual_settings-search-documents"
+        }
+      ]
+    },
+    {
+      "id": "native-menu",
+      "title": "原生菜单（Electron Menu / Windows 菜单栏）",
+      "items": [
+        {
+          "name": "File 菜单",
+          "text": "New Window / New Chat / New standalone chat / New Temporary Chat / Open Folder… / Log Out / Close；对应 accelerator",
+          "status": "in-scope",
+          "evidence": "main-DkWgQSQe.js MJe() 菜单组装; windowsMenuBar.file"
+        },
+        {
+          "name": "Edit 菜单",
+          "text": "Undo / Redo / Cut / Copy / Paste / Paste and Match Style（mac）/ Delete / Select All；（mac）Substitutions、Speech",
+          "status": "in-scope",
+          "evidence": "main-DkWgQSQe.js OJe(); electron.appMenu.edit.*"
+        },
+        {
+          "name": "View 菜单",
+          "text": "Toggle Sidebar / Bottom Panel / Pinned Summary / Terminal / navigation panel / Full view / Cycle workspace layout / Changes panel / Find / Zoom In|Out|Actual Size / Toggle Full Screen / Browser 子菜单（reload/back/forward）/ Toggle Debug Panel / Copy User ID 等",
+          "status": "in-scope",
+          "evidence": "main-DkWgQSQe.js jt 数组"
+        },
+        {
+          "name": "窗口菜单（mac）",
+          "text": "Minimize / Zoom / Bring All to Front",
+          "status": "in-scope",
+          "evidence": "electron.appMenu.window.*"
+        },
+        {
+          "name": "Help 菜单",
+          "text": "Documentation / Keyboard Shortcuts / What's New / Troubleshooting / System Status / Send Feedback / Task Manager / (trace upload) / About / Check for Updates（非 mac）",
+          "status": "in-scope",
+          "evidence": "main-DkWgQSQe.js Help submenu; electron.appMenu.help.* / sidebarHelp.whatsNew"
+        },
+        {
+          "name": "上下文菜单（应用内）",
+          "text": "标签页：Close / Close other tabs / Close tabs to the right / Pin to sidebar；浏览器：Back/Forward/Reload/Inspect/Open in external browser；会话行：Rename/Pin/Archive/Delete 等",
+          "status": "in-scope",
+          "evidence": "codex.tabs.contextMenu.* / browserSidebar.contextMenu.* / sidebarElectron.*; preload codex_desktop:show-context-menu"
+        },
+        {
+          "name": "托盘菜单",
+          "text": "Open main window / New thread / Recent threads / Send feedback",
+          "status": "in-scope",
+          "evidence": "main-DkWgQSQe.js Lqe 托盘菜单类"
+        }
+      ]
+    },
+    {
+      "id": "keyboard-shortcuts",
+      "title": "键盘快捷键（默认值，来自命令注册表）",
+      "items": [
+        {
+          "name": "全局/导航",
+          "text": "CmdOrCtrl+K / CmdOrCtrl+Shift+P 命令菜单；CmdOrCtrl+P 搜索文件；CmdOrCtrl+/ 快捷键帮助；CmdOrCtrl+, 设置；CmdOrCtrl+[ / ] 前进后退；Alt+Left/Right 浏览器前进后退；CmdOrCtrl+1..9 切会话；Ctrl/Alt+1..9 切 tab",
+          "status": "in-scope",
+          "evidence": "bootstrap-DvSEn4qy.js 命令定义 defaultKeybindings; commands.tsv"
+        },
+        {
+          "name": "会话",
+          "text": "CmdOrCtrl+N 新会话；CmdOrCtrl+Shift+O 新会话（备用）；CmdOrCtrl+Shift+N 临时会话；CmdOrCtrl+Shift+A 归档；CmdOrCtrl+Shift+U 标记未读；CmdOrCtrl+Alt+P 置顶；CmdOrCtrl+Shift+Delete 删除；CmdOrCtrl+Shift+[ / ] 上一个/下一个会话；Ctrl+Tab 最近会话切换；CmdOrCtrl+Alt+1..9 最近会话",
+          "status": "in-scope",
+          "evidence": "commands.tsv: newTask/archiveThread/markThreadUnread/toggleThreadPin/deleteChat/nextThread/previousThread/recentThread*"
+        },
+        {
+          "name": "Composer",
+          "text": "Ctrl+Shift+M 模型选择；Ctrl+Shift+D 听写；Ctrl+Shift+V 语音；CmdOrCtrl+Enter 后台发送；CmdOrCtrl+U 附件；CmdOrCtrl+Z / Shift+Z 撤销重做 app 动作；Enter/Esc 审批",
+          "status": "in-scope",
+          "evidence": "commands.tsv: composer.openModelPicker/startDictation/startVoiceMode/submitInBackground/addFiles/approval.*"
+        },
+        {
+          "name": "面板",
+          "text": "CmdOrCtrl+J 底部面板；CmdOrCtrl+B / CmdOrCtrl+Shift+S 侧边栏；CmdOrCtrl+Alt+B Changes 面板；CmdOrCtrl+Shift+E 文件树/导航面板；CmdOrCtrl+Shift+F 全屏视图；CmdOrCtrl+Shift+B 切换布局；CmdOrCtrl+`? （toggleTerminal 无默认键）",
+          "status": "in-scope",
+          "evidence": "commands.tsv: toggleSidebar/toggleBottomPanel/toggleSidePanel/toggleFileTreePanel/showWorkspaceTabView/stepWorkspaceLayout"
+        },
+        {
+          "name": "其他",
+          "text": "CmdOrCtrl+Shift+C 复制工作目录；CmdOrCtrl+Alt+Shift+C 复制会话路径；CmdOrCtrl+Alt+L 复制 deeplink；CmdOrCtrl+T 浏览器新标签；CmdOrCtrl+W/Ctrl+F4 关闭；Alt+Space 显示 Mini；CmdOrCtrl+L 浏览器地址栏/Go to line",
+          "status": "in-scope",
+          "evidence": "commands.tsv; main MJe C=`CmdOrCtrl+Shift+C`"
+        },
+        {
+          "name": "自定义",
+          "text": "Keyboard shortcuts 设置页可改任意快捷键、按击键搜索、重置全部；快捷键对话框（Ctrl+/）按当前上下文分组显示",
+          "status": "in-scope",
+          "evidence": "settings.keyboardShortcuts.* / keyboardShortcutsDialog.*"
+        }
+      ]
+    },
+    {
+      "id": "notifications",
+      "title": "通知 / 未读",
+      "items": [
+        {
+          "name": "任务通知",
+          "text": "Turn completion（Always/Only when unfocused/Never）、Permission approval、Question（input needed）、dot messages；点击跳转会话",
+          "status": "in-scope",
+          "evidence": "notifications.turnMode.* / permissions.* / questions.* / asyncQuestion / inputRequired"
+        },
+        {
+          "name": "未读管理",
+          "text": "Unreads 面板、Clear all unreads、Mark all as read、Permission approval 通知标题",
+          "status": "in-scope",
+          "evidence": "sidebarElectron.unreads.* / notifications.clearAllUnreads.* / codex.notifications.*"
+        },
+        {
+          "name": "声音",
+          "text": "Default/Basso/Classic/Glass/Ping/Pop/Purr/Tink/None/自定义文件",
+          "status": "in-scope",
+          "evidence": "notifications.sound.*"
+        }
+      ]
+    },
+    {
+      "id": "multi-window",
+      "title": "多窗口 / 标签页 / 分离窗口",
+      "items": [
+        {
+          "name": "多窗口",
+          "text": "New Window / Open in New Window / New Window 从 File 菜单；独立窗口保留标签",
+          "status": "in-scope",
+          "evidence": "codex.command.newWindow / openThreadInNewWindow; appShell.detachedWindow.*"
+        },
+        {
+          "name": "分离标签页",
+          "text": "Detached window: Focus chat / Keep window on top / Restore to main window；标签拖拽到新窗口",
+          "status": "in-scope",
+          "evidence": "appShell.detachedWindow.* / appShell.tabs.dragNewWindowCue; detached-window.html"
+        },
+        {
+          "name": "Popout Window",
+          "text": "全局热键唤起小窗；首页/线程页；默认独立聊天；hotkeyWindow.home.taskMenu（Project/Environment/Permissions/Branch/Start in）",
+          "status": "in-scope",
+          "evidence": "hotkeyWindow.* / settings.general.popoutWindow.*"
+        }
+      ]
+    },
+    {
+      "id": "out-of-scope",
+      "title": "超出范围：ChatGPT 云端专属功能（仅列出，不展开）",
+      "items": [
+        {
+          "name": "ChatGPT 会话与云端 agents",
+          "text": "chatgpt.* / chatgptConversations.* / workspaceAgents / space / sites / library / images",
+          "status": "out-of-scope",
+          "evidence": "app-shared 中存在大量 chatgpt.* 消息；本项目不做"
+        },
+        {
+          "name": "Artifacts（Canvas/Docs/Slides/Sheets）",
+          "text": "artifactViewer / artifactTab / canvas / pages / writing blocks / spreadsheet/document/presentation 生成",
+          "status": "out-of-scope",
+          "evidence": "artifact*.* / codex.pages.* / codex.writingBlock.*"
+        },
+        {
+          "name": "云端浏览器与 Computer use",
+          "text": "browser sidebar / browserAuth / browser remote control / cloud computer",
+          "status": "out-of-scope",
+          "evidence": "browser*.* / browserSidebar.* / restricted.cloudComputer.*"
+        },
+        {
+          "name": "Voice Chat / 语音通话",
+          "text": "realtime voice calls / voice floating orb / choose your voice / avatar overlay",
+          "status": "out-of-scope",
+          "evidence": "realtimeVoice.* / voiceFloatingOrb*.* / avatarOverlay.*"
+        },
+        {
+          "name": "计费/钱包/用量",
+          "text": "checkout / billing / credits / usage center / rate-limit reset purchase / wallet onboarding",
+          "status": "out-of-scope",
+          "evidence": "checkout.* / billing.* / usageCenter.* / codexWalletOnboarding*.*"
+        },
+        {
+          "name": "图片生成 / GPTs / Widgets / Apps SDK / appgen",
+          "text": "image generation, gpts, widgets, appgen sites",
+          "status": "out-of-scope",
+          "evidence": "images.* / gptsRouteNavLink / appgen*.* / sites.*"
+        },
+        {
+          "name": "ChatGPT 账号与团队管理",
+          "text": "account / profile / security / teams / parental controls / age / agreements / privacy controls",
+          "status": "out-of-scope",
+          "evidence": "settings.chatGpt.* / settings.teams.* / settings.profile.*"
+        },
+        {
+          "name": "ChatGPT 专属设置分区",
+          "text": "Cloud environments / Codex Cloud / Cloud preferences / Browser extension / Passwords / Ads controls / Consumer analytics / Billing / Usage & billing / Analytics / Data controls(ChatGPT)",
+          "status": "out-of-scope",
+          "evidence": "settings.section.* + use-visible-settings-sections Da 映射"
+        }
+      ]
+    }
+  ]
+}

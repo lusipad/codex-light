@@ -100,7 +100,9 @@ const EFFORT_OPTIONS = [
   { id: "low", shortLabel: "轻度", fullLabel: "轻度 (Low)", desc: "快速响应，轻量级推理" },
   { id: "medium", shortLabel: "中等", fullLabel: "中等 (Medium)", desc: "平衡速度与推理深度" },
   { id: "high", shortLabel: "高", fullLabel: "高 (High)", desc: "深度推演复杂逻辑与边界" },
-  { id: "extra_high", shortLabel: "超高", fullLabel: "超高 (Extra High)", desc: "最高强度推理，适合疑难重构" },
+  { id: "xhigh", shortLabel: "极高", fullLabel: "极高 (xHigh)", desc: "高强度推理，适合疑难重构" },
+  { id: "max", shortLabel: "最高", fullLabel: "最高 (Max)", desc: "最大推理深度，适合最难的问题" },
+  { id: "ultra", shortLabel: "极限", fullLabel: "极限 (Ultra)", desc: "最大推理深度并自动委派子任务" },
 ];
 
 const PERMISSION_OPTIONS: Array<{
