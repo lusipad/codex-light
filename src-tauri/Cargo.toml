@@ -30,6 +30,8 @@ base64 = "0.22"
 dirs = "5.0"
 uuid = { version = "1", features = ["v4"] }
 rfd = "0.15"
+# Local wall-clock scheduling: RRULE next-occurrence math + Local timezone.
+chrono = "0.4"
 
 [profile.dev]
 debug = 0

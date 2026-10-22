@@ -1,4 +1,5 @@
 pub mod app_server;
+pub mod automations;
 pub mod config_skills;
 pub mod git;
 pub mod menu;
@@ -762,6 +763,21 @@ fn automation_delete(id: String) -> Result<Vec<AutomationItem>, String> {
     config_skills::delete_automation(&id)
 }
 
+#[tauri::command]
+fn automations_scheduler_status() -> Value {
+    automations::scheduler_status()
+}
+
+#[tauri::command]
+fn automations_refresh_schedule() -> Value {
+    automations::refresh_schedule()
+}
+
+#[tauri::command]
+async fn automations_run_now(app: AppHandle, id: String) -> Result<Value, String> {
+    automations::run_now(app, id).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app_state = AppState {
@@ -793,6 +809,10 @@ pub fn run() {
             if let Err(err) = menu::build_tray(app.handle()) {
                 eprintln!("[menu] failed to build system tray: {err}");
             }
+
+            // Local automation scheduler: scans RRULE automations every 30s and
+            // executes due ones through the app-server. Idempotent.
+            automations::start(app.handle().clone());
 
             Ok(())
         })
@@ -862,6 +882,9 @@ pub fn run() {
             automations_list,
             automation_save,
             automation_delete,
+            automations_scheduler_status,
+            automations_refresh_schedule,
+            automations_run_now,
             exec_shell_command,
         ])
         .run(tauri::generate_context!())

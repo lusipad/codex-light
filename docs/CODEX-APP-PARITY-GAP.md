@@ -16,7 +16,7 @@
 | [protocol-features.md](research/protocol-features.md) / [protocol-runtime-methods.txt](research/protocol-runtime-methods.txt) | app-server 运行时 170 个方法 / 84 通知 / 11 个服务端请求的完整能力图 |
 | [protocol-probe-summary.md](research/protocol-probe-summary.md) | 真实环境协议探针实测返回（已登录 Plus 账号、真实 threads/projects/plugins） |
 
-> 逐轮实施进度与已完成项见 [IMPLEMENTATION-LOG.md](IMPLEMENTATION-LOG.md)：**Round 1** 差距分析 + 审批协议正确化；**Round 2** 核心链路补全（流式 diff/plan/用量、fork/revert/compact、快速搜索、真实用量/额度）；**Round 3** 批次 2（设置 config 协议化 + 实验特性/账号额度、fs/* + fs/watch + 资源管理器、真实 plan 模式、线程状态条、Inbox 持久化、Code Review）；**Round 4** 批次 3（服务端驱动 Goal、thread/queue、自定义分区、项目实体、插件市场/Apps/Skills、Windows 沙箱）；**Round 5** 批次 4（原生菜单 + 托盘 + 菜单事件桥、13 组快捷键注册表、Hooks 设置页真实化 + 实时运行记录）。
+> 逐轮实施进度与已完成项见 [IMPLEMENTATION-LOG.md](IMPLEMENTATION-LOG.md)：**Round 1** 差距分析 + 审批协议正确化；**Round 2** 核心链路补全（流式 diff/plan/用量、fork/revert/compact、快速搜索、真实用量/额度）；**Round 3** 批次 2（设置 config 协议化 + 实验特性/账号额度、fs/* + fs/watch + 资源管理器、真实 plan 模式、线程状态条、Inbox 持久化、Code Review）；**Round 4** 批次 3（服务端驱动 Goal、thread/queue、自定义分区、项目实体、插件市场/Apps/Skills、Windows 沙箱）；**Round 5** 批次 4（原生菜单 + 托盘、快捷键注册表、Hooks 设置页真实化）；**Round 6** 批次 5（自动化调度执行器 + 运行状态/历史 UI、长会话分页、快捷键设置真实化、review/queue 语义修正）。
 
 ---
 

@@ -138,3 +138,32 @@
 - 快捷键与菜单 accelerator 采用 250ms 去重；极快的重复按同一 toggle 会被合并一次。
 - `toggle-devtools` 仅在 debug 构建由 Rust 直接生效（release 无 devtools feature 时仅发事件）。
 - Hooks 运行记录仅存在于设置页打开期间（未做跨路由持久化）；未信任 hook 会被 codex 上游跳过（UI 已标注 trustStatus）。
+
+## Round 6 — 批次 5：自动化调度执行器 / 长会话分页 / 快捷键设置真实化
+
+### 自动化调度执行器（Rust，新增 `src-tauri/src/automations.rs` 1599 行）
+- `automations::start(app)`：幂等后台循环（首轮 5s、之后每 30s），读取 `~/.codex/automations/<id>/automation.toml`（复用 config_skills::list_automations）。
+- 自研 RRULE 解析 + chrono 本地墙钟计算：HOURLY/DAILY/WEEKLY/MONTHLY/YEARLY + INTERVAL/BYHOUR/BYMINUTE/BYDAY/BYMONTHDAY/WKST；不支持规则 warning 跳过不崩溃。`.run-jitter-salt` FNV-1a 稳定 jitter ≤60s；PAUSED/非 local 跳过；首次发现只排未来（以 created/updated 为锚）。
+- 执行链：`ensure_connected` → `thread/start {cwd, model, approvalPolicy:"never", sandbox:"workspace-write"}` → `turn/start {input:[{text:prompt}], model, effort}`；失败写状态发事件，不 panic。
+- 状态持久化：`~/.codex/.codex-native/scheduler-state.json`（原子写，用户 automation.toml 只读）；事件 `automation:run-started|run-finished`；命令 `automations_scheduler_status|refresh_schedule|run_now` 注册。
+- **17 个单测**（RRULE 解析/下一次运行/jitter/首轮只排未来/PAUSED 跳过/月内 31 日跳过等）全部通过。
+
+### Automations 页（前端）
+- 新增 `src/automationsClient.ts`（调度器 RPC + 事件订阅 + 错误分类 unavailable/command_failed）。
+- AutomationsView：顶部调度器状态条（运行中、当前时间、配置数、下次运行摘要、刷新调度）、每行「下次运行/上次运行状态色/运行次数/错误/线程」、**立即运行**、实时事件标记、运行历史最近 20 条（可清空）；CRUD 全保留；后端未就绪时显示「调度器不可用」黄条且 CRUD 不受影响。
+
+### 其他收尾
+- **长会话分页**：`thread/turns/list {limit:15, sortDirection:"desc", itemsView:"full"}` 首屏 + 「↑ 加载更早的轮次」（cursor 翻页、去重前置、失败回退 full read）；`thread/read` 改 metadata-only。
+- **设置页「键盘快捷键」**：改为从 `src/shortcuts.ts` 导入真实注册表分组渲染（15 项）。
+- 修正 `review/start` 自定义目标：官方枚举是 `{type:"custom", instructions}`（原先误用 `instructions`）。
+- 修正服务端队列语义：空闲时服务端会自动消费队首，移除客户端 auto-start 循环；「立即发送」改为 `thread/queue/start {queuedSubmissionId}`。
+
+### 验证
+- `npm run build` ✅ / `npx tsc --noEmit` ✅
+- `cargo check --manifest-path src-tauri/Cargo.toml` ✅（0 error / 0 warning）
+- `cargo test --manifest-path src-tauri/Cargo.toml automations` ✅ **17 passed / 0 failed**
+- 协议 shape 校验 batch4 **16/16 通过**（隔离 CODEX_HOME：turns 分页、queue update/reorder/delete、project/import、review 四种 target、hooks/list、skills/config/write；items/list 在 0.159 不支持已记录）
+
+### 已知限制
+- 调度器仅在应用运行时工作（无 OS 服务）；重启会对已过期 nextRunAt 补跑一次；`run-finished` 表示成功发起 turn，不等待模型跑完。
+- `thread/items/list` 在当前 CLI 版本返回 not supported（已降级记录）。

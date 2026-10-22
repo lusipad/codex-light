@@ -1,7 +1,9 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  AlertTriangle,
   CheckCircle2,
   Clock,
+  History,
   Pause,
   Play,
   Plus,
@@ -11,6 +13,17 @@ import {
   Zap,
 } from "lucide-react";
 import { tauriInvoke } from "../bridge";
+import {
+  getSchedulerStatus,
+  isSchedulerUnavailableError,
+  refreshSchedule,
+  runAutomationNow,
+  subscribeAutomationEvents,
+  type AutomationRunFinishedEvent,
+  type AutomationRunStartedEvent,
+  type SchedulerEntry,
+  type SchedulerStatus,
+} from "../automationsClient";
 import { AutomationItem, ModelInfo } from "../types";
 
 interface AutomationsViewProps {
@@ -50,6 +63,176 @@ const SCHEDULE_PRESETS = [
   { label: "每小时巡检", rrule: "FREQ=HOURLY;INTERVAL=1" },
 ];
 
+const MAX_RUN_HISTORY = 20;
+
+type SchedulerUiState = "loading" | "ready" | "unavailable" | "error";
+type RunRecordStatus = "running" | "completed" | "failed";
+type NoticeKind = "success" | "error" | "info";
+
+interface RunHistoryRecord {
+  key: string;
+  automationId: string;
+  name: string;
+  status: RunRecordStatus;
+  startedAt: number;
+  finishedAt?: number;
+  threadId?: string;
+  error?: string;
+}
+
+interface Notice {
+  kind: NoticeKind;
+  text: string;
+}
+
+function formatDateTime(value?: number | null): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  try {
+    return date.toLocaleString("zh-CN", {
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+  } catch {
+    return date.toISOString();
+  }
+}
+
+function formatClock(value: number): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  try {
+    return date.toLocaleTimeString("zh-CN", { hour12: false });
+  } catch {
+    return date.toISOString();
+  }
+}
+
+/** "3 小时后" / "2 分钟前" style relative label. */
+function formatRelativeTime(target: number, now: number): string {
+  const diff = target - now;
+  const abs = Math.abs(diff);
+  const minute = 60_000;
+  const hour = 3_600_000;
+  const day = 86_400_000;
+  const suffix = diff >= 0 ? "后" : "前";
+  if (abs < minute) return "即将";
+  if (abs < hour) return `${Math.round(abs / minute)} 分钟${suffix}`;
+  if (abs < day) return `${Math.round(abs / hour)} 小时${suffix}`;
+  return `${Math.round(abs / day)} 天${suffix}`;
+}
+
+function shortId(id?: string | null, length = 8): string {
+  if (!id) return "";
+  return id.length > length ? `${id.slice(0, length)}…` : id;
+}
+
+function truncateText(text: string, max = 60): string {
+  if (!text) return "";
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+function runStatusLabel(status?: string | null): string {
+  const value = (status || "").toLowerCase();
+  if (value === "running") return "运行中";
+  if (value === "completed" || value === "success" || value === "succeeded") return "成功";
+  if (value === "failed" || value === "error") return "失败";
+  return "未运行";
+}
+
+function runStatusColor(status?: string | null): string {
+  const value = (status || "").toLowerCase();
+  if (value === "running") return "var(--accent-blue)";
+  if (value === "completed" || value === "success" || value === "succeeded") {
+    return "var(--accent-green)";
+  }
+  if (value === "failed" || value === "error") return "var(--accent-red)";
+  return "var(--text-tertiary)";
+}
+
+function runStatusBackground(status?: string | null): string {
+  const value = (status || "").toLowerCase();
+  if (value === "running") return "rgba(58, 131, 247, 0.15)";
+  if (value === "completed" || value === "success" || value === "succeeded") {
+    return "rgba(16, 163, 127, 0.15)";
+  }
+  if (value === "failed" || value === "error") return "rgba(239, 68, 68, 0.15)";
+  return "rgba(255, 255, 255, 0.08)";
+}
+
+function noticeColor(kind: NoticeKind): string {
+  if (kind === "success") return "var(--accent-green)";
+  if (kind === "error") return "var(--accent-red)";
+  return "var(--accent-blue)";
+}
+
+function appendRunRecord(
+  records: RunHistoryRecord[],
+  record: RunHistoryRecord
+): RunHistoryRecord[] {
+  return [record, ...records].slice(0, MAX_RUN_HISTORY);
+}
+
+function applyStartedEvent(
+  records: RunHistoryRecord[],
+  event: AutomationRunStartedEvent
+): RunHistoryRecord[] {
+  const runningIndex = records.findIndex(
+    (record) => record.automationId === event.id && record.status === "running"
+  );
+  if (runningIndex >= 0) {
+    const next = [...records];
+    next[runningIndex] = {
+      ...next[runningIndex],
+      name: event.name || next[runningIndex].name,
+      startedAt: event.at || next[runningIndex].startedAt,
+    };
+    return next;
+  }
+  return appendRunRecord(records, {
+    key: `started:${event.id}:${event.at}`,
+    automationId: event.id,
+    name: event.name,
+    status: "running",
+    startedAt: event.at,
+  });
+}
+
+function applyFinishedEvent(
+  records: RunHistoryRecord[],
+  event: AutomationRunFinishedEvent
+): RunHistoryRecord[] {
+  const runningIndex = records.findIndex(
+    (record) => record.automationId === event.id && record.status === "running"
+  );
+  if (runningIndex >= 0) {
+    const next = [...records];
+    next[runningIndex] = {
+      ...next[runningIndex],
+      name: event.name || next[runningIndex].name,
+      status: event.status,
+      finishedAt: event.finishedAt,
+      threadId: event.threadId ?? next[runningIndex].threadId,
+      error: event.error ?? next[runningIndex].error,
+    };
+    return next;
+  }
+  return appendRunRecord(records, {
+    key: `finished:${event.id}:${event.finishedAt}`,
+    automationId: event.id,
+    name: event.name,
+    status: event.status,
+    startedAt: event.finishedAt,
+    finishedAt: event.finishedAt,
+    threadId: event.threadId ?? undefined,
+    error: event.error ?? undefined,
+  });
+}
+
 export const AutomationsView: React.FC<AutomationsViewProps> = ({
   activeWorkspaceRoot,
   models,
@@ -71,16 +254,160 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
   const [execEnv, setExecEnv] = useState<"worktree" | "local">("worktree");
   const [selectedModel, setSelectedModel] = useState<string>("");
 
+  // ── Scheduler state (Rust automation scheduler) ──
+  const [scheduler, setScheduler] = useState<SchedulerStatus | null>(null);
+  const [schedulerState, setSchedulerState] = useState<SchedulerUiState>("loading");
+  const [schedulerError, setSchedulerError] = useState<string>("");
+  const [schedulerBusy, setSchedulerBusy] = useState<boolean>(false);
+  const [runBusyId, setRunBusyId] = useState<string | null>(null);
+  const [runHistory, setRunHistory] = useState<RunHistoryRecord[]>([]);
+  const [runThreads, setRunThreads] = useState<Record<string, string>>({});
+  const [clock, setClock] = useState<number>(Date.now());
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const recordSeqRef = useRef<number>(0);
+
+  const makeRecordKey = useCallback((prefix: string, id: string): string => {
+    recordSeqRef.current += 1;
+    return `${prefix}:${id}:${Date.now()}:${recordSeqRef.current}`;
+  }, []);
+
   const refresh = async () => {
     try {
       const list = await tauriInvoke<AutomationItem[]>("automations_list");
       setAutomations(list);
-    } catch {}
+    } catch {
+      // automations_list already existed before the scheduler task; keep silent.
+    }
   };
 
-  useEffect(() => {
-    refresh();
+  const loadScheduler = useCallback(async (options?: { silent?: boolean }) => {
+    try {
+      const status = await getSchedulerStatus();
+      setScheduler(status);
+      setSchedulerState("ready");
+      setSchedulerError("");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setScheduler(null);
+      if (isSchedulerUnavailableError(error)) {
+        setSchedulerState("unavailable");
+        setSchedulerError("");
+      } else {
+        setSchedulerState("error");
+        setSchedulerError(message);
+      }
+      if (!options?.silent) {
+        setNotice({ kind: "info", text: `无法获取调度器状态：${message}` });
+      }
+    }
   }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  useEffect(() => {
+    void loadScheduler({ silent: true });
+  }, [loadScheduler]);
+
+  // Recompute the scheduler plan after an automation is created/updated/deleted.
+  // Degrades silently when the scheduler backend is not available yet.
+  const syncScheduleAfterConfigChange = useCallback(async () => {
+    try {
+      const status = await refreshSchedule();
+      setScheduler(status);
+      setSchedulerState("ready");
+      setSchedulerError("");
+    } catch (error) {
+      if (isSchedulerUnavailableError(error)) {
+        setSchedulerState("unavailable");
+        setScheduler(null);
+        setSchedulerError("");
+      } else {
+        const message = error instanceof Error ? error.message : String(error);
+        setSchedulerState("error");
+        setSchedulerError(message);
+        void loadScheduler({ silent: true });
+      }
+    }
+  }, [loadScheduler]);
+
+  // Live "current time" for the scheduler status bar.
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  // Auto-dismiss transient notices.
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), 6000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+
+  // Subscribe to realtime run events emitted by the Rust scheduler.
+  useEffect(() => {
+    const unsubscribe = subscribeAutomationEvents((event) => {
+      if (event.kind === "started") {
+        setRunHistory((prev) => applyStartedEvent(prev, event));
+        void loadScheduler({ silent: true });
+        return;
+      }
+      setRunHistory((prev) => applyFinishedEvent(prev, event));
+      if (event.threadId) {
+        const threadId = event.threadId;
+        setRunThreads((prev) => ({ ...prev, [event.id]: threadId }));
+      }
+      setNotice(
+        event.status === "failed"
+          ? {
+              kind: "error",
+              text: `「${event.name}」运行失败${
+                event.error ? `：${truncateText(event.error, 120)}` : ""
+              }`,
+            }
+          : {
+              kind: "success",
+              text: `「${event.name}」运行完成${
+                event.threadId ? `（线程 ${shortId(event.threadId)}）` : ""
+              }`,
+            }
+      );
+      void loadScheduler({ silent: true });
+    });
+    return unsubscribe;
+  }, [loadScheduler]);
+
+  // Reconcile locally-created "running" history records if the backend does not
+  // emit a finished event (uses the refreshed scheduler entry timestamps).
+  useEffect(() => {
+    if (!scheduler) return;
+    setRunHistory((prev) => {
+      let changed = false;
+      const next = prev.map((record) => {
+        if (record.status !== "running") return record;
+        const entry = scheduler.entries.find((candidate) => candidate.id === record.automationId);
+        if (!entry) return record;
+        const status = (entry.lastStatus || "").toLowerCase();
+        const finishedAt = entry.lastRunAt;
+        if (
+          (status === "completed" || status === "failed") &&
+          typeof finishedAt === "number" &&
+          finishedAt >= record.startedAt - 1000
+        ) {
+          changed = true;
+          return {
+            ...record,
+            status: status as RunRecordStatus,
+            finishedAt,
+            error: entry.lastError ?? record.error,
+          };
+        }
+        return record;
+      });
+      return changed ? next : prev;
+    });
+  }, [scheduler]);
 
   const handleCreate = async () => {
     if (!name.trim() || !prompt.trim()) return;
@@ -106,6 +433,7 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
     setName("");
     setPrompt("");
     setShowCreateForm(false);
+    void syncScheduleAfterConfigChange();
   };
 
   const handleToggleStatus = async (item: AutomationItem, targetStatus?: string) => {
@@ -119,6 +447,7 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
       item: next,
     });
     setAutomations(updated);
+    void syncScheduleAfterConfigChange();
   };
 
   const handleDelete = async (id: string) => {
@@ -127,6 +456,98 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
       id,
     });
     setAutomations(updated);
+    void syncScheduleAfterConfigChange();
+  };
+
+  const handleRunNow = async (item: AutomationItem) => {
+    if (runBusyId) return;
+
+    // Scheduler missing / not supported: keep the previous local behavior.
+    if (schedulerState === "unavailable") {
+      onRunAutomationNow(item);
+      setNotice({
+        kind: "info",
+        text: "调度器不可用（后端未就绪），已回退为本地立即运行。",
+      });
+      return;
+    }
+    if (schedulerState === "loading") {
+      setNotice({ kind: "info", text: "调度器状态加载中，请稍候再试。" });
+      return;
+    }
+
+    setRunBusyId(item.id);
+    try {
+      const result = await runAutomationNow(item.id);
+      const threadId = result.threadId;
+      if (threadId) {
+        setRunThreads((prev) => ({ ...prev, [item.id]: threadId }));
+      }
+      setRunHistory((prev) =>
+        appendRunRecord(prev, {
+          key: makeRecordKey("scheduler-run", item.id),
+          automationId: item.id,
+          name: item.name,
+          status: "running",
+          startedAt: Date.now(),
+          threadId: threadId || undefined,
+        })
+      );
+      setNotice({
+        kind: "success",
+        text: `已触发「${item.name}」${
+          threadId ? `（线程 ${shortId(threadId)}）` : ""
+        }，调度器正在执行…`,
+      });
+      void loadScheduler({ silent: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (isSchedulerUnavailableError(error)) {
+        setSchedulerState("unavailable");
+        setScheduler(null);
+        onRunAutomationNow(item);
+        setNotice({
+          kind: "info",
+          text: "调度器不可用（后端未就绪），已回退为本地立即运行。",
+        });
+      } else {
+        setNotice({ kind: "error", text: `立即运行失败：${message}` });
+      }
+    } finally {
+      setRunBusyId(null);
+    }
+  };
+
+  const handleRefreshSchedule = async () => {
+    if (schedulerBusy) return;
+    setSchedulerBusy(true);
+    try {
+      const status = await refreshSchedule();
+      setScheduler(status);
+      setSchedulerState("ready");
+      setSchedulerError("");
+      setNotice({
+        kind: "success",
+        text: `调度已刷新：${status.entries.length} 个任务已注册到调度器${
+          status.running ? "" : "（调度器当前未运行）"
+        }。`,
+      });
+      void refresh();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (isSchedulerUnavailableError(error)) {
+        setSchedulerState("unavailable");
+        setScheduler(null);
+        setSchedulerError("");
+        setNotice({ kind: "error", text: "调度器不可用（后端未就绪）" });
+      } else {
+        setSchedulerState("error");
+        setSchedulerError(message);
+        setNotice({ kind: "error", text: `刷新调度失败：${message}` });
+      }
+    } finally {
+      setSchedulerBusy(false);
+    }
   };
 
   const filteredItems = useMemo(() => {
@@ -137,6 +558,57 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
       return true;
     });
   }, [automations, activeSubTab, statusFilter]);
+
+  const schedulerEntriesById = useMemo(() => {
+    const map = new Map<string, SchedulerEntry>();
+    for (const entry of scheduler?.entries ?? []) {
+      map.set(entry.id, entry);
+    }
+    return map;
+  }, [scheduler]);
+
+  const configuredCount = scheduler?.entries?.length ?? automations.length;
+
+  const nextScheduledEntry = useMemo<SchedulerEntry | null>(() => {
+    const candidates = (scheduler?.entries ?? []).filter(
+      (entry) => typeof entry.nextRunAt === "number" && (entry.nextRunAt as number) > clock
+    );
+    candidates.sort((a, b) => (a.nextRunAt as number) - (b.nextRunAt as number));
+    return candidates[0] ?? null;
+  }, [scheduler, clock]);
+
+  const runningAutomationIds = useMemo(() => {
+    const running = new Set<string>();
+    for (const record of runHistory) {
+      if (record.status === "running") running.add(record.automationId);
+    }
+    for (const entry of scheduler?.entries ?? []) {
+      if ((entry.lastStatus || "").toLowerCase() === "running") running.add(entry.id);
+    }
+    return running;
+  }, [runHistory, scheduler]);
+
+  const schedulerDotColor =
+    schedulerState === "ready"
+      ? scheduler?.running
+        ? "var(--accent-green)"
+        : "var(--accent-amber)"
+      : schedulerState === "error"
+        ? "var(--accent-red)"
+        : schedulerState === "unavailable"
+          ? "var(--text-tertiary)"
+          : "var(--accent-blue)";
+
+  const schedulerStateText =
+    schedulerState === "ready"
+      ? scheduler?.running
+        ? "运行中"
+        : "未运行"
+      : schedulerState === "unavailable"
+        ? "不可用"
+        : schedulerState === "error"
+          ? "异常"
+          : "连接中…";
 
   return (
     <div className="panel-page">
@@ -159,6 +631,110 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
             <RefreshCw size={14} /> 刷新
           </button>
         </div>
+      </div>
+
+      {/* Scheduler status bar */}
+      <div className="card-section">
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            flexWrap: "wrap",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span
+              aria-hidden="true"
+              style={{
+                width: 9,
+                height: 9,
+                borderRadius: "50%",
+                background: schedulerDotColor,
+                flex: "0 0 auto",
+                boxShadow:
+                  schedulerState === "ready" && scheduler?.running
+                    ? "0 0 0 3px rgba(16, 163, 127, 0.16)"
+                    : "none",
+              }}
+            />
+            <strong style={{ fontSize: 13.5 }}>
+              调度器{schedulerStateText}
+            </strong>
+            <span className="tag-badge">当前时间 {formatClock(clock)}</span>
+            <span className="tag-badge">已配置 {configuredCount} 个任务</span>
+            <span
+              className="tag-badge"
+              title={
+                nextScheduledEntry
+                  ? `${nextScheduledEntry.name} · ${formatDateTime(nextScheduledEntry.nextRunAt)}`
+                  : "暂无可预计的下次运行"
+              }
+            >
+              下次运行{" "}
+              {nextScheduledEntry
+                ? formatDateTime(nextScheduledEntry.nextRunAt)
+                : "暂无"}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="secondary-btn"
+            onClick={handleRefreshSchedule}
+            disabled={schedulerBusy || schedulerState === "loading"}
+            title="重新计算下一次调度计划"
+          >
+            <RefreshCw size={14} /> {schedulerBusy ? "刷新中…" : "刷新调度"}
+          </button>
+        </div>
+
+        {schedulerState === "unavailable" && (
+          <p
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              margin: 0,
+              fontSize: 12,
+              color: "var(--accent-amber)",
+            }}
+          >
+            <AlertTriangle size={13} /> 调度器不可用（后端未就绪）。任务的新建 / 编辑 /
+            启停 / 删除仍可正常使用；「立即运行」将回退为本地执行。
+          </p>
+        )}
+
+        {schedulerState === "error" && (
+          <p
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              margin: 0,
+              fontSize: 12,
+              color: "var(--accent-red)",
+            }}
+          >
+            <AlertTriangle size={13} /> 调度器异常：{schedulerError || "未知错误"}
+            （任务 CRUD 不受影响，可尝试「刷新调度」重试）
+          </p>
+        )}
+
+        {nextScheduledEntry && (
+          <p style={{ margin: 0, fontSize: 12, color: "var(--text-tertiary)" }}>
+            下次运行摘要：{nextScheduledEntry.name} 将于{" "}
+            {formatDateTime(nextScheduledEntry.nextRunAt)}（
+            {formatRelativeTime(nextScheduledEntry.nextRunAt as number, clock)}）触发，
+            可执行任务共 {scheduler?.entries.length ?? 0} 项。
+          </p>
+        )}
+
+        {notice && (
+          <p style={{ margin: 0, fontSize: 12, color: noticeColor(notice.kind) }}>
+            {notice.text}
+          </p>
+        )}
       </div>
 
       {/* Sub-Tabs & Status Filter Bar */}
@@ -361,75 +937,229 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
           </div>
         ) : (
           <div className="item-cards-list">
-            {filteredItems.map((item) => (
-              <div key={item.id} className="item-card">
-                <div className="item-card-main">
-                  <div className="item-card-title-row">
-                    {item.kind === "goal" ? (
-                      <Target size={15} className="accent-icon" />
-                    ) : (
-                      <Clock size={15} className="accent-icon" />
+            {filteredItems.map((item) => {
+              const entry = schedulerEntriesById.get(item.id);
+              const itemRunning = runningAutomationIds.has(item.id);
+              const itemThreadId = runThreads[item.id];
+              const showSchedulerMeta =
+                schedulerState === "ready" || Boolean(entry) || Boolean(itemThreadId);
+              return (
+                <div key={item.id} className="item-card">
+                  <div className="item-card-main">
+                    <div className="item-card-title-row">
+                      {item.kind === "goal" ? (
+                        <Target size={15} className="accent-icon" />
+                      ) : (
+                        <Clock size={15} className="accent-icon" />
+                      )}
+                      <strong>{item.name}</strong>
+                      <span
+                        className={`tag-badge ${
+                          item.status === "ACTIVE" ? "accent" : ""
+                        }`}
+                      >
+                        {item.status}
+                      </span>
+                      <span className="tag-badge">
+                        {item.kind === "goal" ? "长期目标 /goal" : item.kind}
+                      </span>
+                      <span className="tag-badge">{item.executionEnvironment}</span>
+                      {itemRunning && (
+                        <span
+                          className="tag-badge"
+                          style={{
+                            color: "var(--accent-blue)",
+                            background: "rgba(58, 131, 247, 0.15)",
+                          }}
+                        >
+                          运行中…
+                        </span>
+                      )}
+                    </div>
+                    <p className="item-card-desc">{item.prompt}</p>
+                    <div className="item-card-meta">
+                      <span>周期: {item.rrule}</span>
+                      {item.cwds.length > 0 && <span>项目: {item.cwds[0]}</span>}
+                      {item.model && <span>模型: {item.model}</span>}
+                    </div>
+                    {showSchedulerMeta && (
+                      <div
+                        className="item-card-meta"
+                        style={{ flexWrap: "wrap", rowGap: 4 }}
+                      >
+                        <span
+                          title={
+                            entry?.nextRunAt
+                              ? formatDateTime(entry.nextRunAt)
+                              : "调度器尚未给出下次运行时间"
+                          }
+                        >
+                          下次运行:{" "}
+                          {entry?.nextRunAt
+                            ? `${formatDateTime(entry.nextRunAt)}（${formatRelativeTime(
+                                entry.nextRunAt,
+                                clock
+                              )}）`
+                            : "—"}
+                        </span>
+                        <span
+                          style={{ color: runStatusColor(entry?.lastStatus) }}
+                          title={entry?.lastError || undefined}
+                        >
+                          上次运行:{" "}
+                          {entry?.lastRunAt
+                            ? `${formatDateTime(entry.lastRunAt)} · ${runStatusLabel(
+                                entry.lastStatus
+                              )}`
+                            : runStatusLabel(entry?.lastStatus)}
+                        </span>
+                        <span>运行次数: {entry?.runCount ?? 0}</span>
+                        {itemThreadId && (
+                          <span title={itemThreadId}>线程: {shortId(itemThreadId)}</span>
+                        )}
+                        {entry?.lastError && (
+                          <span
+                            style={{ color: "var(--accent-red)" }}
+                            title={entry.lastError}
+                          >
+                            错误: {truncateText(entry.lastError, 60)}
+                          </span>
+                        )}
+                      </div>
                     )}
-                    <strong>{item.name}</strong>
-                    <span
-                      className={`tag-badge ${
-                        item.status === "ACTIVE" ? "accent" : ""
-                      }`}
+                  </div>
+                  <div className="item-card-actions">
+                    <button
+                      type="button"
+                      className="primary-btn-sm"
+                      onClick={() => handleRunNow(item)}
+                      disabled={runBusyId !== null}
+                      title={
+                        schedulerState === "unavailable"
+                          ? "调度器不可用（后端未就绪），将回退为本地立即运行"
+                          : "通过调度器立即执行一次"
+                      }
                     >
-                      {item.status}
-                    </span>
-                    <span className="tag-badge">
-                      {item.kind === "goal" ? "长期目标 /goal" : item.kind}
-                    </span>
-                    <span className="tag-badge">{item.executionEnvironment}</span>
-                  </div>
-                  <p className="item-card-desc">{item.prompt}</p>
-                  <div className="item-card-meta">
-                    <span>周期: {item.rrule}</span>
-                    {item.cwds.length > 0 && <span>项目: {item.cwds[0]}</span>}
-                    {item.model && <span>模型: {item.model}</span>}
-                  </div>
-                </div>
-                <div className="item-card-actions">
-                  <button
-                    type="button"
-                    className="primary-btn-sm"
-                    onClick={() => onRunAutomationNow(item)}
-                  >
-                    <Zap size={13} /> 立即运行
-                  </button>
-                  <button
-                    type="button"
-                    className="secondary-btn-sm"
-                    onClick={() => handleToggleStatus(item)}
-                  >
-                    {item.status === "PAUSED" ? (
-                      <>
-                        <Play size={12} /> 启用
-                      </>
-                    ) : (
-                      <>
-                        <Pause size={12} /> 暂停
-                      </>
-                    )}
-                  </button>
-                  {item.status !== "COMPLETED" && (
+                      <Zap size={13} />{" "}
+                      {runBusyId === item.id ? "触发中…" : "立即运行"}
+                    </button>
                     <button
                       type="button"
                       className="secondary-btn-sm"
-                      onClick={() => handleToggleStatus(item, "COMPLETED")}
-                      title="标记为已完成"
+                      onClick={() => handleToggleStatus(item)}
                     >
-                      <CheckCircle2 size={12} /> 完成
+                      {item.status === "PAUSED" ? (
+                        <>
+                          <Play size={12} /> 启用
+                        </>
+                      ) : (
+                        <>
+                          <Pause size={12} /> 暂停
+                        </>
+                      )}
                     </button>
+                    {item.status !== "COMPLETED" && (
+                      <button
+                        type="button"
+                        className="secondary-btn-sm"
+                        onClick={() => handleToggleStatus(item, "COMPLETED")}
+                        title="标记为已完成"
+                      >
+                        <CheckCircle2 size={12} /> 完成
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="danger-btn-sm"
+                      onClick={() => handleDelete(item.id)}
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Scheduler run history (latest 20, clearable) */}
+      <div className="card-section">
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            flexWrap: "wrap",
+          }}
+        >
+          <h3 style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <History size={14} /> 运行历史（最近 {runHistory.length} /{" "}
+            {MAX_RUN_HISTORY} 条）
+          </h3>
+          <button
+            type="button"
+            className="secondary-btn"
+            onClick={() => {
+              setRunHistory([]);
+              setNotice({ kind: "info", text: "运行历史已清空。" });
+            }}
+            disabled={runHistory.length === 0}
+          >
+            <Trash2 size={13} /> 清空
+          </button>
+        </div>
+        {runHistory.length === 0 ? (
+          <div className="empty-hint">
+            尚未收到调度器运行事件。开启调度器或点击「立即运行」后，运行记录会实时出现在这里。
+          </div>
+        ) : (
+          <div className="item-cards-list">
+            {runHistory.map((record) => (
+              <div key={record.key} className="item-card">
+                <div className="item-card-main" style={{ flex: 1 }}>
+                  <div className="item-card-title-row">
+                    <strong>{record.name}</strong>
+                    <span
+                      className="tag-badge"
+                      style={{
+                        color: runStatusColor(record.status),
+                        background: runStatusBackground(record.status),
+                      }}
+                    >
+                      {runStatusLabel(record.status)}
+                    </span>
+                    {record.threadId && (
+                      <span className="tag-badge" title={record.threadId}>
+                        线程 {shortId(record.threadId)}
+                      </span>
+                    )}
+                  </div>
+                  {record.error && (
+                    <p
+                      className="item-card-desc"
+                      style={{ color: "var(--accent-red)", margin: 0 }}
+                      title={record.error}
+                    >
+                      {truncateText(record.error, 160)}
+                    </p>
                   )}
-                  <button
-                    type="button"
-                    className="danger-btn-sm"
-                    onClick={() => handleDelete(item.id)}
+                </div>
+                <div className="item-card-actions">
+                  <span
+                    style={{
+                      fontSize: 11.5,
+                      color: "var(--text-tertiary)",
+                      whiteSpace: "nowrap",
+                    }}
                   >
-                    <Trash2 size={12} />
-                  </button>
+                    {record.status === "running"
+                      ? `开始于 ${formatDateTime(record.startedAt)}`
+                      : `完成于 ${formatDateTime(
+                          record.finishedAt ?? record.startedAt
+                        )}`}
+                  </span>
                 </div>
               </div>
             ))}

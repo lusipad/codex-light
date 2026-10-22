@@ -279,6 +279,17 @@ function playNotificationChime(kind: "nudge" | "done" = "done") {
   }
 }
 
+function mapTurnObject(t: any, idx: number): TurnData {
+  return {
+    id: t?.id || `turn-${idx}`,
+    status: t?.status || "completed",
+    startedAt: t?.startedAt || t?.firstTurnWorkItemStartedAtMs || null,
+    completedAt: t?.completedAt || null,
+    durationMs: t?.durationMs || null,
+    items: Array.isArray(t?.items) ? t.items : [],
+  };
+}
+
 function normalizeTurnsFromThread(threadObj: any): TurnData[] {
   const rawTurns =
     threadObj?.turns ||
@@ -286,14 +297,14 @@ function normalizeTurnsFromThread(threadObj: any): TurnData[] {
     threadObj?.data ||
     [];
   if (!Array.isArray(rawTurns)) return [];
-  return rawTurns.map((t: any, idx: number) => ({
-    id: t.id || `turn-${idx}`,
-    status: t.status || "completed",
-    startedAt: t.startedAt || t.firstTurnWorkItemStartedAtMs || null,
-    completedAt: t.completedAt || null,
-    durationMs: t.durationMs || null,
-    items: Array.isArray(t.items) ? t.items : [],
-  }));
+  return rawTurns.map(mapTurnObject);
+}
+
+/** `thread/turns/list` returns `{data, nextCursor}`（desc 分页时 data 为新→旧）。 */
+function normalizeTurnsFromList(page: any, reverse = true): TurnData[] {
+  const list = Array.isArray(page?.data) ? page.data : [];
+  const ordered = reverse ? list.slice().reverse() : list;
+  return ordered.map(mapTurnObject);
 }
 
 export const App: React.FC = () => {
@@ -341,6 +352,11 @@ export const App: React.FC = () => {
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [activeTurnId, setActiveTurnId] = useState<string | null>(null);
   const [turns, setTurns] = useState<TurnData[]>([]);
+  const [turnsCursor, setTurnsCursor] = useState<string | null>(null);
+  const [hasMoreTurns, setHasMoreTurns] = useState<boolean>(false);
+  const [loadingEarlierTurns, setLoadingEarlierTurns] = useState<boolean>(false);
+  const turnsCursorRef = useRef<string | null>(null);
+  turnsCursorRef.current = turnsCursor;
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
   const [pendingRequests, setPendingRequests] = useState<PendingServerRequest[]>([]);
   const [tokenUsage, setTokenUsage] = useState<TokenUsageSnapshot | null>(null);
@@ -1256,6 +1272,47 @@ export const App: React.FC = () => {
     return () => clearTimeout(handle);
   }, [inboxItems]);
 
+  // 自动化调度器事件 → Toast + Inbox + 刷新会话列表
+  useEffect(() => {
+    let disposed = false;
+    const offStarted = tauriListen<any>("automation:run-started", (payload) => {
+      if (disposed) return;
+      showAppToast(
+        `▶ 正在运行自动化：${payload?.name || payload?.id || ""}`,
+        "info"
+      );
+    });
+    const offFinished = tauriListen<any>("automation:run-finished", (payload) => {
+      if (disposed) return;
+      const ok = payload?.status === "completed";
+      const name = payload?.name || payload?.id || "自动化任务";
+      showAppToast(
+        ok ? `✓ 自动化已完成：${name}` : `自动化失败：${name}`,
+        ok ? "success" : "error"
+      );
+      setInboxItems((prev) =>
+        [
+          {
+            id: `automation-${payload?.id || "task"}-${Date.now()}`,
+            title: ok ? `自动化已完成：${name}` : `自动化失败：${name}`,
+            subtitle: payload?.error ? String(payload.error) : "",
+            kind: "automation" as const,
+            threadId: payload?.threadId || undefined,
+            createdAt: Date.now(),
+            read: false,
+          },
+          ...prev,
+        ].slice(0, 100)
+      );
+      refreshThreads();
+    });
+    return () => {
+      disposed = true;
+      offStarted.then((f) => f()).catch(() => {});
+      offFinished.then((f) => f()).catch(() => {});
+    };
+  }, [showAppToast, refreshThreads]);
+
   // Code Review：进入页面时加载最近提交，供“指定提交”选择
   useEffect(() => {
     if (activeRoute !== "review") return;
@@ -1423,6 +1480,8 @@ export const App: React.FC = () => {
       setActiveTurnId(null);
       setActiveThreadStatus(null);
       setTurns([]);
+      setTurnsCursor(null);
+      setHasMoreTurns(false);
       setPlanSteps([]);
       setTurnDiffFiles([]);
       setTokenUsage(null);
@@ -1439,10 +1498,12 @@ export const App: React.FC = () => {
     setActiveThreadStatus(null);
     setPlanSteps([]);
     setTurnDiffFiles([]);
+    setTurnsCursor(null);
+    setHasMoreTurns(false);
     try {
       const res = await callAppServer<any>("thread/read", {
         threadId,
-        includeTurns: true,
+        includeTurns: false,
       });
       const threadStatus = res?.thread?.status;
       if (threadStatus) {
@@ -1453,9 +1514,31 @@ export const App: React.FC = () => {
             : [],
         });
       }
-      const loadedTurns = normalizeTurnsFromThread(res);
+      // 分页加载最近 15 个 turn（官方推荐的分页读取方式）
+      const PAGE_SIZE = 15;
+      let loadedTurns: TurnData[] = [];
+      let nextCursor: string | null = null;
+      try {
+        const page = await callAppServer<any>("thread/turns/list", {
+          threadId,
+          limit: PAGE_SIZE,
+          sortDirection: "desc",
+          itemsView: "full",
+        });
+        loadedTurns = normalizeTurnsFromList(page, true);
+        nextCursor = page?.nextCursor ?? null;
+      } catch (pageErr) {
+        console.warn("thread/turns/list failed, falling back to full read:", pageErr);
+        const fullRes = await callAppServer<any>("thread/read", {
+          threadId,
+          includeTurns: true,
+        });
+        loadedTurns = normalizeTurnsFromThread(fullRes);
+      }
       if (loadedTurns.length > 0) {
         setTurns(loadedTurns);
+        setTurnsCursor(nextCursor);
+        setHasMoreTurns(Boolean(nextCursor));
       } else {
         const resumeRes = await callAppServer<any>("thread/resume", {
           threadId,
@@ -1475,6 +1558,38 @@ export const App: React.FC = () => {
       // ignore goal read failures
     }
   }, []);
+
+  /** 向上滚动加载更早的轮次（thread/turns/list 的 nextCursor） */
+  const loadEarlierTurns = useCallback(async () => {
+    const threadId = activeThreadIdRef.current;
+    const cursor = turnsCursorRef.current;
+    if (!threadId || !cursor || loadingEarlierTurns) return;
+    setLoadingEarlierTurns(true);
+    try {
+      const page = await callAppServer<any>("thread/turns/list", {
+        threadId,
+        limit: 15,
+        sortDirection: "desc",
+        itemsView: "full",
+        cursor,
+      });
+      const older = normalizeTurnsFromList(page, true);
+      if (older.length > 0) {
+        setTurns((prev) => {
+          const existing = new Set(prev.map((t) => t.id));
+          const deduped = older.filter((t) => !existing.has(t.id));
+          return [...deduped, ...prev];
+        });
+      }
+      setTurnsCursor(page?.nextCursor ?? null);
+      setHasMoreTurns(Boolean(page?.nextCursor));
+    } catch (e) {
+      console.warn("load earlier turns failed:", e);
+      showAppToast("加载更早的轮次失败", "error");
+    } finally {
+      setLoadingEarlierTurns(false);
+    }
+  }, [loadingEarlierTurns, showAppToast]);
 
   // Fork / Revert / Compact — official thread lifecycle via app-server
   const handleForkThread = useCallback(
@@ -1608,7 +1723,7 @@ export const App: React.FC = () => {
           };
         } else if (req.kind === "custom") {
           target = {
-            type: "instructions",
+            type: "custom",
             instructions: req.instructions || "请审查当前工作区的改动",
           };
         } else {
@@ -2202,26 +2317,22 @@ export const App: React.FC = () => {
     }
   }, []);
 
+  // 服务端在空闲时会自动消费队首消息；这里只提供「立即发送队首」的显式操作。
   const handleStartServerQueue = useCallback(async () => {
     const tid = activeThreadIdRef.current;
     if (!tid) return;
+    const first = followupQueue[0];
     try {
-      await callAppServer("thread/queue/start", { threadId: tid });
+      await callAppServer("thread/queue/start", {
+        threadId: tid,
+        queuedSubmissionId: first?.id ?? null,
+      });
+      await refreshThreadQueue(tid);
     } catch (e) {
       console.warn("thread/queue/start failed:", e);
+      showAppToast("启动队列消息失败", "error");
     }
-  }, []);
-
-  // turn 结束后由服务端启动队列中的下一条消息
-  const queueAutoStartRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!isStreaming && followupQueue.length > 0 && activeThreadId) {
-      const key = `${activeThreadId}:${followupQueue.map((q) => q.id).join(",")}`;
-      if (queueAutoStartRef.current === key) return;
-      queueAutoStartRef.current = key;
-      void handleStartServerQueue();
-    }
-  }, [isStreaming, followupQueue, activeThreadId, handleStartServerQueue]);
+  }, [followupQueue, refreshThreadQueue, showAppToast]);
 
   // 切换会话时载入该会话的服务端队列
   useEffect(() => {
@@ -3586,6 +3697,18 @@ export const App: React.FC = () => {
               </div>
 
               <div className="timeline-content-wrapper">
+                {(hasMoreTurns || loadingEarlierTurns) && (
+                  <div className="load-earlier-row">
+                    <button
+                      type="button"
+                      className="turn-action-mini-btn"
+                      disabled={loadingEarlierTurns}
+                      onClick={loadEarlierTurns}
+                    >
+                      {loadingEarlierTurns ? "正在加载更早的轮次…" : "↑ 加载更早的轮次"}
+                    </button>
+                  </div>
+                )}
                 {turns.map((turn) => {
                   const isUser = turn.items.some((i) => i.type === "userMessage");
                   if (isUser) {

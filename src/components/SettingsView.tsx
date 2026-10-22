@@ -44,6 +44,7 @@ import {
   type HookLiveEvent,
   type HooksListResult,
 } from "../hooksClient";
+import { SHORTCUTS } from "../shortcuts";
 import {
   AppServerStatus,
   CodexConfigOverview,
@@ -63,6 +64,15 @@ export interface ThemePalette {
   accent: string;
   textPrimary: string;
 }
+
+/* Group labels/order for the real keyboard shortcut registry (src/shortcuts.ts). */
+const SHORTCUT_GROUP_LABELS: Record<string, string> = {
+  global: "全局",
+  thread: "会话",
+  composer: "输入框",
+  panels: "面板与视图",
+};
+const SHORTCUT_GROUP_ORDER: string[] = ["global", "thread", "composer", "panels"];
 
 export const OFFICIAL_COLOR_THEMES: ThemePalette[] = [
   { id: "codex", name: "Codex Official", bgPrimary: "#0d0d0d", bgSecondary: "#141414", accent: "#3b82f6", textPrimary: "#f3f4f6" },
@@ -2152,26 +2162,42 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <div className="settings-scroll-container">
             <div className="card-section">
               <h3>全局键盘快捷键一览</h3>
-              <div className="item-cards-list">
-                {[
-                  { label: "新建聊天会话", keys: "Ctrl + N" },
-                  { label: "切换底部终端面板", keys: "Ctrl + J" },
-                  { label: "展开 / 收起左侧边栏", keys: "Ctrl + B" },
-                  { label: "在输入框引用工作区文件或 @电脑", keys: "@" },
-                  { label: "在输入框调用已安装技能", keys: "$" },
-                  { label: "打开斜杠命令菜单 (/fast, /plan, /review)", keys: "/" },
-                  { label: "提交 Git 变更", keys: "Ctrl + Enter" },
-                ].map((sc) => (
-                  <div key={sc.label} className="item-card">
-                    <div className="item-card-main">
-                      <strong>{sc.label}</strong>
+              <p className="card-subtitle-desc">
+                以下快捷键来自全局快捷键注册表（`src/shortcuts.ts`），与 App 实际注册的快捷键一一对应，共{" "}
+                {SHORTCUTS.length} 项。
+              </p>
+              {SHORTCUT_GROUP_ORDER.map((group) => {
+                const groupItems = SHORTCUTS.filter(
+                  (shortcut) => shortcut.group === group
+                );
+                if (groupItems.length === 0) return null;
+                return (
+                  <div key={group}>
+                    <div
+                      style={{
+                        fontSize: 12.5,
+                        fontWeight: 600,
+                        color: "var(--text-secondary)",
+                        marginBottom: 8,
+                      }}
+                    >
+                      {SHORTCUT_GROUP_LABELS[group] || group} ({groupItems.length})
                     </div>
-                    <div className="item-card-actions">
-                      <span className="tag-badge accent">{sc.keys}</span>
+                    <div className="item-cards-list">
+                      {groupItems.map((shortcut) => (
+                        <div key={shortcut.id} className="item-card">
+                          <div className="item-card-main">
+                            <strong>{shortcut.label}</strong>
+                          </div>
+                          <div className="item-card-actions">
+                            <span className="tag-badge accent">{shortcut.keys}</span>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
-                ))}
-              </div>
+                );
+              })}
             </div>
 
             {renderBottomBar()}

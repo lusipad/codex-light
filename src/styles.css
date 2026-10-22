@@ -5192,3 +5192,15 @@ html, body, #root {
 .sandbox-notice-banner .mini-link-btn {
   flex: none;
 }
+
+/* Paginated thread loading */
+.load-earlier-row {
+  display: flex;
+  justify-content: center;
+  padding: 10px 0 4px;
+}
+
+.load-earlier-row .turn-action-mini-btn {
+  font-size: 12px;
+  padding: 5px 14px;
+}
