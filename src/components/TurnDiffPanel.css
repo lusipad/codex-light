@@ -1,0 +1,337 @@
+/* ── TurnDiffPanel: 本轮变更（turn/diff/updated）纯展示面板 ── */
+
+.turn-diff-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--card-radius);
+  color: var(--text-primary);
+}
+
+/* Header: 标题 + 文件数徽标 + 刷新 */
+.turn-diff-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.turn-diff-header-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  flex: 0 0 auto;
+}
+
+.turn-diff-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.turn-diff-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: var(--pill-radius);
+  background: var(--bg-pill);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.turn-diff-loading {
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.turn-diff-refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.13s ease, color 0.13s ease;
+}
+
+.turn-diff-refresh:hover:not(:disabled) {
+  background: var(--bg-pill-hover);
+  color: var(--text-primary);
+}
+
+.turn-diff-refresh:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.turn-diff-refresh.is-loading svg {
+  animation: turnDiffSpin 0.9s linear infinite;
+}
+
+.turn-diff-refresh:focus-visible,
+.turn-diff-file-toggle:focus-visible,
+.turn-diff-open-file:focus-visible {
+  outline: 1px solid var(--accent-blue);
+  outline-offset: 1px;
+}
+
+@keyframes turnDiffSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Empty state */
+.turn-diff-empty {
+  padding: 18px 12px;
+  border: 1px dashed var(--border-default);
+  border-radius: 8px;
+  color: var(--text-tertiary);
+  font-size: 12.5px;
+  text-align: center;
+}
+
+.turn-diff-empty.is-loading {
+  animation: turnDiffPulse 1.4s ease-in-out infinite;
+}
+
+@keyframes turnDiffPulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* File list */
+.turn-diff-files {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.turn-diff-file {
+  min-width: 0;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.turn-diff-file-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 8px;
+  background: var(--bg-pill);
+  transition: background 0.13s ease;
+}
+
+.turn-diff-file-head:hover {
+  background: var(--bg-pill-hover);
+}
+
+.turn-diff-file-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.turn-diff-file-toggle svg {
+  flex: 0 0 auto;
+}
+
+.turn-diff-file-path {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.turn-diff-file-toggle:hover .turn-diff-file-path {
+  color: var(--accent-blue);
+}
+
+/* Kind badge: add / delete / update */
+.turn-diff-kind {
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  border: 1px solid transparent;
+  border-radius: var(--pill-radius);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.turn-diff-kind--add {
+  color: var(--accent-green);
+  background: rgba(16, 163, 127, 0.14);
+  border-color: rgba(16, 163, 127, 0.24);
+}
+
+.turn-diff-kind--delete {
+  color: var(--accent-red);
+  background: rgba(239, 68, 68, 0.14);
+  border-color: rgba(239, 68, 68, 0.24);
+}
+
+.turn-diff-kind--update {
+  color: var(--accent-blue);
+  background: rgba(58, 131, 247, 0.14);
+  border-color: rgba(58, 131, 247, 0.24);
+}
+
+.turn-diff-kind--other {
+  color: var(--text-secondary);
+  background: var(--bg-pill);
+  border-color: var(--border-default);
+}
+
+/* +N / -N */
+.turn-diff-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.turn-diff-additions {
+  color: #22c55e;
+}
+
+.turn-diff-deletions {
+  color: var(--accent-red);
+}
+
+.turn-diff-open-file {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0.75;
+  transition: background 0.13s ease, color 0.13s ease, opacity 0.13s ease;
+}
+
+.turn-diff-open-file:hover {
+  background: var(--bg-pill-active);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+  opacity: 1;
+}
+
+/* Unified diff body */
+.turn-diff-code {
+  max-height: 340px;
+  overflow: auto;
+  padding: 6px 0;
+  background: var(--bg-primary);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.turn-diff-line {
+  display: block;
+  min-width: max-content;
+  padding: 0 10px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.6;
+  white-space: pre;
+  tab-size: 2;
+}
+
+.turn-diff-line--add {
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.08);
+}
+
+.turn-diff-line--del {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.turn-diff-line--hunk {
+  color: var(--accent-blue);
+  background: rgba(58, 131, 247, 0.1);
+  font-weight: 500;
+}
+
+.turn-diff-line--meta {
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+
+.turn-diff-line--ctx {
+  color: var(--text-secondary);
+}
+
+.turn-diff-file-empty {
+  padding: 10px 12px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+/* Scrollbars inside the diff body */
+.turn-diff-code::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.turn-diff-code::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: var(--pill-radius);
+}
+
+.turn-diff-code::-webkit-scrollbar-track {
+  background: transparent;
+}

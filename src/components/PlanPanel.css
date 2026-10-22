@@ -1,0 +1,225 @@
+/* ── PlanPanel: 执行计划（turn/plan/updated）纯展示面板 ── */
+
+.plan-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 10px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--card-radius);
+  color: var(--text-primary);
+}
+
+.plan-panel-header {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.plan-panel-header-btn {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  padding: 2px 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.plan-panel-header-btn:focus-visible {
+  outline: 1px solid var(--accent-blue);
+  outline-offset: 2px;
+}
+
+.plan-panel-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  transition: color 0.13s ease;
+}
+
+.plan-panel-header-btn:hover .plan-panel-chevron {
+  color: var(--text-primary);
+}
+
+.plan-panel-title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.plan-panel-progress-text {
+  margin-left: auto;
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  border-radius: var(--pill-radius);
+  background: var(--bg-pill);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.plan-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  animation: planPanelReveal 0.14s ease-out;
+}
+
+@keyframes planPanelReveal {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Thin overall progress bar */
+.plan-panel-progress {
+  height: 3px;
+  overflow: hidden;
+  border-radius: var(--pill-radius);
+  background: var(--bg-pill);
+}
+
+.plan-panel-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent-blue);
+  transition: width 0.22s ease, background 0.22s ease;
+}
+
+.plan-panel-progress-fill.is-complete {
+  background: var(--accent-green);
+}
+
+/* Step list */
+.plan-panel-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.plan-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.plan-step-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  color: var(--text-primary);
+}
+
+.plan-step--pending .plan-step-text {
+  color: var(--text-secondary);
+}
+
+.plan-step--in-progress .plan-step-text {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.plan-step--completed .plan-step-text {
+  color: var(--text-tertiary);
+}
+
+.plan-step--failed .plan-step-text {
+  color: var(--accent-red);
+}
+
+/* Status icons */
+.plan-step-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  border-radius: 50%;
+  box-sizing: border-box;
+}
+
+.plan-step-icon--pending {
+  border: 1.5px solid var(--text-tertiary);
+  background: transparent;
+}
+
+.plan-step-icon--in-progress {
+  border: 1.5px solid rgba(58, 131, 247, 0.3);
+  background: rgba(58, 131, 247, 0.08);
+}
+
+.plan-step-spinner {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid rgba(58, 131, 247, 0.28);
+  border-top-color: var(--accent-blue);
+  border-radius: 50%;
+  animation: planStepSpin 0.8s linear infinite;
+}
+
+@keyframes planStepSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.plan-step-icon--completed {
+  background: var(--accent-green);
+  color: #ffffff;
+}
+
+.plan-step-icon--failed {
+  background: var(--accent-red);
+  color: #ffffff;
+}
+
+.plan-panel-empty {
+  padding: 6px 0 2px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+/* Screen-reader-only status suffix */
+.plan-panel-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

@@ -9,7 +9,10 @@ import {
   classifyServerRequest,
   commandApprovalResponse,
   describeCommand,
+  elicitationResponse,
   fileChangeApprovalResponse,
+  isLegacyApprovalMethod,
+  legacyReviewResponse,
   permissionsApprovalResponse,
   userInputResponse,
 } from "../protocol";
@@ -66,6 +69,8 @@ const ApprovalCard: React.FC<{
       return <PermissionsApprovalCard request={request} onRespond={onRespond} onRespondError={onRespondError} />;
     case "userInput":
       return <UserInputCard request={request} onRespond={onRespond} />;
+    case "elicitation":
+      return <ElicitationCard request={request} onRespond={onRespond} />;
     default:
       return <GenericRequestCard request={request} onRespond={onRespond} onRespondError={onRespondError} />;
   }
@@ -102,6 +107,7 @@ const CommandApprovalCard: React.FC<{
 }> = ({ request, onRespond, onRespondError }) => {
   const params = (request.params ?? {}) as CommandExecutionRequestApprovalParams;
   const [rememberExec, setRememberExec] = useState(false);
+  const legacy = isLegacyApprovalMethod(request.method);
   const command = describeCommand(params);
   const cwd = params.cwd || "";
   const reason = params.reason || "";
@@ -109,8 +115,27 @@ const CommandApprovalCard: React.FC<{
   const amendment = params.proposedExecpolicyAmendment;
   const networkAmendments = params.proposedNetworkPolicyAmendments || [];
 
-  const answer = (decision: CommandExecutionApprovalDecision) =>
-    onRespond(request.id, commandApprovalResponse(decision));
+  const answer = (decision: CommandExecutionApprovalDecision) => {
+    if (legacy) {
+      if (decision === "accept") return onRespond(request.id, legacyReviewResponse("approved"));
+      if (decision === "acceptForSession") {
+        return onRespond(request.id, legacyReviewResponse("approved_for_session"));
+      }
+      if (decision === "decline") return onRespond(request.id, legacyReviewResponse("denied"));
+      if (decision === "cancel") return onRespond(request.id, legacyReviewResponse("abort"));
+      if (typeof decision === "object" && "acceptWithExecpolicyAmendment" in decision) {
+        return onRespond(request.id, {
+          decision: {
+            approved_execpolicy_amendment: {
+              proposed_execpolicy_amendment:
+                decision.acceptWithExecpolicyAmendment.execpolicy_amendment,
+            },
+          },
+        });
+      }
+    }
+    return onRespond(request.id, commandApprovalResponse(decision));
+  };
 
   return (
     <CardShell
@@ -210,6 +235,19 @@ const FileChangeApprovalCard: React.FC<{
   onRespondError: (id: any, message: string) => void;
 }> = ({ request, onRespond }) => {
   const params = (request.params ?? {}) as FileChangeRequestApprovalParams;
+  const legacy = isLegacyApprovalMethod(request.method);
+  const decide = (decision: "accept" | "acceptForSession" | "decline" | "cancel") => {
+    if (legacy) {
+      const mapping: Record<string, any> = {
+        accept: "approved",
+        acceptForSession: "approved_for_session",
+        decline: "denied",
+        cancel: "abort",
+      };
+      return onRespond(request.id, legacyReviewResponse(mapping[decision]));
+    }
+    return onRespond(request.id, fileChangeApprovalResponse(decision));
+  };
   return (
     <CardShell
       icon={<DiffIcon size={18} />}
@@ -220,28 +258,28 @@ const FileChangeApprovalCard: React.FC<{
           <button
             type="button"
             className="btn-approve"
-            onClick={() => onRespond(request.id, fileChangeApprovalResponse("accept"))}
+            onClick={() => decide("accept")}
           >
             <CheckIcon size={14} /> 允许本次变更
           </button>
           <button
             type="button"
             className="btn-session"
-            onClick={() => onRespond(request.id, fileChangeApprovalResponse("acceptForSession"))}
+            onClick={() => decide("acceptForSession")}
           >
             本会话始终允许
           </button>
           <button
             type="button"
             className="btn-decline"
-            onClick={() => onRespond(request.id, fileChangeApprovalResponse("decline"))}
+            onClick={() => decide("decline")}
           >
             拒绝
           </button>
           <button
             type="button"
             className="btn-cancel"
-            onClick={() => onRespond(request.id, fileChangeApprovalResponse("cancel"))}
+            onClick={() => decide("cancel")}
           >
             <CloseIcon size={14} /> 拒绝并中断
           </button>
@@ -500,6 +538,53 @@ const UserInputCard: React.FC<{
           );
         })}
       </div>
+    </CardShell>
+  );
+};
+
+const ElicitationCard: React.FC<{
+  request: PendingServerRequest;
+  onRespond: (id: any, result: any) => void;
+}> = ({ request, onRespond }) => {
+  const params = request.params ?? {};
+  const message =
+    params.message ||
+    params.requestedSchema?.description ||
+    params.prompt ||
+    "MCP 服务器请求输入";
+  return (
+    <CardShell
+      tone="info"
+      icon={<HandApprovalIcon size={18} />}
+      title={`MCP 交互请求${params.serverName ? ` · ${params.serverName}` : ""}`}
+      subtitle={String(message)}
+      footer={
+        <>
+          <button
+            type="button"
+            className="btn-approve"
+            onClick={() => onRespond(request.id, elicitationResponse("accept", {}))}
+          >
+            <CheckIcon size={14} /> 接受
+          </button>
+          <button
+            type="button"
+            className="btn-decline"
+            onClick={() => onRespond(request.id, elicitationResponse("decline"))}
+          >
+            拒绝
+          </button>
+          <button
+            type="button"
+            className="btn-cancel"
+            onClick={() => onRespond(request.id, elicitationResponse("cancel"))}
+          >
+            取消
+          </button>
+        </>
+      }
+    >
+      <pre className="approval-raw-json">{JSON.stringify(params, null, 2)}</pre>
     </CardShell>
   );
 };

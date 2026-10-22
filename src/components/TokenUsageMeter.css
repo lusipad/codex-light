@@ -1,0 +1,258 @@
+/* ── TokenUsageMeter: 上下文 / token 用量展示（compact 圆环 + popover 明细） ── */
+
+/* ── compact: mini donut ring + remaining percentage ── */
+.token-usage-compact {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 2px 4px;
+  border-radius: var(--pill-radius);
+  color: var(--text-secondary);
+  line-height: 1;
+  user-select: none;
+  cursor: default;
+}
+
+.token-usage-compact--empty {
+  opacity: 0.6;
+}
+
+.token-usage-ring {
+  flex: 0 0 auto;
+  display: block;
+}
+
+.token-usage-ring-track {
+  stroke: var(--bg-pill-active);
+}
+
+.token-usage-ring-fill {
+  transition: stroke-dashoffset 0.25s ease, stroke 0.25s ease;
+}
+
+.token-usage-ring-fill--normal {
+  stroke: var(--accent-blue);
+}
+
+.token-usage-ring-fill--warn {
+  stroke: var(--accent-amber);
+}
+
+.token-usage-ring-fill--danger {
+  stroke: var(--accent-red);
+}
+
+.token-usage-ring-fill--empty {
+  stroke: var(--text-disabled);
+}
+
+.token-usage-compact-label {
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* ── popover: detail card ── */
+.token-usage-popover {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 236px;
+  max-width: 280px;
+  padding: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--card-radius);
+  box-shadow: var(--shadow-md);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.token-usage-popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.token-usage-popover-title {
+  color: var(--text-primary);
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.token-usage-popover-subtitle {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.token-usage-progress {
+  height: 4px;
+  overflow: hidden;
+  border-radius: var(--pill-radius);
+  background: var(--bg-pill);
+}
+
+.token-usage-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent-blue);
+  transition: width 0.25s ease, background 0.25s ease;
+}
+
+.token-usage-progress--warn .token-usage-progress-fill {
+  background: var(--accent-amber);
+}
+
+.token-usage-progress--danger .token-usage-progress-fill {
+  background: var(--accent-red);
+}
+
+.token-usage-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.token-usage-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.token-usage-row-label {
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.token-usage-row-value {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.token-usage-row.is-emphasis {
+  margin-top: 2px;
+  padding-top: 5px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.token-usage-row.is-emphasis .token-usage-row-label {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.token-usage-row.is-emphasis .token-usage-row-value {
+  font-weight: 600;
+}
+
+.token-usage-empty {
+  padding: 10px 4px;
+  border: 1px dashed var(--border-default);
+  border-radius: 8px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  text-align: center;
+}
+
+/* ── rate limits / credits ── */
+.token-usage-rate-limits {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 2px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.token-usage-rate-title {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.token-usage-rate-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.token-usage-rate-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+}
+
+.token-usage-rate-value {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.token-usage-rate-bar {
+  height: 4px;
+  overflow: hidden;
+  border-radius: var(--pill-radius);
+  background: var(--bg-pill);
+}
+
+.token-usage-rate-bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent-blue);
+  transition: width 0.25s ease, background 0.25s ease;
+}
+
+.token-usage-rate-bar--warn .token-usage-rate-bar-fill {
+  background: var(--accent-amber);
+}
+
+.token-usage-rate-bar--danger .token-usage-rate-bar-fill {
+  background: var(--accent-red);
+}
+
+.token-usage-rate-bar--empty .token-usage-rate-bar-fill {
+  background: var(--text-disabled);
+}
+
+.token-usage-rate-reset {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.token-usage-credits-row {
+  padding-top: 6px;
+  border-top: 1px dashed var(--border-subtle);
+}
+
+/* 嵌入到既有的用量弹层卡片（App 的 .usage-popover-card）时，去掉自身卡片外观，
+   避免与外层卡片形成双层边框/内边距。单独使用时仍保留上面的卡片样式。 */
+.usage-popover-card .token-usage-popover {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}

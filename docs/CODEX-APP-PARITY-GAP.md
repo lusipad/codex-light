@@ -16,6 +16,8 @@
 | [protocol-features.md](research/protocol-features.md) / [protocol-runtime-methods.txt](research/protocol-runtime-methods.txt) | app-server 运行时 170 个方法 / 84 通知 / 11 个服务端请求的完整能力图 |
 | [protocol-probe-summary.md](research/protocol-probe-summary.md) | 真实环境协议探针实测返回（已登录 Plus 账号、真实 threads/projects/plugins） |
 
+> 逐轮实施进度与已完成项见 [IMPLEMENTATION-LOG.md](IMPLEMENTATION-LOG.md)：**Round 1** 完成差距分析 + 审批协议正确化；**Round 2** 完成核心链路补全（流式 diff/plan/用量、线程 fork/revert/compact、快速搜索协议化、真实用量/额度）。
+
 ---
 
 ## 0. 结论摘要（TL;DR）
@@ -177,6 +179,8 @@
 ---
 
 ## 3. "看起来能用、实际不行"清单（本轮已修 6 条，剩余按优先级）
+
+> Round 2 更新：#7（Markdown 运行/打开文件）、#8（fileChange 渲染）、#15（用量假数据）、#18（fork 入口）已修复；#19（通知）已新增 12 类；#16 主题键仍未处理。详见 [IMPLEMENTATION-LOG.md](IMPLEMENTATION-LOG.md)。
 
 | # | 入口 | 原问题 | 状态 |
 |---|---|---|---|

@@ -6,6 +6,7 @@ import {
   SkillIcon,
 } from "./Icons";
 import { SkillInfoItem, WorkspaceFileHit } from "../types";
+import { findSlashCommands, type SlashCommand } from "../slashCommands";
 
 export interface AutocompleteItem {
   id: string;
@@ -27,84 +28,24 @@ export interface ComposerAutocompleteProps {
   selectedIndex: number;
 }
 
-const SLASH_COMMANDS: AutocompleteItem[] = [
-  {
-    id: "goal",
+/**
+ * 斜杠命令下拉项统一来自 `../slashCommands` 注册表（官方 §5.3 清单）。
+ * 映射规则保持与旧硬编码数组完全一致：
+ * - `title`      = 命令字面量（如 "/review"）
+ * - `subtitle`   = 注册表 description
+ * - `insertText` = 注册表 insertText（action 类命令缺省为 ""）
+ * - `action`     = 注册表 action（如 open_goal_dialog / toggle_plan 等保持不变）
+ */
+function toSlashAutocompleteItem(cmd: SlashCommand): AutocompleteItem {
+  return {
+    id: cmd.id,
     type: "slash",
-    title: "/goal",
-    subtitle: "🎯 开启自主目标模式，多轮自动推进执行与测试验证直至目标达成",
-    insertText: "",
-    action: "open_goal_dialog",
-  },
-  {
-    id: "review",
-    type: "slash",
-    title: "/review",
-    subtitle: "审阅当前 Git 工作区或分支代码改动",
-    insertText: "/review 请审阅当前 Git 工作区中所有未提交的代码变动，总结修改点并指出潜在缺陷或重构建议。",
-  },
-  {
-    id: "plan",
-    type: "slash",
-    title: "/plan",
-    subtitle: "开启计划模式，先制定分步实施方案再执行",
-    insertText: "/plan 请针对以下需求先制定详尽的分步实施计划，待我确认后再执行：",
-    action: "toggle_plan",
-  },
-  {
-    id: "fast",
-    type: "slash",
-    title: "/fast",
-    subtitle: "切换 Fast 2x 极速推理档位",
-    insertText: "",
-    action: "toggle_fast",
-  },
-  {
-    id: "init",
-    type: "slash",
-    title: "/init",
-    subtitle: "分析项目架构并生成 AGENTS.md 规范",
-    insertText: "/init 分析当前项目结构、依赖关系与技术栈，为项目初始化并完善 AGENTS.md 指南。",
-  },
-  {
-    id: "compact",
-    type: "slash",
-    title: "/compact",
-    subtitle: "压缩当前长会话上下文，释放模型窗口",
-    insertText: "/compact 请总结当前会话的核心决策与未决事项，压缩上下文历史。",
-  },
-  {
-    id: "worktree",
-    type: "slash",
-    title: "/worktree",
-    subtitle: "切换到独立 Git Worktree 隔离环境运行",
-    insertText: "",
-    action: "toggle_worktree",
-  },
-  {
-    id: "test",
-    type: "slash",
-    title: "/test",
-    subtitle: "扫描近期改动模块并编写完备单元测试",
-    insertText: "/test 请为当前改动的核心模块编写自动化单元测试，并运行验证。",
-  },
-  {
-    id: "terminal",
-    type: "slash",
-    title: "/terminal",
-    subtitle: "打开底部内置交互式终端面板",
-    insertText: "",
-    action: "open_terminal",
-  },
-  {
-    id: "diff",
-    type: "slash",
-    title: "/diff",
-    subtitle: "打开右侧代码变更审阅工作台",
-    insertText: "",
-    action: "open_diff",
-  },
-];
+    title: cmd.command,
+    subtitle: cmd.description,
+    insertText: cmd.insertText ?? "",
+    action: cmd.action,
+  };
+}
 
 export const ComposerAutocomplete: React.FC<ComposerAutocompleteProps> = ({
   mode,
@@ -120,12 +61,7 @@ export const ComposerAutocomplete: React.FC<ComposerAutocompleteProps> = ({
 
   const items: AutocompleteItem[] = React.useMemo(() => {
     if (mode === "slash") {
-      const q = query.toLowerCase().replace(/^\//, "");
-      return SLASH_COMMANDS.filter(
-        (cmd) =>
-          cmd.title.toLowerCase().includes(q) ||
-          cmd.subtitle?.toLowerCase().includes(q)
-      );
+      return findSlashCommands(query).map(toSlashAutocompleteItem);
     } else {
       const q = query.toLowerCase().replace(/^@/, "");
       const out: AutocompleteItem[] = [];

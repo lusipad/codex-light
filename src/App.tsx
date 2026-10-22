@@ -13,6 +13,7 @@ import {
   BottomPanelIcon,
   RightPanelIcon,
   PlayIcon,
+  SparklesIcon,
 } from "./components/Icons";
 import { callAppServer, tauriInvoke, tauriListen } from "./bridge";
 import {
@@ -58,7 +59,16 @@ import { QuickSearchModal } from "./components/QuickSearchModal";
 import { GoalSetupModal, GoalSetupConfig } from "./components/GoalSetupModal";
 import { GoalProgressBanner } from "./components/GoalProgressBanner";
 import { ApprovalCenter } from "./components/ApprovalCenter";
-import { TokenUsageSnapshot, mergeTokenUsage, NOTIFICATION } from "./protocol";
+import { PlanPanel } from "./components/PlanPanel";
+import { TurnDiffPanel } from "./components/TurnDiffPanel";
+import { TokenUsageMeter } from "./components/TokenUsageMeter";
+import { ThreadActionsMenu, ThreadActionItem } from "./components/ThreadActionsMenu";
+import {
+  TokenUsageSnapshot,
+  mergeTokenUsage,
+  mergeRateLimits,
+  NOTIFICATION,
+} from "./protocol";
 
 const STARTER_PROMPTS = [
   {
@@ -103,6 +113,81 @@ function extractTextFromItem(item: TurnItem): string {
       .join("\n");
   }
   return "";
+}
+
+/** Reasoning items carry `summary[]` + `content[]` (and streamed text). */
+function extractReasoningText(item: TurnItem): string {
+  const parts: string[] = [];
+  const push = (v: any) => {
+    if (typeof v === "string" && v.trim()) parts.push(v);
+    else if (v && typeof v.text === "string" && v.text.trim()) parts.push(v.text);
+  };
+  if (Array.isArray(item.summary)) item.summary.forEach(push);
+  if (typeof item.text === "string" && item.text.trim()) parts.push(item.text);
+  if (Array.isArray(item.content)) item.content.forEach(push);
+  if (Array.isArray(item.reasoningText)) item.reasoningText.forEach(push);
+  else if (typeof item.reasoningText === "string" && item.reasoningText.trim()) {
+    parts.push(item.reasoningText);
+  }
+  if (!parts.length) return extractTextFromItem(item);
+  return Array.from(new Set(parts)).join("\n");
+}
+
+/** Count added/removed lines in a unified diff snippet. */
+function countDiffLines(diff: string): { additions: number; deletions: number } {
+  let additions = 0;
+  let deletions = 0;
+  for (const line of (diff || "").split("\n")) {
+    if (line.startsWith("+++") || line.startsWith("---")) continue;
+    if (line.startsWith("+")) additions++;
+    else if (line.startsWith("-")) deletions++;
+  }
+  return { additions, deletions };
+}
+
+/**
+ * Split a turn-level unified diff (`turn/diff/updated`) into per-file entries.
+ */
+export function parseUnifiedDiffFiles(
+  diff: string
+): Array<{ path: string; kind: string; diff: string; additions: number; deletions: number }> {
+  if (!diff || !diff.trim()) return [];
+  const chunks: string[] = [];
+  const lines = diff.split("\n");
+  let current: string[] = [];
+  for (const line of lines) {
+    if (line.startsWith("diff --git ")) {
+      if (current.length) chunks.push(current.join("\n"));
+      current = [line];
+    } else if (current.length) {
+      current.push(line);
+    }
+  }
+  if (current.length) chunks.push(current.join("\n"));
+  if (!chunks.length) chunks.push(diff);
+
+  return chunks.map((chunk) => {
+    const firstLine = chunk.split("\n")[0] || "";
+    let path = "";
+    const m = firstLine.match(/^diff --git a\/(.+?) b\/(.+)$/);
+    if (m) path = m[2];
+    if (!path) {
+      const plus = chunk.match(/^\+\+\+ b\/(.+)$/m);
+      if (plus) path = plus[1];
+    }
+    if (!path) {
+      const newFile = chunk.match(/^\+\+\+ \/dev\/null$/m);
+      const oldFile = chunk.match(/^--- a\/(.+)$/m);
+      if (newFile && oldFile) path = `(deleted) ${oldFile[1]}`;
+    }
+    if (!path) path = "(unknown file)";
+    let kind = "update";
+    if (/^new file mode/m.test(chunk)) kind = "add";
+    else if (/^deleted file mode/m.test(chunk)) kind = "delete";
+    else if (/^rename from/m.test(chunk)) kind = "rename";
+    const { additions, deletions } = countDiffLines(chunk);
+    return { path, kind, diff: chunk, additions, deletions };
+  });
 }
 
 function extractChecklistFromText(text: string): GoalStepItem[] {
@@ -221,6 +306,16 @@ export const App: React.FC = () => {
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
   const [pendingRequests, setPendingRequests] = useState<PendingServerRequest[]>([]);
   const [tokenUsage, setTokenUsage] = useState<TokenUsageSnapshot | null>(null);
+  const [planSteps, setPlanSteps] = useState<Array<{ step: string; status: string }>>([]);
+  const [turnDiffFiles, setTurnDiffFiles] = useState<
+    Array<{ path: string; kind: string; diff: string; additions: number; deletions: number }>
+  >([]);
+  const [accountInfo, setAccountInfo] = useState<any>(null);
+  const [rateLimits, setRateLimits] = useState<any>(null);
+  const [autoReview, setAutoReview] = useState<{
+    active: boolean;
+    decision?: string | null;
+  } | null>(null);
   const [inboxItems, setInboxItems] = useState<InboxNotificationItem[]>([]);
 
   // Composer State
@@ -508,6 +603,21 @@ export const App: React.FC = () => {
     }
   }, []);
 
+  const refreshAccount = useCallback(async () => {
+    try {
+      const info = await callAppServer<any>("account/read", {});
+      setAccountInfo(info?.account ? info : (info ?? null));
+    } catch (e) {
+      console.warn("account/read failed:", e);
+    }
+    try {
+      const limits = await callAppServer<any>("account/rateLimits/read", {});
+      setRateLimits(limits ?? null);
+    } catch (e) {
+      console.warn("account/rateLimits/read failed:", e);
+    }
+  }, []);
+
   // Connect & Subscribe to App-Server Events on Mount
   useEffect(() => {
     refreshWorkspacesAndMeta();
@@ -532,6 +642,7 @@ export const App: React.FC = () => {
           refreshModels();
           refreshThreads();
           refreshPendingRequests();
+          refreshAccount();
         }
       })
       .catch((err) => {
@@ -551,6 +662,7 @@ export const App: React.FC = () => {
           refreshModels();
           refreshThreads();
           refreshPendingRequests();
+          refreshAccount();
         }
       }
     );
@@ -583,19 +695,52 @@ export const App: React.FC = () => {
           const turnId = params?.turn?.id || params?.turnId;
           if (!turnId || turnId === activeTurnIdRef.current) {
             setActiveTurnId(null);
+            setPlanSteps([]);
           }
           const duration = params?.turn?.durationMs || params?.turnDurationMs;
+          const completedItems = Array.isArray(params?.turn?.items)
+            ? params.turn.items
+            : null;
           setTurns((prev) =>
-            prev.map((t) =>
-              t.id === turnId || (!turnId && t.status === "running")
-                ? {
-                    ...t,
-                    status: "completed",
-                    completedAt: Date.now(),
-                    durationMs: duration,
+            prev.map((t) => {
+              const isTarget = t.id === turnId || (!turnId && t.status === "running");
+              if (!isTarget) return t;
+              let items = t.items;
+              if (completedItems && completedItems.length > 0) {
+                // 合并已完成 turn 的权威 items（本地流式累积可能缺 item）
+                const byId = new Map<string, any>();
+                for (const it of t.items) if (it?.id) byId.set(it.id, it);
+                for (const it of completedItems) {
+                  const existing = it?.id ? byId.get(it.id) : undefined;
+                  if (existing) byId.set(it.id, { ...existing, ...it });
+                  else if (it?.id) byId.set(it.id, it);
+                  else items = [...items, it];
+                }
+                const merged: any[] = [];
+                const seen = new Set<string>();
+                for (const it of [...t.items, ...completedItems]) {
+                  if (!it?.id) continue;
+                  if (seen.has(it.id)) {
+                    const idx = merged.findIndex((m) => m.id === it.id);
+                    if (idx >= 0) merged[idx] = { ...merged[idx], ...it };
+                    continue;
                   }
-                : t
-            )
+                  seen.add(it.id);
+                  merged.push(byId.get(it.id) ?? it);
+                }
+                // 保留本地暂未带 id 的条目
+                for (const it of t.items) if (!it?.id) merged.push(it);
+                items = merged;
+              }
+              return {
+                ...t,
+                status: "completed",
+                completedAt: Date.now(),
+                durationMs: duration,
+                items,
+                error: params?.turn?.error ?? t.error,
+              } as TurnData;
+            })
           );
           refreshGitStatus();
           refreshThreads();
@@ -651,29 +796,58 @@ export const App: React.FC = () => {
           });
         } else if (
           method === "item/reasoning/delta" ||
-          method === "item/reasoning/summaryTextDelta"
+          method === NOTIFICATION.ITEM_REASONING_SUMMARY_DELTA ||
+          method === NOTIFICATION.ITEM_REASONING_TEXT_DELTA
         ) {
           const thoughtDelta = params?.delta || params?.text || "";
+          const isRawText = method === NOTIFICATION.ITEM_REASONING_TEXT_DELTA;
           if (!thoughtDelta) return;
           setTurns((prev) => {
             const list = [...prev];
             const lastTurn = list[list.length - 1];
             if (!lastTurn) return prev;
             const items = [...lastTurn.items];
-            const lastThought = items.filter((i) => i.type === "reasoning").pop();
-            if (!lastThought) {
+            const itemId = params?.itemId;
+            let thoughtIdx = -1;
+            if (itemId) thoughtIdx = items.findIndex((i) => i.id === itemId);
+            if (thoughtIdx < 0) {
+              thoughtIdx = items.map((i) => i.type).lastIndexOf("reasoning");
+            }
+            if (thoughtIdx < 0) {
               items.push({
-                id: params?.itemId || `thought-${Date.now()}`,
+                id: itemId || `thought-${Date.now()}`,
                 type: "reasoning",
-                text: thoughtDelta,
-              });
+                text: isRawText ? "" : thoughtDelta,
+                reasoningText: isRawText ? thoughtDelta : "",
+              } as any);
             } else {
-              lastThought.text = (lastThought.text || "") + thoughtDelta;
+              const existing: any = { ...items[thoughtIdx] };
+              if (isRawText) {
+                existing.reasoningText = (existing.reasoningText || "") + thoughtDelta;
+              } else {
+                existing.text = (existing.text || "") + thoughtDelta;
+              }
+              items[thoughtIdx] = existing;
             }
             lastTurn.items = items;
             return list;
           });
-        } else if (method === "item/commandExecution/outputDelta") {
+        } else if (method === NOTIFICATION.ITEM_REASONING_SUMMARY_PART) {
+          setTurns((prev) => {
+            const list = [...prev];
+            const lastTurn = list[list.length - 1];
+            if (!lastTurn) return prev;
+            const items = [...lastTurn.items];
+            const idx = items.map((i) => i.type).lastIndexOf("reasoning");
+            if (idx >= 0) {
+              const existing: any = { ...items[idx] };
+              existing.text = (existing.text || "") + "\n\n";
+              items[idx] = existing;
+              lastTurn.items = items;
+            }
+            return list;
+          });
+        } else if (method === NOTIFICATION.ITEM_COMMAND_OUTPUT_DELTA) {
           const outDelta = params?.delta || params?.output || "";
           const itemId = params?.itemId;
           setTurns((prev) => {
@@ -718,6 +892,108 @@ export const App: React.FC = () => {
             lastTurn.items = items;
             return list;
           });
+        } else if (method === NOTIFICATION.ITEM_PLAN_DELTA) {
+          const delta = params?.delta || "";
+          if (!delta) return;
+          setTurns((prev) => {
+            const list = [...prev];
+            const lastTurn = list[list.length - 1];
+            if (!lastTurn) return prev;
+            const items = [...lastTurn.items];
+            const itemId = params?.itemId;
+            let idx = itemId ? items.findIndex((i) => i.id === itemId) : -1;
+            if (idx < 0) idx = items.map((i) => i.type).lastIndexOf("plan");
+            if (idx < 0) {
+              items.push({ id: itemId || `plan-${Date.now()}`, type: "plan", text: delta } as any);
+            } else {
+              items[idx] = { ...items[idx], text: (items[idx].text || "") + delta } as any;
+            }
+            lastTurn.items = items;
+            return list;
+          });
+        } else if (method === NOTIFICATION.TURN_PLAN_UPDATED) {
+          const plan = Array.isArray(params?.plan) ? params.plan : [];
+          setPlanSteps(
+            plan
+              .map((p: any) => ({
+                step: String(p?.step ?? p?.title ?? ""),
+                status: String(p?.status ?? "pending"),
+              }))
+              .filter((p: any) => p.step)
+          );
+        } else if (method === NOTIFICATION.TURN_DIFF_UPDATED) {
+          const diff = typeof params?.diff === "string" ? params.diff : "";
+          setTurnDiffFiles(parseUnifiedDiffFiles(diff));
+        } else if (method === NOTIFICATION.ITEM_FILE_CHANGE_PATCH) {
+          const changes = Array.isArray(params?.changes) ? params.changes : [];
+          if (!changes.length) return;
+          setTurns((prev) => {
+            const list = [...prev];
+            const lastTurn = list[list.length - 1];
+            if (!lastTurn) return prev;
+            const items = [...lastTurn.items];
+            const itemId = params?.itemId;
+            let idx = itemId ? items.findIndex((i) => i.id === itemId) : -1;
+            if (idx < 0) idx = items.map((i) => i.type).lastIndexOf("fileChange");
+            if (idx < 0) {
+              items.push({
+                id: itemId || `filechange-${Date.now()}`,
+                type: "fileChange",
+                status: "inProgress",
+                changes,
+              } as any);
+            } else {
+              items[idx] = { ...items[idx], changes } as any;
+            }
+            lastTurn.items = items;
+            return list;
+          });
+        } else if (method === NOTIFICATION.THREAD_STATUS_CHANGED) {
+          const tid = params?.threadId;
+          const status = params?.status?.type ?? params?.status;
+          if (tid) {
+            setThreads((prev) =>
+              prev.map((t) => (t.id === tid ? { ...t, status } : t))
+            );
+          }
+        } else if (method === NOTIFICATION.ACCOUNT_RATE_LIMITS) {
+          setRateLimits((prev: any) => mergeRateLimits(prev, params));
+        } else if (method === NOTIFICATION.ACCOUNT_UPDATED) {
+          setAccountInfo((prev: any) => ({ ...(prev || {}), ...(params || {}) }));
+        } else if (method === NOTIFICATION.ITEM_AUTO_REVIEW_STARTED) {
+          setAutoReview({ active: true, decision: null });
+        } else if (method === NOTIFICATION.ITEM_AUTO_REVIEW_COMPLETED) {
+          const decision =
+            params?.decision?.type ??
+            params?.decision ??
+            params?.result?.decision ??
+            null;
+          setAutoReview({ active: false, decision: decision ? String(decision) : null });
+          setTimeout(() => setAutoReview(null), 8000);
+        } else if (method === NOTIFICATION.THREAD_REVERTED) {
+          if (activeThreadIdRef.current) {
+            selectThread(activeThreadIdRef.current);
+          }
+        } else if (
+          method === NOTIFICATION.THREAD_COMPACTED
+        ) {
+          setTurns((prev) => [
+            ...prev,
+            {
+              id: `compaction-${Date.now()}`,
+              status: "completed",
+              startedAt: Date.now(),
+              items: [
+                {
+                  id: `compaction-item-${Date.now()}`,
+                  type: "agentMessage",
+                  text: "🗜️ 上下文已压缩（Context compacted）",
+                },
+              ],
+            },
+          ]);
+        } else if (method === NOTIFICATION.SKILLS_CHANGED) {
+          refreshWorkspaceContext();
         } else if (method === NOTIFICATION.SERVER_REQUEST_RESOLVED) {
           const resolvedId = params?.requestId ?? params?.id ?? params?.request_id;
           if (resolvedId !== undefined && resolvedId !== null) {
@@ -794,6 +1070,9 @@ export const App: React.FC = () => {
     refreshModels,
     refreshThreads,
     refreshGitStatus,
+    refreshPendingRequests,
+    refreshAccount,
+    refreshWorkspaceContext,
   ]);
 
   useEffect(() => {
@@ -942,7 +1221,11 @@ export const App: React.FC = () => {
         handleSelectWorkspace(workspacePath);
       }
       setActiveThreadId(null);
+      setActiveTurnId(null);
       setTurns([]);
+      setPlanSteps([]);
+      setTurnDiffFiles([]);
+      setTokenUsage(null);
       setActiveRoute("home");
       setTimeout(() => composerTextareaRef.current?.focus(), 50);
     },
@@ -952,6 +1235,9 @@ export const App: React.FC = () => {
   const selectThread = useCallback(async (threadId: string) => {
     setActiveThreadId(threadId);
     setActiveRoute("thread");
+    setActiveTurnId(null);
+    setPlanSteps([]);
+    setTurnDiffFiles([]);
     try {
       const res = await callAppServer<any>("thread/read", {
         threadId,
@@ -970,6 +1256,60 @@ export const App: React.FC = () => {
       console.warn("Failed to read/resume thread:", e);
     }
   }, []);
+
+  // Fork / Revert / Compact — official thread lifecycle via app-server
+  const handleForkThread = useCallback(
+    async (fromTurnId?: string) => {
+      if (!activeThreadId) {
+        showAppToast("请先打开一个会话再派生", "info");
+        return;
+      }
+      try {
+        const res = await callAppServer<any>("thread/fork", {
+          threadId: activeThreadId,
+          cwd: activeWorkspace?.path || undefined,
+          lastTurnId: fromTurnId || activeTurnId || undefined,
+        });
+        const newThreadId = res?.threadId || res?.thread?.id;
+        await refreshThreads();
+        if (newThreadId) {
+          await selectThread(String(newThreadId));
+          showAppToast("✓ 已从当前会话派生新会话", "success");
+        }
+      } catch (e: any) {
+        showAppToast(`派生会话失败：${e?.message || e}`, "error");
+      }
+    },
+    [activeThreadId, activeTurnId, activeWorkspace?.path, refreshThreads, selectThread, showAppToast]
+  );
+
+  const handleRevertToTurn = useCallback(
+    async (beforeTurnId: string) => {
+      if (!activeThreadId) return;
+      try {
+        await callAppServer("thread/revert", {
+          threadId: activeThreadId,
+          beforeTurnId,
+        });
+        await selectThread(activeThreadId);
+        refreshGitStatus();
+        showAppToast("✓ 已回滚到该轮次之前", "success");
+      } catch (e: any) {
+        showAppToast(`回滚失败：${e?.message || e}`, "error");
+      }
+    },
+    [activeThreadId, selectThread, refreshGitStatus, showAppToast]
+  );
+
+  const handleCompactThread = useCallback(async () => {
+    if (!activeThreadId) return;
+    try {
+      await callAppServer("thread/compact/start", { threadId: activeThreadId });
+      showAppToast("已开始压缩上下文，稍后自动完成", "info");
+    } catch (e: any) {
+      showAppToast(`压缩上下文失败：${e?.message || e}`, "error");
+    }
+  }, [activeThreadId, showAppToast]);
 
   // Send or Steer Message
   const handleSendMessage = useCallback(async (overrideText?: string) => {
@@ -1675,8 +2015,151 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
       setShowTerminal(true);
     } else if (action === "open_diff") {
       setShowRightDrawer(true);
+    } else if (action === "new_chat") {
+      startNewThread();
+    } else if (action === "fork_thread") {
+      handleForkThread();
+    } else if (action === "rename_thread") {
+      setThreadTitleInput(
+        activeThreadObj?.name || activeThreadObj?.preview || "本地聊天"
+      );
+      setEditingThreadTitle(true);
+    } else if (action === "archive_thread") {
+      if (activeThreadObj) handleArchiveThread(activeThreadObj, {} as any);
+    } else if (action === "toggle_thread_pin") {
+      if (activeThreadId) handleTogglePinThread(activeThreadId, {} as any);
+    } else if (action === "toggle_pet") {
+      setPetVisible((v) => !v);
+    } else if (action === "open_usage_settings" || action === "show_status") {
+      setShowUsagePopover(true);
+    } else if (action === "open_model_picker") {
+      setShowSessionParamsPopover(false);
+      composerTextareaRef.current?.focus();
+    } else if (action === "open_mcp_status") {
+      setActiveRoute("plugins");
+    } else if (action === "open_project_picker") {
+      setActiveRoute("projects");
+    } else if (action === "open_memories") {
+      setActiveRoute("projects");
+    } else if (action === "open_feedback") {
+      showAppToast("反馈入口：可在设置 → 常规中查看应用信息", "info");
+    } else if (action === "set_followup_queue") {
+      setFollowupQueue((prev) => [
+        ...prev,
+        { id: `q-${Date.now()}`, text: promptInput, mode: "queue", createdAt: Date.now() },
+      ]);
+      setPromptInput("");
+    } else if (action === "set_followup_steer") {
+      if (promptInput.trim()) {
+        handleSteerTurn(promptInput);
+        setPromptInput("");
+      }
+    } else if (action === "open_side_chat") {
+      showAppToast("Side chat 将在后续版本接入", "info");
+    } else if (action === "switch_mode_cloud" || action === "switch_mode_local") {
+      showAppToast("远程/云端环境将在后续版本接入", "info");
+    } else if (action === "open_reasoning_picker" || action === "toggle_ide_context") {
+      composerTextareaRef.current?.focus();
     }
-  }, []);
+  }, [
+    startNewThread,
+    handleForkThread,
+    handleArchiveThread,
+    handleTogglePinThread,
+    handleSteerTurn,
+    activeThreadObj,
+    activeThreadId,
+    promptInput,
+    showAppToast,
+    setFollowupQueue,
+  ]);
+
+  const threadMenuItems: ThreadActionItem[] = useMemo(() => {
+    const pinned = !!(activeThreadId && pinnedThreadIds.includes(activeThreadId));
+    return [
+      { id: "fork_thread", label: "派生新会话 (Fork)", hint: "保留上下文" },
+      {
+        id: "fork_from_here",
+        label: "从当前轮次派生",
+        disabled: !activeTurnId,
+      },
+      { id: "compact_thread", label: "压缩上下文 (Compact)" },
+      { id: "revert_last", label: "回滚最后一个轮次", danger: true },
+      { id: "copy_markdown", label: "复制会话 Markdown", separatorBefore: true },
+      { id: "export_json", label: "导出会话 JSON" },
+      { id: "rename_thread", label: "重命名会话" },
+      { id: "toggle_thread_pin", label: pinned ? "取消置顶" : "置顶会话" },
+      { id: "new_chat", label: "新建会话" },
+      { id: "archive_thread", label: "归档会话", separatorBefore: true },
+      { id: "delete_thread", label: "删除会话", danger: true },
+    ];
+  }, [activeThreadId, activeTurnId, pinnedThreadIds]);
+
+  const handleThreadMenuAction = useCallback(
+    async (id: string) => {
+      try {
+        if (id === "fork_thread") await handleForkThread();
+        else if (id === "fork_from_here") await handleForkThread(activeTurnId || undefined);
+        else if (id === "compact_thread") await handleCompactThread();
+        else if (id === "revert_last") {
+          const lastServerTurn = [...turns]
+            .reverse()
+            .find((t) => /^[0-9a-f]{8}-/i.test(t.id));
+          if (lastServerTurn) await handleRevertToTurn(lastServerTurn.id);
+        } else if (id === "copy_markdown") {
+          const md = turns
+            .map((t) => {
+              const text = t.items.map(extractTextFromItem).filter(Boolean).join("\n");
+              return text ? `${text}\n` : "";
+            })
+            .join("\n");
+          await navigator.clipboard.writeText(md);
+          showAppToast("✓ 已复制会话 Markdown", "success");
+        } else if (id === "export_json") {
+          const blob = new Blob([JSON.stringify(turns, null, 2)], {
+            type: "application/json",
+          });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `codex-thread-${activeThreadId || "local"}.json`;
+          a.click();
+          URL.revokeObjectURL(url);
+        } else if (id === "rename_thread") {
+          if (activeThreadId) {
+            setThreadTitleInput(
+              activeThreadObj?.name || activeThreadObj?.preview || "本地聊天"
+            );
+            setEditingThreadTitle(true);
+          }
+        } else if (id === "toggle_thread_pin") {
+          if (activeThreadId) await handleTogglePinThread(activeThreadId, {} as any);
+        } else if (id === "new_chat") {
+          startNewThread();
+        } else if (id === "archive_thread") {
+          if (activeThreadObj) await handleArchiveThread(activeThreadObj, {} as any);
+        } else if (id === "delete_thread") {
+          if (activeThreadObj) await handleDeleteThread(activeThreadObj, {} as any);
+        }
+      } catch (e: any) {
+        showAppToast(`操作失败：${e?.message || e}`, "error");
+      }
+    },
+    [
+      handleForkThread,
+      handleCompactThread,
+      handleRevertToTurn,
+      handleTogglePinThread,
+      handleArchiveThread,
+      handleDeleteThread,
+      startNewThread,
+      activeTurnId,
+      activeThreadId,
+      activeThreadObj,
+      turns,
+      showAppToast,
+    ]
+  );
 
   const unreadInboxCount = useMemo(
     () => inboxItems.filter((i) => !i.read).length,
@@ -1775,6 +2258,12 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
                     <span className="thread-title-edit-hint"> ✏️</span>
                   </span>
                 )}
+                <ThreadActionsMenu
+                  items={threadMenuItems}
+                  onSelect={handleThreadMenuAction}
+                  align="right"
+                  buttonClassName="window-chrome-icon-btn"
+                />
                 <div
                   className="project-branch-pill clickable"
                   onClick={() => setShowGitMenu((v) => !v)}
@@ -1916,9 +2405,10 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
                     type="button"
                     className="window-chrome-icon-btn with-label"
                     onClick={() => setShowUsagePopover((v) => !v)}
-                    title="查看当前会话上下文用量统计"
+                    title="查看当前会话上下文用量与额度"
                   >
-                    <span>📊 用量</span>
+                    <TokenUsageMeter variant="compact" usage={tokenUsage} />
+                    <span>用量</span>
                   </button>
 
                   {showUsagePopover && (
@@ -1927,7 +2417,7 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
                       onClick={(e) => e.stopPropagation()}
                     >
                       <div className="usage-popover-header">
-                        <strong>会话用量与上下文</strong>
+                        <strong>用量与额度</strong>
                         <button
                           type="button"
                           className="icon-btn"
@@ -1936,6 +2426,20 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
                           ✕
                         </button>
                       </div>
+                      {accountInfo?.email || accountInfo?.account?.email ? (
+                        <div className="usage-stat-row">
+                          <span>账号:</span>
+                          <span className="ellipsis" title={accountInfo?.email || accountInfo?.account?.email}>
+                            {accountInfo?.email || accountInfo?.account?.email}
+                          </span>
+                        </div>
+                      ) : null}
+                      {(accountInfo?.planType || accountInfo?.account?.planType) && (
+                        <div className="usage-stat-row">
+                          <span>套餐:</span>
+                          <span>{accountInfo?.planType || accountInfo?.account?.planType}</span>
+                        </div>
+                      )}
                       <div className="usage-stat-row">
                         <span>模型:</span>
                         <code>{selectedModelId}</code>
@@ -1944,13 +2448,14 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
                         <span>推理级别:</span>
                         <span>{reasoningEffort}</span>
                       </div>
+                      <TokenUsageMeter
+                        variant="popover"
+                        usage={tokenUsage}
+                        rateLimits={rateLimits}
+                      />
                       <div className="usage-stat-row">
-                        <span>对话轮次:</span>
-                        <span>{turns.length} 轮 (Turns)</span>
-                      </div>
-                      <div className="usage-stat-row">
-                        <span>沙盒环境:</span>
-                        <span>{useWorktree ? "Worktree 隔离" : "工作区读写"}</span>
+                        <span>本轮 turn:</span>
+                        <span>{turns.length} 轮（本地记录）</span>
                       </div>
                     </div>
                   )}
@@ -1964,7 +2469,7 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
                       setShowSessionParamsPopover((v) => !v);
                       setShowUsagePopover(false);
                     }}
-                    title="即时微调当前会话超参数 (Temperature, Tokens, WebSearch)"
+                    title="查看会话运行参数（采样参数由服务端决定，不可逐会话覆盖）"
                   >
                     <span>⚙️ 参数</span>
                   </button>
@@ -1975,7 +2480,7 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
                       onClick={(e) => e.stopPropagation()}
                     >
                       <div className="session-params-popover-header">
-                        <strong>当前会话超参数调优</strong>
+                        <strong>会话运行参数</strong>
                         <button
                           type="button"
                           className="icon-btn"
@@ -1984,83 +2489,41 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
                           ✕
                         </button>
                       </div>
-
-                      <div className="session-param-control">
-                        <div className="session-param-control-label">
-                          <span>采样温度 (Temperature)</span>
-                          <span className="mono-badge">{sessionTemperature.toFixed(2)}</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="0"
-                          max="2"
-                          step="0.05"
-                          value={sessionTemperature}
-                          onChange={(e) => setSessionTemperature(parseFloat(e.target.value))}
-                        />
+                      <div className="session-params-notice">
+                        ⚠️ 模型、推理档位、权限策略会随每次 turn 发送到 Codex 服务端；
+                        采样参数（temperature / top_p / max_tokens 等）由服务端模型决定，
+                        app-server 协议不接受逐会话覆盖，以下调节不会生效。
                       </div>
-
-                      <div className="session-param-control">
-                        <div className="session-param-control-label">
-                          <span>核采样 (Top-P)</span>
-                          <span className="mono-badge">{sessionTopP.toFixed(2)}</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="0.05"
-                          max="1.0"
-                          step="0.01"
-                          value={sessionTopP}
-                          onChange={(e) => setSessionTopP(parseFloat(e.target.value))}
-                        />
+                      <div className="usage-stat-row">
+                        <span>模型:</span>
+                        <code>{selectedModelId}</code>
                       </div>
-
-                      <div className="session-param-control">
-                        <div className="session-param-control-label">
-                          <span>单轮最大输出 Tokens</span>
-                          <span className="mono-badge">{sessionMaxTokens}</span>
-                        </div>
-                        <div style={{ display: "flex", gap: 4 }}>
-                          {[4096, 8192, 16384, 32768].map((t) => (
-                            <button
-                              key={t}
-                              type="button"
-                              className={`tag-filter-pill ${sessionMaxTokens === t ? "active" : ""}`}
-                              onClick={() => setSessionMaxTokens(t)}
-                              style={{ padding: "2px 8px", fontSize: 11 }}
-                            >
-                              {t >= 1024 ? `${t / 1024}k` : t}
-                            </button>
-                          ))}
-                        </div>
+                      <div className="usage-stat-row">
+                        <span>推理档位:</span>
+                        <span>{reasoningEffort}</span>
                       </div>
-
-                      <div className="session-param-control">
-                        <div className="session-param-control-label">
-                          <span>联网搜索模式</span>
-                        </div>
-                        <select
-                          value={sessionWebSearch}
-                          onChange={(e) => setSessionWebSearch(e.target.value as any)}
-                          style={{ padding: "4px 8px", fontSize: 12, borderRadius: 6 }}
-                        >
-                          <option value="cached">cached (本地缓存/优先隐私)</option>
-                          <option value="live">live (实时动态联网搜索)</option>
-                          <option value="disabled">disabled (离线断网)</option>
-                        </select>
+                      <div className="usage-stat-row">
+                        <span>速度档位:</span>
+                        <span>{fastMode ? "Fast (priority)" : "Standard"}</span>
                       </div>
-
-                      <div className="session-param-control">
-                        <label className="checkbox-inline" style={{ fontSize: 11.5 }}>
-                          <input
-                            type="checkbox"
-                            checked={sessionAllowNetwork}
-                            onChange={(e) => setSessionAllowNetwork(e.target.checked)}
-                          />
-                          <span>允许命令与工具访问外部网络</span>
-                        </label>
+                      <div className="usage-stat-row">
+                        <span>权限策略:</span>
+                        <span>
+                          {permissionMode === "full"
+                            ? "never / danger-full-access"
+                            : permissionMode === "auto"
+                            ? "on-request / auto_review"
+                            : "on-request / user"}
+                        </span>
                       </div>
-
+                      <div className="usage-stat-row">
+                        <span>沙盒:</span>
+                        <span>{useWorktree ? "Worktree 隔离" : "工作区可写"}</span>
+                      </div>
+                      <div className="usage-stat-row">
+                        <span>计划模式:</span>
+                        <span>{planMode ? "开启" : "关闭"}</span>
+                      </div>
                       <div className="session-params-footer">
                         <button
                           type="button"
@@ -2071,7 +2534,7 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
                             setActiveRoute("settings");
                           }}
                         >
-                          前往完整设置中心配置默认超参数 →
+                          前往完整设置中心配置默认参数 →
                         </button>
                       </div>
                     </div>
@@ -2529,6 +2992,12 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
                   const fileChanges = turn.items.filter(
                     (i) => i.type === "fileChange"
                   );
+                  const planItems = turn.items.filter((i) => i.type === "plan");
+                  const mcpCalls = turn.items.filter((i) => i.type === "mcpToolCall");
+                  const webSearches = turn.items.filter((i) => i.type === "webSearch");
+                  const imageViews = turn.items.filter(
+                    (i) => i.type === "imageView" || i.type === "imageGeneration"
+                  );
                   const messages = turn.items.filter(
                     (i) => i.type === "agentMessage"
                   );
@@ -2585,7 +3054,7 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
                           </div>
                           {isExpanded && (
                             <div className="thought-body">
-                              {thoughts.map(extractTextFromItem).join("\n")}
+                              {thoughts.map(extractReasoningText).join("\n\n")}
                             </div>
                           )}
                         </div>
@@ -2630,34 +3099,155 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
                         );
                       })}
 
-                      {fileChanges.map((fc, fIdx) => (
-                        <div
-                          key={fc.id || fIdx}
-                          className="file-change-card"
-                          onClick={() => {
-                            if (fc.path) setSelectedPreviewFile(fc.path);
-                            setShowRightDrawer(true);
-                          }}
-                        >
-                          <div className="file-change-left">
-                            <DiffIcon size={15} />
-                            <span>{fc.path || "Modified file"}</span>
-                          </div>
-                          <span className="diff-stats-badge">
-                            <span className="diff-plus">
-                              +{fc.insertions || 0}
-                            </span>{" "}
-                            <span className="diff-minus">
-                              -{fc.deletions || 0}
+                      {fileChanges.map((fc, fIdx) => {
+                        const changes: any[] = Array.isArray(fc.changes)
+                          ? fc.changes
+                          : [];
+                        let additions = 0;
+                        let deletions = 0;
+                        for (const change of changes) {
+                          const counted = countDiffLines(String(change?.diff || ""));
+                          additions += counted.additions;
+                          deletions += counted.deletions;
+                        }
+                        const primaryPath = changes[0]?.path || fc.path || "";
+                        const summaryText =
+                          changes.length > 1
+                            ? `${changes[0]?.path || "文件"} 等 ${changes.length} 个文件`
+                            : primaryPath || "Modified file";
+                        const kind = changes[0]?.kind;
+                        return (
+                          <div
+                            key={fc.id || fIdx}
+                            className="file-change-card"
+                            onClick={() => {
+                              if (primaryPath) {
+                                setSelectedPreviewFile(primaryPath);
+                                setShowRightDrawer(true);
+                              }
+                            }}
+                          >
+                            <div className="file-change-left">
+                              <DiffIcon size={15} />
+                              <span title={changes.map((c: any) => c?.path).filter(Boolean).join("\n")}>
+                                {summaryText}
+                              </span>
+                              {kind && (
+                                <span className={`file-change-kind kind-${kind}`}>
+                                  {kind}
+                                </span>
+                              )}
+                            </div>
+                            <span className="diff-stats-badge">
+                              <span className="diff-plus">+{additions}</span>{" "}
+                              <span className="diff-minus">-{deletions}</span>
                             </span>
-                          </span>
+                          </div>
+                        );
+                      })}
+
+                      {planItems.map((plan, pIdx) => (
+                        <div key={plan.id || pIdx} className="plan-inline-card">
+                          <div className="plan-inline-header">
+                            <BrainIcon size={13} />
+                            <span>执行计划</span>
+                          </div>
+                          <pre className="plan-inline-body">
+                            {extractTextFromItem(plan)}
+                          </pre>
                         </div>
                       ))}
+
+                      {mcpCalls.map((call, mcIdx) => {
+                        const status = String(call.status || "completed");
+                        const resultText =
+                          typeof call.result === "string"
+                            ? call.result
+                            : call.result != null
+                            ? JSON.stringify(call.result, null, 2)
+                            : "";
+                        return (
+                          <div key={call.id || mcIdx} className="mcp-call-card">
+                            <div className="mcp-call-header">
+                              <SparklesIcon size={13} />
+                              <span className="mcp-call-tool">
+                                {call.server ? `${call.server} · ` : ""}
+                                {call.tool || "MCP 工具"}
+                              </span>
+                              <span className={`mcp-call-status status-${status}`}>
+                                {status === "inProgress"
+                                  ? "调用中…"
+                                  : status === "failed"
+                                  ? "失败"
+                                  : status === "completed"
+                                  ? "完成"
+                                  : status}
+                              </span>
+                            </div>
+                            {resultText && (
+                              <pre className="mcp-call-result">{resultText}</pre>
+                            )}
+                            {call.error && (
+                              <div className="mcp-call-error">{String(call.error)}</div>
+                            )}
+                          </div>
+                        );
+                      })}
+
+                      {webSearches.map((search, wsIdx) => {
+                        const results: any[] = Array.isArray(search.results)
+                          ? search.results
+                          : [];
+                        return (
+                          <div key={search.id || wsIdx} className="web-search-card">
+                            <div className="web-search-header">
+                              <span>🔎 联网搜索</span>
+                              <span className="web-search-query">
+                                {search.query || ""}
+                              </span>
+                            </div>
+                            {results.slice(0, 5).map((r: any, rIdx: number) => (
+                              <div key={rIdx} className="web-search-result">
+                                {r?.title || r?.url || "结果"}
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })}
+
+                      {imageViews.map((img, imIdx) => {
+                        const path = img.path || img.savedPath || "";
+                        return (
+                          <div
+                            key={img.id || imIdx}
+                            className="image-item-card"
+                            onClick={() => {
+                              if (path) {
+                                setSelectedPreviewFile(path);
+                                setShowRightDrawer(true);
+                              }
+                            }}
+                          >
+                            <span>🖼️ {img.type === "imageView" ? "查看图片" : "生成图片"}</span>
+                            <span className="mono ellipsis" title={path}>
+                              {path.split(/[/\\]/).pop() || ""}
+                            </span>
+                          </div>
+                        );
+                      })}
 
                       {messages.map((msg, mIdx) => (
                         <MarkdownView
                           key={msg.id || mIdx}
                           content={extractTextFromItem(msg)}
+                          onRunCommand={(cmd) => {
+                            setShowTerminal(true);
+                            setPendingTermCommand({ id: Date.now(), command: cmd });
+                          }}
+                          onOpenFile={(filePath) => {
+                            setSelectedPreviewFile(filePath);
+                            setShowRightDrawer(true);
+                          }}
                         />
                       ))}
 
@@ -2689,11 +3279,49 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
                           >
                             🔄 重新生成
                           </button>
+                          {/^[0-9a-f]{8}-/i.test(turn.id) && (
+                            <button
+                              type="button"
+                              className="turn-action-mini-btn"
+                              title="回滚到本轮之前（丢弃本轮及其之后的改动）"
+                              onClick={() => handleRevertToTurn(turn.id)}
+                            >
+                              ⏪ 回滚到此
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>
                   );
                 })}
+
+                {autoReview && (
+                  <div
+                    className={`auto-review-banner ${
+                      autoReview.active ? "active" : "done"
+                    }`}
+                  >
+                    <span className="auto-review-dot" />
+                    {autoReview.active
+                      ? "自动审批审查中：Auto-review 正在评估本次操作…"
+                      : `自动审批已完成${autoReview.decision ? `（${autoReview.decision}）` : ""}`}
+                  </div>
+                )}
+
+                {planSteps.length > 0 && (
+                  <PlanPanel steps={planSteps} defaultCollapsed={false} />
+                )}
+
+                {turnDiffFiles.length > 0 && (
+                  <TurnDiffPanel
+                    files={turnDiffFiles}
+                    onOpenFile={(filePath) => {
+                      setSelectedPreviewFile(filePath);
+                      setShowRightDrawer(true);
+                    }}
+                    onRefresh={refreshGitStatus}
+                  />
+                )}
 
                 {/* Pending Server Requests: approvals / permissions / user input / option picker */}
                 <ApprovalCenter
@@ -2840,6 +3468,7 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
         workspaceFileHits={workspaceFileHits}
         skills={skills}
         projectScripts={projectScripts}
+        workspacePath={activeWorkspace?.path}
         onClose={() => setShowQuickSearch(false)}
         onSelectThread={selectThread}
         onSelectFile={(filePath) => {

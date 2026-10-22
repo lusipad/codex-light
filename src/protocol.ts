@@ -203,6 +203,7 @@ export type ApprovalKind =
   | "fileChange"
   | "permissions"
   | "userInput"
+  | "elicitation"
   | "generic";
 
 export function classifyServerRequest(method: string, params?: any): ApprovalKind {
@@ -215,6 +216,8 @@ export function classifyServerRequest(method: string, params?: any): ApprovalKin
       return "fileChange";
     case "item/permissions/requestApproval":
       return "permissions";
+    case "mcpServer/elicitation/request":
+      return "elicitation";
     case "item/tool/requestUserInput":
     case "tool/requestUserInput":
     case "ask_user":
@@ -224,6 +227,51 @@ export function classifyServerRequest(method: string, params?: any): ApprovalKin
       if (params?.permissions) return "permissions";
       return "generic";
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Legacy (v1) review approvals                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Legacy `execCommandApproval` / `applyPatchApproval` responses use a different
+ * decision vocabulary than the v2 `item/*` approval requests.
+ * Variants: approved | approved_for_session | approved_mcp_policy_amendment |
+ *           denied | timed_out | abort | {approved_execpolicy_amendment} |
+ *           {network_policy_amendment}
+ */
+export type LegacyReviewDecisionValue =
+  | "approved"
+  | "approved_for_session"
+  | "approved_mcp_policy_amendment"
+  | "denied"
+  | "timed_out"
+  | "abort";
+
+export function legacyReviewResponse(
+  decision: LegacyReviewDecisionValue
+): { decision: LegacyReviewDecisionValue } {
+  return { decision };
+}
+
+export function isLegacyApprovalMethod(method: string): boolean {
+  return method === "execCommandApproval" || method === "applyPatchApproval";
+}
+
+/* ------------------------------------------------------------------ */
+/* MCP elicitation                                                     */
+/* ------------------------------------------------------------------ */
+
+export type McpElicitationAction = "accept" | "decline" | "cancel";
+
+export function elicitationResponse(
+  action: McpElicitationAction,
+  content?: any
+): { action: McpElicitationAction; content?: any } {
+  if (action === "accept") {
+    return { action, content: content ?? {} };
+  }
+  return { action };
 }
 
 /** Extract a human readable command line regardless of legacy/new shape. */
