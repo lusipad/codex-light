@@ -1,0 +1,244 @@
+.code-review-view {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 24px 28px;
+  max-width: 980px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.review-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.review-header-left {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.review-back-btn {
+  background: var(--bg-pill);
+  border: 1px solid var(--border-default);
+  color: var(--text-secondary);
+  border-radius: var(--pill-radius);
+  padding: 5px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  flex: none;
+}
+
+.review-back-btn:hover {
+  color: var(--text-primary);
+  border-color: rgba(58, 131, 247, 0.45);
+}
+
+.review-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+.review-subtitle {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  max-width: 560px;
+}
+
+.review-workspace {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  max-width: 300px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.review-workspace-label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary, var(--text-secondary));
+}
+
+.review-workspace .mono {
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.review-target-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.review-target-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  text-align: left;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--border-default);
+  background: var(--bg-pill);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.review-target-card:hover {
+  border-color: rgba(58, 131, 247, 0.45);
+}
+
+.review-target-card.selected {
+  border-color: var(--accent-blue);
+  background: rgba(58, 131, 247, 0.1);
+}
+
+.review-target-icon {
+  font-size: 18px;
+}
+
+.review-target-title {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.review-target-desc {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.review-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  padding: 18px 20px;
+  background: var(--bg-pill);
+}
+
+.review-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.review-field-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.review-field-hint {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.review-field-hint code {
+  font-family: var(--font-mono);
+  background: rgba(0, 0, 0, 0.2);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.review-select,
+.review-input,
+.review-textarea {
+  background: rgba(0, 0, 0, 0.24);
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  color: var(--text-primary);
+  padding: 8px 12px;
+  font-size: 12.5px;
+  outline: none;
+}
+
+.review-select:focus,
+.review-input:focus,
+.review-textarea:focus {
+  border-color: var(--accent-blue);
+}
+
+.review-textarea {
+  resize: vertical;
+  min-height: 64px;
+  line-height: 1.6;
+  font-family: inherit;
+}
+
+.review-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.review-start-btn {
+  background: var(--accent-blue);
+  color: #fff;
+  border: none;
+  border-radius: var(--pill-radius);
+  padding: 8px 20px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.review-start-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.review-actions-hint {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.review-last-result {
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  padding: 14px 16px;
+  background: var(--bg-pill);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.review-last-result-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.review-last-result-body {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.review-empty-hint {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  border: 1px dashed var(--border-default);
+  border-radius: 10px;
+  padding: 16px;
+  text-align: center;
+}

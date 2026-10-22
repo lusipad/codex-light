@@ -278,6 +278,7 @@ export type MainViewRoute =
   | "scheduled"
   | "plugins"
   | "worktrees"
+  | "review"
   | "settings";
 
 export type SettingsSectionSlug =
@@ -300,7 +301,9 @@ export type SettingsSectionSlug =
   | "git-settings"
   | "local-environments"
   | "worktrees"
-  | "providers-models";
+  | "providers-models"
+  | "experimental"
+  | "account";
 
 export type ActiveNavTab =
   | "chat"

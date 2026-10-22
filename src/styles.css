@@ -5115,3 +5115,56 @@ html, body, #root {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.35; transform: scale(0.7); }
 }
+
+/* Thread status chip (app-server ThreadStatus) */
+.thread-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  padding: 3px 10px;
+  border-radius: var(--pill-radius);
+  border: 1px solid var(--border-default);
+  background: var(--bg-pill);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.thread-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  flex: none;
+}
+
+.thread-status-chip.tone-active {
+  color: var(--accent-blue);
+  border-color: rgba(58, 131, 247, 0.35);
+  background: rgba(58, 131, 247, 0.1);
+}
+
+.thread-status-chip.tone-active .thread-status-dot {
+  background: var(--accent-blue);
+  animation: auto-review-pulse 1.2s ease-in-out infinite;
+}
+
+.thread-status-chip.tone-warn {
+  color: #f59e0b;
+  border-color: rgba(245, 158, 11, 0.35);
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.thread-status-chip.tone-warn .thread-status-dot {
+  background: #f59e0b;
+}
+
+.thread-status-chip.tone-error {
+  color: var(--accent-red);
+  border-color: rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.thread-status-chip.tone-error .thread-status-dot {
+  background: var(--accent-red);
+}

@@ -1,0 +1,237 @@
+/* FileExplorer.css — resource-manager controls for the Files tab.
+   Scoped to the `fe-` classes added by DiffDrawer so the existing
+   changes/summary/browser tabs are untouched. */
+
+.fe-path-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.fe-live-dot {
+  color: var(--accent-green);
+  font-size: 8px;
+  line-height: 1;
+  animation: fe-live-pulse 2s ease-in-out infinite;
+}
+
+@keyframes fe-live-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.fe-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.fe-icon-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.fe-icon-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.fe-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-primary);
+}
+
+.fe-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--bg-pill);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-family: inherit;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.fe-toolbar-btn:hover:not(:disabled) {
+  background: var(--bg-pill-hover);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+.fe-toolbar-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.fe-toolbar-btn.primary {
+  background: var(--accent-blue);
+  border-color: transparent;
+  color: #ffffff;
+}
+
+.fe-toolbar-btn.primary:hover:not(:disabled) {
+  filter: brightness(1.1);
+  color: #ffffff;
+}
+
+.fe-toolbar-hint {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.fe-inline-form {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+  animation: fe-fade-in 0.12s ease;
+}
+
+@keyframes fe-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.fe-inline-label {
+  max-width: 42%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.fe-inline-input {
+  flex: 1;
+  min-width: 110px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border-default);
+  border-radius: 5px;
+  outline: none;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.fe-inline-input:focus {
+  border-color: var(--accent-blue);
+}
+
+.fe-file-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.fe-file-row:hover {
+  background: var(--bg-hover);
+}
+
+.fe-file-row.active {
+  background: var(--bg-pill);
+}
+
+.fe-file-row.fe-renaming {
+  outline: 1px dashed var(--accent-blue);
+  outline-offset: -1px;
+}
+
+.fe-file-row .diff-file-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  color: var(--text-primary);
+}
+
+.fe-file-row .file-size-tag {
+  flex-shrink: 0;
+}
+
+.fe-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 6px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.fe-file-row:hover .fe-row-actions,
+.fe-file-row:focus-within .fe-row-actions {
+  opacity: 1;
+}
+
+.fe-row-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 4px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 11.5px;
+  font-family: inherit;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.fe-row-btn:hover:not(:disabled) {
+  background: var(--bg-pill-hover);
+  color: var(--text-primary);
+}
+
+.fe-row-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.fe-row-btn.danger:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.18);
+  color: var(--accent-red);
+}

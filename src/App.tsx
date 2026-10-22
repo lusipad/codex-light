@@ -39,6 +39,7 @@ import {
   GoalStepItem,
   ShellExecResult,
   ProjectScriptCommands,
+  GitCommitInfo,
 } from "./types";
 import { MarkdownView } from "./components/MarkdownView";
 import { DiffDrawer } from "./components/DiffDrawer";
@@ -56,6 +57,7 @@ import { ProjectsIndexView } from "./components/ProjectsIndexView";
 import { InboxView } from "./components/InboxView";
 import { MiniPetWidget } from "./components/MiniPetWidget";
 import { QuickSearchModal } from "./components/QuickSearchModal";
+import { CodeReviewView, ReviewRequest } from "./components/CodeReviewView";
 import { GoalSetupModal, GoalSetupConfig } from "./components/GoalSetupModal";
 import { GoalProgressBanner } from "./components/GoalProgressBanner";
 import { ApprovalCenter } from "./components/ApprovalCenter";
@@ -218,6 +220,23 @@ function extractChecklistFromText(text: string): GoalStepItem[] {
   return items;
 }
 
+/** Map app-server ThreadStatus -> header chip text. */
+function describeThreadStatus(status: { type: string; activeFlags?: string[] } | null): {
+  label: string;
+  tone: string;
+} {
+  if (!status) return { label: "", tone: "" };
+  const flags = status.activeFlags || [];
+  if (status.type === "active") {
+    if (flags.includes("waitingOnApproval")) return { label: "等待批准", tone: "warn" };
+    if (flags.includes("waitingOnUserInput")) return { label: "等待输入", tone: "warn" };
+    return { label: "运行中", tone: "active" };
+  }
+  if (status.type === "systemError") return { label: "出错", tone: "error" };
+  if (status.type === "idle") return { label: "空闲", tone: "idle" };
+  return { label: "", tone: "" };
+}
+
 function playNotificationChime(kind: "nudge" | "done" = "done") {
   try {
     const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
@@ -295,6 +314,11 @@ export const App: React.FC = () => {
   const [workspaces, setWorkspaces] = useState<WorkspaceRootItem[]>([]);
   const [gitStatus, setGitStatus] = useState<GitStatusInfo | null>(null);
   const [gitBranches, setGitBranches] = useState<string[]>([]);
+  const [gitCommits, setGitCommits] = useState<GitCommitInfo[]>([]);
+
+  // Code Review (review/start)
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [reviewLastResult, setReviewLastResult] = useState<string | null>(null);
 
   // Threads, Pinned, Hints & Conversation State
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
@@ -312,6 +336,10 @@ export const App: React.FC = () => {
   >([]);
   const [accountInfo, setAccountInfo] = useState<any>(null);
   const [rateLimits, setRateLimits] = useState<any>(null);
+  const [activeThreadStatus, setActiveThreadStatus] = useState<{
+    type: string;
+    activeFlags?: string[];
+  } | null>(null);
   const [autoReview, setAutoReview] = useState<{
     active: boolean;
     decision?: string | null;
@@ -326,6 +354,8 @@ export const App: React.FC = () => {
   const [useWorktree, setUseWorktree] = useState<boolean>(false);
   const [fastMode, setFastMode] = useState<boolean>(false);
   const [planMode, setPlanMode] = useState<boolean>(false);
+  const planModeRef = useRef<boolean>(false);
+  planModeRef.current = planMode;
   const [attachedFiles, setAttachedFiles] = useState<AttachedFileItem[]>([]);
   const [expandedThoughts, setExpandedThoughts] = useState<Record<string, boolean>>({});
 
@@ -413,6 +443,8 @@ export const App: React.FC = () => {
   activeThreadIdRef.current = activeThreadId;
   const activeTurnIdRef = useRef<string | null>(null);
   activeTurnIdRef.current = activeTurnId;
+  const workspaceWatchIdRef = useRef<string | null>(null);
+  const fsRefreshTimerRef = useRef<any>(null);
 
   const activeWorkspace = useMemo(() => {
     return workspaces.find((w) => w.active) || workspaces[0] || null;
@@ -744,6 +776,24 @@ export const App: React.FC = () => {
           );
           refreshGitStatus();
           refreshThreads();
+          if (turnId) {
+            setInboxItems((prev) => {
+              const entryId = `turn-done-${turnId}`;
+              if (prev.some((item) => item.id === entryId)) return prev;
+              return [
+                {
+                  id: entryId,
+                  title: "会话回复已完成",
+                  subtitle: `turn ${String(turnId).slice(0, 8)}`,
+                  kind: "thread_done" as const,
+                  threadId: activeThreadIdRef.current || undefined,
+                  createdAt: Date.now(),
+                  read: false,
+                },
+                ...prev,
+              ].slice(0, 100);
+            });
+          }
 
           // Autonomous Goal turn completion check
           const currentGoal = activeGoalRef.current;
@@ -955,6 +1005,14 @@ export const App: React.FC = () => {
             setThreads((prev) =>
               prev.map((t) => (t.id === tid ? { ...t, status } : t))
             );
+            if (tid === activeThreadIdRef.current) {
+              setActiveThreadStatus({
+                type: String(status ?? "idle"),
+                activeFlags: Array.isArray(params?.status?.activeFlags)
+                  ? params.status.activeFlags
+                  : [],
+              });
+            }
           }
         } else if (method === NOTIFICATION.ACCOUNT_RATE_LIMITS) {
           setRateLimits((prev: any) => mergeRateLimits(prev, params));
@@ -992,6 +1050,15 @@ export const App: React.FC = () => {
               ],
             },
           ]);
+        } else if (method === NOTIFICATION.FS_CHANGED) {
+          const watchId = params?.watchId;
+          if (watchId && workspaceWatchIdRef.current === watchId) {
+            if (fsRefreshTimerRef.current) clearTimeout(fsRefreshTimerRef.current);
+            fsRefreshTimerRef.current = setTimeout(() => {
+              refreshGitStatus();
+              refreshWorkspaceContext();
+            }, 400);
+          }
         } else if (method === NOTIFICATION.SKILLS_CHANGED) {
           refreshWorkspaceContext();
         } else if (method === NOTIFICATION.SERVER_REQUEST_RESOLVED) {
@@ -1079,6 +1146,58 @@ export const App: React.FC = () => {
     refreshGitStatus();
     refreshWorkspaceContext();
   }, [refreshGitStatus, refreshWorkspaceContext]);
+
+  // 工作区文件系统实时监听：fs/watch + fs/changed → 防抖刷新文件树/Git 状态
+  useEffect(() => {
+    const root = activeWorkspace?.path;
+    if (!root || !appServerStatus.connected) return;
+    const watchId = `workspace:${root}`;
+    workspaceWatchIdRef.current = watchId;
+    callAppServer("fs/watch", { path: root, watchId }).catch((e) =>
+      console.warn("fs/watch failed:", e)
+    );
+    return () => {
+      callAppServer("fs/unwatch", { watchId }).catch(() => {});
+      if (workspaceWatchIdRef.current === watchId) {
+        workspaceWatchIdRef.current = null;
+      }
+    };
+  }, [activeWorkspace?.path, appServerStatus.connected]);
+
+  // Inbox 持久化（desktop_state）+ 变更回写
+  const inboxHydratedRef = useRef(false);
+  useEffect(() => {
+    tauriInvoke<any>("desktop_state_get", { key: "inboxItems" })
+      .then((saved) => {
+        if (Array.isArray(saved) && saved.length > 0) {
+          setInboxItems(saved);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        inboxHydratedRef.current = true;
+      });
+  }, []);
+  useEffect(() => {
+    if (!inboxHydratedRef.current) return;
+    const handle = setTimeout(() => {
+      tauriInvoke("desktop_state_set", {
+        key: "inboxItems",
+        value: inboxItems.slice(0, 100),
+      }).catch(() => {});
+    }, 500);
+    return () => clearTimeout(handle);
+  }, [inboxItems]);
+
+  // Code Review：进入页面时加载最近提交，供“指定提交”选择
+  useEffect(() => {
+    if (activeRoute !== "review") return;
+    const cwd = activeWorkspace?.path;
+    if (!cwd) return;
+    tauriInvoke<GitCommitInfo[]>("git_log_commits", { cwd, limit: 30 })
+      .then((commits) => setGitCommits(Array.isArray(commits) ? commits : []))
+      .catch(() => setGitCommits([]));
+  }, [activeRoute, activeWorkspace?.path]);
 
   // Global keyboard shortcuts (Ctrl+N new chat, Ctrl+B toggle sidebar, Ctrl+J toggle terminal)
   useEffect(() => {
@@ -1222,6 +1341,7 @@ export const App: React.FC = () => {
       }
       setActiveThreadId(null);
       setActiveTurnId(null);
+      setActiveThreadStatus(null);
       setTurns([]);
       setPlanSteps([]);
       setTurnDiffFiles([]);
@@ -1236,6 +1356,7 @@ export const App: React.FC = () => {
     setActiveThreadId(threadId);
     setActiveRoute("thread");
     setActiveTurnId(null);
+    setActiveThreadStatus(null);
     setPlanSteps([]);
     setTurnDiffFiles([]);
     try {
@@ -1243,6 +1364,15 @@ export const App: React.FC = () => {
         threadId,
         includeTurns: true,
       });
+      const threadStatus = res?.thread?.status;
+      if (threadStatus) {
+        setActiveThreadStatus({
+          type: String(threadStatus?.type ?? threadStatus),
+          activeFlags: Array.isArray(threadStatus?.activeFlags)
+            ? threadStatus.activeFlags
+            : [],
+        });
+      }
       const loadedTurns = normalizeTurnsFromThread(res);
       if (loadedTurns.length > 0) {
         setTurns(loadedTurns);
@@ -1311,6 +1441,126 @@ export const App: React.FC = () => {
     }
   }, [activeThreadId, showAppToast]);
 
+  /** 官方 Plan 模式：thread/settings/update 的 collaborationMode（plan/default） */
+  const applyCollaborationMode = useCallback(
+    async (threadId: string, enabled: boolean) => {
+      await callAppServer("thread/settings/update", {
+        threadId,
+        collaborationMode: {
+          mode: enabled ? "plan" : "default",
+          settings: {
+            model: selectedModelId,
+            reasoning_effort: reasoningEffort || null,
+            developer_instructions: null,
+          },
+        },
+      });
+    },
+    [selectedModelId, reasoningEffort]
+  );
+
+  const handleTogglePlanMode = useCallback(
+    async () => {
+      const next = !planModeRef.current;
+      setPlanMode(next);
+      if (!activeThreadId) {
+        showAppToast(
+          next ? "计划模式已开启（将在新会话中生效）" : "计划模式已关闭",
+          "info"
+        );
+        return;
+      }
+      try {
+        await applyCollaborationMode(activeThreadId, next);
+        showAppToast(
+          next ? "✓ 已切换到计划模式 (Plan)" : "✓ 已切换到默认模式 (Default)",
+          "success"
+        );
+      } catch (e: any) {
+        showAppToast(`切换计划模式失败：${e?.message || e}`, "error");
+      }
+    },
+    [activeThreadId, applyCollaborationMode, showAppToast]
+  );
+
+  // Code Review：`review/start` 内联审查（官方 Code Review 能力）
+  const handleStartCodeReview = useCallback(
+    async (req: ReviewRequest) => {
+      const cwd = activeWorkspace?.path;
+      if (!cwd) {
+        showAppToast("请先在左侧选择一个工作区目录", "error");
+        return;
+      }
+      if (!appServerStatus.connected) {
+        showAppToast("app-server 未连接，无法启动审查", "error");
+        return;
+      }
+      setReviewBusy(true);
+      try {
+        const threadRes = await callAppServer<any>("thread/start", {
+          cwd,
+          model: selectedModelId,
+          approvalPolicy: "on-request",
+          approvalsReviewer: "user",
+          sandbox: "workspace-write",
+        });
+        const threadId = threadRes?.threadId || threadRes?.thread?.id;
+        if (!threadId) throw new Error("无法为审查创建会话");
+
+        let target: any;
+        if (req.kind === "branch") {
+          target = { type: "baseBranch", branch: req.branch };
+        } else if (req.kind === "commit") {
+          const commit = gitCommits.find((c) => c.hash === req.sha);
+          target = {
+            type: "commit",
+            sha: req.sha,
+            title: commit?.subject ?? null,
+          };
+        } else if (req.kind === "custom") {
+          target = {
+            type: "instructions",
+            instructions: req.instructions || "请审查当前工作区的改动",
+          };
+        } else {
+          target = { type: "uncommittedChanges" };
+        }
+
+        const reviewRes = await callAppServer<any>("review/start", {
+          threadId,
+          delivery: "inline",
+          target,
+        });
+        const reviewThreadId = reviewRes?.reviewThreadId || threadId;
+        await refreshThreads();
+        await selectThread(reviewThreadId);
+        const label =
+          req.kind === "uncommitted"
+            ? "未提交改动"
+            : req.kind === "branch"
+            ? `对比分支 ${req.branch}`
+            : req.kind === "commit"
+            ? `提交 ${req.sha?.slice(0, 8)}`
+            : "自定义指令";
+        setReviewLastResult(`已启动审查：${label}`);
+        showAppToast(`✓ 代码审查已启动（${label}）`, "success");
+      } catch (e: any) {
+        showAppToast(`启动代码审查失败：${e?.message || e}`, "error");
+      } finally {
+        setReviewBusy(false);
+      }
+    },
+    [
+      activeWorkspace?.path,
+      appServerStatus.connected,
+      selectedModelId,
+      gitCommits,
+      refreshThreads,
+      selectThread,
+      showAppToast,
+    ]
+  );
+
   // Send or Steer Message
   const handleSendMessage = useCallback(async (overrideText?: string) => {
     const rawText = (typeof overrideText === "string" ? overrideText : promptInput).trim();
@@ -1361,10 +1611,7 @@ export const App: React.FC = () => {
       attachedFiles.length > 0
         ? attachedFiles.map((f) => `[附加文件: ${f.path}]`).join("\n") + "\n"
         : "";
-    const planPrefix = planMode
-      ? "[Plan Mode: 请先分析并输出分步实施计划，不要直接修改文件]\n"
-      : "";
-    const text = `${planPrefix}${attachmentContext}${effectiveRawText}`.trim();
+    const text = `${attachmentContext}${effectiveRawText}`.trim();
 
     if (!overrideText) {
       setPromptInput("");
@@ -1445,6 +1692,15 @@ export const App: React.FC = () => {
           setWorkspaceHints((prev) => ({ ...prev, [currentThreadId!]: targetCwd }));
         }
         refreshThreads();
+      }
+
+      // 计划模式：走真实 thread/settings/update（新会话也在首个 turn 前应用）
+      if (planMode && currentThreadId) {
+        try {
+          await applyCollaborationMode(currentThreadId, true);
+        } catch (planErr) {
+          console.warn("apply plan collaboration mode failed:", planErr);
+        }
       }
 
       const turnRes = await callAppServer<any>("turn/start", {
@@ -2170,6 +2426,7 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
     activeWorkspace?.label ||
     activeWorkspace?.path?.split(/[/\\]/).pop() ||
     "codex-app-offline";
+  const threadStatusChip = describeThreadStatus(activeThreadStatus);
 
   return (
     <div className="codex-app-layout">
@@ -2264,6 +2521,15 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
                   align="right"
                   buttonClassName="window-chrome-icon-btn"
                 />
+                {threadStatusChip.label && (
+                  <span
+                    className={`thread-status-chip tone-${threadStatusChip.tone}`}
+                    title={`当前会话状态：${threadStatusChip.label}`}
+                  >
+                    <span className="thread-status-dot" />
+                    {threadStatusChip.label}
+                  </span>
+                )}
                 <div
                   className="project-branch-pill clickable"
                   onClick={() => setShowGitMenu((v) => !v)}
@@ -2701,7 +2967,22 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
         )}
 
         {/* ── Route Dispatcher ── */}
-        {activeRoute === "projects" ? (
+        {activeRoute === "review" ? (
+          <div className="full-route-view">
+            <div className="full-route-container">
+              <CodeReviewView
+                workspacePath={activeWorkspace?.path}
+                branches={gitBranches}
+                defaultBranch={gitStatus?.defaultBranch || "main"}
+                commits={gitCommits}
+                busy={reviewBusy}
+                lastResult={reviewLastResult}
+                onStartReview={handleStartCodeReview}
+                onBack={() => setActiveRoute(turns.length > 0 ? "thread" : "home")}
+              />
+            </div>
+          </div>
+        ) : activeRoute === "projects" ? (
           <ProjectsIndexView
             workspaces={workspaces}
             activeWorkspace={activeWorkspace}
@@ -2884,7 +3165,7 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
               fastMode={fastMode}
               onToggleFastMode={() => setFastMode((v) => !v)}
               planMode={planMode}
-              onTogglePlanMode={() => setPlanMode((v) => !v)}
+              onTogglePlanMode={handleTogglePlanMode}
               attachedFiles={attachedFiles}
               onAttachFiles={handleAttachFiles}
               onAddAttachedFiles={(newFiles) =>
@@ -3395,7 +3676,7 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
                   fastMode={fastMode}
                   onToggleFastMode={() => setFastMode((v) => !v)}
                   planMode={planMode}
-                  onTogglePlanMode={() => setPlanMode((v) => !v)}
+                  onTogglePlanMode={handleTogglePlanMode}
                   attachedFiles={attachedFiles}
                   onAttachFiles={handleAttachFiles}
                   onAddAttachedFiles={(newFiles) =>

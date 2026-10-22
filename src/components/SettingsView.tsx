@@ -12,6 +12,32 @@ import {
 } from "lucide-react";
 import { tauriInvoke } from "../bridge";
 import {
+  APPROVAL_POLICY_OPTIONS,
+  APPROVALS_REVIEWER_OPTIONS,
+  GRANULAR_APPROVAL_POLICY,
+  MODEL_VERBOSITY_OPTIONS,
+  REASONING_EFFORT_OPTIONS,
+  SANDBOX_MODE_OPTIONS,
+  VALID_CONFIG_KEYS,
+  WEB_SEARCH_MODE_OPTIONS,
+  accountRateLimitsRead,
+  accountRead,
+  accountUsageRead,
+  configRead,
+  configRequirementsRead,
+  experimentalFeatureListAll,
+  experimentalFeatureSetEnablement,
+  getConfigValue,
+  mcpServerReload,
+  setConfigKeys,
+  type AccountRateLimitsResult,
+  type AccountReadResult,
+  type AccountUsageResult,
+  type ConfigEdit,
+  type ExperimentalFeature,
+  type ExperimentalFeatureStage,
+} from "../config";
+import {
   AppServerStatus,
   CodexConfigOverview,
   ModelInfo,
@@ -127,6 +153,63 @@ export const MCP_PRESETS = [
   },
 ];
 
+const REASONING_EFFORT_LABELS: Record<string, string> = {
+  low: "low (快速轻度推理)",
+  medium: "medium (标准平衡推理)",
+  high: "high (深度严密思考)",
+  xhigh: "xhigh (极高深度推理)",
+  max: "max (最大推理预算)",
+  ultra: "ultra (极限推理)",
+};
+
+const APPROVAL_POLICY_LABELS: Record<string, string> = {
+  untrusted: "untrusted (旧版严格模式；app-server 0.159 已弃用，保存时改写为 granular 严格档)",
+  "on-request": "on-request (按需：遇到高风险操作时请求批准)",
+  granular: "granular (细粒度：分别控制沙盒/规则/MCP 询问)",
+  never: "never (从不询问，完全静默执行)",
+};
+
+const APPROVALS_REVIEWER_LABELS: Record<string, string> = {
+  user: "user (由我本人审批，默认)",
+  auto_review: "auto_review (由审查子智能体自动风险评估)",
+  guardian_subagent: "guardian_subagent (旧版兼容值，加载时归一化为 auto_review)",
+};
+
+const SANDBOX_MODE_LABELS: Record<string, string> = {
+  "read-only": "read-only (全只读沙盒)",
+  "workspace-write": "workspace-write (仅限工作区读写)",
+  "danger-full-access": "danger-full-access (全磁盘完全访问，谨慎)",
+};
+
+const MODEL_VERBOSITY_LABELS: Record<string, string> = {
+  low: "low (简洁：仅核心代码与结论)",
+  medium: "medium (标准：完整解释与变更)",
+  high: "high (详细：更长的说明与推理摘要)",
+};
+
+const WEB_SEARCH_MODE_LABELS: Record<string, string> = {
+  disabled: "disabled (禁用联网搜索)",
+  cached: "cached (优先使用缓存索引，隐私友好)",
+  indexed: "indexed (使用索引搜索，不直接抓取实时页面)",
+  live: "live (实时联网抓取最新内容)",
+};
+
+const EXPERIMENTAL_STAGE_LABELS: Record<ExperimentalFeatureStage, string> = {
+  beta: "Beta 公测",
+  underDevelopment: "开发中",
+  stable: "稳定",
+  deprecated: "已弃用",
+  removed: "已移除",
+};
+
+const EXPERIMENTAL_STAGE_ORDER: ExperimentalFeatureStage[] = [
+  "beta",
+  "underDevelopment",
+  "stable",
+  "deprecated",
+  "removed",
+];
+
 const SETTINGS_NAV_GROUPS: Array<{
   groupTitle: string;
   items: Array<{ slug: SettingsSectionSlug; label: string; keywords: string }>;
@@ -135,12 +218,13 @@ const SETTINGS_NAV_GROUPS: Array<{
     groupTitle: "个人 (Personal)",
     items: [
       { slug: "general-settings", label: "常规设置", keywords: "general editor notification sleep" },
+      { slug: "account", label: "账号与额度", keywords: "account plan usage rate limit quota credits 账号 额度 用量 计划" },
       { slug: "import", label: "导入配置", keywords: "import cursor vscode windsurf claude" },
       { slug: "appearance", label: "外观与主题", keywords: "appearance theme font color" },
       { slug: "archived-chats", label: "已归档聊天", keywords: "archived chats history restore" },
       { slug: "voice", label: "语音输入", keywords: "voice dictation microphone" },
       { slug: "storage", label: "存储空间", keywords: "storage disk cache worktree" },
-      { slug: "agent", label: "智能体与模型参数", keywords: "agent model parameters temperature top_p tokens reasoning approval sandbox hyperparameter 超参数 参数" },
+      { slug: "agent", label: "智能体与模型参数", keywords: "agent model provider reasoning approval sandbox verbosity web_search instructions 模型 推理 审批 沙盒 指令" },
       { slug: "personalization", label: "个性化指令", keywords: "personalization tone instructions" },
       { slug: "pets", label: "虚拟宠物伴侣", keywords: "pets companion mini widget" },
       { slug: "keyboard-shortcuts", label: "键盘快捷键", keywords: "shortcuts keybindings hotkeys" },
@@ -158,6 +242,7 @@ const SETTINGS_NAV_GROUPS: Array<{
   {
     groupTitle: "编码 (Coding)",
     items: [
+      { slug: "experimental", label: "实验特性", keywords: "experimental features flags beta stage 实验 特性 开关" },
       { slug: "hooks-settings", label: "生命周期挂钩 (Hooks)", keywords: "hooks pretooluse posttooluse stop" },
       { slug: "connections", label: "MCP 连接", keywords: "connections mcp servers" },
       { slug: "git-settings", label: "Git 偏好", keywords: "git branch prefix force lease pr" },
@@ -228,16 +313,30 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [modelCatalogJson, setModelCatalogJson] = useState<string>("");
   const [providers, setProviders] = useState<ModelProviderConfig[]>([]);
 
-  // Hyperparameters & Runtime Tuning
-  const [temperature, setTemperature] = useState<number>(0.2);
-  const [topP, setTopP] = useState<number>(1.0);
-  const [maxOutputTokens, setMaxOutputTokens] = useState<number>(8192);
-  const [contextWindow, setContextWindow] = useState<number>(128000);
+  // Real, protocol-backed runtime settings (only valid config.toml keys)
   const [webSearchMode, setWebSearchMode] = useState<string>("cached");
-  const [allowNetwork, setAllowNetwork] = useState<boolean>(true);
-  const [maxParallelTools, setMaxParallelTools] = useState<number>(8);
-  const [subagentConcurrency, setSubagentConcurrency] = useState<number>(4);
-  const [outputVerbosity, setOutputVerbosity] = useState<string>("medium");
+  const [modelVerbosity, setModelVerbosity] = useState<string>("medium");
+  const [approvalsReviewer, setApprovalsReviewer] = useState<string>("user");
+  const [protocolConfig, setProtocolConfig] = useState<Record<string, unknown> | null>(null);
+  const [protocolConfigAvailable, setProtocolConfigAvailable] = useState<boolean>(false);
+  const [managedRequirements, setManagedRequirements] = useState<Record<string, unknown> | null>(null);
+  const [providersSnapshot, setProvidersSnapshot] = useState<string>("[]");
+  const [mcpServersSnapshot, setMcpServersSnapshot] = useState<string>("[]");
+
+  // Experimental features (experimentalFeature/*)
+  const [experimentalFeatures, setExperimentalFeatures] = useState<ExperimentalFeature[]>([]);
+  const [experimentalLoading, setExperimentalLoading] = useState<boolean>(false);
+  const [experimentalError, setExperimentalError] = useState<string | null>(null);
+  const [experimentalSearch, setExperimentalSearch] = useState<string>("");
+  const [experimentalStage, setExperimentalStage] = useState<"all" | ExperimentalFeatureStage>("all");
+  const [experimentalSaving, setExperimentalSaving] = useState<Record<string, boolean>>({});
+
+  // Account & quota (account/*) — read only
+  const [accountInfo, setAccountInfo] = useState<AccountReadResult | null>(null);
+  const [accountRateLimits, setAccountRateLimits] = useState<AccountRateLimitsResult | null>(null);
+  const [accountUsage, setAccountUsage] = useState<AccountUsageResult | null>(null);
+  const [accountLoading, setAccountLoading] = useState<boolean>(false);
+  const [accountError, setAccountError] = useState<string | null>(null);
 
   // New provider inputs
   const [newProvId, setNewProvId] = useState<string>("");
@@ -334,28 +433,79 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [localEnvToml, setLocalEnvToml] = useState<string>("");
   const [localEnvPath, setLocalEnvPath] = useState<string>("");
 
+  const toErrorMessage = (err: unknown): string =>
+    err instanceof Error ? err.message : String(err);
+
+  const applyProtocolConfig = (raw: Record<string, unknown>) => {
+    const readString = (key: string): string => {
+      const value = getConfigValue(raw, key);
+      return typeof value === "string" ? value : "";
+    };
+    const approvalPolicyValue = getConfigValue(raw, "approval_policy");
+    setApprovalPolicy(
+      typeof approvalPolicyValue === "string"
+        ? approvalPolicyValue
+        : approvalPolicyValue &&
+            typeof approvalPolicyValue === "object" &&
+            "granular" in (approvalPolicyValue as Record<string, unknown>)
+          ? "granular"
+          : "on-request"
+    );
+    setModel(readString("model"));
+    setModelProvider(readString("model_provider"));
+    setReasoningEffort(readString("model_reasoning_effort") || "medium");
+    setApprovalsReviewer(readString("approvals_reviewer") || "user");
+    setSandboxMode(readString("sandbox_mode") || "workspace-write");
+    setWebSearchMode(readString("web_search") || "cached");
+    setModelVerbosity(readString("model_verbosity") || "medium");
+    setModelCatalogJson(readString("model_catalog_json"));
+    const instructionsValue = readString("instructions");
+    if (instructionsValue) setCustomPersonaPrompt(instructionsValue);
+  };
+
   const loadConfig = async () => {
     try {
-      const cfg = await tauriInvoke<CodexConfigOverview>("config_read");
-      setConfig(cfg);
-      setRawToml(cfg.rawToml);
-      setModel(cfg.model || "");
-      setModelProvider(cfg.modelProvider || "");
-      setReasoningEffort(cfg.modelReasoningEffort || "medium");
-      setApprovalPolicy(cfg.approvalPolicy || "on-request");
-      setSandboxMode(cfg.sandboxMode || "workspace-write");
-      setModelCatalogJson(cfg.modelCatalogJson || "");
-      setTemperature(cfg.temperature ?? 0.2);
-      setTopP(cfg.topP ?? 1.0);
-      setMaxOutputTokens(cfg.maxOutputTokens ?? 8192);
-      setContextWindow(cfg.contextWindow ?? 128000);
-      setWebSearchMode(cfg.webSearchMode || "cached");
-      setAllowNetwork(cfg.allowNetwork ?? true);
-      setMaxParallelTools(cfg.maxParallelTools ?? 8);
-      setSubagentConcurrency(cfg.subagentConcurrency ?? 4);
-      setOutputVerbosity(cfg.outputVerbosity || "medium");
-      setProviders(cfg.providers || []);
-      setMcpServers(cfg.mcpServers || []);
+      // Primary path: app-server `config/read` (real effective config incl. project layers).
+      let loadedViaProtocol = false;
+      try {
+        const protocolResult = await configRead(activeWorkspaceRoot || undefined);
+        const rawConfig = protocolResult.config;
+        if (rawConfig && Object.keys(rawConfig).length > 0) {
+          setProtocolConfig(rawConfig);
+          applyProtocolConfig(rawConfig);
+          loadedViaProtocol = true;
+        }
+      } catch (protocolErr) {
+        console.warn(
+          "config/read app-server 不可用，回退到 Tauri config_read:",
+          protocolErr
+        );
+      }
+      setProtocolConfigAvailable(loadedViaProtocol);
+
+      // Legacy Tauri read stays the source of configPath / raw TOML / providers / MCP lists.
+      try {
+        const cfg = await tauriInvoke<CodexConfigOverview>("config_read");
+        setConfig(cfg);
+        setRawToml(cfg.rawToml);
+        if (!loadedViaProtocol) {
+          setModel(cfg.model || "");
+          setModelProvider(cfg.modelProvider || "");
+          setReasoningEffort(cfg.modelReasoningEffort || "medium");
+          setApprovalPolicy(cfg.approvalPolicy || "on-request");
+          setSandboxMode(cfg.sandboxMode || "workspace-write");
+          setModelCatalogJson(cfg.modelCatalogJson || "");
+          setWebSearchMode(cfg.webSearchMode || "cached");
+          if (cfg.instructions) setCustomPersonaPrompt(cfg.instructions);
+        }
+        setProviders(cfg.providers || []);
+        setMcpServers(cfg.mcpServers || []);
+        setProvidersSnapshot(JSON.stringify(cfg.providers || []));
+        setMcpServersSnapshot(JSON.stringify(cfg.mcpServers || []));
+      } catch (legacyErr) {
+        if (!loadedViaProtocol) throw legacyErr;
+        console.warn("Tauri config_read 不可用:", legacyErr);
+      }
 
       tauriInvoke<any>("desktop_state_get", { key: "desktopPreferences" })
         .then((prefs) => {
@@ -417,6 +567,70 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }
   };
 
+  const loadManagedRequirements = async () => {
+    try {
+      const result = await configRequirementsRead();
+      setManagedRequirements(result.requirements ?? null);
+    } catch (err) {
+      console.warn("configRequirements/read 不可用:", err);
+      setManagedRequirements(null);
+    }
+  };
+
+  /** Keep the protocol snapshot in sync after a write (used for clear-key detection). */
+  const refreshProtocolConfigSnapshot = async () => {
+    try {
+      const result = await configRead(activeWorkspaceRoot || undefined);
+      if (result.config && Object.keys(result.config).length > 0) {
+        setProtocolConfig(result.config);
+        setProtocolConfigAvailable(true);
+      }
+    } catch (err) {
+      console.warn("config/read 刷新协议快照失败:", err);
+    }
+  };
+
+  const loadExperimentalFeatures = async () => {
+    setExperimentalLoading(true);
+    setExperimentalError(null);
+    try {
+      const features = await experimentalFeatureListAll();
+      setExperimentalFeatures(features);
+    } catch (err) {
+      setExperimentalError(
+        `无法读取实验特性列表（app-server 可能未连接）: ${toErrorMessage(err)}`
+      );
+    } finally {
+      setExperimentalLoading(false);
+    }
+  };
+
+  const loadAccountData = async () => {
+    setAccountLoading(true);
+    setAccountError(null);
+    const failures: string[] = [];
+    try {
+      setAccountInfo(await accountRead());
+    } catch (err) {
+      setAccountInfo(null);
+      failures.push(`account/read: ${toErrorMessage(err)}`);
+    }
+    try {
+      setAccountRateLimits(await accountRateLimitsRead());
+    } catch (err) {
+      setAccountRateLimits(null);
+      failures.push(`account/rateLimits/read: ${toErrorMessage(err)}`);
+    }
+    try {
+      setAccountUsage(await accountUsageRead());
+    } catch (err) {
+      setAccountUsage(null);
+      failures.push(`account/usage/read: ${toErrorMessage(err)}`);
+    }
+    if (failures.length > 0) setAccountError(failures.join(" · "));
+    setAccountLoading(false);
+  };
+
   useEffect(() => {
     loadConfig();
     tauriInvoke<string | null>("desktop_state_get", { key: "colorTheme" })
@@ -451,6 +665,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           setLocalEnvPath(res?.path || "");
         })
         .catch(() => {});
+    } else if (activeSection === "agent") {
+      void loadManagedRequirements();
+    } else if (activeSection === "experimental") {
+      void loadExperimentalFeatures();
+    } else if (activeSection === "account") {
+      void loadAccountData();
     }
   }, [activeSection, activeWorkspaceRoot]);
 
@@ -459,91 +679,233 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setTimeout(() => setSaveBanner(null), 2600);
   };
 
+  const buildValidConfigEdits = (): ConfigEdit[] => {
+    const edits: ConfigEdit[] = [];
+    const push = (keyPath: string, value: unknown) => {
+      edits.push({ keyPath, value, mergeStrategy: "replace" });
+    };
+    const loadedProvider = getConfigValue(protocolConfig, "model_provider");
+    const loadedCatalogJson = getConfigValue(protocolConfig, "model_catalog_json");
+    if (model.trim()) push(VALID_CONFIG_KEYS.model, model.trim());
+    if (modelProvider.trim()) {
+      push(VALID_CONFIG_KEYS.modelProvider, modelProvider.trim());
+    } else if (typeof loadedProvider === "string" && loadedProvider.trim()) {
+      // User selected "(未设置)" — remove the key from config.toml.
+      push(VALID_CONFIG_KEYS.modelProvider, null);
+    }
+    if (reasoningEffort.trim()) push(VALID_CONFIG_KEYS.reasoningEffort, reasoningEffort);
+    if (approvalPolicy === "granular" || approvalPolicy === "untrusted") {
+      // granular is the supported object form; `untrusted` was dropped from config
+      // validation in app-server 0.159, so it is mapped onto the strict granular profile.
+      push(VALID_CONFIG_KEYS.approvalPolicy, GRANULAR_APPROVAL_POLICY);
+    } else if (approvalPolicy.trim()) {
+      push(VALID_CONFIG_KEYS.approvalPolicy, approvalPolicy);
+    }
+    if (approvalsReviewer.trim()) {
+      push(VALID_CONFIG_KEYS.approvalsReviewer, approvalsReviewer);
+    }
+    if (sandboxMode.trim()) push(VALID_CONFIG_KEYS.sandboxMode, sandboxMode);
+    if (webSearchMode.trim()) push(VALID_CONFIG_KEYS.webSearch, webSearchMode);
+    if (modelVerbosity.trim()) {
+      push(VALID_CONFIG_KEYS.modelVerbosity, modelVerbosity);
+    }
+    if (modelCatalogJson.trim()) {
+      push(VALID_CONFIG_KEYS.modelCatalogJson, modelCatalogJson.trim());
+    } else if (
+      typeof loadedCatalogJson === "string" &&
+      loadedCatalogJson.trim()
+    ) {
+      push(VALID_CONFIG_KEYS.modelCatalogJson, null);
+    }
+    // Clearing the instructions textarea removes the key (null = remove in config protocol).
+    push(VALID_CONFIG_KEYS.instructions, customPersonaPrompt.trim() || null);
+    return edits;
+  };
+
+  const saveDesktopPreferences = async () => {
+    await tauriInvoke("desktop_state_set", {
+      key: "desktopPreferences",
+      value: {
+        defaultEditor,
+        preventSleep,
+        toneStyle,
+        customPersonaPrompt,
+        codeStylePref,
+        userRoleTitle,
+        gitBranchPrefix,
+        gitDefaultBranch,
+        gitSignCommits,
+        gitIgnoreWhitespace,
+        gitConventionalCommits,
+        gitAutoStage,
+        worktreeRetentionDays,
+        worktreeShareCache,
+        worktreeAutoCommit,
+        voiceEnabled,
+        voiceEngine,
+        voiceLanguage,
+        voiceAutoSendDelay,
+        voiceHotkey,
+        pluginMarketplaceUrl,
+        pluginAutoUpdate,
+        pluginAllowUntrusted,
+        pluginDevMode,
+        pluginSandbox,
+        computerUseEnabled,
+        computerResolution,
+        computerMouseMode,
+        computerDangerConfirm,
+        computerShowRedDot,
+        computerTargetDisplay,
+        appshotsEnabled,
+        appshotsFormat,
+        appshotsHotkey,
+        appshotsHideSelf,
+        appshotsBlacklist,
+        browserUseEnabled,
+        browserHeadless,
+        browserEngine,
+        browserCustomPath,
+        browserProxy,
+        browserPersistCookies,
+        hooksEnabled,
+        preSessionHook,
+        preToolHook,
+        postEditHook,
+        testFailHook,
+      },
+    }).catch(() => {});
+  };
+
+  const handleToggleExperimentalFeature = async (feature: ExperimentalFeature) => {
+    const nextEnabled = !feature.enabled;
+    setExperimentalSaving((prev) => ({ ...prev, [feature.name]: true }));
+    setExperimentalFeatures((prev) =>
+      prev.map((item) =>
+        item.name === feature.name ? { ...item, enabled: nextEnabled } : item
+      )
+    );
+    try {
+      const result = await experimentalFeatureSetEnablement({
+        [feature.name]: nextEnabled,
+      });
+      const serverValue = result.enablement[feature.name];
+      if (typeof serverValue === "boolean" && serverValue !== nextEnabled) {
+        setExperimentalFeatures((prev) =>
+          prev.map((item) =>
+            item.name === feature.name ? { ...item, enabled: serverValue } : item
+          )
+        );
+      }
+      flashSaved(
+        `✓ 已${nextEnabled ? "启用" : "停用"}实验特性: ${
+          feature.displayName || feature.name
+        }`
+      );
+    } catch (err) {
+      setExperimentalFeatures((prev) =>
+        prev.map((item) =>
+          item.name === feature.name ? { ...item, enabled: feature.enabled } : item
+        )
+      );
+      setErrorBanner(`切换实验特性失败: ${toErrorMessage(err)}`);
+    } finally {
+      setExperimentalSaving((prev) => {
+        const next = { ...prev };
+        delete next[feature.name];
+        return next;
+      });
+    }
+  };
+
   const handleSaveVisual = async () => {
     setErrorBanner(null);
+    if (!config && !protocolConfig) {
+      setErrorBanner("配置尚未加载完成，请稍后重试保存。");
+      return;
+    }
+    // Only valid config.toml keys are submitted (invalid hyperparameters were removed).
+    const edits = buildValidConfigEdits();
+    let protocolWritten = false;
+    let protocolWarning: string | null = null;
+
+    // Primary path: app-server config/batchWrite + reloadUserConfig: true.
     try {
-      const updated = await tauriInvoke<CodexConfigOverview>("config_update", {
-        payload: {
-          model,
-          modelProvider,
-          modelReasoningEffort: reasoningEffort,
-          approvalPolicy,
-          sandboxMode,
-          modelCatalogJson,
-          temperature,
-          topP,
-          maxOutputTokens,
-          contextWindow,
-          webSearchMode,
-          allowNetwork,
-          maxParallelTools,
-          subagentConcurrency,
-          outputVerbosity,
-          instructions: customPersonaPrompt.trim() || undefined,
-          providers,
-          mcpServers,
-        },
-      });
-      setConfig(updated);
-      setRawToml(updated.rawToml);
+      const writeResult = await setConfigKeys(edits);
+      protocolWritten = true;
+      if (writeResult?.status === "okOverridden") {
+        protocolWarning =
+          writeResult.overriddenMetadata?.message || "部分配置键被托管策略覆盖";
+      }
+    } catch (protocolErr) {
+      console.warn(
+        "config/batchWrite 失败，回退到 Tauri config_update:",
+        protocolErr
+      );
+    }
 
-      await tauriInvoke("desktop_state_set", {
-        key: "desktopPreferences",
-        value: {
-          defaultEditor,
-          preventSleep,
-          toneStyle,
-          customPersonaPrompt,
-          codeStylePref,
-          userRoleTitle,
-          gitBranchPrefix,
-          gitDefaultBranch,
-          gitSignCommits,
-          gitIgnoreWhitespace,
-          gitConventionalCommits,
-          gitAutoStage,
-          worktreeRetentionDays,
-          worktreeShareCache,
-          worktreeAutoCommit,
-          voiceEnabled,
-          voiceEngine,
-          voiceLanguage,
-          voiceAutoSendDelay,
-          voiceHotkey,
-          pluginMarketplaceUrl,
-          pluginAutoUpdate,
-          pluginAllowUntrusted,
-          pluginDevMode,
-          pluginSandbox,
-          computerUseEnabled,
-          computerResolution,
-          computerMouseMode,
-          computerDangerConfirm,
-          computerShowRedDot,
-          computerTargetDisplay,
-          appshotsEnabled,
-          appshotsFormat,
-          appshotsHotkey,
-          appshotsHideSelf,
-          appshotsBlacklist,
-          browserUseEnabled,
-          browserHeadless,
-          browserEngine,
-          browserCustomPath,
-          browserProxy,
-          browserPersistCookies,
-          hooksEnabled,
-          preSessionHook,
-          preToolHook,
-          postEditHook,
-          testFailHook,
-        },
-      }).catch(() => {});
+    // Providers / MCP lists are still persisted through the legacy TOML writer,
+    // and only when they actually changed (avoids rewriting unrelated tables).
+    const providersDirty = JSON.stringify(providers) !== providersSnapshot;
+    const mcpDirty = JSON.stringify(mcpServers) !== mcpServersSnapshot;
 
-      flashSaved("✓ 配置与偏好已保存至 ~/.codex/config.toml 及 desktop-state.json");
+    try {
+      if (!protocolWritten || providersDirty || mcpDirty) {
+        const payload: Record<string, unknown> = {};
+        if (providersDirty) payload.providers = providers;
+        if (mcpDirty) payload.mcpServers = mcpServers;
+        if (!protocolWritten) {
+          // Legacy fallback supports only these valid scalar keys.
+          payload.model = model.trim() || undefined;
+          payload.modelProvider = modelProvider.trim() || undefined;
+          payload.modelReasoningEffort = reasoningEffort || undefined;
+          payload.approvalPolicy =
+            approvalPolicy === "granular" || approvalPolicy === "untrusted"
+              ? "on-request"
+              : approvalPolicy || undefined;
+          payload.sandboxMode = sandboxMode || undefined;
+          payload.modelCatalogJson = modelCatalogJson.trim() || undefined;
+          payload.instructions = customPersonaPrompt.trim() || undefined;
+        }
+        const updated = await tauriInvoke<CodexConfigOverview>("config_update", {
+          payload,
+        });
+        setConfig(updated);
+        setRawToml(updated.rawToml);
+        setProviders(updated.providers || []);
+        setMcpServers(updated.mcpServers || []);
+        setProvidersSnapshot(JSON.stringify(updated.providers || []));
+        setMcpServersSnapshot(JSON.stringify(updated.mcpServers || []));
+      } else {
+        // Everything was already persisted by config/batchWrite — refresh raw TOML view.
+        const cfg = await tauriInvoke<CodexConfigOverview>("config_read");
+        setConfig(cfg);
+        setRawToml(cfg.rawToml);
+        setProviders(cfg.providers || providers);
+        setMcpServers(cfg.mcpServers || mcpServers);
+        setProvidersSnapshot(JSON.stringify(cfg.providers || providers));
+        setMcpServersSnapshot(JSON.stringify(cfg.mcpServers || mcpServers));
+      }
+
+      await saveDesktopPreferences();
+      flashSaved(
+        protocolWritten
+          ? "✓ 已通过 app-server config/batchWrite 保存（reloadUserConfig: true 热更新）"
+          : "✓ 已通过 Tauri 命令保存（app-server 未连接，回退模式）"
+      );
       onConfigUpdated();
-    } catch (err: any) {
-      setErrorBanner(err?.message || String(err));
+      if (protocolWritten) void refreshProtocolConfigSnapshot();
+      if (protocolWarning) setErrorBanner(`⚠️ ${protocolWarning}`);
+    } catch (err) {
+      if (protocolWritten) {
+        setErrorBanner(
+          `配置键已写入，但同步 Providers / MCP 列表失败: ${toErrorMessage(err)}`
+        );
+        await saveDesktopPreferences();
+        onConfigUpdated();
+      } else {
+        setErrorBanner(toErrorMessage(err));
+      }
     }
   };
 
@@ -594,6 +956,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       });
       setConfig(updated);
       setRawToml(updated.rawToml);
+      setMcpServersSnapshot(JSON.stringify(updated.mcpServers || nextServers));
+      // app-server must re-read the MCP definitions written to config.toml.
+      void mcpServerReload().catch(() => {});
       flashSaved(`✓ 已添加并保存 MCP 服务器: ${item.id}`);
       onConfigUpdated();
     } catch (e: any) {
@@ -612,6 +977,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       });
       setConfig(updated);
       setRawToml(updated.rawToml);
+      setMcpServersSnapshot(JSON.stringify(updated.mcpServers || nextServers));
+      void mcpServerReload().catch(() => {});
       flashSaved(`✓ 已${!srv.enabled ? "启用" : "停用"} MCP: ${srv.id}`);
       onConfigUpdated();
     } catch (e: any) {
@@ -628,6 +995,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       });
       setConfig(updated);
       setRawToml(updated.rawToml);
+      setMcpServersSnapshot(JSON.stringify(updated.mcpServers || nextServers));
+      void mcpServerReload().catch(() => {});
       flashSaved(`✓ 已移除 MCP 服务器: ${srv.id}`);
       onConfigUpdated();
     } catch (e: any) {
@@ -644,6 +1013,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       );
       setConfig(updated);
       setRawToml(updated.rawToml);
+      setMcpServers(updated.mcpServers || []);
+      setMcpServersSnapshot(JSON.stringify(updated.mcpServers || []));
+      // Raw TOML edits may contain [mcp_servers.*]; ask app-server to reload them.
+      void mcpServerReload().catch(() => {});
       flashSaved("✓ TOML 源码已校验并保存");
       onConfigUpdated();
     } catch (err: any) {
@@ -699,6 +1072,129 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     return `${(b / (1024 * 1024)).toFixed(2)} MB`;
   };
 
+  const formatTokenCount = (tokens: number | null | undefined): string => {
+    if (tokens === null || tokens === undefined || Number.isNaN(Number(tokens))) {
+      return "—";
+    }
+    const value = Number(tokens);
+    if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(2)}B`;
+    if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
+    if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
+    return String(value);
+  };
+
+  const formatUnixSeconds = (seconds: number | null | undefined): string => {
+    if (!seconds) return "—";
+    try {
+      return new Date(seconds * 1000).toLocaleString();
+    } catch {
+      return "—";
+    }
+  };
+
+  const formatWindowDuration = (mins: number | null | undefined): string => {
+    if (!mins) return "额度窗口";
+    if (mins === 300) return "5 小时窗口";
+    if (mins === 10080) return "7 天窗口";
+    if (mins % 1440 === 0) return `${mins / 1440} 天窗口`;
+    if (mins % 60 === 0) return `${mins / 60} 小时窗口`;
+    return `${mins} 分钟窗口`;
+  };
+
+  const formatDurationSeconds = (seconds: number | null | undefined): string => {
+    if (!seconds) return "—";
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    if (hours > 0) return `${hours} 小时 ${minutes} 分钟`;
+    return `${Math.max(1, minutes)} 分钟`;
+  };
+
+  const usageLast14Days = useMemo(() => {
+    const buckets = accountUsage?.dailyUsageBuckets || [];
+    const byDate = new Map<string, number>();
+    for (const bucket of buckets) {
+      if (bucket?.startDate) byDate.set(bucket.startDate, bucket.tokens || 0);
+    }
+    const days: Array<{ date: string; label: string; tokens: number }> = [];
+    const today = new Date();
+    for (let offset = 13; offset >= 0; offset -= 1) {
+      const day = new Date(
+        today.getFullYear(),
+        today.getMonth(),
+        today.getDate() - offset
+      );
+      const iso = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(
+        2,
+        "0"
+      )}-${String(day.getDate()).padStart(2, "0")}`;
+      days.push({
+        date: iso,
+        label: `${String(day.getMonth() + 1).padStart(2, "0")}-${String(
+          day.getDate()
+        ).padStart(2, "0")}`,
+        tokens: byDate.get(iso) ?? 0,
+      });
+    }
+    return days;
+  }, [accountUsage]);
+
+  const experimentalEnabledCount = useMemo(
+    () => experimentalFeatures.filter((feature) => feature.enabled).length,
+    [experimentalFeatures]
+  );
+
+  const experimentalDefaultEnabledCount = useMemo(
+    () => experimentalFeatures.filter((feature) => feature.defaultEnabled).length,
+    [experimentalFeatures]
+  );
+
+  const filteredExperimentalFeatures = useMemo(() => {
+    const query = experimentalSearch.trim().toLowerCase();
+    return experimentalFeatures.filter((feature) => {
+      if (experimentalStage !== "all" && feature.stage !== experimentalStage) {
+        return false;
+      }
+      if (!query) return true;
+      return [
+        feature.name,
+        feature.displayName || "",
+        feature.description || "",
+        feature.announcement || "",
+      ].some((text) => text.toLowerCase().includes(query));
+    });
+  }, [experimentalFeatures, experimentalSearch, experimentalStage]);
+
+  const groupedExperimentalFeatures = useMemo(
+    () =>
+      EXPERIMENTAL_STAGE_ORDER.map((stage) => ({
+        stage,
+        items: filteredExperimentalFeatures.filter(
+          (feature) => feature.stage === stage
+        ),
+      })).filter((group) => group.items.length > 0),
+    [filteredExperimentalFeatures]
+  );
+
+  const accountRateSnapshot = useMemo(() => {
+    if (accountRateLimits?.rateLimits) return accountRateLimits.rateLimits;
+    const byId = accountRateLimits?.rateLimitsByLimitId;
+    if (byId) {
+      const first = Object.values(byId)[0];
+      if (first) return first;
+    }
+    return null;
+  }, [accountRateLimits]);
+
+  const accountDailyMaxTokens = useMemo(
+    () => Math.max(1, ...usageLast14Days.map((day) => day.tokens)),
+    [usageLast14Days]
+  );
+
+  const chatgptAccount =
+    accountInfo?.account && accountInfo.account.type === "chatgpt"
+      ? accountInfo.account
+      : null;
+
   const renderBottomBar = () => (
     <div className="settings-section-bottom-bar">
       <button type="button" className="primary-btn" onClick={handleSaveVisual}>
@@ -718,7 +1214,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <Search size={13} />
           <input
             type="text"
-            placeholder="搜索 20 项设置..."
+            placeholder="搜索设置项..."
             value={navSearch}
             onChange={(e) => setNavSearch(e.target.value)}
           />
@@ -967,25 +1463,49 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         )}
 
-        {/* SECTION: AGENT & HYPERPARAMETERS */}
+        {/* SECTION: AGENT & MODEL PARAMETERS (config/* protocol backed) */}
         {activeSection === "agent" && (
           <div className="settings-scroll-container">
-            {/* Quick Strategy Presets */}
             <div className="card-section">
-              <h3>超参数快速调优预设 (Hyperparameter Presets)</h3>
+              <h3>配置生效方式 (app-server config 协议)</h3>
               <p className="card-subtitle-desc">
-                根据开发场景快速切换温度采样、Top-P、Token 限制与推理深度的优化配置组合。
+                {protocolConfigAvailable
+                  ? `✅ 已通过 app-server config/read 读取真实生效配置（${
+                      protocolConfig ? Object.keys(protocolConfig).length : 0
+                    } 个配置键，含项目层覆盖）。保存时写入 ~/.codex/config.toml，并通过 reloadUserConfig: true 热更新已加载线程。`
+                  : "⚠️ app-server config/read 不可用，当前回退到 Tauri 本地 config.toml 读取。保存会回退到本地 TOML 写入（web_search / model_verbosity / approvals_reviewer 需要连接 app-server 后才能写入）。"}
+              </p>
+              {managedRequirements !== null && (
+                <div
+                  className="tag-badge"
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "5px 10px",
+                    marginTop: 8,
+                    color: "#f59e0b",
+                  }}
+                >
+                  🛡️ 检测到托管配置约束（requirements.toml / MDM），部分键可能被覆盖或锁定。
+                </div>
+              )}
+            </div>
+
+            {/* Real (protocol-backed) presets — only touch valid config keys */}
+            <div className="card-section">
+              <h3>真实可写预设 (Valid Config Presets)</h3>
+              <p className="card-subtitle-desc">
+                预设只调整 codex 真实识别的键（model_reasoning_effort / model_verbosity / web_search），点击后仍需点击右上角「保存更改」写入并热更新。
               </p>
               <div className="preset-cards-grid">
                 <div
                   className="preset-template-card"
                   onClick={() => {
-                    setTemperature(0.05);
-                    setTopP(0.85);
-                    setMaxOutputTokens(8192);
                     setReasoningEffort("high");
-                    setOutputVerbosity("medium");
-                    flashSaved("已载入：严谨编码与重构预设 (低采样、高推理)");
+                    setModelVerbosity("low");
+                    setWebSearchMode("cached");
+                    flashSaved("已载入：严谨编码预设 (reasoning=high, verbosity=low)");
                   }}
                 >
                   <div className="preset-template-title">
@@ -993,19 +1513,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     <strong>严谨编码模式 (Deterministic Code)</strong>
                   </div>
                   <p className="preset-template-desc">
-                    T: 0.05 · Top-P: 0.85 · 推理: high。近零随机性，语法与逻辑严格确定，适合底层算法、重构及测试驱动开发。
+                    model_reasoning_effort=high · model_verbosity=low · web_search=cached。高推理、低废话，适合底层算法、重构与测试驱动开发。
                   </p>
                 </div>
 
                 <div
                   className="preset-template-card"
                   onClick={() => {
-                    setTemperature(0.2);
-                    setTopP(1.0);
-                    setMaxOutputTokens(8192);
                     setReasoningEffort("medium");
-                    setOutputVerbosity("medium");
-                    flashSaved("已载入：全栈平衡模式预设 (官方推荐日常开发)");
+                    setModelVerbosity("medium");
+                    setWebSearchMode("cached");
+                    flashSaved("已载入：平衡开发预设 (reasoning=medium, verbosity=medium)");
                   }}
                 >
                   <div className="preset-template-title">
@@ -1013,188 +1531,66 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     <strong>平衡开发模式 (Balanced - 推荐)</strong>
                   </div>
                   <p className="preset-template-desc">
-                    T: 0.20 · Top-P: 1.0 · 推理: medium。兼顾代码严谨性与上下文发散能力，适合日常功能开发与多文件协同。
+                    model_reasoning_effort=medium · model_verbosity=medium · web_search=cached。兼顾严谨性与上下文发散，适合日常功能开发。
                   </p>
                 </div>
 
                 <div
                   className="preset-template-card"
                   onClick={() => {
-                    setTemperature(0.7);
-                    setTopP(0.95);
-                    setMaxOutputTokens(16384);
-                    setReasoningEffort("low");
-                    setOutputVerbosity("high");
-                    flashSaved("已载入：架构脑暴与创意设计预设 (高探索度)");
+                    setReasoningEffort("max");
+                    setModelVerbosity("high");
+                    setWebSearchMode("live");
+                    flashSaved("已载入：架构探索预设 (reasoning=max, web_search=live)");
                   }}
                 >
                   <div className="preset-template-title">
                     <span style={{ fontSize: 20 }}>💡</span>
-                    <strong>创意构思模式 (Creative & Brainstorm)</strong>
+                    <strong>架构探索模式 (Deep Explore)</strong>
                   </div>
                   <p className="preset-template-desc">
-                    T: 0.70 · Top-P: 0.95 · 推理: low。较高随机性，适合技术方案选型、设计头脑风暴与自然语言文案。
+                    model_reasoning_effort=max · model_verbosity=high · web_search=live。最大推理预算 + 实时检索，适合方案选型与跨文件架构分析。
                   </p>
                 </div>
               </div>
             </div>
 
-            {/* Model Generation & Sampling Hyperparameters */}
+            {/* Real generation controls (valid config.toml keys only) */}
             <div className="card-section">
-              <h3>生成采样超参数 (Model Sampling & Hyperparameters)</h3>
+              <h3>生成与输出控制 (Generation & Output)</h3>
               <div className="form-grid-row">
                 <div className="form-field">
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <label>采样温度 (Temperature: `temperature`)</label>
-                    <span className="mono-badge">{temperature.toFixed(2)}</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="0"
-                    max="2"
-                    step="0.05"
-                    value={temperature}
-                    onChange={(e) => setTemperature(parseFloat(e.target.value))}
-                  />
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-tertiary)" }}>
-                    <span>0.0 (确定性代码)</span>
-                    <span>1.0 (标准)</span>
-                    <span>2.0 (极端发散)</span>
-                  </div>
-                </div>
-
-                <div className="form-field">
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <label>核采样率 (Top-P: `top_p`)</label>
-                    <span className="mono-badge">{topP.toFixed(2)}</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="0.05"
-                    max="1.0"
-                    step="0.01"
-                    value={topP}
-                    onChange={(e) => setTopP(parseFloat(e.target.value))}
-                  />
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-tertiary)" }}>
-                    <span>0.1 (聚焦头部)</span>
-                    <span>0.9</span>
-                    <span>1.0 (全概率覆盖)</span>
-                  </div>
-                </div>
-
-                <div className="form-field">
-                  <label>单轮最大输出 Tokens (`max_output_tokens`)</label>
-                  <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
-                    {[4096, 8192, 16384, 32768].map((t) => (
-                      <button
-                        key={t}
-                        type="button"
-                        className={`tag-filter-pill ${maxOutputTokens === t ? "active" : ""}`}
-                        onClick={() => setMaxOutputTokens(t)}
-                      >
-                        {t >= 1024 ? `${t / 1024}k` : t}
-                      </button>
-                    ))}
-                  </div>
-                  <input
-                    type="number"
-                    min={512}
-                    max={131072}
-                    step={512}
-                    value={maxOutputTokens}
-                    onChange={(e) => setMaxOutputTokens(parseInt(e.target.value) || 8192)}
-                  />
-                  <span style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 4 }}>
-                    控制模型单次回合允许生成的最大代码/文本 Token 数量。
-                  </span>
-                </div>
-
-                <div className="form-field">
-                  <label>上下文滑动窗口限制 (`context_window`)</label>
-                  <select
-                    value={contextWindow}
-                    onChange={(e) => setContextWindow(parseInt(e.target.value))}
-                  >
-                    <option value={32000}>32k Tokens (紧凑会话)</option>
-                    <option value={128000}>128k Tokens (标准上下文)</option>
-                    <option value={200000}>200k Tokens (超长上下文)</option>
-                    <option value={1000000}>1M Tokens (百万级全局大模型)</option>
-                  </select>
-                  <span style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 4 }}>
-                    达到阈值时自动触发会话压缩与滚动摘要裁剪。
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Agent Runtime & Tool Execution Parameters */}
-            <div className="card-section">
-              <h3>Agent 执行与并发参数 (Agent Runtime & Tools)</h3>
-              <div className="form-grid-row">
-                <div className="form-field">
-                  <label>联网搜索模式 (`web_search_mode`)</label>
+                  <label>联网搜索模式 (`web_search`)</label>
                   <select
                     value={webSearchMode}
                     onChange={(e) => setWebSearchMode(e.target.value)}
                   >
-                    <option value="cached">cached (优先缓存/安全隐私)</option>
-                    <option value="live">live (实时联网/即时检索最新文档)</option>
-                    <option value="disabled">disabled (离线断网模式)</option>
+                    {WEB_SEARCH_MODE_OPTIONS.map((mode) => (
+                      <option key={mode} value={mode}>
+                        {WEB_SEARCH_MODE_LABELS[mode] || mode}
+                      </option>
+                    ))}
                   </select>
+                  <span style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 4 }}>
+                    合法枚举：disabled / cached / indexed / live。旧键 web_search_mode 不是 codex 配置键，已从 UI 移除。
+                  </span>
                 </div>
 
                 <div className="form-field">
-                  <label>输出结果详实度 (`output_verbosity`)</label>
+                  <label>输出详实度 (`model_verbosity`)</label>
                   <select
-                    value={outputVerbosity}
-                    onChange={(e) => setOutputVerbosity(e.target.value)}
+                    value={modelVerbosity}
+                    onChange={(e) => setModelVerbosity(e.target.value)}
                   >
-                    <option value="low">low (简洁模式: 仅核心代码与结论)</option>
-                    <option value="medium">medium (标准模式: 完整解释与变更)</option>
-                    <option value="high">high (调试模式: 详细思考日志与工具入参)</option>
+                    {MODEL_VERBOSITY_OPTIONS.map((verbosity) => (
+                      <option key={verbosity} value={verbosity}>
+                        {MODEL_VERBOSITY_LABELS[verbosity]}
+                      </option>
+                    ))}
                   </select>
-                </div>
-
-                <div className="form-field">
-                  <label>单轮最大并行工具调用数 (`max_parallel_tools`)</label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={32}
-                    value={maxParallelTools}
-                    onChange={(e) => setMaxParallelTools(Math.max(1, parseInt(e.target.value) || 8))}
-                  />
                   <span style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 4 }}>
-                    允许智能体一次性并发执行的读文件/搜素/终端命令最大条数。
+                    Verbosity 枚举，仅对 GPT-5 系列 Responses API 生效。旧键 output_verbosity 已移除。
                   </span>
-                </div>
-
-                <div className="form-field">
-                  <label>子智能体并发上限 (`subagent_concurrency`)</label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={16}
-                    value={subagentConcurrency}
-                    onChange={(e) => setSubagentConcurrency(Math.max(1, parseInt(e.target.value) || 4))}
-                  />
-                  <span style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 4 }}>
-                    同时允许被唤醒并行作业的 Subagent 数量。
-                  </span>
-                </div>
-
-                <div className="form-field" style={{ gridColumn: "1 / -1" }}>
-                  <label className="checkbox-inline">
-                    <input
-                      type="checkbox"
-                      checked={allowNetwork}
-                      onChange={(e) => setAllowNetwork(e.target.checked)}
-                    />
-                    <span>
-                      允许沙盒执行环境访问公网（例如支持终端执行 <code>npm install</code>、<code>pip</code>、<code>git clone</code> 与外部 API 访问）
-                    </span>
-                  </label>
                 </div>
               </div>
             </div>
@@ -1209,10 +1605,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     type="text"
                     value={model}
                     onChange={(e) => setModel(e.target.value)}
-                    placeholder="gpt-5.4"
+                    placeholder="gpt-6.1-sol"
                   />
                   <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
-                    {["gpt-5.4", "o3-mini", "claude-3-7-sonnet", "deepseek-r1"].map((m) => (
+                    {(models.length > 0
+                      ? models
+                          .map((m) => m.model || m.id)
+                          .filter((m): m is string => Boolean(m))
+                          .slice(0, 10)
+                      : []
+                    ).map((m) => (
                       <button
                         key={m}
                         type="button"
@@ -1223,6 +1625,35 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       </button>
                     ))}
                   </div>
+                  {models.length === 0 && (
+                    <span style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 4 }}>
+                      模型候选来自 app-server model/list（当前不可用，可手动输入模型 ID）。
+                    </span>
+                  )}
+                </div>
+
+                <div className="form-field">
+                  <label>默认模型提供商 (`model_provider`)</label>
+                  <select
+                    value={modelProvider}
+                    onChange={(e) => setModelProvider(e.target.value)}
+                  >
+                    <option value="">(未设置，使用内置默认提供商)</option>
+                    {providers.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} ({p.id})
+                      </option>
+                    ))}
+                    {modelProvider &&
+                      !providers.some((p) => p.id === modelProvider) && (
+                        <option value={modelProvider}>
+                          {modelProvider} (当前配置值)
+                        </option>
+                      )}
+                  </select>
+                  <span style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 4 }}>
+                    自定义提供商在「提供商与模型目录」分区维护，保存后写入 [model_providers.*]。
+                  </span>
                 </div>
 
                 <div className="form-field">
@@ -1231,12 +1662,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     value={reasoningEffort}
                     onChange={(e) => setReasoningEffort(e.target.value)}
                   >
-                    <option value="none">none (无思考/极速直出)</option>
-                    <option value="low">low (快速轻度推理)</option>
-                    <option value="medium">medium (标准平衡推理)</option>
-                    <option value="high">high (深度严密思考)</option>
-                    <option value="xhigh">xhigh (极高深度推理)</option>
+                    {REASONING_EFFORT_OPTIONS.map((effort) => (
+                      <option key={effort} value={effort}>
+                        {REASONING_EFFORT_LABELS[effort] || effort}
+                      </option>
+                    ))}
                   </select>
+                  <span style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 4 }}>
+                    合法枚举来自 model/list 的 supportedReasoningEfforts（low / medium / high / xhigh / max / ultra）。
+                  </span>
                 </div>
 
                 <div className="form-field">
@@ -1245,10 +1679,34 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     value={approvalPolicy}
                     onChange={(e) => setApprovalPolicy(e.target.value)}
                   >
-                    <option value="on-request">on-request (遇到高危写操作请求批准)</option>
-                    <option value="untrusted">untrusted (严格审批每一步命令与工具)</option>
-                    <option value="never">never (完全静默自主执行)</option>
+                    {APPROVAL_POLICY_OPTIONS.map((policy) => (
+                      <option key={policy} value={policy}>
+                        {APPROVAL_POLICY_LABELS[policy] || policy}
+                      </option>
+                    ))}
                   </select>
+                  <span style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 4 }}>
+                    合法值：on-request / never / granular(对象) / untrusted（0.159 已弃用，保存时自动改写为 granular 严格档；旧值 on-failure 会被归一化为 on-request）。
+                  </span>
+                </div>
+
+                <div className="form-field">
+                  <label>审批请求审查方 (`approvals_reviewer`)</label>
+                  <select
+                    value={approvalsReviewer}
+                    onChange={(e) => setApprovalsReviewer(e.target.value)}
+                  >
+                    {APPROVALS_REVIEWER_OPTIONS.filter(
+                      (reviewer) => reviewer !== "guardian_subagent"
+                    ).map((reviewer) => (
+                      <option key={reviewer} value={reviewer}>
+                        {APPROVALS_REVIEWER_LABELS[reviewer] || reviewer}
+                      </option>
+                    ))}
+                  </select>
+                  <span style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 4 }}>
+                    决定审批请求路由给用户还是自动审查子智能体。
+                  </span>
                 </div>
 
                 <div className="form-field">
@@ -1257,17 +1715,37 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     value={sandboxMode}
                     onChange={(e) => setSandboxMode(e.target.value)}
                   >
-                    <option value="workspace-write">workspace-write (仅限工作区读写)</option>
-                    <option value="read-only">read-only (全只读沙盒)</option>
-                    <option value="danger-full-access">danger-full-access (全磁盘完全访问)</option>
+                    {SANDBOX_MODE_OPTIONS.map((mode) => (
+                      <option key={mode} value={mode}>
+                        {SANDBOX_MODE_LABELS[mode] || mode}
+                      </option>
+                    ))}
                   </select>
+                  <span style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 4 }}>
+                    合法枚举：read-only / workspace-write / danger-full-access。
+                  </span>
                 </div>
               </div>
             </div>
 
+            {/* Global instructions (config.toml root key) */}
+            <div className="card-section">
+              <h3>全局自定义指令 (`instructions`)</h3>
+              <p className="card-subtitle-desc">
+                写入 config.toml 的 instructions 根级键，每个新会话自动注入 System Prompt（与「个性化指令」分区共用同一状态；清空后保存会移除该键）。
+              </p>
+              <textarea
+                className="code-editor-textarea"
+                style={{ minHeight: 140 }}
+                value={customPersonaPrompt}
+                onChange={(e) => setCustomPersonaPrompt(e.target.value)}
+                placeholder={"例如：\n1. 始终使用专业准确的中文回答。\n2. 优先编写可维护、带测试的高质量代码。\n3. 改动前先思考边界异常与既有架构。"}
+              />
+            </div>
+
             <div className="settings-section-bottom-bar">
               <button type="button" className="primary-btn" onClick={handleSaveVisual}>
-                <Save size={14} /> 保存模型与超参数配置
+                <Save size={14} /> 保存模型与运行时配置
               </button>
               <button type="button" className="secondary-btn" onClick={loadConfig}>
                 <RefreshCw size={14} /> 放弃未保存修改
@@ -2775,6 +3253,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                           });
                           setConfig(updated);
                           setRawToml(updated.rawToml);
+                          setMcpServersSnapshot(JSON.stringify(updated.mcpServers || merged));
+                          void mcpServerReload().catch(() => {});
                           flashSaved(`✓ 已从 ${res.path} 成功导入 ${res.count} 个 Claude MCP 服务器并持久化保存！`);
                           onConfigUpdated();
                         } else {
@@ -2927,6 +3407,517 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
 
             {renderBottomBar()}
+          </div>
+        )}
+
+        {/* ── SECTION 21: EXPERIMENTAL FEATURES (实验特性) ── */}
+        {activeSection === "experimental" && (
+          <div className="settings-scroll-container">
+            <div className="card-section">
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
+                  gap: 12,
+                }}
+              >
+                <div>
+                  <h3>实验特性开关 (Experimental Features)</h3>
+                  <p className="card-subtitle-desc">
+                    数据来自 app-server `experimentalFeature/list`（本机 152 项）。开关通过
+                    `experimentalFeature/enablement/set` 即时切换进程级运行时启用状态；部分特性需要重载线程或重启 app-server 后才完全生效。
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  onClick={() => void loadExperimentalFeatures()}
+                  disabled={experimentalLoading}
+                >
+                  <RefreshCw size={14} /> {experimentalLoading ? "读取中..." : "刷新列表"}
+                </button>
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+                <span className="tag-badge accent">共 {experimentalFeatures.length} 项</span>
+                <span className="tag-badge">已启用 {experimentalEnabledCount}</span>
+                <span className="tag-badge">默认启用 {experimentalDefaultEnabledCount}</span>
+                <span className="tag-badge">筛选结果 {filteredExperimentalFeatures.length}</span>
+              </div>
+              {experimentalError && (
+                <div className="error-banner" style={{ marginTop: 10 }}>
+                  {experimentalError}
+                </div>
+              )}
+            </div>
+
+            <div className="card-section">
+              <div className="settings-search-box" style={{ maxWidth: 460 }}>
+                <Search size={13} />
+                <input
+                  type="text"
+                  placeholder="搜索实验特性名称 / 稳定名 / 描述..."
+                  value={experimentalSearch}
+                  onChange={(e) => setExperimentalSearch(e.target.value)}
+                />
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                <button
+                  type="button"
+                  className={`tag-filter-pill ${
+                    experimentalStage === "all" ? "active" : ""
+                  }`}
+                  onClick={() => setExperimentalStage("all")}
+                >
+                  全部 ({experimentalFeatures.length})
+                </button>
+                {EXPERIMENTAL_STAGE_ORDER.map((stage) => {
+                  const count = experimentalFeatures.filter(
+                    (feature) => feature.stage === stage
+                  ).length;
+                  if (count === 0) return null;
+                  return (
+                    <button
+                      key={stage}
+                      type="button"
+                      className={`tag-filter-pill ${
+                        experimentalStage === stage ? "active" : ""
+                      }`}
+                      onClick={() => setExperimentalStage(stage)}
+                    >
+                      {EXPERIMENTAL_STAGE_LABELS[stage]} ({count})
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {experimentalLoading && experimentalFeatures.length === 0 ? (
+              <div className="empty-hint">正在从 app-server 读取实验特性列表...</div>
+            ) : groupedExperimentalFeatures.length === 0 ? (
+              <div className="empty-hint">
+                {experimentalError
+                  ? "无法读取实验特性列表，请确认 App-Server 已连接后刷新。"
+                  : "没有匹配的实验特性。"}
+              </div>
+            ) : (
+              groupedExperimentalFeatures.map((group) => (
+                <div className="card-section" key={group.stage}>
+                  <h3>
+                    {EXPERIMENTAL_STAGE_LABELS[group.stage]} ({group.items.length})
+                  </h3>
+                  <div className="item-cards-list">
+                    {group.items.map((feature) => {
+                      const isSaving = experimentalSaving[feature.name] === true;
+                      return (
+                        <div key={feature.name} className="item-card">
+                          <div className="item-card-main">
+                            <div className="item-card-title-row">
+                              <strong>{feature.displayName || feature.name}</strong>
+                              <span className="tag-badge">{feature.name}</span>
+                              <span
+                                className={`tag-badge ${
+                                  feature.stage === "beta" ? "accent" : ""
+                                }`}
+                              >
+                                {EXPERIMENTAL_STAGE_LABELS[feature.stage]}
+                              </span>
+                              {feature.defaultEnabled && (
+                                <span className="tag-badge">默认启用</span>
+                              )}
+                              {feature.enabled && (
+                                <span className="tag-badge accent">已启用</span>
+                              )}
+                            </div>
+                            {feature.description && (
+                              <div className="item-card-meta">
+                                <span>{feature.description}</span>
+                              </div>
+                            )}
+                            {feature.announcement && (
+                              <div className="item-card-meta">
+                                <span>📣 {feature.announcement}</span>
+                              </div>
+                            )}
+                          </div>
+                          <div className="item-card-actions">
+                            <label
+                              className="switch-control"
+                              title={
+                                isSaving
+                                  ? "切换中..."
+                                  : "切换该实验特性的运行时启用状态"
+                              }
+                            >
+                              <input
+                                type="checkbox"
+                                checked={feature.enabled}
+                                disabled={isSaving}
+                                onChange={() =>
+                                  void handleToggleExperimentalFeature(feature)
+                                }
+                              />
+                              <span className="switch-slider" />
+                            </label>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        {/* ── SECTION 22: ACCOUNT & QUOTA (账号与额度) ── */}
+        {activeSection === "account" && (
+          <div className="settings-scroll-container">
+            <div className="card-section">
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
+                  gap: 12,
+                }}
+              >
+                <div>
+                  <h3>账号信息 (`account/read`)</h3>
+                  <p className="card-subtitle-desc">
+                    只读视图：登录 / 登出请使用 Codex CLI 或官方客户端。数据来自 app-server
+                    的 account/read、account/rateLimits/read 与 account/usage/read。
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  onClick={() => void loadAccountData()}
+                  disabled={accountLoading}
+                >
+                  <RefreshCw size={14} /> {accountLoading ? "读取中..." : "刷新账号数据"}
+                </button>
+              </div>
+
+              {accountError && (
+                <div className="error-banner" style={{ marginTop: 10 }}>
+                  {accountError}
+                </div>
+              )}
+
+              {chatgptAccount ? (
+                <div className="item-cards-list" style={{ marginTop: 12 }}>
+                  <div className="item-card">
+                    <div className="item-card-main">
+                      <div className="item-card-title-row">
+                        <strong>{chatgptAccount.email || "(邮箱未提供)"}</strong>
+                        <span className="tag-badge accent">ChatGPT</span>
+                        <span className="tag-badge">plan: {chatgptAccount.planType}</span>
+                      </div>
+                      <div className="item-card-meta">
+                        <span>账号类型: chatgpt</span>
+                        <span>
+                          需要 OpenAI 登录:{" "}
+                          {accountInfo?.requiresOpenaiAuth ? "是" : "否"}
+                        </span>
+                        {accountInfo?.workspaceRouting?.chatgptAccountId && (
+                          <span>
+                            Account ID: {accountInfo.workspaceRouting.chatgptAccountId}
+                          </span>
+                        )}
+                        {accountInfo?.workspaceRouting?.backendOrigin && (
+                          <span>
+                            Backend: {accountInfo.workspaceRouting.backendOrigin}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="empty-hint" style={{ marginTop: 12 }}>
+                  {accountLoading
+                    ? "正在读取账号信息..."
+                    : accountInfo?.account
+                      ? `当前为 ${
+                          accountInfo.account.type === "apiKey"
+                            ? "API Key"
+                            : "Amazon Bedrock"
+                        } 登录方式，无 ChatGPT 账号 / 额度信息。`
+                      : "未登录或账号信息不可用。"}
+                </div>
+              )}
+            </div>
+
+            <div className="card-section">
+              <h3>额度限额 (`account/rateLimits/read`)</h3>
+              {accountRateSnapshot ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 16, marginTop: 10 }}>
+                  {([
+                    { key: "primary", label: "主额度窗口", window: accountRateSnapshot.primary },
+                    { key: "secondary", label: "次额度窗口", window: accountRateSnapshot.secondary },
+                  ] as const).map(({ key, label, window }) => {
+                    if (!window) return null;
+                    const percent = Math.max(
+                      0,
+                      Math.min(100, window.usedPercent ?? 0)
+                    );
+                    const barColor =
+                      percent >= 90
+                        ? "#ef4444"
+                        : percent >= 70
+                          ? "#f59e0b"
+                          : "#3b82f6";
+                    return (
+                      <div key={key}>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            gap: 12,
+                            fontSize: 12.5,
+                            marginBottom: 6,
+                          }}
+                        >
+                          <span style={{ color: "var(--text-secondary)" }}>
+                            {label} · {formatWindowDuration(window.windowDurationMins)} ·
+                            重置时间: {formatUnixSeconds(window.resetsAt)}
+                          </span>
+                          <span className="mono-badge">{percent}% 已用</span>
+                        </div>
+                        <div
+                          style={{
+                            height: 8,
+                            borderRadius: 999,
+                            background: "rgba(255, 255, 255, 0.08)",
+                            overflow: "hidden",
+                          }}
+                        >
+                          <div
+                            style={{
+                              height: "100%",
+                              width: `${percent}%`,
+                              background: barColor,
+                              borderRadius: 999,
+                              transition: "width 0.2s ease",
+                            }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    <span className="tag-badge">
+                      plan:{" "}
+                      {accountRateSnapshot.planType ||
+                        chatgptAccount?.planType ||
+                        "—"}
+                    </span>
+                    {accountRateSnapshot.credits && (
+                      <span className="tag-badge">
+                        {accountRateSnapshot.credits.unlimited
+                          ? "额度: 无限"
+                          : accountRateSnapshot.credits.hasCredits
+                            ? `额度余额: ${accountRateSnapshot.credits.balance ?? "—"}`
+                            : "额度余额: 无"}
+                      </span>
+                    )}
+                    {typeof accountRateLimits?.rateLimitResetCredits
+                      ?.availableCount === "number" && (
+                      <span className="tag-badge">
+                        可用额度重置次数:{" "}
+                        {accountRateLimits.rateLimitResetCredits.availableCount}
+                      </span>
+                    )}
+                    {accountRateLimits?.ordinaryUsageAllowed === false && (
+                      <span className="tag-badge" style={{ color: "#ef4444" }}>
+                        ⚠️ 普通用量当前不可用
+                      </span>
+                    )}
+                    {accountRateSnapshot.spendControlReached && (
+                      <span className="tag-badge" style={{ color: "#f59e0b" }}>
+                        ⚠️ 已触达花费控制
+                      </span>
+                    )}
+                    {accountRateSnapshot.rateLimitReachedType && (
+                      <span className="tag-badge" style={{ color: "#f59e0b" }}>
+                        受限类型: {accountRateSnapshot.rateLimitReachedType}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="empty-hint" style={{ marginTop: 12 }}>
+                  {accountLoading
+                    ? "正在读取额度数据..."
+                    : "暂无额度数据（未登录或后端未返回）。"}
+                </div>
+              )}
+            </div>
+
+            <div className="card-section">
+              <h3>Token 用量统计 (`account/usage/read`)</h3>
+              {accountUsage ? (
+                <>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns:
+                        "repeat(auto-fit, minmax(150px, 1fr))",
+                      gap: 10,
+                      marginTop: 10,
+                    }}
+                  >
+                    {[
+                      {
+                        label: "累计 Tokens",
+                        value: formatTokenCount(accountUsage.summary?.lifetimeTokens),
+                        hint: "lifetimeTokens",
+                      },
+                      {
+                        label: "单日峰值 Tokens",
+                        value: formatTokenCount(accountUsage.summary?.peakDailyTokens),
+                        hint: "peakDailyTokens",
+                      },
+                      {
+                        label: "当前连续天数",
+                        value:
+                          accountUsage.summary?.currentStreakDays != null
+                            ? `${accountUsage.summary.currentStreakDays} 天`
+                            : "—",
+                        hint: "currentStreakDays",
+                      },
+                      {
+                        label: "最长连续天数",
+                        value:
+                          accountUsage.summary?.longestStreakDays != null
+                            ? `${accountUsage.summary.longestStreakDays} 天`
+                            : "—",
+                        hint: "longestStreakDays",
+                      },
+                      {
+                        label: "最长单轮耗时",
+                        value: formatDurationSeconds(
+                          accountUsage.summary?.longestRunningTurnSec
+                        ),
+                        hint: "longestRunningTurnSec",
+                      },
+                    ].map((stat) => (
+                      <div
+                        key={stat.hint}
+                        style={{
+                          padding: "10px 12px",
+                          background: "var(--bg-input)",
+                          border: "1px solid var(--border-subtle)",
+                          borderRadius: 8,
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontSize: 11,
+                            color: "var(--text-tertiary)",
+                            marginBottom: 4,
+                          }}
+                        >
+                          {stat.label}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 18,
+                            fontWeight: 600,
+                            color: "var(--text-primary)",
+                          }}
+                        >
+                          {stat.value}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 10,
+                            color: "var(--text-tertiary)",
+                            marginTop: 2,
+                          }}
+                        >
+                          {stat.hint}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <h4 style={{ marginTop: 18, fontSize: 13 }}>
+                    最近 14 天每日 Token 用量
+                  </h4>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "flex-end",
+                      gap: 6,
+                      height: 120,
+                      marginTop: 10,
+                      padding: "0 2px",
+                    }}
+                  >
+                    {usageLast14Days.map((day) => {
+                      const heightPercent =
+                        day.tokens > 0
+                          ? Math.max(
+                              4,
+                              Math.round((day.tokens / accountDailyMaxTokens) * 100)
+                            )
+                          : 2;
+                      return (
+                        <div
+                          key={day.date}
+                          title={`${day.date}: ${formatTokenCount(day.tokens)} tokens`}
+                          style={{
+                            flex: 1,
+                            display: "flex",
+                            flexDirection: "column",
+                            alignItems: "center",
+                            justifyContent: "flex-end",
+                            gap: 4,
+                            height: "100%",
+                          }}
+                        >
+                          <div
+                            style={{
+                              width: "100%",
+                              height: `${heightPercent}%`,
+                              minHeight: 3,
+                              borderRadius: "4px 4px 0 0",
+                              background:
+                                day.tokens > 0
+                                  ? "var(--accent-blue)"
+                                  : "rgba(255, 255, 255, 0.08)",
+                            }}
+                          />
+                          <span
+                            style={{
+                              fontSize: 9,
+                              color: "var(--text-tertiary)",
+                              writingMode: "vertical-rl",
+                              transform: "rotate(180deg)",
+                              lineHeight: 1,
+                            }}
+                          >
+                            {day.label}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="card-subtitle-desc" style={{ marginTop: 12 }}>
+                    数据由 app-server 按账号聚合；dailyUsageBuckets 只包含实际有用量的日期，缺失日期按 0 处理。
+                  </p>
+                </>
+              ) : (
+                <div className="empty-hint" style={{ marginTop: 12 }}>
+                  {accountLoading
+                    ? "正在读取用量数据..."
+                    : "暂无用量数据（未登录或后端未返回）。"}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>

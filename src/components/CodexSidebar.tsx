@@ -14,6 +14,7 @@ import {
   SettingsIcon,
   AutomationIcon,
   SkillIcon,
+  FileCodeIcon,
 } from "./Icons";
 import {
   MainViewRoute,
@@ -386,6 +387,17 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
         >
           <SkillIcon size={14} />
           <span>插件与技能</span>
+        </button>
+
+        <button
+          type="button"
+          className={`sidebar-sub-nav-row ${
+            activeRoute === "review" ? "active" : ""
+          }`}
+          onClick={() => onNavigate("review")}
+        >
+          <FileCodeIcon size={14} />
+          <span>代码审查</span>
         </button>
       </div>
 

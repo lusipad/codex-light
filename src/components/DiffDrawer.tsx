@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { tauriListen } from "../bridge";
 import {
   DirectoryEntryItem,
   FilePreviewResult,
@@ -9,7 +10,23 @@ import {
   WorkspaceFileHit,
 } from "../types";
 import {
+  baseNameFsPath,
+  createDirectory as fsCreateDirectory,
+  isBinaryBytes,
+  joinFsPath,
+  parentFsPath,
+  readDirectory as fsReadDirectory,
+  readFileBytes,
+  removePath as fsRemovePath,
+  renamePath as fsRenamePath,
+  watchPath as fsWatchPath,
+  writeFileText as fsWriteFileText,
+  type FsDirectoryEntry,
+  type FsUnwatch,
+} from "../fsClient";
+import {
   CheckIcon,
+  CopyIcon,
   FolderIcon,
   GitBranchIcon,
   GlobeIcon,
@@ -20,6 +37,7 @@ import {
   TrashIcon,
   XIcon,
 } from "./Icons";
+import "./FileExplorer.css";
 
 interface DiffDrawerProps {
   open?: boolean;
@@ -86,6 +104,226 @@ function parseUnifiedDiff(diffText: string): ParsedDiffLine[] {
     }
   }
   return out;
+}
+
+/* ------------------------------------------------------------------ */
+/* Files tab: app-server `fs/*` helpers                                */
+/* ------------------------------------------------------------------ */
+
+/** Same editable-preview cap as the legacy `fs_read_preview` command. */
+const MAX_TEXT_PREVIEW_BYTES = 256 * 1024;
+
+/** Extensions the legacy command renders as `<img>` data URLs. */
+const IMAGE_EXTENSIONS = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "svg",
+  "bmp",
+  "ico",
+]);
+
+/**
+ * Known binary/media formats are previewed through the legacy command.
+ * `fs/readFile` has no size guard (verified: a 60 MB file returns in ~9 s as a
+ * huge base64 JSON line), so routing obvious large binaries around it keeps
+ * the app-server IPC and browser memory usage bounded.
+ */
+const BINARY_EXTENSIONS = new Set([
+  // video / audio
+  "mp4", "mov", "avi", "mkv", "webm", "wmv", "flv", "m4v",
+  "mp3", "wav", "flac", "ogg", "m4a", "aac",
+  // archives / packages
+  "zip", "7z", "rar", "gz", "tar", "bz2", "xz", "zst",
+  "jar", "war", "whl", "egg", "apk", "dmg", "iso", "cab",
+  // executables / object files
+  "exe", "dll", "so", "dylib", "bin", "obj", "o", "a", "lib",
+  "pdb", "class", "wasm", "node", "pyd", "pyc",
+  // office / documents
+  "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "rtf",
+  // fonts
+  "ttf", "otf", "woff", "woff2", "eot",
+  // databases / model & columnar data
+  "db", "sqlite", "sqlite3", "mdb", "realm",
+  "gguf", "safetensors", "pt", "pth", "onnx", "h5", "npy", "npz",
+  "parquet", "arrow", "feather", "pkl", "pickle",
+]);
+
+type ExplorerDraftMode = "createFile" | "createDir" | "rename";
+
+interface ExplorerDraft {
+  mode: ExplorerDraftMode;
+  value: string;
+  targetPath?: string;
+  targetName?: string;
+}
+
+/** Marker error: `fs/readFile` cannot serve this preview, fall back silently. */
+function previewFallbackError(reason: string): Error {
+  const error = new Error(reason);
+  error.name = "PreviewFallbackError";
+  return error;
+}
+
+function isPreviewFallbackError(error: unknown): boolean {
+  return (error as Error | null)?.name === "PreviewFallbackError";
+}
+
+function fileExtension(pathValue: string): string {
+  const base = baseNameFsPath(pathValue);
+  const dot = base.lastIndexOf(".");
+  return dot >= 0 ? base.slice(dot + 1).toLowerCase() : "";
+}
+
+/**
+ * Mirror the legacy `fs_list_dir(showHidden=false)` filtering so switching to
+ * `fs/readDirectory` (which returns every entry) does not change what is shown.
+ */
+function isHiddenEntryName(name: string): boolean {
+  if (name === "node_modules" || name === "target" || name === ".git") return true;
+  if (name.startsWith(".") && name !== ".env" && name !== ".gitignore") return true;
+  return false;
+}
+
+function compareDirectoryEntries(
+  a: DirectoryEntryItem,
+  b: DirectoryEntryItem
+): number {
+  if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
+  return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+}
+
+function toDirectoryEntryItems(
+  dir: string,
+  entries: FsDirectoryEntry[]
+): DirectoryEntryItem[] {
+  return entries
+    .filter((entry) => !isHiddenEntryName(entry.fileName))
+    .map((entry) => ({
+      name: entry.fileName,
+      path: joinFsPath(dir, entry.fileName),
+      isDirectory: entry.isDirectory,
+      // fs/readDirectory does not report size/mtime; the UI hides unknown sizes.
+      size: 0,
+      mtimeMs: 0,
+    }))
+    .sort(compareDirectoryEntries);
+}
+
+/**
+ * Read an editable text preview through `fs/readFile`.
+ * Throws `PreviewFallbackError` for images / binary / oversized files so the
+ * caller can fall back to `fs_read_preview`, and a normal error when the
+ * protocol itself is unavailable.
+ */
+async function readTextPreviewViaProtocol(
+  pathValue: string
+): Promise<FilePreviewResult> {
+  const extension = fileExtension(pathValue);
+  if (IMAGE_EXTENSIONS.has(extension) || BINARY_EXTENSIONS.has(extension)) {
+    throw previewFallbackError("image/binary preview needs fs_read_preview");
+  }
+  const bytes = await readFileBytes(pathValue);
+  if (bytes.length > MAX_TEXT_PREVIEW_BYTES) {
+    throw previewFallbackError("file exceeds editable preview limit");
+  }
+  if (isBinaryBytes(bytes)) {
+    throw previewFallbackError("file looks binary");
+  }
+  // Keep a UTF-8 BOM in the text so an edit/save round-trips the bytes.
+  const content = new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
+  return {
+    path: pathValue,
+    isBinary: false,
+    isImage: false,
+    content,
+    base64DataUrl: null,
+    sizeBytes: bytes.length,
+    mtimeMs: 0,
+  };
+}
+
+function validateEntryName(rawName: string): string | null {
+  const name = rawName.trim();
+  if (!name) return "名称不能为空";
+  if (name === "." || name === "..") return "名称不合法";
+  if (/[\\/:*?"<>|]/.test(name)) return '名称不能包含 \\ / : * ? " < > | 字符';
+  if (/[. ]$/.test(name)) return "名称不能以空格或点结尾";
+  if (name.length > 200) return "名称过长";
+  return null;
+}
+
+/** True when `childPath` is `parentPath` itself or inside it. */
+function isPathWithin(childPath: string, parentPath: string): boolean {
+  if (childPath === parentPath) return true;
+  const normalizedParent = parentPath.replace(/[\\/]+$/, "");
+  return (
+    childPath.startsWith(`${normalizedParent}\\`) ||
+    childPath.startsWith(`${normalizedParent}/`)
+  );
+}
+
+function replacePathPrefix(
+  pathValue: string,
+  oldPrefix: string,
+  newPrefix: string
+): string {
+  return isPathWithin(pathValue, oldPrefix)
+    ? `${newPrefix}${pathValue.slice(oldPrefix.length)}`
+    : pathValue;
+}
+
+/**
+ * Check whether `dir` already contains `name`: `fs/readDirectory` first,
+ * legacy `fs_list_dir` when the protocol is unavailable. `null` = unknown.
+ */
+async function entryExistsInDir(
+  dir: string,
+  name: string
+): Promise<boolean | null> {
+  const wanted = name.toLowerCase();
+  try {
+    const entries = await fsReadDirectory(dir);
+    return entries.some((entry) => entry.fileName.toLowerCase() === wanted);
+  } catch (protocolError) {
+    console.warn(
+      "fs/readDirectory unavailable for existence check, falling back to fs_list_dir:",
+      protocolError
+    );
+  }
+  try {
+    const entries = await invoke<DirectoryEntryItem[]>("fs_list_dir", {
+      path: dir,
+      showHidden: true,
+    });
+    return entries.some((entry) => entry.name.toLowerCase() === wanted);
+  } catch (fallbackError) {
+    console.warn("fs_list_dir failed for existence check:", fallbackError);
+    return null;
+  }
+}
+
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(textarea);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
 }
 
 export const DiffDrawer: React.FC<DiffDrawerProps> = ({
@@ -155,6 +393,15 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   const [inFileSearch, setInFileSearch] = useState("");
   const [isDirty, setIsDirty] = useState(false);
   const [savingFile, setSavingFile] = useState(false);
+  const [dirLoading, setDirLoading] = useState(false);
+  const [watchActive, setWatchActive] = useState(false);
+  const [explorerDraft, setExplorerDraft] = useState<ExplorerDraft | null>(null);
+  const [explorerBusy, setExplorerBusy] = useState(false);
+  const dirLoadSeqRef = useRef(0);
+  const fsWatchTimerRef = useRef<number | null>(null);
+  const lastExternalPreviewRef = useRef<string | null>(null);
+  const appServerConnectedRef = useRef<boolean | null>(null);
+  const [watchEpoch, setWatchEpoch] = useState(0);
 
   // Browser preview state
   const [browserUrl, setBrowserUrl] = useState("http://localhost:1420");
@@ -165,6 +412,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   useEffect(() => {
     if (cwd) {
       setCurrentDir(cwd);
+      setExplorerDraft(null);
     }
   }, [cwd]);
 
@@ -206,15 +454,131 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
       .finally(() => setLoadingDiff(false));
   }, [open, activeTab, cwd, selectedFile, diffMode, baseBranch, selectedCommitHash, gitStatus]);
 
+  /**
+   * List one directory: app-server `fs/readDirectory` first, then the legacy
+   * local `fs_list_dir` command so browsing keeps working offline.
+   */
+  const refreshDirectory = useCallback(async (dir: string) => {
+    if (!dir) return;
+    const seq = dirLoadSeqRef.current + 1;
+    dirLoadSeqRef.current = seq;
+    setDirLoading(true);
+    // The legacy listing is both the offline fallback and the size/mtime
+    // source: `fs/readDirectory` only reports names and types.
+    const legacyEntriesPromise = invoke<DirectoryEntryItem[]>("fs_list_dir", {
+      path: dir,
+      showHidden: false,
+    }).catch((legacyError) => {
+      console.warn("fs_list_dir failed:", legacyError);
+      return null;
+    });
+    try {
+      let entries: DirectoryEntryItem[];
+      try {
+        const protocolEntries = await fsReadDirectory(dir);
+        entries = toDirectoryEntryItems(dir, protocolEntries);
+        const legacyEntries = await legacyEntriesPromise;
+        if (legacyEntries) {
+          const byPath = new Map(legacyEntries.map((entry) => [entry.path, entry]));
+          entries = entries.map((entry) => {
+            const legacy = byPath.get(entry.path);
+            return legacy
+              ? { ...entry, size: legacy.size, mtimeMs: legacy.mtimeMs }
+              : entry;
+          });
+        }
+      } catch (protocolError) {
+        console.warn(
+          "fs/readDirectory unavailable, falling back to fs_list_dir:",
+          protocolError
+        );
+        const legacyEntries = await legacyEntriesPromise;
+        if (!legacyEntries) throw protocolError;
+        entries = legacyEntries;
+      }
+      if (seq !== dirLoadSeqRef.current) return;
+      setDirEntries(entries);
+    } catch (listingError) {
+      console.warn("directory listing failed:", listingError);
+      if (seq !== dirLoadSeqRef.current) return;
+      setDirEntries([]);
+    } finally {
+      if (seq === dirLoadSeqRef.current) setDirLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (!open || activeTab !== "files" || !currentDir) return;
-    invoke<DirectoryEntryItem[]>("fs_list_dir", {
-      path: currentDir,
-      showHidden: false,
+    void refreshDirectory(currentDir);
+  }, [open, activeTab, currentDir, refreshDirectory]);
+
+  // Re-arm `fs/watch` when app-server reconnects (watches are connection-scoped).
+  useEffect(() => {
+    if (!open || activeTab !== "files") return;
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    tauriListen<{ connected?: boolean }>("app-server:status", (status) => {
+      if (disposed) return;
+      const connected = Boolean(status?.connected);
+      if (connected && appServerConnectedRef.current !== true) {
+        setWatchEpoch((epoch) => epoch + 1);
+      }
+      appServerConnectedRef.current = connected;
     })
-      .then((entries) => setDirEntries(entries))
-      .catch(() => setDirEntries([]));
-  }, [open, activeTab, currentDir]);
+      .then((fn) => {
+        if (disposed) {
+          fn();
+          return;
+        }
+        unlisten = fn;
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+      if (unlisten) unlisten();
+    };
+  }, [open, activeTab]);
+
+  // Live refresh: `fs/watch` on the current directory, debounced `fs/changed`.
+  useEffect(() => {
+    if (!open || activeTab !== "files" || !currentDir) return;
+    let disposed = false;
+    let stopWatch: FsUnwatch | null = null;
+    setWatchActive(false);
+
+    fsWatchPath(currentDir, () => {
+      if (disposed) return;
+      if (fsWatchTimerRef.current !== null) {
+        window.clearTimeout(fsWatchTimerRef.current);
+      }
+      fsWatchTimerRef.current = window.setTimeout(() => {
+        fsWatchTimerRef.current = null;
+        if (!disposed) void refreshDirectory(currentDir);
+      }, 300);
+    })
+      .then((unwatch) => {
+        if (disposed) {
+          void unwatch();
+          return;
+        }
+        stopWatch = unwatch;
+        setWatchActive(true);
+      })
+      .catch((watchError) => {
+        console.warn("fs/watch unavailable for directory:", currentDir, watchError);
+        if (!disposed) setWatchActive(false);
+      });
+
+    return () => {
+      disposed = true;
+      setWatchActive(false);
+      if (fsWatchTimerRef.current !== null) {
+        window.clearTimeout(fsWatchTimerRef.current);
+        fsWatchTimerRef.current = null;
+      }
+      if (stopWatch) void stopWatch();
+    };
+  }, [open, activeTab, currentDir, refreshDirectory, watchEpoch]);
 
   useEffect(() => {
     if (!open || activeTab !== "files" || !cwd) return;
@@ -313,30 +677,59 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     }
   };
 
-  const openFilePreview = async (path: string) => {
+  /**
+   * Preview a file: `fs/readFile` (UTF-8) first; images / binary / oversized
+   * files and protocol failures fall back to the legacy `fs_read_preview`.
+   */
+  const openFilePreview = async (
+    path: string,
+    options?: { silent?: boolean }
+  ) => {
+    try {
+      const preview = await readTextPreviewViaProtocol(path);
+      setFilePreview(preview);
+      setEditedContent(preview.content ?? "");
+      setIsDirty(false);
+      return;
+    } catch (protocolError) {
+      if (!isPreviewFallbackError(protocolError)) {
+        console.warn(
+          "fs/readFile unavailable for preview, falling back to fs_read_preview:",
+          protocolError
+        );
+      }
+    }
     try {
       const res = await invoke<FilePreviewResult>("fs_read_preview", {
         path,
-        maxBytes: 256 * 1024,
+        maxBytes: MAX_TEXT_PREVIEW_BYTES,
       });
       setFilePreview(res);
       setEditedContent(res.content ?? "");
       setIsDirty(false);
     } catch (e) {
-      showToast(`读取文件失败: ${String(e)}`);
+      if (!options?.silent) showToast(`读取文件失败: ${String(e)}`);
     }
   };
 
   const saveEditedFile = async () => {
     if (!filePreview) return;
     setSavingFile(true);
+    const targetPath = filePreview.path;
+    const content = editedContent;
     try {
-      await invoke("fs_write_file", {
-        path: filePreview.path,
-        content: editedContent,
-      });
+      try {
+        await fsWriteFileText(targetPath, content);
+      } catch (protocolError) {
+        console.warn(
+          "fs/writeFile unavailable, falling back to fs_write_file:",
+          protocolError
+        );
+        await invoke("fs_write_file", { path: targetPath, content });
+      }
       setIsDirty(false);
       onRefreshGit();
+      void refreshDirectory(currentDir);
       showToast("✓ 文件已保存");
     } catch (e) {
       showToast(`保存文件失败: ${String(e)}`);
@@ -344,6 +737,161 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
       setSavingFile(false);
     }
   };
+
+  // External file selection (timeline cards / @mentions / quick search): keep
+  // the Changes tab behavior untouched, but warm up the Files tab preview.
+  useEffect(() => {
+    if (!open || !selectedPreviewFile) {
+      if (!selectedPreviewFile) lastExternalPreviewRef.current = null;
+      return;
+    }
+    if (lastExternalPreviewRef.current === selectedPreviewFile) return;
+    if (filePreview?.path === selectedPreviewFile) {
+      lastExternalPreviewRef.current = selectedPreviewFile;
+      return;
+    }
+    // Never replace an open editor that has unsaved changes.
+    if (isDirty) return;
+    lastExternalPreviewRef.current = selectedPreviewFile;
+    void openFilePreview(selectedPreviewFile, { silent: true });
+  }, [open, selectedPreviewFile, filePreview?.path, isDirty]);
+
+  const handleCopyPath = async (path: string) => {
+    const ok = await copyTextToClipboard(path);
+    showToast(ok ? `✓ 已复制路径: ${path}` : `复制路径失败: ${path}`);
+  };
+
+  const beginCreateDraft = (mode: "createFile" | "createDir") => {
+    if (explorerBusy) return;
+    setExplorerDraft({ mode, value: "" });
+  };
+
+  const beginRenameDraft = (item: DirectoryEntryItem) => {
+    if (explorerBusy) return;
+    setExplorerDraft({
+      mode: "rename",
+      value: item.name,
+      targetPath: item.path,
+      targetName: item.name,
+    });
+  };
+
+  const cancelExplorerDraft = () => {
+    if (explorerBusy) return;
+    setExplorerDraft(null);
+  };
+
+  const submitExplorerDraft = async (
+    event: React.FormEvent<HTMLFormElement>
+  ) => {
+    event.preventDefault();
+    const draft = explorerDraft;
+    if (!draft || explorerBusy) return;
+
+    const name = draft.value.trim();
+    const nameError = validateEntryName(name);
+    if (nameError) {
+      showToast(nameError);
+      return;
+    }
+
+    const isRename = draft.mode === "rename";
+    const targetDir =
+      isRename && draft.targetPath
+        ? parentFsPath(draft.targetPath)
+        : currentDir;
+    const targetPath =
+      isRename && draft.targetPath
+        ? joinFsPath(targetDir, name)
+        : joinFsPath(currentDir, name);
+    if (isRename && draft.targetPath === targetPath) {
+      setExplorerDraft(null);
+      return;
+    }
+
+    setExplorerBusy(true);
+    try {
+      const exists = await entryExistsInDir(targetDir, name);
+      if (exists === null) throw new Error("无法检查目标目录内容");
+      if (exists) throw new Error(`已存在同名文件或文件夹：${name}`);
+
+      if (draft.mode === "createDir") {
+        await fsCreateDirectory(targetPath, true);
+        showToast(`✓ 已新建文件夹: ${name}`);
+      } else if (draft.mode === "createFile") {
+        try {
+          await fsWriteFileText(targetPath, "");
+        } catch (protocolError) {
+          console.warn(
+            "fs/writeFile unavailable for create, falling back to fs_write_file:",
+            protocolError
+          );
+          await invoke("fs_write_file", { path: targetPath, content: "" });
+        }
+        showToast(`✓ 已新建文件: ${name}`);
+      } else {
+        const oldPath = draft.targetPath as string;
+        await fsRenamePath(oldPath, targetPath);
+        setFilePreview((prev) => {
+          if (!prev) return prev;
+          const nextPath = replacePathPrefix(prev.path, oldPath, targetPath);
+          return nextPath === prev.path ? prev : { ...prev, path: nextPath };
+        });
+        showToast(`✓ 已重命名: ${draft.targetName ?? oldPath} → ${name}`);
+      }
+
+      setExplorerDraft(null);
+      await refreshDirectory(currentDir);
+      if (draft.mode === "createFile") void openFilePreview(targetPath);
+      onRefreshGit();
+    } catch (e) {
+      showToast(
+        draft.mode === "createDir"
+          ? `新建文件夹失败: ${String(e)}`
+          : draft.mode === "createFile"
+            ? `新建文件失败: ${String(e)}`
+            : `重命名失败: ${String(e)}`
+      );
+    } finally {
+      setExplorerBusy(false);
+    }
+  };
+
+  const handleDeleteEntry = async (item: DirectoryEntryItem) => {
+    const kind = item.isDirectory ? "文件夹" : "文件";
+    const confirmed = window.confirm(
+      `确定要删除${kind} “${item.name}” 吗？\n${item.path}\n\n此操作不可撤销。`
+    );
+    if (!confirmed) return;
+
+    setExplorerBusy(true);
+    try {
+      await fsRemovePath(item.path, {
+        recursive: item.isDirectory,
+        force: true,
+      });
+      if (filePreview && isPathWithin(filePreview.path, item.path)) {
+        setFilePreview(null);
+        setEditedContent("");
+        setIsDirty(false);
+      }
+      showToast(`✓ 已删除${kind}: ${item.name}`);
+      await refreshDirectory(currentDir);
+      onRefreshGit();
+    } catch (e) {
+      showToast(`删除失败: ${String(e)}`);
+    } finally {
+      setExplorerBusy(false);
+    }
+  };
+
+  const explorerDraftLabel = explorerDraft
+    ? explorerDraft.mode === "rename"
+      ? `重命名 “${explorerDraft.targetName ?? ""}” 为：`
+      : explorerDraft.mode === "createDir"
+        ? "新建文件夹名称："
+        : "新建文件名称："
+    : "";
 
   const parsedLines = useMemo(() => parseUnifiedDiff(diffContent), [diffContent]);
 
@@ -824,20 +1372,110 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
             <span className="file-browser-cwd" title={currentDir}>
               {currentDir}
             </span>
-            {currentDir !== cwd && (
+            <div className="fe-path-actions">
+              {watchActive && (
+                <span
+                  className="fe-live-dot"
+                  title="已通过 fs/watch 监听当前目录，文件变化会自动刷新"
+                >
+                  ●
+                </span>
+              )}
               <button
-                className="mini-link-btn"
-                onClick={() => {
-                  const parent = currentDir
-                    .replace(/[\\/]+$/, "")
-                    .replace(/[\\/][^\\/]+$/, "");
-                  if (parent) setCurrentDir(parent);
-                }}
+                className="fe-icon-btn"
+                title="刷新当前目录"
+                disabled={dirLoading}
+                onClick={() => void refreshDirectory(currentDir)}
               >
-                返回上级
+                <RefreshIcon size={12} />
               </button>
-            )}
+              {currentDir !== cwd && (
+                <button
+                  className="mini-link-btn"
+                  onClick={() => {
+                    const parent = parentFsPath(currentDir);
+                    if (parent && parent !== currentDir) setCurrentDir(parent);
+                  }}
+                >
+                  返回上级
+                </button>
+              )}
+            </div>
           </div>
+
+          <div className="fe-toolbar">
+            <button
+              className="fe-toolbar-btn"
+              title="在当前目录新建文件"
+              disabled={explorerBusy}
+              onClick={() => beginCreateDraft("createFile")}
+            >
+              <PlusIcon size={12} />
+              <span>新建文件</span>
+            </button>
+            <button
+              className="fe-toolbar-btn"
+              title="在当前目录新建文件夹"
+              disabled={explorerBusy}
+              onClick={() => beginCreateDraft("createDir")}
+            >
+              <FolderIcon size={12} />
+              <span>新建文件夹</span>
+            </button>
+            <button
+              className="fe-toolbar-btn"
+              title="复制当前目录绝对路径"
+              onClick={() => void handleCopyPath(currentDir)}
+            >
+              <CopyIcon size={12} />
+              <span>复制路径</span>
+            </button>
+            {dirLoading && <span className="fe-toolbar-hint">加载中…</span>}
+            {explorerBusy && <span className="fe-toolbar-hint">处理中…</span>}
+          </div>
+
+          {explorerDraft && (
+            <form className="fe-inline-form" onSubmit={submitExplorerDraft}>
+              <span className="fe-inline-label" title={explorerDraftLabel}>
+                {explorerDraftLabel}
+              </span>
+              <input
+                className="fe-inline-input"
+                autoFocus
+                placeholder={
+                  explorerDraft.mode === "rename" ? "新名称" : "名称"
+                }
+                value={explorerDraft.value}
+                disabled={explorerBusy}
+                onChange={(event) =>
+                  setExplorerDraft((prev) =>
+                    prev ? { ...prev, value: event.target.value } : prev
+                  )
+                }
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    cancelExplorerDraft();
+                  }
+                }}
+              />
+              <button
+                type="submit"
+                className="fe-toolbar-btn primary"
+                disabled={explorerBusy || !explorerDraft.value.trim()}
+              >
+                {explorerDraft.mode === "rename" ? "重命名" : "创建"}
+              </button>
+              <button
+                type="button"
+                className="fe-toolbar-btn"
+                disabled={explorerBusy}
+                onClick={cancelExplorerDraft}
+              >
+                取消
+              </button>
+            </form>
+          )}
 
           <div className="diff-branch-filter-row">
             <SearchIcon size={13} />
@@ -857,38 +1495,81 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                   className={`diff-file-row ${
                     filePreview?.path === hit.absPath ? "active" : ""
                   }`}
-                  onClick={() => openFilePreview(hit.absPath)}
+                  onClick={() => void openFilePreview(hit.absPath)}
                 >
                   <span className="file-icon-tag">📄</span>
                   <span className="diff-file-path">{hit.relPath}</span>
                 </div>
               ))
+            ) : dirEntries.length === 0 ? (
+              <div className="empty-hint-small">
+                {dirLoading ? "正在加载目录…" : "目录为空"}
+              </div>
             ) : (
-              dirEntries.map((item) => (
-                <div
-                  key={item.path}
-                  className={`diff-file-row ${
-                    filePreview?.path === item.path ? "active" : ""
-                  }`}
-                  onClick={() => {
-                    if (item.isDirectory) {
-                      setCurrentDir(item.path);
-                    } else {
-                      openFilePreview(item.path);
-                    }
-                  }}
-                >
-                  <span className="file-icon-tag">
-                    {item.isDirectory ? "📁" : "📄"}
-                  </span>
-                  <span className="diff-file-path">{item.name}</span>
-                  {!item.isDirectory && (
-                    <span className="file-size-tag">
-                      {(item.size / 1024).toFixed(1)} KB
+              dirEntries.map((item) => {
+                const isRenaming =
+                  explorerDraft?.mode === "rename" &&
+                  explorerDraft.targetPath === item.path;
+                return (
+                  <div
+                    key={item.path}
+                    className={`diff-file-row fe-file-row ${
+                      filePreview?.path === item.path ? "active" : ""
+                    } ${isRenaming ? "fe-renaming" : ""}`}
+                    onClick={() => {
+                      if (item.isDirectory) {
+                        setExplorerDraft(null);
+                        setCurrentDir(item.path);
+                      } else {
+                        void openFilePreview(item.path);
+                      }
+                    }}
+                  >
+                    <span className="file-icon-tag">
+                      {item.isDirectory ? "📁" : "📄"}
                     </span>
-                  )}
-                </div>
-              ))
+                    <span className="diff-file-path" title={item.path}>
+                      {item.name}
+                    </span>
+                    {!item.isDirectory && item.size > 0 && (
+                      <span className="file-size-tag">
+                        {(item.size / 1024).toFixed(1)} KB
+                      </span>
+                    )}
+                    <span
+                      className="fe-row-actions"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <button
+                        type="button"
+                        className="fe-row-btn"
+                        title={`重命名 ${item.name}`}
+                        disabled={explorerBusy}
+                        onClick={() => beginRenameDraft(item)}
+                      >
+                        ✎
+                      </button>
+                      <button
+                        type="button"
+                        className="fe-row-btn"
+                        title={`复制路径 ${item.path}`}
+                        onClick={() => void handleCopyPath(item.path)}
+                      >
+                        ⧉
+                      </button>
+                      <button
+                        type="button"
+                        className="fe-row-btn danger"
+                        title={`删除 ${item.name}`}
+                        disabled={explorerBusy}
+                        onClick={() => void handleDeleteEntry(item)}
+                      >
+                        <TrashIcon size={11} />
+                      </button>
+                    </span>
+                  </div>
+                );
+              })
             )}
           </div>
 

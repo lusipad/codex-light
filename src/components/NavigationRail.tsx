@@ -9,6 +9,7 @@ import {
   WorktreeIcon,
   SettingsIcon,
   SparklesIcon,
+  FileCodeIcon,
 } from "./Icons";
 import { MainViewRoute } from "../types";
 
@@ -103,6 +104,15 @@ export const NavigationRail: React.FC<NavigationRailProps> = ({
           title="托管工作树 (Worktrees)"
         >
           <WorktreeIcon size={16} />
+        </button>
+
+        <button
+          type="button"
+          className={`nav-rail-btn ${activeRoute === "review" ? "active" : ""}`}
+          onClick={() => onNavigate("review")}
+          title="代码审查 (Code Review)"
+        >
+          <FileCodeIcon size={16} />
         </button>
       </div>
 

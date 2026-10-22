@@ -44,3 +44,33 @@
 - 批次 2：设置页全面走 `config/*` 协议、`fs/watch` 实时文件树、资源管理器增删改、`config/mcpServer/reload`
 - 批次 3：`thread/goal/*` 真 Goal、`threadSection/*` 分组、`project/*` 项目实体、插件市场、Code Review、`experimentalFeature/*`、Windows 沙箱安装、线程队列
 - 批次 4：原生菜单 + 可改键快捷键、系统通知/托盘/多窗口、自动化调度器、Inbox 持久化
+
+## Round 3 — 批次 2：设置/文件系统协议化 + Code Review
+
+### 设置页（`src/config.ts` + `SettingsView` + `types.ts`）
+- 新增 `src/config.ts`（511 行）：`config/read|value/write|batchWrite`、`configRequirements/read`、`config/mcpServer/reload`、`experimentalFeature/list|enablement/set`、`account/read|rateLimits|usage` 的协议封装 + 有效/无效 config 键白名单 + 枚举常量。
+- 读取：优先 `config/read(activeWorkspaceRoot)` 映射真实配置，失败回退 Tauri `config_read`。
+- 保存：`config/batchWrite` + `reloadUserConfig:true`，只提交白名单键；providers/MCP 仅 dirty 时才走既有 Rust 写入；协议失败整体回退。
+- 删除 7 个无效键控件（temperature/top_p/max_output_tokens/context_window/max_parallel_tools/subagent_concurrency/allow_network）+ 3 张假预设卡；改正 2 个错误键（`web_search_mode`→`web_search`、`output_verbosity`→`model_verbosity`）；新增 model_provider、approvals_reviewer、instructions、真实模型候选、托管约束提示。
+- 新增「实验特性」分区：`experimentalFeature/list` 全量 152 项，stage 分组 + 搜索 + 开关（乐观回写/失败回滚）。
+- 新增「账号与额度」分区（只读）：email/planType、主/次窗口 usedPercent + 重置时间 + credits、usage summary + 最近 14 天柱状图。
+- MCP 增删改/导入/raw TOML 保存后追加 `config/mcpServer/reload`。
+
+### 文件系统（`src/fsClient.ts` + `DiffDrawer` + `FileExplorer.css`）
+- 新增 `src/fsClient.ts`：`fs/readDirectory|readFile|writeFile|createDirectory|remove|copy|getMetadata|watch|unwatch` 封装（base64 编解码、二进制检测、路径工具、`renamePath`=copy+remove、`watchPath` 唯一 watchId + 先订阅后 watch + 幂等 teardown）。
+- DiffDrawer Files tab：目录读取/预览/保存协议优先（保留 Tauri 回退）；新增新建文件、新建文件夹、重命名、删除（二次确认）、复制路径；`fs/watch` 300ms 防抖刷新、切 tab/目录/卸载清理、app-server 重连自动重建 watch；图片/大二进制回退本地预览。
+
+### 主界面（App.tsx / NavigationRail / CodexSidebar）
+- 全局工作区 `fs/watch`：文件变化 400ms 防抖刷新 Git 状态与文件列表。
+- **计划模式走真实协议**：`thread/settings/update` 的 `collaborationMode: {mode:"plan"|"default", settings:{model,reasoning_effort}}`，移除原「prompt 前缀」伪装；新会话在首个 turn 前应用。
+- 线程状态条：监听 `thread/status/changed`，头部显示 空闲/运行中/等待批准/等待输入/出错 状态徽标。
+- Inbox 持久化（`desktop_state` 读写）+ turn 完成自动入箱（去重）。
+- **Code Review 页面（新增）**：`review/start` 内联审查，支持 4 种目标（未提交改动 / 对比分支 / 指定提交 / 自定义指令）、分支与提交选择器、审查结果在会话中流式展示；导航栏与侧边栏新增「代码审查」入口。
+
+### 验证
+- `npm run build` ✅（1,6xx modules，CSS 104KB / JS 888KB）
+- 协议 shape 校验 **22/22 通过**（`.ref/scripts/verify-batch2-shapes.mjs`，隔离 `CODEX_HOME`）：config/read|batchWrite|value/write 实测生效、configRequirements、mcpServer/reload、experimentalFeature list/set（152 项）、fs 全操作（含 base64 读写、copy、remove、metadata）、**fs/watch→fs/changed 真实通知**、thread/settings/update collaborationMode plan/default、review/start 形状。
+- 组件层：队友对设置页做了隔离 CODEX_HOME 的真实 app-server 枚举矩阵测试（6 档 effort / 3 档 sandbox / 4 档 web_search / 3 档 verbosity 写读通过）。
+
+### 后续（批次 3）
+- `thread/goal/*` 真 Goal、`threadSection/*` 侧栏分组、`project/*` 项目实体、`plugin/*`+`marketplace/*` 插件市场、`thread/queue/*`、`windowsSandbox/*`、`hooks/list`、Apps、原生菜单/快捷键、自动化调度器。
