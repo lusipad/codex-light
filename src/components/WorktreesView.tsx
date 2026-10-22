@@ -13,11 +13,13 @@ import { GitWorktreeInfo } from "../types";
 interface WorktreesViewProps {
   activeWorkspaceRoot: string;
   onStartChatInWorktree: (worktreePath: string) => void;
+  onOpenTerminalInWorktree?: (worktreePath: string) => void;
 }
 
 export const WorktreesView: React.FC<WorktreesViewProps> = ({
   activeWorkspaceRoot,
   onStartChatInWorktree,
+  onOpenTerminalInWorktree,
 }) => {
   const [worktrees, setWorktrees] = useState<GitWorktreeInfo[]>([]);
   const [branches, setBranches] = useState<string[]>([]);
@@ -197,6 +199,31 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
                     </div>
                   </div>
                   <div className="item-card-actions">
+                    <button
+                      type="button"
+                      className="secondary-btn-sm"
+                      title="在系统文件管理器中打开此 Worktree 文件夹"
+                      onClick={async () => {
+                        try {
+                          await tauriInvoke("reveal_path_in_explorer", { path: wt.path });
+                          notify("✓ 已在系统文件管理器中打开文件夹");
+                        } catch (err: any) {
+                          notify(`打开失败: ${String(err)}`);
+                        }
+                      }}
+                    >
+                      📂 目录
+                    </button>
+                    {onOpenTerminalInWorktree && (
+                      <button
+                        type="button"
+                        className="secondary-btn-sm"
+                        title="在此 Worktree 打开终端"
+                        onClick={() => onOpenTerminalInWorktree(wt.path)}
+                      >
+                        💻 终端
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="primary-btn-sm"

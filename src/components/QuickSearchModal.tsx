@@ -10,13 +10,14 @@ import {
   Settings,
   X,
 } from "lucide-react";
-import { MainViewRoute, SettingsSectionSlug, SkillInfoItem, ThreadSummary, WorkspaceFileHit } from "../types";
+import { MainViewRoute, ProjectScriptCommands, SettingsSectionSlug, SkillInfoItem, ThreadSummary, WorkspaceFileHit } from "../types";
 
 export interface QuickSearchModalProps {
   open: boolean;
   threads: ThreadSummary[];
   workspaceFileHits: WorkspaceFileHit[];
   skills: SkillInfoItem[];
+  projectScripts?: ProjectScriptCommands;
   onClose: () => void;
   onSelectThread: (threadId: string) => void;
   onSelectFile: (filePath: string) => void;
@@ -41,6 +42,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   threads,
   workspaceFileHits,
   skills,
+  projectScripts,
   onClose,
   onSelectThread,
   onSelectFile,
@@ -53,6 +55,10 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
+
+  const runCmd = projectScripts?.runCommand || "npm run dev";
+  const testCmd = projectScripts?.testCommand || "npm test";
+  const buildCmd = projectScripts?.buildCommand || "npm run build";
 
   useEffect(() => {
     if (open) {
@@ -82,22 +88,33 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
       {
         id: "act-run-dev",
         category: "action",
-        title: "运行本地启动服务 (npm run dev)",
-        subtitle: "在集成终端中执行开发服务器",
+        title: `运行启动服务 (${runCmd})`,
+        subtitle: "在集成终端中执行本地启动命令",
         icon: <Play size={14} />,
         onSelect: () => {
-          onTriggerCommand("npm run dev");
+          onTriggerCommand(runCmd);
           onClose();
         },
       },
       {
         id: "act-run-test",
         category: "action",
-        title: "运行单元测试 (npm test)",
+        title: `运行单元测试 (${testCmd})`,
         subtitle: "在集成终端中运行测试套件",
         icon: <Command size={14} />,
         onSelect: () => {
-          onTriggerCommand("npm test");
+          onTriggerCommand(testCmd);
+          onClose();
+        },
+      },
+      {
+        id: "act-run-build",
+        category: "action",
+        title: `运行构建编译 (${buildCmd})`,
+        subtitle: "在集成终端中执行生产打包命令",
+        icon: <Play size={14} />,
+        onSelect: () => {
+          onTriggerCommand(buildCmd);
           onClose();
         },
       },

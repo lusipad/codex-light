@@ -2080,6 +2080,12 @@ html, body, #root {
   color: var(--accent-blue);
 }
 
+.project-thread-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .route-empty-state {
   padding: 56px 20px;
   display: flex;

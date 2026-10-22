@@ -2173,6 +2173,8 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
             onPickNewFolder={handlePickNewFolder}
             onRemoveWorkspace={handleRemoveWorkspace}
             onRevealPath={handleRevealPath}
+            onDeleteThread={handleDeleteThread}
+            onRenameThread={handleRenameThread}
           />
         ) : activeRoute === "inbox" ? (
           <InboxView
@@ -2180,6 +2182,21 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
             onMarkAllRead={() =>
               setInboxItems((prev) => prev.map((i) => ({ ...i, read: true })))
             }
+            onClearAll={() => {
+              if (window.confirm("确定要清空收件箱中的全部通知吗？")) {
+                setInboxItems([]);
+              }
+            }}
+            onDeleteItem={(id, e) => {
+              e.stopPropagation();
+              setInboxItems((prev) => prev.filter((i) => i.id !== id));
+            }}
+            onToggleRead={(id, e) => {
+              e.stopPropagation();
+              setInboxItems((prev) =>
+                prev.map((i) => (i.id === id ? { ...i, read: !i.read } : i))
+              );
+            }}
             onSelectNotification={(item) => {
               setInboxItems((prev) =>
                 prev.map((i) => (i.id === item.id ? { ...i, read: true } : i))
@@ -2198,8 +2215,21 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
                 activeWorkspaceRoot={activeWorkspace?.path || ""}
                 models={models}
                 onRunAutomationNow={(item) => {
-                  setActiveRoute("home");
-                  setPromptInput(`[执行计划任务: ${item.name}]\n${item.prompt}`);
+                  if (item.kind === "goal") {
+                    handleLaunchGoal({
+                      objective: item.prompt,
+                      maxTurns: 15,
+                      autoVerifyCommand: projectScripts.testCommand || "npm test",
+                      autoContinue: true,
+                      useWorktree: item.executionEnvironment === "worktree",
+                    });
+                  } else {
+                    const targetCwd = item.cwds[0] || activeWorkspace?.path;
+                    startNewThread(targetCwd);
+                    setTimeout(() => {
+                      handleSendMessage(`[执行计划任务: ${item.name}]\n${item.prompt}`);
+                    }, 120);
+                  }
                 }}
               />
             </div>
@@ -2215,9 +2245,17 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
             <div className="full-route-container">
               <WorktreesView
                 activeWorkspaceRoot={activeWorkspace?.path || ""}
-                onStartChatInWorktree={() => {
+                onStartChatInWorktree={(wtPath) => {
                   setUseWorktree(true);
-                  setActiveRoute("home");
+                  startNewThread(wtPath);
+                  showAppToast(`✓ 已在 Worktree 目录启动隔离会话: ${wtPath}`, "info");
+                }}
+                onOpenTerminalInWorktree={(wtPath) => {
+                  setShowTerminal(true);
+                  setPendingTermCommand({
+                    id: Date.now(),
+                    command: `cd "${wtPath}"`,
+                  });
                 }}
               />
             </div>
@@ -2850,6 +2888,7 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
         threads={threads}
         workspaceFileHits={workspaceFileHits}
         skills={skills}
+        projectScripts={projectScripts}
         onClose={() => setShowQuickSearch(false)}
         onSelectThread={selectThread}
         onSelectFile={(filePath) => {
@@ -2880,6 +2919,7 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
         onClose={() => setShowGoalModal(false)}
         initialObjective={promptInput.replace(/^\/goal\s*/, "")}
         workspacePath={activeWorkspace?.path}
+        projectScripts={projectScripts}
         onLaunchGoal={handleLaunchGoal}
       />
 

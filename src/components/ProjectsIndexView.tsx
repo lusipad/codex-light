@@ -21,6 +21,8 @@ export interface ProjectsIndexViewProps {
   onPickNewFolder: () => void;
   onRemoveWorkspace: (path: string, e: React.MouseEvent) => void;
   onRevealPath?: (path: string) => void;
+  onDeleteThread?: (thread: ThreadSummary, e: React.MouseEvent) => void;
+  onRenameThread?: (threadId: string, newName: string) => void;
 }
 
 function normPath(p?: string | null): string {
@@ -39,6 +41,8 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
   onPickNewFolder,
   onRemoveWorkspace,
   onRevealPath,
+  onDeleteThread,
+  onRenameThread,
 }) => {
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -202,7 +206,37 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
                             onClick={() => onSelectThread(t.id)}
                           >
                             <span>💬 {t.name || t.preview || "未命名聊天"}</span>
-                            <span className="thread-open-link">打开聊天 →</span>
+                            <div className="project-thread-actions" onClick={(e) => e.stopPropagation()}>
+                              {onRenameThread && (
+                                <button
+                                  type="button"
+                                  className="thread-icon-btn"
+                                  title="重命名聊天"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const next = prompt("请输入新聊天标题:", t.name || t.preview || "");
+                                    if (next && next.trim()) {
+                                      onRenameThread(t.id, next.trim());
+                                    }
+                                  }}
+                                >
+                                  ✏️
+                                </button>
+                              )}
+                              {onDeleteThread && (
+                                <button
+                                  type="button"
+                                  className="thread-icon-btn danger"
+                                  title="彻底删除此聊天"
+                                  onClick={(e) => onDeleteThread(t, e)}
+                                >
+                                  🗑️
+                                </button>
+                              )}
+                              <span className="thread-open-link" onClick={() => onSelectThread(t.id)}>
+                                打开聊天 →
+                              </span>
+                            </div>
                           </div>
                         ))
                       )}

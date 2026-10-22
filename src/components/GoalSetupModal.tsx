@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { CloseIcon, ShieldIcon, SparklesIcon, WorktreeIcon } from "./Icons";
+import { ProjectScriptCommands } from "../types";
 
 export interface GoalSetupConfig {
   objective: string;
@@ -14,6 +15,7 @@ export interface GoalSetupModalProps {
   onClose: () => void;
   initialObjective?: string;
   workspacePath?: string;
+  projectScripts?: ProjectScriptCommands;
   onLaunchGoal: (config: GoalSetupConfig) => void;
 }
 
@@ -39,10 +41,13 @@ export const GoalSetupModal: React.FC<GoalSetupModalProps> = ({
   onClose,
   initialObjective = "",
   workspacePath,
+  projectScripts,
   onLaunchGoal,
 }) => {
   const [objective, setObjective] = useState<string>(initialObjective);
-  const [verifyCommand, setVerifyCommand] = useState<string>("npm test");
+  const [verifyCommand, setVerifyCommand] = useState<string>(
+    projectScripts?.testCommand || "npm test"
+  );
   const [maxTurns, setMaxTurns] = useState<number>(10);
   const [autoContinue, setAutoContinue] = useState<boolean>(true);
   const [useWorktree, setUseWorktree] = useState<boolean>(false);
@@ -52,8 +57,11 @@ export const GoalSetupModal: React.FC<GoalSetupModalProps> = ({
       if (initialObjective) {
         setObjective(initialObjective);
       }
+      if (projectScripts?.testCommand) {
+        setVerifyCommand(projectScripts.testCommand);
+      }
     }
-  }, [isOpen, initialObjective]);
+  }, [isOpen, initialObjective, projectScripts]);
 
   if (!isOpen) return null;
 
