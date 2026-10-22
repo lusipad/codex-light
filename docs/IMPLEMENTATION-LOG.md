@@ -74,3 +74,37 @@
 
 ### 后续（批次 3）
 - `thread/goal/*` 真 Goal、`threadSection/*` 侧栏分组、`project/*` 项目实体、`plugin/*`+`marketplace/*` 插件市场、`thread/queue/*`、`windowsSandbox/*`、`hooks/list`、Apps、原生菜单/快捷键、自动化调度器。
+
+## Round 4 — 批次 3：真 Goal / 服务端队列 / 侧栏分区 / 项目实体 / 插件市场 / 沙箱
+
+### 目标（Goal）改为官方服务端驱动
+- 新增 `src/threadGoal.ts`：`thread/goal/get|set|clear` 封装、`/goal <objective>` 提示词约定、状态/用量格式化。
+- App：启动目标 = `thread/goal/set {objective,status:active}` + 首轮发送 `/goal <objective>`（服务端负责自主续跑）；暂停/恢复/清除全部走协议；`thread/goal/updated|cleared` 同步状态；切换会话时 `thread/goal/get` 回填。
+- 移除客户端自造的"轮次续跑/倒计时/伪造进度"逻辑；本地验证命令作为可选工具保留；目标完成触发提示音 + Inbox。
+
+### 服务端消息队列（thread/queue/*）
+- 新增队列同步：`thread/queue/list` 回填、`thread/queue/changed` 通知刷新、`thread/queue/start` 在 turn 结束后自动推进、`thread/queue/delete` 取消、steer 失败时 `thread/queue/add` 入服务端队列（本地队列仅兜底）。
+- Up next 栏改为「立即发送 / 引导到当前轮 / 取消」，均对应服务端队列操作。
+
+### 侧边栏自定义分区（threadSection/*）
+- 新增 `src/threadSections.ts`；CodexSidebar 新增「自定义分区」区：新建/重命名/删除分区（删除前把线程移出）、会话「移动到分区 / 移出分区」子菜单；协议不可用时整区隐藏不回归。
+
+### 项目实体（project/*）
+- 新增 `src/projects.ts`；ProjectsIndexView 改为真实项目列表：新建（名称 + 多根目录）/重命名/删除/上移下移/项目内新建聊天/展开项目会话；协议失败回退旧 workspace 视图。
+
+### 插件 / 市场 / Apps（plugin/*、marketplace/*、app/*、skills/*）
+- 新增 `src/plugins.ts`（25.7KB 协议层，含错误分类 forbidden/auth/network/timeout）。
+- SkillsMcpView 去硬编码：插件页用 `plugin/installed`（分组/详情/卸载）、浏览页 `plugin/list{marketplaceKinds:["local"]}`（139KB，一次缓存）、市场页 add/remove/upgrade、Apps 页 `app/list`（403 时降级 + `app/installed` 回退）、技能页 `skills/list` + `skills/config/write` 启停（本地读取兜底）。
+
+### Windows 沙箱（windowsSandbox/*）
+- 连接后 `windowsSandbox/readiness` 检测；未就绪显示可关闭横幅 +「安装沙箱」（`windowsSandbox/setupStart`），`windowsSandbox/setupCompleted` 后自动复检。
+
+### 验证
+- `npm run build` ✅（1,632 modules，CSS 114KB / JS 950KB）
+- 协议 shape 校验 **28/28 通过**（`.ref/scripts/verify-batch3-shapes.mjs`，隔离 CODEX_HOME）：goal set/get/pause/clear、queue add/list/delete、threadSection CRUD + move、project create/list/read/update/move/delete、plugin installed/list(local)、marketplace add 形状、skills/list、hooks/list、windowsSandbox/readiness、permissionProfile/list、app/list 403 优雅降级。
+- 队友额外验证：插件页对真实 app-server 的只读集成（installed 3 市场/18 插件、browse 77 项、skills 70 项、app/installed 9 项回退）+ 20 项纯函数单测 + SSR 冒烟。
+
+### 已知限制（记录）
+- 官方 `thread/start` 无 `projectId` 参数，`thread/metadata/update` 也不含项目字段 → 新建会话暂不能挂到项目实体（项目聊天数只统计已有的 `projectId`）。
+- 已分区会话同时仍出现在「最近」列表（官方行为差异），后续可加过滤开关。
+- `app/list` 在当前账号必 403（ChatGPT 连接器接口），已降级为提示 + 本地快照。

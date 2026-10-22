@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   FolderIcon,
   PlusIcon,
@@ -7,8 +7,18 @@ import {
   ChevronDownIcon,
   CloseIcon,
   NewChatComposeIcon,
+  RefreshIcon,
 } from "./Icons";
 import { ThreadSummary, WorkspaceRootItem } from "../types";
+import { tauriInvoke, tauriListen } from "../bridge";
+import {
+  Project,
+  createProject,
+  deleteProject,
+  listProjects,
+  moveProject,
+  updateProject,
+} from "../projects";
 
 export interface ProjectsIndexViewProps {
   workspaces: WorkspaceRootItem[];
@@ -23,11 +33,44 @@ export interface ProjectsIndexViewProps {
   onRevealPath?: (path: string) => void;
   onDeleteThread?: (thread: ThreadSummary, e: React.MouseEvent) => void;
   onRenameThread?: (threadId: string, newName: string) => void;
+
+  /* ── 以下均为可选新增 props（向后兼容，不传时行为不变） ── */
+  /** app-server 连接 / 父级数据刷新时递增此值，可触发重新拉取项目列表。 */
+  refreshToken?: number | string | null;
+  /** 项目增删改后通知父级刷新 threads / workspaces（可选）。 */
+  onProjectsChanged?: () => void;
+  /** 线程的项目归属变化（thread/project/updated）后通知父级刷新 threads（可选）。 */
+  onThreadsChanged?: () => void;
+  /** 轻量提示出口（可选；App 可直接传 showAppToast）。 */
+  onShowToast?: (
+    message: string,
+    type?: "info" | "success" | "error"
+  ) => void;
 }
+
+type ProjectLoadState = "loading" | "ready" | "unavailable";
 
 function normPath(p?: string | null): string {
   if (!p) return "";
   return p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+}
+
+function formatRelativeTime(unixSeconds?: number | null): string {
+  if (unixSeconds == null || !Number.isFinite(unixSeconds) || unixSeconds <= 0) {
+    return "未知";
+  }
+  // 兼容秒 / 毫秒时间戳
+  const ms = unixSeconds > 1e12 ? unixSeconds : unixSeconds * 1000;
+  const diff = Date.now() - ms;
+  if (diff < 0) return new Date(ms).toLocaleDateString();
+  const minute = 60 * 1000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+  if (diff < minute) return "刚刚";
+  if (diff < hour) return `${Math.floor(diff / minute)} 分钟前`;
+  if (diff < day) return `${Math.floor(diff / hour)} 小时前`;
+  if (diff < day * 30) return `${Math.floor(diff / day)} 天前`;
+  return new Date(ms).toLocaleDateString();
 }
 
 export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
@@ -43,9 +86,116 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
   onRevealPath,
   onDeleteThread,
   onRenameThread,
+  refreshToken,
+  onProjectsChanged,
+  onThreadsChanged,
+  onShowToast,
 }) => {
   const [search, setSearch] = useState("");
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+
+  /* ── 真实项目实体（project/*） ── */
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [loadState, setLoadState] = useState<ProjectLoadState>("loading");
+  const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
+  const [actionBusyId, setActionBusyId] = useState<string | null>(null);
+
+  /* ── 新建项目表单 ── */
+  const [creating, setCreating] = useState(false);
+  const [draftName, setDraftName] = useState("");
+  const [draftRoots, setDraftRoots] = useState<string[]>([]);
+  const [draftManualRoot, setDraftManualRoot] = useState("");
+  const [formBusy, setFormBusy] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  /* ── 回退 workspace 视图状态（协议不可用时使用） ── */
+  const [expandedWorkspaces, setExpandedWorkspaces] = useState<Record<string, boolean>>({});
+
+  const notify = useCallback(
+    (message: string, type: "info" | "success" | "error" = "info") => {
+      if (onShowToast) onShowToast(message, type);
+      else if (type === "error") console.warn(message);
+    },
+    [onShowToast]
+  );
+
+  const loadProjects = useCallback(async (): Promise<Project[] | null> => {
+    try {
+      const list = await listProjects();
+      setProjects(list);
+      setLoadState("ready");
+      return list;
+    } catch (e) {
+      // 协议不可用 / app-server 未连接：回退到原有 workspace 视图（不得白屏）
+      console.warn("project/list failed, falling back to workspace view:", e);
+      setProjects([]);
+      setLoadState("unavailable");
+      return null;
+    }
+  }, []);
+
+  // 挂载时 & refreshToken 变化时加载项目
+  useEffect(() => {
+    void loadProjects();
+  }, [loadProjects, refreshToken]);
+
+  // app-server 连接成功后重试（首次挂载时可能尚未连接）
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    tauriListen<{ connected?: boolean } | null>(
+      "app-server:status",
+      (status) => {
+        if (!disposed && status && status.connected) {
+          void loadProjects();
+        }
+      }
+    )
+      .then((fn) => {
+        if (disposed) fn();
+        else unlisten = fn;
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+      if (unlisten) unlisten();
+    };
+  }, [loadProjects]);
+
+  // 监听 project/changed、thread/project/updated，实时同步项目列表与会话归属
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    tauriListen<any>("app-server:notification", (payload) => {
+      if (disposed) return;
+      const method = payload?.method;
+      if (method === "project/changed" || method === "project/list") {
+        void loadProjects();
+        onProjectsChanged?.();
+      } else if (method === "thread/project/updated") {
+        onThreadsChanged?.();
+      }
+    })
+      .then((fn) => {
+        if (disposed) fn();
+        else unlisten = fn;
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+      if (unlisten) unlisten();
+    };
+  }, [loadProjects, onProjectsChanged, onThreadsChanged]);
+
+  /* ── 搜索过滤（项目 / workspace 两套视图共用输入） ── */
+  const filteredProjects = useMemo(() => {
+    if (!search.trim()) return projects;
+    const q = search.toLowerCase();
+    return projects.filter(
+      (project) =>
+        project.name.toLowerCase().includes(q) ||
+        project.roots.some((root) => root.path.toLowerCase().includes(q))
+    );
+  }, [projects, search]);
 
   const filteredWorkspaces = useMemo(() => {
     if (!search.trim()) return workspaces;
@@ -56,7 +206,20 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
     );
   }, [workspaces, search]);
 
-  const threadsByProject = useMemo(() => {
+  /* ── 按 projectId 统计会话 ── */
+  const threadsByProjectId = useMemo(() => {
+    const map: Record<string, ThreadSummary[]> = {};
+    for (const thread of threads) {
+      const projectId = thread.projectId;
+      if (!projectId) continue;
+      if (!map[projectId]) map[projectId] = [];
+      map[projectId].push(thread);
+    }
+    return map;
+  }, [threads]);
+
+  /* ── 回退视图：按 cwd 归组到 workspace（原有逻辑） ── */
+  const threadsByWorkspacePath = useMemo(() => {
     const map: Record<string, ThreadSummary[]> = {};
     for (const ws of workspaces) {
       map[normPath(ws.path)] = [];
@@ -75,6 +238,570 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
     return map;
   }, [workspaces, threads, workspaceHints]);
 
+  /* ── 新建项目操作 ── */
+  const resetCreateForm = () => {
+    setCreating(false);
+    setDraftName("");
+    setDraftRoots([]);
+    setDraftManualRoot("");
+    setFormError(null);
+    setFormBusy(false);
+  };
+
+  const handleOpenCreateForm = () => {
+    setCreating(true);
+    setFormError(null);
+  };
+
+  const addDraftRoot = (path: string) => {
+    const trimmed = path.trim();
+    if (!trimmed) return;
+    setDraftRoots((prev) => {
+      const key = normPath(trimmed);
+      if (prev.some((item) => normPath(item) === key)) return prev;
+      return [...prev, trimmed];
+    });
+    setFormError(null);
+  };
+
+  const handlePickRootFolder = async () => {
+    try {
+      const picked = await tauriInvoke<string | null>("pick_folder_dialog");
+      if (picked) addDraftRoot(picked);
+    } catch (e: any) {
+      setFormError(`选择文件夹失败：${e?.message || e}`);
+    }
+  };
+
+  const handleAddManualRoot = () => {
+    const value = draftManualRoot.trim();
+    if (!value) return;
+    addDraftRoot(value);
+    setDraftManualRoot("");
+  };
+
+  const handleRemoveDraftRoot = (path: string) => {
+    setDraftRoots((prev) => prev.filter((item) => item !== path));
+  };
+
+  const handleCreateProject = async () => {
+    const name = draftName.trim();
+    if (!name) {
+      setFormError("请输入项目名称");
+      return;
+    }
+    if (draftRoots.length === 0) {
+      setFormError("请至少添加一个项目根目录");
+      return;
+    }
+    setFormBusy(true);
+    setFormError(null);
+    try {
+      const created = await createProject(name, draftRoots);
+      resetCreateForm();
+      await loadProjects();
+      onProjectsChanged?.();
+      notify(
+        created?.name ? `已创建项目「${created.name}」` : "已创建项目",
+        "success"
+      );
+    } catch (e: any) {
+      setFormError(`创建项目失败：${e?.message || e}`);
+      setFormBusy(false);
+    }
+  };
+
+  /* ── 项目行操作 ── */
+  const handleToggleProject = (project: Project) => {
+    setExpandedProjects((prev) => ({
+      ...prev,
+      [project.id]: !prev[project.id],
+    }));
+    // 若项目根目录已注册为 workspace，同步左侧选中状态
+    const root = project.roots[0]?.path;
+    if (!root) return;
+    const matched = workspaces.find((ws) => normPath(ws.path) === normPath(root));
+    if (matched) onSelectWorkspace(matched.path);
+  };
+
+  const handleStartChatInProject = (project: Project) => {
+    const root = project.roots[0]?.path;
+    if (!root) {
+      notify("该项目没有根目录，无法新建聊天", "error");
+      return;
+    }
+    onStartNewChatInProject(root);
+  };
+
+  const handleRenameProject = async (project: Project) => {
+    const next = window.prompt(`重命名项目「${project.name}」`, project.name);
+    if (next == null) return;
+    const trimmed = next.trim();
+    if (!trimmed || trimmed === project.name) return;
+    setActionBusyId(project.id);
+    try {
+      const updated = await updateProject(project.id, { name: trimmed });
+      setProjects((prev) =>
+        prev.map((item) =>
+          item.id === project.id ? { ...item, name: updated.name || trimmed } : item
+        )
+      );
+      notify(`已重命名为「${updated.name || trimmed}」`, "success");
+      onProjectsChanged?.();
+    } catch (e: any) {
+      notify(`重命名项目失败：${e?.message || e}`, "error");
+    } finally {
+      setActionBusyId(null);
+    }
+  };
+
+  const handleDeleteProject = async (project: Project) => {
+    const confirmed = window.confirm(
+      `删除项目「${project.name}」？\n项目内的聊天不会被删除，只会解除项目关联。`
+    );
+    if (!confirmed) return;
+    setActionBusyId(project.id);
+    try {
+      await deleteProject(project.id);
+      setProjects((prev) => prev.filter((item) => item.id !== project.id));
+      onProjectsChanged?.();
+      onThreadsChanged?.();
+      notify(`已删除项目「${project.name}」`, "success");
+    } catch (e: any) {
+      notify(`删除项目失败：${e?.message || e}`, "error");
+      await loadProjects();
+    } finally {
+      setActionBusyId(null);
+    }
+  };
+
+  const handleMoveProject = async (project: Project, direction: "up" | "down") => {
+    const index = projects.findIndex((item) => item.id === project.id);
+    if (index < 0) return;
+    let beforeProjectId: string | null;
+    if (direction === "up") {
+      if (index === 0) return;
+      beforeProjectId = projects[index - 1].id;
+    } else {
+      if (index >= projects.length - 1) return;
+      beforeProjectId = projects[index + 2]?.id ?? null;
+    }
+    setActionBusyId(project.id);
+    try {
+      await moveProject(project.id, beforeProjectId);
+      await loadProjects();
+      onProjectsChanged?.();
+    } catch (e: any) {
+      notify(`移动项目失败：${e?.message || e}`, "error");
+    } finally {
+      setActionBusyId(null);
+    }
+  };
+
+  /* ── 回退视图渲染（原有 workspace 视图，保持原行为） ── */
+  const renderWorkspaceFallback = () => (
+    <>
+      <div
+        className="project-col-actions"
+        style={{
+          justifyContent: "flex-start",
+          padding: "8px 16px",
+          background: "rgba(245, 158, 11, 0.08)",
+          borderBottom: "1px solid var(--border-subtle)",
+          fontSize: 12.5,
+          color: "var(--text-secondary)",
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+        }}
+      >
+        <span>项目协议不可用，已回退到本地工作区视图。</span>
+        <button
+          type="button"
+          className="secondary-pill-action-btn"
+          onClick={() => {
+            setLoadState("loading");
+            void loadProjects();
+          }}
+        >
+          <RefreshIcon size={12} />
+          <span>重试</span>
+        </button>
+      </div>
+
+      <div className="projects-index-table">
+        <div className="projects-table-head">
+          <span>名称</span>
+          <span>本地路径</span>
+          <span>聊天数</span>
+          <span style={{ textAlign: "right" }}>项目操作</span>
+        </div>
+
+        {filteredWorkspaces.length === 0 ? (
+          <div className="route-empty-state">
+            <FolderIcon size={32} />
+            <h3>没有项目</h3>
+            <p>点击右上角“新建项目”添加本地代码仓库文件夹。</p>
+          </div>
+        ) : (
+          filteredWorkspaces.map((ws) => {
+            const key = normPath(ws.path);
+            const isExp = expandedWorkspaces[key] ?? normPath(activeWorkspace?.path) === key;
+            const projThreads = threadsByWorkspacePath[key] || [];
+            const isCurrent = normPath(activeWorkspace?.path) === key;
+
+            return (
+              <div key={ws.path} className="projects-table-group">
+                <div
+                  className={`projects-table-row ${isCurrent ? "active" : ""}`}
+                  onClick={() => {
+                    setExpandedWorkspaces((prev) => ({ ...prev, [key]: !isExp }));
+                    onSelectWorkspace(ws.path);
+                  }}
+                >
+                  <div className="project-col-name">
+                    {isExp ? (
+                      <ChevronDownIcon size={14} />
+                    ) : (
+                      <ChevronRightIcon size={14} />
+                    )}
+                    <FolderIcon size={16} />
+                    <span className="project-name-strong">{ws.label}</span>
+                    {ws.hasAgentsMd && (
+                      <span className="popover-badge recommended">AGENTS.md</span>
+                    )}
+                  </div>
+
+                  <div className="project-col-path" title={ws.path}>
+                    {ws.path}
+                  </div>
+
+                  <div className="project-col-count">
+                    {projThreads.length} 个聊天
+                  </div>
+
+                  <div
+                    className="project-col-actions"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {onRevealPath && (
+                      <button
+                        type="button"
+                        className="secondary-pill-action-btn"
+                        onClick={() => onRevealPath(ws.path)}
+                        title="在系统文件管理器中打开此文件夹"
+                      >
+                        📂 <span>打开目录</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="secondary-pill-action-btn"
+                      onClick={() => onStartNewChatInProject(ws.path)}
+                      title="在项目中开始新的本地聊天"
+                    >
+                      <NewChatComposeIcon size={13} />
+                      <span>新建聊天</span>
+                    </button>
+                    {workspaces.length > 1 && (
+                      <button
+                        type="button"
+                        className="icon-danger-btn"
+                        onClick={(e) => onRemoveWorkspace(ws.path, e)}
+                        title="移除项目"
+                      >
+                        <CloseIcon size={14} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {isExp && (
+                  <div className="project-expanded-threads">
+                    {projThreads.length === 0 ? (
+                      <div className="project-expanded-empty">暂无聊天</div>
+                    ) : (
+                      projThreads.map((t) => (
+                        <div
+                          key={t.id}
+                          className="project-expanded-thread-item"
+                          onClick={() => onSelectThread(t.id)}
+                        >
+                          <span>💬 {t.name || t.preview || "未命名聊天"}</span>
+                          <div
+                            className="project-thread-actions"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {onRenameThread && (
+                              <button
+                                type="button"
+                                className="thread-icon-btn"
+                                title="重命名聊天"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const next = prompt(
+                                    "请输入新聊天标题:",
+                                    t.name || t.preview || ""
+                                  );
+                                  if (next && next.trim()) {
+                                    onRenameThread(t.id, next.trim());
+                                  }
+                                }}
+                              >
+                                ✏️
+                              </button>
+                            )}
+                            {onDeleteThread && (
+                              <button
+                                type="button"
+                                className="thread-icon-btn danger"
+                                title="彻底删除此聊天"
+                                onClick={(e) => onDeleteThread(t, e)}
+                              >
+                                🗑️
+                              </button>
+                            )}
+                            <span
+                              className="thread-open-link"
+                              onClick={() => onSelectThread(t.id)}
+                            >
+                              打开聊天 →
+                            </span>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
+      </div>
+    </>
+  );
+
+  const renderProjectRows = () => {
+    if (loadState === "loading") {
+      return (
+        <div className="route-empty-state">
+          <FolderIcon size={32} />
+          <h3>正在加载项目…</h3>
+          <p>正在从 app-server 读取项目列表。</p>
+        </div>
+      );
+    }
+
+    if (filteredProjects.length === 0) {
+      return (
+        <div className="route-empty-state">
+          <FolderIcon size={32} />
+          <h3>{projects.length === 0 ? "还没有项目" : "没有匹配的项目"}</h3>
+          <p>
+            {projects.length === 0
+              ? "点击右上角“新建项目”，选择本地文件夹创建第一个项目。"
+              : "尝试更换搜索关键词。"}
+          </p>
+        </div>
+      );
+    }
+
+    return filteredProjects.map((project) => {
+      const isExpanded = !!expandedProjects[project.id];
+      const projectThreads = threadsByProjectId[project.id] || [];
+      const roots = project.roots;
+      const isBusy = actionBusyId === project.id;
+      const index = projects.findIndex((item) => item.id === project.id);
+
+      return (
+        <div className="projects-table-group" key={project.id}>
+          <div
+            className={`projects-table-row ${isExpanded ? "active" : ""}`}
+            onClick={() => handleToggleProject(project)}
+            title={project.name}
+          >
+            <div className="project-col-name">
+              {isExpanded ? (
+                <ChevronDownIcon size={14} />
+              ) : (
+                <ChevronRightIcon size={14} />
+              )}
+              <FolderIcon size={16} />
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  minWidth: 0,
+                  gap: 1,
+                }}
+              >
+                <span
+                  className="project-name-strong"
+                  style={{
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {project.name}
+                </span>
+                <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+                  更新于 {formatRelativeTime(project.updatedAt)}
+                </span>
+              </div>
+            </div>
+
+            <div
+              className="project-col-path"
+              title={roots.map((root) => root.path).join("\n")}
+            >
+              {roots.length === 0 ? (
+                <span style={{ color: "var(--text-tertiary)" }}>（无根目录）</span>
+              ) : (
+                <>
+                  {roots[0].path}
+                  {roots.length > 1 && (
+                    <span className="popover-badge" style={{ marginLeft: 6 }}>
+                      {roots.length} 个根目录
+                    </span>
+                  )}
+                </>
+              )}
+            </div>
+
+            <div className="project-col-count">
+              {projectThreads.length} 个聊天
+            </div>
+
+            <div
+              className="project-col-actions"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                className="thread-icon-btn"
+                title="在该项目中新建聊天（使用第一个根目录）"
+                disabled={isBusy}
+                onClick={() => handleStartChatInProject(project)}
+              >
+                <NewChatComposeIcon size={13} />
+              </button>
+              {onRevealPath && roots.length > 0 && (
+                <button
+                  type="button"
+                  className="thread-icon-btn"
+                  title="在系统文件管理器中打开第一个根目录"
+                  disabled={isBusy}
+                  onClick={() => onRevealPath(roots[0].path)}
+                >
+                  📂
+                </button>
+              )}
+              <button
+                type="button"
+                className="thread-icon-btn"
+                title="上移项目"
+                disabled={isBusy || index <= 0}
+                onClick={() => void handleMoveProject(project, "up")}
+              >
+                ↑
+              </button>
+              <button
+                type="button"
+                className="thread-icon-btn"
+                title="下移项目"
+                disabled={isBusy || index < 0 || index >= projects.length - 1}
+                onClick={() => void handleMoveProject(project, "down")}
+              >
+                ↓
+              </button>
+              <button
+                type="button"
+                className="thread-icon-btn"
+                title="重命名项目"
+                disabled={isBusy}
+                onClick={() => void handleRenameProject(project)}
+              >
+                ✏️
+              </button>
+              <button
+                type="button"
+                className="thread-icon-btn danger"
+                title="删除项目（聊天不会被删除）"
+                disabled={isBusy}
+                onClick={() => void handleDeleteProject(project)}
+              >
+                🗑️
+              </button>
+            </div>
+          </div>
+
+          {isExpanded && (
+            <div className="project-expanded-threads">
+              {projectThreads.length === 0 ? (
+                <div className="project-expanded-empty">
+                  暂无聊天（仅显示最近加载的 60 条会话中属于本项目的聊天）
+                </div>
+              ) : (
+                projectThreads.map((t) => (
+                  <div
+                    key={t.id}
+                    className="project-expanded-thread-item"
+                    onClick={() => onSelectThread(t.id)}
+                  >
+                    <span>💬 {t.name || t.preview || "未命名聊天"}</span>
+                    <div
+                      className="project-thread-actions"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {onRenameThread && (
+                        <button
+                          type="button"
+                          className="thread-icon-btn"
+                          title="重命名聊天"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const next = prompt(
+                              "请输入新聊天标题:",
+                              t.name || t.preview || ""
+                            );
+                            if (next && next.trim()) {
+                              onRenameThread(t.id, next.trim());
+                            }
+                          }}
+                        >
+                          ✏️
+                        </button>
+                      )}
+                      {onDeleteThread && (
+                        <button
+                          type="button"
+                          className="thread-icon-btn danger"
+                          title="彻底删除此聊天"
+                          onClick={(e) => onDeleteThread(t, e)}
+                        >
+                          🗑️
+                        </button>
+                      )}
+                      <span
+                        className="thread-open-link"
+                        onClick={() => onSelectThread(t.id)}
+                      >
+                        打开聊天 →
+                      </span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+      );
+    });
+  };
+
+  const isFallback = loadState === "unavailable";
+
   return (
     <div className="full-route-view">
       <div className="full-route-container">
@@ -88,7 +815,8 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
           <button
             type="button"
             className="primary-pill-action-btn"
-            onClick={onPickNewFolder}
+            onClick={isFallback ? onPickNewFolder : handleOpenCreateForm}
+            disabled={!isFallback && (creating || formBusy)}
           >
             <PlusIcon size={15} />
             <span>新建项目</span>
@@ -100,153 +828,161 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
           <SearchIcon size={15} />
           <input
             type="text"
-            placeholder="搜索项目名称或路径..."
+            placeholder={isFallback ? "搜索项目名称或路径..." : "搜索项目名称或根目录路径..."}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
 
-        {/* Projects Table */}
-        <div className="projects-index-table">
-          <div className="projects-table-head">
-            <span>名称</span>
-            <span>本地路径</span>
-            <span>聊天数</span>
-            <span style={{ textAlign: "right" }}>项目操作</span>
-          </div>
-
-          {filteredWorkspaces.length === 0 ? (
-            <div className="route-empty-state">
-              <FolderIcon size={32} />
-              <h3>没有项目</h3>
-              <p>点击右上角“新建项目”添加本地代码仓库文件夹。</p>
+        {/* 新建项目（真实 project/create） */}
+        {!isFallback && creating && (
+          <div className="card-section" style={{ marginBottom: 16 }}>
+            <h3>新建项目</h3>
+            <div className="form-grid-row">
+              <div className="form-field">
+                <label>项目名称</label>
+                <input
+                  type="text"
+                  value={draftName}
+                  placeholder="例如 my-project"
+                  autoFocus
+                  disabled={formBusy}
+                  onChange={(e) => setDraftName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void handleCreateProject();
+                    }
+                    if (e.key === "Escape") resetCreateForm();
+                  }}
+                />
+              </div>
+              <div className="form-field">
+                <label>根目录（首个为主目录）</label>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    type="button"
+                    className="secondary-pill-action-btn"
+                    style={{ flexShrink: 0 }}
+                    disabled={formBusy}
+                    onClick={() => void handlePickRootFolder()}
+                  >
+                    <FolderIcon size={13} />
+                    <span>选择文件夹</span>
+                  </button>
+                  <input
+                    type="text"
+                    style={{ flex: 1 }}
+                    value={draftManualRoot}
+                    placeholder="或手动输入绝对路径后回车"
+                    disabled={formBusy}
+                    onChange={(e) => setDraftManualRoot(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        handleAddManualRoot();
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="secondary-pill-action-btn"
+                    style={{ flexShrink: 0 }}
+                    disabled={formBusy || !draftManualRoot.trim()}
+                    onClick={handleAddManualRoot}
+                  >
+                    添加
+                  </button>
+                </div>
+              </div>
             </div>
-          ) : (
-            filteredWorkspaces.map((ws) => {
-              const key = normPath(ws.path);
-              const isExp = expanded[key] ?? normPath(activeWorkspace?.path) === key;
-              const projThreads = threadsByProject[key] || [];
-              const isCurrent = normPath(activeWorkspace?.path) === key;
 
-              return (
-                <div key={ws.path} className="projects-table-group">
+            {draftRoots.length === 0 ? (
+              <p className="card-subtitle-desc">
+                尚未添加根目录。项目至少需要一个本地文件夹（可多次选择以追加多个根目录）。
+              </p>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {draftRoots.map((root, index) => (
                   <div
-                    className={`projects-table-row ${isCurrent ? "active" : ""}`}
-                    onClick={() => {
-                      setExpanded((prev) => ({ ...prev, [key]: !isExp }));
-                      onSelectWorkspace(ws.path);
+                    key={root}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 10,
+                      background: "rgba(255, 255, 255, 0.03)",
+                      border: "1px solid var(--border-subtle)",
+                      borderRadius: 8,
+                      padding: "7px 10px",
+                      fontSize: 12.5,
                     }}
                   >
-                    <div className="project-col-name">
-                      {isExp ? (
-                        <ChevronDownIcon size={14} />
-                      ) : (
-                        <ChevronRightIcon size={14} />
-                      )}
-                      <FolderIcon size={16} />
-                      <span className="project-name-strong">{ws.label}</span>
-                      {ws.hasAgentsMd && (
-                        <span className="popover-badge recommended">AGENTS.md</span>
-                      )}
-                    </div>
-
-                    <div className="project-col-path" title={ws.path}>
-                      {ws.path}
-                    </div>
-
-                    <div className="project-col-count">
-                      {projThreads.length} 个聊天
-                    </div>
-
-                    <div
-                      className="project-col-actions"
-                      onClick={(e) => e.stopPropagation()}
+                    <span
+                      style={{
+                        fontFamily: "var(--font-mono)",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                      title={root}
                     >
-                      {onRevealPath && (
-                        <button
-                          type="button"
-                          className="secondary-pill-action-btn"
-                          onClick={() => onRevealPath(ws.path)}
-                          title="在系统文件管理器中打开此文件夹"
-                        >
-                          📂 <span>打开目录</span>
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        className="secondary-pill-action-btn"
-                        onClick={() => onStartNewChatInProject(ws.path)}
-                        title="在项目中开始新的本地聊天"
-                      >
-                        <NewChatComposeIcon size={13} />
-                        <span>新建聊天</span>
-                      </button>
-                      {workspaces.length > 1 && (
-                        <button
-                          type="button"
-                          className="icon-danger-btn"
-                          onClick={(e) => onRemoveWorkspace(ws.path, e)}
-                          title="移除项目"
-                        >
-                          <CloseIcon size={14} />
-                        </button>
-                      )}
-                    </div>
+                      {index === 0 ? "★ " : ""}
+                      {root}
+                    </span>
+                    <button
+                      type="button"
+                      className="icon-danger-btn"
+                      title="移除根目录"
+                      disabled={formBusy}
+                      onClick={() => handleRemoveDraftRoot(root)}
+                    >
+                      <CloseIcon size={13} />
+                    </button>
                   </div>
+                ))}
+              </div>
+            )}
 
-                  {isExp && (
-                    <div className="project-expanded-threads">
-                      {projThreads.length === 0 ? (
-                        <div className="project-expanded-empty">暂无聊天</div>
-                      ) : (
-                        projThreads.map((t) => (
-                          <div
-                            key={t.id}
-                            className="project-expanded-thread-item"
-                            onClick={() => onSelectThread(t.id)}
-                          >
-                            <span>💬 {t.name || t.preview || "未命名聊天"}</span>
-                            <div className="project-thread-actions" onClick={(e) => e.stopPropagation()}>
-                              {onRenameThread && (
-                                <button
-                                  type="button"
-                                  className="thread-icon-btn"
-                                  title="重命名聊天"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    const next = prompt("请输入新聊天标题:", t.name || t.preview || "");
-                                    if (next && next.trim()) {
-                                      onRenameThread(t.id, next.trim());
-                                    }
-                                  }}
-                                >
-                                  ✏️
-                                </button>
-                              )}
-                              {onDeleteThread && (
-                                <button
-                                  type="button"
-                                  className="thread-icon-btn danger"
-                                  title="彻底删除此聊天"
-                                  onClick={(e) => onDeleteThread(t, e)}
-                                >
-                                  🗑️
-                                </button>
-                              )}
-                              <span className="thread-open-link" onClick={() => onSelectThread(t.id)}>
-                                打开聊天 →
-                              </span>
-                            </div>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })
-          )}
-        </div>
+            {formError && (
+              <p style={{ color: "#fca5a5", fontSize: 12.5, margin: 0 }}>
+                {formError}
+              </p>
+            )}
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button
+                type="button"
+                className="secondary-pill-action-btn"
+                disabled={formBusy}
+                onClick={resetCreateForm}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="primary-pill-action-btn"
+                disabled={formBusy}
+                onClick={() => void handleCreateProject()}
+              >
+                {formBusy ? "创建中…" : "创建项目"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 列表：真实项目实体；协议失败时回退 workspace 视图 */}
+        {isFallback ? renderWorkspaceFallback() : (
+          <div className="projects-index-table">
+            <div className="projects-table-head">
+              <span>名称</span>
+              <span>根目录</span>
+              <span>聊天数</span>
+              <span style={{ textAlign: "right" }}>项目操作</span>
+            </div>
+            {renderProjectRows()}
+          </div>
+        )}
       </div>
     </div>
   );

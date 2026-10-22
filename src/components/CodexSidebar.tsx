@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDownIcon,
   ChevronRightIcon,
@@ -15,12 +15,22 @@ import {
   AutomationIcon,
   SkillIcon,
   FileCodeIcon,
+  EllipsisIcon,
 } from "./Icons";
 import {
   MainViewRoute,
   ThreadSummary,
   WorkspaceRootItem,
 } from "../types";
+import { tauriListen } from "../bridge";
+import {
+  ThreadSection,
+  createSection,
+  deleteSection,
+  listSections,
+  moveThreadToSection,
+  updateSection,
+} from "../threadSections";
 
 export interface CodexSidebarProps {
   collapsed: boolean;
@@ -46,11 +56,36 @@ export interface CodexSidebarProps {
   onRevealPath?: (path: string, e: React.MouseEvent) => void;
   onOpenAgentsMd: () => void;
   onOpenQuickSearch?: () => void;
+
+  /* ── 以下均为可选新增 props（向后兼容，不传时行为不变） ── */
+  /** app-server 连接 / 父级数据刷新时递增此值，可触发侧栏重新拉取分区。 */
+  refreshToken?: number | string | null;
+  /** 分区移动/删除等操作完成后通知父级刷新 threads（可选）。 */
+  onThreadsChanged?: () => void;
+  /** 轻量提示出口（可选；App 可直接传 showAppToast）。 */
+  onShowToast?: (
+    message: string,
+    type?: "info" | "success" | "error"
+  ) => void;
+}
+
+interface ThreadMenuState {
+  threadId: string;
+  x: number;
+  y: number;
 }
 
 function normPath(p?: string | null): string {
   if (!p) return "";
   return p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+}
+
+const EMPTY_SECTION_NAMES = new Set(["pinned", "置顶"]);
+
+function isBuiltinEmptySection(section: ThreadSection, count: number): boolean {
+  // 官方内置的 "Pinned" 分区与侧栏「置顶」区重复；为空时不渲染，
+  // 非空时照常渲染，避免丢失服务端已有分组数据。
+  return count === 0 && EMPTY_SECTION_NAMES.has(section.name.trim().toLowerCase());
 }
 
 export const CodexSidebar: React.FC<CodexSidebarProps> = ({
@@ -77,6 +112,9 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
   onRevealPath,
   onOpenAgentsMd,
   onOpenQuickSearch,
+  refreshToken,
+  onThreadsChanged,
+  onShowToast,
 }) => {
   const [showBrandMenu, setShowBrandMenu] = useState(false);
   const [showSearchInput, setShowSearchInput] = useState(false);
@@ -86,20 +124,112 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
   const [renamingThreadId, setRenamingThreadId] = useState<string | null>(null);
   const [renamingText, setRenamingText] = useState("");
 
-  if (collapsed) return null;
+  /* ── 自定义分区（threadSection/*） ── */
+  const [sections, setSections] = useState<ThreadSection[]>([]);
+  const [sectionsAvailable, setSectionsAvailable] = useState(false);
+  /** 本地乐观覆盖：threadId → sectionId（null 表示移出分区） */
+  const [sectionOverrides, setSectionOverrides] = useState<
+    Record<string, string | null>
+  >({});
+  const [sectionBusy, setSectionBusy] = useState(false);
+  const [showSectionCreator, setShowSectionCreator] = useState(false);
+  const [newSectionName, setNewSectionName] = useState("");
+  const [renamingSectionId, setRenamingSectionId] = useState<string | null>(null);
+  const [renamingSectionName, setRenamingSectionName] = useState("");
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
+  const sectionRenameBlurGuardRef = useRef(false);
 
-  const isProjectExpanded = (wsPath: string) => {
-    const key = normPath(wsPath);
-    if (key in expandedProjects) return expandedProjects[key];
-    return normPath(activeWorkspace?.path) === key;
-  };
+  /* ── 会话「移动到分区」菜单 ── */
+  const [threadMenu, setThreadMenu] = useState<ThreadMenuState | null>(null);
+  const [threadMenuMoveOpen, setThreadMenuMoveOpen] = useState(false);
 
-  const toggleProjectExpand = (wsPath: string) => {
-    const key = normPath(wsPath);
-    const current = isProjectExpanded(wsPath);
-    setExpandedProjects((prev) => ({ ...prev, [key]: !current }));
-    onSelectWorkspace(wsPath);
-  };
+  const notify = useCallback(
+    (message: string, type: "info" | "success" | "error" = "info") => {
+      if (onShowToast) {
+        onShowToast(message, type);
+      } else if (type === "error") {
+        console.warn(message);
+      }
+    },
+    [onShowToast]
+  );
+
+  const loadSections = useCallback(async () => {
+    try {
+      const list = await listSections();
+      setSections(list);
+      setSectionsAvailable(true);
+      // 清理指向已删除分区的本地覆盖
+      setSectionOverrides((prev) => {
+        const ids = new Set(list.map((s) => s.id));
+        let changed = false;
+        const next: Record<string, string | null> = { ...prev };
+        for (const threadId of Object.keys(next)) {
+          const sectionId = next[threadId];
+          if (sectionId && !ids.has(sectionId)) {
+            next[threadId] = null;
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    } catch (e) {
+      // 协议不可用 / app-server 未连接：静默隐藏自定义分区区，不影响原有列表
+      console.warn("threadSection/list failed, custom sections hidden:", e);
+      setSections([]);
+      setSectionsAvailable(false);
+    }
+  }, []);
+
+  // 挂载时 & refreshToken 变化时重新拉取分区
+  useEffect(() => {
+    void loadSections();
+  }, [loadSections, refreshToken]);
+
+  // app-server 连接成功后重试（首次挂载时可能尚未连接）
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    tauriListen<{ connected?: boolean } | null>(
+      "app-server:status",
+      (status) => {
+        if (!disposed && status && status.connected) {
+          void loadSections();
+        }
+      }
+    )
+      .then((fn) => {
+        if (disposed) fn();
+        else unlisten = fn;
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+      if (unlisten) unlisten();
+    };
+  }, [loadSections]);
+
+  // 「移动到分区」菜单：点击外部 / Esc / 滚动时关闭
+  useEffect(() => {
+    if (!threadMenu) return;
+    const close = () => {
+      setThreadMenu(null);
+      setThreadMenuMoveOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    window.addEventListener("click", close);
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [threadMenu]);
 
   const filteredThreads = useMemo(() => {
     if (!searchQuery.trim()) return threads;
@@ -150,6 +280,42 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
     });
   }, [filteredThreads, pinnedThreadIds, recentFilterMode, workspaces, workspaceHints]);
 
+  /** 会话当前所属分区（本地乐观覆盖优先于 props 的 section 字段）。 */
+  const sectionIdOfThread = useCallback(
+    (thread: ThreadSummary): string | null => {
+      if (Object.prototype.hasOwnProperty.call(sectionOverrides, thread.id)) {
+        return sectionOverrides[thread.id] ?? null;
+      }
+      return thread.section ?? null;
+    },
+    [sectionOverrides]
+  );
+
+  const threadsBySection = useMemo(() => {
+    const map: Record<string, ThreadSummary[]> = {};
+    for (const section of sections) map[section.id] = [];
+    for (const thread of filteredThreads) {
+      const sectionId = sectionIdOfThread(thread);
+      if (sectionId && map[sectionId]) map[sectionId].push(thread);
+    }
+    return map;
+  }, [filteredThreads, sections, sectionIdOfThread]);
+
+  if (collapsed) return null;
+
+  const isProjectExpanded = (wsPath: string) => {
+    const key = normPath(wsPath);
+    if (key in expandedProjects) return expandedProjects[key];
+    return normPath(activeWorkspace?.path) === key;
+  };
+
+  const toggleProjectExpand = (wsPath: string) => {
+    const key = normPath(wsPath);
+    const current = isProjectExpanded(wsPath);
+    setExpandedProjects((prev) => ({ ...prev, [key]: !current }));
+    onSelectWorkspace(wsPath);
+  };
+
   const startRename = (t: ThreadSummary, e: React.MouseEvent) => {
     e.stopPropagation();
     setRenamingThreadId(t.id);
@@ -163,9 +329,267 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
     setRenamingThreadId(null);
   };
 
+  /* ── 自定义分区操作 ── */
+
+  const cancelSectionCreator = () => {
+    setShowSectionCreator(false);
+    setNewSectionName("");
+  };
+
+  const handleCreateSection = async () => {
+    const name = newSectionName.trim();
+    if (!name || sectionBusy) return;
+    setSectionBusy(true);
+    try {
+      const created = await createSection(name);
+      setSections((prev) =>
+        prev.some((section) => section.id === created.id) ? prev : [...prev, created]
+      );
+      setShowSectionCreator(false);
+      setNewSectionName("");
+      notify(`已创建分区「${created.name}」`, "info");
+    } catch (e: any) {
+      notify(`创建分区失败：${e?.message || e}`, "error");
+    } finally {
+      setSectionBusy(false);
+    }
+  };
+
+  const startRenameSection = (section: ThreadSection, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setRenamingSectionId(section.id);
+    setRenamingSectionName(section.name);
+  };
+
+  const cancelRenameSection = () => {
+    setRenamingSectionId(null);
+    setRenamingSectionName("");
+  };
+
+  const commitRenameSection = async (section: ThreadSection) => {
+    const name = renamingSectionName.trim();
+    setRenamingSectionId(null);
+    setRenamingSectionName("");
+    if (!name || name === section.name) return;
+    try {
+      const updated = await updateSection(section.id, name);
+      setSections((prev) =>
+        prev.map((item) =>
+          item.id === section.id ? { ...item, name: updated.name || name } : item
+        )
+      );
+      notify(`已重命名分区「${updated.name || name}」`, "info");
+    } catch (e: any) {
+      notify(`重命名分区失败：${e?.message || e}`, "error");
+    }
+  };
+
+  const handleDeleteSection = async (section: ThreadSection) => {
+    if (sectionBusy) return;
+    const affected = threads.filter((t) => sectionIdOfThread(t) === section.id);
+    const confirmed = window.confirm(
+      `删除分区「${section.name}」？\n其中的 ${affected.length} 个聊天将移出该分区（不会删除聊天）。`
+    );
+    if (!confirmed) return;
+
+    setSectionBusy(true);
+    let moveFailures = 0;
+    for (const thread of affected) {
+      try {
+        await moveThreadToSection(thread.id, null);
+      } catch {
+        moveFailures += 1;
+      }
+    }
+    // 即使个别移动失败，也先在本地把线程归回未分组
+    setSectionOverrides((prev) => {
+      const next: Record<string, string | null> = { ...prev };
+      for (const thread of affected) next[thread.id] = null;
+      for (const threadId of Object.keys(next)) {
+        if (next[threadId] === section.id) next[threadId] = null;
+      }
+      return next;
+    });
+
+    try {
+      await deleteSection(section.id);
+      setSections((prev) => prev.filter((item) => item.id !== section.id));
+      onThreadsChanged?.();
+      if (moveFailures > 0) {
+        notify(
+          `已删除分区「${section.name}」，但有 ${moveFailures} 个聊天未能确认移出`,
+          "info"
+        );
+      } else {
+        notify(`已删除分区「${section.name}」`, "info");
+      }
+    } catch (e: any) {
+      notify(`删除分区失败：${e?.message || e}`, "error");
+      // 以服务端为准重新同步
+      await loadSections();
+    } finally {
+      setSectionBusy(false);
+    }
+  };
+
+  const handleMoveThreadToSection = async (
+    threadId: string,
+    sectionId: string | null
+  ) => {
+    setThreadMenu(null);
+    setThreadMenuMoveOpen(false);
+    try {
+      await moveThreadToSection(threadId, sectionId);
+      setSectionOverrides((prev) => ({ ...prev, [threadId]: sectionId }));
+      onThreadsChanged?.();
+      const targetName = sectionId
+        ? sections.find((section) => section.id === sectionId)?.name
+        : null;
+      notify(
+        targetName ? `已移动到分区「${targetName}」` : "已移出分区",
+        "info"
+      );
+    } catch (e: any) {
+      notify(`移动聊天到分区失败：${e?.message || e}`, "error");
+    }
+  };
+
+  const openThreadMenu = (
+    thread: ThreadSummary,
+    x: number,
+    y: number,
+    e?: React.MouseEvent
+  ) => {
+    if (e) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+    const menuWidth = 216;
+    const menuHeight = 320;
+    const left = Math.max(
+      8,
+      Math.min(x, Math.max(8, window.innerWidth - menuWidth - 8))
+    );
+    const top = Math.max(
+      8,
+      Math.min(y, Math.max(8, window.innerHeight - menuHeight))
+    );
+    setThreadMenu({ threadId: thread.id, x: left, y: top });
+    setThreadMenuMoveOpen(false);
+  };
+
+  const openThreadMenuFromButton = (
+    thread: ThreadSummary,
+    e: React.MouseEvent<HTMLButtonElement>
+  ) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    openThreadMenu(thread, rect.left, rect.bottom + 4, e);
+  };
+
+  const renderThreadMenu = () => {
+    if (!threadMenu) return null;
+    const thread = threads.find((t) => t.id === threadMenu.threadId);
+    if (!thread) return null;
+    const currentSectionId = sectionIdOfThread(thread);
+    const hasSections = sections.length > 0;
+
+    return (
+      <div
+        className="composer-popover-menu"
+        style={{
+          position: "fixed",
+          left: threadMenu.x,
+          top: threadMenu.y,
+          zIndex: 400,
+          minWidth: 208,
+          maxHeight: 340,
+          overflowY: "auto",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="popover-section-label">会话操作</div>
+        <div
+          className="popover-menu-item"
+          onClick={() => setThreadMenuMoveOpen((open) => !open)}
+        >
+          <span className="popover-item-title">
+            {threadMenuMoveOpen ? "移动到分区 ▾" : "移动到分区 ▸"}
+          </span>
+          {currentSectionId && (
+            <span className="popover-badge">
+              {sections.find((section) => section.id === currentSectionId)?.name ||
+                "已分区"}
+            </span>
+          )}
+        </div>
+
+        {threadMenuMoveOpen && (
+          <div style={{ paddingLeft: 4 }}>
+            {hasSections ? (
+              sections.map((section) => (
+                <div
+                  key={section.id}
+                  className={`popover-menu-item ${
+                    section.id === currentSectionId ? "selected" : ""
+                  }`}
+                  onClick={() =>
+                    void handleMoveThreadToSection(thread.id, section.id)
+                  }
+                >
+                  <span className="popover-item-title">📁 {section.name}</span>
+                  {section.id === currentSectionId && (
+                    <span className="popover-badge recommended">当前</span>
+                  )}
+                </div>
+              ))
+            ) : (
+              <div
+                className="popover-menu-item"
+                style={{ cursor: "default", opacity: 0.65 }}
+              >
+                <span className="popover-item-desc">还没有分区，请先新建分区</span>
+              </div>
+            )}
+            <div className="popover-divider" />
+            <div
+              className="popover-menu-item"
+              onClick={() => void handleMoveThreadToSection(thread.id, null)}
+            >
+              <span className="popover-item-title">↩️ 移出分区</span>
+            </div>
+          </div>
+        )}
+
+        <div className="popover-divider" />
+        <div
+          className="popover-menu-item"
+          onClick={() => {
+            setThreadMenu(null);
+            setThreadMenuMoveOpen(false);
+            onSelectThread(thread.id);
+          }}
+        >
+          <span className="popover-item-title">💬 打开聊天</span>
+        </div>
+        <div
+          className="popover-menu-item"
+          onClick={() => {
+            setThreadMenu(null);
+            setThreadMenuMoveOpen(false);
+            setRenamingThreadId(thread.id);
+            setRenamingText(thread.name || thread.preview || "未命名聊天");
+          }}
+        >
+          <span className="popover-item-title">✏️ 重命名聊天</span>
+        </div>
+      </div>
+    );
+  };
+
   const renderThreadRow = (t: ThreadSummary, indented = false) => {
     const isActive = activeRoute === "thread" && activeThreadId === t.id;
     const isPinned = pinnedThreadIds.includes(t.id);
+    const currentSectionId = sectionIdOfThread(t);
     return (
       <div
         key={t.id}
@@ -173,6 +597,20 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
           indented ? "indented" : ""
         }`}
         onClick={() => onSelectThread(t.id)}
+        onContextMenu={(e) => {
+          if (!sectionsAvailable) return;
+          e.preventDefault();
+          e.stopPropagation();
+          openThreadMenu(t, e.clientX, e.clientY);
+        }}
+        title={
+          currentSectionId
+            ? `分区：${
+                sections.find((section) => section.id === currentSectionId)?.name ||
+                "自定义"
+              }`
+            : undefined
+        }
       >
         <div className="sidebar-thread-left">
           {renamingThreadId === t.id ? (
@@ -195,6 +633,16 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
           )}
         </div>
         <div className="sidebar-thread-actions">
+          {sectionsAvailable && (
+            <button
+              type="button"
+              className="thread-icon-btn"
+              title="移动到分区"
+              onClick={(e) => openThreadMenuFromButton(t, e)}
+            >
+              <EllipsisIcon size={12} />
+            </button>
+          )}
           <button
             type="button"
             className="thread-icon-btn"
@@ -401,7 +849,7 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
         </button>
       </div>
 
-      {/* ── 3. Three-Section Tree: 置顶 / 项目 / 最近 (Matches ref-1-home.png) ── */}
+      {/* ── 3. Tree: 置顶 / 自定义分区 / 项目 / 最近 ── */}
       <div className="sidebar-threads-scroll">
         {/* Section A: 置顶 (Pinned) */}
         <div className="sidebar-section-header-row">
@@ -411,6 +859,200 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
           <div className="sidebar-section-list">
             {pinnedThreads.map((t) => renderThreadRow(t, false))}
           </div>
+        )}
+
+        {/* Section A2: 自定义分区 (threadSection/*) —— 协议不可用时整块隐藏 */}
+        {sectionsAvailable && (
+          <>
+            <div className="sidebar-section-header-row" style={{ marginTop: 10 }}>
+              <span className="sidebar-section-label">自定义分区</span>
+              <div className="sidebar-section-tools">
+                <button
+                  type="button"
+                  className="sidebar-mini-tool-btn"
+                  title="新建分区"
+                  disabled={sectionBusy}
+                  onClick={() => {
+                    setShowSectionCreator(true);
+                    setNewSectionName("");
+                    setRenamingSectionId(null);
+                  }}
+                >
+                  <PlusIcon size={13} />
+                </button>
+              </div>
+            </div>
+
+            {showSectionCreator && (
+              <div
+                className="sidebar-project-row"
+                style={{ cursor: "default", gap: 6 }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <input
+                  type="text"
+                  className="sidebar-thread-rename-input"
+                  placeholder="分区名称"
+                  value={newSectionName}
+                  autoFocus
+                  disabled={sectionBusy}
+                  onChange={(e) => setNewSectionName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void handleCreateSection();
+                    }
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      cancelSectionCreator();
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  className="sidebar-mini-tool-btn"
+                  title="创建分区"
+                  disabled={sectionBusy || !newSectionName.trim()}
+                  onClick={() => void handleCreateSection()}
+                >
+                  ✓
+                </button>
+                <button
+                  type="button"
+                  className="sidebar-mini-tool-btn"
+                  title="取消"
+                  disabled={sectionBusy}
+                  onClick={cancelSectionCreator}
+                >
+                  <CloseIcon size={11} />
+                </button>
+              </div>
+            )}
+
+            <div className="sidebar-projects-tree">
+              {sections.map((section) => {
+                const sectionThreads = threadsBySection[section.id] || [];
+                const count = sectionThreads.length;
+                if (isBuiltinEmptySection(section, count)) return null;
+                const isCollapsed = !!collapsedSections[section.id];
+                const isRenaming = renamingSectionId === section.id;
+                return (
+                  <div className="sidebar-project-group" key={section.id}>
+                    <div
+                      className="sidebar-project-row"
+                      title={section.name}
+                      onClick={() => {
+                        if (isRenaming) return;
+                        setCollapsedSections((prev) => ({
+                          ...prev,
+                          [section.id]: !isCollapsed,
+                        }));
+                      }}
+                    >
+                      <div className="sidebar-project-left">
+                        <span className="project-folder-icon">
+                          {isCollapsed ? (
+                            <ChevronRightIcon size={13} />
+                          ) : (
+                            <ChevronDownIcon size={13} />
+                          )}
+                        </span>
+                        {isRenaming ? (
+                          <input
+                            type="text"
+                            className="sidebar-thread-rename-input"
+                            value={renamingSectionName}
+                            autoFocus
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => setRenamingSectionName(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                sectionRenameBlurGuardRef.current = true;
+                                void commitRenameSection(section);
+                              }
+                              if (e.key === "Escape") {
+                                e.preventDefault();
+                                cancelRenameSection();
+                              }
+                            }}
+                            onBlur={() => {
+                              if (sectionRenameBlurGuardRef.current) {
+                                sectionRenameBlurGuardRef.current = false;
+                                return;
+                              }
+                              void commitRenameSection(section);
+                            }}
+                          />
+                        ) : (
+                          <>
+                            <span className="sidebar-project-name">
+                              {section.name}
+                            </span>
+                            <span
+                              style={{
+                                fontSize: 11,
+                                color: "var(--text-tertiary)",
+                                flexShrink: 0,
+                              }}
+                            >
+                              {count}
+                            </span>
+                          </>
+                        )}
+                      </div>
+
+                      <div
+                        className="sidebar-project-actions"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <button
+                          type="button"
+                          className="thread-icon-btn"
+                          title="新建分区"
+                          disabled={sectionBusy}
+                          onClick={() => {
+                            setShowSectionCreator(true);
+                            setNewSectionName("");
+                            setRenamingSectionId(null);
+                          }}
+                        >
+                          <PlusIcon size={12} />
+                        </button>
+                        <button
+                          type="button"
+                          className="thread-icon-btn"
+                          title="重命名分区"
+                          onClick={(e) => startRenameSection(section, e)}
+                        >
+                          ✏️
+                        </button>
+                        <button
+                          type="button"
+                          className="thread-icon-btn danger"
+                          title="删除分区（聊天会移出分区）"
+                          disabled={sectionBusy}
+                          onClick={() => void handleDeleteSection(section)}
+                        >
+                          🗑️
+                        </button>
+                      </div>
+                    </div>
+
+                    {!isCollapsed && (
+                      <div className="sidebar-project-children">
+                        {count === 0 ? (
+                          <div className="sidebar-project-empty">暂无聊天</div>
+                        ) : (
+                          sectionThreads.map((t) => renderThreadRow(t, true))
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </>
         )}
 
         {/* Section B: 项目 (Projects Tree) */}
@@ -566,6 +1208,9 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
           <span>设置</span>
         </button>
       </div>
+
+      {/* ── 5. 会话「移动到分区」浮动菜单 ── */}
+      {renderThreadMenu()}
     </aside>
   );
 };

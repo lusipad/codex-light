@@ -71,6 +71,14 @@ import {
   mergeRateLimits,
   NOTIFICATION,
 } from "./protocol";
+import {
+  ThreadGoal,
+  goalGet,
+  goalSet,
+  goalClear,
+  buildGoalPrompt,
+  goalStatusLabel,
+} from "./threadGoal";
 
 const STARTER_PROMPTS = [
   {
@@ -320,6 +328,10 @@ export const App: React.FC = () => {
   const [reviewBusy, setReviewBusy] = useState(false);
   const [reviewLastResult, setReviewLastResult] = useState<string | null>(null);
 
+  // Windows sandbox readiness（windowsSandbox/*）
+  const [sandboxNotice, setSandboxNotice] = useState<string | null>(null);
+  const [sandboxSettingUp, setSandboxSettingUp] = useState(false);
+
   // Threads, Pinned, Hints & Conversation State
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [pinnedThreadIds, setPinnedThreadIds] = useState<string[]>([]);
@@ -432,10 +444,14 @@ export const App: React.FC = () => {
   const [activeGoal, setActiveGoal] = useState<ActiveGoalSession | null>(null);
   const [showGoalModal, setShowGoalModal] = useState<boolean>(false);
   const [goalCountdown, setGoalCountdown] = useState<number | null>(null);
+  const [serverGoal, setServerGoal] = useState<ThreadGoal | null>(null);
   const activeGoalRef = useRef<ActiveGoalSession | null>(null);
   activeGoalRef.current = activeGoal;
+  const serverGoalRef = useRef<ThreadGoal | null>(null);
+  serverGoalRef.current = serverGoal;
   const countdownTimerRef = useRef<any>(null);
   const handleGoalTurnFinishedRef = useRef<((g: ActiveGoalSession) => Promise<void>) | null>(null);
+  const handleLaunchGoalRef = useRef<((config: GoalSetupConfig) => Promise<void>) | null>(null);
 
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const timelineScrollRef = useRef<HTMLDivElement | null>(null);
@@ -1014,6 +1030,35 @@ export const App: React.FC = () => {
               });
             }
           }
+        } else if (method === NOTIFICATION.WINDOWS_SANDBOX_SETUP_COMPLETED) {
+          callAppServer<any>("windowsSandbox/readiness", {})
+            .then((res) => {
+              if (res?.status === "ready") {
+                setSandboxNotice(null);
+                showAppToast("✓ Windows 沙箱已就绪", "success");
+              }
+            })
+            .catch(() => {});
+        } else if (method === NOTIFICATION.THREAD_QUEUE_CHANGED) {
+          const tid = params?.threadId;
+          if (!tid || tid === activeThreadIdRef.current) {
+            refreshThreadQueue(tid ?? undefined);
+          }
+        } else if (method === NOTIFICATION.THREAD_GOAL_UPDATED) {
+          const goal = params?.goal as ThreadGoal | undefined;
+          if (goal) {
+            if (!goal.threadId || goal.threadId === activeThreadIdRef.current) {
+              syncGoalFromServer(goal);
+              if (goal.status === "complete") {
+                playNotificationChime("done");
+              }
+            }
+          }
+        } else if (method === NOTIFICATION.THREAD_GOAL_CLEARED) {
+          const tid = params?.threadId;
+          if (!tid || tid === activeThreadIdRef.current) {
+            syncGoalFromServer(null);
+          }
         } else if (method === NOTIFICATION.ACCOUNT_RATE_LIMITS) {
           setRateLimits((prev: any) => mergeRateLimits(prev, params));
         } else if (method === NOTIFICATION.ACCOUNT_UPDATED) {
@@ -1163,6 +1208,26 @@ export const App: React.FC = () => {
       }
     };
   }, [activeWorkspace?.path, appServerStatus.connected]);
+
+  // Windows 沙箱就绪检测（windowsSandbox/readiness）
+  useEffect(() => {
+    if (!appServerStatus.connected) return;
+    let cancelled = false;
+    callAppServer<any>("windowsSandbox/readiness", {})
+      .then((res) => {
+        if (cancelled) return;
+        const status = res?.status;
+        if (status && status !== "ready" && status !== "notRequired") {
+          setSandboxNotice(String(status));
+        } else {
+          setSandboxNotice(null);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [appServerStatus.connected]);
 
   // Inbox 持久化（desktop_state）+ 变更回写
   const inboxHydratedRef = useRef(false);
@@ -1385,6 +1450,15 @@ export const App: React.FC = () => {
     } catch (e) {
       console.warn("Failed to read/resume thread:", e);
     }
+    // 同步服务端 thread goal（若存在）
+    try {
+      const goal = await goalGet(threadId);
+      if (threadId === activeThreadIdRef.current) {
+        setServerGoal(goal);
+      }
+    } catch {
+      // ignore goal read failures
+    }
   }, []);
 
   // Fork / Revert / Compact — official thread lifecycle via app-server
@@ -1566,44 +1640,26 @@ export const App: React.FC = () => {
     const rawText = (typeof overrideText === "string" ? overrideText : promptInput).trim();
     if (!rawText && attachedFiles.length === 0) return;
 
-    // Direct /goal command detection
+    // Direct /goal command detection (官方 goal 走 thread/goal/* 协议)
     if (rawText === "/goal") {
       setShowGoalModal(true);
       setPromptInput("");
       return;
     }
 
-    let effectiveRawText = rawText;
-    if (rawText.startsWith("/goal ")) {
-      const goalObj = rawText.slice(6).trim();
-      if (goalObj) {
-        const newGoal: ActiveGoalSession = {
-          id: `goal-${Date.now()}`,
-          threadId: activeThreadId || "",
-          objective: goalObj,
-          status: "running",
-          currentTurn: 1,
-          maxTurns: 10,
-          autoVerifyCommand: "npm test",
-          verificationStatus: "idle",
-          steps: [],
+    const effectiveRawText = rawText;
+    if (rawText.startsWith("/goal ") && handleLaunchGoalRef.current) {
+      const goalObjective = rawText.slice(6).trim();
+      if (goalObjective) {
+        setPromptInput("");
+        await handleLaunchGoalRef.current({
+          objective: goalObjective,
+          maxTurns: 0,
+          autoVerifyCommand: "",
           autoContinue: true,
-          countdownRemaining: null,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        };
-        setActiveGoal(newGoal);
-
-        effectiveRawText = `[🎯 /goal 自主目标模式启动]
-目标：${goalObj}
-最大自主轮次：10 轮
-验证命令：npm test
-
-执行指引：
-1. 请先在回复开头梳理任务分解清单，以 Markdown 任务列表格式（- [ ] 步骤说明）列出所有需完成的关键步骤。
-2. 逐一自主推进并实施这些步骤，每完成一步请将其标记为 - [x]。
-3. 检查代码改动并确保实现正确。
-4. 当全部目标步骤完成且验证无误时，请在最终回复末尾明确输出 [GOAL_COMPLETED]。`;
+          useWorktree: false,
+        });
+        return;
       }
     }
 
@@ -1757,7 +1813,56 @@ export const App: React.FC = () => {
     refreshThreads,
   ]);
 
-  // Autonomous Goal Engine Methods
+  // ── Thread Goal（官方 thread/goal/*，服务端驱动自主推进）──
+  const syncGoalFromServer = useCallback((goal: ThreadGoal | null) => {
+    setServerGoal(goal);
+    setActiveGoal((prev) => {
+      if (!goal) return null;
+      const statusMap: Record<string, ActiveGoalSession["status"]> = {
+        active: "running",
+        paused: "paused",
+        complete: "completed",
+      };
+      const viewStatus = statusMap[goal.status] ?? "paused";
+      return {
+        id: `goal-${goal.threadId}`,
+        threadId: goal.threadId,
+        objective: goal.objective,
+        status: viewStatus,
+        currentTurn: prev?.currentTurn ?? 1,
+        maxTurns: 0,
+        autoVerifyCommand: prev?.autoVerifyCommand ?? "",
+        verificationStatus: prev?.verificationStatus ?? "idle",
+        verificationOutput: prev?.verificationOutput,
+        steps: prev?.steps ?? [],
+        autoContinue: true,
+        countdownRemaining: null,
+        createdAt: goal.createdAt * 1000,
+        updatedAt: goal.updatedAt * 1000,
+      };
+    });
+  }, []);
+
+  const refreshThreadGoal = useCallback(
+    async (threadId?: string | null) => {
+      const tid = threadId ?? activeThreadIdRef.current;
+      if (!tid) {
+        syncGoalFromServer(null);
+        return null;
+      }
+      try {
+        const goal = await goalGet(tid);
+        if (tid === activeThreadIdRef.current) syncGoalFromServer(goal);
+        return goal;
+      } catch (e) {
+        console.warn("thread/goal/get failed:", e);
+        return null;
+      }
+    },
+    [syncGoalFromServer]
+  );
+
+  // 本地验证命令（服务端 goal 协议不含 verify 字段，保留为可选本地工具）
   const runGoalVerification = useCallback(
     async (goalToVerify?: ActiveGoalSession) => {
       const g = goalToVerify || activeGoalRef.current;
@@ -1805,72 +1910,36 @@ export const App: React.FC = () => {
     [activeWorkspace?.path]
   );
 
+  /** 继续推进：官方约定发送 `/goal <objective>` 作为续跑提示 */
   const triggerNextGoalTurn = useCallback(() => {
-    if (countdownTimerRef.current) {
-      clearInterval(countdownTimerRef.current);
-      countdownTimerRef.current = null;
-    }
-    setGoalCountdown(null);
-
-    const g = activeGoalRef.current;
-    if (!g || g.status !== "running") return;
-
-    const nextTurnNum = g.currentTurn + 1;
-    setActiveGoal((prev) => (prev ? { ...prev, currentTurn: nextTurnNum } : null));
-
-    const uncompletedSteps = g.steps.filter((s) => s.status !== "completed");
-    const stepsReminder =
-      uncompletedSteps.length > 0
-        ? `\n剩余待办清单：\n${uncompletedSteps.map((s) => `- [ ] ${s.title}`).join("\n")}`
-        : "";
-    const verifyReminder =
-      g.verificationStatus === "failed"
-        ? `\n⚠️ 上一轮运行验证命令 (${g.autoVerifyCommand}) 未通过，请仔细查看报错并修复。`
-        : "";
-
-    const nextPrompt = `[Goal 自主推进 轮次 ${nextTurnNum}/${g.maxTurns}]
-当前总目标：${g.objective}
-${verifyReminder}
-${stepsReminder}
-请继续分析并执行改动。每完成一项请将其标记为 - [x]。所有步骤全部完成且验证通过后，请在回复末尾输出 [GOAL_COMPLETED]。`;
-
-    handleSendMessage(nextPrompt);
+    const objective =
+      serverGoalRef.current?.objective || activeGoalRef.current?.objective || "";
+    if (!objective.trim()) return;
+    void handleSendMessage(buildGoalPrompt(objective));
   }, [handleSendMessage]);
 
   const handleGoalTurnFinished = useCallback(
     async (currentGoal: ActiveGoalSession) => {
-      // Find latest assistant text
+      // 服务端负责自主续跑；客户端只同步展示（步骤解析 + 服务端状态回读）
       const lastAssistantTurn = [...turns]
         .reverse()
         .find((t) => t.items.some((i) => i.type === "agentMessage"));
       const lastText = lastAssistantTurn
         ? lastAssistantTurn.items.map(extractTextFromItem).join("\n")
         : "";
-
-      // Parse checklist steps from the latest assistant message
       const parsedSteps = extractChecklistFromText(lastText);
       if (parsedSteps.length > 0) {
         setActiveGoal((prev) => (prev ? { ...prev, steps: parsedSteps } : null));
       }
 
-      const hasGoalCompletedToken = lastText.includes("[GOAL_COMPLETED]");
-      const allStepsDone =
-        parsedSteps.length > 0 && parsedSteps.every((s) => s.status === "completed");
-
-      // Run verification if configured
-      let verifyPassed = true;
-      if (currentGoal.autoVerifyCommand) {
-        verifyPassed = await runGoalVerification(currentGoal);
-      }
-
-      if ((hasGoalCompletedToken || allStepsDone) && verifyPassed) {
-        setActiveGoal((prev) => (prev ? { ...prev, status: "completed" } : null));
+      const refreshed = await refreshThreadGoal();
+      if (refreshed?.status === "complete") {
         playNotificationChime("done");
         setInboxItems((prev) => [
           {
             id: `goal-done-${Date.now()}`,
-            title: "🎯 目标已成功达成！",
-            subtitle: currentGoal.objective,
+            title: "🎯 目标已完成",
+            subtitle: refreshed.objective || currentGoal.objective,
             kind: "goal",
             threadId: activeThreadId || undefined,
             createdAt: Date.now(),
@@ -1878,38 +1947,10 @@ ${stepsReminder}
           },
           ...prev,
         ]);
-      } else if (currentGoal.currentTurn >= currentGoal.maxTurns) {
-        setActiveGoal((prev) => (prev ? { ...prev, status: "paused" } : null));
-        setInboxItems((prev) => [
-          {
-            id: `goal-max-${Date.now()}`,
-            title: "🎯 目标已达最大轮次限制 (已暂停)",
-            subtitle: `已执行 ${currentGoal.maxTurns} 轮: ${currentGoal.objective}`,
-            kind: "goal",
-            threadId: activeThreadId || undefined,
-            createdAt: Date.now(),
-            read: false,
-          },
-          ...prev,
-        ]);
-      } else if (currentGoal.autoContinue) {
-        let count = 3;
-        setGoalCountdown(count);
-        if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
-        countdownTimerRef.current = setInterval(() => {
-          count -= 1;
-          if (count <= 0) {
-            clearInterval(countdownTimerRef.current);
-            countdownTimerRef.current = null;
-            setGoalCountdown(null);
-            triggerNextGoalTurn();
-          } else {
-            setGoalCountdown(count);
-          }
-        }, 1000);
+        setServerGoal(null);
       }
     },
-    [turns, runGoalVerification, activeThreadId, triggerNextGoalTurn]
+    [turns, refreshThreadGoal, activeThreadId]
   );
 
   useEffect(() => {
@@ -1918,42 +1959,100 @@ ${stepsReminder}
 
   const handleLaunchGoal = useCallback(
     async (config: GoalSetupConfig) => {
-      const newGoal: ActiveGoalSession = {
-        id: `goal-${Date.now()}`,
-        threadId: activeThreadId || "",
-        objective: config.objective,
-        status: "running",
-        currentTurn: 1,
-        maxTurns: config.maxTurns,
-        autoVerifyCommand: config.autoVerifyCommand,
-        verificationStatus: "idle",
-        steps: [],
-        autoContinue: config.autoContinue,
-        countdownRemaining: null,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      };
-      setActiveGoal(newGoal);
-
-      if (config.useWorktree) {
-        setUseWorktree(true);
+      const objective = config.objective.trim();
+      if (!objective) return;
+      if (config.useWorktree) setUseWorktree(true);
+      try {
+        let threadId = activeThreadIdRef.current;
+        if (!threadId) {
+          const startRes = await callAppServer<any>("thread/start", {
+            cwd: activeWorkspace?.path || undefined,
+            model: selectedModelId,
+            approvalPolicy: permissionMode === "full" ? "never" : "on-request",
+            approvalsReviewer: permissionMode === "auto" ? "auto_review" : "user",
+            sandbox:
+              permissionMode === "full" ? "danger-full-access" : "workspace-write",
+          });
+          threadId = startRes?.threadId || startRes?.thread?.id || null;
+          if (!threadId) throw new Error("无法为目标创建会话");
+          setActiveThreadId(threadId);
+          setActiveRoute("thread");
+          refreshThreads();
+        }
+        const goal = await goalSet(threadId, { objective, status: "active" });
+        syncGoalFromServer(goal ?? (await goalGet(threadId)));
+        setShowGoalModal(false);
+        await handleSendMessage(buildGoalPrompt(objective));
+        showAppToast("🎯 已启动服务端自主目标", "success");
+      } catch (e: any) {
+        showAppToast(`启动目标失败：${e?.message || e}`, "error");
       }
-
-      const formattedPrompt = `[🎯 /goal 自主目标模式启动]
-目标：${config.objective}
-最大自主轮次：${config.maxTurns} 轮
-${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验证机制：模型自主分析与标记"}
-
-执行指引：
-1. 请先在回复开头梳理任务分解清单，以 Markdown 任务列表格式（- [ ] 步骤说明）列出所有需完成的关键步骤。
-2. 自主推进并实施这些步骤，每完成一步请将其标记为 - [x]。
-3. 检查代码改动并确保实现正确。
-4. 当全部目标步骤完成且验证无误时，请在最终回复末尾明确输出 [GOAL_COMPLETED]。`;
-
-      await handleSendMessage(formattedPrompt);
     },
-    [activeThreadId, handleSendMessage]
+    [
+      activeWorkspace?.path,
+      selectedModelId,
+      permissionMode,
+      refreshThreads,
+      syncGoalFromServer,
+      handleSendMessage,
+      showAppToast,
+    ]
   );
+
+  useEffect(() => {
+    handleLaunchGoalRef.current = handleLaunchGoal;
+  }, [handleLaunchGoal]);
+
+  const handleGoalPause = useCallback(async () => {
+    const tid = activeThreadIdRef.current;
+    if (!tid) return;
+    try {
+      const goal = await goalSet(tid, { status: "paused" });
+      syncGoalFromServer(goal);
+      showAppToast("目标已暂停", "info");
+    } catch (e: any) {
+      showAppToast(`暂停目标失败：${e?.message || e}`, "error");
+    }
+  }, [syncGoalFromServer, showAppToast]);
+
+  const handleGoalResume = useCallback(async () => {
+    const tid = activeThreadIdRef.current;
+    if (!tid) return;
+    try {
+      const goal = await goalSet(tid, { status: "active" });
+      syncGoalFromServer(goal);
+      const objective = goal?.objective || activeGoalRef.current?.objective || "";
+      if (objective) await handleSendMessage(buildGoalPrompt(objective));
+      showAppToast("目标已恢复", "success");
+    } catch (e: any) {
+      showAppToast(`恢复目标失败：${e?.message || e}`, "error");
+    }
+  }, [syncGoalFromServer, handleSendMessage, showAppToast]);
+
+  const handleGoalAbort = useCallback(async () => {
+    const tid = activeThreadIdRef.current;
+    try {
+      if (tid) await goalClear(tid);
+    } catch (e) {
+      console.warn("thread/goal/clear failed:", e);
+    }
+    syncGoalFromServer(null);
+    setServerGoal(null);
+    setGoalCountdown(null);
+    showAppToast("目标已清除", "info");
+  }, [syncGoalFromServer, showAppToast]);
+
+  const handleSetupWindowsSandbox = useCallback(async () => {
+    setSandboxSettingUp(true);
+    try {
+      await callAppServer("windowsSandbox/setupStart", {});
+      showAppToast("已开始安装 Windows 沙箱，完成后会自动提示", "info");
+    } catch (e: any) {
+      showAppToast(`启动沙箱安装失败：${e?.message || e}`, "error");
+    } finally {
+      setSandboxSettingUp(false);
+    }
+  }, [showAppToast]);
 
   const handleInterruptTurn = useCallback(async () => {
     if (!activeThreadId) {
@@ -1997,16 +2096,26 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
           },
         ]);
       } catch (e) {
-        console.warn("turn/steer failed, falling back to queue:", e);
-        setFollowupQueue((prev) => [
-          ...prev,
-          {
-            id: `q-${Date.now()}`,
-            text: text.trim(),
-            mode: "queue",
-            createdAt: Date.now(),
-          },
-        ]);
+        console.warn("turn/steer failed, falling back to server queue:", e);
+        try {
+          await callAppServer("thread/queue/add", {
+            threadId: activeThreadId,
+            clientUserMessageId: `ctn-${Date.now()}`,
+            input: [{ type: "text", text: text.trim() }],
+          });
+          await refreshThreadQueue(activeThreadId);
+        } catch (queueErr) {
+          console.warn("thread/queue/add failed, keep local queue:", queueErr);
+          setFollowupQueue((prev) => [
+            ...prev,
+            {
+              id: `q-${Date.now()}`,
+              text: text.trim(),
+              mode: "queue",
+              createdAt: Date.now(),
+            },
+          ]);
+        }
       }
     },
     [activeThreadId]
@@ -2048,14 +2157,62 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
     []
   );
 
-  // Auto-drain next queued follow-up when turn finishes
+  // 服务端消息队列（thread/queue/*）同步
+  const refreshThreadQueue = useCallback(async (threadId?: string | null) => {
+    const tid = threadId ?? activeThreadIdRef.current;
+    if (!tid) {
+      setFollowupQueue([]);
+      return;
+    }
+    try {
+      const res = await callAppServer<{ data?: any[] }>("thread/queue/list", {
+        threadId: tid,
+      });
+      const items = Array.isArray(res?.data) ? res.data : [];
+      setFollowupQueue(
+        items.map((item) => {
+          const textPart = Array.isArray(item?.input)
+            ? item.input.find((i: any) => typeof i?.text === "string")
+            : null;
+          return {
+            id: String(item?.id ?? item?.clientUserMessageId ?? `q-${Math.random()}`),
+            text: String(textPart?.text ?? ""),
+            mode: "queue" as const,
+            createdAt: Date.now(),
+          };
+        })
+      );
+    } catch (e) {
+      console.warn("thread/queue/list failed:", e);
+    }
+  }, []);
+
+  const handleStartServerQueue = useCallback(async () => {
+    const tid = activeThreadIdRef.current;
+    if (!tid) return;
+    try {
+      await callAppServer("thread/queue/start", { threadId: tid });
+    } catch (e) {
+      console.warn("thread/queue/start failed:", e);
+    }
+  }, []);
+
+  // turn 结束后由服务端启动队列中的下一条消息
+  const queueAutoStartRef = useRef<string | null>(null);
   useEffect(() => {
     if (!isStreaming && followupQueue.length > 0 && activeThreadId) {
-      const next = followupQueue[0];
-      setFollowupQueue((prev) => prev.slice(1));
-      handleSendMessage(next.text);
+      const key = `${activeThreadId}:${followupQueue.map((q) => q.id).join(",")}`;
+      if (queueAutoStartRef.current === key) return;
+      queueAutoStartRef.current = key;
+      void handleStartServerQueue();
     }
-  }, [isStreaming, followupQueue, activeThreadId]);
+  }, [isStreaming, followupQueue, activeThreadId, handleStartServerQueue]);
+
+  // 切换会话时载入该会话的服务端队列
+  useEffect(() => {
+    if (activeThreadId) void refreshThreadQueue(activeThreadId);
+    else setFollowupQueue([]);
+  }, [activeThreadId, refreshThreadQueue]);
 
   // Thread Pin, Rename, Archive
   const handleTogglePinThread = useCallback(
@@ -2467,6 +2624,9 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
         onRevealPath={handleRevealPath}
         onOpenAgentsMd={() => setShowAgentsMdModal(true)}
         onOpenQuickSearch={() => setShowQuickSearch(true)}
+        refreshToken={appServerStatus.connected ? 1 : 0}
+        onThreadsChanged={refreshThreads}
+        onShowToast={showAppToast}
       />
 
       {/* ── 3. Main Workspace Area ── */}
@@ -2907,32 +3067,39 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
           </div>
         </header>
 
+        {/* Windows 沙箱就绪提示 */}
+        {sandboxNotice && (
+          <div className="sandbox-notice-banner">
+            <span className="sandbox-notice-text">
+              ⚠️ Windows 沙箱未就绪（{sandboxNotice}）：Codex 命令将在降级模式下执行。
+            </span>
+            <button
+              type="button"
+              className="btn-approve"
+              disabled={sandboxSettingUp}
+              onClick={handleSetupWindowsSandbox}
+            >
+              {sandboxSettingUp ? "正在启动…" : "安装沙箱"}
+            </button>
+            <button
+              type="button"
+              className="mini-link-btn"
+              onClick={() => setSandboxNotice(null)}
+            >
+              忽略
+            </button>
+          </div>
+        )}
+
         {/* Persistent Autonomous Goal Banner */}
         {activeGoal && (activeRoute === "thread" || activeRoute === "home") && (
           <GoalProgressBanner
             goal={activeGoal}
             isStreaming={isStreaming}
             countdown={goalCountdown}
-            onPause={() => {
-              if (countdownTimerRef.current) {
-                clearInterval(countdownTimerRef.current);
-                countdownTimerRef.current = null;
-              }
-              setGoalCountdown(null);
-              setActiveGoal((prev) => (prev ? { ...prev, status: "paused" } : null));
-            }}
-            onResume={() => {
-              setActiveGoal((prev) => (prev ? { ...prev, status: "running" } : null));
-              triggerNextGoalTurn();
-            }}
-            onAbort={() => {
-              if (countdownTimerRef.current) {
-                clearInterval(countdownTimerRef.current);
-                countdownTimerRef.current = null;
-              }
-              setGoalCountdown(null);
-              setActiveGoal((prev) => (prev ? { ...prev, status: "aborted" } : null));
-            }}
+            onPause={handleGoalPause}
+            onResume={handleGoalResume}
+            onAbort={handleGoalAbort}
             onTriggerNextNow={triggerNextGoalTurn}
             onRunVerification={() => runGoalVerification()}
             onToggleStep={(stepId) => {
@@ -2996,6 +3163,10 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
             onRevealPath={handleRevealPath}
             onDeleteThread={handleDeleteThread}
             onRenameThread={handleRenameThread}
+            refreshToken={appServerStatus.connected ? 1 : 0}
+            onProjectsChanged={refreshThreads}
+            onThreadsChanged={refreshThreads}
+            onShowToast={showAppToast}
           />
         ) : activeRoute === "inbox" ? (
           <InboxView
@@ -3633,14 +3804,33 @@ ${config.autoVerifyCommand ? `验证命令：${config.autoVerifyCommand}` : "验
                     <button
                       type="button"
                       className="mini-link-btn"
+                      onClick={() => handleStartServerQueue()}
+                    >
+                      立即发送
+                    </button>
+                    <button
+                      type="button"
+                      className="mini-link-btn"
                       onClick={() => handleSteerTurn(followupQueue[0].text)}
                     >
-                      立即引导 (Steer)
+                      引导到当前轮 (Steer)
                     </button>
                     <button
                       type="button"
                       className="mini-link-btn danger"
-                      onClick={() => setFollowupQueue((prev) => prev.slice(1))}
+                      onClick={() => {
+                        const item = followupQueue[0];
+                        if (activeThreadId && item) {
+                          callAppServer("thread/queue/delete", {
+                            threadId: activeThreadId,
+                            queuedSubmissionId: item.id,
+                          })
+                            .then(() => refreshThreadQueue(activeThreadId))
+                            .catch(() => setFollowupQueue((prev) => prev.slice(1)));
+                        } else {
+                          setFollowupQueue((prev) => prev.slice(1));
+                        }
+                      }}
                     >
                       取消
                     </button>

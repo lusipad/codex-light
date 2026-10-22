@@ -99,6 +99,10 @@ export interface ThreadSummary {
   updatedAt?: number;
   model?: string | null;
   status?: { type: string } | string;
+  /** 会话所属自定义分区 id（`thread/list` 的 `section` 字段），null 表示未分组。 */
+  section?: string | null;
+  /** 会话所属项目实体 id（`thread/list` 的 `projectId` 字段），null 表示未关联项目。 */
+  projectId?: string | null;
 }
 
 export interface TurnItem {

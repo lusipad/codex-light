@@ -357,6 +357,8 @@ export const NOTIFICATION = {
   MODEL_REROUTED: "model/rerouted",
   HOOK_STARTED: "hook/started",
   HOOK_COMPLETED: "hook/completed",
+  WINDOWS_SANDBOX_SETUP_COMPLETED: "windowsSandbox/setupCompleted",
+  WINDOWS_WORLD_WRITABLE_WARNING: "windows/worldWritableWarning",
 } as const;
 
 /** Token usage snapshot from `thread/tokenUsage/updated`. */
