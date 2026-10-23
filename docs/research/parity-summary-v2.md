@@ -144,3 +144,13 @@ npx tsc --noEmit                                   # 本次实测 exit 0（未�
 
 
 
+
+---
+
+## 7. Round 8 增补（最终提交 `2fe35c3` 之后）
+
+- **系统原生通知已补齐**（此前 Top-1 缺失项）：`tauri-plugin-notification` + `show_desktop_notification` 命令 + 设置页「通知与免打扰」分区（桌面通知/提示音/审批提醒开关 + 测试通知）；触发点 = 回复完成 / 审批请求 / 自动化结束（仅窗口后台时弹）。→ 原 Top-1 关闭。
+- **已归档会话页**（`thread/list{archived}` + 恢复/删除/搜索）与导航入口已加入，官方 Archive IA 闭合。
+- **8 个仅本地偏好的设置分区**（Computer use / Appshots / Browser / Git / Worktrees / Voice / Plugins / Pets）已加「本地偏好分区」提示条，明确标注未接入执行器。
+- **最终验证**：`scripts/verify-all.ps1`（tsc + vite build + cargo check + cargo test 17 + 4 个真实 app-server 协议探测 9/22/28/16）→ **ALL CHECKS PASSED**。
+- 结论：核心 Codex 基线能力已全部真实接线；剩余未实现项均为范围声明内（云端/实时语音/官方插件类/多窗口/附件持久化等，见 `docs/FINAL-REPORT.md` §5）。最终交付报告：`docs/FINAL-REPORT.md`。

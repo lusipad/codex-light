@@ -5,7 +5,7 @@
 基于 [`codex-app-offline`](../README.md) 协议与能力契约重写的全功能、轻量化原生 **Codex 桌面客户端**。
 对标本机官方 **Codex App（Electron）** 的 Codex 模式基线能力（不含 ChatGPT 云端专属：Artifacts/云浏览器/实时语音/计费团队等）。
 
-> 对标差距分析、官方功能面清单与逐轮实施记录：
+> **最终交付报告：[docs/FINAL-REPORT.md](docs/FINAL-REPORT.md)**。对标差距分析、官方功能面清单与逐轮实施记录：
 > [`docs/CODEX-APP-PARITY-GAP.md`](docs/CODEX-APP-PARITY-GAP.md) ｜
 > [`docs/IMPLEMENTATION-LOG.md`](docs/IMPLEMENTATION-LOG.md) ｜
 > [`docs/research/parity-summary-v2.md`](docs/research/parity-summary-v2.md) ｜

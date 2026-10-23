@@ -215,3 +215,9 @@
 
 ### 验证
 - `pwsh -NoProfile -File ./scripts/verify-all.ps1` → **ALL CHECKS PASSED**（tsc / vite build / cargo check / cargo test 17 / 协议探测 9+22+28+16 全通过）
+
+## 收尾（Round 8 / 最终提交）
+
+- 最终全量验证（`scripts/verify-all.ps1`）**ALL CHECKS PASSED**：tsc / vite build / cargo check（0 error 0 warning）/ cargo test automations（17 passed）/ 协议探测 9+22+28+16 全通过。
+- 新增 `docs/FINAL-REPORT.md`：最终交付报告（结论、能力清单、验证证据、交付物索引、范围声明/未实现项、下一步建议）。
+- 目标评估：官方 Codex 桌面端核心链路（对话/审批/diff/终端/文件/设置/Goal/队列/分区/项目/插件/Codex Review/Hooks/自动化/原生菜单通知/归档/分页）已全部真实接线并通过验证；剩余项均为范围声明内（云端/实时语音/官方插件类/多窗口/附件持久化等），目标判定完成。
