@@ -5204,3 +5204,26 @@ html, body, #root {
   font-size: 12px;
   padding: 5px 14px;
 }
+
+/* Settings: local-only preference sections notice */
+.settings-local-only-banner {
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  background: rgba(245, 158, 11, 0.09);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.settings-local-only-banner strong {
+  color: #f59e0b;
+}
+
+.settings-local-only-banner code {
+  font-family: var(--font-mono);
+  background: rgba(0, 0, 0, 0.2);
+  padding: 1px 5px;
+  border-radius: 4px;
+}

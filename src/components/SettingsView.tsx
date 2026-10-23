@@ -321,6 +321,7 @@ const SETTINGS_NAV_GROUPS: Array<{
       { slug: "personalization", label: "个性化指令", keywords: "personalization tone instructions" },
       { slug: "pets", label: "虚拟宠物伴侣", keywords: "pets companion mini widget" },
       { slug: "keyboard-shortcuts", label: "键盘快捷键", keywords: "shortcuts keybindings hotkeys" },
+      { slug: "notifications", label: "通知与免打扰", keywords: "notifications desktop toast sound do not disturb 通知 免打扰" },
     ],
   },
   {
@@ -349,6 +350,18 @@ const SETTINGS_NAV_GROUPS: Array<{
       { slug: "providers-models", label: "提供商与模型目录", keywords: "providers models catalog config.toml" },
     ],
   },
+];
+
+/** Settings sections that currently only persist local preferences (no executor yet). */
+const LOCAL_ONLY_SETTINGS_SECTIONS: SettingsSectionSlug[] = [
+  "computer-use",
+  "appshots",
+  "browser-use",
+  "git-settings",
+  "worktrees",
+  "voice",
+  "plugins-settings",
+  "pets",
 ];
 
 export function applyColorTheme(themeId: string) {
@@ -506,6 +519,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   // Hooks Settings (生命周期挂钩) — real data via hooks/list + live hook/* notifications
   const [hooksEnabled, setHooksEnabled] = useState<boolean>(true);
+  const [desktopNotifications, setDesktopNotifications] = useState<boolean>(true);
+  const [notificationSound, setNotificationSound] = useState<boolean>(true);
+  const [notifyOnApproval, setNotifyOnApproval] = useState<boolean>(true);
   const [hooksListResult, setHooksListResult] = useState<HooksListResult | null>(null);
   const [hooksLoading, setHooksLoading] = useState<boolean>(false);
   const [hooksError, setHooksError] = useState<string | null>(null);
@@ -646,6 +662,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             if (prefs.browserProxy) setBrowserProxy(prefs.browserProxy);
             if (prefs.browserPersistCookies !== undefined) setBrowserPersistCookies(prefs.browserPersistCookies);
             if (prefs.hooksEnabled !== undefined) setHooksEnabled(prefs.hooksEnabled);
+            if (prefs.desktopNotifications !== undefined) setDesktopNotifications(prefs.desktopNotifications);
+            if (prefs.notificationSound !== undefined) setNotificationSound(prefs.notificationSound);
+            if (prefs.notifyOnApproval !== undefined) setNotifyOnApproval(prefs.notifyOnApproval);
           }
         })
         .catch(() => {});
@@ -923,8 +942,28 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         browserProxy,
         browserPersistCookies,
         hooksEnabled,
+        desktopNotifications,
+        notificationSound,
+        notifyOnApproval,
       },
-    }).catch(() => {});
+    })
+      .then(() => {
+        // 通知 App 立即应用新的通知偏好（无需重启）
+        try {
+          window.dispatchEvent(
+            new CustomEvent("codex-prefs-changed", {
+              detail: {
+                desktopNotifications,
+                notificationSound,
+                notifyOnApproval,
+              },
+            })
+          );
+        } catch {
+          // ignore
+        }
+      })
+      .catch(() => {});
   };
 
   const handleToggleExperimentalFeature = async (feature: ExperimentalFeature) => {
@@ -1459,6 +1498,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         {errorBanner && <div className="error-banner">{errorBanner}</div>}
 
         {/* SECTION: GENERAL SETTINGS */}
+        {LOCAL_ONLY_SETTINGS_SECTIONS.includes(activeSection) && (
+          <div className="settings-local-only-banner">
+            <strong>本地偏好分区：</strong>
+            此分区的设置会保存在本机，但对应能力尚未接入实际执行器（官方实现依赖内置插件或云端服务）。
+            真实生效的配置请以 <code>config.toml</code> 及对应功能页面为准。
+          </div>
+        )}
+
         {activeSection === "general-settings" && (
           <div className="settings-scroll-container">
             <div className="card-section">
@@ -2154,6 +2201,98 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </button>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* SECTION: NOTIFICATIONS */}
+        {activeSection === "notifications" && (
+          <div className="settings-scroll-container">
+            <div className="card-section">
+              <h3>通知与免打扰</h3>
+              <p className="card-subtitle-desc">
+                控制 Codex 在后台时如何提醒你。桌面通知使用系统原生通知（Windows Toast / macOS / Linux），仅在窗口不在前台时弹出；提示音在应用内播放。
+              </p>
+              <div className="item-cards-list">
+                <div className="item-card">
+                  <div className="item-card-main">
+                    <strong>桌面系统通知</strong>
+                    <span className="card-subtitle-desc">
+                      任务完成、自动化结束、需要审批时弹出系统通知
+                    </span>
+                  </div>
+                  <div className="item-card-actions">
+                    <label className="switch-control">
+                      <input
+                        type="checkbox"
+                        checked={desktopNotifications}
+                        onChange={(e) => setDesktopNotifications(e.target.checked)}
+                      />
+                      <span className="switch-slider" />
+                    </label>
+                  </div>
+                </div>
+                <div className="item-card">
+                  <div className="item-card-main">
+                    <strong>完成提示音</strong>
+                    <span className="card-subtitle-desc">
+                      一轮回复或目标完成时播放提示音
+                    </span>
+                  </div>
+                  <div className="item-card-actions">
+                    <label className="switch-control">
+                      <input
+                        type="checkbox"
+                        checked={notificationSound}
+                        onChange={(e) => setNotificationSound(e.target.checked)}
+                      />
+                      <span className="switch-slider" />
+                    </label>
+                  </div>
+                </div>
+                <div className="item-card">
+                  <div className="item-card-main">
+                    <strong>审批提醒</strong>
+                    <span className="card-subtitle-desc">
+                      Codex 请求批准命令/文件变更时额外发送桌面通知
+                    </span>
+                  </div>
+                  <div className="item-card-actions">
+                    <label className="switch-control">
+                      <input
+                        type="checkbox"
+                        checked={notifyOnApproval}
+                        onChange={(e) => setNotifyOnApproval(e.target.checked)}
+                      />
+                      <span className="switch-slider" />
+                    </label>
+                  </div>
+                </div>
+              </div>
+              <div style={{ marginTop: 12, display: "flex", gap: 10, alignItems: "center" }}>
+                <button
+                  type="button"
+                  className="primary-btn"
+                  onClick={async () => {
+                    try {
+                      await tauriInvoke("show_desktop_notification", {
+                        title: "Codex Native",
+                        body: "这是一条测试通知：系统通知已可用。",
+                      });
+                      flashSaved("✓ 已发送测试通知");
+                    } catch (err) {
+                      setErrorBanner(`通知发送失败: ${toErrorMessage(err)}`);
+                    }
+                  }}
+                >
+                  发送测试通知
+                </button>
+                <span className="card-subtitle-desc">
+                  若系统未显示通知，请检查 Windows「通知和操作」中是否允许本应用。
+                </span>
+              </div>
+            </div>
+
+            {renderBottomBar()}
           </div>
         )}
 

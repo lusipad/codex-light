@@ -778,6 +778,23 @@ async fn automations_run_now(app: AppHandle, id: String) -> Result<Value, String
     automations::run_now(app, id).await
 }
 
+/// Show a native OS notification (Windows toast / macOS / Linux).
+/// Frontend gates this by user preference before calling.
+#[tauri::command]
+fn show_desktop_notification(
+    app: AppHandle,
+    title: String,
+    body: String,
+) -> Result<(), String> {
+    use tauri_plugin_notification::NotificationExt;
+    app.notification()
+        .builder()
+        .title(title)
+        .body(body)
+        .show()
+        .map_err(|e| format!("notification failed: {e}"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app_state = AppState {
@@ -787,6 +804,7 @@ pub fn run() {
     };
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             use tauri::Manager;
             if let Some(window) = app.get_webview_window("main") {
@@ -885,6 +903,7 @@ pub fn run() {
             automations_scheduler_status,
             automations_refresh_schedule,
             automations_run_now,
+            show_desktop_notification,
             exec_shell_command,
         ])
         .run(tauri::generate_context!())

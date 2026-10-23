@@ -194,3 +194,24 @@
 
 ### 验证
 - `pwsh -NoProfile -File ./scripts/verify-all.ps1` → **ALL CHECKS PASSED**
+
+## Round 8 — 系统原生通知 / 通知设置分区 / 假分区标注
+
+### 系统原生通知（tauri-plugin-notification）
+- Rust：`Cargo.toml` 增加 `tauri-plugin-notification = "2"`；`lib.rs` 注册插件 + 新命令 `show_desktop_notification(title, body)`（Windows Toast / macOS / Linux）。
+- 前端：App 新增通知偏好（桌面通知/提示音/审批提醒）与 `applyNotifyPrefs`；偏好从 `desktopPreferences` 读取，并监听 `codex-prefs-changed` 同源事件即时生效。
+- 触发点（仅窗口在后台时弹系统通知，避免打扰）：
+  - `turn/completed` → 「Codex 回复已完成」
+  - `app-server:server-request`（审批请求）→ 「Codex 需要你的批准」+ 命令摘要（受审批提醒开关控制）
+  - `automation:run-finished` → 自动化完成/失败
+  - 提示音改为受「完成提示音」开关控制（`notifyChime`）
+
+### 设置页「通知与免打扰」分区
+- 新增 slug `notifications`（个人组）：桌面系统通知 / 完成提示音 / 审批提醒 三个开关 + 「发送测试通知」按钮 + 系统通知权限提示。
+- `saveDesktopPreferences` 写入 `desktopNotifications`、`notificationSound`、`notifyOnApproval`，并 dispatch `codex-prefs-changed` → App 即时应用。
+
+### 假分区标注
+- 对仅写本地偏好的 8 个分区（Computer use / Appshots / Browser / Git / Worktrees / Voice / Plugins / Pets）在设置页顶部显示「本地偏好分区：尚未接入实际执行器」提示条，避免"点了没反应"的误解。
+
+### 验证
+- `pwsh -NoProfile -File ./scripts/verify-all.ps1` → **ALL CHECKS PASSED**（tsc / vite build / cargo check / cargo test 17 / 协议探测 9+22+28+16 全通过）

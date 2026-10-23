@@ -32,6 +32,7 @@ uuid = { version = "1", features = ["v4"] }
 rfd = "0.15"
 # Local wall-clock scheduling: RRULE next-occurrence math + Local timezone.
 chrono = "0.4"
+tauri-plugin-notification = "2"
 
 [profile.dev]
 debug = 0

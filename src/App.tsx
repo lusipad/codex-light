@@ -686,6 +686,35 @@ export const App: React.FC = () => {
     }
   }, []);
 
+  // 通知偏好（桌面系统通知 / 提示音 / 审批提醒）
+  const [notifyPrefs, setNotifyPrefs] = useState<{
+    desktop: boolean;
+    sound: boolean;
+    approval: boolean;
+  }>({ desktop: true, sound: true, approval: true });
+  const notifyPrefsRef = useRef(notifyPrefs);
+  notifyPrefsRef.current = notifyPrefs;
+  const applyNotifyPrefs = useCallback((prefs: any) => {
+    if (!prefs || typeof prefs !== "object") return;
+    const next = {
+      desktop: prefs.desktopNotifications !== false,
+      sound: prefs.notificationSound !== false,
+      approval: prefs.notifyOnApproval !== false,
+    };
+    setNotifyPrefs(next);
+    notifyPrefsRef.current = next;
+  }, []);
+  const sendDesktopNotification = useCallback((title: string, body: string) => {
+    if (!notifyPrefsRef.current.desktop) return;
+    const hidden = typeof document !== "undefined" ? document.hidden : false;
+    if (!hidden) return; // 窗口在前台时不弹系统通知，避免打扰
+    tauriInvoke("show_desktop_notification", { title, body }).catch(() => {});
+  }, []);
+  const notifyChime = useCallback((kind: "nudge" | "done" = "done") => {
+    if (!notifyPrefsRef.current.sound) return;
+    playNotificationChime(kind);
+  }, []);
+
   // Connect & Subscribe to App-Server Events on Mount
   useEffect(() => {
     refreshWorkspacesAndMeta();
@@ -698,10 +727,27 @@ export const App: React.FC = () => {
           if (prefs.toneStyle) setToneStyle(prefs.toneStyle);
           if (prefs.petVisible !== undefined) setPetVisible(prefs.petVisible);
           if (prefs.selectedPetSpecies) setSelectedPetSpecies(prefs.selectedPetSpecies);
+          applyNotifyPrefs(prefs);
         }
       })
       .catch(() => {});
 
+    // 设置页保存通知偏好后即时生效（同源 window 事件）
+    const onPrefsChanged = (ev: Event) => {
+      const detail = (ev as CustomEvent).detail;
+      if (detail && typeof detail === "object") {
+        applyNotifyPrefs(detail);
+      }
+    };
+    window.addEventListener("codex-prefs-changed", onPrefsChanged);
+    // 挂载后立即读取一次应用内通知设置（防止首轮 prefs 读取竞态）
+    return () => {
+      window.removeEventListener("codex-prefs-changed", onPrefsChanged);
+    };
+  }, [applyNotifyPrefs]);
+
+  // 旧的挂载副作用（确保只执行一次）
+  useEffect(() => {
     // Ensure app-server is connected
     tauriInvoke<AppServerStatus>("app_server_connect")
       .then((st) => {
@@ -759,7 +805,11 @@ export const App: React.FC = () => {
           });
         } else if (method === "turn/completed") {
           setIsStreaming(false);
-          playNotificationChime("done");
+          notifyChime("done");
+          sendDesktopNotification(
+            "Codex 回复已完成",
+            activeThreadObj?.name || activeThreadObj?.preview || "本轮任务已完成"
+          );
           const turnId = params?.turn?.id || params?.turnId;
           if (!turnId || turnId === activeTurnIdRef.current) {
             setActiveTurnId(null);
@@ -1070,7 +1120,7 @@ export const App: React.FC = () => {
             if (!goal.threadId || goal.threadId === activeThreadIdRef.current) {
               syncGoalFromServer(goal);
               if (goal.status === "complete") {
-                playNotificationChime("done");
+                notifyChime("done");
               }
             }
           }
@@ -1188,6 +1238,12 @@ export const App: React.FC = () => {
           },
           ...prev,
         ]);
+        if (notifyPrefsRef.current.approval) {
+          sendDesktopNotification(
+            "Codex 需要你的批准",
+            req.params?.command ? `$ ${req.params.command}` : req.method
+          );
+        }
       }
     );
 
@@ -1291,6 +1347,10 @@ export const App: React.FC = () => {
       showAppToast(
         ok ? `✓ 自动化已完成：${name}` : `自动化失败：${name}`,
         ok ? "success" : "error"
+      );
+      sendDesktopNotification(
+        ok ? `自动化已完成：${name}` : `自动化失败：${name}`,
+        payload?.error ? String(payload.error) : "定时任务执行结束"
       );
       setInboxItems((prev) =>
         [
@@ -2066,7 +2126,7 @@ export const App: React.FC = () => {
 
       const refreshed = await refreshThreadGoal();
       if (refreshed?.status === "complete") {
-        playNotificationChime("done");
+        notifyChime("done");
         setInboxItems((prev) => [
           {
             id: `goal-done-${Date.now()}`,

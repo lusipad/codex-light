@@ -297,6 +297,7 @@ export type SettingsSectionSlug =
   | "personalization"
   | "pets"
   | "keyboard-shortcuts"
+  | "notifications"
   | "plugins-settings"
   | "computer-use"
   | "appshots"
