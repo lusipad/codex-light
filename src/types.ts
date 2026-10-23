@@ -283,6 +283,7 @@ export type MainViewRoute =
   | "plugins"
   | "worktrees"
   | "review"
+  | "archive"
   | "settings";
 
 export type SettingsSectionSlug =

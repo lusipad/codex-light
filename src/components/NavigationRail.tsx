@@ -10,6 +10,7 @@ import {
   SettingsIcon,
   SparklesIcon,
   FileCodeIcon,
+  ArchiveIcon,
 } from "./Icons";
 import { MainViewRoute } from "../types";
 
@@ -113,6 +114,15 @@ export const NavigationRail: React.FC<NavigationRailProps> = ({
           title="代码审查 (Code Review)"
         >
           <FileCodeIcon size={16} />
+        </button>
+
+        <button
+          type="button"
+          className={`nav-rail-btn ${activeRoute === "archive" ? "active" : ""}`}
+          onClick={() => onNavigate("archive")}
+          title="已归档会话 (Archive)"
+        >
+          <ArchiveIcon size={16} />
         </button>
       </div>
 

@@ -60,6 +60,7 @@ import { InboxView } from "./components/InboxView";
 import { MiniPetWidget } from "./components/MiniPetWidget";
 import { QuickSearchModal } from "./components/QuickSearchModal";
 import { CodeReviewView, ReviewRequest } from "./components/CodeReviewView";
+import { ArchiveView } from "./components/ArchiveView";
 import { GoalSetupModal, GoalSetupConfig } from "./components/GoalSetupModal";
 import { GoalProgressBanner } from "./components/GoalProgressBanner";
 import { ApprovalCenter } from "./components/ApprovalCenter";
@@ -340,6 +341,7 @@ export const App: React.FC = () => {
   // Code Review (review/start)
   const [reviewBusy, setReviewBusy] = useState(false);
   const [reviewLastResult, setReviewLastResult] = useState<string | null>(null);
+  const [archiveRefreshTick, setArchiveRefreshTick] = useState<number>(0);
 
   // Windows sandbox readiness（windowsSandbox/*）
   const [sandboxNotice, setSandboxNotice] = useState<string | null>(null);
@@ -2381,6 +2383,7 @@ export const App: React.FC = () => {
           archive: true,
         });
         setThreads((prev) => prev.filter((t) => t.id !== thread.id));
+        setArchiveRefreshTick((v) => v + 1);
         if (activeThreadId === thread.id) {
           startNewThread();
         }
@@ -2389,6 +2392,39 @@ export const App: React.FC = () => {
       }
     },
     [activeThreadId, startNewThread]
+  );
+
+  // 归档页操作（thread/unarchive / thread_delete）
+  const handleUnarchiveThread = useCallback(
+    async (thread: ThreadSummary) => {
+      await callAppServer("thread/unarchive", { threadId: thread.id });
+      await refreshThreads();
+      setArchiveRefreshTick((v) => v + 1);
+    },
+    [refreshThreads]
+  );
+
+  const handleDeleteArchivedThread = useCallback(
+    async (thread: ThreadSummary) => {
+      await tauriInvoke("thread_delete", { threadId: thread.id });
+      await refreshThreads();
+      setArchiveRefreshTick((v) => v + 1);
+    },
+    [refreshThreads]
+  );
+
+  const handleOpenArchivedThread = useCallback(
+    async (threadId: string) => {
+      try {
+        await callAppServer("thread/unarchive", { threadId });
+      } catch (e) {
+        console.warn("thread/unarchive failed:", e);
+      }
+      await refreshThreads();
+      setArchiveRefreshTick((v) => v + 1);
+      await selectThread(threadId);
+    },
+    [refreshThreads, selectThread]
   );
 
   const handleDeleteThread = useCallback(
@@ -3436,7 +3472,19 @@ export const App: React.FC = () => {
         )}
 
         {/* ── Route Dispatcher ── */}
-        {activeRoute === "review" ? (
+        {activeRoute === "archive" ? (
+          <div className="full-route-view">
+            <div className="full-route-container">
+              <ArchiveView
+                refreshToken={`${archiveRefreshTick}:${appServerStatus.connected}`}
+                onSelectThread={handleOpenArchivedThread}
+                onUnarchive={handleUnarchiveThread}
+                onDelete={handleDeleteArchivedThread}
+                onShowToast={showAppToast}
+              />
+            </div>
+          </div>
+        ) : activeRoute === "review" ? (
           <div className="full-route-view">
             <div className="full-route-container">
               <CodeReviewView

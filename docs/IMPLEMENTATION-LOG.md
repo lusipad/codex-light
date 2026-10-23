@@ -167,3 +167,30 @@
 ### 已知限制
 - 调度器仅在应用运行时工作（无 OS 服务）；重启会对已过期 nextRunAt 补跑一次；`run-finished` 表示成功发起 turn，不等待模型跑完。
 - `thread/items/list` 在当前 CLI 版本返回 not supported（已降级记录）。
+
+## Round 7 — 归档页 / 一键验证 / 增量再审计
+
+### 已归档会话页（官方 Archive IA）
+- `types.ts` 新增 `archive` 路由；新增 `src/components/ArchiveView.tsx/.css`。
+- 能力：`thread/list {archived:true, sortKey:"updated_at", searchTerm}` 真实读取 + 300ms 防抖标题搜索；行内显示标题/更新时间/cwd；「恢复」= `thread/unarchive`、「删除」= 二次确认 + `thread_delete`、点击行 = 自动恢复并打开会话；空态/错误重试/刷新/计数。
+- 导航接入：左侧图标栏 + 侧边栏「已归档会话」入口；归档/恢复/删除后通过 refreshToken 与通知刷新。
+
+### 一键验证脚本
+- 新增 `scripts/verify-all.ps1`：依次执行 `tsc --noEmit`、`npm run build`、`cargo check`、`cargo test automations`、4 个协议探测脚本（`-Fast` 可跳过探测）；任一失败即非零退出并汇总失败步骤。
+- 协议探测脚本移入 tracked 目录 `scripts/protocol-verify/`（原在 `.ref/scripts`，gitignore）：全部使用隔离 `CODEX_HOME`，不触碰用户真实 `~/.codex`。
+- 本轮实测：**ALL CHECKS PASSED**（协议探测 9/9、22/22、28/28、16/16）。
+
+### 增量再审计（只读，HEAD + 归档页增量）
+- 新增 `docs/research/current-audit-v2.md`（47 模块矩阵、旧 §28 复核、断链清单 v2、缺失能力、四组真实度统计）与 `docs/research/parity-summary-v2.md`（一页纸对标：71 方法清单/35 通知/7-10 server request/官方 45 设置分区映射/核心链路 ✅ 表）。
+- 关键数字（Round 初始 → 现在）：
+  - 前端引用 client RPC 方法 17 → **71**（+Rust 桥 3 = 74，稳定目录 104 → 68%）；通知 8 → **35**；server request 1（错误）→ **7/10**
+  - 功能点级真实度：REAL 33% → **58.3%**，MOCK/BROKEN 26% → **8.7%**
+  - 模块级：REAL 8 → **16** / 36 模块
+  - 官方 45 设置分区：真实可用 10（22%）、真实+部分 21（47%）
+- 仍缺 Top：系统通知中心/免打扰设置、实时语音、附件持久化、computer-use/Appshots/Browser、账号登录、command/exec+process、item/tool/call、Markdown 富渲染、多窗口/可编辑 keymap、19 个官方云端/团队/计费类分区（多数范围外）。
+
+### README
+- 重写为当前能力清单（9 大块）+ 一键验证命令 + 已知限制，并链接差距报告/实施日志/审计 v2。
+
+### 验证
+- `pwsh -NoProfile -File ./scripts/verify-all.ps1` → **ALL CHECKS PASSED**

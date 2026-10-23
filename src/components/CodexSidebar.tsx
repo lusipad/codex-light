@@ -847,6 +847,17 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
           <FileCodeIcon size={14} />
           <span>代码审查</span>
         </button>
+
+        <button
+          type="button"
+          className={`sidebar-sub-nav-row ${
+            activeRoute === "archive" ? "active" : ""
+          }`}
+          onClick={() => onNavigate("archive")}
+        >
+          <ArchiveIcon size={14} />
+          <span>已归档会话</span>
+        </button>
       </div>
 
       {/* ── 3. Tree: 置顶 / 自定义分区 / 项目 / 最近 ── */}
