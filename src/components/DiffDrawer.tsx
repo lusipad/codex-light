@@ -873,16 +873,71 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     }
   }, [diffContent]);
 
+  const handleGenerateCommitMessage = useCallback(() => {
+    const files = displayedEntries.map((e) => e.path);
+    if (files.length === 0) {
+      showToast("暂无改动文件可生成提交说明");
+      return;
+    }
+    const isDoc = files.every((f) => /\.(md|txt|doc)$/i.test(f));
+    const isTest = files.every((f) => /(test|spec)/i.test(f));
+    const isStyle = files.every((f) => /\.(css|scss|less)$/i.test(f));
+    const prefix = isDoc ? "docs" : isTest ? "test" : isStyle ? "style" : "fix";
+    const firstBase = files[0].split(/[/\\]/).pop()?.replace(/\.[^.]+$/, "") || "core";
+    const msg =
+      files.length === 1
+        ? `${prefix}(${firstBase}): update ${files[0]}`
+        : `${prefix}: update ${firstBase} and ${files.length - 1} other file${files.length > 2 ? "s" : ""}`;
+    setCommitMessage(msg);
+    showToast(`✓ 已自动生成提交说明: ${msg}`);
+  }, [displayedEntries]);
+
   const handleCommit = async () => {
-    if (!commitMessage.trim()) return;
+    let messageToUse = commitMessage.trim();
+    if (!messageToUse) {
+      const files = displayedEntries.map((e) => e.path);
+      if (files.length === 0) {
+        showToast("暂无可提交的改动");
+        return;
+      }
+      const firstBase = files[0].split(/[/\\]/).pop()?.replace(/\.[^.]+$/, "") || "core";
+      messageToUse = files.length === 1 ? `update ${files[0]}` : `update ${files.length} files (${firstBase})`;
+    }
     setCommitting(true);
     try {
-      await invoke("git_commit_changes", { cwd, message: commitMessage.trim() });
+      await invoke("git_commit_changes", { cwd, message: messageToUse });
       setCommitMessage("");
       onRefreshGit();
       showToast("✓ 已成功创建 Git 提交");
     } catch (e) {
       showToast(`提交失败: ${String(e)}`);
+    } finally {
+      setCommitting(false);
+    }
+  };
+
+  const handleCommitAndPush = async () => {
+    let messageToUse = commitMessage.trim();
+    if (!messageToUse) {
+      const files = displayedEntries.map((e) => e.path);
+      if (files.length === 0) {
+        showToast("暂无可提交的改动");
+        return;
+      }
+      const firstBase = files[0].split(/[/\\]/).pop()?.replace(/\.[^.]+$/, "") || "core";
+      messageToUse = files.length === 1 ? `update ${files[0]}` : `update ${files.length} files (${firstBase})`;
+    }
+    setCommitting(true);
+    try {
+      await invoke("git_commit_changes", { cwd, message: messageToUse });
+      setCommitMessage("");
+      onRefreshGit();
+      showToast("✓ 提交成功，正在推送到远程...");
+      await invoke("git_push_changes", { cwd, forceWithLease });
+      onRefreshGit();
+      showToast("✓ 提交并推送成功");
+    } catch (e) {
+      showToast(`操作失败: ${String(e)}`);
     } finally {
       setCommitting(false);
     }
@@ -1744,6 +1799,15 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                 />
                 <button
                   type="button"
+                  className="secondary-btn compact"
+                  onClick={handleGenerateCommitMessage}
+                  title="根据改动自动生成 Conventional Commits 提交说明"
+                >
+                  <SparklesIcon size={12} />
+                  <span>生成</span>
+                </button>
+                <button
+                  type="button"
                   className="primary-btn compact"
                   disabled={committing || (!commitMessage.trim() && displayedEntries.length === 0)}
                   onClick={handleCommit}
@@ -1755,11 +1819,20 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                 <button
                   type="button"
                   className="secondary-btn compact"
+                  disabled={committing || (!commitMessage.trim() && displayedEntries.length === 0)}
+                  onClick={handleCommitAndPush}
+                  title="提交并推送到远程分支 (Commit and push)"
+                >
+                  <span>提交并推送 ↑</span>
+                </button>
+                <button
+                  type="button"
+                  className="secondary-btn compact"
                   disabled={pushing}
                   onClick={handlePush}
                   title="git push 推送到远端分支"
                 >
-                  <span>{pushing ? "推送中..." : "推送 ↑"}</span>
+                  <span>{pushing ? "推送中..." : "推送"}</span>
                 </button>
                 <button
                   type="button"

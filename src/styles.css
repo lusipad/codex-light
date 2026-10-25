@@ -3841,6 +3841,12 @@ html, body, #root {
   transform: scale(1.6);
 }
 
+.user-turn-jump-dot.bookmarked {
+  background: #f59e0b !important;
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.7);
+  transform: scale(1.4);
+}
+
 /* Interactive Question Card (requestUserInput) */
 .question-card {
   border: 1px solid rgba(58, 131, 247, 0.4);

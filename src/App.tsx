@@ -485,6 +485,13 @@ export const App: React.FC = () => {
   const [showQuickSearch, setShowQuickSearch] = useState<boolean>(false);
   const [showFindBar, setShowFindBar] = useState<boolean>(false);
   const [findBarScope, setFindBarScope] = useState<"chat" | "diff">("chat");
+  const [bookmarkedTurnIds, setBookmarkedTurnIds] = useState<Record<string, string[]>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("codex_thread_bookmarks") || "{}");
+    } catch {
+      return {};
+    }
+  });
 
   // Global Toast & Header inline rename
   const [appToast, setAppToast] = useState<{
@@ -504,6 +511,27 @@ export const App: React.FC = () => {
       }, 3200);
     },
     []
+  );
+
+  const toggleBookmark = useCallback(
+    (turnId: string) => {
+      if (!activeThreadId) return;
+      setBookmarkedTurnIds((prev) => {
+        const current = prev[activeThreadId] || [];
+        const updated = current.includes(turnId)
+          ? current.filter((id) => id !== turnId)
+          : [...current, turnId];
+        const next = { ...prev, [activeThreadId]: updated };
+        try {
+          localStorage.setItem("codex_thread_bookmarks", JSON.stringify(next));
+        } catch {
+          // ignore
+        }
+        return next;
+      });
+      showAppToast("已更新提问收藏状态", "info");
+    },
+    [activeThreadId, showAppToast]
   );
 
   const flushPendingAttachmentSave = useCallback(async (threadId: string) => {
@@ -3958,12 +3986,14 @@ export const App: React.FC = () => {
                   .filter((t) => t.items.some((i) => i.type === "userMessage"))
                   .map((turn, uIdx) => {
                     const txt = turn.items.map(extractTextFromItem).join(" ");
+                    const bookmarks = (activeThreadId && bookmarkedTurnIds[activeThreadId]) || [];
+                    const isBookmarked = bookmarks.includes(turn.id);
                     return (
                       <button
                         key={turn.id}
                         type="button"
-                        className="user-turn-jump-dot"
-                        title={`跳转到第 ${uIdx + 1} 条提问: ${txt.slice(0, 40)}`}
+                        className={`user-turn-jump-dot ${isBookmarked ? "bookmarked" : ""}`}
+                        title={`${isBookmarked ? "★ [已收藏] " : ""}跳转到第 ${uIdx + 1} 条提问: ${txt.slice(0, 40)}`}
                         onClick={() => {
                           const el = document.getElementById(`turn-${turn.id}`);
                           el?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -4091,6 +4121,7 @@ export const App: React.FC = () => {
                     (isStreaming && turn.status === "running");
 
                   const userText = userItems.map(extractTextFromItem).join("\n\n");
+                  const isBookmarked = (activeThreadId && bookmarkedTurnIds[activeThreadId]?.includes(turn.id)) || false;
 
                   return (
                     <React.Fragment key={turn.id}>
@@ -4101,6 +4132,14 @@ export const App: React.FC = () => {
                         >
                           <div className="user-bubble">{userText}</div>
                           <div className="turn-action-buttons-row right">
+                            <button
+                              type="button"
+                              className={`turn-action-mini-btn ${isBookmarked ? "active" : ""}`}
+                              title={isBookmarked ? "取消收藏此提问" : "收藏/书签此提问 (Bookmark)"}
+                              onClick={() => toggleBookmark(turn.id)}
+                            >
+                              {isBookmarked ? "★ 已收藏" : "☆ 收藏"}
+                            </button>
                             <button
                               type="button"
                               className="turn-action-mini-btn"
