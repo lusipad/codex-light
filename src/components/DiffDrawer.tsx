@@ -44,11 +44,12 @@ import {
 } from "./Icons";
 import { NewTabPage } from "./NewTabPage";
 import { BrowserToolbar } from "./BrowserToolbar";
+import { SideChatPanel } from "./SideChatPanel";
 import "./FileExplorer.css";
 
 export interface WorkbenchTabItem {
   id: string;
-  kind: "newTab" | "changes" | "files" | "summary" | "browser";
+  kind: "newTab" | "changes" | "files" | "summary" | "browser" | "sideChat";
   title: string;
   icon: React.ReactNode;
   url?: string;
@@ -69,9 +70,12 @@ export interface DiffDrawerProps {
   selectedPreviewFile?: string | null;
   onSelectPreviewFile?: (file: string | null) => void;
   onSendReviewComment?: (commentPrompt: string) => void;
-  initialTab?: "newTab" | "changes" | "files" | "summary" | "browser";
+  initialTab?: "newTab" | "changes" | "files" | "summary" | "browser" | "sideChat";
+  initialSidePrompt?: string;
   onOpenTerminal?: () => void;
   onOpenSideChat?: () => void;
+  onFocusMainChat?: () => void;
+  onInsertToMainChat?: (content: string) => void;
 }
 
 interface ParsedDiffLine {
@@ -361,8 +365,11 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   onSelectPreviewFile,
   onSendReviewComment,
   initialTab = "changes",
+  initialSidePrompt,
   onOpenTerminal,
   onOpenSideChat,
+  onFocusMainChat,
+  onInsertToMainChat,
 }) => {
   const [isFullWidth, setIsFullWidth] = useState(false);
   const [openTabs, setOpenTabs] = useState<WorkbenchTabItem[]>([
@@ -383,6 +390,12 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
           return [
             { id: "newTab", kind: "newTab", title: "新标签页", icon: <GlobeIcon size={13} />, closable: true },
             ...prev,
+          ];
+        }
+        if (initialTab === "sideChat") {
+          return [
+            ...prev,
+            { id: "sideChat", kind: "sideChat", title: "侧边对话", icon: <SparklesIcon size={13} />, closable: true },
           ];
         }
         return prev;
@@ -408,6 +421,18 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     };
     setOpenTabs((prev) => [newTab, ...prev]);
     setActiveTabId(id);
+  };
+
+  const handleOpenSideChatTab = () => {
+    setOpenTabs((prev) => {
+      if (prev.some((t) => t.kind === "sideChat")) return prev;
+      return [
+        ...prev,
+        { id: "sideChat", kind: "sideChat", title: "侧边对话", icon: <SparklesIcon size={13} />, closable: true },
+      ];
+    });
+    setActiveTabId("sideChat");
+    onOpenSideChat?.();
   };
 
   const handleCloseTab = (id: string) => {
@@ -1204,12 +1229,23 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
           onOpenChanges={() => setActiveTabId("changes")}
           onOpenTerminal={() => onOpenTerminal?.()}
           onOpenFiles={() => setActiveTabId("files")}
-          onOpenSideChat={onOpenSideChat}
+          onOpenSideChat={handleOpenSideChatTab}
           onNavigateUrl={handleNavigateUrl}
           onClose={() => handleCloseTab(activeTabId)}
           onNotify={showToast}
           recentTabs={recentBrowserTabs}
           onSelectRecent={setActiveTabId}
+        />
+      )}
+
+      {/* TAB: SIDE CHAT */}
+      {activeKind === "sideChat" && (
+        <SideChatPanel
+          initialPrompt={initialSidePrompt}
+          workspacePath={cwd}
+          onClose={() => handleCloseTab(activeTabId)}
+          onFocusMainChat={onFocusMainChat}
+          onInsertToMainChat={onInsertToMainChat}
         />
       )}
 

@@ -90,6 +90,7 @@ import { PlanPanel } from "./components/PlanPanel";
 import { TurnDiffPanel } from "./components/TurnDiffPanel";
 import { TokenUsageMeter } from "./components/TokenUsageMeter";
 import { ToolCallCards } from "./components/ToolCallCards";
+import { TextSelectionToolbar } from "./components/TextSelectionToolbar";
 import { ThreadActionsMenu, ThreadActionItem } from "./components/ThreadActionsMenu";
 import {
   TokenUsageSnapshot,
@@ -444,7 +445,8 @@ export const App: React.FC = () => {
   const [showSessionParamsPopover, setShowSessionParamsPopover] = useState<boolean>(false);
   const [showExportPopover, setShowExportPopover] = useState<boolean>(false);
   const [showSourcesPopover, setShowSourcesPopover] = useState<boolean>(false);
-  const [initialWorkbenchTab, setInitialWorkbenchTab] = useState<"newTab" | "changes" | "files" | "summary" | "browser">("changes");
+  const [initialWorkbenchTab, setInitialWorkbenchTab] = useState<"newTab" | "changes" | "files" | "summary" | "browser" | "sideChat">("changes");
+  const [sideChatPrompt, setSideChatPrompt] = useState<string>("");
   const [pinnedSummaryVisible, setPinnedSummaryVisible] = useState<boolean>(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsSectionSlug>("general-settings");
 
@@ -2599,6 +2601,16 @@ export const App: React.FC = () => {
       setShowRightDrawer(true);
     },
     "open-review": () => setActiveRoute("review"),
+    "open-side-chat": () => {
+      setInitialWorkbenchTab("sideChat");
+      setShowRightDrawer(true);
+    },
+    "copy-working-dir": () => {
+      if (activeWorkspace?.path) {
+        navigator.clipboard.writeText(activeWorkspace.path);
+        showAppToast(`✓ 已复制工作区路径: ${activeWorkspace.path}`, "info");
+      }
+    },
     "copy-last-code-block": () => {
       const blocks: string[] = [];
       for (const turn of turns) {
@@ -3730,6 +3742,25 @@ export const App: React.FC = () => {
           /* ── Active Local Conversation Stream (/local/:clientThreadId) ── */
           <>
             <div className="timeline-scroll-pane" ref={timelineScrollRef}>
+              <TextSelectionToolbar
+                containerRef={timelineScrollRef}
+                onAddToChat={(text) => {
+                  setPromptInput((prev) => {
+                    const quote = `> ${text.trim()}\n\n`;
+                    return prev ? `${quote}${prev}` : quote;
+                  });
+                  composerTextareaRef.current?.focus();
+                }}
+                onAskInSideChat={(text) => {
+                  setSideChatPrompt(`请针对以下代码/内容进行深入分析：\n\n> ${text.trim()}\n\n`);
+                  setInitialWorkbenchTab("sideChat");
+                  setShowRightDrawer(true);
+                }}
+                onCopy={(text) => {
+                  navigator.clipboard.writeText(text);
+                  showAppToast("✓ 选区内容已复制到剪贴板", "info");
+                }}
+              />
               {/* Right-Side User Message Navigation Rail */}
               <div className="thread-user-message-navigation-rail">
                 {turns
@@ -4409,7 +4440,19 @@ export const App: React.FC = () => {
         onSelectPreviewFile={setSelectedPreviewFile}
         onSendReviewComment={(comment) => handleSendMessage(comment)}
         initialTab={initialWorkbenchTab}
+        initialSidePrompt={sideChatPrompt}
         onOpenTerminal={() => setShowTerminal((v) => !v)}
+        onOpenSideChat={() => {
+          setInitialWorkbenchTab("sideChat");
+          setShowRightDrawer(true);
+        }}
+        onFocusMainChat={() => {
+          composerTextareaRef.current?.focus();
+        }}
+        onInsertToMainChat={(content) => {
+          setPromptInput((prev) => (prev ? `${prev}\n\n${content}` : content));
+          composerTextareaRef.current?.focus();
+        }}
       />
 
       {/* ── 5. AGENTS.md Modal ── */}

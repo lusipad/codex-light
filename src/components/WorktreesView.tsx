@@ -99,9 +99,29 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
             在独立目录 (`~/.codex/worktrees`) 中并行运行多个 Agent 任务，互不污染主工作区。
           </p>
         </div>
-        <button type="button" className="secondary-btn" onClick={refresh}>
-          <RefreshCw size={14} /> 刷新列表
-        </button>
+        <div style={{ display: "flex", gap: "8px" }}>
+          <button
+            type="button"
+            className="secondary-btn"
+            title="执行 git worktree repair 修复被移动或脱落的工作树关联"
+            onClick={async () => {
+              try {
+                const res = await tauriInvoke<string>("git_worktree_repair", {
+                  cwd: activeWorkspaceRoot,
+                });
+                notify(res ? `修复结果: ${res}` : "✓ 工作树关联健康，无需修复");
+                await refresh();
+              } catch (err: any) {
+                notify(`修复出错: ${err?.message || String(err)}`);
+              }
+            }}
+          >
+            🔧 修复工作树
+          </button>
+          <button type="button" className="secondary-btn" onClick={refresh}>
+            <RefreshCw size={14} /> 刷新列表
+          </button>
+        </div>
       </div>
 
       {toast && (
@@ -198,49 +218,70 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
                       )}
                     </div>
                   </div>
-                  <div className="item-card-actions">
-                    <button
-                      type="button"
-                      className="secondary-btn-sm"
-                      title="在系统文件管理器中打开此 Worktree 文件夹"
-                      onClick={async () => {
-                        try {
-                          await tauriInvoke("reveal_path_in_explorer", { path: wt.path });
-                          notify("✓ 已在系统文件管理器中打开文件夹");
-                        } catch (err: any) {
-                          notify(`打开失败: ${String(err)}`);
-                        }
-                      }}
-                    >
-                      📂 目录
-                    </button>
-                    {onOpenTerminalInWorktree && (
-                      <button
-                        type="button"
-                        className="secondary-btn-sm"
-                        title="在此 Worktree 打开终端"
-                        onClick={() => onOpenTerminalInWorktree(wt.path)}
-                      >
-                        💻 终端
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      className="primary-btn-sm"
-                      onClick={() => onStartChatInWorktree(wt.path)}
-                    >
-                      <MessageSquarePlus size={13} /> 在此启动会话
-                    </button>
-                    {!isMainRepo && (
-                      <button
-                        type="button"
-                        className="danger-btn-sm"
-                        onClick={() => handleDeleteWorktree(wt)}
-                      >
-                        <Trash2 size={13} /> 移除
-                      </button>
-                    )}
-                  </div>
+        <div className="item-card-actions">
+          <button
+            type="button"
+            className="secondary-btn-sm"
+            title="在系统文件管理器中打开此 Worktree 文件夹"
+            onClick={async () => {
+              try {
+                await tauriInvoke("reveal_path_in_explorer", { path: wt.path });
+                notify("✓ 已在系统文件管理器中打开文件夹");
+              } catch (err: any) {
+                notify(`打开失败: ${String(err)}`);
+              }
+            }}
+          >
+            📂 目录
+          </button>
+          {onOpenTerminalInWorktree && (
+            <button
+              type="button"
+              className="secondary-btn-sm"
+              title="在此 Worktree 打开终端"
+              onClick={() => onOpenTerminalInWorktree(wt.path)}
+            >
+              💻 终端
+            </button>
+          )}
+          {!isMainRepo && wt.hasUncommittedChanges && (
+            <button
+              type="button"
+              className="secondary-btn-sm accent-border"
+              title="将此隔离 Worktree 中的改动应用合并回当前主工作区"
+              onClick={async () => {
+                try {
+                  const res = await tauriInvoke<string>("git_worktree_bring_changes_back", {
+                    worktreePath: wt.path,
+                    targetCwd: activeWorkspaceRoot,
+                  });
+                  notify(res);
+                  await refresh();
+                } catch (err: any) {
+                  notify(`带回失败: ${err?.message || String(err)}`);
+                }
+              }}
+            >
+              📥 带回主工作区
+            </button>
+          )}
+          <button
+            type="button"
+            className="primary-btn-sm"
+            onClick={() => onStartChatInWorktree(wt.path)}
+          >
+            <MessageSquarePlus size={13} /> 在此启动会话
+          </button>
+          {!isMainRepo && (
+            <button
+              type="button"
+              className="danger-btn-sm"
+              onClick={() => handleDeleteWorktree(wt)}
+            >
+              <Trash2 size={13} /> 移除
+            </button>
+          )}
+        </div>
                 </div>
               );
             })}

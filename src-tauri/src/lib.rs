@@ -586,6 +586,24 @@ fn git_worktree_delete(worktree_path: String, git_dir: Option<String>) -> Result
 }
 
 #[tauri::command]
+async fn git_worktree_bring_changes_back(worktree_path: String, target_cwd: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        git::bring_worktree_changes_back(&worktree_path, &target_cwd)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn git_worktree_repair(cwd: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        git::repair_worktrees(&cwd)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 fn git_worktree_set_owner(worktree_path: String, thread_id: String) -> Result<(), String> {
     git::set_worktree_owner_thread(&worktree_path, &thread_id)
 }
@@ -972,6 +990,8 @@ pub fn run() {
             git_worktrees_list,
             git_worktree_create,
             git_worktree_delete,
+            git_worktree_bring_changes_back,
+            git_worktree_repair,
             git_worktree_set_owner,
             gh_status,
             git_log_commits,

@@ -651,6 +651,41 @@ pub fn delete_worktree(worktree_path: &str, git_dir: Option<String>) -> Result<(
     Ok(())
 }
 
+pub fn bring_worktree_changes_back(worktree_path: &str, target_cwd: &str) -> Result<String, String> {
+    let target_root = find_git_root(target_cwd).ok_or("Target directory is not a git repository")?;
+    let diff_out = run_git(worktree_path, &["diff", "HEAD", "--binary"]).unwrap_or_default();
+    if diff_out.trim().is_empty() {
+        return Ok("Worktree 没有未提交的修改需要带回。".to_string());
+    }
+
+    let mut child = Command::new("git");
+    child
+        .arg("-C")
+        .arg(&target_root)
+        .args(["apply", "--whitespace=nowarn", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(target_os = "windows")]
+    child.creation_flags(CREATE_NO_WINDOW);
+
+    let mut spawned = child.spawn().map_err(|e| e.to_string())?;
+    if let Some(mut stdin) = spawned.stdin.take() {
+        let _ = stdin.write_all(diff_out.as_bytes());
+    }
+    let out = spawned.wait_with_output().map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        return Err(format!("应用改动失败: {}", err));
+    }
+    Ok("✓ 已成功将 Worktree 的改动应用回主工作区！".to_string())
+}
+
+pub fn repair_worktrees(cwd: &str) -> Result<String, String> {
+    let repo = find_git_root(cwd).ok_or("Not a git repository")?;
+    run_git(&repo, &["worktree", "repair"])
+}
+
 pub fn set_worktree_owner_thread(worktree_path: &str, thread_id: &str) -> Result<(), String> {
     run_git(worktree_path, &["config", "codex.ownerThreadId", thread_id])?;
     Ok(())

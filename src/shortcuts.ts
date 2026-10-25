@@ -122,6 +122,20 @@ export const SHORTCUTS: ShortcutDef[] = [
     match: (e) => isMod(e) && e.altKey && key(e) === "c",
   },
   {
+    id: "open-side-chat",
+    keys: "Ctrl+Alt+S",
+    label: "打开侧边独立对话",
+    group: "panels",
+    match: (e) => isMod(e) && e.altKey && key(e) === "s",
+  },
+  {
+    id: "copy-working-dir",
+    keys: "Ctrl+Shift+C",
+    label: "复制当前工作目录",
+    group: "global",
+    match: (e) => isMod(e) && e.shiftKey && !e.altKey && key(e) === "c",
+  },
+  {
     id: "escape",
     keys: "Esc",
     label: "关闭弹窗/面板",
