@@ -532,7 +532,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     .map((tab) => ({ id: tab.id, title: tab.title, url: tab.url as string }));
 
   // Changes state
-  const [diffMode, setDiffMode] = useState<"working" | "staged" | "branch" | "commits">(
+  const [diffMode, setDiffMode] = useState<"lastTurn" | "working" | "staged" | "branch" | "commits">(
     "working"
   );
   const [diffLayout, setDiffLayout] = useState<"unified" | "split">("unified");
@@ -616,6 +616,33 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
 
   useEffect(() => {
     if (!open || activeTab !== "changes" || !cwd) return;
+    if (diffMode === "lastTurn") {
+      setLoadingDiff(true);
+      const turnsList = Array.isArray(turns) ? turns : [];
+      const lastTurnWithChanges = [...turnsList].reverse().find((t) =>
+        (t.items || []).some((i) => i.type === "fileChange" || i.type === "diff")
+      );
+      if (!lastTurnWithChanges) {
+        setDiffContent("本轮暂无文件改动记录。");
+        setLoadingDiff(false);
+        return;
+      }
+      const diffPieces: string[] = [];
+      for (const item of lastTurnWithChanges.items || []) {
+        if (item.type === "fileChange" && Array.isArray((item as any).changes)) {
+          for (const ch of (item as any).changes) {
+            if (ch?.diff) {
+              if (!selectedFile || ch.path === selectedFile) {
+                diffPieces.push(ch.diff);
+              }
+            }
+          }
+        }
+      }
+      setDiffContent(diffPieces.join("\n\n") || "本轮选定文件无差异文本。");
+      setLoadingDiff(false);
+      return;
+    }
     if (diffMode === "commits") {
       setLoadingDiff(true);
       invoke<GitCommitInfo[]>("git_log_commits", { cwd, limit: 40 })
@@ -644,7 +671,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
       .then((res) => setDiffContent(res))
       .catch((err) => setDiffContent(`Error loading diff: ${String(err)}`))
       .finally(() => setLoadingDiff(false));
-  }, [open, activeTab, cwd, selectedFile, diffMode, baseBranch, selectedCommitHash, gitStatus]);
+  }, [open, activeTab, cwd, selectedFile, diffMode, baseBranch, selectedCommitHash, gitStatus, turns]);
 
   /**
    * List one directory: app-server `fs/readDirectory` first, then the legacy
@@ -1307,6 +1334,14 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
         <div className="diff-drawer-body">
           {/* Top Review Mode & Layout Toolbar */}
           <div className="diff-mode-bar">
+            <button
+              type="button"
+              className={`seg-btn ${diffMode === "lastTurn" ? "active" : ""}`}
+              onClick={() => setDiffMode("lastTurn")}
+              title="查看最近一轮对话产生的文件改动 (Last turn)"
+            >
+              本轮改动
+            </button>
             <button
               type="button"
               className={`seg-btn ${diffMode === "working" ? "active" : ""}`}

@@ -2982,9 +2982,8 @@ export const App: React.FC = () => {
       setPetVisible((v) => !v);
     } else if (action === "open_usage_settings" || action === "show_status") {
       setShowUsagePopover(true);
-    } else if (action === "open_model_picker") {
-      setShowSessionParamsPopover(false);
-      composerTextareaRef.current?.focus();
+    } else if (action === "open_model_picker" || action === "open_reasoning_picker") {
+      setShowSessionParamsPopover(true);
     } else if (action === "open_mcp_status") {
       setActiveRoute("plugins");
     } else if (action === "open_project_picker") {
@@ -3005,10 +3004,19 @@ export const App: React.FC = () => {
         setPromptInput("");
       }
     } else if (action === "open_side_chat") {
-      showAppToast("Side chat 将在后续版本接入", "info");
+      setInitialWorkbenchTab("sideChat");
+      setShowRightDrawer(true);
+    } else if (action === "approve_recent_denial") {
+      if (pendingRequests.length > 0) {
+        const lastReq = pendingRequests[pendingRequests.length - 1];
+        void handleRespondServerRequest(lastReq.id, { decision: "approved" });
+        showAppToast("✓ 已批准当前待审批操作", "success");
+      } else {
+        showAppToast("当前无待审批请求", "info");
+      }
     } else if (action === "switch_mode_cloud" || action === "switch_mode_local") {
       showAppToast("远程/云端环境将在后续版本接入", "info");
-    } else if (action === "open_reasoning_picker" || action === "toggle_ide_context") {
+    } else if (action === "toggle_ide_context") {
       composerTextareaRef.current?.focus();
     }
   }, [
@@ -3017,6 +3025,8 @@ export const App: React.FC = () => {
     handleArchiveThread,
     handleTogglePinThread,
     handleSteerTurn,
+    handleRespondServerRequest,
+    pendingRequests,
     activeThreadObj,
     activeThreadId,
     promptInput,
