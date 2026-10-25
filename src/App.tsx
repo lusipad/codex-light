@@ -28,6 +28,7 @@ import {
   EllipsisIcon,
   ArchiveIcon,
   SearchIcon,
+  BellIcon,
 } from "./components/Icons";
 import { ProjectSourcesPopover } from "./components/ProjectSourcesPopover";
 import { AppTitleBar } from "./components/AppTitleBar";
@@ -3023,8 +3024,25 @@ export const App: React.FC = () => {
     setFollowupQueue,
   ]);
 
+  const unreadInboxCount = useMemo(
+    () => inboxItems.filter((i) => !i.read).length,
+    [inboxItems]
+  );
+  const activityThreadIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          inboxItems
+            .filter((item) => !item.read && item.threadId)
+            .map((item) => item.threadId as string)
+        )
+      ),
+    [inboxItems]
+  );
+
   const threadMenuItems: ThreadActionItem[] = useMemo(() => {
     const pinned = !!(activeThreadId && pinnedThreadIds.includes(activeThreadId));
+    const isUnread = !!(activeThreadId && activityThreadIds.includes(activeThreadId));
     return [
       {
         id: "rename_thread",
@@ -3037,6 +3055,11 @@ export const App: React.FC = () => {
         label: "在会话中查找",
         icon: <SearchIcon size={14} />,
         hint: "Ctrl+F",
+      },
+      {
+        id: "mark_unread",
+        label: isUnread ? "标记为已读" : "标记为未读",
+        icon: <BellIcon size={14} />,
       },
       {
         id: "toggle_thread_pin",
@@ -3106,7 +3129,7 @@ export const App: React.FC = () => {
         separatorBefore: true,
       },
     ];
-  }, [activeThreadId, pinnedThreadIds]);
+  }, [activeThreadId, pinnedThreadIds, activityThreadIds]);
 
   const handleThreadMenuAction = useCallback(
     async (id: string) => {
@@ -3120,6 +3143,32 @@ export const App: React.FC = () => {
           }
         } else if (id === "find_in_chat") {
           setShowFindBar(true);
+        } else if (id === "mark_unread") {
+          if (activeThreadId) {
+            const isUnread = activityThreadIds.includes(activeThreadId);
+            if (isUnread) {
+              setInboxItems((prev) =>
+                prev.map((item) =>
+                  item.threadId === activeThreadId ? { ...item, read: true } : item
+                )
+              );
+              showAppToast("✓ 已标记为已读", "info");
+            } else {
+              setInboxItems((prev) => [
+                {
+                  id: `unread-${activeThreadId}-${Date.now()}`,
+                  title: `待处理：${activeThreadObj?.name || activeThreadObj?.preview || "会话"}`,
+                  subtitle: "手动标记为待办未读",
+                  kind: "activity",
+                  createdAt: Date.now(),
+                  read: false,
+                  threadId: activeThreadId,
+                },
+                ...prev,
+              ]);
+              showAppToast("✓ 已标记为未读并加入活动视图", "info");
+            }
+          }
         } else if (id === "toggle_thread_pin") {
           if (activeThreadId) {
             await handleTogglePinThread(activeThreadId, {} as any);
@@ -3193,20 +3242,8 @@ export const App: React.FC = () => {
       startNewThread,
       turns,
       showAppToast,
+      activityThreadIds,
     ]
-  );
-
-  const unreadInboxCount = useMemo(
-    () => inboxItems.filter((i) => !i.read).length,
-    [inboxItems]
-  );
-  const activityThreadIds = useMemo(
-    () => Array.from(new Set(
-      inboxItems
-        .filter((item) => !item.read && item.threadId)
-        .map((item) => item.threadId as string)
-    )),
-    [inboxItems]
   );
 
   const projectName =
@@ -4095,20 +4132,50 @@ export const App: React.FC = () => {
                           className="assistant-turn-block"
                         >
                           <div className="assistant-header">
-                        <OpenAIIcon size={17} />
-                        <span>Codex</span>
-                        {turn.durationMs && (
-                          <span
-                            style={{
-                              fontSize: 11,
-                              color: "var(--text-tertiary)",
-                              fontWeight: 400,
-                            }}
-                          >
-                            · {(turn.durationMs / 1000).toFixed(1)}s
-                          </span>
-                        )}
-                      </div>
+                            <OpenAIIcon size={17} />
+                            <span>Codex</span>
+                            {turn.status === "running" && isStreaming ? (
+                              <span
+                                style={{
+                                  fontSize: 11,
+                                  color: "var(--accent-blue, #3b82f6)",
+                                  fontWeight: 500,
+                                }}
+                              >
+                                · 进行中 (Working...)
+                              </span>
+                            ) : turn.status === "interrupted" ? (
+                              <span
+                                style={{
+                                  fontSize: 11,
+                                  color: "var(--text-tertiary)",
+                                  fontWeight: 500,
+                                }}
+                              >
+                                · 已暂停 (Paused)
+                              </span>
+                            ) : turn.status === "failed" ? (
+                              <span
+                                style={{
+                                  fontSize: 11,
+                                  color: "#ef4444",
+                                  fontWeight: 500,
+                                }}
+                              >
+                                · 异常 (Failed)
+                              </span>
+                            ) : turn.durationMs ? (
+                              <span
+                                style={{
+                                  fontSize: 11,
+                                  color: "var(--text-tertiary)",
+                                  fontWeight: 400,
+                                }}
+                              >
+                                · {(turn.durationMs / 1000).toFixed(1)}s
+                              </span>
+                            ) : null}
+                          </div>
 
                       {thoughts.length > 0 && (
                         <div className="thought-accordion">

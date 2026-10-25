@@ -271,7 +271,7 @@ export interface InboxNotificationItem {
   id: string;
   title: string;
   subtitle: string;
-  kind: "automation" | "approval" | "thread_done" | "mention" | "goal";
+  kind: "automation" | "approval" | "thread_done" | "mention" | "goal" | "activity";
   threadId?: string;
   createdAt: number;
   read: boolean;
