@@ -160,19 +160,25 @@ async fn pick_files_dialog() -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
-fn workspace_agents_md(cwd: String) -> Result<Value, String> {
-    match find_agents_md(&cwd) {
+async fn workspace_agents_md(cwd: String) -> Result<Value, String> {
+    tokio::task::spawn_blocking(move || match find_agents_md(&cwd) {
         Some((path, content)) => Ok(json!({ "found": true, "path": path, "content": content })),
         None => Ok(json!({ "found": false, "path": null, "content": "" })),
-    }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn fs_list_dir(
+async fn fs_list_dir(
     path: String,
     show_hidden: Option<bool>,
 ) -> Result<Vec<DirectoryEntryItem>, String> {
-    list_directory_entries(&path, show_hidden.unwrap_or(false))
+    tokio::task::spawn_blocking(move || {
+        list_directory_entries(&path, show_hidden.unwrap_or(false))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -186,16 +192,20 @@ fn fs_write_file(path: String, content: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn fs_search_files(
+async fn fs_search_files(
     cwd: String,
     query: Option<String>,
     limit: Option<usize>,
 ) -> Result<Vec<WorkspaceFileHit>, String> {
-    Ok(search_workspace_files(
-        &cwd,
-        query.as_deref(),
-        limit.unwrap_or(60),
-    ))
+    tokio::task::spawn_blocking(move || {
+        Ok(search_workspace_files(
+            &cwd,
+            query.as_deref(),
+            limit.unwrap_or(60),
+        ))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -384,9 +394,8 @@ pub struct ProjectScriptCommands {
     pub project_type: String,
 }
 
-#[tauri::command]
-fn detect_project_scripts(cwd: String) -> ProjectScriptCommands {
-    let root = std::path::Path::new(&cwd);
+fn detect_project_scripts_internal(cwd: &str) -> ProjectScriptCommands {
+    let root = std::path::Path::new(cwd);
     let pkg_json_path = root.join("package.json");
     if pkg_json_path.is_file() {
         let pm = if root.join("pnpm-lock.yaml").exists() {
@@ -487,8 +496,17 @@ fn detect_project_scripts(cwd: String) -> ProjectScriptCommands {
 }
 
 #[tauri::command]
-fn git_status(cwd: String) -> Result<GitStatusInfo, String> {
-    Ok(git::git_status_for_path(&cwd))
+async fn detect_project_scripts(cwd: String) -> Result<ProjectScriptCommands, String> {
+    tokio::task::spawn_blocking(move || detect_project_scripts_internal(&cwd))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn git_status(cwd: String) -> Result<GitStatusInfo, String> {
+    tokio::task::spawn_blocking(move || Ok(git::git_status_for_path(&cwd)))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -525,8 +543,10 @@ fn git_commit_changes(cwd: String, message: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn git_branches(cwd: String) -> Result<Vec<String>, String> {
-    git::list_branches(&cwd)
+async fn git_branches(cwd: String) -> Result<Vec<String>, String> {
+    tokio::task::spawn_blocking(move || git::list_branches(&cwd))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -599,6 +619,11 @@ fn git_create_pr(
     draft: Option<bool>,
 ) -> Result<String, String> {
     git::create_pull_request(&cwd, &title, &body, base_branch, draft.unwrap_or(false))
+}
+
+#[tauri::command]
+fn git_list_prs(cwd: String, limit: Option<usize>) -> Result<Vec<git::GitPullRequestInfo>, String> {
+    git::list_pull_requests(&cwd, limit)
 }
 
 #[tauri::command]
@@ -727,11 +752,83 @@ fn config_generate_models_api() -> Result<String, String> {
     config_skills::generate_sample_models_api_catalog()
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InstalledPetInfo {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "displayName")]
+    pub display_name: String,
+    pub description: Option<String>,
+    #[serde(rename = "spriteVersionNumber")]
+    pub sprite_version_number: u32,
+    #[serde(rename = "spritesheetPath")]
+    pub spritesheet_path: String,
+    #[serde(rename = "spritesheetDataUrl")]
+    pub spritesheet_data_url: Option<String>,
+}
+
 #[tauri::command]
-fn skills_list_local(workspace_root: Option<String>) -> Result<Vec<SkillInfoItem>, String> {
-    Ok(config_skills::list_local_and_recommended_skills(
-        workspace_root,
-    ))
+async fn pets_list_installed() -> Result<Vec<InstalledPetInfo>, String> {
+    tokio::task::spawn_blocking(|| {
+        let home = std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .unwrap_or_default();
+        let pets_dir = std::path::Path::new(&home).join(".codex").join("pets");
+        if !pets_dir.is_dir() {
+            return Ok(Vec::new());
+        }
+        let mut result = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(pets_dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    let pet_json = p.join("pet.json");
+                    if pet_json.is_file() {
+                        if let Ok(content) = std::fs::read_to_string(&pet_json) {
+                            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                                let id = val.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+                                let display_name = val.get("displayName").and_then(|v| v.as_str()).unwrap_or(&id).to_string();
+                                let description = val.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                let sprite_version_number = val.get("spriteVersionNumber").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
+                                let sheet_rel = val.get("spritesheetPath").and_then(|v| v.as_str()).unwrap_or("spritesheet.webp");
+                                let sheet_path = p.join(sheet_rel);
+                                let mut sheet_data_url = None;
+                                if sheet_path.is_file() {
+                                    if let Ok(bytes) = std::fs::read(&sheet_path) {
+                                        use base64::Engine;
+                                        let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                                        sheet_data_url = Some(format!("data:image/webp;base64,{}", b64));
+                                    }
+                                }
+                                result.push(InstalledPetInfo {
+                                    id,
+                                    display_name,
+                                    description,
+                                    sprite_version_number,
+                                    spritesheet_path: sheet_path.to_string_lossy().to_string(),
+                                    spritesheet_data_url: sheet_data_url,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(result)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn skills_list_local(workspace_root: Option<String>) -> Result<Vec<SkillInfoItem>, String> {
+    tokio::task::spawn_blocking(move || {
+        Ok(config_skills::list_local_and_recommended_skills(
+            workspace_root,
+        ))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -881,6 +978,7 @@ pub fn run() {
             git_commit_diff,
             git_push_changes,
             git_create_pr,
+            git_list_prs,
             storage_stats_get,
             storage_clean_cache,
             import_external_tool_config,
@@ -903,6 +1001,7 @@ pub fn run() {
             automations_scheduler_status,
             automations_refresh_schedule,
             automations_run_now,
+            pets_list_installed,
             show_desktop_notification,
             exec_shell_command,
         ])

@@ -37,8 +37,11 @@ export interface QuickSearchModalProps {
 interface SearchResultItem {
   id: string;
   category: "action" | "thread" | "file" | "skill" | "setting";
+  section: string;
   title: string;
   subtitle?: string;
+  shortcut?: string;
+  rightLabel?: string;
   icon: React.ReactNode;
   onSelect: () => void;
 }
@@ -338,8 +341,10 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
       {
         id: "act-new-chat",
         category: "action",
+        section: "快捷操作 (Quick actions)",
         title: "新建聊天会话",
-        subtitle: "创建新的空白对话流 (Ctrl+N)",
+        subtitle: "创建新的空白对话流",
+        shortcut: "Ctrl+N",
         icon: <MessageSquare size={14} />,
         onSelect: () => {
           onStartNewChat();
@@ -349,6 +354,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
       {
         id: "act-run-dev",
         category: "action",
+        section: "快捷操作 (Quick actions)",
         title: `运行启动服务 (${runCmd})`,
         subtitle: "在集成终端中执行本地启动命令",
         icon: <Play size={14} />,
@@ -360,6 +366,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
       {
         id: "act-run-test",
         category: "action",
+        section: "快捷操作 (Quick actions)",
         title: `运行单元测试 (${testCmd})`,
         subtitle: "在集成终端中运行测试套件",
         icon: <Command size={14} />,
@@ -371,6 +378,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
       {
         id: "act-run-build",
         category: "action",
+        section: "快捷操作 (Quick actions)",
         title: `运行构建编译 (${buildCmd})`,
         subtitle: "在集成终端中执行生产打包命令",
         icon: <Play size={14} />,
@@ -382,8 +390,10 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
       {
         id: "act-projects",
         category: "action",
+        section: "快捷操作 (Quick actions)",
         title: "打开项目中心",
         subtitle: "管理已注册的本地工作区目录",
+        shortcut: "Ctrl+Shift+P",
         icon: <Folder size={14} />,
         onSelect: () => {
           onNavigateRoute("projects");
@@ -393,8 +403,10 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
       {
         id: "act-settings",
         category: "action",
+        section: "快捷操作 (Quick actions)",
         title: "打开设置中心",
-        subtitle: "常规、外观、模型与提供商设置 (Ctrl+,)",
+        subtitle: "常规、外观、模型与提供商设置",
+        shortcut: "Ctrl+,",
         icon: <Settings size={14} />,
         onSelect: () => {
           onNavigateRoute("settings");
@@ -420,8 +432,10 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
       results.push({
         id: `rth-${t.id}`,
         category: "thread",
+        section: "会话记录 (Chats)",
         title: t.name || t.preview || t.id,
         subtitle: `历史会话${t.cwd ? ` · ${t.cwd}` : ""}`,
+        rightLabel: t.cwd ? t.cwd.split(/[/\\]/).pop() : "Chat",
         icon: <MessageSquare size={14} />,
         onSelect: () => {
           onSelectThread(t.id);
@@ -444,8 +458,10 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
         results.push({
           id: `th-${t.id}`,
           category: "thread",
+          section: "会话记录 (Chats)",
           title: t.name || t.preview || t.id,
           subtitle: `历史会话 · ${t.cwd || ""}`,
+          rightLabel: t.cwd ? t.cwd.split(/[/\\]/).pop() : "Chat",
           icon: <MessageSquare size={14} />,
           onSelect: () => {
             onSelectThread(t.id);
@@ -464,8 +480,10 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
       results.push({
         id: `rfile-${f.absPath}`,
         category: "file",
+        section: "工作区文件 (Files)",
         title: f.fileName,
         subtitle: f.relPath,
+        rightLabel: "File",
         icon: <FileText size={14} />,
         onSelect: () => {
           onSelectFile(f.absPath);
@@ -487,8 +505,10 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
         results.push({
           id: `file-${f.absPath}`,
           category: "file",
+          section: "工作区文件 (Files)",
           title: f.name,
           subtitle: f.relPath,
+          rightLabel: "File",
           icon: <FileText size={14} />,
           onSelect: () => {
             onSelectFile(f.absPath);
@@ -512,8 +532,10 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
         results.push({
           id: `sk-${s.id}`,
           category: "skill",
+          section: "扩展技能 (Skills)",
           title: `$${s.id} (${s.name})`,
           subtitle: s.description,
+          rightLabel: "Skill",
           icon: <BookOpen size={14} />,
           onSelect: () => {
             onSelectSkill(s.id);
@@ -574,8 +596,10 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
         results.push({
           id: `set-${s.slug}`,
           category: "setting",
+          section: "设置中心 (Settings)",
           title: s.title,
           subtitle: s.subtitle,
+          rightLabel: "Setting",
           icon: <Settings size={14} />,
           onSelect: () => {
             onNavigateSettings(s.slug);
@@ -616,6 +640,29 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
       setSelectedIndex(
         (idx) => (idx - 1 + items.length) % Math.max(1, items.length)
       );
+    } else if (e.key === "Tab") {
+      e.preventDefault();
+      if (items.length === 0) return;
+      const currentSec = items[selectedIndex]?.section;
+      if (!currentSec) return;
+      if (e.shiftKey) {
+        for (let i = selectedIndex - 1; i >= 0; i--) {
+          if (items[i].section !== currentSec) {
+            const prevSec = items[i].section;
+            let firstOfPrev = i;
+            while (firstOfPrev > 0 && items[firstOfPrev - 1].section === prevSec) firstOfPrev--;
+            setSelectedIndex(firstOfPrev);
+            return;
+          }
+        }
+      } else {
+        for (let i = selectedIndex + 1; i < items.length; i++) {
+          if (items[i].section !== currentSec) {
+            setSelectedIndex(i);
+            return;
+          }
+        }
+      }
     } else if (e.key === "Enter") {
       e.preventDefault();
       if (items[selectedIndex]) {
@@ -646,9 +693,6 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
-          <button type="button" className="icon-btn" onClick={onClose}>
-            <X size={14} />
-          </button>
         </div>
 
         <div className="quick-search-results">
@@ -667,36 +711,44 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
               </div>
             )
           ) : (
-            items.map((item, index) => (
-              <div
-                key={item.id}
-                className={`quick-search-row ${
-                  index === selectedIndex ? "active" : ""
-                }`}
-                onClick={item.onSelect}
-                onMouseEnter={() => setSelectedIndex(index)}
-              >
-                <div className="quick-search-row-icon">{item.icon}</div>
-                <div className="quick-search-row-content">
-                  <span className="quick-search-row-title">{item.title}</span>
-                  {item.subtitle && (
-                    <span className="quick-search-row-subtitle">
-                      {item.subtitle}
-                    </span>
+            items.map((item, index) => {
+              const showSectionHeader =
+                index === 0 || items[index - 1].section !== item.section;
+              return (
+                <React.Fragment key={item.id}>
+                  {showSectionHeader && (
+                    <div className="quick-search-section-header">
+                      {item.section}
+                    </div>
                   )}
-                </div>
-                <span className="tag-badge" style={{ fontSize: 10.5 }}>
-                  {item.category}
-                </span>
-              </div>
-            ))
+                  <div
+                    className={`quick-search-row ${
+                      index === selectedIndex ? "active" : ""
+                    }`}
+                    onClick={item.onSelect}
+                    onMouseEnter={() => setSelectedIndex(index)}
+                  >
+                    <div className="quick-search-row-icon">{item.icon}</div>
+                    <div className="quick-search-row-content">
+                      <span className="quick-search-row-title">{item.title}</span>
+                      {item.subtitle && (
+                        <span className="quick-search-row-subtitle">
+                          {item.subtitle}
+                        </span>
+                      )}
+                    </div>
+                    {item.shortcut ? (
+                      <kbd className="quick-search-kbd">{item.shortcut}</kbd>
+                    ) : item.rightLabel ? (
+                      <span className="quick-search-right-label">
+                        {item.rightLabel}
+                      </span>
+                    ) : null}
+                  </div>
+                </React.Fragment>
+              );
+            })
           )}
-        </div>
-
-        <div className="quick-search-footer">
-          <span>↑↓ 导航</span>
-          <span>↵ 确认</span>
-          <span>Esc 退出</span>
         </div>
       </div>
     </div>

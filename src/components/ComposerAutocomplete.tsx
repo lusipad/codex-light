@@ -66,23 +66,7 @@ export const ComposerAutocomplete: React.FC<ComposerAutocompleteProps> = ({
       const q = query.toLowerCase().replace(/^@/, "");
       const out: AutocompleteItem[] = [];
 
-      // 1. Official "@电脑 Control Windows apps" entry at top (matches 2-mention-menu.png)
-      if (
-        !q ||
-        "电脑".includes(q) ||
-        "computer".includes(q) ||
-        "windows".includes(q)
-      ) {
-        out.push({
-          id: "__computer_use__",
-          type: "computer",
-          title: "电脑",
-          subtitle: "Control Windows apps",
-          insertText: "@电脑 ",
-        });
-      }
-
-      // 2. Workspace files from recursive search hits (or fallback top-level files)
+      // 1. Workspace files from recursive search hits (or fallback top-level files)
       if (fileHits.length > 0) {
         const matchedHits = fileHits
           .filter(

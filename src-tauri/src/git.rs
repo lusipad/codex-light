@@ -778,3 +778,92 @@ pub fn create_pull_request(
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitPullRequestInfo {
+    pub number: u64,
+    pub title: String,
+    pub state: String,
+    #[serde(default)]
+    pub is_draft: bool,
+    pub author: Option<String>,
+    pub head_ref_name: Option<String>,
+    pub base_ref_name: Option<String>,
+    pub updated_at: Option<String>,
+    pub additions: Option<u64>,
+    pub deletions: Option<u64>,
+    pub url: Option<String>,
+}
+
+pub fn list_pull_requests(
+    target_path: &str,
+    limit: Option<usize>,
+) -> Result<Vec<GitPullRequestInfo>, String> {
+    let git_root = find_git_root(target_path).ok_or("Not a git repository")?;
+    let limit_val = limit.unwrap_or(30).to_string();
+    let mut cmd = Command::new("gh");
+    cmd.current_dir(&git_root).args([
+        "pr",
+        "list",
+        "--limit",
+        &limit_val,
+        "--json",
+        "number,title,state,isDraft,author,headRefName,baseRefName,updatedAt,additions,deletions,url",
+    ]);
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+
+    let output = cmd.output().map_err(|e| format!("Failed to invoke gh CLI: {}", e))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(stderr);
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    #[derive(Deserialize)]
+    struct GhPrJson {
+        number: u64,
+        title: String,
+        state: String,
+        #[serde(rename = "isDraft", default)]
+        is_draft: bool,
+        author: Option<GhAuthor>,
+        #[serde(rename = "headRefName")]
+        head_ref_name: Option<String>,
+        #[serde(rename = "baseRefName")]
+        base_ref_name: Option<String>,
+        #[serde(rename = "updatedAt")]
+        updated_at: Option<String>,
+        additions: Option<u64>,
+        deletions: Option<u64>,
+        url: Option<String>,
+    }
+    #[derive(Deserialize)]
+    struct GhAuthor {
+        login: Option<String>,
+    }
+
+    let parsed: Vec<GhPrJson> =
+        serde_json::from_str(&stdout).map_err(|e| format!("JSON parse error: {}", e))?;
+    let list = parsed
+        .into_iter()
+        .map(|p| GitPullRequestInfo {
+            number: p.number,
+            title: p.title,
+            state: p.state,
+            is_draft: p.is_draft,
+            author: p.author.and_then(|a| a.login),
+            head_ref_name: p.head_ref_name,
+            base_ref_name: p.base_ref_name,
+            updated_at: p.updated_at,
+            additions: p.additions,
+            deletions: p.deletions,
+            url: p.url,
+        })
+        .collect();
+    Ok(list)
+}
+
+

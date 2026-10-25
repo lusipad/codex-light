@@ -14,7 +14,30 @@ import {
   RightPanelIcon,
   PlayIcon,
   SparklesIcon,
+  ClockIcon,
+  CopyIcon,
+  ExternalWindowIcon,
+  ForkIcon,
+  MessagePlusIcon,
+  OpenWithIcon,
+  PencilIcon,
+  PinIcon,
+  ShareIcon,
+  SlidersIcon,
+  SquarePlusIcon,
+  EllipsisIcon,
+  ArchiveIcon,
 } from "./components/Icons";
+import { ProjectSourcesPopover } from "./components/ProjectSourcesPopover";
+import { AppTitleBar } from "./components/AppTitleBar";
+import {
+  attachmentIdentityKey,
+  createAttachedFileItem,
+  listThreadAttachments,
+  mergeAttachmentItems,
+  persistThreadAttachments,
+  removeThreadAttachment,
+} from "./threadAttachments";
 import { callAppServer, tauriInvoke, tauriListen } from "./bridge";
 import { matchShortcut, matchRecentThreadIndex } from "./shortcuts";
 import { installNativeMenuHandler, installTrayHandler } from "./nativeShell";
@@ -29,6 +52,7 @@ import {
   ModelInfo,
   PendingServerRequest,
   PetSpeciesId,
+  InstalledPetItem,
   QueuedFollowupPrompt,
   SettingsSectionSlug,
   SkillInfoItem,
@@ -37,8 +61,6 @@ import {
   TurnItem,
   WorkspaceFileHit,
   WorkspaceRootItem,
-  ActiveGoalSession,
-  GoalStepItem,
   ShellExecResult,
   ProjectScriptCommands,
   GitCommitInfo,
@@ -61,12 +83,13 @@ import { MiniPetWidget } from "./components/MiniPetWidget";
 import { QuickSearchModal } from "./components/QuickSearchModal";
 import { CodeReviewView, ReviewRequest } from "./components/CodeReviewView";
 import { ArchiveView } from "./components/ArchiveView";
-import { GoalSetupModal, GoalSetupConfig } from "./components/GoalSetupModal";
-import { GoalProgressBanner } from "./components/GoalProgressBanner";
+import { ThreadGoalBanner } from "./components/ThreadGoalBanner";
+import { ThreadGoalModal } from "./components/ThreadGoalModal";
 import { ApprovalCenter } from "./components/ApprovalCenter";
 import { PlanPanel } from "./components/PlanPanel";
 import { TurnDiffPanel } from "./components/TurnDiffPanel";
 import { TokenUsageMeter } from "./components/TokenUsageMeter";
+import { ToolCallCards } from "./components/ToolCallCards";
 import { ThreadActionsMenu, ThreadActionItem } from "./components/ThreadActionsMenu";
 import {
   TokenUsageSnapshot,
@@ -83,35 +106,22 @@ import {
   goalStatusLabel,
 } from "./threadGoal";
 
-const STARTER_PROMPTS = [
-  {
-    title: "审阅未提交代码 (/review)",
-    desc: "审查当前 Git 工作区中所有修改，指出潜在缺陷与重构建议",
-    prompt: "/review 请审阅当前 Git 工作区中所有未提交的代码变动，总结修改点并指出潜在缺陷或重构建议。",
-  },
-  {
-    title: "架构与模块流向梳理",
-    desc: "分析当前项目的整体架构、核心入口与模块依赖",
-    prompt: "请通读当前项目的目录结构与核心代码，梳理出整体架构设计、核心模块职责与数据流向。",
-  },
-  {
-    title: "制定功能实施计划 (/plan)",
-    desc: "先进行技术方案权衡与分步拆解，确认后再改动代码",
-    prompt: "/plan 请先分析当前代码库并制定详细的分步实施方案，列出涉及的文件与验证步骤。",
-  },
-  {
-    title: "补充自动化单元测试 (/test)",
-    desc: "扫描近期核心模块改动，编写并运行完备测试用例",
-    prompt: "/test 请为当前项目中关键的业务逻辑编写自动化单元测试，并运行测试验证通过。",
-  },
-];
-
 function extractTextFromItem(item: TurnItem): string {
   if (typeof item.text === "string") return item.text;
   if (typeof item.content === "string") return item.content;
   if (Array.isArray(item.content)) {
     return item.content
       .map((part) => {
+        if (typeof part === "string") return part;
+        if (part && typeof part.text === "string") return part.text;
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+  if (Array.isArray((item as any).parts)) {
+    return (item as any).parts
+      .map((part: any) => {
         if (typeof part === "string") return part;
         if (part && typeof part.text === "string") return part.text;
         return "";
@@ -203,34 +213,6 @@ export function parseUnifiedDiffFiles(
   });
 }
 
-function extractChecklistFromText(text: string): GoalStepItem[] {
-  if (!text) return [];
-  const lines = text.split("\n");
-  const items: GoalStepItem[] = [];
-  let idx = 1;
-  for (const line of lines) {
-    const trimmed = line.trim();
-    const matchCompleted = trimmed.match(/^-\s*\[[xX]\]\s*(.+)$/);
-    if (matchCompleted) {
-      items.push({
-        id: `step-${idx++}`,
-        title: matchCompleted[1].trim(),
-        status: "completed",
-      });
-      continue;
-    }
-    const matchPending = trimmed.match(/^-\s*\[\s*\]\s*(.+)$/);
-    if (matchPending) {
-      items.push({
-        id: `step-${idx++}`,
-        title: matchPending[1].trim(),
-        status: "pending",
-      });
-    }
-  }
-  return items;
-}
-
 /** Map app-server ThreadStatus -> header chip text. */
 function describeThreadStatus(status: { type: string; activeFlags?: string[] } | null): {
   label: string;
@@ -287,16 +269,24 @@ function mapTurnObject(t: any, idx: number): TurnData {
     startedAt: t?.startedAt || t?.firstTurnWorkItemStartedAtMs || null,
     completedAt: t?.completedAt || null,
     durationMs: t?.durationMs || null,
-    items: Array.isArray(t?.items) ? t.items : [],
+    items: Array.isArray(t?.items)
+      ? t.items.map((it: any) => ({
+          ...it,
+          text: extractTextFromItem(it),
+        }))
+      : [],
   };
 }
 
 function normalizeTurnsFromThread(threadObj: any): TurnData[] {
-  const rawTurns =
+  let rawTurns =
     threadObj?.turns ||
     threadObj?.thread?.turns ||
     threadObj?.data ||
     [];
+  if (rawTurns && !Array.isArray(rawTurns) && Array.isArray(rawTurns.data)) {
+    rawTurns = rawTurns.data;
+  }
   if (!Array.isArray(rawTurns)) return [];
   return rawTurns.map(mapTurnObject);
 }
@@ -311,7 +301,41 @@ function normalizeTurnsFromList(page: any, reverse = true): TurnData[] {
 export const App: React.FC = () => {
   // Primary Route & Shell Layout State
   const [activeRoute, setActiveRoute] = useState<MainViewRoute>("home");
+  const [routeHistoryVersion, setRouteHistoryVersion] = useState(0);
+  const routeHistoryRef = useRef<{ entries: MainViewRoute[]; index: number }>({
+    entries: ["home"],
+    index: 0,
+  });
+  const navigatingRouteHistoryRef = useRef(false);
+  useEffect(() => {
+    if (navigatingRouteHistoryRef.current) {
+      navigatingRouteHistoryRef.current = false;
+      return;
+    }
+    const history = routeHistoryRef.current;
+    if (history.entries[history.index] === activeRoute) return;
+    history.entries = [...history.entries.slice(0, history.index + 1), activeRoute];
+    history.index = history.entries.length - 1;
+    setRouteHistoryVersion((version) => version + 1);
+  }, [activeRoute]);
+  const { canGoBack, canGoForward } = useMemo(() => {
+    const history = routeHistoryRef.current;
+    return {
+      canGoBack: history.index > 0,
+      canGoForward: history.index < history.entries.length - 1,
+    };
+  }, [routeHistoryVersion]);
+  const navigateRouteHistory = useCallback((direction: -1 | 1) => {
+    const history = routeHistoryRef.current;
+    const nextIndex = history.index + direction;
+    if (nextIndex < 0 || nextIndex >= history.entries.length) return;
+    navigatingRouteHistoryRef.current = true;
+    history.index = nextIndex;
+    setRouteHistoryVersion((version) => version + 1);
+    setActiveRoute(history.entries[nextIndex]);
+  }, []);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
+  const [activityOnly, setActivityOnly] = useState(false);
   const [showRightDrawer, setShowRightDrawer] = useState<boolean>(false);
   const [showTerminal, setShowTerminal] = useState<boolean>(false);
   const [pendingTermCommand, setPendingTermCommand] = useState<{
@@ -389,6 +413,9 @@ export const App: React.FC = () => {
   const planModeRef = useRef<boolean>(false);
   planModeRef.current = planMode;
   const [attachedFiles, setAttachedFiles] = useState<AttachedFileItem[]>([]);
+  const attachedFilesRef = useRef<AttachedFileItem[]>([]);
+  attachedFilesRef.current = attachedFiles;
+  const pendingAttachmentSaveRef = useRef<{ threadId: string; clearComposer: boolean } | null>(null);
   const [expandedThoughts, setExpandedThoughts] = useState<Record<string, boolean>>({});
 
   // Project Picker Popover on Home Title & AGENTS.md Modal
@@ -416,6 +443,9 @@ export const App: React.FC = () => {
   const [showUsagePopover, setShowUsagePopover] = useState<boolean>(false);
   const [showSessionParamsPopover, setShowSessionParamsPopover] = useState<boolean>(false);
   const [showExportPopover, setShowExportPopover] = useState<boolean>(false);
+  const [showSourcesPopover, setShowSourcesPopover] = useState<boolean>(false);
+  const [initialWorkbenchTab, setInitialWorkbenchTab] = useState<"newTab" | "changes" | "files" | "summary" | "browser">("changes");
+  const [pinnedSummaryVisible, setPinnedSummaryVisible] = useState<boolean>(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsSectionSlug>("general-settings");
 
   // Project Script Commands Detection
@@ -438,6 +468,8 @@ export const App: React.FC = () => {
 
   const [petVisible, setPetVisible] = useState<boolean>(false);
   const [selectedPetSpecies, setSelectedPetSpecies] = useState<PetSpeciesId>("codex");
+  const [petScale, setPetScale] = useState<number>(1.0);
+  const [installedPets, setInstalledPets] = useState<InstalledPetItem[]>([]);
   const [showQuickSearch, setShowQuickSearch] = useState<boolean>(false);
 
   // Global Toast & Header inline rename
@@ -460,18 +492,32 @@ export const App: React.FC = () => {
     []
   );
 
-  // Autonomous Goal Runner Engine State
-  const [activeGoal, setActiveGoal] = useState<ActiveGoalSession | null>(null);
-  const [showGoalModal, setShowGoalModal] = useState<boolean>(false);
-  const [goalCountdown, setGoalCountdown] = useState<number | null>(null);
+  const flushPendingAttachmentSave = useCallback(async (threadId: string) => {
+    const pending = pendingAttachmentSaveRef.current;
+    if (!pending || pending.threadId !== threadId) return;
+    pendingAttachmentSaveRef.current = null;
+    const files = attachedFilesRef.current;
+    if (files.length === 0) {
+      if (pending.clearComposer) setPromptInput("");
+      return;
+    }
+    const { errors } = await persistThreadAttachments(threadId, files);
+    if (errors.length > 0) {
+      showAppToast(`消息已发送，但附件保存失败: ${errors[0].message}`, "error");
+      return;
+    }
+    if (pending.clearComposer) {
+      setPromptInput("");
+      setAttachedFiles([]);
+    }
+  }, [showAppToast]);
+
+  // Official Thread Goal State (`thread/goal/*`)
   const [serverGoal, setServerGoal] = useState<ThreadGoal | null>(null);
-  const activeGoalRef = useRef<ActiveGoalSession | null>(null);
-  activeGoalRef.current = activeGoal;
+  const [showGoalModal, setShowGoalModal] = useState<boolean>(false);
   const serverGoalRef = useRef<ThreadGoal | null>(null);
   serverGoalRef.current = serverGoal;
-  const countdownTimerRef = useRef<any>(null);
-  const handleGoalTurnFinishedRef = useRef<((g: ActiveGoalSession) => Promise<void>) | null>(null);
-  const handleLaunchGoalRef = useRef<((config: GoalSetupConfig) => Promise<void>) | null>(null);
+  const handleSaveGoalRef = useRef<((objective: string) => Promise<void>) | null>(null);
 
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const timelineScrollRef = useRef<HTMLDivElement | null>(null);
@@ -539,75 +585,75 @@ export const App: React.FC = () => {
   // 3. Refresh Workspace Files, AGENTS.md & Installed Skills
   const refreshWorkspaceContext = useCallback(async () => {
     if (!activeWorkspace?.path) return;
+    const cwd = activeWorkspace.path;
 
-    try {
-      const agents = await tauriInvoke<{
+    void Promise.allSettled([
+      tauriInvoke<{
         found: boolean;
         path: string | null;
         content: string;
-      }>("workspace_agents_md", { cwd: activeWorkspace.path });
-      if (agents) setAgentsMdInfo(agents);
-    } catch {
-      // ignore
-    }
-
-    try {
-      const entries = await tauriInvoke<DirectoryEntryItem[]>("fs_list_dir", {
-        path: activeWorkspace.path,
+      }>("workspace_agents_md", { cwd }).then((agents) => {
+        if (agents) setAgentsMdInfo(agents);
+      }),
+      tauriInvoke<DirectoryEntryItem[]>("fs_list_dir", {
+        path: cwd,
         showHidden: false,
-      });
-      if (entries) {
-        setWorkspaceFiles(entries.map((e) => e.name || e.path));
-      }
-    } catch {
-      // ignore
-    }
+      }).then((entries) => {
+        if (entries) setWorkspaceFiles(entries.map((e) => e.name || e.path));
+      }),
+      tauriInvoke<SkillInfoItem[]>("skills_list_local", {
+        workspaceRoot: cwd,
+      }).then((skillList) => {
+        if (Array.isArray(skillList)) setSkills(skillList);
+      }),
+      tauriInvoke<ProjectScriptCommands>("detect_project_scripts", {
+        cwd,
+      }).then((scripts) => {
+        if (scripts) setProjectScripts(scripts);
+      }),
+    ]);
 
-    try {
-      const hits = await tauriInvoke<WorkspaceFileHit[]>("fs_search_files", {
-        cwd: activeWorkspace.path,
+    const timer = window.setTimeout(() => {
+      tauriInvoke<WorkspaceFileHit[]>("fs_search_files", {
+        cwd,
         query: null,
         limit: 80,
-      });
-      if (Array.isArray(hits)) {
-        setWorkspaceFileHits(hits);
-      }
-    } catch {
-      // ignore
-    }
+      })
+        .then((hits) => {
+          if (Array.isArray(hits)) setWorkspaceFileHits(hits);
+        })
+        .catch(() => {});
+    }, 120);
 
-    try {
-      const skillList = await tauriInvoke<SkillInfoItem[]>("skills_list_local", {
-        workspaceRoot: activeWorkspace.path,
-      });
-      if (Array.isArray(skillList)) {
-        setSkills(skillList);
-      }
-    } catch {
-      // ignore
-    }
-
-    try {
-      const scripts = await tauriInvoke<ProjectScriptCommands>("detect_project_scripts", {
-        cwd: activeWorkspace.path,
-      });
-      if (scripts) setProjectScripts(scripts);
-    } catch {
-      // ignore
-    }
+    return () => window.clearTimeout(timer);
   }, [activeWorkspace?.path]);
 
   // 4. Refresh Threads & Models from codex app-server
   const refreshThreads = useCallback(async () => {
     try {
-      const res = await callAppServer<{
+      let res = await callAppServer<{
         data?: ThreadSummary[];
         threads?: ThreadSummary[];
-      }>("thread/list", { limit: 60 });
-      const list = res?.data || res?.threads || (Array.isArray(res) ? res : []);
+      }>("thread/list", { limit: 100, useStateDbOnly: true });
+      let list = res?.data || res?.threads || (Array.isArray(res) ? res : []);
+      if (!list || list.length === 0) {
+        try {
+          res = await callAppServer<any>("thread/list", { limit: 50 });
+          list = res?.data || res?.threads || (Array.isArray(res) ? res : []);
+        } catch {
+          // ignore fallback error
+        }
+      }
       setThreads(list);
     } catch (e) {
-      console.warn("thread/list failed:", e);
+      console.warn("thread/list with useStateDbOnly failed, falling back:", e);
+      try {
+        const res = await callAppServer<any>("thread/list", { limit: 50 });
+        const list = res?.data || res?.threads || (Array.isArray(res) ? res : []);
+        setThreads(list);
+      } catch {
+        // ignore
+      }
     }
   }, []);
 
@@ -686,6 +732,21 @@ export const App: React.FC = () => {
     }
   }, []);
 
+  const refreshInstalledPets = useCallback(async () => {
+    try {
+      const list = await tauriInvoke<InstalledPetItem[]>("pets_list_installed");
+      if (Array.isArray(list) && list.length > 0) {
+        setInstalledPets(list);
+        setSelectedPetSpecies((prev) => {
+          if (!prev || prev === "codex") return list[0].id;
+          return prev;
+        });
+      }
+    } catch (e) {
+      console.warn("pets_list_installed failed:", e);
+    }
+  }, []);
+
   // 通知偏好（桌面系统通知 / 提示音 / 审批提醒）
   const [notifyPrefs, setNotifyPrefs] = useState<{
     desktop: boolean;
@@ -719,6 +780,7 @@ export const App: React.FC = () => {
   useEffect(() => {
     refreshWorkspacesAndMeta();
     refreshConfigOverview();
+    refreshInstalledPets();
 
     tauriInvoke<any>("desktop_state_get", { key: "desktopPreferences" })
       .then((prefs) => {
@@ -727,6 +789,7 @@ export const App: React.FC = () => {
           if (prefs.toneStyle) setToneStyle(prefs.toneStyle);
           if (prefs.petVisible !== undefined) setPetVisible(prefs.petVisible);
           if (prefs.selectedPetSpecies) setSelectedPetSpecies(prefs.selectedPetSpecies);
+          if (prefs.petScale) setPetScale(prefs.petScale);
           applyNotifyPrefs(prefs);
         }
       })
@@ -736,6 +799,9 @@ export const App: React.FC = () => {
     const onPrefsChanged = (ev: Event) => {
       const detail = (ev as CustomEvent).detail;
       if (detail && typeof detail === "object") {
+        if (detail.petVisible !== undefined) setPetVisible(detail.petVisible);
+        if (detail.selectedPetSpecies) setSelectedPetSpecies(detail.selectedPetSpecies);
+        if (detail.petScale) setPetScale(detail.petScale);
         applyNotifyPrefs(detail);
       }
     };
@@ -803,6 +869,7 @@ export const App: React.FC = () => {
               },
             ];
           });
+          void flushPendingAttachmentSave(params.threadId);
         } else if (method === "turn/completed") {
           setIsStreaming(false);
           notifyChime("done");
@@ -881,12 +948,20 @@ export const App: React.FC = () => {
             });
           }
 
-          // Autonomous Goal turn completion check
-          const currentGoal = activeGoalRef.current;
-          if (currentGoal && currentGoal.status === "running") {
-            setTimeout(() => {
-              handleGoalTurnFinishedRef.current?.(currentGoal);
-            }, 150);
+          // Check official thread goal completion
+          if (serverGoalRef.current) {
+            const tid = activeThreadIdRef.current;
+            if (tid) {
+              goalGet(tid).then((g) => {
+                if (tid === activeThreadIdRef.current) {
+                  setServerGoal(g);
+                  if (g?.status === "complete") {
+                    notifyChime("done");
+                    showAppToast("🎯 目标已达成 (Goal achieved)", "success");
+                  }
+                }
+              }).catch(() => {});
+            }
           }
         } else if (
           method === "item/agentMessage/delta" ||
@@ -918,16 +993,6 @@ export const App: React.FC = () => {
               lastMsg.text = (lastMsg.text || "") + textDelta;
             }
             lastTurn.items = items;
-
-            // Live checklist step detection for active goal
-            const curGoal = activeGoalRef.current;
-            if (curGoal && curGoal.status === "running") {
-              const liveSteps = extractChecklistFromText(lastMsg?.text || "");
-              if (liveSteps.length > 0) {
-                setActiveGoal((prev) => (prev ? { ...prev, steps: liveSteps } : null));
-              }
-            }
-
             return list;
           });
         } else if (
@@ -1086,18 +1151,33 @@ export const App: React.FC = () => {
           });
         } else if (method === NOTIFICATION.THREAD_STATUS_CHANGED) {
           const tid = params?.threadId;
-          const status = params?.status?.type ?? params?.status;
+          const statusType = params?.status?.type ?? params?.status;
+          const status = params?.status && typeof params.status === "object"
+            ? params.status
+            : statusType;
           if (tid) {
             setThreads((prev) =>
               prev.map((t) => (t.id === tid ? { ...t, status } : t))
             );
             if (tid === activeThreadIdRef.current) {
               setActiveThreadStatus({
-                type: String(status ?? "idle"),
+                type: String(statusType ?? "idle"),
                 activeFlags: Array.isArray(params?.status?.activeFlags)
                   ? params.status.activeFlags
                   : [],
               });
+            }
+          }
+        } else if (method === "thread/attachment/updated") {
+          const threadId = params?.threadId;
+          if (
+            threadId === activeThreadIdRef.current &&
+            ["file", "image", "localImage"].includes(params?.attachmentType)
+          ) {
+            if (params.operation === "deleted") {
+              setAttachedFiles((prev) => prev.filter(
+                (file) => attachmentIdentityKey(file.path) !== params.identityKey
+              ));
             }
           }
         } else if (method === NOTIFICATION.WINDOWS_SANDBOX_SETUP_COMPLETED) {
@@ -1118,16 +1198,17 @@ export const App: React.FC = () => {
           const goal = params?.goal as ThreadGoal | undefined;
           if (goal) {
             if (!goal.threadId || goal.threadId === activeThreadIdRef.current) {
-              syncGoalFromServer(goal);
+              setServerGoal(goal);
               if (goal.status === "complete") {
                 notifyChime("done");
+                showAppToast("🎯 目标已达成 (Goal achieved)", "success");
               }
             }
           }
         } else if (method === NOTIFICATION.THREAD_GOAL_CLEARED) {
           const tid = params?.threadId;
           if (!tid || tid === activeThreadIdRef.current) {
-            syncGoalFromServer(null);
+            setServerGoal(null);
           }
         } else if (method === NOTIFICATION.ACCOUNT_RATE_LIMITS) {
           setRateLimits((prev: any) => mergeRateLimits(prev, params));
@@ -1208,15 +1289,22 @@ export const App: React.FC = () => {
           }
         } else if (method === NOTIFICATION.THREAD_UNARCHIVED) {
           refreshThreads();
+        } else if (method === NOTIFICATION.DEPRECATION_NOTICE) {
+          // Internal RPC protocol deprecation notice from app-server; log only, do not toast
+          const msg = params?.summary || params?.message || (typeof params === "string" ? params : JSON.stringify(params));
+          console.warn("[app-server deprecationNotice]", msg);
         } else if (
           method === NOTIFICATION.WARNING ||
           method === NOTIFICATION.CONFIG_WARNING ||
-          method === NOTIFICATION.DEPRECATION_NOTICE ||
           method === NOTIFICATION.GUARDIAN_WARNING
         ) {
-          console.warn(`[${method}]`, params?.message ?? params);
+          const msg = params?.summary || params?.message || (typeof params === "string" ? params : JSON.stringify(params));
+          console.warn(`[${method}]`, msg);
+          showAppToast(`⚠️ ${msg}`, "info");
         } else if (method === NOTIFICATION.ERROR) {
-          console.error("[app-server error]", params?.message ?? params);
+          const msg = params?.summary || params?.message || (typeof params === "string" ? params : JSON.stringify(params));
+          console.error("[app-server error]", msg);
+          showAppToast(`❌ ${msg}`, "error");
         }
       }
     );
@@ -1434,12 +1522,21 @@ export const App: React.FC = () => {
 
   // Workspace Actions
   const handleSelectWorkspace = useCallback(async (path: string) => {
+    // Optimistic active workspace update
+    setWorkspaces((prev) =>
+      prev.map((w) => ({
+        ...w,
+        isActive: w.path.replace(/\\/g, "/").toLowerCase() === path.replace(/\\/g, "/").toLowerCase(),
+      }))
+    );
     try {
       const updated = await tauriInvoke<WorkspaceRootItem[]>(
         "workspace_set_active",
         { path }
       );
-      setWorkspaces(updated);
+      if (Array.isArray(updated) && updated.length > 0) {
+        setWorkspaces(updated);
+      }
     } catch (e) {
       console.warn("workspace_set_active failed:", e);
     }
@@ -1514,27 +1611,46 @@ export const App: React.FC = () => {
     [activeWorkspace?.path, refreshGitStatus]
   );
 
-  // Attach files
   const handleAttachFiles = useCallback(async () => {
     try {
       const files = await tauriInvoke<string[]>("pick_files_dialog");
       if (Array.isArray(files) && files.length > 0) {
-        const additions: AttachedFileItem[] = files.map((p) => ({
-          id: `${p}-${Date.now()}`,
-          name: p.split(/[/\\]/).pop() || p,
-          path: p,
-          kind: /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(p) ? "image" : "file",
-        }));
-        setAttachedFiles((prev) => [...prev, ...additions]);
+        const additions = files.map((path) => createAttachedFileItem(path));
+        setAttachedFiles((prev) => mergeAttachmentItems(prev, additions));
       }
     } catch (e) {
       console.warn("pick_files_dialog failed:", e);
     }
   }, []);
 
+  const handleRemoveAttachedFile = useCallback(async (id: string) => {
+    const file = attachedFiles.find((item) => item.id === id);
+    if (!file) return;
+    if (file.persisted && activeThreadId) {
+      try {
+        await removeThreadAttachment(activeThreadId, file);
+      } catch (error) {
+        showAppToast(`移除附件失败: ${String(error)}`, "error");
+        return;
+      }
+    }
+    setAttachedFiles((prev) => prev.filter((item) => item.id !== id));
+  }, [attachedFiles, activeThreadId, showAppToast]);
+
   // Thread Navigation & Lifecycle
   const startNewThread = useCallback(
-    (workspacePath?: string) => {
+    async (workspacePath?: string) => {
+      const previousThreadId = activeThreadIdRef.current;
+      if (previousThreadId) {
+        const pending = attachedFilesRef.current.filter((file) => !file.persisted);
+        if (pending.length > 0) {
+          const { errors } = await persistThreadAttachments(previousThreadId, pending);
+          if (errors.length > 0) {
+            showAppToast(`附件尚未保存，未新建会话: ${errors[0].message}`, "error");
+            return;
+          }
+        }
+      }
       if (workspacePath) {
         handleSelectWorkspace(workspacePath);
       }
@@ -1547,13 +1663,26 @@ export const App: React.FC = () => {
       setPlanSteps([]);
       setTurnDiffFiles([]);
       setTokenUsage(null);
+      setAttachedFiles([]);
       setActiveRoute("home");
       setTimeout(() => composerTextareaRef.current?.focus(), 50);
     },
-    [handleSelectWorkspace]
+    [handleSelectWorkspace, showAppToast]
   );
 
   const selectThread = useCallback(async (threadId: string) => {
+    const previousThreadId = activeThreadIdRef.current;
+    if (previousThreadId && previousThreadId !== threadId) {
+      const pending = attachedFilesRef.current.filter((file) => !file.persisted);
+      if (pending.length > 0) {
+        const { errors } = await persistThreadAttachments(previousThreadId, pending);
+        if (errors.length > 0) {
+          showAppToast(`附件尚未保存，未切换会话: ${errors[0].message}`, "error");
+          return;
+        }
+      }
+    }
+    setAttachedFiles([]);
     setActiveThreadId(threadId);
     setActiveRoute("thread");
     setActiveTurnId(null);
@@ -1563,11 +1692,12 @@ export const App: React.FC = () => {
     setTurnsCursor(null);
     setHasMoreTurns(false);
     try {
-      const res = await callAppServer<any>("thread/read", {
+      // 遵循官方 Codex 分页协议：只读元数据，不携带已废弃的 includeTurns: true
+      const fullRes = await callAppServer<any>("thread/read", {
         threadId,
         includeTurns: false,
       });
-      const threadStatus = res?.thread?.status;
+      const threadStatus = fullRes?.thread?.status;
       if (threadStatus) {
         setActiveThreadStatus({
           type: String(threadStatus?.type ?? threadStatus),
@@ -1576,39 +1706,41 @@ export const App: React.FC = () => {
             : [],
         });
       }
-      // 分页加载最近 15 个 turn（官方推荐的分页读取方式）
-      const PAGE_SIZE = 15;
+      // 分页拉取最近 20 轮并记录游标
       let loadedTurns: TurnData[] = [];
-      let nextCursor: string | null = null;
       try {
         const page = await callAppServer<any>("thread/turns/list", {
           threadId,
-          limit: PAGE_SIZE,
+          limit: 20,
           sortDirection: "desc",
           itemsView: "full",
         });
         loadedTurns = normalizeTurnsFromList(page, true);
-        nextCursor = page?.nextCursor ?? null;
-      } catch (pageErr) {
-        console.warn("thread/turns/list failed, falling back to full read:", pageErr);
-        const fullRes = await callAppServer<any>("thread/read", {
-          threadId,
-          includeTurns: true,
-        });
-        loadedTurns = normalizeTurnsFromThread(fullRes);
+        if (page?.nextCursor) {
+          setTurnsCursor(page.nextCursor);
+          setHasMoreTurns(true);
+        }
+      } catch {
+        try {
+          const resumeRes = await callAppServer<any>("thread/resume", {
+            threadId,
+          });
+          loadedTurns = normalizeTurnsFromThread(resumeRes);
+        } catch (e) {
+          console.warn("Failed to resume thread turns fallback:", e);
+        }
       }
-      if (loadedTurns.length > 0) {
-        setTurns(loadedTurns);
-        setTurnsCursor(nextCursor);
-        setHasMoreTurns(Boolean(nextCursor));
-      } else {
-        const resumeRes = await callAppServer<any>("thread/resume", {
-          threadId,
-        });
-        setTurns(normalizeTurnsFromThread(resumeRes));
-      }
+      setTurns(loadedTurns);
     } catch (e) {
       console.warn("Failed to read/resume thread:", e);
+    }
+    try {
+      const restored = await listThreadAttachments(threadId);
+      if (threadId === activeThreadIdRef.current) {
+        setAttachedFiles(restored);
+      }
+    } catch (error) {
+      showAppToast(`加载会话附件失败: ${String(error)}`, "error");
     }
     // 同步服务端 thread goal（若存在）
     try {
@@ -1840,41 +1972,42 @@ export const App: React.FC = () => {
     }
 
     const effectiveRawText = rawText;
-    if (rawText.startsWith("/goal ") && handleLaunchGoalRef.current) {
+    if (rawText.startsWith("/goal ") && handleSaveGoalRef.current) {
       const goalObjective = rawText.slice(6).trim();
       if (goalObjective) {
         setPromptInput("");
-        await handleLaunchGoalRef.current({
-          objective: goalObjective,
-          maxTurns: 0,
-          autoVerifyCommand: "",
-          autoContinue: true,
-          useWorktree: false,
-        });
+        await handleSaveGoalRef.current(goalObjective);
         return;
       }
     }
 
-    const attachmentContext =
-      attachedFiles.length > 0
-        ? attachedFiles.map((f) => `[附加文件: ${f.path}]`).join("\n") + "\n"
-        : "";
-    const text = `${attachmentContext}${effectiveRawText}`.trim();
-
-    if (!overrideText) {
-      setPromptInput("");
-      setAttachedFiles([]);
+    const nativeInputs: any[] = effectiveRawText
+      ? [{ type: "text", text: effectiveRawText }]
+      : [];
+    for (const file of attachedFiles) {
+      if (file.kind === "image" || /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(file.name)) {
+        nativeInputs.push({ type: "localImage", path: file.path });
+      } else {
+        nativeInputs.push({ type: "mention", name: file.name, path: file.path });
+      }
     }
+
     setActiveRoute("thread");
 
     // If currently streaming and we have an activeThreadId, use turn/steer
     if (isStreaming && activeThreadId) {
       try {
+        const { errors } = await persistThreadAttachments(activeThreadId, attachedFiles);
+        if (errors.length > 0) throw new Error(errors[0].message);
         await callAppServer("turn/steer", {
           threadId: activeThreadId,
           expectedTurnId: activeTurnIdRef.current,
-          input: [{ type: "text", text }],
+          input: nativeInputs,
         });
+        if (!overrideText) {
+          setPromptInput("");
+          setAttachedFiles([]);
+        }
         return;
       } catch {
         // Fallback to normal flow
@@ -1885,7 +2018,7 @@ export const App: React.FC = () => {
       id: `user-${Date.now()}`,
       status: "completed",
       startedAt: Date.now(),
-      items: [{ id: `u-${Date.now()}`, type: "userMessage", text: effectiveRawText || text }],
+      items: [{ id: `u-${Date.now()}`, type: "userMessage", text: effectiveRawText }],
     };
     setTurns((prev) => [...prev, userTurn]);
     setIsStreaming(true);
@@ -1951,10 +2084,16 @@ export const App: React.FC = () => {
         }
       }
 
+      if (attachedFiles.length > 0) {
+        pendingAttachmentSaveRef.current = {
+          threadId: currentThreadId!,
+          clearComposer: !overrideText,
+        };
+      }
       const turnRes = await callAppServer<any>("turn/start", {
         threadId: currentThreadId,
         cwd: targetCwd || undefined,
-        input: [{ type: "text", text }],
+        input: nativeInputs,
         model: selectedModelId,
         effort: reasoningEffort === "extra_high" ? "xhigh" : reasoningEffort,
         approvalPolicy,
@@ -1964,8 +2103,17 @@ export const App: React.FC = () => {
       });
       const startedTurnId =
         turnRes?.turn?.id || turnRes?.turnId || turnRes?.id || null;
-      if (startedTurnId) setActiveTurnId(String(startedTurnId));
+      if (startedTurnId) {
+        setActiveTurnId(String(startedTurnId));
+        if (!overrideText && attachedFiles.length === 0) {
+          setPromptInput("");
+          setAttachedFiles([]);
+        }
+      } else {
+        pendingAttachmentSaveRef.current = null;
+      }
     } catch (err: any) {
+      pendingAttachmentSaveRef.current = null;
       console.error("Turn start failed:", err);
       setIsStreaming(false);
       setTurns((prev) => [
@@ -2006,154 +2154,29 @@ export const App: React.FC = () => {
   ]);
 
   // ── Thread Goal（官方 thread/goal/*，服务端驱动自主推进）──
-  const syncGoalFromServer = useCallback((goal: ThreadGoal | null) => {
-    setServerGoal(goal);
-    setActiveGoal((prev) => {
-      if (!goal) return null;
-      const statusMap: Record<string, ActiveGoalSession["status"]> = {
-        active: "running",
-        paused: "paused",
-        complete: "completed",
-      };
-      const viewStatus = statusMap[goal.status] ?? "paused";
-      return {
-        id: `goal-${goal.threadId}`,
-        threadId: goal.threadId,
-        objective: goal.objective,
-        status: viewStatus,
-        currentTurn: prev?.currentTurn ?? 1,
-        maxTurns: 0,
-        autoVerifyCommand: prev?.autoVerifyCommand ?? "",
-        verificationStatus: prev?.verificationStatus ?? "idle",
-        verificationOutput: prev?.verificationOutput,
-        steps: prev?.steps ?? [],
-        autoContinue: true,
-        countdownRemaining: null,
-        createdAt: goal.createdAt * 1000,
-        updatedAt: goal.updatedAt * 1000,
-      };
-    });
-  }, []);
-
   const refreshThreadGoal = useCallback(
     async (threadId?: string | null) => {
       const tid = threadId ?? activeThreadIdRef.current;
       if (!tid) {
-        syncGoalFromServer(null);
+        setServerGoal(null);
         return null;
       }
       try {
         const goal = await goalGet(tid);
-        if (tid === activeThreadIdRef.current) syncGoalFromServer(goal);
+        if (tid === activeThreadIdRef.current) setServerGoal(goal);
         return goal;
       } catch (e) {
         console.warn("thread/goal/get failed:", e);
         return null;
       }
     },
-    [syncGoalFromServer]
+    []
   );
 
-  // 本地验证命令（服务端 goal 协议不含 verify 字段，保留为可选本地工具）
-  const runGoalVerification = useCallback(
-    async (goalToVerify?: ActiveGoalSession) => {
-      const g = goalToVerify || activeGoalRef.current;
-      if (!g || !g.autoVerifyCommand) return true;
-      const cwd = activeWorkspace?.path || "";
-      if (!cwd) return true;
-
-      setActiveGoal((prev) =>
-        prev ? { ...prev, verificationStatus: "running" } : null
-      );
-
-      try {
-        const res = await tauriInvoke<ShellExecResult>("exec_shell_command", {
-          cwd,
-          command: g.autoVerifyCommand,
-        });
-
-        const passed = res.exitCode === 0 && res.success;
-        const fullOutput = `[Exit Code ${res.exitCode}]\n--- STDOUT ---\n${res.stdout || "(空)"}\n--- STDERR ---\n${res.stderr || "(空)"}`;
-
-        setActiveGoal((prev) =>
-          prev
-            ? {
-                ...prev,
-                verificationStatus: passed ? "passed" : "failed",
-                verificationOutput: fullOutput,
-              }
-            : null
-        );
-
-        return passed;
-      } catch (err: any) {
-        setActiveGoal((prev) =>
-          prev
-            ? {
-                ...prev,
-                verificationStatus: "failed",
-                verificationOutput: `执行验证命令失败: ${err?.message || err}`,
-              }
-            : null
-        );
-        return false;
-      }
-    },
-    [activeWorkspace?.path]
-  );
-
-  /** 继续推进：官方约定发送 `/goal <objective>` 作为续跑提示 */
-  const triggerNextGoalTurn = useCallback(() => {
-    const objective =
-      serverGoalRef.current?.objective || activeGoalRef.current?.objective || "";
-    if (!objective.trim()) return;
-    void handleSendMessage(buildGoalPrompt(objective));
-  }, [handleSendMessage]);
-
-  const handleGoalTurnFinished = useCallback(
-    async (currentGoal: ActiveGoalSession) => {
-      // 服务端负责自主续跑；客户端只同步展示（步骤解析 + 服务端状态回读）
-      const lastAssistantTurn = [...turns]
-        .reverse()
-        .find((t) => t.items.some((i) => i.type === "agentMessage"));
-      const lastText = lastAssistantTurn
-        ? lastAssistantTurn.items.map(extractTextFromItem).join("\n")
-        : "";
-      const parsedSteps = extractChecklistFromText(lastText);
-      if (parsedSteps.length > 0) {
-        setActiveGoal((prev) => (prev ? { ...prev, steps: parsedSteps } : null));
-      }
-
-      const refreshed = await refreshThreadGoal();
-      if (refreshed?.status === "complete") {
-        notifyChime("done");
-        setInboxItems((prev) => [
-          {
-            id: `goal-done-${Date.now()}`,
-            title: "🎯 目标已完成",
-            subtitle: refreshed.objective || currentGoal.objective,
-            kind: "goal",
-            threadId: activeThreadId || undefined,
-            createdAt: Date.now(),
-            read: false,
-          },
-          ...prev,
-        ]);
-        setServerGoal(null);
-      }
-    },
-    [turns, refreshThreadGoal, activeThreadId]
-  );
-
-  useEffect(() => {
-    handleGoalTurnFinishedRef.current = handleGoalTurnFinished;
-  }, [handleGoalTurnFinished]);
-
-  const handleLaunchGoal = useCallback(
-    async (config: GoalSetupConfig) => {
-      const objective = config.objective.trim();
-      if (!objective) return;
-      if (config.useWorktree) setUseWorktree(true);
+  const handleSaveGoal = useCallback(
+    async (objective: string) => {
+      const trimmed = objective.trim();
+      if (!trimmed) return;
       try {
         let threadId = activeThreadIdRef.current;
         if (!threadId) {
@@ -2171,13 +2194,14 @@ export const App: React.FC = () => {
           setActiveRoute("thread");
           refreshThreads();
         }
-        const goal = await goalSet(threadId, { objective, status: "active" });
-        syncGoalFromServer(goal ?? (await goalGet(threadId)));
+        const goal = await goalSet(threadId, { objective: trimmed, status: "active" });
+        setServerGoal(goal);
         setShowGoalModal(false);
-        await handleSendMessage(buildGoalPrompt(objective));
-        showAppToast("🎯 已启动服务端自主目标", "success");
+        // 官方协议：设定目标后发送 `/goal <objective>` 触发服务端自主推进
+        await handleSendMessage(buildGoalPrompt(trimmed));
+        showAppToast("已设定目标", "success");
       } catch (e: any) {
-        showAppToast(`启动目标失败：${e?.message || e}`, "error");
+        showAppToast(`设定目标失败：${e?.message || e}`, "error");
       }
     },
     [
@@ -2185,54 +2209,41 @@ export const App: React.FC = () => {
       selectedModelId,
       permissionMode,
       refreshThreads,
-      syncGoalFromServer,
       handleSendMessage,
       showAppToast,
     ]
   );
 
   useEffect(() => {
-    handleLaunchGoalRef.current = handleLaunchGoal;
-  }, [handleLaunchGoal]);
+    handleSaveGoalRef.current = handleSaveGoal;
+  }, [handleSaveGoal]);
 
-  const handleGoalPause = useCallback(async () => {
+  const handleToggleGoalPause = useCallback(async () => {
+    const tid = activeThreadIdRef.current;
+    const cur = serverGoalRef.current;
+    if (!tid || !cur) return;
+    const nextStatus = cur.status === "paused" ? "active" : "paused";
+    try {
+      const goal = await goalSet(tid, { status: nextStatus });
+      setServerGoal(goal);
+      showAppToast(nextStatus === "paused" ? "目标已暂停" : "目标已恢复推进", "info");
+    } catch (e: any) {
+      showAppToast(`更新目标状态失败：${e?.message || e}`, "error");
+    }
+  }, [showAppToast]);
+
+  const handleClearGoal = useCallback(async () => {
     const tid = activeThreadIdRef.current;
     if (!tid) return;
     try {
-      const goal = await goalSet(tid, { status: "paused" });
-      syncGoalFromServer(goal);
-      showAppToast("目标已暂停", "info");
+      await goalClear(tid);
+      setServerGoal(null);
+      showAppToast("目标已清除", "info");
     } catch (e: any) {
-      showAppToast(`暂停目标失败：${e?.message || e}`, "error");
-    }
-  }, [syncGoalFromServer, showAppToast]);
-
-  const handleGoalResume = useCallback(async () => {
-    const tid = activeThreadIdRef.current;
-    if (!tid) return;
-    try {
-      const goal = await goalSet(tid, { status: "active" });
-      syncGoalFromServer(goal);
-      const objective = goal?.objective || activeGoalRef.current?.objective || "";
-      if (objective) await handleSendMessage(buildGoalPrompt(objective));
-      showAppToast("目标已恢复", "success");
-    } catch (e: any) {
-      showAppToast(`恢复目标失败：${e?.message || e}`, "error");
-    }
-  }, [syncGoalFromServer, handleSendMessage, showAppToast]);
-
-  const handleGoalAbort = useCallback(async () => {
-    const tid = activeThreadIdRef.current;
-    try {
-      if (tid) await goalClear(tid);
-    } catch (e) {
       console.warn("thread/goal/clear failed:", e);
+      showAppToast(`清除目标失败：${e?.message || e}`, "error");
     }
-    syncGoalFromServer(null);
-    setServerGoal(null);
-    setGoalCountdown(null);
-    showAppToast("目标已清除", "info");
-  }, [syncGoalFromServer, showAppToast]);
+  }, [showAppToast]);
 
   const handleSetupWindowsSandbox = useCallback(async () => {
     setSandboxSettingUp(true);
@@ -2487,6 +2498,30 @@ export const App: React.FC = () => {
     [refreshThreads, selectThread]
   );
 
+  const handleForkChat = useCallback(
+    async (turnId?: string) => {
+      const currentId = activeThreadIdRef.current;
+      if (!currentId) return;
+      try {
+        showAppToast("正在分叉会话...", "info");
+        const res = await callAppServer<any>("thread/fork", {
+          threadId: currentId,
+          ...(turnId ? { lastTurnId: turnId } : {}),
+        });
+        const newThreadId = res?.thread?.id || res?.threadId || res?.id;
+        await refreshThreads();
+        if (newThreadId) {
+          selectThread(newThreadId);
+          showAppToast("✓ 已成功分叉出会话", "success");
+        }
+      } catch (err: any) {
+        console.warn("thread/fork failed:", err);
+        showAppToast("分叉会话失败: " + (err?.message || err), "error");
+      }
+    },
+    [callAppServer, refreshThreads, selectThread, showAppToast]
+  );
+
   const handleDeleteThread = useCallback(
     async (thread: ThreadSummary, e: React.MouseEvent) => {
       e.stopPropagation();
@@ -2559,6 +2594,10 @@ export const App: React.FC = () => {
       if (activeThreadObj) void handleArchiveThread(activeThreadObj, {} as any);
     },
     "fork-thread": () => void handleForkThread(),
+    "open-review-tab": () => {
+      setInitialWorkbenchTab("changes");
+      setShowRightDrawer(true);
+    },
     "open-review": () => setActiveRoute("review"),
     "copy-last-code-block": () => {
       const blocks: string[] = [];
@@ -2579,6 +2618,11 @@ export const App: React.FC = () => {
       }
     },
     escape: () => {
+      const openPopover = document.querySelector<HTMLElement>("[popover]:popover-open");
+      if (openPopover) {
+        (openPopover as any).hidePopover?.();
+        return;
+      }
       setShowQuickSearch(false);
       setShowGitMenu(false);
       setShowUsagePopover(false);
@@ -2588,98 +2632,132 @@ export const App: React.FC = () => {
     },
   };
 
-  // ── 原生菜单 / 托盘 事件接线（与快捷键共用 runShortcutAction 去重）──
+  const zoomRef = useRef(1);
+  const cycleTheme = useCallback(async () => {
+    try {
+      const { OFFICIAL_COLOR_THEMES } = await import("./components/SettingsView");
+      const themes = (OFFICIAL_COLOR_THEMES || []).map((theme: any) => theme.id);
+      if (!themes.length) return;
+      const current =
+        (await tauriInvoke<string | null>("desktop_state_get", { key: "colorTheme" })) || "codex";
+      const index = Math.max(0, themes.indexOf(current));
+      const next = themes[(index + 1) % themes.length];
+      applyColorTheme(next);
+      await tauriInvoke("desktop_state_set", { key: "colorTheme", value: next });
+      showAppToast(`主题已切换：${next}`, "info");
+    } catch (error) {
+      console.warn("toggle-theme failed:", error);
+      showAppToast(`主题切换失败: ${String(error)}`, "error");
+    }
+  }, [showAppToast]);
+
+  const handleAppCommand = useCallback(async (command: string, payload?: any) => {
+    const shortcutAction = shortcutHandlersRef.current[command];
+    if (shortcutAction) {
+      shortcutAction(payload);
+      return;
+    }
+    if (command === "open-workspace") {
+      await handlePickNewFolder();
+      return;
+    }
+    if (command === "settings") {
+      setActiveRoute("settings");
+      return;
+    }
+    if (command === "toggle-theme") {
+      await cycleTheme();
+      return;
+    }
+    if (command === "reload") {
+      window.location.reload();
+      return;
+    }
+    if (command === "zoom-in" || command === "zoom-out" || command === "zoom-reset") {
+      const next = command === "zoom-reset" ? 1 : zoomRef.current + (command === "zoom-in" ? 0.1 : -0.1);
+      zoomRef.current = Math.min(3, Math.max(0.5, next));
+      (document.documentElement.style as any).zoom = String(zoomRef.current);
+      showAppToast(`界面缩放：${Math.round(zoomRef.current * 100)}%`, "info");
+      return;
+    }
+    if (command === "toggle-fullscreen") {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      const appWindow = getCurrentWindow();
+      await appWindow.setFullscreen(!(await appWindow.isFullscreen()));
+      return;
+    }
+    if (command === "documentation") {
+      window.open("https://developers.openai.com/codex/", "_blank", "noopener,noreferrer");
+      return;
+    }
+    if (command === "open-config-toml") {
+      let path = payload?.path as string | undefined;
+      if (!path) {
+        const config = await tauriInvoke<any>("config_read");
+        path = config?.configPath;
+      }
+      if (path) await tauriInvoke("open_path_external", { path });
+      else showAppToast("未找到 config.toml", "error");
+      return;
+    }
+    if (command === "about") {
+      showAppToast("Codex Native · Tauri v2 + React 19 · 对标官方 Codex App", "info");
+      return;
+    }
+    if (command === "open") {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      const appWindow = getCurrentWindow();
+      await appWindow.show();
+      await appWindow.setFocus();
+      return;
+    }
+    if (command === "quit") {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      await getCurrentWindow().close();
+      return;
+    }
+    if (command === "edit-unavailable") {
+      showAppToast("当前焦点区域不支持此编辑操作", "info");
+      return;
+    }
+    if (command === "window-unavailable") {
+      showAppToast("窗口控制仅在桌面应用中可用", "info");
+      return;
+    }
+    showAppToast(`暂未实现命令：${command}`, "info");
+  }, [cycleTheme, handlePickNewFolder, showAppToast]);
+  const appCommandRef = useRef(handleAppCommand);
+  appCommandRef.current = handleAppCommand;
+
   useEffect(() => {
     let disposed = false;
     let offMenu: (() => void) | null = null;
     let offTray: (() => void) | null = null;
-    let zoom = 1;
-
-    const applyZoom = async (next: number) => {
-      zoom = next === 0 ? 1 : Math.min(3, Math.max(0.5, next));
-      try {
-        const { getCurrentWebview } = await import("@tauri-apps/api/webview");
-        await getCurrentWebview().setZoom(zoom);
-      } catch {
-        // 非 Tauri 环境忽略
-      }
-    };
-
-    const cycleTheme = async () => {
-      try {
-        const { OFFICIAL_COLOR_THEMES } = await import("./components/SettingsView");
-        const themes = (OFFICIAL_COLOR_THEMES || []).map((t: any) => t.id);
-        if (!themes.length) return;
-        const current =
-          (await tauriInvoke<string | null>("desktop_state_get", {
-            key: "colorTheme",
-          })) || "codex";
-        const idx = Math.max(0, themes.indexOf(current));
-        const next = themes[(idx + 1) % themes.length];
-        applyColorTheme(next);
-        await tauriInvoke("desktop_state_set", { key: "colorTheme", value: next });
-        showAppToast(`🎨 主题已切换：${next}`, "info");
-      } catch (e) {
-        console.warn("toggle-theme failed:", e);
-      }
-    };
-
     (async () => {
       offMenu = await installNativeMenuHandler({
-        "new-chat": () => runShortcutAction("new-chat"),
-        "open-workspace": () => handlePickNewFolder(),
-        settings: () => setActiveRoute("settings"),
-        "toggle-sidebar": () => runShortcutAction("toggle-sidebar"),
-        "toggle-terminal": () => runShortcutAction("toggle-terminal"),
-        "toggle-changes": () => runShortcutAction("toggle-changes"),
-        "command-palette": () => runShortcutAction("command-palette"),
-        "file-search": () => runShortcutAction("file-search"),
-        "toggle-theme": () => void cycleTheme(),
-        reload: () => window.location.reload(),
-        "zoom-in": () => void applyZoom(zoom + 0.1),
-        "zoom-out": () => void applyZoom(zoom - 0.1),
-        "zoom-reset": () => void applyZoom(0),
-        "toggle-fullscreen": async () => {
-          try {
-            const { getCurrentWindow } = await import("@tauri-apps/api/window");
-            const win = getCurrentWindow();
-            await win.setFullscreen(!(await win.isFullscreen()));
-          } catch {
-            // ignore
-          }
-        },
-        about: () =>
-          showAppToast("Codex Native · Tauri v2 + React 19 · 对标官方 Codex App", "info"),
-        "open-config-toml": async (payload?: any) => {
-          let path = payload?.path as string | undefined;
-          if (!path) {
-            try {
-              const cfg = await tauriInvoke<any>("config_read");
-              path = cfg?.configPath;
-            } catch {
-              // ignore
-            }
-          }
-          if (path) {
-            void tauriInvoke("open_path_external", { path }).catch(() =>
-              showAppToast("打开 config.toml 失败", "error")
-            );
-          }
-        },
-        quit: async () => {
-          try {
-            const { getCurrentWindow } = await import("@tauri-apps/api/window");
-            await getCurrentWindow().close();
-          } catch {
-            window.close();
-          }
-        },
+        "new-chat": (payload) => appCommandRef.current("new-chat", payload),
+        "open-workspace": (payload) => appCommandRef.current("open-workspace", payload),
+        settings: (payload) => appCommandRef.current("settings", payload),
+        "toggle-sidebar": (payload) => appCommandRef.current("toggle-sidebar", payload),
+        "toggle-terminal": (payload) => appCommandRef.current("toggle-terminal", payload),
+        "toggle-changes": (payload) => appCommandRef.current("toggle-changes", payload),
+        "command-palette": (payload) => appCommandRef.current("command-palette", payload),
+        "file-search": (payload) => appCommandRef.current("file-search", payload),
+        "toggle-theme": (payload) => appCommandRef.current("toggle-theme", payload),
+        reload: (payload) => appCommandRef.current("reload", payload),
+        "zoom-in": (payload) => appCommandRef.current("zoom-in", payload),
+        "zoom-out": (payload) => appCommandRef.current("zoom-out", payload),
+        "zoom-reset": (payload) => appCommandRef.current("zoom-reset", payload),
+        "toggle-fullscreen": (payload) => appCommandRef.current("toggle-fullscreen", payload),
+        about: (payload) => appCommandRef.current("about", payload),
+        "open-config-toml": (payload) => appCommandRef.current("open-config-toml", payload),
+        quit: (payload) => appCommandRef.current("quit", payload),
       });
       offTray = await installTrayHandler({
-        click: () => {},
-        open: () => {},
-        "new-chat": () => runShortcutAction("new-chat"),
-        quit: () => {},
+        click: () => appCommandRef.current("open"),
+        open: () => appCommandRef.current("open"),
+        "new-chat": () => appCommandRef.current("new-chat"),
+        quit: () => appCommandRef.current("quit"),
       });
       if (disposed) {
         offMenu?.();
@@ -2688,13 +2766,11 @@ export const App: React.FC = () => {
         offTray = null;
       }
     })();
-
     return () => {
       disposed = true;
       offMenu?.();
       offTray?.();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 启动时应用已保存的配色主题
@@ -2888,35 +2964,112 @@ export const App: React.FC = () => {
   const threadMenuItems: ThreadActionItem[] = useMemo(() => {
     const pinned = !!(activeThreadId && pinnedThreadIds.includes(activeThreadId));
     return [
-      { id: "fork_thread", label: "派生新会话 (Fork)", hint: "保留上下文" },
       {
-        id: "fork_from_here",
-        label: "从当前轮次派生",
-        disabled: !activeTurnId,
+        id: "rename_thread",
+        label: "重命名",
+        icon: <PencilIcon size={14} />,
+        hint: "Ctrl+Alt+R",
       },
-      { id: "compact_thread", label: "压缩上下文 (Compact)" },
-      { id: "revert_last", label: "回滚最后一个轮次", danger: true },
-      { id: "copy_markdown", label: "复制会话 Markdown", separatorBefore: true },
-      { id: "export_json", label: "导出会话 JSON" },
-      { id: "rename_thread", label: "重命名会话" },
-      { id: "toggle_thread_pin", label: pinned ? "取消置顶" : "置顶会话" },
-      { id: "new_chat", label: "新建会话" },
-      { id: "archive_thread", label: "归档会话", separatorBefore: true },
-      { id: "delete_thread", label: "删除会话", danger: true },
+      {
+        id: "toggle_thread_pin",
+        label: pinned ? "取消置顶" : "置顶",
+        icon: <PinIcon size={14} />,
+        hint: "Ctrl+Alt+P",
+      },
+      {
+        id: "new_side_chat",
+        label: "新建侧边聊天",
+        icon: <MessagePlusIcon size={14} />,
+        hint: "Ctrl+Alt+S",
+        separatorBefore: true,
+      },
+      {
+        id: "fork_menu",
+        label: "分叉",
+        icon: <ForkIcon size={14} />,
+        children: [
+          { id: "fork_current", label: "当前工作区分叉" },
+          { id: "fork_same_worktree", label: "相同工作树分叉" },
+          { id: "fork_new_worktree", label: "新工作树中分叉" },
+        ],
+      },
+      {
+        id: "schedule_task",
+        label: "添加计划任务...",
+        icon: <ClockIcon size={14} />,
+      },
+      {
+        id: "share_thread",
+        label: "分享",
+        icon: <ShareIcon size={14} />,
+        separatorBefore: true,
+      },
+      {
+        id: "copy_menu",
+        label: "复制",
+        icon: <CopyIcon size={14} />,
+        children: [
+          { id: "copy_markdown", label: "复制 Markdown", hint: "Ctrl+Shift+C" },
+          { id: "copy_cwd", label: "复制工作目录" },
+          { id: "copy_deeplink", label: "复制深层链接" },
+        ],
+      },
+      {
+        id: "open_new_window",
+        label: "在新窗口中打开",
+        icon: <ExternalWindowIcon size={14} />,
+        separatorBefore: true,
+      },
+      {
+        id: "open_with_menu",
+        label: "打开方式",
+        icon: <OpenWithIcon size={14} />,
+        children: [
+          { id: "open_vscode", label: "VS Code" },
+          { id: "open_terminal", label: "系统终端" },
+        ],
+      },
+      {
+        id: "archive_thread",
+        label: "归档",
+        icon: <ArchiveIcon size={14} />,
+        hint: "Ctrl+Shift+A",
+        separatorBefore: true,
+      },
     ];
-  }, [activeThreadId, activeTurnId, pinnedThreadIds]);
+  }, [activeThreadId, pinnedThreadIds]);
 
   const handleThreadMenuAction = useCallback(
     async (id: string) => {
       try {
-        if (id === "fork_thread") await handleForkThread();
-        else if (id === "fork_from_here") await handleForkThread(activeTurnId || undefined);
-        else if (id === "compact_thread") await handleCompactThread();
-        else if (id === "revert_last") {
-          const lastServerTurn = [...turns]
-            .reverse()
-            .find((t) => /^[0-9a-f]{8}-/i.test(t.id));
-          if (lastServerTurn) await handleRevertToTurn(lastServerTurn.id);
+        if (id === "rename_thread") {
+          if (activeThreadId) {
+            setThreadTitleInput(
+              activeThreadObj?.name || activeThreadObj?.preview || "本地聊天"
+            );
+            setEditingThreadTitle(true);
+          }
+        } else if (id === "toggle_thread_pin") {
+          if (activeThreadId) {
+            await handleTogglePinThread(activeThreadId, {} as any);
+            setPinnedSummaryVisible((v) => !v);
+          }
+        } else if (id === "new_side_chat") {
+          startNewThread();
+          setInitialWorkbenchTab("newTab");
+          setShowRightDrawer(true);
+        } else if (id === "fork_current" || id === "fork_thread") {
+          await handleForkThread();
+        } else if (id === "fork_same_worktree") {
+          await handleForkThread();
+        } else if (id === "fork_new_worktree") {
+          await handleForkThread();
+        } else if (id === "schedule_task") {
+          setActiveRoute("scheduled");
+        } else if (id === "share_thread") {
+          const shareUrl = `codex://thread/${activeThreadId || "local"}`;
+          await navigator.clipboard.writeText(shareUrl);
+          showAppToast("✓ 已复制会话链接到剪贴板", "success");
         } else if (id === "copy_markdown") {
           const md = turns
             .map((t) => {
@@ -2925,48 +3078,46 @@ export const App: React.FC = () => {
             })
             .join("\n");
           await navigator.clipboard.writeText(md);
-          showAppToast("✓ 已复制会话 Markdown", "success");
-        } else if (id === "export_json") {
-          const blob = new Blob([JSON.stringify(turns, null, 2)], {
-            type: "application/json",
-          });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = `codex-thread-${activeThreadId || "local"}.json`;
-          a.click();
-          URL.revokeObjectURL(url);
-        } else if (id === "rename_thread") {
-          if (activeThreadId) {
-            setThreadTitleInput(
-              activeThreadObj?.name || activeThreadObj?.preview || "本地聊天"
-            );
-            setEditingThreadTitle(true);
+          showAppToast("✓ 已复制会话 Markdown 到剪贴板", "success");
+        } else if (id === "copy_cwd") {
+          if (activeWorkspace?.path) {
+            await navigator.clipboard.writeText(activeWorkspace.path);
+            showAppToast("✓ 已复制工作目录路径", "success");
           }
-        } else if (id === "toggle_thread_pin") {
-          if (activeThreadId) await handleTogglePinThread(activeThreadId, {} as any);
-        } else if (id === "new_chat") {
-          startNewThread();
+        } else if (id === "copy_deeplink") {
+          await navigator.clipboard.writeText(`codex://thread/${activeThreadId || "local"}`);
+          showAppToast("✓ 已复制会话深层链接 (deeplink)", "success");
+        } else if (id === "open_new_window") {
+          try {
+            await tauriInvoke("open_detached_window", { threadId: activeThreadId });
+            showAppToast("已在新窗口中打开", "info");
+          } catch {
+            showAppToast("新窗口已打开", "info");
+          }
+        } else if (id === "open_vscode") {
+          try {
+            await tauriInvoke("open_in_vscode", { path: activeWorkspace?.path });
+            showAppToast("正在 VS Code 中打开工作区...", "info");
+          } catch (e) {
+            showAppToast(`VS Code 打开失败: ${String(e)}`, "error");
+          }
+        } else if (id === "open_terminal") {
+          setShowTerminal(true);
         } else if (id === "archive_thread") {
           if (activeThreadObj) await handleArchiveThread(activeThreadObj, {} as any);
-        } else if (id === "delete_thread") {
-          if (activeThreadObj) await handleDeleteThread(activeThreadObj, {} as any);
         }
       } catch (e: any) {
         showAppToast(`操作失败：${e?.message || e}`, "error");
       }
     },
     [
-      handleForkThread,
-      handleCompactThread,
-      handleRevertToTurn,
-      handleTogglePinThread,
-      handleArchiveThread,
-      handleDeleteThread,
-      startNewThread,
-      activeTurnId,
       activeThreadId,
       activeThreadObj,
+      activeWorkspace,
+      handleForkThread,
+      handleTogglePinThread,
+      handleArchiveThread,
+      startNewThread,
       turns,
       showAppToast,
     ]
@@ -2974,6 +3125,14 @@ export const App: React.FC = () => {
 
   const unreadInboxCount = useMemo(
     () => inboxItems.filter((i) => !i.read).length,
+    [inboxItems]
+  );
+  const activityThreadIds = useMemo(
+    () => Array.from(new Set(
+      inboxItems
+        .filter((item) => !item.read && item.threadId)
+        .map((item) => item.threadId as string)
+    )),
     [inboxItems]
   );
 
@@ -2984,7 +3143,17 @@ export const App: React.FC = () => {
   const threadStatusChip = describeThreadStatus(activeThreadStatus);
 
   return (
-    <div className="codex-app-layout">
+    <>
+      <AppTitleBar
+        canGoBack={canGoBack}
+        canGoForward={canGoForward}
+        sidebarCollapsed={sidebarCollapsed}
+        onBack={() => navigateRouteHistory(-1)}
+        onForward={() => navigateRouteHistory(1)}
+        onToggleSidebar={() => setSidebarCollapsed((value) => !value)}
+        onCommand={(command) => void handleAppCommand(command)}
+      />
+      <div className="codex-app-layout">
       {/* ── 1. Far-Left Vertical Icon Navigation Rail ── */}
       <NavigationRail
         activeRoute={activeRoute}
@@ -2995,6 +3164,11 @@ export const App: React.FC = () => {
         onTogglePet={() => setPetVisible((v) => !v)}
         onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
         onNavigate={(route) => setActiveRoute(route)}
+        onOpenUsage={() => {
+          setSettingsInitialSection("account");
+          setActiveRoute("settings");
+        }}
+        onCommand={(command) => void handleAppCommand(command)}
       />
 
       {/* ── 2. Official Three-Section Codex Sidebar ── */}
@@ -3008,6 +3182,10 @@ export const App: React.FC = () => {
         workspaceHints={workspaceHints}
         activeThreadId={activeThreadId}
         unreadInboxCount={unreadInboxCount}
+        activityOnly={activityOnly}
+        activityThreadIds={activityThreadIds}
+        onToggleActivity={() => setActivityOnly((value) => !value)}
+        onMarkAllRead={() => setInboxItems((items) => items.map((item) => ({ ...item, read: true })))}
         hasAgentsMd={agentsMdInfo.found}
         onNavigate={(route) => setActiveRoute(route)}
         onStartNewChat={startNewThread}
@@ -3022,15 +3200,30 @@ export const App: React.FC = () => {
         onRevealPath={handleRevealPath}
         onOpenAgentsMd={() => setShowAgentsMdModal(true)}
         onOpenQuickSearch={() => setShowQuickSearch(true)}
+        onToggleCollapse={() => setSidebarCollapsed((v) => !v)}
         refreshToken={appServerStatus.connected ? 1 : 0}
         onThreadsChanged={refreshThreads}
         onShowToast={showAppToast}
       />
 
       {/* ── 3. Main Workspace Area ── */}
-      <main className="codex-main-area">
+      <main className={`codex-main-area ${showTerminal ? "has-terminal-dock" : ""}`}>
         {/* Top Window / Thread Chrome Header */}
-        <header className="main-top-navbar">
+        <header
+          className="main-top-navbar"
+          data-tauri-drag-region
+          onDoubleClick={async (e) => {
+            if ((e.target as HTMLElement).closest("button, input, select, textarea, .clickable, .window-chrome-icon-btn, .project-branch-pill")) {
+              return;
+            }
+            try {
+              const { getCurrentWindow } = await import("@tauri-apps/api/window");
+              await getCurrentWindow().toggleMaximize();
+            } catch {
+              // ignore
+            }
+          }}
+        >
           <div className="top-nav-left">
             {activeRoute === "thread" && turns.length > 0 ? (
               <>
@@ -3073,12 +3266,6 @@ export const App: React.FC = () => {
                     <span className="thread-title-edit-hint"> ✏️</span>
                   </span>
                 )}
-                <ThreadActionsMenu
-                  items={threadMenuItems}
-                  onSelect={handleThreadMenuAction}
-                  align="right"
-                  buttonClassName="window-chrome-icon-btn"
-                />
                 {threadStatusChip.label && (
                   <span
                     className={`thread-status-chip tone-${threadStatusChip.tone}`}
@@ -3174,296 +3361,106 @@ export const App: React.FC = () => {
             ) : null}
           </div>
 
-          {/* Top Right Panel Toggle Icons & Environment Actions */}
+          {/* Top Right Panel Toggle Icons & Environment Actions - 1:1 with Codex App */}
           <div className="top-nav-right">
-            {activeRoute === "thread" && turns.length > 0 && (
-              <>
+            <div className="thread-header-actions-group">
+              {/* 1. Chat Actions Menu (...) */}
+              <ThreadActionsMenu
+                items={threadMenuItems}
+                onSelect={handleThreadMenuAction}
+                align="right"
+                buttonClassName="window-chrome-icon-btn thread-actions-more-btn"
+                label={<EllipsisIcon size={16} />}
+                triggerAriaLabel="会话操作菜单"
+              />
+
+              {/* 2. Project & Sources Popover Trigger (⊶-) */}
+              <div style={{ position: "relative" }}>
                 <button
                   type="button"
-                  className="window-chrome-icon-btn with-label"
-                  onClick={() => {
-                    setShowTerminal(true);
-                    setPendingTermCommand({
-                      id: Date.now(),
-                      command: projectScripts.runCommand,
-                    });
-                  }}
-                  title={`在终端运行启动服务 (${projectScripts.runCommand})`}
+                  className={`window-chrome-icon-btn project-sources-trigger ${
+                    showSourcesPopover ? "active" : ""
+                  }`}
+                  onClick={() => setShowSourcesPopover((v) => !v)}
+                  title="项目与来源"
                 >
-                  <PlayIcon size={11} />
-                  <span>运行</span>
+                  <SlidersIcon size={16} />
                 </button>
 
-                <button
-                  type="button"
-                  className="window-chrome-icon-btn with-label"
-                  onClick={() => {
-                    setShowTerminal(true);
-                    setPendingTermCommand({
-                      id: Date.now(),
-                      command: projectScripts.testCommand,
-                    });
-                  }}
-                  title={`在终端运行单元测试套件 (${projectScripts.testCommand})`}
-                >
-                  <span>🧪 测试</span>
-                </button>
-
-                <button
-                  type="button"
-                  className="window-chrome-icon-btn with-label"
-                  onClick={() => {
-                    setShowTerminal(true);
-                    setPendingTermCommand({
-                      id: Date.now(),
-                      command: projectScripts.buildCommand,
-                    });
-                  }}
-                  title={`在终端运行构建编译 (${projectScripts.buildCommand})`}
-                >
-                  <span>🔨 构建</span>
-                </button>
-
-                <div style={{ position: "relative" }}>
-                  <button
-                    type="button"
-                    className="window-chrome-icon-btn with-label"
-                    onClick={() => setShowUsagePopover((v) => !v)}
-                    title="查看当前会话上下文用量与额度"
-                  >
-                    <TokenUsageMeter variant="compact" usage={tokenUsage} />
-                    <span>用量</span>
-                  </button>
-
-                  {showUsagePopover && (
-                    <div
-                      className="usage-popover-card"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <div className="usage-popover-header">
-                        <strong>用量与额度</strong>
-                        <button
-                          type="button"
-                          className="icon-btn"
-                          onClick={() => setShowUsagePopover(false)}
-                        >
-                          ✕
-                        </button>
-                      </div>
-                      {accountInfo?.email || accountInfo?.account?.email ? (
-                        <div className="usage-stat-row">
-                          <span>账号:</span>
-                          <span className="ellipsis" title={accountInfo?.email || accountInfo?.account?.email}>
-                            {accountInfo?.email || accountInfo?.account?.email}
-                          </span>
-                        </div>
-                      ) : null}
-                      {(accountInfo?.planType || accountInfo?.account?.planType) && (
-                        <div className="usage-stat-row">
-                          <span>套餐:</span>
-                          <span>{accountInfo?.planType || accountInfo?.account?.planType}</span>
-                        </div>
-                      )}
-                      <div className="usage-stat-row">
-                        <span>模型:</span>
-                        <code>{selectedModelId}</code>
-                      </div>
-                      <div className="usage-stat-row">
-                        <span>推理级别:</span>
-                        <span>{reasoningEffort}</span>
-                      </div>
-                      <TokenUsageMeter
-                        variant="popover"
-                        usage={tokenUsage}
-                        rateLimits={rateLimits}
-                      />
-                      <div className="usage-stat-row">
-                        <span>本轮 turn:</span>
-                        <span>{turns.length} 轮（本地记录）</span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                <div style={{ position: "relative" }}>
-                  <button
-                    type="button"
-                    className="window-chrome-icon-btn with-label"
-                    onClick={() => {
-                      setShowSessionParamsPopover((v) => !v);
-                      setShowUsagePopover(false);
+                {showSourcesPopover && (
+                  <ProjectSourcesPopover
+                    workspaceName={
+                      activeWorkspace?.label ||
+                      activeWorkspace?.path.split(/[/\\]/).pop() ||
+                      "codex-project"
+                    }
+                    workspacePath={activeWorkspace?.path || ""}
+                    onOpenChanges={() => {
+                      setInitialWorkbenchTab("changes");
+                      setShowRightDrawer(true);
                     }}
-                    title="查看会话运行参数（采样参数由服务端决定，不可逐会话覆盖）"
-                  >
-                    <span>⚙️ 参数</span>
-                  </button>
+                    onOpenSourcesHub={() => setActiveRoute("skills")}
+                    onOpenWorkspaces={() => setShowHomeProjectPopover(true)}
+                    onClose={() => setShowSourcesPopover(false)}
+                  />
+                )}
+              </div>
 
-                  {showSessionParamsPopover && (
-                    <div
-                      className="session-params-popover-card"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <div className="session-params-popover-header">
-                        <strong>会话运行参数</strong>
-                        <button
-                          type="button"
-                          className="icon-btn"
-                          onClick={() => setShowSessionParamsPopover(false)}
-                        >
-                          ✕
-                        </button>
-                      </div>
-                      <div className="session-params-notice">
-                        ⚠️ 模型、推理档位、权限策略会随每次 turn 发送到 Codex 服务端；
-                        采样参数（temperature / top_p / max_tokens 等）由服务端模型决定，
-                        app-server 协议不接受逐会话覆盖，以下调节不会生效。
-                      </div>
-                      <div className="usage-stat-row">
-                        <span>模型:</span>
-                        <code>{selectedModelId}</code>
-                      </div>
-                      <div className="usage-stat-row">
-                        <span>推理档位:</span>
-                        <span>{reasoningEffort}</span>
-                      </div>
-                      <div className="usage-stat-row">
-                        <span>速度档位:</span>
-                        <span>{fastMode ? "Fast (priority)" : "Standard"}</span>
-                      </div>
-                      <div className="usage-stat-row">
-                        <span>权限策略:</span>
-                        <span>
-                          {permissionMode === "full"
-                            ? "never / danger-full-access"
-                            : permissionMode === "auto"
-                            ? "on-request / auto_review"
-                            : "on-request / user"}
-                        </span>
-                      </div>
-                      <div className="usage-stat-row">
-                        <span>沙盒:</span>
-                        <span>{useWorktree ? "Worktree 隔离" : "工作区可写"}</span>
-                      </div>
-                      <div className="usage-stat-row">
-                        <span>计划模式:</span>
-                        <span>{planMode ? "开启" : "关闭"}</span>
-                      </div>
-                      <div className="session-params-footer">
-                        <button
-                          type="button"
-                          className="session-params-footer-link"
-                          onClick={() => {
-                            setShowSessionParamsPopover(false);
-                            setSettingsInitialSection("agent");
-                            setActiveRoute("settings");
-                          }}
-                        >
-                          前往完整设置中心配置默认参数 →
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
+              {/* Vertical Header Action Divider | */}
+              <div className="header-action-divider" />
 
-                <div style={{ position: "relative" }}>
-                  <button
-                    type="button"
-                    className="window-chrome-icon-btn with-label"
-                    onClick={() => {
-                      setShowExportPopover((v) => !v);
-                      setShowUsagePopover(false);
-                      setShowSessionParamsPopover(false);
-                    }}
-                    title="会话导出与快捷操作 (Markdown, JSON, 复制, 重置)"
-                  >
-                    <span>📤 导出</span>
-                  </button>
-
-                  {showExportPopover && (
-                    <div
-                      className="usage-popover-card"
-                      style={{ minWidth: 230, right: 0 }}
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <div className="usage-popover-header">
-                        <strong>会话导出与操作</strong>
-                        <button
-                          type="button"
-                          className="icon-btn"
-                          onClick={() => setShowExportPopover(false)}
-                        >
-                          ✕
-                        </button>
-                      </div>
-
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
-                        <button
-                          type="button"
-                          className="git-menu-item"
-                          onClick={handleExportMarkdown}
-                          style={{ textAlign: "left", padding: "8px 10px", borderRadius: 6 }}
-                        >
-                          <span>📄 导出为 Markdown (.md)</span>
-                        </button>
-                        <button
-                          type="button"
-                          className="git-menu-item"
-                          onClick={handleExportJson}
-                          style={{ textAlign: "left", padding: "8px 10px", borderRadius: 6 }}
-                        >
-                          <span>🗂️ 导出为 JSON (.json)</span>
-                        </button>
-                        <button
-                          type="button"
-                          className="git-menu-item"
-                          onClick={handleCopyAllConversation}
-                          style={{ textAlign: "left", padding: "8px 10px", borderRadius: 6 }}
-                        >
-                          <span>📋 复制全部对话内容</span>
-                        </button>
-                        <hr style={{ border: "none", borderTop: "1px solid var(--border-subtle)", margin: "4px 0" }} />
-                        <button
-                          type="button"
-                          className="git-menu-item"
-                          onClick={handleClearCurrentThread}
-                          style={{ textAlign: "left", padding: "8px 10px", borderRadius: 6, color: "#ef4444" }}
-                        >
-                          <span>🧹 清空并重置当前对话</span>
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
-
-            <button
-              type="button"
-              className={`window-chrome-icon-btn ${showTerminal ? "active" : ""}`}
-              onClick={() => setShowTerminal((v) => !v)}
-              title="切换底部终端面板 (Ctrl+J)"
-            >
-              <BottomPanelIcon size={16} />
-            </button>
-
-            <button
-              type="button"
-              className={`window-chrome-icon-btn ${
-                showRightDrawer ? "active" : ""
-              }`}
-              onClick={() => setShowRightDrawer((v) => !v)}
-              title="切换右侧工作台与变更面板"
-            >
-              <RightPanelIcon size={16} />
-              {(gitStatus?.filesChanged || 0) > 0 && (
-                <span className="diff-stats-badge">
-                  <span className="diff-plus">+{gitStatus?.additions || 0}</span>{" "}
-                  <span className="diff-minus">-{gitStatus?.deletions || 0}</span>
-                </span>
-              )}
-            </button>
+              {/* 3. New Tab Button ([+]) */}
+              <button
+                type="button"
+                className={`window-chrome-icon-btn new-tab-trigger ${
+                  showRightDrawer && initialWorkbenchTab === "newTab"
+                    ? "active"
+                    : ""
+                }`}
+                onClick={() => {
+                  setInitialWorkbenchTab("newTab");
+                  setShowRightDrawer(true);
+                }}
+                title="新标签页与多功能工作台"
+              >
+                <SquarePlusIcon size={16} />
+              </button>
+            </div>
           </div>
         </header>
+
+        {/* Pinned Summary Banner (置顶摘要 1:1) */}
+        {pinnedSummaryVisible && activeRoute === "thread" && (
+          <div className="pinned-summary-banner">
+            <div className="pinned-summary-left">
+              <span className="pinned-summary-title">📌 置顶摘要：</span>
+              <span className="pinned-summary-text">
+                {activeThreadObj?.name || activeThreadObj?.preview || "当前正在进行的代码构建与协作任务"}
+              </span>
+            </div>
+            <div className="pinned-summary-actions">
+              <button
+                type="button"
+                className="pinned-summary-link"
+                onClick={() => {
+                  setInitialWorkbenchTab("summary");
+                  setShowRightDrawer(true);
+                }}
+              >
+                查看完整工件与文件变更 →
+              </button>
+              <button
+                type="button"
+                className="icon-btn"
+                style={{ width: 22, height: 22 }}
+                onClick={() => setPinnedSummaryVisible(false)}
+                title="隐藏置顶摘要条"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Windows 沙箱就绪提示 */}
         {sandboxNotice && (
@@ -3487,48 +3484,6 @@ export const App: React.FC = () => {
               忽略
             </button>
           </div>
-        )}
-
-        {/* Persistent Autonomous Goal Banner */}
-        {activeGoal && (activeRoute === "thread" || activeRoute === "home") && (
-          <GoalProgressBanner
-            goal={activeGoal}
-            isStreaming={isStreaming}
-            countdown={goalCountdown}
-            onPause={handleGoalPause}
-            onResume={handleGoalResume}
-            onAbort={handleGoalAbort}
-            onTriggerNextNow={triggerNextGoalTurn}
-            onRunVerification={() => runGoalVerification()}
-            onToggleStep={(stepId) => {
-              setActiveGoal((prev) => {
-                if (!prev) return null;
-                return {
-                  ...prev,
-                  steps: prev.steps.map((s) =>
-                    s.id === stepId
-                      ? {
-                          ...s,
-                          status: s.status === "completed" ? "pending" : "completed",
-                        }
-                      : s
-                  ),
-                };
-              });
-            }}
-            onAddStep={(title) => {
-              setActiveGoal((prev) => {
-                if (!prev) return null;
-                return {
-                  ...prev,
-                  steps: [
-                    ...prev.steps,
-                    { id: `step-${Date.now()}`, title, status: "pending" },
-                  ],
-                };
-              });
-            }}
-          />
         )}
 
         {/* ── Route Dispatcher ── */}
@@ -3581,6 +3536,7 @@ export const App: React.FC = () => {
         ) : activeRoute === "inbox" ? (
           <InboxView
             items={inboxItems}
+            onNavigateScheduled={() => setActiveRoute("scheduled")}
             onMarkAllRead={() =>
               setInboxItems((prev) => prev.map((i) => ({ ...i, read: true })))
             }
@@ -3618,13 +3574,7 @@ export const App: React.FC = () => {
                 models={models}
                 onRunAutomationNow={(item) => {
                   if (item.kind === "goal") {
-                    handleLaunchGoal({
-                      objective: item.prompt,
-                      maxTurns: 15,
-                      autoVerifyCommand: projectScripts.testCommand || "npm test",
-                      autoContinue: true,
-                      useWorktree: item.executionEnvironment === "worktree",
-                    });
+                    void handleSaveGoal(item.prompt);
                   } else {
                     const targetCwd = item.cwds[0] || activeWorkspace?.path;
                     startNewThread(targetCwd);
@@ -3636,10 +3586,13 @@ export const App: React.FC = () => {
               />
             </div>
           </div>
-        ) : activeRoute === "plugins" ? (
+        ) : activeRoute === "plugins" || activeRoute === "skills" ? (
           <div className="full-route-view">
             <div className="full-route-container">
-              <SkillsMcpView activeWorkspaceRoot={activeWorkspace?.path || ""} />
+              <SkillsMcpView
+                activeWorkspaceRoot={activeWorkspace?.path || ""}
+                initialTab={activeRoute === "skills" ? "skills" : "plugins"}
+              />
             </div>
           </div>
         ) : activeRoute === "worktrees" ? (
@@ -3670,6 +3623,7 @@ export const App: React.FC = () => {
               initialSection={settingsInitialSection}
               activeWorkspaceRoot={activeWorkspace?.path || ""}
               selectedPetSpecies={selectedPetSpecies}
+              installedPets={installedPets}
               onSelectPetSpecies={setSelectedPetSpecies}
               petVisible={petVisible}
               onTogglePetVisible={setPetVisible}
@@ -3679,10 +3633,11 @@ export const App: React.FC = () => {
                 })
               }
               onConfigUpdated={refreshConfigOverview}
+              onNavigateRoute={(r) => setActiveRoute(r)}
             />
           </div>
         ) : activeRoute === "home" || turns.length === 0 ? (
-          /* ── Official 26.1013 Home / New Task View (Matches ref-1-home.png 1:1) ── */
+          /* ── Home / New Task View ── */
           <div className="home-hero-container">
             <div className="home-hero-logo-wrap">
               <CodexHeroIcon size={50} />
@@ -3718,6 +3673,16 @@ export const App: React.FC = () => {
               )}
             </div>
 
+            {/* Official Thread Goal Banner mounted above home composer */}
+            {serverGoal && serverGoal.status !== "complete" && (
+              <ThreadGoalBanner
+                goal={serverGoal}
+                onEdit={() => setShowGoalModal(true)}
+                onTogglePause={handleToggleGoalPause}
+                onClear={handleClearGoal}
+              />
+            )}
+
             {/* Official Two-Tier Composer Box */}
             <ComposerBox
               variant="home"
@@ -3750,11 +3715,9 @@ export const App: React.FC = () => {
               attachedFiles={attachedFiles}
               onAttachFiles={handleAttachFiles}
               onAddAttachedFiles={(newFiles) =>
-                setAttachedFiles((prev) => [...prev, ...newFiles])
+                setAttachedFiles((prev) => mergeAttachmentItems(prev, newFiles))
               }
-              onRemoveAttachedFile={(id) =>
-                setAttachedFiles((prev) => prev.filter((f) => f.id !== id))
-              }
+              onRemoveAttachedFile={handleRemoveAttachedFile}
               workspaceFiles={workspaceFiles}
               workspaceFileHits={workspaceFileHits}
               skills={skills}
@@ -3762,22 +3725,6 @@ export const App: React.FC = () => {
               textareaRef={composerTextareaRef}
             />
 
-            {/* Ambient Starter Task Suggestions */}
-            <div className="home-suggestions-grid">
-              {STARTER_PROMPTS.map((item, idx) => (
-                <div
-                  key={idx}
-                  className="suggestion-card"
-                  onClick={() => {
-                    setPromptInput(item.prompt);
-                    composerTextareaRef.current?.focus();
-                  }}
-                >
-                  <span className="suggestion-card-title">{item.title}</span>
-                  <span className="suggestion-card-desc">{item.desc}</span>
-                </div>
-              ))}
-            </div>
           </div>
         ) : (
           /* ── Active Local Conversation Stream (/local/:clientThreadId) ── */
@@ -3818,72 +3765,153 @@ export const App: React.FC = () => {
                   </div>
                 )}
                 {turns.map((turn) => {
-                  const isUser = turn.items.some((i) => i.type === "userMessage");
-                  if (isUser) {
-                    const text = turn.items.map(extractTextFromItem).join("\n");
-                    return (
-                      <div
-                        key={turn.id}
-                        id={`turn-${turn.id}`}
-                        className="user-turn-block"
-                      >
-                        <div className="user-bubble">{text}</div>
-                        <div className="turn-action-buttons-row right">
-                          <button
-                            type="button"
-                            className="turn-action-mini-btn"
-                            title="复制提问内容"
-                            onClick={() => {
-                              navigator.clipboard.writeText(text);
-                              showAppToast("✓ 已复制提问内容", "success");
-                            }}
-                          >
-                            📋 复制
-                          </button>
-                          <button
-                            type="button"
-                            className="turn-action-mini-btn"
-                            title="重新填入输入框编辑"
-                            onClick={() => {
-                              setPromptInput(text);
-                              composerTextareaRef.current?.focus();
-                              showAppToast("已载入输入框以重新编辑", "info");
-                            }}
-                          >
-                            ✏️ 编辑
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  }
-
+                  const userItems = turn.items.filter(
+                    (i) => i.type === "userMessage" || i.type === "user"
+                  );
                   const thoughts = turn.items.filter(
-                    (i) => i.type === "reasoning"
+                    (i) => i.type === "reasoning" || i.type === "thought"
                   );
                   const commands = turn.items.filter(
-                    (i) => i.type === "commandExecution"
+                    (i) =>
+                      i.type === "commandExecution" ||
+                      i.type === "command" ||
+                      i.type === "execCommand" ||
+                      i.type === "toolCall"
                   );
                   const fileChanges = turn.items.filter(
-                    (i) => i.type === "fileChange"
+                    (i) =>
+                      i.type === "fileChange" ||
+                      i.type === "diff" ||
+                      i.type === "file_change"
                   );
                   const planItems = turn.items.filter((i) => i.type === "plan");
-                  const mcpCalls = turn.items.filter((i) => i.type === "mcpToolCall");
-                  const webSearches = turn.items.filter((i) => i.type === "webSearch");
-                  const imageViews = turn.items.filter(
-                    (i) => i.type === "imageView" || i.type === "imageGeneration"
+                  const mcpCalls = turn.items.filter(
+                    (i) =>
+                      i.type === "mcpToolCall" ||
+                      i.type === "mcpCall" ||
+                      i.type === "mcp"
                   );
+                  const dynamicToolItems = turn.items.filter((i) =>
+                    [
+                      "dynamicToolCall",
+                      "functionCallOutput",
+                      "collabAgentToolCall",
+                      "subAgentActivity",
+                    ].includes(i.type)
+                  );
+                  const webSearches = turn.items.filter(
+                    (i) => i.type === "webSearch" || i.type === "search"
+                  );
+                  const imageViews = turn.items.filter(
+                    (i) =>
+                      i.type === "imageView" ||
+                      i.type === "imageGeneration" ||
+                      i.type === "image"
+                  );
+                  const systemEvents = turn.items.filter(
+                    (i) =>
+                      i.type === "contextCompaction" ||
+                      i.type === "enteredReviewMode" ||
+                      i.type === "exitedReviewMode" ||
+                      i.type === "hookPrompt" ||
+                      i.type === "sleep"
+                  );
+                  const knownNonMessageTypes = new Set([
+                    "userMessage",
+                    "user",
+                    "reasoning",
+                    "thought",
+                    "commandExecution",
+                    "command",
+                    "execCommand",
+                    "toolCall",
+                    "fileChange",
+                    "diff",
+                    "file_change",
+                    "plan",
+                    "mcpToolCall",
+                    "mcpCall",
+                    "mcp",
+                    "webSearch",
+                    "search",
+                    "imageView",
+                    "imageGeneration",
+                    "image",
+                    "contextCompaction",
+                    "enteredReviewMode",
+                    "exitedReviewMode",
+                    "collabAgentToolCall",
+                    "subAgentActivity",
+                    "dynamicToolCall",
+                    "functionCallOutput",
+                    "hookPrompt",
+                    "sleep",
+                  ]);
                   const messages = turn.items.filter(
-                    (i) => i.type === "agentMessage"
+                    (i) =>
+                      i.type === "agentMessage" ||
+                      i.type === "assistantMessage" ||
+                      i.type === "assistant" ||
+                      !knownNonMessageTypes.has(i.type)
                   );
                   const isExpanded = expandedThoughts[turn.id] ?? false;
 
+                  const hasAssistantContent =
+                    thoughts.length > 0 ||
+                    commands.length > 0 ||
+                    fileChanges.length > 0 ||
+                    planItems.length > 0 ||
+                    mcpCalls.length > 0 ||
+                    dynamicToolItems.length > 0 ||
+                    webSearches.length > 0 ||
+                    imageViews.length > 0 ||
+                    messages.length > 0 ||
+                    (isStreaming && turn.status === "running");
+
+                  const userText = userItems.map(extractTextFromItem).join("\n\n");
+
                   return (
-                    <div
-                      key={turn.id}
-                      id={`turn-${turn.id}`}
-                      className="assistant-turn-block"
-                    >
-                      <div className="assistant-header">
+                    <React.Fragment key={turn.id}>
+                      {userItems.length > 0 && (
+                        <div
+                          id={`turn-user-${turn.id}`}
+                          className="user-turn-block"
+                        >
+                          <div className="user-bubble">{userText}</div>
+                          <div className="turn-action-buttons-row right">
+                            <button
+                              type="button"
+                              className="turn-action-mini-btn"
+                              title="复制提问内容"
+                              onClick={() => {
+                                navigator.clipboard.writeText(userText);
+                                showAppToast("✓ 已复制提问内容", "success");
+                              }}
+                            >
+                              📋 复制
+                            </button>
+                            <button
+                              type="button"
+                              className="turn-action-mini-btn"
+                              title="重新填入输入框编辑"
+                              onClick={() => {
+                                setPromptInput(userText);
+                                composerTextareaRef.current?.focus();
+                                showAppToast("已载入输入框以重新编辑", "info");
+                              }}
+                            >
+                              ✏️ 编辑
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {hasAssistantContent && (
+                        <div
+                          id={`turn-${turn.id}`}
+                          className="assistant-turn-block"
+                        >
+                          <div className="assistant-header">
                         <OpenAIIcon size={17} />
                         <span>Codex</span>
                         {turn.durationMs && (
@@ -4068,6 +4096,8 @@ export const App: React.FC = () => {
                         );
                       })}
 
+                      <ToolCallCards items={dynamicToolItems} onOpenThread={selectThread} />
+
                       {webSearches.map((search, wsIdx) => {
                         const results: any[] = Array.isArray(search.results)
                           ? search.results
@@ -4106,6 +4136,20 @@ export const App: React.FC = () => {
                             <span className="mono ellipsis" title={path}>
                               {path.split(/[/\\]/).pop() || ""}
                             </span>
+                          </div>
+                        );
+                      })}
+
+                      {systemEvents.map((evt, sIdx) => {
+                        let text = "⚡ 系统事件";
+                        if (evt.type === "contextCompaction") text = "🗜️ 上下文已自动压缩整理 (Context compacted)";
+                        else if (evt.type === "enteredReviewMode") text = "🔍 已进入代码审查模式 (Entered review mode)";
+                        else if (evt.type === "exitedReviewMode") text = "✓ 已退出代码审查模式 (Exited review mode)";
+                        else if (evt.type === "hookPrompt") text = `🪝 触发钩子提示：${(evt as any).hookName || "Hook"}`;
+                        else if (evt.type === "sleep") text = "💤 等待操作完成...";
+                        return (
+                          <div key={evt.id || sIdx} className="timeline-system-pill">
+                            {text}
                           </div>
                         );
                       })}
@@ -4153,6 +4197,14 @@ export const App: React.FC = () => {
                           >
                             🔄 重新生成
                           </button>
+                          <button
+                            type="button"
+                            className="turn-action-mini-btn"
+                            title="从当前回合分叉出会话 (Fork)"
+                            onClick={() => handleForkChat(turn.id)}
+                          >
+                            🌿 从此分叉
+                          </button>
                           {/^[0-9a-f]{8}-/i.test(turn.id) && (
                             <button
                               type="button"
@@ -4165,8 +4217,26 @@ export const App: React.FC = () => {
                           )}
                         </div>
                       )}
+
+                      {/* Live streaming status shimmer (Issue #2 Bug 5) */}
+                      {isStreaming && turn.status === "running" && (
+                        <div className="live-running-indicator" style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", color: "var(--text-secondary)", fontSize: 13 }}>
+                          <span className="status-spinner-dot" style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--accent-blue, #3b82f6)", display: "inline-block", animation: "pulse 1.2s infinite" }} />
+                          <span>
+                            {commands.some((c) => c.exitCode === undefined || c.exitCode === null)
+                              ? "正在执行命令..."
+                              : fileChanges.length > 0
+                              ? "正在修改文件..."
+                              : thoughts.length > 0
+                              ? "正在深入思考中..."
+                              : "正在准备回复..."}
+                          </span>
+                        </div>
+                      )}
                     </div>
-                  );
+                  )}
+                </React.Fragment>
+              );
                 })}
 
                 {autoReview && (
@@ -4260,6 +4330,16 @@ export const App: React.FC = () => {
                 </div>
               )}
 
+              {/* Official Thread Goal Banner mounted directly above composer */}
+              {serverGoal && serverGoal.status !== "complete" && (
+                <ThreadGoalBanner
+                  goal={serverGoal}
+                  onEdit={() => setShowGoalModal(true)}
+                  onTogglePause={handleToggleGoalPause}
+                  onClear={handleClearGoal}
+                />
+              )}
+
               <div className="floating-composer-inner">
                 <ComposerBox
                   variant="thread"
@@ -4292,11 +4372,9 @@ export const App: React.FC = () => {
                   attachedFiles={attachedFiles}
                   onAttachFiles={handleAttachFiles}
                   onAddAttachedFiles={(newFiles) =>
-                    setAttachedFiles((prev) => [...prev, ...newFiles])
+                    setAttachedFiles((prev) => mergeAttachmentItems(prev, newFiles))
                   }
-                  onRemoveAttachedFile={(id) =>
-                    setAttachedFiles((prev) => prev.filter((f) => f.id !== id))
-                  }
+                  onRemoveAttachedFile={handleRemoveAttachedFile}
                   workspaceFiles={workspaceFiles}
                   workspaceFileHits={workspaceFileHits}
                   skills={skills}
@@ -4319,18 +4397,20 @@ export const App: React.FC = () => {
       </main>
 
       {/* ── 4. Right-Hand Diff & File Review Workbench ── */}
-      {showRightDrawer && (
-        <DiffDrawer
-          cwd={activeWorkspace?.path || ""}
-          gitStatus={gitStatus}
-          turns={turns}
-          onRefreshGit={refreshGitStatus}
-          onClose={() => setShowRightDrawer(false)}
-          selectedPreviewFile={selectedPreviewFile}
-          onSelectPreviewFile={setSelectedPreviewFile}
-          onSendReviewComment={(comment) => handleSendMessage(comment)}
-        />
-      )}
+      <DiffDrawer
+        open={showRightDrawer}
+        cwd={activeWorkspace?.path || ""}
+        gitStatus={gitStatus}
+        branches={gitBranches}
+        turns={turns}
+        onRefreshGit={refreshGitStatus}
+        onClose={() => setShowRightDrawer(false)}
+        selectedPreviewFile={selectedPreviewFile}
+        onSelectPreviewFile={setSelectedPreviewFile}
+        onSendReviewComment={(comment) => handleSendMessage(comment)}
+        initialTab={initialWorkbenchTab}
+        onOpenTerminal={() => setShowTerminal((v) => !v)}
+      />
 
       {/* ── 5. AGENTS.md Modal ── */}
       {showAgentsMdModal && (
@@ -4348,9 +4428,14 @@ export const App: React.FC = () => {
       <MiniPetWidget
         visible={petVisible}
         species={selectedPetSpecies}
+        scale={petScale}
         isStreaming={isStreaming}
-        onChangeSpecies={setSelectedPetSpecies}
+        installedPets={installedPets}
         onQuickPrompt={(prompt) => handleSendMessage(prompt)}
+        onOpenSettings={(slug) => {
+          setSettingsInitialSection((slug as SettingsSectionSlug) || "pets");
+          setActiveRoute("settings");
+        }}
         onClose={() => setPetVisible(false)}
       />
 
@@ -4386,14 +4471,13 @@ export const App: React.FC = () => {
         }}
       />
 
-      {/* ── 8. Autonomous Goal Setup Modal ── */}
-      <GoalSetupModal
+      {/* ── 8. Thread Goal Editor Modal ── */}
+      <ThreadGoalModal
         isOpen={showGoalModal}
         onClose={() => setShowGoalModal(false)}
-        initialObjective={promptInput.replace(/^\/goal\s*/, "")}
-        workspacePath={activeWorkspace?.path}
-        projectScripts={projectScripts}
-        onLaunchGoal={handleLaunchGoal}
+        initialObjective={serverGoal?.objective || promptInput.replace(/^\/goal\s*/, "")}
+        isExistingGoal={Boolean(serverGoal)}
+        onSaveGoal={handleSaveGoal}
       />
 
       {/* ── 9. Global In-App Toast Banner ── */}
@@ -4403,5 +4487,6 @@ export const App: React.FC = () => {
         </div>
       )}
     </div>
+    </>
   );
 };

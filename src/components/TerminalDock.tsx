@@ -145,6 +145,31 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
         }
       }, 30);
 
+      term.attachCustomKeyEventHandler((arg: KeyboardEvent) => {
+        if (arg.type === "keydown") {
+          if (
+            (arg.ctrlKey || arg.metaKey) &&
+            ((arg.shiftKey && arg.key.toLowerCase() === "c") ||
+              (arg.key.toLowerCase() === "c" && term.hasSelection()))
+          ) {
+            const sel = term.getSelection();
+            if (sel) {
+              navigator.clipboard.writeText(sel);
+              return false;
+            }
+          }
+          if ((arg.ctrlKey || arg.metaKey) && arg.key.toLowerCase() === "v") {
+            navigator.clipboard.readText().then((clip) => {
+              if (clip) {
+                invoke("terminal_write", { sessionId: activeTab.id, data: clip }).catch(() => {});
+              }
+            });
+            return false;
+          }
+        }
+        return true;
+      });
+
       term.onData((data) => {
         invoke("terminal_write", { sessionId: activeTab.id, data }).catch(
           () => {}
@@ -154,15 +179,22 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
       entry = { term, fit, el };
       xtermMapRef.current.set(activeTab.id, entry);
 
-      invoke("terminal_create_or_attach", {
+      let disposed = false;
+      invoke<any>("terminal_create_or_attach", {
         sessionId: activeTab.id,
         cwd: activeTab.cwd || cwd || ".",
         cols: term.cols || 100,
         rows: term.rows || 24,
         shell: activeTab.shell || selectedShell,
-      }).catch((err) => {
-        term.writeln(`\x1b[31m无法启动终端会话: ${String(err)}\x1b[0m`);
-      });
+      })
+        .then((info) => {
+          if (!disposed && info?.replayLog) {
+            term.write(info.replayLog);
+          }
+        })
+        .catch((err) => {
+          term.writeln(`\x1b[31m无法启动终端会话: ${String(err)}\x1b[0m`);
+        });
     } else {
       setTimeout(() => {
         try {
@@ -193,8 +225,17 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
       }
     };
 
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined" && containerRef.current) {
+      ro = new ResizeObserver(() => handleResize());
+      ro.observe(containerRef.current);
+    }
+
     window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
+    return () => {
+      window.removeEventListener("resize", handleResize);
+      ro?.disconnect();
+    };
   }, [open, activeTabId, tabs, cwd, fontSize, selectedShell]);
 
   const addNewTerminal = () => {

@@ -1,0 +1,101 @@
+.browser-info-popover,
+.browser-more-popover {
+  position: fixed;
+  inset: auto;
+  width: 320px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  box-shadow: var(--shadow-lg);
+}
+
+.browser-info-popover::backdrop,
+.browser-more-popover::backdrop {
+  background: transparent;
+}
+
+.browser-info-popover h2 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.browser-info-popover p,
+.browser-info-popover dt,
+.browser-info-popover dd {
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.browser-info-popover dl {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 6px 10px;
+  margin: 0;
+}
+
+.browser-info-popover dt {
+  color: var(--text-tertiary);
+}
+
+.browser-info-popover dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.browser-info-popover .browser-info-url {
+  max-height: 84px;
+  overflow-y: auto;
+}
+
+.browser-info-popover .browser-info-note {
+  margin: 12px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-default);
+  color: var(--text-tertiary);
+}
+
+.browser-more-popover {
+  width: 240px;
+  padding: 6px;
+}
+
+.browser-more-popover button,
+.browser-more-popover a {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 9px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-primary);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.browser-more-popover button:hover:not(:disabled),
+.browser-more-popover a:hover,
+.browser-more-popover button:focus-visible,
+.browser-more-popover a:focus-visible {
+  background: var(--bg-hover);
+  outline: none;
+}
+
+.browser-more-popover button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.browser-more-popover svg {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+}

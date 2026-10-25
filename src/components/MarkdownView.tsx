@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Check, Copy, Play } from "lucide-react";
+import { Check, Copy, Play, WrapText } from "lucide-react";
 
 interface MarkdownViewProps {
   content: string;
@@ -15,7 +15,7 @@ interface ParsedBlock {
 
 function splitMarkdownBlocks(raw: string): ParsedBlock[] {
   const blocks: ParsedBlock[] = [];
-  const regex = /```([a-zA-Z0-9_-]*)\r?\n([\s\S]*?)```/g;
+  const regex = /```([a-zA-Z0-9_+#.-]*)[ \t]*\r?\n([\s\S]*?)```/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
@@ -45,28 +45,91 @@ function splitMarkdownBlocks(raw: string): ParsedBlock[] {
   return blocks;
 }
 
+function tokenizeCodeLine(line: string, lang: string): React.ReactNode {
+  if (lang === "diff" || lang === "patch") {
+    if (line.startsWith("+") && !line.startsWith("+++")) {
+      return <span className="tok-diff-add">{line}</span>;
+    }
+    if (line.startsWith("-") && !line.startsWith("---")) {
+      return <span className="tok-diff-del">{line}</span>;
+    }
+    if (line.startsWith("@@")) {
+      return <span className="tok-diff-hunk">{line}</span>;
+    }
+  }
+
+  const tokenRegex =
+    /(\/\/.*$|#.*$|\/\*[\s\S]*?\*\/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b(?:const|let|var|function|return|if|else|for|while|switch|case|break|continue|import|from|export|default|class|interface|type|enum|async|await|try|catch|finally|throw|new|typeof|instanceof|in|of|true|false|null|undefined|fn|pub|mod|use|struct|impl|trait|match|mut|ref|Self|self|where|crate|super|def|elif|except|lambda|pass|raise|with|yield|None|True|False|package|func|chan|defer|go|select|SELECT|FROM|WHERE|INSERT|UPDATE|DELETE|JOIN|GROUP|ORDER|BY|LIMIT)\b|\b\d+(?:\.\d+)?\b)/g;
+
+  const nodes: React.ReactNode[] = [];
+  let lastIdx = 0;
+  let m: RegExpExecArray | null;
+
+  while ((m = tokenRegex.exec(line)) !== null) {
+    if (m.index > lastIdx) {
+      nodes.push(line.slice(lastIdx, m.index));
+    }
+    const tok = m[0];
+    let cls = "tok-kw";
+    if (tok.startsWith("//") || tok.startsWith("#") || tok.startsWith("/*")) {
+      cls = "tok-comment";
+    } else if (tok.startsWith('"') || tok.startsWith("'") || tok.startsWith("`")) {
+      cls = "tok-string";
+    } else if (/^\d/.test(tok)) {
+      cls = "tok-number";
+    } else if (/^(true|false|null|undefined|None|True|False)$/.test(tok)) {
+      cls = "tok-bool";
+    }
+    nodes.push(
+      <span key={m.index} className={cls}>
+        {tok}
+      </span>
+    );
+    lastIdx = tokenRegex.lastIndex;
+  }
+
+  if (lastIdx < line.length) {
+    nodes.push(line.slice(lastIdx));
+  }
+  return nodes.length > 0 ? nodes : line;
+}
+
+function hasUnsafeExternalProtocol(value: string): boolean {
+  return /^(?:javascript|vbscript|data):/i.test(value.trim());
+}
+
+function hasUnsafeImageProtocol(value: string): boolean {
+  return /^(?:javascript|vbscript|data:(?!image\/))/i.test(value.trim());
+}
+
 function renderInlineSegments(
   text: string,
   onOpenFile?: (filePath: string) => void
 ): React.ReactNode[] {
-  const parts = text.split(/(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\([^)]+\))/g);
+  const inlineRegex =
+    /(`[^`]+`|!\[[^\]]*\]\([^)]+\)|\[[^\]]+\]\([^)]+\)|\*\*\*[^*]+\*\*\*|\*\*[^*]+\*\*|~~[^~]+~~|(?<!\*)\*[^*\s][^*]*\*(?!\*)|(?<!\w)_[^_\s][^_]*_(?!\w))/g;
+  const parts = text.split(inlineRegex);
   return parts.map((part, idx) => {
-    if (part.startsWith("`") && part.endsWith("`") && part.length > 2) {
+    if (!part) return null;
+
+    if (part.startsWith("`") && part.endsWith("`") && part.length >= 2) {
       const inner = part.slice(1, -1);
+      const cleanedPath = inner.replace(/:\d+(?::\d+)?$/, "");
       const looksLikePath =
-        inner.includes("/") ||
-        inner.includes("\\") ||
-        /\.[a-zA-Z0-9]{1,6}$/.test(inner);
+        cleanedPath.includes("/") ||
+        cleanedPath.includes("\\") ||
+        /\.[a-zA-Z0-9]{1,6}$/.test(cleanedPath);
       if (looksLikePath && onOpenFile) {
         return (
-          <code
+          <button
             key={idx}
+            type="button"
             className="inline-code clickable-code"
-            onClick={() => onOpenFile(inner)}
+            onClick={() => onOpenFile(cleanedPath)}
             title="点击在右侧文件预览中打开"
           >
             {inner}
-          </code>
+          </button>
         );
       }
       return (
@@ -75,16 +138,53 @@ function renderInlineSegments(
         </code>
       );
     }
-    if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
-      return <strong key={idx}>{part.slice(2, -2)}</strong>;
+
+    const imgMatch = part.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
+    if (imgMatch) {
+      const [, alt, src] = imgMatch;
+      if (hasUnsafeImageProtocol(src)) {
+        return <span key={idx} className="md-unsupported-media">不支持的图片地址</span>;
+      }
+      return (
+        <img
+          key={idx}
+          src={src}
+          alt={alt}
+          className="md-inline-image"
+          loading="lazy"
+        />
+      );
     }
+
     const linkMatch = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
     if (linkMatch) {
       const [, label, href] = linkMatch;
+      if (hasUnsafeExternalProtocol(href)) {
+        return <span key={idx} className="md-unsupported-media">不支持的链接地址</span>;
+      }
       if (href.startsWith("file://") && onOpenFile) {
         const cleaned = decodeURIComponent(
           href.replace(/^file:\/\/\/?/, "").replace(/#L\d+.*$/, "")
         );
+        return (
+          <button
+            key={idx}
+            type="button"
+            className="inline-file-link"
+            onClick={() => onOpenFile(cleaned)}
+          >
+            {label}
+          </button>
+        );
+      }
+      if (
+        onOpenFile &&
+        !href.startsWith("http://") &&
+        !href.startsWith("https://") &&
+        !href.startsWith("mailto:") &&
+        !href.startsWith("#")
+      ) {
+        const cleaned = decodeURIComponent(href.replace(/#L\d+.*$/, ""));
         return (
           <button
             key={idx}
@@ -108,8 +208,54 @@ function renderInlineSegments(
         </a>
       );
     }
+
+    if (part.startsWith("***") && part.endsWith("***") && part.length > 6) {
+      return (
+        <strong key={idx}>
+          <em>{renderInlineSegments(part.slice(3, -3), onOpenFile)}</em>
+        </strong>
+      );
+    }
+    if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
+      return (
+        <strong key={idx}>
+          {renderInlineSegments(part.slice(2, -2), onOpenFile)}
+        </strong>
+      );
+    }
+    if (part.startsWith("~~") && part.endsWith("~~") && part.length > 4) {
+      return (
+        <del key={idx}>
+          {renderInlineSegments(part.slice(2, -2), onOpenFile)}
+        </del>
+      );
+    }
+    if (
+      ((part.startsWith("*") && part.endsWith("*")) ||
+        (part.startsWith("_") && part.endsWith("_"))) &&
+      part.length > 2
+    ) {
+      return (
+        <em key={idx}>{renderInlineSegments(part.slice(1, -1), onOpenFile)}</em>
+      );
+    }
+
     return <React.Fragment key={idx}>{part}</React.Fragment>;
   });
+}
+
+function parseTableCells(row: string): string[] {
+  const trimmed = row.trim();
+  const stripped = trimmed.replace(/^\|/, "").replace(/\|$/, "");
+  return stripped.split("|").map((c) => c.trim());
+}
+
+function isTableSeparator(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed.includes("|") && !trimmed.includes("-")) return false;
+  const cells = parseTableCells(trimmed);
+  if (cells.length === 0) return false;
+  return cells.every((c) => /^:?-{3,}:?$/.test(c));
 }
 
 function renderTextParagraphs(
@@ -118,72 +264,249 @@ function renderTextParagraphs(
 ) {
   const lines = text.split(/\r?\n/);
   const elements: React.ReactNode[] = [];
-  let listItems: string[] = [];
 
-  const flushList = (keyPrefix: string) => {
-    if (listItems.length === 0) return;
-    elements.push(
-      <ul key={`${keyPrefix}-list`} className="md-list">
-        {listItems.map((item, idx) => (
-          <li key={idx}>{renderInlineSegments(item, onOpenFile)}</li>
-        ))}
-      </ul>
-    );
-    listItems = [];
+  let ulItems: { text: string; checked?: boolean }[] = [];
+  let olItems: { num: number; text: string }[] = [];
+  let quoteLines: string[] = [];
+
+  const flushListsAndQuotes = (keyPrefix: string) => {
+    if (ulItems.length > 0) {
+      elements.push(
+        <ul key={`${keyPrefix}-ul`} className="md-list">
+          {ulItems.map((item, idx) => (
+            <li
+              key={idx}
+              className={
+                typeof item.checked === "boolean" ? "md-task-list-item" : undefined
+              }
+            >
+              {typeof item.checked === "boolean" && (
+                <input
+                  type="checkbox"
+                  checked={item.checked}
+                  readOnly
+                  className="md-task-checkbox"
+                />
+              )}
+              <span>{renderInlineSegments(item.text, onOpenFile)}</span>
+            </li>
+          ))}
+        </ul>
+      );
+      ulItems = [];
+    }
+    if (olItems.length > 0) {
+      const startNum = olItems[0]?.num || 1;
+      elements.push(
+        <ol key={`${keyPrefix}-ol`} start={startNum} className="md-list md-ol-list">
+          {olItems.map((item, idx) => (
+            <li key={idx}>{renderInlineSegments(item.text, onOpenFile)}</li>
+          ))}
+        </ol>
+      );
+      olItems = [];
+    }
+    if (quoteLines.length > 0) {
+      const firstLine = quoteLines[0] || "";
+      const alertMatch = firstLine.match(
+        /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*(.*)$/i
+      );
+      const alertType = alertMatch ? alertMatch[1].toLowerCase() : null;
+      const bodyLines = alertMatch
+        ? [alertMatch[2], ...quoteLines.slice(1)].filter(Boolean)
+        : quoteLines;
+      elements.push(
+        <blockquote
+          key={`${keyPrefix}-quote`}
+          className={`md-blockquote ${alertType ? `md-alert-${alertType}` : ""}`}
+        >
+          {alertType && (
+            <div className="md-alert-title">{alertType.toUpperCase()}</div>
+          )}
+          {bodyLines.map((ql, qIdx) => (
+            <p key={qIdx} className="md-blockquote-p">
+              {renderInlineSegments(ql, onOpenFile)}
+            </p>
+          ))}
+        </blockquote>
+      );
+      quoteLines = [];
+    }
   };
 
-  lines.forEach((line, i) => {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     const trimmed = line.trim();
-    if (!trimmed) {
-      flushList(`l-${i}`);
-      return;
-    }
-    if (trimmed.startsWith("### ")) {
-      flushList(`l-${i}`);
-      elements.push(
-        <h4 key={i} className="md-h3">
-          {renderInlineSegments(trimmed.slice(4), onOpenFile)}
-        </h4>
-      );
-    } else if (trimmed.startsWith("## ")) {
-      flushList(`l-${i}`);
-      elements.push(
-        <h3 key={i} className="md-h2">
-          {renderInlineSegments(trimmed.slice(3), onOpenFile)}
-        </h3>
-      );
-    } else if (trimmed.startsWith("# ")) {
-      flushList(`l-${i}`);
-      elements.push(
-        <h2 key={i} className="md-h1">
-          {renderInlineSegments(trimmed.slice(2), onOpenFile)}
-        </h2>
-      );
-    } else if (/^[-*]\s+/.test(trimmed) || /^\d+\.\s+/.test(trimmed)) {
-      listItems.push(trimmed.replace(/^([-*]|\d+\.)\s+/, ""));
-    } else {
-      flushList(`l-${i}`);
-      elements.push(
-        <p key={i} className="md-p">
-          {renderInlineSegments(line, onOpenFile)}
-        </p>
-      );
-    }
-  });
 
-  flushList("end");
+    if (!trimmed) {
+      flushListsAndQuotes(`l-${i}`);
+      continue;
+    }
+
+    // Check for GFM table
+    if (
+      trimmed.includes("|") &&
+      i + 1 < lines.length &&
+      isTableSeparator(lines[i + 1])
+    ) {
+      flushListsAndQuotes(`l-${i}`);
+      const headers = parseTableCells(trimmed);
+      const alignments = parseTableCells(lines[i + 1]).map((sep) => {
+        if (sep.startsWith(":") && sep.endsWith(":")) return "center" as const;
+        if (sep.endsWith(":")) return "right" as const;
+        return "left" as const;
+      });
+      i += 2;
+      const rows: string[][] = [];
+      while (i < lines.length && lines[i].trim().includes("|")) {
+        rows.push(parseTableCells(lines[i]));
+        i++;
+      }
+      i--; // adjust for outer loop increment
+      elements.push(
+        <div key={`table-${i}`} className="md-table-wrapper">
+          <table className="md-table">
+            <caption className="sr-only">Markdown 数据表</caption>
+            <thead>
+              <tr>
+                {headers.map((h, hIdx) => (
+                  <th
+                    scope="col"
+                    key={hIdx}
+                    style={{ textAlign: alignments[hIdx] || "left" }}
+                  >
+                    {renderInlineSegments(h, onOpenFile)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, rIdx) => (
+                <tr key={rIdx}>
+                  {headers.map((_, cIdx) => (
+                    <td
+                      key={cIdx}
+                      style={{ textAlign: alignments[cIdx] || "left" }}
+                    >
+                      {renderInlineSegments(row[cIdx] ?? "", onOpenFile)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+      continue;
+    }
+
+    // Horizontal rule
+    if (/^(?:-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
+      flushListsAndQuotes(`l-${i}`);
+      elements.push(<hr key={`hr-${i}`} className="md-hr" />);
+      continue;
+    }
+
+    // Blockquote
+    if (trimmed.startsWith(">")) {
+      if (ulItems.length > 0 || olItems.length > 0) {
+        flushListsAndQuotes(`l-${i}`);
+      }
+      quoteLines.push(trimmed.replace(/^>\s?/, ""));
+      continue;
+    } else if (quoteLines.length > 0) {
+      flushListsAndQuotes(`l-${i}`);
+    }
+
+    // Headings h1-h6
+    const headingMatch = trimmed.match(/^(#{1,6})\s+(.+)$/);
+    if (headingMatch) {
+      flushListsAndQuotes(`l-${i}`);
+      const level = headingMatch[1].length;
+      const contentNode = renderInlineSegments(headingMatch[2], onOpenFile);
+      if (level === 1) {
+        elements.push(
+          <h2 key={i} className="md-h1">
+            {contentNode}
+          </h2>
+        );
+      } else if (level === 2) {
+        elements.push(
+          <h3 key={i} className="md-h2">
+            {contentNode}
+          </h3>
+        );
+      } else if (level === 3) {
+        elements.push(
+          <h4 key={i} className="md-h3">
+            {contentNode}
+          </h4>
+        );
+      } else {
+        elements.push(
+          <h5 key={i} className={`md-h${level}`}>
+            {contentNode}
+          </h5>
+        );
+      }
+      continue;
+    }
+
+    // Task list item
+    const taskMatch = trimmed.match(/^[-*+]\s+\[([ xX])\]\s+(.*)$/);
+    if (taskMatch) {
+      if (olItems.length > 0) flushListsAndQuotes(`l-${i}`);
+      ulItems.push({
+        checked: taskMatch[1].toLowerCase() === "x",
+        text: taskMatch[2],
+      });
+      continue;
+    }
+
+    // Unordered list item
+    const ulMatch = trimmed.match(/^[-*+]\s+(.+)$/);
+    if (ulMatch) {
+      if (olItems.length > 0) flushListsAndQuotes(`l-${i}`);
+      ulItems.push({ text: ulMatch[1] });
+      continue;
+    }
+
+    // Ordered list item
+    const olMatch = trimmed.match(/^(\d+)\.\s+(.+)$/);
+    if (olMatch) {
+      if (ulItems.length > 0) flushListsAndQuotes(`l-${i}`);
+      olItems.push({ num: Number(olMatch[1]), text: olMatch[2] });
+      continue;
+    }
+
+    flushListsAndQuotes(`l-${i}`);
+    elements.push(
+      <p key={i} className="md-p">
+        {renderInlineSegments(line, onOpenFile)}
+      </p>
+    );
+  }
+
+  flushListsAndQuotes("end");
   return elements;
 }
 
 export const MarkdownView: React.FC<MarkdownViewProps> = React.memo(
   ({ content, onRunCommand, onOpenFile }) => {
     const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
+    const [wrappedBlocks, setWrappedBlocks] = useState<Record<number, boolean>>(
+      {}
+    );
     const blocks = splitMarkdownBlocks(content || "");
 
     const handleCopy = (code: string, idx: number) => {
       navigator.clipboard.writeText(code);
       setCopiedIdx(idx);
       setTimeout(() => setCopiedIdx(null), 1500);
+    };
+
+    const toggleWrap = (idx: number) => {
+      setWrappedBlocks((prev) => ({ ...prev, [idx]: !prev[idx] }));
     };
 
     const isShellLang = (lang: string) =>
@@ -195,11 +518,27 @@ export const MarkdownView: React.FC<MarkdownViewProps> = React.memo(
       <div className="markdown-body">
         {blocks.map((block, idx) => {
           if (block.kind === "code") {
+            const codeLines = block.code.split(/\r?\n/);
+            const isWrapped = Boolean(wrappedBlocks[idx]);
             return (
               <div key={idx} className="code-block-wrapper">
                 <div className="code-block-header">
-                  <span className="code-lang">{block.lang || "code"}</span>
+                  <div className="code-block-meta">
+                    <span className="code-lang">{block.lang || "code"}</span>
+                    <span className="code-line-count">
+                      {codeLines.length} {codeLines.length === 1 ? "line" : "lines"}
+                    </span>
+                  </div>
                   <div className="code-block-actions">
+                    <button
+                      type="button"
+                      className={`code-action-btn ${isWrapped ? "active" : ""}`}
+                      onClick={() => toggleWrap(idx)}
+                      title="切换自动换行"
+                    >
+                      <WrapText size={12} />
+                      <span>换行</span>
+                    </button>
                     {onRunCommand && isShellLang(block.lang) && (
                       <button
                         type="button"
@@ -230,8 +569,15 @@ export const MarkdownView: React.FC<MarkdownViewProps> = React.memo(
                     </button>
                   </div>
                 </div>
-                <pre className="code-block-pre">
-                  <code>{block.code}</code>
+                <pre className={`code-block-pre ${isWrapped ? "wrapped" : ""}`} tabIndex={0} aria-label={`${block.lang} 代码块`}>
+                  <code>
+                    {codeLines.map((ln, lIdx) => (
+                      <React.Fragment key={lIdx}>
+                        {tokenizeCodeLine(ln, block.lang)}
+                        {lIdx < codeLines.length - 1 ? "\n" : ""}
+                      </React.Fragment>
+                    ))}
+                  </code>
                 </pre>
               </div>
             );

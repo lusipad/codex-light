@@ -51,10 +51,20 @@ import {
   ModelInfo,
   ModelProviderConfig,
   McpServerConfigItem,
+  MainViewRoute,
   PetSpeciesId,
+  InstalledPetItem,
+  PET_SPECIES_LIST,
   SettingsSectionSlug,
   StorageStatsOverview,
 } from "../types";
+import {
+  listInstalledPlugins,
+  pluginDisplayName,
+  pluginDescription,
+  pluginVersion,
+  type PluginSummary,
+} from "../plugins";
 
 export interface ThemePalette {
   id: string;
@@ -102,22 +112,7 @@ export const OFFICIAL_COLOR_THEMES: ThemePalette[] = [
   { id: "notion", name: "Notion Warm Dark", bgPrimary: "#191919", bgSecondary: "#202020", accent: "#2eaadc", textPrimary: "#ebebeb" },
 ];
 
-export const PET_SPECIES_LIST: Array<{
-  id: PetSpeciesId;
-  name: string;
-  emoji: string;
-  desc: string;
-}> = [
-  { id: "codex", name: "Codex", emoji: "✨", desc: "官方星环智能体伴侣，随推理状态呼吸闪烁" },
-  { id: "rocky", name: "Rocky", emoji: "🪨", desc: "稳如磐石的构建守护者，偏爱零报错编译" },
-  { id: "hoots", name: "Hoots", emoji: "🦉", desc: "通宵值守的代码猫头鹰，擅长深夜 /goal 巡检" },
-  { id: "seedy", name: "Seedy", emoji: "🌱", desc: "随提交次数茁壮成长的新芽伙伴" },
-  { id: "stacky", name: "Stacky", emoji: "🥞", desc: "全栈叠叠乐精灵，精通前后端联调" },
-  { id: "fireball", name: "Fireball", emoji: "🔥", desc: "高能极速输出模式吉祥物" },
-  { id: "bsod", name: "BSOD", emoji: "🟦", desc: "复古蓝屏小怪兽，帮你提前拦截崩溃异常" },
-  { id: "dewey", name: "Dewey", emoji: "💧", desc: "清爽极简的水滴助手" },
-  { id: "null-signal", name: "Null Signal", emoji: "👾", desc: "赛博像素幽灵，潜行于终端与日志之间" },
-];
+export { PET_SPECIES_LIST } from "../types";
 
 export const MCP_PRESETS = [
   {
@@ -327,10 +322,7 @@ const SETTINGS_NAV_GROUPS: Array<{
   {
     groupTitle: "集成 (Integrations)",
     items: [
-      { slug: "plugins-settings", label: "插件设置", keywords: "plugins marketplace auto update" },
-      { slug: "computer-use", label: "计算机使用 (@电脑)", keywords: "computer use desktop control windows" },
-      { slug: "appshots", label: "应用截图 (Appshots)", keywords: "appshots screenshot capture" },
-      { slug: "browser-use", label: "浏览器使用", keywords: "browser playwright preview localhost" },
+      { slug: "plugins-settings", label: "插件设置 (Plugins)", keywords: "plugins marketplace auto update 插件 技能" },
     ],
   },
   {
@@ -354,9 +346,6 @@ const SETTINGS_NAV_GROUPS: Array<{
 
 /** Settings sections that currently only persist local preferences (no executor yet). */
 const LOCAL_ONLY_SETTINGS_SECTIONS: SettingsSectionSlug[] = [
-  "computer-use",
-  "appshots",
-  "browser-use",
   "git-settings",
   "worktrees",
   "voice",
@@ -381,11 +370,13 @@ interface SettingsViewProps {
   activeWorkspaceRoot?: string;
   initialSection?: SettingsSectionSlug;
   selectedPetSpecies?: PetSpeciesId;
+  installedPets?: InstalledPetItem[];
   onSelectPetSpecies?: (species: PetSpeciesId) => void;
   petVisible?: boolean;
   onTogglePetVisible?: (visible: boolean) => void;
   onRestartAppServer: (customCliPath?: string) => void;
   onConfigUpdated: () => void;
+  onNavigateRoute?: (route: MainViewRoute) => void;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
@@ -394,11 +385,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   activeWorkspaceRoot = "",
   initialSection = "general-settings",
   selectedPetSpecies = "codex",
+  installedPets = [],
   onSelectPetSpecies,
   petVisible = false,
   onTogglePetVisible,
   onRestartAppServer,
   onConfigUpdated,
+  onNavigateRoute,
 }) => {
   const [activeSection, setActiveSection] =
     useState<SettingsSectionSlug>(initialSection);
@@ -481,41 +474,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [newMcpEnvMap, setNewMcpEnvMap] = useState<Record<string, string>>({});
   const [mcpTestStatus, setMcpTestStatus] = useState<Record<string, string>>({});
 
-  // Plugins Settings State
+  // Plugins Settings State (Real protocol & directory backed)
   const [pluginMarketplaceUrl, setPluginMarketplaceUrl] = useState<string>("https://plugins.codex.sh/registry");
   const [pluginAutoUpdate, setPluginAutoUpdate] = useState<boolean>(true);
   const [pluginAllowUntrusted, setPluginAllowUntrusted] = useState<boolean>(false);
   const [pluginDevMode, setPluginDevMode] = useState<boolean>(false);
   const [pluginSandbox, setPluginSandbox] = useState<string>("workspace");
-  const [installedPlugins, setInstalledPlugins] = useState<Array<{ id: string; name: string; version: string; desc: string; enabled: boolean }>>([
-    { id: "git-review", name: "Git Enhanced Reviewer", version: "1.2.0", desc: "智能 Git 差异分析与安全审计挂钩", enabled: true },
-    { id: "tailwind-helper", name: "Tailwind CSS IntelliSense", version: "0.9.4", desc: "类名推演与移动端响应式样式生成", enabled: true },
-    { id: "diagram-viewer", name: "Mermaid Visualizer", version: "1.0.2", desc: "支持渲染 Mermaid 流程图与时序架构图", enabled: true },
-    { id: "docker-mcp", name: "Docker Container Navigator", version: "0.5.1", desc: "容器状态探查与镜像构建管理", enabled: false },
-  ]);
+  const [realPlugins, setRealPlugins] = useState<PluginSummary[]>([]);
+  const [loadingRealPlugins, setLoadingRealPlugins] = useState<boolean>(false);
 
-  // Computer Use (@电脑)
-  const [computerUseEnabled, setComputerUseEnabled] = useState<boolean>(true);
-  const [computerResolution, setComputerResolution] = useState<string>("1920x1080");
-  const [computerMouseMode, setComputerMouseMode] = useState<string>("smooth");
-  const [computerDangerConfirm, setComputerDangerConfirm] = useState<boolean>(true);
-  const [computerShowRedDot, setComputerShowRedDot] = useState<boolean>(true);
-  const [computerTargetDisplay, setComputerTargetDisplay] = useState<string>("0");
-
-  // Appshots (应用截图)
-  const [appshotsEnabled, setAppshotsEnabled] = useState<boolean>(true);
-  const [appshotsFormat, setAppshotsFormat] = useState<string>("webp");
-  const [appshotsHotkey, setAppshotsHotkey] = useState<string>("Ctrl+Shift+S");
-  const [appshotsHideSelf, setAppshotsHideSelf] = useState<boolean>(true);
-  const [appshotsBlacklist, setAppshotsBlacklist] = useState<string>("1Password, Bitwarden, KeePass, KeepassXC");
-
-  // Browser Use (浏览器使用)
-  const [browserUseEnabled, setBrowserUseEnabled] = useState<boolean>(true);
-  const [browserHeadless, setBrowserHeadless] = useState<boolean>(false);
-  const [browserEngine, setBrowserEngine] = useState<string>("chrome");
-  const [browserCustomPath, setBrowserCustomPath] = useState<string>("");
-  const [browserProxy, setBrowserProxy] = useState<string>("");
-  const [browserPersistCookies, setBrowserPersistCookies] = useState<boolean>(true);
+  // Pet Visibility & Size (1:1 with official pets.txt)
+  const [petVisibility, setPetVisibility] = useState<"always-visible" | "on-demand">("always-visible");
+  const [petScale, setPetScale] = useState<number>(1.0);
 
   // Hooks Settings (生命周期挂钩) — real data via hooks/list + live hook/* notifications
   const [hooksEnabled, setHooksEnabled] = useState<boolean>(true);
@@ -619,6 +589,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       tauriInvoke<any>("desktop_state_get", { key: "desktopPreferences" })
         .then((prefs) => {
           if (prefs && typeof prefs === "object") {
+            if (prefs.uiFontSize) {
+              setUiFontSize(prefs.uiFontSize);
+              document.documentElement.style.fontSize = `${prefs.uiFontSize}px`;
+            }
+            if (prefs.petVisibility) setPetVisibility(prefs.petVisibility);
+            if (prefs.petScale) setPetScale(prefs.petScale);
             if (prefs.defaultEditor) setDefaultEditor(prefs.defaultEditor);
             if (prefs.preventSleep !== undefined) setPreventSleep(prefs.preventSleep);
             if (prefs.toneStyle) setToneStyle(prefs.toneStyle);
@@ -644,23 +620,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             if (prefs.pluginAllowUntrusted !== undefined) setPluginAllowUntrusted(prefs.pluginAllowUntrusted);
             if (prefs.pluginDevMode !== undefined) setPluginDevMode(prefs.pluginDevMode);
             if (prefs.pluginSandbox) setPluginSandbox(prefs.pluginSandbox);
-            if (prefs.computerUseEnabled !== undefined) setComputerUseEnabled(prefs.computerUseEnabled);
-            if (prefs.computerResolution) setComputerResolution(prefs.computerResolution);
-            if (prefs.computerMouseMode) setComputerMouseMode(prefs.computerMouseMode);
-            if (prefs.computerDangerConfirm !== undefined) setComputerDangerConfirm(prefs.computerDangerConfirm);
-            if (prefs.computerShowRedDot !== undefined) setComputerShowRedDot(prefs.computerShowRedDot);
-            if (prefs.computerTargetDisplay) setComputerTargetDisplay(prefs.computerTargetDisplay);
-            if (prefs.appshotsEnabled !== undefined) setAppshotsEnabled(prefs.appshotsEnabled);
-            if (prefs.appshotsFormat) setAppshotsFormat(prefs.appshotsFormat);
-            if (prefs.appshotsHotkey) setAppshotsHotkey(prefs.appshotsHotkey);
-            if (prefs.appshotsHideSelf !== undefined) setAppshotsHideSelf(prefs.appshotsHideSelf);
-            if (prefs.appshotsBlacklist) setAppshotsBlacklist(prefs.appshotsBlacklist);
-            if (prefs.browserUseEnabled !== undefined) setBrowserUseEnabled(prefs.browserUseEnabled);
-            if (prefs.browserHeadless !== undefined) setBrowserHeadless(prefs.browserHeadless);
-            if (prefs.browserEngine) setBrowserEngine(prefs.browserEngine);
-            if (prefs.browserCustomPath) setBrowserCustomPath(prefs.browserCustomPath);
-            if (prefs.browserProxy) setBrowserProxy(prefs.browserProxy);
-            if (prefs.browserPersistCookies !== undefined) setBrowserPersistCookies(prefs.browserPersistCookies);
             if (prefs.hooksEnabled !== undefined) setHooksEnabled(prefs.hooksEnabled);
             if (prefs.desktopNotifications !== undefined) setDesktopNotifications(prefs.desktopNotifications);
             if (prefs.notificationSound !== undefined) setNotificationSound(prefs.notificationSound);
@@ -803,6 +762,22 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   }, []);
 
   useEffect(() => {
+    if (activeSection === "plugins-settings") {
+      setLoadingRealPlugins(true);
+      const cwds = activeWorkspaceRoot ? [activeWorkspaceRoot] : [];
+      listInstalledPlugins(cwds)
+        .then((res) => {
+          const all = (res?.marketplaces ?? []).flatMap((m) => m.plugins ?? []);
+          setRealPlugins(all);
+        })
+        .catch(() => {
+          setRealPlugins([]);
+        })
+        .finally(() => setLoadingRealPlugins(false));
+    }
+  }, [activeSection, activeWorkspaceRoot]);
+
+  useEffect(() => {
     loadConfig();
     tauriInvoke<string | null>("desktop_state_get", { key: "colorTheme" })
       .then((t) => {
@@ -899,6 +874,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     await tauriInvoke("desktop_state_set", {
       key: "desktopPreferences",
       value: {
+        uiFontSize,
+        petVisibility,
+        petScale,
         defaultEditor,
         preventSleep,
         toneStyle,
@@ -924,23 +902,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         pluginAllowUntrusted,
         pluginDevMode,
         pluginSandbox,
-        computerUseEnabled,
-        computerResolution,
-        computerMouseMode,
-        computerDangerConfirm,
-        computerShowRedDot,
-        computerTargetDisplay,
-        appshotsEnabled,
-        appshotsFormat,
-        appshotsHotkey,
-        appshotsHideSelf,
-        appshotsBlacklist,
-        browserUseEnabled,
-        browserHeadless,
-        browserEngine,
-        browserCustomPath,
-        browserProxy,
-        browserPersistCookies,
         hooksEnabled,
         desktopNotifications,
         notificationSound,
@@ -956,6 +917,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 desktopNotifications,
                 notificationSound,
                 notifyOnApproval,
+                petScale,
+                petVisibility,
+                selectedPetSpecies,
+                petVisible,
               },
             })
           );
@@ -1102,7 +1067,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setMcpTestStatus((prev) => ({ ...prev, [srv.id]: "测试中..." }));
     try {
       if (srv.url) {
-        setMcpTestStatus((prev) => ({ ...prev, [srv.id]: "✓ 远程端点已响应" }));
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 4000);
+          await fetch(srv.url, { method: "HEAD", signal: controller.signal, mode: "no-cors" });
+          clearTimeout(timer);
+          setMcpTestStatus((prev) => ({ ...prev, [srv.id]: "✓ 远程端点可连通" }));
+        } catch (fetchErr: any) {
+          setMcpTestStatus((prev) => ({
+            ...prev,
+            [srv.id]: `❌ 连接失败: ${fetchErr?.name === "AbortError" ? "超时 (4s)" : "网络不可达"}`,
+          }));
+        }
       } else {
         const testCmd = `${srv.command || "npx"} --help`;
         const res = await tauriInvoke<any>("exec_shell_command", {
@@ -1112,7 +1088,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         if (res?.exitCode === 0 || res?.success) {
           setMcpTestStatus((prev) => ({ ...prev, [srv.id]: "✓ 正常在线 (Exit 0)" }));
         } else {
-          setMcpTestStatus((prev) => ({ ...prev, [srv.id]: `❌ 退出码 ${res?.exitCode}` }));
+          setMcpTestStatus((prev) => ({ ...prev, [srv.id]: `❌ 退出码 ${res?.exitCode ?? -1}` }));
         }
       }
     } catch {
@@ -1687,6 +1663,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       setUiFontSize(v);
                       document.documentElement.style.fontSize = `${v}px`;
                     }}
+                    onMouseUp={saveDesktopPreferences}
                   />
                 </div>
               </div>
@@ -1987,20 +1964,94 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         )}
 
-        {/* SECTION: PETS */}
+        {/* SECTION: PETS (Mini & Pets) */}
         {activeSection === "pets" && (
           <div className="settings-scroll-container">
             <div className="card-section">
-              <h3>桌面虚拟宠物伴侣 (`Mini Pet Companion`)</h3>
-              <label className="checkbox-inline" style={{ marginBottom: 14 }}>
-                <input
-                  type="checkbox"
-                  checked={petVisible}
-                  onChange={(e) => onTogglePetVisible?.(e.target.checked)}
-                />
-                <span>在主界面右下角显示悬浮虚拟宠物与快捷提问胶囊</span>
-              </label>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+                <div>
+                  <h3>Mini & Pets</h3>
+                  <p className="card-subtitle-desc">
+                    Mini manages threads and surfaces what needs attention
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="secondary-btn-sm"
+                  onClick={() => onTogglePetVisible?.(!petVisible)}
+                >
+                  {petVisible ? "Hide mini" : "Show mini"}
+                </button>
+              </div>
+            </div>
 
+            <div className="card-section">
+              <h3>Visibility</h3>
+              <p className="card-subtitle-desc">
+                Choose whether your Mini stays on your desktop or appears on demand
+              </p>
+              <div style={{ marginTop: 12, maxWidth: 380 }}>
+                <select
+                  value={petVisibility}
+                  onChange={(e) => {
+                    const next = e.target.value as "always-visible" | "on-demand";
+                    setPetVisibility(next);
+                    saveDesktopPreferences();
+                  }}
+                  style={{ width: "100%", padding: "6px 10px", borderRadius: 6 }}
+                >
+                  <option value="always-visible">Always visible · Keep your Mini on your desktop</option>
+                  <option value="on-demand">On demand · Show from the menu. Hide when you click away</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="card-section">
+              <h3>Pick a pet</h3>
+              <p className="card-subtitle-desc">
+                Choose a companion for your desktop and quick access
+              </p>
+
+              {installedPets.length > 0 && (
+                <>
+                  <h4 style={{ margin: "14px 0 8px", fontSize: 13, color: "var(--text-secondary)" }}>
+                    Custom pets (`~/.codex/pets`)
+                  </h4>
+                  <div className="preset-cards-grid" style={{ marginBottom: 16 }}>
+                    {installedPets.map((pet) => (
+                      <div
+                        key={pet.id}
+                        className={`preset-template-card ${
+                          selectedPetSpecies === pet.id ? "active" : ""
+                        }`}
+                        onClick={() => {
+                          onSelectPetSpecies?.(pet.id);
+                          onTogglePetVisible?.(true);
+                          flashSaved(`已选择本地宠物: ${pet.displayName}`);
+                        }}
+                      >
+                        <div className="preset-template-title" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          {pet.spritesheetDataUrl ? (
+                            <img
+                              src={pet.spritesheetDataUrl}
+                              alt={pet.displayName}
+                              style={{ width: 28, height: 28, objectFit: "cover", objectPosition: "0 0", borderRadius: 4 }}
+                            />
+                          ) : (
+                            <span style={{ fontSize: 20 }}>🐾</span>
+                          )}
+                          <strong>{pet.displayName}</strong>
+                        </div>
+                        <p className="preset-template-desc">{pet.description || "自定义本地宠物精灵图"}</p>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              <h4 style={{ margin: "12px 0 8px", fontSize: 13, color: "var(--text-secondary)" }}>
+                Built-in companions
+              </h4>
               <div className="preset-cards-grid">
                 {PET_SPECIES_LIST.map((pet) => (
                   <div
@@ -2011,7 +2062,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     onClick={() => {
                       onSelectPetSpecies?.(pet.id);
                       onTogglePetVisible?.(true);
-                      flashSaved(`已召唤伙伴: ${pet.name}`);
+                      flashSaved(`已选择伴侣: ${pet.name}`);
                     }}
                   >
                     <div className="preset-template-title">
@@ -2021,6 +2072,70 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     <p className="preset-template-desc">{pet.desc}</p>
                   </div>
                 ))}
+              </div>
+            </div>
+
+            <div className="card-section">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <h3>Pet size</h3>
+                  <p className="card-subtitle-desc">Adjust the size of your pet</p>
+                </div>
+                <button
+                  type="button"
+                  className="secondary-btn-sm"
+                  onClick={() => {
+                    setPetScale(1.0);
+                    saveDesktopPreferences();
+                  }}
+                >
+                  Reset
+                </button>
+              </div>
+              <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 14 }}>
+                <input
+                  type="range"
+                  min="0.6"
+                  max="1.8"
+                  step="0.1"
+                  value={petScale}
+                  onChange={(e) => {
+                    setPetScale(Number(e.target.value));
+                  }}
+                  onMouseUp={saveDesktopPreferences}
+                  style={{ width: 220 }}
+                />
+                <span style={{ fontSize: 12.5, color: "var(--text-secondary)", fontFamily: "var(--font-mono)" }}>
+                  {Math.round(petScale * 100)}%
+                </span>
+              </div>
+            </div>
+
+            <div className="card-section">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <h3>Custom pets</h3>
+                  <p className="card-subtitle-desc" style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>
+                    ~/.codex/pets
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="secondary-btn-sm"
+                  onClick={async () => {
+                    try {
+                      await tauriInvoke("open_path_in_shell", { path: "~/.codex/pets" });
+                    } catch {
+                      await tauriInvoke("storage_stats_get").then((s: any) => {
+                        if (s?.codexHome) {
+                          tauriInvoke("reveal_path_in_explorer", { path: `${s.codexHome}\\pets` }).catch(() => {});
+                        }
+                      }).catch(() => {});
+                    }
+                  }}
+                >
+                  Open folder
+                </button>
               </div>
             </div>
 
@@ -2875,323 +2990,67 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
 
             <div className="card-section">
-              <h3>已安装扩展插件 ({installedPlugins.length})</h3>
-              <div className="item-cards-list">
-                {installedPlugins.map((plugin) => (
-                  <div key={plugin.id} className="item-card">
-                    <div className="item-card-main">
-                      <div className="item-card-title-row">
-                        <strong>{plugin.name}</strong>
-                        <span className="tag-badge">{plugin.version}</span>
-                        <span className={`tag-badge ${plugin.enabled ? "accent" : ""}`}>
-                          {plugin.enabled ? "运行中" : "已停用"}
-                        </span>
-                      </div>
-                      <div className="item-card-meta">
-                        <span>{plugin.desc}</span>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <div>
+                  <h3 style={{ margin: 0 }}>已安装扩展插件 ({realPlugins.length})</h3>
+                  <p className="card-subtitle-desc" style={{ margin: "4px 0 0 0" }}>
+                    通过本地或远程 Registry 安装的真实插件与技能
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="primary-btn compact"
+                  onClick={() => onNavigateRoute?.("skills")}
+                >
+                  浏览插件市场 (Browse directory)
+                </button>
+              </div>
+
+              {loadingRealPlugins ? (
+                <div className="empty-diff-state compact">
+                  <span>正在扫描已安装插件... (Loading plugins...)</span>
+                </div>
+              ) : realPlugins.length === 0 ? (
+                <div className="empty-diff-state" style={{ padding: "24px 16px" }}>
+                  <p style={{ margin: "0 0 10px 0", color: "var(--text-secondary)", fontSize: 13 }}>
+                    暂无已安装的插件扩展。
+                  </p>
+                  <button
+                    type="button"
+                    className="secondary-btn compact"
+                    onClick={() => onNavigateRoute?.("skills")}
+                  >
+                    前往插件市场安装
+                  </button>
+                </div>
+              ) : (
+                <div className="item-cards-list">
+                  {realPlugins.map((plugin) => (
+                    <div key={plugin.id} className="item-card">
+                      <div className="item-card-main">
+                        <div className="item-card-title-row">
+                          <strong>{pluginDisplayName(plugin)}</strong>
+                          <span className="tag-badge">{pluginVersion(plugin)}</span>
+                          <span className={`tag-badge ${plugin.enabled !== false ? "accent" : ""}`}>
+                            {plugin.enabled !== false ? "已启用" : "已停用"}
+                          </span>
+                        </div>
+                        <div className="item-card-meta">
+                          <span>{pluginDescription(plugin) || "无描述"}</span>
+                        </div>
                       </div>
                     </div>
-                    <div className="item-card-actions">
-                      <button
-                        type="button"
-                        className="secondary-btn-sm"
-                        onClick={() => {
-                          setInstalledPlugins((prev) =>
-                            prev.map((p) =>
-                              p.id === plugin.id ? { ...p, enabled: !p.enabled } : p
-                            )
-                          );
-                          flashSaved(`已${plugin.enabled ? "停用" : "启用"}插件: ${plugin.name}`);
-                        }}
-                      >
-                        {plugin.enabled ? "停用" : "启用"}
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {renderBottomBar()}
           </div>
         )}
 
-        {/* ── SECTION 12: COMPUTER USE (@电脑) ── */}
-        {activeSection === "computer-use" && (
-          <div className="settings-scroll-container">
-            <div className="card-section">
-              <h3>桌面操控权限与安全策略 (@电脑)</h3>
-              <p className="card-subtitle-desc">
-                允许智能体通过视觉截屏识别屏幕元素，模拟鼠标点击与键盘按键操控桌面软件。
-              </p>
-              <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
-                <div className="settings-toggle-row">
-                  <div className="settings-toggle-label">
-                    <span className="settings-toggle-title">启用计算机使用控制能力 (@电脑)</span>
-                    <span className="settings-toggle-desc">允许智能体响应 @电脑 提示词并执行鼠标键盘模拟</span>
-                  </div>
-                  <label className="switch-control">
-                    <input
-                      type="checkbox"
-                      checked={computerUseEnabled}
-                      onChange={(e) => setComputerUseEnabled(e.target.checked)}
-                    />
-                    <span className="switch-slider" />
-                  </label>
-                </div>
 
-                <div className="settings-toggle-row">
-                  <div className="settings-toggle-label">
-                    <span className="settings-toggle-title">高危破坏性操作强制弹窗批准</span>
-                    <span className="settings-toggle-desc">涉及格式化、彻底删除非空目录、系统账户变动时必须用户二次确认</span>
-                  </div>
-                  <label className="switch-control">
-                    <input
-                      type="checkbox"
-                      checked={computerDangerConfirm}
-                      onChange={(e) => setComputerDangerConfirm(e.target.checked)}
-                    />
-                    <span className="switch-slider" />
-                  </label>
-                </div>
 
-                <div className="settings-toggle-row">
-                  <div className="settings-toggle-label">
-                    <span className="settings-toggle-title">鼠标操作时显示醒目红点指示 (Visual Cursor)</span>
-                    <span className="settings-toggle-desc">在模拟点击与拖拽位置渲染半透明红色圆点，便于人工核对轨迹</span>
-                  </div>
-                  <label className="switch-control">
-                    <input
-                      type="checkbox"
-                      checked={computerShowRedDot}
-                      onChange={(e) => setComputerShowRedDot(e.target.checked)}
-                    />
-                    <span className="switch-slider" />
-                  </label>
-                </div>
-              </div>
-            </div>
-
-            <div className="card-section">
-              <h3>分辨率与显示屏偏好</h3>
-              <div className="form-grid-row">
-                <div className="form-field">
-                  <label>视觉模型采样分辨率</label>
-                  <select
-                    value={computerResolution}
-                    onChange={(e) => setComputerResolution(e.target.value)}
-                  >
-                    <option value="1920x1080">1920 x 1080 (1080p 标准高清，推荐)</option>
-                    <option value="1280x720">1280 x 720 (720p 低延迟高响应)</option>
-                    <option value="native">原生物理分辨率 (超高精度，高 Token 消耗)</option>
-                  </select>
-                </div>
-                <div className="form-field">
-                  <label>鼠标移动定位方式</label>
-                  <select
-                    value={computerMouseMode}
-                    onChange={(e) => setComputerMouseMode(e.target.value)}
-                  >
-                    <option value="smooth">拟真平滑贝塞尔轨迹移动 (Smooth)</option>
-                    <option value="instant">瞬时精确定位跳跃 (Instant)</option>
-                  </select>
-                </div>
-                <div className="form-field">
-                  <label>操作物理显示器编号</label>
-                  <select
-                    value={computerTargetDisplay}
-                    onChange={(e) => setComputerTargetDisplay(e.target.value)}
-                  >
-                    <option value="0">主显示屏 0</option>
-                    <option value="1">副显示屏 1</option>
-                    <option value="auto">自动跟随活跃窗口所在屏幕</option>
-                  </select>
-                </div>
-                <div className="form-field">
-                  <label>紧急中止热键</label>
-                  <input type="text" value="双击 Esc 键立即停止操作" readOnly style={{ opacity: 0.8 }} />
-                </div>
-              </div>
-            </div>
-
-            {renderBottomBar()}
-          </div>
-        )}
-
-        {/* ── SECTION 13: APPSHOTS (应用截图) ── */}
-        {activeSection === "appshots" && (
-          <div className="settings-scroll-container">
-            <div className="card-section">
-              <h3>截图与屏幕视觉捕获 (Appshots)</h3>
-              <p className="card-subtitle-desc">
-                自动捕获当前桌面与应用窗口画面，注入视觉多模态大模型辅助定位界面布局缺陷。
-              </p>
-              <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
-                <div className="settings-toggle-row">
-                  <div className="settings-toggle-label">
-                    <span className="settings-toggle-title">启用 Appshots 窗口截图注入能力</span>
-                    <span className="settings-toggle-desc">允许通过截屏按钮或快捷键快速将当前窗口画面附带给 Codex</span>
-                  </div>
-                  <label className="switch-control">
-                    <input
-                      type="checkbox"
-                      checked={appshotsEnabled}
-                      onChange={(e) => setAppshotsEnabled(e.target.checked)}
-                    />
-                    <span className="switch-slider" />
-                  </label>
-                </div>
-
-                <div className="settings-toggle-row">
-                  <div className="settings-toggle-label">
-                    <span className="settings-toggle-title">截图时自动最小化或隐藏 Codex 窗口</span>
-                    <span className="settings-toggle-desc">捕获屏幕画面前将当前聊天界面暂离，避免遮挡被测目标窗口</span>
-                  </div>
-                  <label className="switch-control">
-                    <input
-                      type="checkbox"
-                      checked={appshotsHideSelf}
-                      onChange={(e) => setAppshotsHideSelf(e.target.checked)}
-                    />
-                    <span className="switch-slider" />
-                  </label>
-                </div>
-              </div>
-            </div>
-
-            <div className="card-section">
-              <h3>图像格式与隐私过滤</h3>
-              <div className="form-grid-row">
-                <div className="form-field">
-                  <label>存储与传输图像格式</label>
-                  <select
-                    value={appshotsFormat}
-                    onChange={(e) => setAppshotsFormat(e.target.value)}
-                  >
-                    <option value="webp">WebP (推荐，体积压缩 65%，极速传输)</option>
-                    <option value="png">PNG (无损高保真原画)</option>
-                  </select>
-                </div>
-                <div className="form-field">
-                  <label>全局快速截屏快捷键</label>
-                  <input
-                    type="text"
-                    value={appshotsHotkey}
-                    onChange={(e) => setAppshotsHotkey(e.target.value)}
-                  />
-                </div>
-                <div className="form-field" style={{ gridColumn: "span 2" }}>
-                  <label>隐私安全敏感应用黑名单 (捕获时自动剔除或跳过)</label>
-                  <input
-                    type="text"
-                    value={appshotsBlacklist}
-                    onChange={(e) => setAppshotsBlacklist(e.target.value)}
-                  />
-                  <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
-                    多个应用以逗号分隔，如: 1Password, Bitwarden, KeePass, 私密标签页
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {renderBottomBar()}
-          </div>
-        )}
-
-        {/* ── SECTION 14: BROWSER USE (浏览器使用) ── */}
-        {activeSection === "browser-use" && (
-          <div className="settings-scroll-container">
-            <div className="card-section">
-              <h3>自主网页浏览智能体 (Browser-Use)</h3>
-              <p className="card-subtitle-desc">
-                基于 Playwright / Chromium 内核，允许智能体自主打开网页、执行搜索、查阅文档、填写表单并测试 Web 应用。
-              </p>
-              <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
-                <div className="settings-toggle-row">
-                  <div className="settings-toggle-label">
-                    <span className="settings-toggle-title">启用自主网页浏览与爬取能力</span>
-                    <span className="settings-toggle-desc">允许智能体调用浏览器自动化工具抓取线上最新资料与 API 文档</span>
-                  </div>
-                  <label className="switch-control">
-                    <input
-                      type="checkbox"
-                      checked={browserUseEnabled}
-                      onChange={(e) => setBrowserUseEnabled(e.target.checked)}
-                    />
-                    <span className="switch-slider" />
-                  </label>
-                </div>
-
-                <div className="settings-toggle-row">
-                  <div className="settings-toggle-label">
-                    <span className="settings-toggle-title">后台无头静默模式 (Headless Mode)</span>
-                    <span className="settings-toggle-desc">开启后浏览器在后台安静执行不弹出窗口；关闭则实时弹出窗口便于观察操作</span>
-                  </div>
-                  <label className="switch-control">
-                    <input
-                      type="checkbox"
-                      checked={browserHeadless}
-                      onChange={(e) => setBrowserHeadless(e.target.checked)}
-                    />
-                    <span className="switch-slider" />
-                  </label>
-                </div>
-
-                <div className="settings-toggle-row">
-                  <div className="settings-toggle-label">
-                    <span className="settings-toggle-title">会话 Cookie 与登录态持久化</span>
-                    <span className="settings-toggle-desc">保存已访问网站的登录态至 ~/.codex/browser-profile，无需重复扫码登录</span>
-                  </div>
-                  <label className="switch-control">
-                    <input
-                      type="checkbox"
-                      checked={browserPersistCookies}
-                      onChange={(e) => setBrowserPersistCookies(e.target.checked)}
-                    />
-                    <span className="switch-slider" />
-                  </label>
-                </div>
-              </div>
-            </div>
-
-            <div className="card-section">
-              <h3>浏览器内核与网络代理</h3>
-              <div className="form-grid-row">
-                <div className="form-field">
-                  <label>浏览器引擎类型</label>
-                  <select
-                    value={browserEngine}
-                    onChange={(e) => setBrowserEngine(e.target.value)}
-                  >
-                    <option value="chrome">自动检测系统 Google Chrome</option>
-                    <option value="edge">Microsoft Edge</option>
-                    <option value="chromium">内置便携式 Chromium</option>
-                  </select>
-                </div>
-                <div className="form-field">
-                  <label>网络代理服务器 (Proxy URL)</label>
-                  <input
-                    type="text"
-                    placeholder="例如: http://127.0.0.1:7890 (留空使用系统代理)"
-                    value={browserProxy}
-                    onChange={(e) => setBrowserProxy(e.target.value)}
-                  />
-                </div>
-                <div className="form-field" style={{ gridColumn: "span 2" }}>
-                  <label>自定义浏览器执行路径 (留空自动探测)</label>
-                  <input
-                    type="text"
-                    placeholder="例如: C:\Program Files\Google\Chrome\Application\chrome.exe"
-                    value={browserCustomPath}
-                    onChange={(e) => setBrowserCustomPath(e.target.value)}
-                  />
-                </div>
-              </div>
-            </div>
-
-            {renderBottomBar()}
-          </div>
-        )}
 
         {/* ── SECTION 15: HOOKS SETTINGS (生命周期挂钩 · hooks/list + 实时运行) ── */}
         {activeSection === "hooks-settings" && (
@@ -3963,7 +3822,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                           cwd: activeWorkspaceRoot,
                         });
                         if (res?.found) {
-                          flashSaved(`✓ 已从 ${res.path} 成功检测到 ${res.count} 项 VS Code 快捷键绑定习惯并兼容生效！`);
+                          flashSaved(`✓ 已检测到 VS Code 键位配置文件 (${res.path})，共 ${res.count} 项用户自定义绑定`);
                         } else {
                           flashSaved(`未在系统中找到 VS Code 快捷键配置文件 (${res?.path || "keybindings.json"})`);
                         }

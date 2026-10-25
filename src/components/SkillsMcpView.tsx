@@ -71,6 +71,7 @@ import {
 
 interface SkillsMcpViewProps {
   activeWorkspaceRoot: string;
+  initialTab?: SubTab;
 }
 
 type SubTab = "plugins" | "skills" | "mcp" | "apps" | "marketplaces";
@@ -212,8 +213,15 @@ function patchMarketplacePlugin(
 
 export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   activeWorkspaceRoot,
+  initialTab,
 }) => {
-  const [subTab, setSubTab] = useState<SubTab>("plugins");
+  const [subTab, setSubTab] = useState<SubTab>(initialTab || "plugins");
+
+  useEffect(() => {
+    if (initialTab) {
+      setSubTab(initialTab);
+    }
+  }, [initialTab]);
   const [searchQuery, setSearchQuery] = useState("");
   const [skills, setSkills] = useState<SkillInfoItem[]>([]);
   const [selectedSkill, setSelectedSkill] = useState<SkillInfoItem | null>(null);
@@ -716,7 +724,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     }
   };
 
-  const handleSelectSkillRow = (row: SkillRow) => {
+  const handleSelectSkillRow = async (row: SkillRow) => {
     setSelectedSkillKey(row.key);
     if (row.local) {
       setSelectedSkill(row.local);
@@ -731,7 +739,32 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
           ? row.remote.name.split(":").pop() || row.remote.name
           : row.remote?.name || row.name
       );
-      setSkillContent("");
+      setSkillContent("正在加载技能内容...");
+      if (row.remote?.path) {
+        try {
+          const res = await tauriInvoke<any>("file_read", { path: row.remote.path });
+          const content = res?.content ?? res?.text ?? "";
+          if (content) {
+            setSkillContent(content);
+            return;
+          }
+        } catch {}
+      }
+      if (row.remote?.pluginId) {
+        try {
+          const parts = row.remote.pluginId.split("@");
+          const skillRes = await callAppServer<any>("plugin/skill/read", {
+            remotePluginId: parts[0],
+            remoteMarketplaceName: parts[1] || "",
+            skillName: row.remote.name,
+          });
+          if (skillRes?.content) {
+            setSkillContent(skillRes.content);
+            return;
+          }
+        } catch {}
+      }
+      setSkillContent(`---\nname: ${row.name}\ndescription: ${row.description}\nscope: ${row.scope}\n---\n\n${row.description || "暂无详细文档"}`);
     }
   };
 

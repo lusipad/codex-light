@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Trash2 } from "lucide-react";
 import { callAppServer } from "../bridge";
 import { ThreadSummary } from "../types";
 import "./ArchiveView.css";
@@ -55,7 +56,8 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
         ...(searchTerm ? { searchTerm } : {}),
       });
       if (seq !== requestSeqRef.current) return;
-      setThreads(Array.isArray(res?.data) ? res.data : []);
+      const list = res?.data || (res as any)?.threads || (Array.isArray(res) ? res : []);
+      setThreads(Array.isArray(list) ? list : []);
     } catch (e: any) {
       if (seq !== requestSeqRef.current) return;
       setError(String(e?.message || e));
@@ -187,19 +189,20 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
               <div className="archive-row-actions">
                 <button
                   type="button"
+                  className="archive-action danger"
+                  disabled={busyId === thread.id}
+                  onClick={() => void handleDelete(thread)}
+                  title="永久删除"
+                >
+                  <Trash2 size={13} />
+                </button>
+                <button
+                  type="button"
                   className="archive-action"
                   disabled={busyId === thread.id}
                   onClick={() => void handleUnarchive(thread)}
                 >
-                  恢复
-                </button>
-                <button
-                  type="button"
-                  className="archive-action danger"
-                  disabled={busyId === thread.id}
-                  onClick={() => void handleDelete(thread)}
-                >
-                  删除
+                  取消归档
                 </button>
               </div>
             </div>

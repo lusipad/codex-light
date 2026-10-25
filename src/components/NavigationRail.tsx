@@ -1,7 +1,6 @@
-import React from "react";
+import React, { useId, useRef, useState } from "react";
 import {
-  SidebarLeftIcon,
-  OpenAIIcon,
+  HomeIcon,
   FolderIcon,
   BellIcon,
   AutomationIcon,
@@ -11,8 +10,12 @@ import {
   SparklesIcon,
   FileCodeIcon,
   ArchiveIcon,
+  EllipsisIcon,
+  ClockIcon,
+  GlobeIcon,
 } from "./Icons";
 import { MainViewRoute } from "../types";
+import "./NavigationRail.css";
 
 export interface NavigationRailProps {
   activeRoute: MainViewRoute;
@@ -23,137 +26,192 @@ export interface NavigationRailProps {
   onTogglePet?: () => void;
   onToggleSidebar: () => void;
   onNavigate: (route: MainViewRoute) => void;
+  onOpenUsage: () => void;
+  onCommand: (command: string) => void;
 }
 
 export const NavigationRail: React.FC<NavigationRailProps> = ({
   activeRoute,
-  sidebarCollapsed,
   unreadInboxCount,
   appServerConnected,
   petVisible = false,
   onTogglePet,
-  onToggleSidebar,
   onNavigate,
+  onOpenUsage,
+  onCommand,
 }) => {
+  const instanceId = useId().replace(/:/g, "");
+  const triggerRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const [menuPosition, setMenuPosition] = useState<{
+    left: number;
+    top?: number;
+    bottom?: number;
+  }>({ left: 0 });
+
+  const positionMenu = (event: React.MouseEvent<HTMLButtonElement>, profile: boolean) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    setMenuPosition(
+      profile
+        ? { left: rect.right + 8, bottom: window.innerHeight - rect.top + 4 }
+        : { left: rect.right + 8, top: rect.top }
+    );
+  };
+
+  const closePopover = (element: HTMLElement) => {
+    (element.closest("[popover]") as HTMLElement | null)?.hidePopover?.();
+  };
+
+  const handleMenuKeys = (event: React.KeyboardEvent<HTMLElement>) => {
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    const buttons = Array.from(
+      event.currentTarget.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")
+    );
+    if (!buttons.length) return;
+    event.preventDefault();
+    const current = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    const next = event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? buttons.length - 1
+        : event.key === "ArrowDown"
+          ? (current + 1 + buttons.length) % buttons.length
+          : (current - 1 + buttons.length) % buttons.length;
+    buttons[next].focus();
+  };
+
+  const handleToggle = (event: React.SyntheticEvent<HTMLElement>, key: string) => {
+    const nativeEvent = event.nativeEvent as ToggleEvent;
+    const popover = event.currentTarget;
+    if (nativeEvent.newState === "open") {
+      requestAnimationFrame(() => {
+        popover.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+      });
+    } else {
+      triggerRefs.current[key]?.focus({ preventScroll: true });
+    }
+  };
+
+  const routeButton = (
+    route: MainViewRoute,
+    title: string,
+    icon: React.ReactNode,
+    active = activeRoute === route
+  ) => (
+    <button
+      type="button"
+      className={`nav-rail-btn ${active ? "active" : ""}`}
+      onClick={() => onNavigate(route)}
+      aria-label={title}
+      aria-pressed={active}
+      title={title}
+    >
+      {icon}
+    </button>
+  );
+
   return (
-    <nav className="codex-nav-rail" aria-label="主导航栏">
+    <nav className="codex-nav-rail" aria-label="应用导航">
       <div className="nav-rail-top">
+        {routeButton("home", "首页", <HomeIcon size={18} />, activeRoute === "home" || activeRoute === "thread")}
+        {routeButton("scheduled", "定时任务", <AutomationIcon size={18} />)}
+        {routeButton("plugins", "插件", <SkillIcon size={18} />)}
         <button
+          ref={(node) => { triggerRefs.current.more = node; }}
           type="button"
-          className={`nav-rail-btn ${sidebarCollapsed ? "" : "rail-toggle-open"}`}
-          onClick={onToggleSidebar}
-          title={sidebarCollapsed ? "展开侧边栏 (Ctrl+B)" : "折叠侧边栏 (Ctrl+B)"}
+          className="nav-rail-btn"
+          aria-label="探索"
+          title="探索"
+          onClick={(event) => positionMenu(event, false)}
+          {...({ popovertarget: `${instanceId}-more` } as any)}
         >
-          <SidebarLeftIcon size={16} />
+          <EllipsisIcon size={18} />
         </button>
-
-        <div className="nav-rail-divider" />
-
-        <button
-          type="button"
-          className={`nav-rail-btn ${
-            activeRoute === "home" || activeRoute === "thread" ? "active" : ""
-          }`}
-          onClick={() => onNavigate("home")}
-          title="聊天与新任务 (Home)"
-        >
-          <OpenAIIcon size={16} />
-        </button>
-
-        <button
-          type="button"
-          className={`nav-rail-btn ${activeRoute === "projects" ? "active" : ""}`}
-          onClick={() => onNavigate("projects")}
-          title="项目中心 (Projects)"
-        >
-          <FolderIcon size={16} />
-        </button>
-
-        <button
-          type="button"
-          className={`nav-rail-btn ${activeRoute === "inbox" ? "active" : ""}`}
-          onClick={() => onNavigate("inbox")}
-          title="收件箱与动态通知 (Inbox)"
-          style={{ position: "relative" }}
-        >
-          <BellIcon size={16} />
-          {unreadInboxCount > 0 && <span className="nav-rail-badge-dot" />}
-        </button>
-
-        <button
-          type="button"
-          className={`nav-rail-btn ${activeRoute === "scheduled" ? "active" : ""}`}
-          onClick={() => onNavigate("scheduled")}
-          title="计划任务与长期目标 (Scheduled & /goal)"
-        >
-          <AutomationIcon size={16} />
-        </button>
-
-        <button
-          type="button"
-          className={`nav-rail-btn ${activeRoute === "plugins" ? "active" : ""}`}
-          onClick={() => onNavigate("plugins")}
-          title="插件、技能与 MCP 市场 (Plugins & Skills)"
-        >
-          <SkillIcon size={16} />
-        </button>
-
-        <button
-          type="button"
-          className={`nav-rail-btn ${activeRoute === "worktrees" ? "active" : ""}`}
-          onClick={() => onNavigate("worktrees")}
-          title="托管工作树 (Worktrees)"
-        >
-          <WorktreeIcon size={16} />
-        </button>
-
-        <button
-          type="button"
-          className={`nav-rail-btn ${activeRoute === "review" ? "active" : ""}`}
-          onClick={() => onNavigate("review")}
-          title="代码审查 (Code Review)"
-        >
-          <FileCodeIcon size={16} />
-        </button>
-
-        <button
-          type="button"
-          className={`nav-rail-btn ${activeRoute === "archive" ? "active" : ""}`}
-          onClick={() => onNavigate("archive")}
-          title="已归档会话 (Archive)"
-        >
-          <ArchiveIcon size={16} />
-        </button>
+        {routeButton("review", "代码审查", <FileCodeIcon size={18} />)}
       </div>
 
       <div className="nav-rail-bottom">
-        {onTogglePet && (
+        <button
+          ref={(node) => { triggerRefs.current.profile = node; }}
+          type="button"
+          className="nav-rail-profile-button"
+          aria-label="打开个人资料菜单"
+          title={`打开个人资料菜单 · app-server ${appServerConnected ? "已连接" : "未连接"}`}
+          onClick={(event) => positionMenu(event, true)}
+          {...({ popovertarget: `${instanceId}-profile` } as any)}
+        >
+          <span className="nav-rail-avatar" aria-hidden="true">C</span>
+          <span className={`nav-rail-profile-status ${appServerConnected ? "online" : "offline"}`} aria-hidden="true" />
+        </button>
+      </div>
+
+      <div
+        id={`${instanceId}-more`}
+        className="nav-rail-popover"
+        role="menu"
+        aria-label="更多功能"
+        style={menuPosition}
+        onKeyDown={handleMenuKeys}
+        onToggle={(event) => handleToggle(event, "more")}
+        {...({ popover: "auto" } as any)}
+      >
+        {[
+          { route: "projects" as const, label: "项目", icon: <FolderIcon size={16} /> },
+          { route: "worktrees" as const, label: "Worktrees", icon: <WorktreeIcon size={16} /> },
+          { route: "inbox" as const, label: "收件箱", icon: <BellIcon size={16} />, badge: unreadInboxCount },
+          { route: "archive" as const, label: "已归档的聊天", icon: <ArchiveIcon size={16} /> },
+        ].map((item) => (
           <button
+            key={item.route}
             type="button"
-            className={`nav-rail-btn ${petVisible ? "active" : ""}`}
-            onClick={onTogglePet}
-            title="召唤 / 隐藏桌面虚拟宠物伴侣 (Mini Pet)"
+            role="menuitem"
+            className="nav-rail-menu-item"
+            onClick={(event) => {
+              closePopover(event.currentTarget);
+              onNavigate(item.route);
+            }}
           >
-            <SparklesIcon size={15} />
+            {item.icon}
+            <span>{item.label}</span>
+            {!!item.badge && <span className="nav-rail-menu-badge">{item.badge}</span>}
+          </button>
+        ))}
+      </div>
+
+      <div
+        id={`${instanceId}-profile`}
+        className="nav-rail-popover nav-rail-profile-popover"
+        role="menu"
+        aria-label="个人资料菜单"
+        style={menuPosition}
+        onKeyDown={handleMenuKeys}
+        onToggle={(event) => handleToggle(event, "profile")}
+        {...({ popover: "auto" } as any)}
+      >
+        <div className="nav-rail-profile-summary">
+          <span className="nav-rail-avatar large" aria-hidden="true">C</span>
+          <div>
+            <strong>Codex Native</strong>
+            <span>{appServerConnected ? "app-server 已连接" : "app-server 未连接"}</span>
+          </div>
+        </div>
+        <button type="button" role="menuitem" className="nav-rail-menu-item" onClick={(event) => { closePopover(event.currentTarget); onOpenUsage(); }}>
+          <ClockIcon size={16} />
+          <span>剩余用量</span>
+        </button>
+        {onTogglePet && (
+          <button type="button" role="menuitem" className="nav-rail-menu-item" onClick={(event) => { closePopover(event.currentTarget); onTogglePet(); }}>
+            <SparklesIcon size={16} />
+            <span>{petVisible ? "隐藏 Mini" : "显示 Mini"}</span>
           </button>
         )}
-        <span
-          className={`nav-rail-status-dot ${
-            appServerConnected ? "online" : "offline"
-          }`}
-          title={
-            appServerConnected
-              ? "codex app-server 已连接"
-              : "codex app-server 未连接"
-          }
-        />
-        <button
-          type="button"
-          className={`nav-rail-btn ${activeRoute === "settings" ? "active" : ""}`}
-          onClick={() => onNavigate("settings")}
-          title="设置中心 (Settings)"
-        >
+        <button type="button" role="menuitem" className="nav-rail-menu-item" onClick={(event) => { closePopover(event.currentTarget); onNavigate("settings"); }}>
           <SettingsIcon size={16} />
+          <span>设置</span>
+          <kbd>Ctrl+,</kbd>
+        </button>
+        <button type="button" role="menuitem" className="nav-rail-menu-item" onClick={(event) => { closePopover(event.currentTarget); onCommand("documentation"); }}>
+          <GlobeIcon size={16} />
+          <span>帮助与文档</span>
         </button>
       </div>
     </nav>

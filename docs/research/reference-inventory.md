@@ -1,6 +1,9 @@
 # 官方 Codex App（Electron）参考清单 / REFERENCE-INVENTORY
 
 > 目标：对标官方 Codex 桌面端（Tauri 项目的差距分析基线）。本文只覆盖 **Codex 桌面端基线能力**；ChatGPT 云端专属功能集中列在文末「超出范围」。
+>
+> **2026-10-25 更新：全 App 页面总表、Computer Use 实测和路由／可见性纠错见 [codex-app-full-surface.md](codex-app-full-surface.md)。本文保留为 Codex 专项历史明细，不再单独作为“完整 App 清单”；文中“全量”“100%”及“未运行官方 App”等旧表述以新文档为准。**
+>
 > 所有中文为叙述，引号内为官方英文原文（renderer i18n `defaultMessage`，从 app.asar 提取），证据给出 `message-id` 与所在 chunk 文件名。
 
 ---

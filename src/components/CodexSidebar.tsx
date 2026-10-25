@@ -11,10 +11,6 @@ import {
   PinIcon,
   ArchiveIcon,
   CloseIcon,
-  SettingsIcon,
-  AutomationIcon,
-  SkillIcon,
-  FileCodeIcon,
   EllipsisIcon,
 } from "./Icons";
 import {
@@ -42,6 +38,10 @@ export interface CodexSidebarProps {
   workspaceHints: Record<string, string>;
   activeThreadId: string | null;
   unreadInboxCount: number;
+  activityOnly: boolean;
+  activityThreadIds: string[];
+  onToggleActivity: () => void;
+  onMarkAllRead: () => void;
   hasAgentsMd: boolean;
   onNavigate: (route: MainViewRoute) => void;
   onStartNewChat: (workspacePath?: string) => void;
@@ -56,6 +56,7 @@ export interface CodexSidebarProps {
   onRevealPath?: (path: string, e: React.MouseEvent) => void;
   onOpenAgentsMd: () => void;
   onOpenQuickSearch?: () => void;
+  onToggleCollapse?: () => void;
 
   /* ── 以下均为可选新增 props（向后兼容，不传时行为不变） ── */
   /** app-server 连接 / 父级数据刷新时递增此值，可触发侧栏重新拉取分区。 */
@@ -98,7 +99,10 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
   workspaceHints,
   activeThreadId,
   unreadInboxCount,
-  hasAgentsMd,
+  activityOnly,
+  activityThreadIds,
+  onToggleActivity,
+  onMarkAllRead,
   onNavigate,
   onStartNewChat,
   onSelectWorkspace,
@@ -110,13 +114,11 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
   onDeleteThread,
   onRenameThread,
   onRevealPath,
-  onOpenAgentsMd,
   onOpenQuickSearch,
   refreshToken,
   onThreadsChanged,
   onShowToast,
 }) => {
-  const [showBrandMenu, setShowBrandMenu] = useState(false);
   const [showSearchInput, setShowSearchInput] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
@@ -232,12 +234,26 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
   }, [threadMenu]);
 
   const filteredThreads = useMemo(() => {
-    if (!searchQuery.trim()) return threads;
-    const q = searchQuery.toLowerCase();
-    return threads.filter((t) =>
-      (t.name || t.preview || t.id).toLowerCase().includes(q)
+    const unreadIds = new Set(activityThreadIds);
+    const visible = activityOnly
+      ? threads.filter((thread) => {
+          if (unreadIds.has(thread.id)) return true;
+          const status = thread.status;
+          const type = typeof status === "string" ? status : status?.type;
+          const flags = typeof status === "object" && status
+            ? (status as any).activeFlags || []
+            : [];
+          return type === "active" || type === "running" ||
+            type === "waitingOnApproval" || type === "waitingOnUserInput" ||
+            flags.includes("waitingOnApproval") || flags.includes("waitingOnUserInput");
+        })
+      : threads;
+    if (!searchQuery.trim()) return visible;
+    const query = searchQuery.toLowerCase();
+    return visible.filter((thread) =>
+      (thread.name || thread.preview || thread.id).toLowerCase().includes(query)
     );
-  }, [threads, searchQuery]);
+  }, [threads, searchQuery, activityOnly, activityThreadIds]);
 
   const pinnedThreads = useMemo(
     () => filteredThreads.filter((t) => pinnedThreadIds.includes(t.id)),
@@ -573,6 +589,18 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
         </div>
         <div
           className="popover-menu-item"
+          onClick={(e) => {
+            setThreadMenu(null);
+            setThreadMenuMoveOpen(false);
+            onTogglePinThread(thread.id, e);
+          }}
+        >
+          <span className="popover-item-title">
+            {pinnedThreadIds.includes(thread.id) ? "📌 取消置顶" : "📌 置顶聊天"}
+          </span>
+        </div>
+        <div
+          className="popover-menu-item"
           onClick={() => {
             setThreadMenu(null);
             setThreadMenuMoveOpen(false);
@@ -582,6 +610,30 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
         >
           <span className="popover-item-title">✏️ 重命名聊天</span>
         </div>
+        <div
+          className="popover-menu-item"
+          onClick={(e) => {
+            setThreadMenu(null);
+            setThreadMenuMoveOpen(false);
+            onArchiveThread(thread, e);
+          }}
+        >
+          <span className="popover-item-title">📦 归档聊天</span>
+        </div>
+        {onDeleteThread && (
+          <div
+            className="popover-menu-item danger"
+            onClick={(e) => {
+              setThreadMenu(null);
+              setThreadMenuMoveOpen(false);
+              onDeleteThread(thread, e);
+            }}
+          >
+            <span className="popover-item-title" style={{ color: "var(--accent-red)" }}>
+              🗑️ 永久删除
+            </span>
+          </div>
+        )}
       </div>
     );
   };
@@ -598,7 +650,6 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
         }`}
         onClick={() => onSelectThread(t.id)}
         onContextMenu={(e) => {
-          if (!sectionsAvailable) return;
           e.preventDefault();
           e.stopPropagation();
           openThreadMenu(t, e.clientX, e.clientY);
@@ -628,6 +679,11 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
             />
           ) : (
             <span className="sidebar-thread-title">
+              {(t as any).isStreaming || t.status === "running" ? (
+                <span className="sidebar-thread-status-spinner" title="正在运行..." />
+              ) : (t as any).unread ? (
+                <span className="sidebar-thread-unread-dot" title="未读消息" />
+              ) : null}
               {t.name || t.preview || "新聊天"}
             </span>
           )}
@@ -683,13 +739,14 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
   };
 
   return (
-    <aside className="codex-sidebar">
+    <aside className={`codex-sidebar ${collapsed ? "collapsed" : ""}`} aria-hidden={collapsed}>
       {/* ── 1. Official Top Header: "Codex ⌄" on Left, Bell + Search on Right ── */}
-      <div className="sidebar-top-bar" style={{ position: "relative" }}>
+      <div className="sidebar-top-bar">
         <button
           type="button"
           className="codex-brand-dropdown-btn"
-          onClick={() => setShowBrandMenu((v) => !v)}
+          aria-label="切换模式，当前模式：Codex"
+          {...({ popovertarget: "codex-brand-product-menu" } as any)}
         >
           <span className="codex-brand-text">Codex</span>
           <ChevronDownIcon size={13} />
@@ -698,9 +755,10 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
         <div className="sidebar-top-icons">
           <button
             type="button"
-            className={`sidebar-top-icon-btn ${activeRoute === "inbox" ? "active" : ""}`}
-            onClick={() => onNavigate("inbox")}
-            title="收件箱与通知 (Inbox)"
+            className={`sidebar-top-icon-btn ${activityOnly ? "active" : ""}`}
+            onClick={onToggleActivity}
+            aria-pressed={activityOnly}
+            title="查看活动"
           >
             <BellIcon size={15} />
             {unreadInboxCount > 0 && <span className="sidebar-bell-dot" />}
@@ -721,71 +779,44 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
           </button>
         </div>
 
-        {showBrandMenu && (
-          <div
-            className="composer-popover-menu top-left"
-            style={{ top: 44, left: 12, minWidth: 210 }}
+        <div
+          id="codex-brand-product-menu"
+          className="codex-brand-product-popover"
+          role="menu"
+          aria-label="产品模式"
+          {...({ popover: "auto" } as any)}
+        >
+          <div className="brand-product-menu-label">切换模式，当前模式：Codex</div>
+          <button
+            type="button"
+            role="menuitemradio"
+            aria-checked="true"
+            className="brand-product-option selected"
+            onClick={(event) => {
+              (event.currentTarget.closest("[popover]") as any)?.hidePopover?.();
+            }}
           >
-            <div
-              className="popover-menu-item"
-              onClick={() => {
-                setShowBrandMenu(false);
-                onStartNewChat();
-              }}
-            >
-              <span className="popover-item-title">📝 新聊天 (Ctrl+N)</span>
-            </div>
-            <div
-              className="popover-menu-item"
-              onClick={() => {
-                setShowBrandMenu(false);
-                onNavigate("projects");
-              }}
-            >
-              <span className="popover-item-title">📁 项目中心 (/projects)</span>
-            </div>
-            <div
-              className="popover-menu-item"
-              onClick={() => {
-                setShowBrandMenu(false);
-                onNavigate("scheduled");
-              }}
-            >
-              <span className="popover-item-title">⏱️ 计划任务 (/scheduled)</span>
-            </div>
-            <div
-              className="popover-menu-item"
-              onClick={() => {
-                setShowBrandMenu(false);
-                onNavigate("plugins");
-              }}
-            >
-              <span className="popover-item-title">🧩 插件与技能 (/plugins)</span>
-            </div>
-            {hasAgentsMd && (
-              <div
-                className="popover-menu-item"
-                onClick={() => {
-                  setShowBrandMenu(false);
-                  onOpenAgentsMd();
-                }}
-              >
-                <span className="popover-item-title">📜 查看项目 AGENTS.md</span>
-              </div>
-            )}
-            <div className="popover-divider" />
-            <div
-              className="popover-menu-item"
-              onClick={() => {
-                setShowBrandMenu(false);
-                onNavigate("settings");
-              }}
-            >
-              <span className="popover-item-title">⚙️ 打开设置中心</span>
-            </div>
-          </div>
-        )}
+            <span><strong>Codex</strong><small>构建、调试与交付</small></span>
+            <span aria-hidden="true">✓</span>
+          </button>
+          <button type="button" className="brand-product-option" disabled title="ChatGPT 模式尚未接入">
+            <span><strong>ChatGPT</strong><small>尚未接入</small></span>
+          </button>
+          <button type="button" className="brand-product-option" disabled title="ChatGPT Work 模式尚未接入">
+            <span><strong>ChatGPT Work</strong><small>尚未接入</small></span>
+          </button>
+        </div>
       </div>
+
+      {activityOnly && (
+        <div className="sidebar-activity-banner">
+          <strong>活动</strong>
+          <div>
+            <button type="button" onClick={onMarkAllRead}>全部已读</button>
+            <button type="button" onClick={onToggleActivity}>关闭</button>
+          </div>
+        </div>
+      )}
 
       {/* Optional inline search input */}
       {showSearchInput && (
@@ -815,61 +846,20 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
           <span>新聊天</span>
         </button>
 
-        <button
-          type="button"
-          className={`sidebar-sub-nav-row ${
-            activeRoute === "scheduled" ? "active" : ""
-          }`}
-          onClick={() => onNavigate("scheduled")}
-        >
-          <AutomationIcon size={14} />
-          <span>计划任务</span>
-        </button>
-
-        <button
-          type="button"
-          className={`sidebar-sub-nav-row ${
-            activeRoute === "plugins" ? "active" : ""
-          }`}
-          onClick={() => onNavigate("plugins")}
-        >
-          <SkillIcon size={14} />
-          <span>插件与技能</span>
-        </button>
-
-        <button
-          type="button"
-          className={`sidebar-sub-nav-row ${
-            activeRoute === "review" ? "active" : ""
-          }`}
-          onClick={() => onNavigate("review")}
-        >
-          <FileCodeIcon size={14} />
-          <span>代码审查</span>
-        </button>
-
-        <button
-          type="button"
-          className={`sidebar-sub-nav-row ${
-            activeRoute === "archive" ? "active" : ""
-          }`}
-          onClick={() => onNavigate("archive")}
-        >
-          <ArchiveIcon size={14} />
-          <span>已归档会话</span>
-        </button>
       </div>
 
       {/* ── 3. Tree: 置顶 / 自定义分区 / 项目 / 最近 ── */}
       <div className="sidebar-threads-scroll">
-        {/* Section A: 置顶 (Pinned) */}
-        <div className="sidebar-section-header-row">
-          <span className="sidebar-section-label">置顶</span>
-        </div>
+        {/* Section A: 置顶 (Pinned) —— 仅在有置顶项时显示 */}
         {pinnedThreads.length > 0 && (
-          <div className="sidebar-section-list">
-            {pinnedThreads.map((t) => renderThreadRow(t, false))}
-          </div>
+          <>
+            <div className="sidebar-section-header-row">
+              <span className="sidebar-section-label">置顶</span>
+            </div>
+            <div className="sidebar-section-list">
+              {pinnedThreads.map((t) => renderThreadRow(t, false))}
+            </div>
+          </>
         )}
 
         {/* Section A2: 自定义分区 (threadSection/*) —— 协议不可用时整块隐藏 */}
@@ -1198,26 +1188,12 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
         <div className="sidebar-section-list">
           {recentThreads.length === 0 ? (
             <div className="sidebar-project-empty" style={{ paddingLeft: 12 }}>
-              暂无聊天
+              {activityOnly ? "暂无需要关注的事项" : "暂无聊天"}
             </div>
           ) : (
             recentThreads.map((t) => renderThreadRow(t, false))
           )}
         </div>
-      </div>
-
-      {/* ── 4. Bottom Settings Row (Matches ref-1-home.png) ── */}
-      <div className="sidebar-bottom-bar">
-        <button
-          type="button"
-          className={`sidebar-settings-footer-btn ${
-            activeRoute === "settings" ? "active" : ""
-          }`}
-          onClick={() => onNavigate("settings")}
-        >
-          <SettingsIcon size={15} />
-          <span>设置</span>
-        </button>
       </div>
 
       {/* ── 5. 会话「移动到分区」浮动菜单 ── */}

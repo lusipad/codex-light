@@ -1,22 +1,26 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { ChevronRightIcon } from "./Icons";
 import "./ThreadActionsMenu.css";
 
 export interface ThreadActionItem {
   id: string;
   label: string;
+  icon?: React.ReactNode;
   danger?: boolean;
   disabled?: boolean;
   hint?: string;
   separatorBefore?: boolean;
+  children?: ThreadActionItem[];
 }
 
 export interface ThreadActionsMenuProps {
   items: ThreadActionItem[];
   onSelect: (id: string) => void;
-  label?: string;
+  label?: string | React.ReactNode;
   align?: "left" | "right";
   buttonClassName?: string;
+  triggerAriaLabel?: string;
 }
 
 interface MenuPosition {
@@ -27,8 +31,6 @@ interface MenuPosition {
 }
 
 const MENU_GAP = 6;
-const MENU_ESTIMATED_ITEM_HEIGHT = 34;
-const MENU_MAX_ESTIMATED_HEIGHT = 320;
 const VIEWPORT_MARGIN = 8;
 
 export const ThreadActionsMenu: React.FC<ThreadActionsMenuProps> = ({
@@ -37,8 +39,10 @@ export const ThreadActionsMenu: React.FC<ThreadActionsMenuProps> = ({
   label,
   align = "right",
   buttonClassName,
+  triggerAriaLabel = "聊天操作",
 }) => {
   const [open, setOpen] = useState<boolean>(false);
+  const [activeSubmenuId, setActiveSubmenuId] = useState<string | null>(null);
   const [position, setPosition] = useState<MenuPosition | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -47,6 +51,7 @@ export const ThreadActionsMenu: React.FC<ThreadActionsMenuProps> = ({
 
   const closeMenu = useCallback((refocusTrigger: boolean) => {
     setOpen(false);
+    setActiveSubmenuId(null);
     setPosition(null);
     if (refocusTrigger) {
       triggerRef.current?.focus();
@@ -57,13 +62,8 @@ export const ThreadActionsMenu: React.FC<ThreadActionsMenuProps> = ({
     const trigger = triggerRef.current;
     if (!trigger) return;
     const rect = trigger.getBoundingClientRect();
-    const estimatedHeight = Math.min(
-      MENU_MAX_ESTIMATED_HEIGHT,
-      Math.max(1, safeItems.length) * MENU_ESTIMATED_ITEM_HEIGHT + 12
-    );
     const spaceBelow = window.innerHeight - rect.bottom - MENU_GAP;
-    const spaceAbove = rect.top - MENU_GAP;
-    const openUpwards = spaceBelow < estimatedHeight && spaceAbove > spaceBelow;
+    const openUpwards = spaceBelow < 380 && rect.top > spaceBelow;
 
     const next: MenuPosition = {};
     if (openUpwards) {
@@ -77,9 +77,8 @@ export const ThreadActionsMenu: React.FC<ThreadActionsMenuProps> = ({
       next.left = Math.max(VIEWPORT_MARGIN, Math.min(rect.left, window.innerWidth - VIEWPORT_MARGIN));
     }
     setPosition(next);
-  }, [align, safeItems.length]);
+  }, [align]);
 
-  // Open lifecycle: position the portaled menu, track reflow, focus first item.
   useLayoutEffect(() => {
     if (!open) return;
     updatePosition();
@@ -102,7 +101,6 @@ export const ThreadActionsMenu: React.FC<ThreadActionsMenuProps> = ({
     };
   }, [open, updatePosition]);
 
-  // Close on outside click or Escape.
   useEffect(() => {
     if (!open) return;
 
@@ -139,7 +137,7 @@ export const ThreadActionsMenu: React.FC<ThreadActionsMenuProps> = ({
       return;
     }
     const focusable = Array.from(
-      menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')
+      menu.querySelectorAll<HTMLButtonElement>(':scope > .thread-actions-item:not(:disabled), :scope > .thread-actions-item-wrap > .thread-actions-item:not(:disabled)')
     );
     if (focusable.length === 0) return;
     event.preventDefault();
@@ -164,6 +162,10 @@ export const ThreadActionsMenu: React.FC<ThreadActionsMenuProps> = ({
 
   const handleSelect = (item: ThreadActionItem) => {
     if (item.disabled) return;
+    if (item.children && item.children.length > 0) {
+      setActiveSubmenuId((prev) => (prev === item.id ? null : item.id));
+      return;
+    }
     closeMenu(false);
     onSelect(item.id);
   };
@@ -180,8 +182,8 @@ export const ThreadActionsMenu: React.FC<ThreadActionsMenuProps> = ({
         className={triggerClassName}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label="聊天操作"
-        title={label || "聊天操作"}
+        aria-label={triggerAriaLabel}
+        title={typeof label === "string" ? label : triggerAriaLabel}
         onClick={() => {
           if (open) {
             closeMenu(false);
@@ -190,7 +192,9 @@ export const ThreadActionsMenu: React.FC<ThreadActionsMenuProps> = ({
           }
         }}
       >
-        <span className="thread-actions-trigger-content">{label ?? "⋯"}</span>
+        <span className="thread-actions-trigger-content">
+          {label ?? "⋯"}
+        </span>
       </button>
 
       {open &&
@@ -205,30 +209,78 @@ export const ThreadActionsMenu: React.FC<ThreadActionsMenuProps> = ({
               right: position?.right,
             }}
             role="menu"
-            aria-label="聊天操作"
+            aria-label={triggerAriaLabel}
             onKeyDown={handleMenuKeyDown}
           >
             {safeItems.length === 0 ? (
               <div className="thread-actions-empty">暂无可用操作</div>
             ) : (
-              safeItems.map((item) => (
-                <React.Fragment key={item.id}>
-                  {item.separatorBefore && (
-                    <div className="thread-actions-separator" role="separator" />
-                  )}
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className={`thread-actions-item${item.danger ? " is-danger" : ""}`}
-                    disabled={item.disabled}
-                    onClick={() => handleSelect(item)}
-                    title={item.hint || item.label}
-                  >
-                    <span className="thread-actions-item-label">{item.label}</span>
-                    {item.hint && <span className="thread-actions-item-hint">{item.hint}</span>}
-                  </button>
-                </React.Fragment>
-              ))
+              safeItems.map((item) => {
+                const hasChildren = Boolean(item.children && item.children.length > 0);
+                const isSubmenuOpen = activeSubmenuId === item.id;
+
+                return (
+                  <React.Fragment key={item.id}>
+                    {item.separatorBefore && (
+                      <div className="thread-actions-separator" role="separator" />
+                    )}
+                    <div
+                      className={`thread-actions-item-wrap ${hasChildren ? "has-submenu" : ""}`}
+                      onMouseEnter={() => {
+                        if (hasChildren) setActiveSubmenuId(item.id);
+                      }}
+                      onMouseLeave={() => {
+                        if (hasChildren) setActiveSubmenuId(null);
+                      }}
+                    >
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className={`thread-actions-item${item.danger ? " is-danger" : ""}${isSubmenuOpen ? " is-active" : ""}`}
+                        disabled={item.disabled}
+                        onClick={() => handleSelect(item)}
+                        title={item.hint || item.label}
+                      >
+                        {item.icon && <span className="thread-actions-item-icon">{item.icon}</span>}
+                        <span className="thread-actions-item-label">{item.label}</span>
+                        {item.hint && <span className="thread-actions-item-hint">{item.hint}</span>}
+                        {hasChildren && (
+                          <span className="thread-actions-item-arrow">
+                            <ChevronRightIcon size={13} />
+                          </span>
+                        )}
+                      </button>
+
+                      {hasChildren && isSubmenuOpen && (
+                        <div className="thread-actions-submenu" role="menu">
+                          {item.children!.map((subItem) => (
+                            <React.Fragment key={subItem.id}>
+                              {subItem.separatorBefore && (
+                                <div className="thread-actions-separator" role="separator" />
+                              )}
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className={`thread-actions-item${subItem.danger ? " is-danger" : ""}`}
+                                disabled={subItem.disabled}
+                                onClick={() => {
+                                  closeMenu(false);
+                                  onSelect(subItem.id);
+                                }}
+                                title={subItem.hint || subItem.label}
+                              >
+                                {subItem.icon && <span className="thread-actions-item-icon">{subItem.icon}</span>}
+                                <span className="thread-actions-item-label">{subItem.label}</span>
+                                {subItem.hint && <span className="thread-actions-item-hint">{subItem.hint}</span>}
+                              </button>
+                            </React.Fragment>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </React.Fragment>
+                );
+              })
             )}
           </div>,
           document.body

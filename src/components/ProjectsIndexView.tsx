@@ -612,13 +612,18 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
       const roots = project.roots;
       const isBusy = actionBusyId === project.id;
       const index = projects.findIndex((item) => item.id === project.id);
+      const effectiveUpdated = Math.max(
+        project.updatedAt,
+        ...projectThreads.map((t) => (t.updatedAt || t.createdAt || 0) * 1000)
+      );
 
       return (
         <div className="projects-table-group" key={project.id}>
           <div
             className={`projects-table-row ${isExpanded ? "active" : ""}`}
             onClick={() => handleToggleProject(project)}
-            title={project.name}
+            onDoubleClick={() => handleStartChatInProject(project)}
+            title={`${project.name} (双击直接启动聊天)`}
           >
             <div className="project-col-name">
               {isExpanded ? (
@@ -646,7 +651,7 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
                   {project.name}
                 </span>
                 <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
-                  更新于 {formatRelativeTime(project.updatedAt)}
+                  更新于 {formatRelativeTime(effectiveUpdated)}
                 </span>
               </div>
             </div>
@@ -930,15 +935,31 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
                       {index === 0 ? "★ " : ""}
                       {root}
                     </span>
-                    <button
-                      type="button"
-                      className="icon-danger-btn"
-                      title="移除根目录"
-                      disabled={formBusy}
-                      onClick={() => handleRemoveDraftRoot(root)}
-                    >
-                      <CloseIcon size={13} />
-                    </button>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      {index > 0 && (
+                        <button
+                          type="button"
+                          className="secondary-pill-action-btn"
+                          style={{ padding: "2px 8px", fontSize: 11 }}
+                          disabled={formBusy}
+                          onClick={() => {
+                            setDraftRoots((prev) => [root, ...prev.filter((r) => r !== root)]);
+                          }}
+                          title="将此目录设为主目录"
+                        >
+                          设为主目录
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="icon-danger-btn"
+                        title="移除根目录"
+                        disabled={formBusy}
+                        onClick={() => handleRemoveDraftRoot(root)}
+                      >
+                        <CloseIcon size={13} />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>

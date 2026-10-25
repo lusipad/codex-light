@@ -232,6 +232,9 @@ export interface AttachedFileItem {
   name: string;
   path: string;
   kind: "file" | "image" | "mention";
+  attachmentType?: "file" | "image";
+  persisted?: boolean;
+  createdAt?: number;
 }
 
 export interface ShellExecResult {
@@ -281,6 +284,7 @@ export type MainViewRoute =
   | "inbox"
   | "scheduled"
   | "plugins"
+  | "skills"
   | "worktrees"
   | "review"
   | "archive"
@@ -299,9 +303,6 @@ export type SettingsSectionSlug =
   | "keyboard-shortcuts"
   | "notifications"
   | "plugins-settings"
-  | "computer-use"
-  | "appshots"
-  | "browser-use"
   | "hooks-settings"
   | "connections"
   | "git-settings"
@@ -353,15 +354,25 @@ export interface ProjectScriptCommands {
   projectType: string;
 }
 
-export type PetSpeciesId =
-  | "codex"
-  | "rocky"
-  | "hoots"
-  | "seedy"
-  | "stacky"
-  | "fireball"
-  | "bsod"
-  | "dewey"
-  | "null-signal";
+export type PetSpeciesId = string;
+
+export interface InstalledPetItem {
+  id: string;
+  displayName: string;
+  description: string | null;
+  spriteVersionNumber: number;
+  spritesheetPath: string;
+  spritesheetDataUrl: string | null;
+}
+
+export const PET_SPECIES_LIST: Array<{
+  id: PetSpeciesId;
+  name: string;
+  emoji: string;
+  desc: string;
+}> = [
+  { id: "codex", name: "Codex", emoji: "✨", desc: "官方星环智能体伴侣，随推理状态呼吸闪烁" },
+  { id: "rocky", name: "Rocky", emoji: "🪨", desc: "官方像素 Sprite 桌面伴侣 (切帧动画驱动)" },
+];
 
 

@@ -1,0 +1,177 @@
+.app-titlebar {
+  position: relative;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  flex: 0 0 45px;
+  width: 100%;
+  height: 45px;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  user-select: none;
+  -webkit-app-region: drag;
+}
+
+.app-titlebar button,
+.app-titlebar a,
+.app-titlebar [popover] {
+  -webkit-app-region: no-drag;
+}
+
+.app-titlebar-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 12px;
+}
+
+.app-titlebar-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  background: transparent;
+  cursor: pointer;
+}
+
+.app-titlebar-icon:hover:not(:disabled),
+.app-titlebar-icon:focus-visible {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.app-titlebar-icon:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.app-titlebar-menus {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 10px;
+}
+
+.app-titlebar-menu-trigger {
+  height: 26px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.app-titlebar-menu-trigger:hover,
+.app-titlebar-menu-trigger:focus-visible,
+.app-titlebar-menu-trigger:popover-open {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.app-titlebar-popover {
+  position: fixed;
+  inset: auto;
+  width: 252px;
+  margin: 0;
+  padding: 6px;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  box-shadow: var(--shadow-lg);
+}
+
+.app-titlebar-popover::backdrop {
+  background: transparent;
+}
+
+.app-titlebar-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 9px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-primary);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-titlebar-menu-item:hover,
+.app-titlebar-menu-item:focus-visible {
+  background: var(--bg-hover);
+  outline: none;
+}
+
+.app-titlebar-menu-item.danger {
+  color: var(--accent-red);
+}
+
+.app-titlebar-menu-item kbd {
+  color: var(--text-tertiary);
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.app-titlebar-menu-separator {
+  height: 1px;
+  margin: 5px 6px;
+  background: var(--border-default);
+}
+
+.app-titlebar-drag-space {
+  flex: 1;
+  align-self: stretch;
+}
+
+.app-window-controls {
+  display: flex;
+  align-items: stretch;
+  align-self: stretch;
+}
+
+.app-window-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 50px;
+  padding: 0;
+  border: 0;
+  color: var(--text-secondary);
+  background: transparent;
+  cursor: pointer;
+}
+
+.app-window-control:hover,
+.app-window-control:focus-visible {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.app-window-control.close:hover,
+.app-window-control.close:focus-visible {
+  color: #fff;
+  background: #c42b1c;
+}
+
+button:focus-visible,
+a:focus-visible,
+[role="menuitem"]:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+}

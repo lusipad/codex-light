@@ -33,7 +33,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     id: "goal",
     command: "/goal",
     title: "Goal",
-    description: "🎯 开启自主目标模式，多轮自动推进执行与测试验证直至目标达成",
+    description: "设定持续推进的目标 (Set a goal to keep pursuing)",
     kind: "action",
     action: "open_goal_dialog",
     insertText: "",

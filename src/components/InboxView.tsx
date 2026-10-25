@@ -9,6 +9,7 @@ export interface InboxViewProps {
   onDeleteItem?: (id: string, e: React.MouseEvent) => void;
   onToggleRead?: (id: string, e: React.MouseEvent) => void;
   onSelectNotification: (item: InboxNotificationItem) => void;
+  onNavigateScheduled?: () => void;
 }
 
 export const InboxView: React.FC<InboxViewProps> = ({
@@ -18,6 +19,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
   onDeleteItem,
   onToggleRead,
   onSelectNotification,
+  onNavigateScheduled,
 }) => {
   const [filter, setFilter] = useState<"all" | "unread" | "automation" | "approval">("all");
 
@@ -69,6 +71,17 @@ export const InboxView: React.FC<InboxViewProps> = ({
                 审批
               </button>
             </div>
+            {onNavigateScheduled && (
+              <button
+                type="button"
+                className="secondary-pill-action-btn"
+                onClick={onNavigateScheduled}
+                title="查看已排期自动化任务列表"
+              >
+                <AutomationIcon size={13} />
+                <span>已排期任务 (Scheduled)</span>
+              </button>
+            )}
             {items.some((i) => !i.read) && (
               <button
                 type="button"

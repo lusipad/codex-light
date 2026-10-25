@@ -8,7 +8,8 @@
 
 | 文件 | 内容 |
 |---|---|
-| [reference-inventory.md](research/reference-inventory.md) | 官方 App 17 章功能面清单（109KB，约千行表格） |
+| [codex-app-full-surface.md](research/codex-app-full-surface.md) | **2026-10-25 全 App 页面与功能总表：本地代码 + Computer Use 实测，含路由、设置、可见性和纠错** |
+| [reference-inventory.md](research/reference-inventory.md) | Codex 本地模式专项历史明细（17 章，使用全量总表中的纠错说明） |
 | [feature-index.json](research/feature-index.json) | 43 模块 / 212 功能点（in-scope / out-of-scope），可机器比对 |
 | [current-audit.md](research/current-audit.md) | 本项目 32 模块真实度审计（REAL/PARTIAL/MOCK/MISSING + 证据行号） |
 | [stubs.md](research/stubs.md) | 全部占位/硬编码/无效实现精确位置（按文件 + 修复难度） |

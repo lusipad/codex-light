@@ -108,6 +108,13 @@ export const SHORTCUTS: ShortcutDef[] = [
     match: (e) => isMod(e) && e.altKey && key(e) === "f",
   },
   {
+    id: "open-review-tab",
+    keys: "Ctrl+Shift+G",
+    label: "打开变更标签",
+    group: "panels",
+    match: (e) => isMod(e) && e.shiftKey && !e.altKey && key(e) === "g",
+  },
+  {
     id: "open-review",
     keys: "Ctrl+Alt+C",
     label: "打开代码审查",

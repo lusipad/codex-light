@@ -25,6 +25,8 @@ import {
   WorkspaceRootItem,
 } from "../types";
 import { ComposerAutocomplete, AutocompleteItem } from "./ComposerAutocomplete";
+import { ComposerAttachmentChip } from "./ComposerAttachmentChip";
+import { createAttachedFileItem } from "../threadAttachments";
 
 export interface ComposerBoxProps {
   variant: "home" | "thread";
@@ -68,33 +70,6 @@ export interface ComposerBoxProps {
   onSlashAction?: (action: string) => void;
   textareaRef?: React.RefObject<HTMLTextAreaElement | null>;
 }
-
-const DEFAULT_MODELS: ModelInfo[] = [
-  {
-    id: "gpt-6.1-sol",
-    displayName: "6.1 Sol",
-    description: "超低延迟敏捷编码模型，适合日常快速修改与调试",
-    tags: ["极速"],
-  },
-  {
-    id: "gpt-6-astra",
-    displayName: "6 Astra",
-    description: "最强大的旗舰级深度推理与全栈工程架构模型",
-    tags: ["旗舰"],
-  },
-  {
-    id: "gpt-5.4",
-    displayName: "GPT-5.4",
-    description: "均衡全能旗舰编码模型，擅长多文件协同与代码审查",
-    tags: ["推荐"],
-  },
-  {
-    id: "gpt-5.3-codex",
-    displayName: "5.3 Codex",
-    description: "针对代码补丁、单测生成与命令执行深度优化的编码模型",
-    tags: ["代码"],
-  },
-];
 
 const EFFORT_OPTIONS = [
   { id: "low", shortLabel: "轻度", fullLabel: "轻度 (Low)", desc: "快速响应，轻量级推理" },
@@ -209,10 +184,19 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
     }
 
     try {
+      let savedVoiceLang = "zh-CN";
+      try {
+        const raw = localStorage.getItem("codex_desktop_preferences");
+        if (raw) {
+          const p = JSON.parse(raw);
+          if (p.voiceLanguage) savedVoiceLang = p.voiceLanguage;
+        }
+      } catch {}
+
       const rec = new SpeechRec();
       rec.continuous = true;
       rec.interimResults = true;
-      rec.lang = "zh-CN";
+      rec.lang = savedVoiceLang;
 
       let accumulated = promptInput ? promptInput + " " : "";
 
@@ -273,12 +257,9 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
         const file = e.dataTransfer.files[i];
         const filePath = (file as any).path || file.name;
         const isImage = /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(file.name);
-        droppedItems.push({
-          id: `${file.name}-${Date.now()}-${i}`,
-          name: file.name,
-          path: filePath,
-          kind: isImage ? "image" : "file",
-        });
+        droppedItems.push(
+          createAttachedFileItem(filePath, file.name, isImage ? "image" : "file")
+        );
       }
       if (droppedItems.length > 0) {
         if (onAddAttachedFiles) {
@@ -305,28 +286,26 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
     return () => document.removeEventListener("mousedown", handleOutsideClick);
   }, []);
 
-  const allModels = React.useMemo(() => {
-    const map = new Map<string, ModelInfo>();
-    for (const m of DEFAULT_MODELS) {
-      map.set(m.id, m);
-    }
-    for (const m of models) {
-      map.set(m.id, {
-        ...map.get(m.id),
-        ...m,
-        displayName: m.displayName || map.get(m.id)?.displayName || m.id,
-      });
-    }
-    return Array.from(map.values());
-  }, [models]);
+  const allModels = React.useMemo(() => models || [], [models]);
 
   const activeModel = allModels.find((m) => m.id === selectedModelId) || {
     id: selectedModelId,
     displayName: selectedModelId,
   };
 
+  const availableEfforts = React.useMemo(() => {
+    const supported = (activeModel as any).supportedReasoningEfforts;
+    if (Array.isArray(supported) && supported.length > 0) {
+      const filtered = EFFORT_OPTIONS.filter((e) => supported.includes(e.id));
+      return filtered.length > 0 ? filtered : EFFORT_OPTIONS;
+    }
+    return EFFORT_OPTIONS;
+  }, [activeModel]);
+
   const activeEffort =
-    EFFORT_OPTIONS.find((e) => e.id === reasoningEffort) || EFFORT_OPTIONS[0];
+    availableEfforts.find((e) => e.id === reasoningEffort) ||
+    availableEfforts[0] ||
+    EFFORT_OPTIONS[0];
 
   const activePermission =
     PERMISSION_OPTIONS.find((p) => p.id === permissionMode) || PERMISSION_OPTIONS[0];
@@ -400,7 +379,21 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
         return;
       }
     }
-    if (e.key === "Enter" && !e.shiftKey) {
+    let sendShortcutPref = "enter";
+    try {
+      const raw = localStorage.getItem("codex_desktop_preferences");
+      if (raw) {
+        const p = JSON.parse(raw);
+        if (p.sendShortcut) sendShortcutPref = p.sendShortcut;
+      }
+    } catch {}
+
+    const shouldSend =
+      sendShortcutPref === "cmd-enter"
+        ? (e.metaKey || e.ctrlKey) && e.key === "Enter"
+        : e.key === "Enter" && !e.shiftKey;
+
+    if (shouldSend) {
       e.preventDefault();
       onSendMessage();
     }
@@ -533,7 +526,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
             )}
           </div>
 
-          {/* 3. Git Branch Pill */}
+          {variant === "thread" && (
           <div className="composer-dropdown-anchor">
             <button
               type="button"
@@ -605,31 +598,21 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
               </div>
             )}
           </div>
+          )}
         </div>
 
         {/* Right indicators on top bar */}
         <div className="composer-context-right">
-          <button
-            type="button"
-            className="composer-mode-badge goal-pill"
-            onClick={() => onSlashAction?.("open_goal_dialog")}
-            title="启动自主目标模式 (/goal)"
-            style={{
-              cursor: "pointer",
-              background: "rgba(16, 185, 129, 0.12)",
-              color: "#10b981",
-              border: "1px solid rgba(16, 185, 129, 0.28)",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 3,
-              padding: "2px 8px",
-              borderRadius: 999,
-              fontSize: 11,
-              fontWeight: 500,
-            }}
-          >
-            🎯 目标模式
-          </button>
+          {variant === "home" && (
+            <label className="composer-worktree-toggle">
+              <span>工作树</span>
+              <input
+                type="checkbox"
+                checked={useWorktree}
+                onChange={(event) => onSetUseWorktree(event.target.checked)}
+              />
+            </label>
+          )}
           {planMode && (
             <span className="composer-mode-badge plan" onClick={onTogglePlanMode} title="点击关闭计划模式">
               🗺️ 计划模式
@@ -662,17 +645,11 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
         {attachedFiles.length > 0 && (
           <div className="composer-attachments-row">
             {attachedFiles.map((file) => (
-              <div key={file.id} className="composer-attachment-chip" title={file.path}>
-                <PaperclipIcon size={12} />
-                <span className="attachment-chip-name">{file.name}</span>
-                <button
-                  type="button"
-                  className="attachment-chip-remove"
-                  onClick={() => onRemoveAttachedFile(file.id)}
-                >
-                  <CloseIcon size={11} />
-                </button>
-              </div>
+              <ComposerAttachmentChip
+                key={file.id}
+                file={file}
+                onRemove={() => onRemoveAttachedFile(file.id)}
+              />
             ))}
           </div>
         )}
@@ -747,18 +724,6 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
                       <span className="popover-item-title">计划模式 (Plan Mode)</span>
                     </div>
                     {planMode && <CheckIcon size={13} />}
-                  </div>
-                  <div
-                    className="popover-menu-item"
-                    onClick={() => {
-                      onSlashAction?.("open_goal_dialog");
-                      setOpenMenu(null);
-                    }}
-                  >
-                    <div className="popover-item-header">
-                      <span style={{ fontSize: 13, marginRight: 2 }}>🎯</span>
-                      <span className="popover-item-title">自主目标模式 (/goal)</span>
-                    </div>
                   </div>
                 </div>
               )}
@@ -885,7 +850,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
                   <div className="popover-divider" />
                   <div className="popover-section-label">推理强度 (Reasoning Effort)</div>
                   <div className="effort-segmented-bar">
-                    {EFFORT_OPTIONS.map((eff) => (
+                    {availableEfforts.map((eff) => (
                       <button
                         key={eff.id}
                         type="button"

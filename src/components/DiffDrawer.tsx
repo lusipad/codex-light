@@ -27,28 +27,51 @@ import {
 import {
   CheckIcon,
   CopyIcon,
+  DiffIcon,
+  DownloadIcon,
+  EllipsisIcon,
   FolderIcon,
+  FullscreenIcon,
   GitBranchIcon,
   GlobeIcon,
   PlusIcon,
   RefreshIcon,
   SearchIcon,
   SparklesIcon,
+  SplitViewIcon,
   TrashIcon,
   XIcon,
 } from "./Icons";
+import { NewTabPage } from "./NewTabPage";
+import { BrowserToolbar } from "./BrowserToolbar";
 import "./FileExplorer.css";
 
-interface DiffDrawerProps {
+export interface WorkbenchTabItem {
+  id: string;
+  kind: "newTab" | "changes" | "files" | "summary" | "browser";
+  title: string;
+  icon: React.ReactNode;
+  url?: string;
+  history?: string[];
+  historyIndex?: number;
+  closable?: boolean;
+  badge?: number;
+}
+
+export interface DiffDrawerProps {
   open?: boolean;
   cwd: string;
   gitStatus: GitStatusInfo | null;
+  branches?: string[];
   turns?: TurnData[];
   onRefreshGit: () => void;
   onClose: () => void;
   selectedPreviewFile?: string | null;
   onSelectPreviewFile?: (file: string | null) => void;
   onSendReviewComment?: (commentPrompt: string) => void;
+  initialTab?: "newTab" | "changes" | "files" | "summary" | "browser";
+  onOpenTerminal?: () => void;
+  onOpenSideChat?: () => void;
 }
 
 interface ParsedDiffLine {
@@ -330,16 +353,158 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   open = true,
   cwd,
   gitStatus,
+  branches = [],
   turns = [],
   onRefreshGit,
   onClose,
   selectedPreviewFile,
   onSelectPreviewFile,
   onSendReviewComment,
+  initialTab = "changes",
+  onOpenTerminal,
+  onOpenSideChat,
 }) => {
-  const [activeTab, setActiveTab] = useState<"changes" | "files" | "summary" | "browser">(
-    "changes"
-  );
+  const [isFullWidth, setIsFullWidth] = useState(false);
+  const [openTabs, setOpenTabs] = useState<WorkbenchTabItem[]>([
+    { id: "newTab", kind: "newTab", title: "新标签页", icon: <GlobeIcon size={13} />, closable: true },
+    { id: "changes", kind: "changes", title: "变更", icon: <DiffIcon size={13} />, closable: false },
+    { id: "files", kind: "files", title: "文件", icon: <FolderIcon size={13} />, closable: false },
+    { id: "summary", kind: "summary", title: "摘要", icon: <SparklesIcon size={13} />, closable: false },
+  ]);
+  const [activeTabId, setActiveTabId] = useState<string>(initialTab);
+  const [browserReloadTokens, setBrowserReloadTokens] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTabId(initialTab);
+      setOpenTabs((prev) => {
+        if (prev.some((t) => t.id === initialTab)) return prev;
+        if (initialTab === "newTab") {
+          return [
+            { id: "newTab", kind: "newTab", title: "新标签页", icon: <GlobeIcon size={13} />, closable: true },
+            ...prev,
+          ];
+        }
+        return prev;
+      });
+    }
+  }, [initialTab]);
+
+  const activeTabObj = openTabs.find((t) => t.id === activeTabId) || openTabs[0];
+  const activeKind = activeTabObj?.kind || "changes";
+  const activeTab = activeKind === "files" || activeKind === "summary" ? activeKind : "changes";
+  const setActiveTab = (tab: "changes" | "files" | "summary") => {
+    setActiveTabId(tab);
+  };
+
+  const handleAddNewTab = () => {
+    const id = `newTab-${Date.now()}`;
+    const newTab: WorkbenchTabItem = {
+      id,
+      kind: "newTab",
+      title: "新标签页",
+      icon: <GlobeIcon size={13} />,
+      closable: true,
+    };
+    setOpenTabs((prev) => [newTab, ...prev]);
+    setActiveTabId(id);
+  };
+
+  const handleCloseTab = (id: string) => {
+    setOpenTabs((prev) => {
+      const next = prev.filter((t) => t.id !== id);
+      if (activeTabId === id) {
+        const idx = prev.findIndex((t) => t.id === id);
+        const fallback =
+          next[Math.max(0, idx - 1)] ||
+          next[0] || { id: "changes", kind: "changes", title: "变更", icon: <DiffIcon size={13} /> };
+        setActiveTabId(fallback.id);
+      }
+      return next.length > 0
+        ? next
+        : [
+            { id: "changes", kind: "changes", title: "变更", icon: <DiffIcon size={13} />, closable: false },
+          ];
+    });
+  };
+
+  const handleReloadBrowser = () => {
+    if (activeKind !== "browser" || !activeTabObj) return;
+    setBrowserReloadTokens((prev) => ({
+      ...prev,
+      [activeTabObj.id]: (prev[activeTabObj.id] || 0) + 1,
+    }));
+  };
+
+  const navigateBrowserHistory = (direction: -1 | 1) => {
+    if (activeKind !== "browser" || !activeTabObj) return;
+    const history = activeTabObj.history || (activeTabObj.url ? [activeTabObj.url] : []);
+    const currentIndex = activeTabObj.historyIndex ?? 0;
+    const nextIndex = currentIndex + direction;
+    if (nextIndex < 0 || nextIndex >= history.length) return;
+    const url = history[nextIndex];
+    let title = url;
+    try {
+      title = new URL(url).hostname || url;
+    } catch {
+      title = url;
+    }
+    setOpenTabs((prev) => prev.map((tab) =>
+      tab.id === activeTabObj.id
+        ? { ...tab, url, title, history, historyIndex: nextIndex }
+        : tab
+    ));
+  };
+
+  const handleNavigateUrl = (url: string) => {
+    let hostname = url;
+    try {
+      hostname = new URL(url).hostname || url;
+    } catch {
+      hostname = url;
+    }
+    if (activeKind === "browser" && activeTabObj) {
+      if (activeTabObj.url === url) {
+        handleReloadBrowser();
+        return;
+      }
+      setOpenTabs((prev) => prev.map((tab) => {
+        if (tab.id !== activeTabObj.id) return tab;
+        const history = tab.history || (tab.url ? [tab.url] : []);
+        const index = tab.historyIndex ?? Math.max(0, history.length - 1);
+        const nextHistory = [...history.slice(0, index + 1), url];
+        return {
+          ...tab,
+          title: hostname,
+          url,
+          history: nextHistory,
+          historyIndex: nextHistory.length - 1,
+        };
+      }));
+      return;
+    }
+    const browserId = `browser-${Date.now()}`;
+    const newTab: WorkbenchTabItem = {
+      id: browserId,
+      kind: "browser",
+      title: hostname,
+      url,
+      history: [url],
+      historyIndex: 0,
+      icon: <GlobeIcon size={13} />,
+      closable: true,
+    };
+    setOpenTabs((prev) => [...prev, newTab]);
+    setActiveTabId(browserId);
+  };
+
+  const activeHistoryIndex = activeTabObj?.historyIndex ?? 0;
+  const canBrowserGoBack = activeKind === "browser" && activeHistoryIndex > 0;
+  const canBrowserGoForward = activeKind === "browser" &&
+    activeHistoryIndex < (activeTabObj?.history?.length ?? 0) - 1;
+  const recentBrowserTabs = openTabs
+    .filter((tab) => tab.kind === "browser" && tab.url)
+    .map((tab) => ({ id: tab.id, title: tab.title, url: tab.url as string }));
 
   // Changes state
   const [diffMode, setDiffMode] = useState<"working" | "staged" | "branch" | "commits">(
@@ -398,16 +563,18 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   const [explorerDraft, setExplorerDraft] = useState<ExplorerDraft | null>(null);
   const [explorerBusy, setExplorerBusy] = useState(false);
   const dirLoadSeqRef = useRef(0);
+
+  const displayedEntries = useMemo(() => {
+    const list = gitStatus?.entries || [];
+    if (diffMode === "staged") {
+      return list.filter((e) => e.staged);
+    }
+    return list;
+  }, [gitStatus, diffMode]);
   const fsWatchTimerRef = useRef<number | null>(null);
   const lastExternalPreviewRef = useRef<string | null>(null);
   const appServerConnectedRef = useRef<boolean | null>(null);
   const [watchEpoch, setWatchEpoch] = useState(0);
-
-  // Browser preview state
-  const [browserUrl, setBrowserUrl] = useState("http://localhost:1420");
-  const [browserInputUrl, setBrowserInputUrl] = useState("http://localhost:1420");
-  const [browserKey, setBrowserKey] = useState(0);
-  const [browserAnnotation, setBrowserAnnotation] = useState("");
 
   useEffect(() => {
     if (cwd) {
@@ -953,89 +1120,162 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   if (!open) return null;
 
   return (
-    <aside className="diff-drawer">
-      {/* Top 4-Tab Workbench Switcher */}
+    <aside className={`diff-drawer ${isFullWidth ? "full-width" : ""}`}>
+      {/* Workbench tab strip */}
       <div className="diff-drawer-header">
         <div className="diff-drawer-tabs">
+          {openTabs.map((tab) => {
+            const isActive = tab.id === activeTabId;
+            const badgeCount =
+              tab.kind === "changes" ? gitStatus?.entries?.length || 0 : tab.badge;
+
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                className={`diff-tab-pill ${isActive ? "active" : ""}`}
+                onClick={() => setActiveTabId(tab.id)}
+                title={tab.url ? `${tab.title}\n${tab.url}` : tab.title}
+              >
+                <span className="diff-tab-icon">{tab.icon}</span>
+                <span className="diff-tab-label">{tab.title}</span>
+                {badgeCount !== undefined && badgeCount > 0 && (
+                  <span className="badge-pill">{badgeCount}</span>
+                )}
+                {tab.closable && (
+                  <span
+                    className="diff-tab-close"
+                    title="关闭标签页"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleCloseTab(tab.id);
+                    }}
+                  >
+                    <XIcon size={11} />
+                  </span>
+                )}
+              </button>
+            );
+          })}
+
           <button
-            className={`diff-tab ${activeTab === "changes" ? "active" : ""}`}
-            onClick={() => setActiveTab("changes")}
+            type="button"
+            className="diff-tab-add-btn"
+            title="新标签页"
+            onClick={handleAddNewTab}
           >
-            <GitBranchIcon size={13} />
-            <span>变更</span>
-            {gitStatus && gitStatus.entries.length > 0 && (
-              <span className="badge-pill">{gitStatus.entries.length}</span>
-            )}
-          </button>
-          <button
-            className={`diff-tab ${activeTab === "files" ? "active" : ""}`}
-            onClick={() => setActiveTab("files")}
-          >
-            <FolderIcon size={13} />
-            <span>文件</span>
-          </button>
-          <button
-            className={`diff-tab ${activeTab === "summary" ? "active" : ""}`}
-            onClick={() => setActiveTab("summary")}
-          >
-            <SparklesIcon size={13} />
-            <span>摘要</span>
-          </button>
-          <button
-            className={`diff-tab ${activeTab === "browser" ? "active" : ""}`}
-            onClick={() => setActiveTab("browser")}
-          >
-            <GlobeIcon size={13} />
-            <span>预览</span>
+            <PlusIcon size={14} />
           </button>
         </div>
+
         <div className="diff-drawer-actions">
           <button
+            type="button"
             className="icon-btn"
             onClick={onRefreshGit}
             title="刷新工作区与 Git 状态"
           >
             <RefreshIcon size={14} />
           </button>
-          <button className="icon-btn" onClick={onClose} title="收起右侧工作台">
-            <XIcon size={14} />
+          <button
+            type="button"
+            className={`icon-btn ${isFullWidth ? "active" : ""}`}
+            onClick={() => setIsFullWidth((v) => !v)}
+            title={isFullWidth ? "退出全屏工作台" : "全屏工作台 (⛶)"}
+          >
+            <FullscreenIcon size={14} />
+          </button>
+          <button
+            type="button"
+            className="icon-btn"
+            onClick={onClose}
+            title="收起右侧工作台 ([|])"
+          >
+            <SplitViewIcon size={15} />
           </button>
         </div>
       </div>
 
       {gitToast && <div className="workbench-toast-banner">{gitToast}</div>}
 
+      {/* TAB: NEW TAB / WORKSPACE TOOLS */}
+      {activeKind === "newTab" && (
+        <NewTabPage
+          onOpenChanges={() => setActiveTabId("changes")}
+          onOpenTerminal={() => onOpenTerminal?.()}
+          onOpenFiles={() => setActiveTabId("files")}
+          onOpenSideChat={onOpenSideChat}
+          onNavigateUrl={handleNavigateUrl}
+          onClose={() => handleCloseTab(activeTabId)}
+          onNotify={showToast}
+          recentTabs={recentBrowserTabs}
+          onSelectRecent={setActiveTabId}
+        />
+      )}
+
+      {/* TAB: IN-APP BROWSER */}
+      {activeKind === "browser" && activeTabObj?.url && (
+        <div className="in-app-browser-container">
+          <BrowserToolbar
+            currentUrl={activeTabObj.url}
+            canGoBack={canBrowserGoBack}
+            canGoForward={canBrowserGoForward}
+            onBack={() => navigateBrowserHistory(-1)}
+            onForward={() => navigateBrowserHistory(1)}
+            onReload={handleReloadBrowser}
+            onNavigate={handleNavigateUrl}
+            onClose={() => handleCloseTab(activeTabId)}
+            onNotify={showToast}
+          />
+          <div className="in-app-browser-frame-wrap">
+            <iframe
+              key={`${activeTabObj.id}:${activeTabObj.url}:${browserReloadTokens[activeTabObj.id] || 0}`}
+              src={activeTabObj.url}
+              title={activeTabObj.title}
+              className="in-app-browser-iframe"
+              sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
+            />
+          </div>
+        </div>
+      )}
+
       {/* TAB 1: CHANGES & CODE REVIEW */}
-      {activeTab === "changes" ? (
+      {activeKind === "changes" ? (
         <div className="diff-drawer-body">
+          {/* Top Review Mode & Layout Toolbar */}
           <div className="diff-mode-bar">
             <button
+              type="button"
               className={`seg-btn ${diffMode === "working" ? "active" : ""}`}
               onClick={() => setDiffMode("working")}
             >
               未提交
             </button>
             <button
+              type="button"
               className={`seg-btn ${diffMode === "staged" ? "active" : ""}`}
               onClick={() => setDiffMode("staged")}
             >
               已暂存
             </button>
             <button
+              type="button"
               className={`seg-btn ${diffMode === "branch" ? "active" : ""}`}
               onClick={() => setDiffMode("branch")}
             >
               分支对比
             </button>
             <button
+              type="button"
               className={`seg-btn ${diffMode === "commits" ? "active" : ""}`}
               onClick={() => setDiffMode("commits")}
             >
               提交历史
             </button>
 
-            <div className="diff-layout-switch" style={{ marginLeft: "auto" }}>
+            <div className="diff-layout-switch">
               <button
+                type="button"
                 className={`seg-btn ${diffLayout === "unified" ? "active" : ""}`}
                 onClick={() => setDiffLayout("unified")}
                 title="统一 Diff 视图"
@@ -1043,6 +1283,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                 统一
               </button>
               <button
+                type="button"
                 className={`seg-btn ${diffLayout === "split" ? "active" : ""}`}
                 onClick={() => setDiffLayout("split")}
                 title="左右并排对比视图"
@@ -1055,318 +1296,387 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
           {diffMode === "branch" && (
             <div className="diff-branch-filter-row">
               <span className="muted-text">基准分支:</span>
-              <input
+              <select
                 className="branch-input-mini"
-                placeholder="main"
-                value={baseBranch}
+                value={baseBranch || "main"}
                 onChange={(e) => setBaseBranch(e.target.value)}
-              />
-            </div>
-          )}
-
-          {diffMode === "commits" ? (
-            <div className="diff-file-list">
-              <div className="diff-file-list-header">
-                <span>最近提交 ({commits.length})</span>
-              </div>
-              <div className="diff-file-items">
-                {commits.map((c) => (
-                  <div
-                    key={c.hash}
-                    className={`diff-file-row ${
-                      selectedCommitHash === c.hash ? "active" : ""
-                    }`}
-                    onClick={() => setSelectedCommitHash(c.hash)}
-                  >
-                    <span className="git-status-tag status-m">{c.shortHash}</span>
-                    <span className="diff-file-path" title={c.subject}>
-                      {c.subject}
-                    </span>
-                    <span className="muted-text" style={{ fontSize: 11 }}>
-                      {c.relativeTime}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="diff-file-list">
-              <div className="diff-file-list-header">
-                <span>
-                  更改的文件 ({gitStatus?.entries.length ?? 0})
-                  {gitStatus && (
-                    <span className="diff-stat-inline">
-                      <span className="diff-add">+{gitStatus.additions}</span>{" "}
-                      <span className="diff-del">-{gitStatus.deletions}</span>
-                    </span>
-                  )}
-                </span>
-                <div className="diff-file-bulk-actions">
-                  <button className="mini-link-btn" onClick={() => setSelectedFile(null)}>
-                    全部
-                  </button>
-                  <button className="mini-link-btn" onClick={() => handleStage()}>
-                    全暂存
-                  </button>
-                  <button className="mini-link-btn" onClick={() => handleUnstage()}>
-                    全取消
-                  </button>
-                </div>
-              </div>
-
-              <div className="diff-file-items">
-                {gitStatus?.entries.length === 0 && (
-                  <div className="empty-hint-small">工作树干净，没有未提交更改</div>
+              >
+                {branches.length > 0 ? (
+                  branches.map((b) => (
+                    <option key={b} value={b}>
+                      {b}
+                    </option>
+                  ))
+                ) : (
+                  <>
+                    <option value="main">main</option>
+                    <option value="master">master</option>
+                  </>
                 )}
-                {gitStatus?.entries.map((entry) => {
-                  const isViewed = Boolean(viewedFiles[entry.path]);
-                  return (
-                    <div
-                      key={entry.path}
-                      className={`diff-file-row ${
-                        selectedFile === entry.path ? "active" : ""
-                      } ${isViewed ? "viewed" : ""}`}
-                      onClick={() => setSelectedFile(entry.path)}
-                    >
-                      <span
-                        className={`git-status-tag status-${
-                          entry.untracked ? "u" : entry.staged ? "s" : "m"
-                        }`}
-                      >
-                        {entry.status || "M"}
-                      </span>
-                      <span className="diff-file-path" title={entry.path}>
-                        {entry.path}
-                      </span>
-                      <div
-                        className="diff-file-row-btns"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <button
-                          className={`mini-action-btn ${isViewed ? "active" : ""}`}
-                          onClick={() =>
-                            setViewedFiles((prev) => ({
-                              ...prev,
-                              [entry.path]: !prev[entry.path],
-                            }))
-                          }
-                          title="标记为已审阅"
-                        >
-                          ✓
-                        </button>
-                        {!entry.staged ? (
-                          <button
-                            className="mini-action-btn"
-                            onClick={() => handleStage(entry.path)}
-                            title="暂存文件"
-                          >
-                            <PlusIcon size={12} />
-                          </button>
-                        ) : (
-                          <button
-                            className="mini-action-btn"
-                            onClick={() => handleUnstage(entry.path)}
-                            title="取消暂存"
-                          >
-                            -
-                          </button>
-                        )}
-                        <button
-                          className="mini-action-btn danger"
-                          onClick={() => handleDiscard(entry.path)}
-                          title="放弃更改"
-                        >
-                          <TrashIcon size={12} />
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+              </select>
             </div>
           )}
 
-          {/* Commit + Push + PR Bar */}
-          <div className="diff-commit-box">
-            <input
-              className="commit-input"
-              placeholder="输入 Git 提交说明 (Commit message)..."
-              value={commitMessage}
-              onChange={(e) => setCommitMessage(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-                  handleCommit();
-                }
-              }}
-            />
-            <button
-              className="primary-btn compact"
-              disabled={committing || !commitMessage.trim()}
-              onClick={handleCommit}
-            >
-              <CheckIcon size={13} />
-              <span>{committing ? "提交中" : "提交"}</span>
-            </button>
-            <button
-              className="secondary-btn compact"
-              disabled={pushing}
-              onClick={handlePush}
-              title="git push 推送到远端分支"
-            >
-              <span>{pushing ? "推送中..." : "推送 ↑"}</span>
-            </button>
-            <button
-              className="secondary-btn compact"
-              onClick={() => setShowPrModal((v) => !v)}
-              title="使用 GitHub CLI 创建 Pull Request"
-            >
-              <span>PR</span>
-            </button>
-          </div>
-
-          {/* Optional Force-with-Lease & PR Drawer */}
-          <div className="diff-git-subbar">
-            <label className="checkbox-inline">
-              <input
-                type="checkbox"
-                checked={forceWithLease}
-                onChange={(e) => setForceWithLease(e.target.checked)}
-              />
-              <span>--force-with-lease</span>
-            </label>
-            <span className="muted-text" style={{ marginLeft: "auto", fontSize: 11 }}>
-              点击任意 Diff 行可向 Codex 发送行级评审
-            </span>
-          </div>
-
-          {showPrModal && (
-            <div className="diff-pr-panel">
-              <div className="diff-pr-panel-header">
-                <strong>创建 GitHub Pull Request</strong>
-                <button className="icon-btn" onClick={() => setShowPrModal(false)}>
-                  <XIcon size={12} />
-                </button>
-              </div>
-              <input
-                className="commit-input"
-                placeholder="PR 标题..."
-                value={prTitle}
-                onChange={(e) => setPrTitle(e.target.value)}
-              />
-              <textarea
-                className="commit-input"
-                rows={3}
-                placeholder="PR 描述与变更摘要..."
-                value={prBody}
-                onChange={(e) => setPrBody(e.target.value)}
-              />
-              <div className="diff-pr-panel-footer">
-                <label className="checkbox-inline">
-                  <input
-                    type="checkbox"
-                    checked={prDraft}
-                    onChange={(e) => setPrDraft(e.target.checked)}
-                  />
-                  <span>草稿 (Draft PR)</span>
-                </label>
-                <button
-                  className="primary-btn compact"
-                  disabled={creatingPr || !prTitle.trim()}
-                  onClick={handleCreatePr}
-                >
-                  {creatingPr ? "创建中..." : "创建 PR"}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Diff Code Viewer (Unified or Split + Inline Line Comments) */}
-          <div className="diff-code-container">
-            {loadingDiff ? (
-              <div className="empty-hint-small">正在加载 Diff...</div>
-            ) : !diffContent.trim() ? (
-              <div className="empty-hint-small">无差异内容</div>
-            ) : diffLayout === "split" ? (
-              <div className="diff-split-grid">
-                <div className="diff-split-col">
-                  <div className="diff-split-col-header">旧版本 (Original)</div>
-                  {parsedLines
-                    .filter((l) => l.type !== "add")
-                    .map((line, i) => (
-                      <div
-                        key={i}
-                        className={`diff-line diff-line-${line.type}`}
-                        onClick={() => setCommentLineIdx(i)}
-                      >
-                        <span className="diff-ln">{line.oldLine ?? ""}</span>
-                        <span className="diff-tx">{line.raw}</span>
-                      </div>
-                    ))}
+          {/* Scrollable Main Area */}
+          <div className="diff-content-scroll-area">
+            {diffMode === "commits" ? (
+              <div className="diff-file-list" style={{ maxHeight: "none", borderBottom: "none" }}>
+                <div className="diff-file-list-header">
+                  <span>最近提交 ({commits.length})</span>
                 </div>
-                <div className="diff-split-col">
-                  <div className="diff-split-col-header">新版本 (Modified)</div>
-                  {parsedLines
-                    .filter((l) => l.type !== "del")
-                    .map((line, i) => (
+                <div className="diff-file-items">
+                  {commits.length === 0 ? (
+                    <div className="empty-hint-small">暂无提交记录</div>
+                  ) : (
+                    commits.map((c) => (
                       <div
-                        key={i}
-                        className={`diff-line diff-line-${line.type}`}
-                        onClick={() => setCommentLineIdx(i)}
+                        key={c.hash}
+                        className={`diff-file-row ${
+                          selectedCommitHash === c.hash ? "active" : ""
+                        }`}
+                        onClick={() => setSelectedCommitHash(c.hash)}
                       >
-                        <span className="diff-ln">{line.newLine ?? ""}</span>
-                        <span className="diff-tx">{line.raw}</span>
+                        <span className="git-status-tag status-m">{c.shortHash}</span>
+                        <span className="diff-file-path" title={c.subject}>
+                          {c.subject}
+                        </span>
+                        <span className="muted-text" style={{ fontSize: 11 }}>
+                          {c.relativeTime}
+                        </span>
                       </div>
-                    ))}
+                    ))
+                  )}
+                </div>
+              </div>
+            ) : displayedEntries.length === 0 ? (
+              /* Official Codex App 1:1 Empty State Card */
+              <div className="diff-empty-state-card">
+                <div className="diff-empty-icon-circle">
+                  <CheckIcon size={24} />
+                </div>
+                <div className="diff-empty-title">
+                  {diffMode === "staged"
+                    ? "没有已暂存的更改"
+                    : diffMode === "working"
+                    ? "工作树干净，没有未提交更改"
+                    : "当前无文件差异"}
+                </div>
+                <div className="diff-empty-desc">
+                  {diffMode === "staged"
+                    ? "在更改列表中点击暂存按钮，将修改纳入提交范围"
+                    : diffMode === "working"
+                    ? "项目工作区当前没有变动，修改文件后将自动显示在这里"
+                    : "此分支与基准分支内容一致"}
                 </div>
               </div>
             ) : (
-              <div className="diff-pre">
-                {parsedLines.map((line, i) => (
-                  <React.Fragment key={i}>
-                    <div
-                      className={`diff-line diff-line-${line.type} clickable`}
-                      onClick={() =>
-                        setCommentLineIdx(commentLineIdx === i ? null : i)
-                      }
-                    >
-                      <span className="diff-ln">{line.oldLine ?? ""}</span>
-                      <span className="diff-ln">{line.newLine ?? ""}</span>
-                      <span className="diff-tx">{line.raw || " "}</span>
+              <>
+                <div className="diff-file-list">
+                  <div className="diff-file-list-header">
+                    <span>
+                      更改的文件 ({gitStatus?.entries.length ?? 0})
+                      {gitStatus && (
+                        <span className="diff-stat-inline">
+                          <span className="diff-add">+{gitStatus.additions}</span>{" "}
+                          <span className="diff-del">-{gitStatus.deletions}</span>
+                        </span>
+                      )}
+                    </span>
+                    <div className="diff-file-bulk-actions">
+                      <button
+                        type="button"
+                        className="mini-link-btn"
+                        onClick={() => setSelectedFile(null)}
+                      >
+                        全部
+                      </button>
+                      <button
+                        type="button"
+                        className="mini-link-btn"
+                        onClick={() => handleStage()}
+                      >
+                        全暂存
+                      </button>
+                      <button
+                        type="button"
+                        className="mini-link-btn"
+                        onClick={() => handleUnstage()}
+                      >
+                        全取消
+                      </button>
                     </div>
-                    {commentLineIdx === i && (
-                      <div className="diff-inline-comment-box">
-                        <input
-                          className="commit-input"
-                          placeholder={`针对此行向 Codex 提出修改意见...`}
-                          value={commentText}
-                          onChange={(e) => setCommentText(e.target.value)}
-                          autoFocus
-                        />
-                        <button
-                          className="primary-btn compact"
-                          onClick={() => {
-                            if (!commentText.trim()) return;
-                            const targetLabel = selectedFile || "当前变更";
-                            const prompt = `请查看 \`${targetLabel}\` 中的这行变更：\n\`\`\`diff\n${line.raw}\n\`\`\`\n评审意见：${commentText.trim()}`;
-                            onSendReviewComment?.(prompt);
-                            setCommentText("");
-                            setCommentLineIdx(null);
-                          }}
+                  </div>
+
+                  <div className="diff-file-items">
+                    {displayedEntries.map((entry) => {
+                      const isViewed = Boolean(viewedFiles[entry.path]);
+                      return (
+                        <div
+                          key={entry.path}
+                          className={`diff-file-row ${
+                            selectedFile === entry.path ? "active" : ""
+                          } ${isViewed ? "viewed" : ""}`}
+                          onClick={() => setSelectedFile(entry.path)}
                         >
-                          发送给 Codex
-                        </button>
+                          <span
+                            className={`git-status-tag status-${
+                              entry.untracked ? "u" : entry.staged ? "s" : "m"
+                            }`}
+                          >
+                            {entry.status || "M"}
+                          </span>
+                          <span className="diff-file-path" title={entry.path}>
+                            {entry.path}
+                          </span>
+                          <div
+                            className="diff-file-row-btns"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <button
+                              type="button"
+                              className={`mini-action-btn ${isViewed ? "active" : ""}`}
+                              onClick={() =>
+                                setViewedFiles((prev) => ({
+                                  ...prev,
+                                  [entry.path]: !prev[entry.path],
+                                }))
+                              }
+                              title="标记为已审阅"
+                            >
+                              ✓
+                            </button>
+                            {!entry.staged ? (
+                              <button
+                                type="button"
+                                className="mini-action-btn"
+                                onClick={() => handleStage(entry.path)}
+                                title="暂存文件"
+                              >
+                                <PlusIcon size={12} />
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                className="mini-action-btn"
+                                onClick={() => handleUnstage(entry.path)}
+                                title="取消暂存"
+                              >
+                                -
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              className="mini-action-btn danger"
+                              onClick={() => handleDiscard(entry.path)}
+                              title="放弃更改"
+                            >
+                              <TrashIcon size={12} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Diff Code Viewer (Unified or Split + Inline Line Comments) */}
+                <div className="diff-code-container">
+                  {loadingDiff ? (
+                    <div className="empty-hint-small">正在加载 Diff...</div>
+                  ) : !diffContent.trim() ? (
+                    <div className="empty-hint-small">选择文件以查看详细差异</div>
+                  ) : diffLayout === "split" ? (
+                    <div className="diff-split-grid">
+                      <div className="diff-split-col">
+                        <div className="diff-split-col-header">旧版本 (Original)</div>
+                        {parsedLines
+                          .filter((l) => l.type !== "add")
+                          .map((line, i) => (
+                            <div
+                              key={i}
+                              className={`diff-line diff-line-${line.type}`}
+                              onClick={() => setCommentLineIdx(i)}
+                            >
+                              <span className="diff-ln">{line.oldLine ?? ""}</span>
+                              <span className="diff-tx">{line.raw}</span>
+                            </div>
+                          ))}
                       </div>
-                    )}
-                  </React.Fragment>
-                ))}
-              </div>
+                      <div className="diff-split-col">
+                        <div className="diff-split-col-header">新版本 (Modified)</div>
+                        {parsedLines
+                          .filter((l) => l.type !== "del")
+                          .map((line, i) => (
+                            <div
+                              key={i}
+                              className={`diff-line diff-line-${line.type}`}
+                              onClick={() => setCommentLineIdx(i)}
+                            >
+                              <span className="diff-ln">{line.newLine ?? ""}</span>
+                              <span className="diff-tx">{line.raw}</span>
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="diff-pre">
+                      {parsedLines.map((line, i) => (
+                        <React.Fragment key={i}>
+                          <div
+                            className={`diff-line diff-line-${line.type} clickable`}
+                            onClick={() =>
+                              setCommentLineIdx(commentLineIdx === i ? null : i)
+                            }
+                          >
+                            <span className="diff-ln">{line.oldLine ?? ""}</span>
+                            <span className="diff-ln">{line.newLine ?? ""}</span>
+                            <span className="diff-tx">{line.raw || " "}</span>
+                          </div>
+                          {commentLineIdx === i && (
+                            <div className="diff-inline-comment-box">
+                              <input
+                                className="commit-input"
+                                placeholder={`针对此行向 Codex 提出修改意见...`}
+                                value={commentText}
+                                onChange={(e) => setCommentText(e.target.value)}
+                                autoFocus
+                              />
+                              <button
+                                type="button"
+                                className="primary-btn compact"
+                                onClick={() => {
+                                  if (!commentText.trim()) return;
+                                  const targetLabel = selectedFile || "当前变更";
+                                  const prompt = `请查看 \`${targetLabel}\` 中的这行变更：\n\`\`\`diff\n${line.raw}\n\`\`\`\n评审意见：${commentText.trim()}`;
+                                  onSendReviewComment?.(prompt);
+                                  setCommentText("");
+                                  setCommentLineIdx(null);
+                                }}
+                              >
+                                发送给 Codex
+                              </button>
+                            </div>
+                          )}
+                        </React.Fragment>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
             )}
           </div>
+
+          {/* Docked Commit & Push Section at the Bottom */}
+          {diffMode !== "commits" && (
+            <div className="diff-commit-dock">
+              {showPrModal && (
+                <div className="diff-pr-panel">
+                  <div className="diff-pr-panel-header">
+                    <strong>创建 GitHub Pull Request</strong>
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      onClick={() => setShowPrModal(false)}
+                    >
+                      <XIcon size={12} />
+                    </button>
+                  </div>
+                  <input
+                    className="commit-input"
+                    placeholder="PR 标题..."
+                    value={prTitle}
+                    onChange={(e) => setPrTitle(e.target.value)}
+                  />
+                  <textarea
+                    className="commit-input"
+                    rows={3}
+                    placeholder="PR 描述与变更摘要..."
+                    value={prBody}
+                    onChange={(e) => setPrBody(e.target.value)}
+                    style={{ height: "auto" }}
+                  />
+                  <div className="diff-pr-panel-footer">
+                    <label className="checkbox-inline">
+                      <input
+                        type="checkbox"
+                        checked={prDraft}
+                        onChange={(e) => setPrDraft(e.target.checked)}
+                      />
+                      <span>草稿 (Draft PR)</span>
+                    </label>
+                    <button
+                      type="button"
+                      className="primary-btn compact"
+                      disabled={creatingPr || !prTitle.trim()}
+                      onClick={handleCreatePr}
+                    >
+                      {creatingPr ? "创建中..." : "创建 PR"}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div className="diff-commit-box">
+                <input
+                  className="commit-input"
+                  placeholder="输入 Git 提交说明 (留空自动生成)..."
+                  value={commitMessage}
+                  onChange={(e) => setCommitMessage(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                      handleCommit();
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  className="primary-btn compact"
+                  disabled={committing || (!commitMessage.trim() && displayedEntries.length === 0)}
+                  onClick={handleCommit}
+                  title="git commit 提交更改"
+                >
+                  <CheckIcon size={13} />
+                  <span>{committing ? "提交中" : "提交"}</span>
+                </button>
+                <button
+                  type="button"
+                  className="secondary-btn compact"
+                  disabled={pushing}
+                  onClick={handlePush}
+                  title="git push 推送到远端分支"
+                >
+                  <span>{pushing ? "推送中..." : "推送 ↑"}</span>
+                </button>
+                <button
+                  type="button"
+                  className="secondary-btn compact"
+                  onClick={() => setShowPrModal((v) => !v)}
+                  title="使用 GitHub CLI 创建 Pull Request"
+                >
+                  <span>PR</span>
+                </button>
+              </div>
+
+              <div className="diff-git-subbar">
+                <label className="checkbox-inline">
+                  <input
+                    type="checkbox"
+                    checked={forceWithLease}
+                    onChange={(e) => setForceWithLease(e.target.checked)}
+                  />
+                  <span>--force-with-lease</span>
+                </label>
+                <span className="muted-text" style={{ marginLeft: "auto", fontSize: 11 }}>
+                  点击任意 Diff 行可向 Codex 发送行级评审
+                </span>
+              </div>
+            </div>
+          )}
         </div>
       ) : null}
 
       {/* TAB 2: FILES & EDITOR */}
-      {activeTab === "files" ? (
+      {activeKind === "files" ? (
         <div className="diff-drawer-body">
           <div className="file-browser-path-bar">
             <span className="file-browser-cwd" title={currentDir}>
@@ -1579,12 +1889,24 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                 <span className="file-editor-title" title={filePreview.path}>
                   {filePreview.path.split(/[\\/]/).pop()}
                 </span>
-                <input
-                  className="in-file-search-input"
-                  placeholder="查找内容..."
-                  value={inFileSearch}
-                  onChange={(e) => setInFileSearch(e.target.value)}
-                />
+                <div style={{ display: "flex", alignItems: "center", gap: 6, flex: 1 }}>
+                  <input
+                    className="in-file-search-input"
+                    placeholder="查找内容..."
+                    value={inFileSearch}
+                    onChange={(e) => setInFileSearch(e.target.value)}
+                  />
+                  {inFileSearch.trim() && (
+                    <span style={{ fontSize: 11, color: "var(--text-tertiary)", whiteSpace: "nowrap" }}>
+                      {
+                        editedContent
+                          .toLowerCase()
+                          .split(inFileSearch.toLowerCase()).length - 1
+                      }{" "}
+                      处匹配
+                    </span>
+                  )}
+                </div>
                 {!filePreview.isBinary && !filePreview.isImage && (
                   <button
                     className="primary-btn compact"
@@ -1618,7 +1940,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
       ) : null}
 
       {/* TAB 3: SUMMARY & ARTIFACTS */}
-      {activeTab === "summary" ? (
+      {activeKind === "summary" ? (
         <div className="diff-drawer-body workbench-summary-body">
           <div className="workbench-section-card">
             <div className="workbench-section-title">
@@ -1684,68 +2006,6 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                 ))}
               </div>
             )}
-          </div>
-        </div>
-      ) : null}
-
-      {/* TAB 4: IN-APP BROWSER PREVIEW */}
-      {activeTab === "browser" ? (
-        <div className="diff-drawer-body workbench-browser-body">
-          <div className="browser-url-bar">
-            <input
-              className="commit-input"
-              value={browserInputUrl}
-              onChange={(e) => setBrowserInputUrl(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  setBrowserUrl(browserInputUrl.trim());
-                }
-              }}
-              placeholder="http://localhost:1420"
-            />
-            <button
-              className="secondary-btn compact"
-              onClick={() => setBrowserUrl(browserInputUrl.trim())}
-            >
-              前往
-            </button>
-            <button
-              className="icon-btn"
-              onClick={() => setBrowserKey((k) => k + 1)}
-              title="刷新网页预览"
-            >
-              <RefreshIcon size={13} />
-            </button>
-          </div>
-
-          <div className="browser-iframe-wrap">
-            <iframe
-              key={`${browserUrl}-${browserKey}`}
-              src={browserUrl}
-              title="Codex In-App Browser Preview"
-              className="browser-preview-iframe"
-            />
-          </div>
-
-          <div className="diff-commit-box">
-            <input
-              className="commit-input"
-              placeholder="输入针对当前预览页面的视觉/交互反馈发给 Codex..."
-              value={browserAnnotation}
-              onChange={(e) => setBrowserAnnotation(e.target.value)}
-            />
-            <button
-              className="primary-btn compact"
-              disabled={!browserAnnotation.trim()}
-              onClick={() => {
-                onSendReviewComment?.(
-                  `[网页预览反馈 ${browserUrl}]：${browserAnnotation.trim()}`
-                );
-                setBrowserAnnotation("");
-              }}
-            >
-              发送反馈
-            </button>
           </div>
         </div>
       ) : null}

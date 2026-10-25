@@ -221,3 +221,41 @@
 - 最终全量验证（`scripts/verify-all.ps1`）**ALL CHECKS PASSED**：tsc / vite build / cargo check（0 error 0 warning）/ cargo test automations（17 passed）/ 协议探测 9+22+28+16 全通过。
 - 新增 `docs/FINAL-REPORT.md`：最终交付报告（结论、能力清单、验证证据、交付物索引、范围声明/未实现项、下一步建议）。
 - 目标评估：官方 Codex 桌面端核心链路（对话/审批/diff/终端/文件/设置/Goal/队列/分区/项目/插件/Codex Review/Hooks/自动化/原生菜单通知/归档/分页）已全部真实接线并通过验证；剩余项均为范围声明内（云端/实时语音/官方插件类/多窗口/附件持久化等），目标判定完成。
+
+## Round 9 — 工作台标签系统 / 自绘标题栏 / 附件持久化 / PR 列表 / 桌面伴侣切帧 / 1:1 对齐
+
+### 工作台标签系统（Workbench Tabs，1:1 对标 §2.2）
+- `DiffDrawer` 升级为通用右侧工作台，支持 `newTab`、`changes`、`files`、`summary`、`browser` 多标签切换与动态增删。
+- 新增 `src/components/NewTabPage.tsx/.css`：新标签页快速入口（变更、终端、文件、Side Chat、网址导航）。
+- 新增 `src/components/BrowserToolbar.tsx/.css`：浏览器地址栏、前进、后退、刷新、外置浏览器打开。
+- 全屏/最大化切换（`isFullWidth`）与 Split/Unified Diff 视图切换。
+
+### 标题栏与主菜单（AppTitleBar，1:1 对标 §1.1 / §7.4）
+- 新增 `src/components/AppTitleBar.tsx/.css`：自绘标题栏，包含后退/前进、侧栏折叠、文件/编辑/视图/窗口/帮助顶级下拉菜单、窗口标题及窗口控制。
+- 菜单项快捷键与 `src/shortcuts.ts` 全局按键映射联动。
+
+### 线程附件持久化（thread/attachment/*，1:1 对标 §3.1）
+- 新增 `src/threadAttachments.ts`：封装 `thread/attachment/add`（支持 file 与 image 类型）、`thread/attachment/list`、`thread/attachment/remove`。
+- 新增 `src/components/ComposerAttachmentChip.tsx`：附件缩略图预览与行内删除。
+- 会话切换时自动加载并回填已持久化附件；发送新会话时自动批量持久化附件。
+- 新增探测脚本 `scripts/protocol-verify/verify-attachments.mjs`（12/12 隔离协议探测通过）。
+
+### Pull Requests 与 Code Review 双模式（1:1 对标 §4.4）
+- `CodeReviewView` 增加 Local Review 与 Pull Requests 双标签。
+- Rust 新增 `git_list_prs`，结合 GitHub CLI（`gh_status`），真实展示 PR 列表（编号、标题、分支、增减行、Draft 状态）并提供快捷审查。
+
+### 官方桌面伴侣（Mini & Pets）切帧加载（1:1 对标 §5.2 / §7.5）
+- Rust 新增 `pets_list_installed`，遍历 `~/.codex/pets/*/pet.json` 并动态加载 WebP spritesheet 转换为 Data URL。
+- 新增 `src/components/PetSprite.tsx` 切帧渲染组件，驱动官方像素伴侣动画。
+- 设置页真实读取已安装宠物并配置显示模式（always-visible / on-demand）与尺寸缩放。
+
+### 侧栏与主导航 1:1 对齐（1:1 对标 §1.1 / §2.1）
+- `NavigationRail` 重构为官方结构（首页、定时任务、探索 popover、插件、代码审查、底部个人资料头像弹窗）。
+- `CodexSidebar` 增加「活动（Activity）」过滤（未读/运行中/等待审批过滤），侧栏产品模式切换 popover（Codex / ChatGPT / Work），Pin/Archive/Delete 菜单完备。
+- 新增 `src/components/ProjectSourcesPopover.tsx`：多根目录与 Source Folders 管理。
+- 新增 `src/components/ToolCallCards.tsx`：结构化渲染子代理任务与 MCP 工具调用卡片。
+
+### 验证
+- `pwsh -NoProfile -File ./scripts/verify-all.ps1` → **ALL CHECKS PASSED**
+- 协议探测扩充至 5 组（9+22+28+16+12 = **87/87 passed**）。
+- TypeScript typecheck (0 error)、Vite production build、Cargo check (0 error)、Cargo test 17 passed。

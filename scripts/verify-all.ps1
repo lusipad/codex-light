@@ -47,7 +47,8 @@ try {
       "scripts/protocol-verify/verify-appserver-shapes.mjs",
       "scripts/protocol-verify/verify-batch2-shapes.mjs",
       "scripts/protocol-verify/verify-batch3-shapes.mjs",
-      "scripts/protocol-verify/verify-batch4-shapes.mjs"
+      "scripts/protocol-verify/verify-batch4-shapes.mjs",
+      "scripts/protocol-verify/verify-attachments.mjs"
     )
     foreach ($probe in $probes) {
       Invoke-Step "Protocol probe: $probe" { node $probe }
