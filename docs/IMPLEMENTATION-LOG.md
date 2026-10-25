@@ -316,3 +316,42 @@
   - Cargo check：SUCCESS (0 warning 0 error)
   - Cargo unit tests：17 passed, 0 failed
   - 5 套独立协议探针脚本：**87/87 全部通过** (9 + 22 + 28 + 16 + 12 = 87)
+
+---
+
+## Round 9 — 官方细节 1:1 深度复刻与全量表面闭环
+
+### 1. 侧边栏与会话组织对齐官方 `smn` 逻辑
+- **项目过滤规则**：实测逆向官方 Electron asar (`app-initial-fd3c4b862660.js`)，在 `By project` 组织模式下，主会话列表严格过滤掉归属于已登记项目的会话（`e.projectKey == null || !visibleProjectKeys.has(e.projectKey)`），防止跨项目内容重叠污染。
+- **Organize 浮层菜单**：提供 `groupByMenu`（`By project` vs `In one list`）、`chatsSortMenu`（`Last updated` vs `Created`）与 `filterScope`，支持即时动态排序与分组。
+- **活动视图与工作区联动**：点击项目或独立会话时自动双向同步当前活跃工作区路径；增加项目胶囊徽标与未读状态标记。
+
+### 2. 会话（Thread）与输入框（Composer）深度增强
+- **会话内查找栏 (`ThreadFindBar`)**：实测对齐 `codex.threadFindBar.*`，支持 `Ctrl+F` 唤起、会话消息与代码差异跨域过滤、上一个/下一个精准跳转与 `.find-highlight-pulse` 平滑视觉聚焦。
+- **消息级动作与收藏书签**：用户气泡新增「🌿 从此分叉」与「⭐ 收藏 / 书签」；右侧快速跳转轨道新增金色收藏高亮圆点，持久化于本地缓存。
+- **代码块快捷复制**：新增快捷键 `Ctrl+Shift+;` 快速复制最后一轮生成的有效代码块。
+- **36 个官方斜杠命令全矩阵**：补齐官方全量标准斜杠命令（`/plan`, `/goal`, `/review`, `/fork`, `/side`, `/new`, `/compact`, `/init`, `/mcp`, `/status`, `/usage`, `/model`, `/reasoning`, `/speed`, `/project`, `/chat`, `/local`, `/worktree`, `/cloud`, `/cloud-environment`, `/ide`, `/memories`, `/rename`, `/archive`, `/star`, `/feedback`, `/pet`, `/share`, `/approve`, `/resume`, `/hotkey-new` 等）。
+
+### 3. 代码变更抽屉（DiffDrawer）全能进化
+- **本轮改动（Last turn diff）**：新增差异来源切换，支持提取最近一轮轮次内的文件改动对比。
+- **代码换行开关（Word wrap）**：新增一键换行切换，长行代码自适应折行。
+- **补丁导出与复制**：新增 `复制 git apply` 与 `复制完整 Patch` 按钮，便于命令行极速应用代码变动。
+- **智能提交信息生成与一键推送**：内置 Conventional Commits 语义化提交信息自动生成器（`✨ 生成`）以及一键暂存、提交并推送到远端仓库。
+
+### 4. 官方 9 大音效主题与通知策略（1:1 音效矩阵）
+- **Web Audio 真实声音合成引擎 (`src/sound.ts`)**：纯前端无外部静态依赖合成官方全部 9 款提示音效（`default`, `basso`, `classic`, `glass`, `ping`, `pop`, `purr`, `tink`, `none`）。
+- **轮次完成策略**：对齐官方 `turnCompletionPolicy`（`unfocused` 非焦点后台提醒、`always` 始终提醒、`never` 完全静音）。
+- **设置中心试听与权限指引**：增加「▶ 试听声音」按钮与 Windows Toast 权限检测。
+
+### 5. 设置中心全景 24 分区与 Command Palette 索引
+- **补齐官方设置分区**：开发者个人资料 (`profile`)、代码审查规范 (`code-review`)、电脑操控与桌面自动化 (`computer-use`)、应用快照上下文 (`appshots`)、浏览器自动化 (`browser-use`)、云端执行偏好 (`cloud-settings`)。
+- **全量命令面板索引**：`QuickSearchModal` (`Ctrl+K`) 全量索引所有 24 个设置分区，支持关键词模糊匹配与一键直达跳转。
+- **顶栏上下文 Token 用量与速率限制仪表盘**：挂接 `TokenUsageMeter`，提供紧凑环形进度指示器（Compact Donut Ring）与悬浮明细卡片（输入/缓存/输出/推理/窗口剩余及主次限额重置倒计时）。
+
+### 6. 全量验证结果
+- `pwsh -NoProfile -File ./scripts/verify-all.ps1`：**ALL CHECKS PASSED**
+  - TypeScript typecheck (`tsc --noEmit`)：0 error
+  - Vite production build：SUCCESS (1,676 模块)
+  - Cargo check：SUCCESS (0 warning 0 error)
+  - Cargo unit tests：17 passed, 0 failed
+  - 5 套独立协议探针脚本：**87/87 全部通过** (9 + 22 + 28 + 16 + 12 = 87)
