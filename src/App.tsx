@@ -1488,6 +1488,10 @@ export const App: React.FC = () => {
   const shortcutTimestampsRef = useRef<Record<string, number>>({});
   const threadsRef = useRef<ThreadSummary[]>([]);
   threadsRef.current = threads;
+  const workspacesRef = useRef<WorkspaceRootItem[]>([]);
+  workspacesRef.current = workspaces;
+  const workspaceHintsRef = useRef<Record<string, string>>({});
+  workspaceHintsRef.current = workspaceHints;
 
   /**
    * 统一分发快捷键动作，并去重：原生菜单 accelerator 与 webview keydown
@@ -1535,7 +1539,7 @@ export const App: React.FC = () => {
     setWorkspaces((prev) =>
       prev.map((w) => ({
         ...w,
-        isActive: w.path.replace(/\\/g, "/").toLowerCase() === path.replace(/\\/g, "/").toLowerCase(),
+        active: w.path.replace(/\\/g, "/").toLowerCase() === path.replace(/\\/g, "/").toLowerCase(),
       }))
     );
     try {
@@ -1755,6 +1759,22 @@ export const App: React.FC = () => {
         }
       }
       setTurns(loadedTurns);
+
+      // 同步工作区关联状态：若该会话属于某个已知工作区且尚未激活，则自动切换对应工作区
+      const candidateCwd =
+        fullRes?.thread?.cwd ||
+        threadsRef.current.find((t) => t.id === threadId)?.cwd ||
+        workspaceHintsRef.current[threadId];
+      if (candidateCwd) {
+        const normCand = candidateCwd.replace(/\\/g, "/").toLowerCase();
+        const matchedWs = workspacesRef.current.find((w) => {
+          const nw = w.path.replace(/\\/g, "/").toLowerCase();
+          return nw && (normCand === nw || normCand.startsWith(nw + "/"));
+        });
+        if (matchedWs && !matchedWs.active) {
+          void handleSelectWorkspace(matchedWs.path);
+        }
+      }
     } catch (e) {
       console.warn("Failed to read/resume thread:", e);
     }
@@ -1775,7 +1795,7 @@ export const App: React.FC = () => {
     } catch {
       // ignore goal read failures
     }
-  }, []);
+  }, [handleSelectWorkspace]);
 
   /** 向上滚动加载更早的轮次（thread/turns/list 的 nextCursor） */
   const loadEarlierTurns = useCallback(async () => {

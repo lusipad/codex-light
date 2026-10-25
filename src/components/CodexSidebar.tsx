@@ -122,7 +122,36 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
   const [showSearchInput, setShowSearchInput] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
-  const [recentFilterMode, setRecentFilterMode] = useState<"all" | "standalone">("all");
+  const [organizeMode, setOrganizeMode] = useState<"project" | "list">(() => {
+    return (localStorage.getItem("codex_sidebar_organize_mode") as "project" | "list") || "project";
+  });
+  const [chatSortMode, setChatSortMode] = useState<"updated_at" | "created_at">(() => {
+    return (localStorage.getItem("codex_sidebar_sort_mode") as "updated_at" | "created_at") || "updated_at";
+  });
+  const [filterScope, setFilterScope] = useState<"projectless" | "current" | "all">(() => {
+    return (localStorage.getItem("codex_sidebar_filter_scope") as "projectless" | "current" | "all") || "projectless";
+  });
+  const [showOrganizeMenu, setShowOrganizeMenu] = useState(false);
+  const organizeMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!showOrganizeMenu) return;
+    const onMouseDown = (e: MouseEvent) => {
+      if (organizeMenuRef.current && !organizeMenuRef.current.contains(e.target as Node)) {
+        setShowOrganizeMenu(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setShowOrganizeMenu(false);
+    };
+    window.addEventListener("mousedown", onMouseDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("mousedown", onMouseDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [showOrganizeMenu]);
+
   const [renamingThreadId, setRenamingThreadId] = useState<string | null>(null);
   const [renamingText, setRenamingText] = useState("");
 
@@ -255,9 +284,37 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
     );
   }, [threads, searchQuery, activityOnly, activityThreadIds]);
 
+  // 辅助函数：根据 hintCwd 查找对应的已注册工作区
+  const getThreadWorkspace = useCallback(
+    (t: ThreadSummary): WorkspaceRootItem | null => {
+      const hintCwd = normPath(t.cwd || workspaceHints[t.id]);
+      if (!hintCwd) return null;
+      return (
+        workspaces.find((ws) => {
+          const nWs = normPath(ws.path);
+          return nWs && (hintCwd === nWs || hintCwd.startsWith(nWs + "/"));
+        }) || null
+      );
+    },
+    [workspaces, workspaceHints]
+  );
+
+  // 全局排序后的会话列表
+  const sortedFilteredThreads = useMemo(() => {
+    const list = [...filteredThreads];
+    if (chatSortMode === "created_at") {
+      return list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    }
+    return list.sort((a, b) => {
+      const bTime = (b as any).recencyAt || b.updatedAt || b.createdAt || 0;
+      const aTime = (a as any).recencyAt || a.updatedAt || a.createdAt || 0;
+      return bTime - aTime;
+    });
+  }, [filteredThreads, chatSortMode]);
+
   const pinnedThreads = useMemo(
-    () => filteredThreads.filter((t) => pinnedThreadIds.includes(t.id)),
-    [filteredThreads, pinnedThreadIds]
+    () => sortedFilteredThreads.filter((t) => pinnedThreadIds.includes(t.id)),
+    [sortedFilteredThreads, pinnedThreadIds]
   );
 
   // Map threads to workspaces
@@ -266,35 +323,65 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
     for (const ws of workspaces) {
       map[normPath(ws.path)] = [];
     }
-    for (const t of filteredThreads) {
-      const hintCwd = t.cwd || workspaceHints[t.id] || "";
-      const nCwd = normPath(hintCwd);
-      if (!nCwd) continue;
-      // Match exact or child directory of a workspace root
-      for (const ws of workspaces) {
-        const nWs = normPath(ws.path);
-        if (nWs && (nCwd === nWs || nCwd.startsWith(nWs + "/"))) {
-          map[nWs].push(t);
-          break;
-        }
+    for (const t of sortedFilteredThreads) {
+      if (pinnedThreadIds.includes(t.id)) continue;
+      const ws = getThreadWorkspace(t);
+      if (ws) {
+        map[normPath(ws.path)]?.push(t);
       }
     }
     return map;
-  }, [filteredThreads, workspaces, workspaceHints]);
+  }, [sortedFilteredThreads, workspaces, getThreadWorkspace, pinnedThreadIds]);
 
-  const recentThreads = useMemo(() => {
-    const unpinned = filteredThreads.filter((t) => !pinnedThreadIds.includes(t.id));
-    if (recentFilterMode === "all") return unpinned;
-    // Only threads not belonging to any registered workspace
-    return unpinned.filter((t) => {
-      const hintCwd = normPath(t.cwd || workspaceHints[t.id]);
-      if (!hintCwd) return true;
-      return !workspaces.some((ws) => {
-        const nWs = normPath(ws.path);
-        return nWs && (hintCwd === nWs || hintCwd.startsWith(nWs + "/"));
+  const activeWsKey = normPath(activeWorkspace?.path);
+
+  // 主聊天/活动会话列表 (对标官方 smn / TasksSection 逻辑)
+  const mainChatThreads = useMemo(() => {
+    // 排除置顶
+    const unpinned = sortedFilteredThreads.filter((t) => !pinnedThreadIds.includes(t.id));
+
+    // 1. 如果处于 Activity 视图，直接显示过滤好的活动/未读会话
+    if (activityOnly) {
+      return unpinned;
+    }
+
+    // 2. 单列表模式 (In one list - 官方 flatProjectSidebar.inOneList)
+    if (organizeMode === "list") {
+      if (filterScope === "current" && activeWsKey) {
+        return unpinned.filter((t) => {
+          const ws = getThreadWorkspace(t);
+          return ws && normPath(ws.path) === activeWsKey;
+        });
+      }
+      if (filterScope === "projectless") {
+        return unpinned.filter((t) => !getThreadWorkspace(t));
+      }
+      return unpinned;
+    }
+
+    // 3. 按项目分组模式 (By project - 官方默认 smn 逻辑)
+    // 属于项目的会话已经在项目树内呈现，主列表默认仅显示独立/无项目会话，
+    // 消除项目串户与重复显示；用户也可主动选择查看当前项目或全部
+    if (filterScope === "all") {
+      return unpinned;
+    }
+    if (filterScope === "current" && activeWsKey) {
+      return unpinned.filter((t) => {
+        const ws = getThreadWorkspace(t);
+        return ws && normPath(ws.path) === activeWsKey;
       });
-    });
-  }, [filteredThreads, pinnedThreadIds, recentFilterMode, workspaces, workspaceHints]);
+    }
+    // 默认仅显示独立无项目会话 (Projectless)
+    return unpinned.filter((t) => !getThreadWorkspace(t));
+  }, [
+    sortedFilteredThreads,
+    pinnedThreadIds,
+    activityOnly,
+    organizeMode,
+    filterScope,
+    activeWsKey,
+    getThreadWorkspace,
+  ]);
 
   /** 会话当前所属分区（本地乐观覆盖优先于 props 的 section 字段）。 */
   const sectionIdOfThread = useCallback(
@@ -325,11 +412,17 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
     return normPath(activeWorkspace?.path) === key;
   };
 
-  const toggleProjectExpand = (wsPath: string) => {
+  const toggleProjectExpand = (wsPath: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
     const key = normPath(wsPath);
     const current = isProjectExpanded(wsPath);
     setExpandedProjects((prev) => ({ ...prev, [key]: !current }));
+  };
+
+  const handleSelectProject = (wsPath: string) => {
     onSelectWorkspace(wsPath);
+    // 选中时自动展开该项目
+    setExpandedProjects((prev) => ({ ...prev, [normPath(wsPath)]: true }));
   };
 
   const startRename = (t: ThreadSummary, e: React.MouseEvent) => {
@@ -638,10 +731,26 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
     );
   };
 
+  const formatRelativeTime = (ts?: number) => {
+    if (!ts) return "";
+    const ms = ts > 1e11 ? ts : ts * 1000;
+    const now = Date.now();
+    const diff = now - ms;
+    if (diff < 60000) return "刚刚";
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}m`;
+    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h`;
+    if (diff < 86400000 * 2) return "昨天";
+    const d = new Date(ms);
+    return `${d.getMonth() + 1}/${d.getDate()}`;
+  };
+
   const renderThreadRow = (t: ThreadSummary, indented = false) => {
     const isActive = activeRoute === "thread" && activeThreadId === t.id;
     const isPinned = pinnedThreadIds.includes(t.id);
     const currentSectionId = sectionIdOfThread(t);
+    const threadWs = getThreadWorkspace(t);
+    const timeHint = formatRelativeTime(t.updatedAt || t.createdAt);
+
     return (
       <div
         key={t.id}
@@ -686,6 +795,17 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
               ) : null}
               {t.name || t.preview || "新聊天"}
             </span>
+          )}
+          {!indented && threadWs && (
+            <span
+              className="sidebar-thread-project-badge"
+              title={`所属项目: ${threadWs.path}`}
+            >
+              {threadWs.label || threadWs.path.split(/[/\\]/).pop()}
+            </span>
+          )}
+          {timeHint && (
+            <span className="sidebar-thread-time-hint">{timeHint}</span>
           )}
         </div>
         <div className="sidebar-thread-actions">
@@ -1085,113 +1205,250 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
           </div>
         </div>
 
-        <div className="sidebar-projects-tree">
-          {workspaces.map((ws) => {
-            const isSelectedWs = normPath(activeWorkspace?.path) === normPath(ws.path);
-            const expanded = isProjectExpanded(ws.path);
-            const projectThreads = threadsByProject[normPath(ws.path)] || [];
+        {/* Section B: 项目 (Projects) —— 组织模式为 project 时展示 */}
+        {organizeMode === "project" && (
+          <div className="sidebar-projects-tree">
+            {workspaces.map((ws) => {
+              const isSelectedWs = normPath(activeWorkspace?.path) === normPath(ws.path);
+              const expanded = isProjectExpanded(ws.path);
+              const projectThreads = threadsByProject[normPath(ws.path)] || [];
 
-            return (
-              <div key={ws.path} className="sidebar-project-group">
-                <div
-                  className={`sidebar-project-row ${isSelectedWs ? "selected" : ""}`}
-                  onClick={() => toggleProjectExpand(ws.path)}
-                  title={ws.path}
-                >
-                  <div className="sidebar-project-left">
-                    <span className="project-folder-icon">
-                      {expanded ? (
-                        <FolderIcon size={14} />
-                      ) : (
-                        <ChevronRightIcon size={13} />
+              return (
+                <div key={ws.path} className="sidebar-project-group">
+                  <div
+                    className={`sidebar-project-row ${isSelectedWs ? "selected" : ""}`}
+                    onClick={() => handleSelectProject(ws.path)}
+                    title={ws.path}
+                  >
+                    <div className="sidebar-project-left">
+                      <span
+                        className="project-folder-icon"
+                        onClick={(e) => toggleProjectExpand(ws.path, e)}
+                        title={expanded ? "点击折叠" : "点击展开"}
+                      >
+                        {expanded ? (
+                          <ChevronDownIcon size={13} />
+                        ) : (
+                          <ChevronRightIcon size={13} />
+                        )}
+                      </span>
+                      <span className="sidebar-project-name">
+                        {ws.label || ws.path.split(/[/\\]/).pop()}
+                      </span>
+                      {projectThreads.length > 0 && (
+                        <span className="project-count-badge" title={`${projectThreads.length} 个会话`}>
+                          {projectThreads.length}
+                        </span>
                       )}
-                    </span>
-                    <span className="sidebar-project-name">
-                      {ws.label || ws.path.split(/[/\\]/).pop()}
-                    </span>
-                  </div>
+                    </div>
 
-                  <div className="sidebar-project-actions">
-                    {onRevealPath && (
+                    <div className="sidebar-project-actions">
+                      {onRevealPath && (
+                        <button
+                          type="button"
+                          className="thread-icon-btn"
+                          title="在系统文件管理器中打开文件夹"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onRevealPath(ws.path, e);
+                          }}
+                        >
+                          📂
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="thread-icon-btn"
-                        title="在系统文件管理器中打开文件夹"
+                        title="在此项目中新建聊天"
                         onClick={(e) => {
                           e.stopPropagation();
-                          onRevealPath(ws.path, e);
+                          onSelectWorkspace(ws.path);
+                          onStartNewChat(ws.path);
                         }}
                       >
-                        📂
+                        <PlusIcon size={12} />
                       </button>
-                    )}
-                    <button
-                      type="button"
-                      className="thread-icon-btn"
-                      title="在此项目中新建聊天"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onSelectWorkspace(ws.path);
-                        onStartNewChat(ws.path);
-                      }}
-                    >
-                      <PlusIcon size={12} />
-                    </button>
-                    {workspaces.length > 1 && (
-                      <button
-                        type="button"
-                        className="thread-icon-btn"
-                        title="移除项目"
-                        onClick={(e) => onRemoveWorkspace(ws.path, e)}
-                      >
-                        <CloseIcon size={11} />
-                      </button>
-                    )}
+                      {workspaces.length > 1 && (
+                        <button
+                          type="button"
+                          className="thread-icon-btn"
+                          title="移除项目"
+                          onClick={(e) => onRemoveWorkspace(ws.path, e)}
+                        >
+                          <CloseIcon size={11} />
+                        </button>
+                      )}
+                    </div>
                   </div>
+
+                  {expanded && (
+                    <div className="sidebar-project-children">
+                      {projectThreads.length === 0 ? (
+                        <div className="sidebar-project-empty">暂无聊天</div>
+                      ) : (
+                        projectThreads.map((t) => renderThreadRow(t, true))
+                      )}
+                    </div>
+                  )}
                 </div>
+              );
+            })}
+          </div>
+        )}
 
-                {expanded && (
-                  <div className="sidebar-project-children">
-                    {projectThreads.length === 0 ? (
-                      <div className="sidebar-project-empty">暂无聊天</div>
-                    ) : (
-                      projectThreads.map((t) => renderThreadRow(t, true))
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Section C: 最近 (Recent) */}
+        {/* Section C: 聊天列表 (Chats / Activity) —— 对标官方 TasksSection */}
         <div className="sidebar-section-header-row" style={{ marginTop: 12 }}>
-          <span className="sidebar-section-label">最近</span>
+          <span className="sidebar-section-label">
+            {activityOnly
+              ? `待处理活动 (${mainChatThreads.length})`
+              : organizeMode === "list"
+              ? `全部聊天 (${mainChatThreads.length})`
+              : filterScope === "current" && activeWorkspace
+              ? `${activeWorkspace.label || activeWorkspace.path.split(/[/\\]/).pop()} 的会话 (${mainChatThreads.length})`
+              : filterScope === "all"
+              ? `全部最近聊天 (${mainChatThreads.length})`
+              : `独立聊天 (${mainChatThreads.length})`}
+          </span>
           <div className="sidebar-section-tools">
             <button
               type="button"
-              className="sidebar-mini-tool-btn"
-              onClick={() =>
-                setRecentFilterMode((m) => (m === "all" ? "standalone" : "all"))
-              }
-              title={
-                recentFilterMode === "all"
-                  ? "当前显示: 全部最近聊天 (点击仅显示无项目聊天)"
-                  : "当前显示: 独立无项目聊天 (点击显示全部)"
-              }
+              className={`sidebar-mini-tool-btn ${showOrganizeMenu ? "active" : ""}`}
+              onClick={() => setShowOrganizeMenu((v) => !v)}
+              title="整理侧栏与排序 (Organize sidebar)"
             >
               <FilterIcon size={12} />
             </button>
           </div>
         </div>
 
+        {/* Organize & Sort Popover (对标官方 groupByMenu & chatsSortMenu) */}
+        {showOrganizeMenu && (
+          <div
+            ref={organizeMenuRef}
+            className="composer-popover-menu sidebar-organize-popover"
+            style={{
+              margin: "4px 8px 10px",
+              background: "var(--bg-surface-2, #222226)",
+              border: "1px solid var(--border-subtle, #333338)",
+              borderRadius: 8,
+              padding: 10,
+              boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)" }}>整理侧栏 (Organize sidebar)</span>
+              <button
+                type="button"
+                style={{ background: "none", border: "none", color: "#8e8e93", cursor: "pointer", fontSize: 13 }}
+                onClick={() => setShowOrganizeMenu(false)}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ fontSize: 11, fontWeight: 500, color: "var(--text-tertiary)", marginBottom: 4 }}>组织方式 (Organize)</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 2, marginBottom: 8 }}>
+              <button
+                type="button"
+                className={`popover-menu-item ${organizeMode === "project" ? "selected" : ""}`}
+                onClick={() => {
+                  setOrganizeMode("project");
+                  localStorage.setItem("codex_sidebar_organize_mode", "project");
+                }}
+              >
+                <span className="popover-item-title">📁 按项目分组 (By project)</span>
+                {organizeMode === "project" && <span className="popover-badge recommended">当前</span>}
+              </button>
+              <button
+                type="button"
+                className={`popover-menu-item ${organizeMode === "list" ? "selected" : ""}`}
+                onClick={() => {
+                  setOrganizeMode("list");
+                  localStorage.setItem("codex_sidebar_organize_mode", "list");
+                }}
+              >
+                <span className="popover-item-title">☰ 单一列表视图 (In one list)</span>
+                {organizeMode === "list" && <span className="popover-badge recommended">当前</span>}
+              </button>
+            </div>
+
+            <div style={{ fontSize: 11, fontWeight: 500, color: "var(--text-tertiary)", marginBottom: 4 }}>排序方式 (Sort chats by)</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 2, marginBottom: 8 }}>
+              <button
+                type="button"
+                className={`popover-menu-item ${chatSortMode === "updated_at" ? "selected" : ""}`}
+                onClick={() => {
+                  setChatSortMode("updated_at");
+                  localStorage.setItem("codex_sidebar_sort_mode", "updated_at");
+                }}
+              >
+                <span className="popover-item-title">🕒 按最近更新 (Last updated)</span>
+                {chatSortMode === "updated_at" && <span className="popover-badge recommended">当前</span>}
+              </button>
+              <button
+                type="button"
+                className={`popover-menu-item ${chatSortMode === "created_at" ? "selected" : ""}`}
+                onClick={() => {
+                  setChatSortMode("created_at");
+                  localStorage.setItem("codex_sidebar_sort_mode", "created_at");
+                }}
+              >
+                <span className="popover-item-title">📅 按创建时间 (Created)</span>
+                {chatSortMode === "created_at" && <span className="popover-badge recommended">当前</span>}
+              </button>
+            </div>
+
+            <div style={{ fontSize: 11, fontWeight: 500, color: "var(--text-tertiary)", marginBottom: 4 }}>会话筛选 (Filter scope)</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              <button
+                type="button"
+                className={`popover-menu-item ${filterScope === "projectless" ? "selected" : ""}`}
+                onClick={() => {
+                  setFilterScope("projectless");
+                  localStorage.setItem("codex_sidebar_filter_scope", "projectless");
+                }}
+              >
+                <span className="popover-item-title">仅独立无项目会话</span>
+                {filterScope === "projectless" && <span className="popover-badge recommended">当前</span>}
+              </button>
+              <button
+                type="button"
+                className={`popover-menu-item ${filterScope === "current" ? "selected" : ""}`}
+                onClick={() => {
+                  setFilterScope("current");
+                  localStorage.setItem("codex_sidebar_filter_scope", "current");
+                }}
+              >
+                <span className="popover-item-title">仅当前选定项目</span>
+                {filterScope === "current" && <span className="popover-badge recommended">当前</span>}
+              </button>
+              <button
+                type="button"
+                className={`popover-menu-item ${filterScope === "all" ? "selected" : ""}`}
+                onClick={() => {
+                  setFilterScope("all");
+                  localStorage.setItem("codex_sidebar_filter_scope", "all");
+                }}
+              >
+                <span className="popover-item-title">显示全部聊天</span>
+                {filterScope === "all" && <span className="popover-badge recommended">当前</span>}
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="sidebar-section-list">
-          {recentThreads.length === 0 ? (
+          {mainChatThreads.length === 0 ? (
             <div className="sidebar-project-empty" style={{ paddingLeft: 12 }}>
-              {activityOnly ? "暂无需要关注的事项" : "暂无聊天"}
+              {activityOnly
+                ? "暂无需要关注的事项"
+                : filterScope === "current"
+                ? "当前项目暂无独立聊天"
+                : "暂无聊天"}
             </div>
           ) : (
-            recentThreads.map((t) => renderThreadRow(t, false))
+            mainChatThreads.map((t) => renderThreadRow(t, false))
           )}
         </div>
       </div>

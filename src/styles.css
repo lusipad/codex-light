@@ -281,6 +281,42 @@ html, body, #root {
   background: var(--bg-pill-hover);
 }
 
+.sidebar-thread-project-badge {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-tertiary);
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.sidebar-thread-time-hint {
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+  margin-left: auto;
+  padding-right: 4px;
+  flex-shrink: 0;
+}
+
+.sidebar-thread-row:hover .sidebar-thread-time-hint {
+  display: none;
+}
+
+.project-count-badge {
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 999px;
+  padding: 0 6px;
+  line-height: 16px;
+  margin-left: 4px;
+  flex-shrink: 0;
+}
+
 /* Sidebar Footer */
 .sidebar-bottom-bar {
   padding: 8px 10px;
