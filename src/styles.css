@@ -3388,7 +3388,11 @@ html, body, #root {
   display: flex;
   align-items: baseline;
   padding: 0 8px;
-  white-space: pre-wrap;
+  white-space: pre;
+}
+
+.diff-word-wrap .diff-line {
+  white-space: pre-wrap !important;
   word-break: break-all;
 }
 

@@ -297,6 +297,46 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     kind: "action",
     action: "approve_recent_denial",
   },
+  {
+    id: "chat",
+    command: "/chat",
+    title: "Chat without project",
+    description: "开启独立无项目会话 (Work outside of a project)",
+    kind: "action",
+    action: "new_standalone_chat",
+  },
+  {
+    id: "cloud_environment",
+    command: "/cloud-environment",
+    title: "Cloud environment",
+    description: "选择云开发环境或打开环境管理器",
+    kind: "action",
+    action: "open_cloud_environments",
+  },
+  {
+    id: "share",
+    command: "/share",
+    title: "Share",
+    description: "复制会话快照分享链接到剪贴板",
+    kind: "action",
+    action: "share_thread",
+  },
+  {
+    id: "resume",
+    command: "/resume",
+    title: "Resume recent",
+    description: "恢复并载入最近一次执行的会话",
+    kind: "action",
+    action: "resume_recent_thread",
+  },
+  {
+    id: "hotkey_new",
+    command: "/hotkey-new",
+    title: "New scratchpad",
+    description: "清空输入并返回新建会话首页",
+    kind: "action",
+    action: "reset_to_home",
+  },
 ];
 
 /**

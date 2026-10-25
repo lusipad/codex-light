@@ -541,6 +541,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     selectedPreviewFile ?? null
   );
   const [viewedFiles, setViewedFiles] = useState<Record<string, boolean>>({});
+  const [wordWrap, setWordWrap] = useState<boolean>(false);
   const [diffContent, setDiffContent] = useState<string>("");
   const [loadingDiff, setLoadingDiff] = useState(false);
 
@@ -1445,6 +1446,14 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
               </button>
               <button
                 type="button"
+                className={`seg-btn ${wordWrap ? "active" : ""}`}
+                onClick={() => setWordWrap((v) => !v)}
+                title="切换代码自动换行 (Toggle word wrap)"
+              >
+                换行
+              </button>
+              <button
+                type="button"
                 className="seg-btn"
                 onClick={handleCopyGitApply}
                 title="复制 git apply 命令到剪贴板"
@@ -1655,7 +1664,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                   ) : !diffContent.trim() ? (
                     <div className="empty-hint-small">选择文件以查看详细差异</div>
                   ) : diffLayout === "split" ? (
-                    <div className="diff-split-grid">
+                    <div className={`diff-split-grid ${wordWrap ? "diff-word-wrap" : ""}`}>
                       <div className="diff-split-col">
                         <div className="diff-split-col-header">旧版本 (Original)</div>
                         {parsedLines
@@ -1688,7 +1697,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                       </div>
                     </div>
                   ) : (
-                    <div className="diff-pre">
+                    <div className={`diff-pre ${wordWrap ? "diff-word-wrap" : ""}`}>
                       {parsedLines.map((line, i) => (
                         <React.Fragment key={i}>
                           <div

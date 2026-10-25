@@ -3044,11 +3044,33 @@ export const App: React.FC = () => {
       }
     } else if (action === "switch_mode_cloud" || action === "switch_mode_local") {
       showAppToast("远程/云端环境将在后续版本接入", "info");
+    } else if (action === "new_standalone_chat") {
+      startNewThread();
+      setShowPopoutModal(true);
+    } else if (action === "open_cloud_environments") {
+      setActiveRoute("cloud-environments");
+    } else if (action === "share_thread") {
+      const shareUrl = `codex://thread/${activeThreadId || "local"}`;
+      void navigator.clipboard.writeText(shareUrl);
+      showAppToast("✓ 已复制会话链接到剪贴板", "success");
+    } else if (action === "resume_recent_thread") {
+      if (threadsRef.current.length > 0) {
+        void selectThread(threadsRef.current[0].id);
+        showAppToast(`✓ 已恢复最近会话`, "info");
+      } else {
+        showAppToast("暂无最近会话可恢复", "info");
+      }
+    } else if (action === "reset_to_home") {
+      setPromptInput("");
+      setAttachedFiles([]);
+      setActiveRoute("home");
+      showAppToast("已返回主页空白草稿", "info");
     } else if (action === "toggle_ide_context") {
       composerTextareaRef.current?.focus();
     }
   }, [
     startNewThread,
+    selectThread,
     handleForkThread,
     handleArchiveThread,
     handleTogglePinThread,

@@ -662,11 +662,13 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
           className="composer-textarea"
           rows={variant === "home" ? 2 : 2}
           placeholder={
-            variant === "home"
-              ? "随心输入"
+            planMode
+              ? "计划模式：描述你想实现的目标，Codex 将先分步制定计划再执行..."
+              : variant === "home"
+              ? "随心输入 (@ 引用文件或技能，/ 快捷命令)"
               : isStreaming
               ? "输入后续引导或排队消息... (Enter 立即引导 / Alt+Enter 加入队列)"
-              : "随心输入 (@ 引用文件或电脑，/ 快捷命令)"
+              : "随心输入 (@ 引用文件或技能，/ 快捷命令)"
           }
           value={promptInput}
           onChange={handleInputChange}
