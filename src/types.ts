@@ -295,6 +295,19 @@ export type MainViewRoute =
   | "library"
   | "cloud-environments";
 
+export type TurnCompletionPolicy = "always" | "unfocused" | "never";
+
+export type NotificationSoundTheme =
+  | "default"
+  | "basso"
+  | "classic"
+  | "glass"
+  | "ping"
+  | "pop"
+  | "purr"
+  | "tink"
+  | "none";
+
 export type SettingsSectionSlug =
   | "general-settings"
   | "import"
@@ -315,7 +328,13 @@ export type SettingsSectionSlug =
   | "worktrees"
   | "providers-models"
   | "experimental"
-  | "account";
+  | "account"
+  | "code-review"
+  | "computer-use"
+  | "appshots"
+  | "browser-use"
+  | "cloud-settings"
+  | "profile";
 
 export type ActiveNavTab =
   | "chat"

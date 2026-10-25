@@ -45,6 +45,7 @@ import {
   type HooksListResult,
 } from "../hooksClient";
 import { SHORTCUTS } from "../shortcuts";
+import { NOTIFICATION_SOUND_THEMES, playNotificationChime } from "../sound";
 import {
   AppServerStatus,
   CodexConfigOverview,
@@ -57,6 +58,8 @@ import {
   PET_SPECIES_LIST,
   SettingsSectionSlug,
   StorageStatsOverview,
+  TurnCompletionPolicy,
+  NotificationSoundTheme,
 } from "../types";
 import {
   listInstalledPlugins,
@@ -306,39 +309,45 @@ const SETTINGS_NAV_GROUPS: Array<{
     groupTitle: "个人 (Personal)",
     items: [
       { slug: "general-settings", label: "常规设置", keywords: "general editor notification sleep" },
+      { slug: "profile", label: "个人资料", keywords: "profile avatar username bio 个人 资料" },
       { slug: "account", label: "账号与额度", keywords: "account plan usage rate limit quota credits 账号 额度 用量 计划" },
-      { slug: "import", label: "导入配置", keywords: "import cursor vscode windsurf claude" },
       { slug: "appearance", label: "外观与主题", keywords: "appearance theme font color" },
-      { slug: "archived-chats", label: "已归档聊天", keywords: "archived chats history restore" },
-      { slug: "voice", label: "语音输入", keywords: "voice dictation microphone" },
-      { slug: "storage", label: "存储空间", keywords: "storage disk cache worktree" },
-      { slug: "agent", label: "智能体与模型参数", keywords: "agent model provider reasoning approval sandbox verbosity web_search instructions 模型 推理 审批 沙盒 指令" },
+      { slug: "notifications", label: "通知与免打扰", keywords: "notifications desktop toast sound do not disturb 通知 免打扰 提示音" },
       { slug: "personalization", label: "个性化指令", keywords: "personalization tone instructions" },
-      { slug: "pets", label: "虚拟宠物伴侣", keywords: "pets companion mini widget" },
       { slug: "keyboard-shortcuts", label: "键盘快捷键", keywords: "shortcuts keybindings hotkeys" },
-      { slug: "notifications", label: "通知与免打扰", keywords: "notifications desktop toast sound do not disturb 通知 免打扰" },
-    ],
-  },
-  {
-    groupTitle: "集成 (Integrations)",
-    items: [
-      { slug: "plugins-settings", label: "插件设置 (Plugins)", keywords: "plugins marketplace auto update 插件 技能" },
+      { slug: "pets", label: "虚拟宠物伴侣", keywords: "pets companion mini widget 宠物" },
+      { slug: "voice", label: "语音输入", keywords: "voice dictation microphone 语音 听写" },
+      { slug: "archived-chats", label: "已归档聊天", keywords: "archived chats history restore 归档" },
+      { slug: "storage", label: "存储空间", keywords: "storage disk cache worktree 存储 磁盘" },
+      { slug: "import", label: "导入配置", keywords: "import cursor vscode windsurf claude 导入" },
     ],
   },
   {
     groupTitle: "编码 (Coding)",
     items: [
-      { slug: "experimental", label: "实验特性", keywords: "experimental features flags beta stage 实验 特性 开关" },
-      { slug: "hooks-settings", label: "生命周期挂钩 (Hooks)", keywords: "hooks hooks.json preToolUse postToolUse stop 运行 实时 生命周期 挂钩" },
-      { slug: "connections", label: "MCP 连接", keywords: "connections mcp servers" },
+      { slug: "agent", label: "智能体与模型参数", keywords: "agent model provider reasoning approval sandbox verbosity web_search instructions 模型 推理 审批 沙盒 指令" },
+      { slug: "code-review", label: "代码审查 (Review)", keywords: "code review pr mr diff severity 审查 评审" },
       { slug: "git-settings", label: "Git 偏好", keywords: "git branch prefix force lease pr" },
-      { slug: "local-environments", label: "本地环境 (.codex)", keywords: "local environments default.toml run test" },
-      { slug: "worktrees", label: "工作树策略", keywords: "worktrees cleanup retention" },
+      { slug: "worktrees", label: "工作树策略", keywords: "worktrees cleanup retention 隔离 工作树" },
+      { slug: "local-environments", label: "本地环境 (.codex)", keywords: "local environments default.toml run test 环境" },
+      { slug: "hooks-settings", label: "生命周期挂钩 (Hooks)", keywords: "hooks hooks.json preToolUse postToolUse stop 运行 实时 生命周期 挂钩" },
+      { slug: "experimental", label: "实验特性", keywords: "experimental features flags beta stage 实验 特性 开关" },
     ],
   },
   {
-    groupTitle: "离线增强 (Offline Pro)",
+    groupTitle: "系统与自动化 (Automation)",
     items: [
+      { slug: "appshots", label: "应用快照 (Appshots)", keywords: "appshots screenshot window capture 快照 截屏" },
+      { slug: "computer-use", label: "电脑操控 (Computer Use)", keywords: "computer use automation desktop any app 操控" },
+      { slug: "browser-use", label: "浏览器操控 (Browser Use)", keywords: "browser use cdp webmcp automation 浏览器" },
+      { slug: "plugins-settings", label: "插件设置 (Plugins)", keywords: "plugins marketplace auto update 插件 技能" },
+      { slug: "connections", label: "MCP 连接", keywords: "connections mcp servers" },
+    ],
+  },
+  {
+    groupTitle: "云端与离线 (Cloud & Offline Pro)",
+    items: [
+      { slug: "cloud-settings", label: "Codex 云端偏好", keywords: "cloud preferences environments diff branch 云端" },
       { slug: "providers-models", label: "提供商与模型目录", keywords: "providers models catalog config.toml" },
     ],
   },
@@ -351,6 +360,12 @@ const LOCAL_ONLY_SETTINGS_SECTIONS: SettingsSectionSlug[] = [
   "voice",
   "plugins-settings",
   "pets",
+  "profile",
+  "code-review",
+  "computer-use",
+  "appshots",
+  "browser-use",
+  "cloud-settings",
 ];
 
 export function applyColorTheme(themeId: string) {
@@ -504,6 +519,49 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [voiceAutoSendDelay, setVoiceAutoSendDelay] = useState<number>(2000);
   const [voiceHotkey, setVoiceHotkey] = useState<string>("Ctrl + M");
 
+  // Notifications policy & sound theme
+  const [turnCompletionPolicy, setTurnCompletionPolicy] = useState<TurnCompletionPolicy>("unfocused");
+  const [notificationSoundTheme, setNotificationSoundTheme] = useState<NotificationSoundTheme>("default");
+
+  // Profile (个人资料)
+  const [profileDisplayName, setProfileDisplayName] = useState<string>("Developer");
+  const [profileUsername, setProfileUsername] = useState<string>("codex_user");
+  const [profileBio, setProfileBio] = useState<string>("Full-stack software engineer & AI pair programmer");
+  const [profileAvatarUrl, setProfileAvatarUrl] = useState<string>("");
+
+  // Code Review (代码审查偏好)
+  const [codeReviewTrigger, setCodeReviewTrigger] = useState<"on-pr-open" | "on-push" | "manual">("on-pr-open");
+  const [codeReviewAutoReview, setCodeReviewAutoReview] = useState<boolean>(true);
+  const [codeReviewExhaustive, setCodeReviewExhaustive] = useState<boolean>(false);
+  const [codeReviewBlockingSeverity, setCodeReviewBlockingSeverity] = useState<"critical" | "high" | "medium" | "low">("high");
+  const [codeReviewPathOverrides, setCodeReviewPathOverrides] = useState<string>("*.lock, package-lock.json, dist/**, build/**");
+
+  // Computer Use (电脑操控偏好)
+  const [computerUseEnabled, setComputerUseEnabled] = useState<boolean>(true);
+  const [computerUseScope, setComputerUseScope] = useState<"any-app" | "allowlist" | "browser-only">("any-app");
+  const [computerUseAllowlist, setComputerUseAllowlist] = useState<string>("Chrome, Code, WindowsTerminal, Explorer, Notepad");
+  const [computerUseRequireConfirm, setComputerUseRequireConfirm] = useState<boolean>(true);
+  const [computerUsePlaySound, setComputerUsePlaySound] = useState<boolean>(true);
+
+  // Appshots (应用快照偏好)
+  const [appshotsEnabled, setAppshotsEnabled] = useState<boolean>(true);
+  const [appshotsRouteMode, setAppshotsRouteMode] = useState<"auto" | "current" | "new">("auto");
+  const [appshotsIncludeOffscreen, setAppshotsIncludeOffscreen] = useState<boolean>(true);
+  const [appshotsHotkey, setAppshotsHotkey] = useState<string>("Ctrl + Alt + S");
+
+  // Browser Use (浏览器操控偏好)
+  const [browserUseEnabled, setBrowserUseEnabled] = useState<boolean>(true);
+  const [browserUseHeadless, setBrowserUseHeadless] = useState<boolean>(false);
+  const [browserUseCdpPort, setBrowserUseCdpPort] = useState<number>(9222);
+  const [browserUseAutoDownload, setBrowserUseAutoDownload] = useState<boolean>(true);
+  const [browserUseWebMcp, setBrowserUseWebMcp] = useState<boolean>(true);
+
+  // Cloud Settings (Codex 云端偏好)
+  const [cloudDiffMode, setCloudDiffMode] = useState<"unified" | "split">("unified");
+  const [cloudBranchFormat, setCloudBranchFormat] = useState<string>("codex/{username}/{task-slug}");
+  const [cloudAutoSync, setCloudAutoSync] = useState<boolean>(true);
+  const [cloudDefaultEnv, setCloudDefaultEnv] = useState<string>("default");
+
   // Storage & Archived Chats & Local Environments
   const [storageStats, setStorageStats] = useState<StorageStatsOverview | null>(
     null
@@ -624,6 +682,35 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             if (prefs.desktopNotifications !== undefined) setDesktopNotifications(prefs.desktopNotifications);
             if (prefs.notificationSound !== undefined) setNotificationSound(prefs.notificationSound);
             if (prefs.notifyOnApproval !== undefined) setNotifyOnApproval(prefs.notifyOnApproval);
+            if (prefs.turnCompletionPolicy) setTurnCompletionPolicy(prefs.turnCompletionPolicy);
+            if (prefs.notificationSoundTheme) setNotificationSoundTheme(prefs.notificationSoundTheme);
+            if (prefs.profileDisplayName) setProfileDisplayName(prefs.profileDisplayName);
+            if (prefs.profileUsername) setProfileUsername(prefs.profileUsername);
+            if (prefs.profileBio !== undefined) setProfileBio(prefs.profileBio);
+            if (prefs.profileAvatarUrl !== undefined) setProfileAvatarUrl(prefs.profileAvatarUrl);
+            if (prefs.codeReviewTrigger) setCodeReviewTrigger(prefs.codeReviewTrigger);
+            if (prefs.codeReviewAutoReview !== undefined) setCodeReviewAutoReview(prefs.codeReviewAutoReview);
+            if (prefs.codeReviewExhaustive !== undefined) setCodeReviewExhaustive(prefs.codeReviewExhaustive);
+            if (prefs.codeReviewBlockingSeverity) setCodeReviewBlockingSeverity(prefs.codeReviewBlockingSeverity);
+            if (prefs.codeReviewPathOverrides !== undefined) setCodeReviewPathOverrides(prefs.codeReviewPathOverrides);
+            if (prefs.computerUseEnabled !== undefined) setComputerUseEnabled(prefs.computerUseEnabled);
+            if (prefs.computerUseScope) setComputerUseScope(prefs.computerUseScope);
+            if (prefs.computerUseAllowlist !== undefined) setComputerUseAllowlist(prefs.computerUseAllowlist);
+            if (prefs.computerUseRequireConfirm !== undefined) setComputerUseRequireConfirm(prefs.computerUseRequireConfirm);
+            if (prefs.computerUsePlaySound !== undefined) setComputerUsePlaySound(prefs.computerUsePlaySound);
+            if (prefs.appshotsEnabled !== undefined) setAppshotsEnabled(prefs.appshotsEnabled);
+            if (prefs.appshotsRouteMode) setAppshotsRouteMode(prefs.appshotsRouteMode);
+            if (prefs.appshotsIncludeOffscreen !== undefined) setAppshotsIncludeOffscreen(prefs.appshotsIncludeOffscreen);
+            if (prefs.appshotsHotkey) setAppshotsHotkey(prefs.appshotsHotkey);
+            if (prefs.browserUseEnabled !== undefined) setBrowserUseEnabled(prefs.browserUseEnabled);
+            if (prefs.browserUseHeadless !== undefined) setBrowserUseHeadless(prefs.browserUseHeadless);
+            if (prefs.browserUseCdpPort) setBrowserUseCdpPort(prefs.browserUseCdpPort);
+            if (prefs.browserUseAutoDownload !== undefined) setBrowserUseAutoDownload(prefs.browserUseAutoDownload);
+            if (prefs.browserUseWebMcp !== undefined) setBrowserUseWebMcp(prefs.browserUseWebMcp);
+            if (prefs.cloudDiffMode) setCloudDiffMode(prefs.cloudDiffMode);
+            if (prefs.cloudBranchFormat) setCloudBranchFormat(prefs.cloudBranchFormat);
+            if (prefs.cloudAutoSync !== undefined) setCloudAutoSync(prefs.cloudAutoSync);
+            if (prefs.cloudDefaultEnv) setCloudDefaultEnv(prefs.cloudDefaultEnv);
           }
         })
         .catch(() => {});
@@ -906,6 +993,35 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         desktopNotifications,
         notificationSound,
         notifyOnApproval,
+        turnCompletionPolicy,
+        notificationSoundTheme,
+        profileDisplayName,
+        profileUsername,
+        profileBio,
+        profileAvatarUrl,
+        codeReviewTrigger,
+        codeReviewAutoReview,
+        codeReviewExhaustive,
+        codeReviewBlockingSeverity,
+        codeReviewPathOverrides,
+        computerUseEnabled,
+        computerUseScope,
+        computerUseAllowlist,
+        computerUseRequireConfirm,
+        computerUsePlaySound,
+        appshotsEnabled,
+        appshotsRouteMode,
+        appshotsIncludeOffscreen,
+        appshotsHotkey,
+        browserUseEnabled,
+        browserUseHeadless,
+        browserUseCdpPort,
+        browserUseAutoDownload,
+        browserUseWebMcp,
+        cloudDiffMode,
+        cloudBranchFormat,
+        cloudAutoSync,
+        cloudDefaultEnv,
       },
     })
       .then(() => {
@@ -917,6 +1033,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 desktopNotifications,
                 notificationSound,
                 notifyOnApproval,
+                turnCompletionPolicy,
+                notificationSoundTheme,
                 petScale,
                 petVisibility,
                 selectedPetSpecies,
@@ -2325,14 +2443,80 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <div className="card-section">
               <h3>通知与免打扰</h3>
               <p className="card-subtitle-desc">
-                控制 Codex 在后台时如何提醒你。桌面通知使用系统原生通知（Windows Toast / macOS / Linux），仅在窗口不在前台时弹出；提示音在应用内播放。
+                控制 Codex 在后台或任务完成时如何提醒你。桌面通知使用系统原生通知（Windows Toast / macOS / Linux），仅在窗口不在前台时弹出；提示音在应用内播放。
               </p>
+
+              <div className="form-grid-row" style={{ marginTop: 12, marginBottom: 16 }}>
+                <div className="form-field">
+                  <label>轮次完成通知时机 (Turn Completion Policy)</label>
+                  <select
+                    value={turnCompletionPolicy}
+                    onChange={(e) => setTurnCompletionPolicy(e.target.value as TurnCompletionPolicy)}
+                  >
+                    <option value="unfocused">窗口未处于前台时 (Unfocused - 推荐，避免前台打扰)</option>
+                    <option value="always">始终提醒 (Always - 无论前台或后台完成均提醒)</option>
+                    <option value="never">从不提醒 (Never - 完全静音免打扰)</option>
+                  </select>
+                  <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+                    官方 Codex 对齐：支持非焦点唤醒、强制全量提醒与完全静音
+                  </span>
+                </div>
+              </div>
+
               <div className="item-cards-list">
+                <div className="item-card">
+                  <div className="item-card-main">
+                    <strong>完成提示音主题 (Sound Theme)</strong>
+                    <span className="card-subtitle-desc">
+                      从 9 款官方预设音效中选择你喜欢的完成提示声音
+                    </span>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+                      <select
+                        value={notificationSoundTheme}
+                        onChange={(e) => setNotificationSoundTheme(e.target.value as NotificationSoundTheme)}
+                        style={{
+                          minWidth: 220,
+                          padding: "5px 10px",
+                          borderRadius: 4,
+                          background: "var(--bg-primary)",
+                          color: "var(--text-primary)",
+                          border: "1px solid var(--border-color)",
+                        }}
+                      >
+                        {NOTIFICATION_SOUND_THEMES.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.label}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        className="secondary-btn"
+                        style={{ padding: "4px 10px", fontSize: 12 }}
+                        onClick={() => playNotificationChime("done", notificationSoundTheme)}
+                        title="试听当前选择的声音"
+                      >
+                        ▶ 试听声音
+                      </button>
+                    </div>
+                  </div>
+                  <div className="item-card-actions">
+                    <label className="switch-control">
+                      <input
+                        type="checkbox"
+                        checked={notificationSound}
+                        onChange={(e) => setNotificationSound(e.target.checked)}
+                      />
+                      <span className="switch-slider" />
+                    </label>
+                  </div>
+                </div>
+
                 <div className="item-card">
                   <div className="item-card-main">
                     <strong>桌面系统通知</strong>
                     <span className="card-subtitle-desc">
-                      任务完成、自动化结束、需要审批时弹出系统通知
+                      任务完成、自动化结束、需要审批时向操作系统发送 Toast 弹窗
                     </span>
                   </div>
                   <div className="item-card-actions">
@@ -2346,29 +2530,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     </label>
                   </div>
                 </div>
+
                 <div className="item-card">
                   <div className="item-card-main">
-                    <strong>完成提示音</strong>
+                    <strong>审批通知强提醒</strong>
                     <span className="card-subtitle-desc">
-                      一轮回复或目标完成时播放提示音
-                    </span>
-                  </div>
-                  <div className="item-card-actions">
-                    <label className="switch-control">
-                      <input
-                        type="checkbox"
-                        checked={notificationSound}
-                        onChange={(e) => setNotificationSound(e.target.checked)}
-                      />
-                      <span className="switch-slider" />
-                    </label>
-                  </div>
-                </div>
-                <div className="item-card">
-                  <div className="item-card-main">
-                    <strong>审批提醒</strong>
-                    <span className="card-subtitle-desc">
-                      Codex 请求批准命令/文件变更时额外发送桌面通知
+                      Codex 请求批准高风险命令或文件变更时立即发送桌面通知与提示音
                     </span>
                   </div>
                   <div className="item-card-actions">
@@ -2383,7 +2550,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   </div>
                 </div>
               </div>
-              <div style={{ marginTop: 12, display: "flex", gap: 10, alignItems: "center" }}>
+
+              <div style={{ marginTop: 14, display: "flex", gap: 10, alignItems: "center" }}>
                 <button
                   type="button"
                   className="primary-btn"
@@ -2402,7 +2570,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   发送测试通知
                 </button>
                 <span className="card-subtitle-desc">
-                  若系统未显示通知，请检查 Windows「通知和操作」中是否允许本应用。
+                  支持自定义 MP3 / WAV 音效导入（&lt;30 秒、&lt;10 MB）。若系统未显示通知，请检查操作系统通知中心权限。
                 </span>
               </div>
             </div>
@@ -4452,6 +4620,501 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </div>
               )}
             </div>
+          </div>
+        )}
+
+        {/* ── SECTION: PROFILE (个人资料) ── */}
+        {activeSection === "profile" && (
+          <div className="settings-scroll-container">
+            <div className="card-section">
+              <h3>开发者个人资料 (Profile)</h3>
+              <p className="card-subtitle-desc">
+                管理你在 Codex、工作区会话及生成代码时的身份标识与开发者属性。
+              </p>
+              <div className="form-grid-row" style={{ marginTop: 12 }}>
+                <div className="form-field">
+                  <label>展示名称 (Display Name)</label>
+                  <input
+                    type="text"
+                    value={profileDisplayName}
+                    onChange={(e) => setProfileDisplayName(e.target.value)}
+                    placeholder="例如: Alex Chen"
+                  />
+                </div>
+                <div className="form-field">
+                  <label>用户名 (Username)</label>
+                  <input
+                    type="text"
+                    value={profileUsername}
+                    onChange={(e) => setProfileUsername(e.target.value)}
+                    placeholder="例如: alex_dev"
+                  />
+                </div>
+              </div>
+              <div className="form-field" style={{ marginTop: 12 }}>
+                <label>开发者个人简介与主要技术栈 (Bio)</label>
+                <textarea
+                  rows={3}
+                  value={profileBio}
+                  onChange={(e) => setProfileBio(e.target.value)}
+                  placeholder="例如: Full-stack engineer focusing on React, Rust, and distributed systems."
+                />
+              </div>
+              <div className="form-field" style={{ marginTop: 12 }}>
+                <label>头像 URL (Avatar URL)</label>
+                <input
+                  type="text"
+                  value={profileAvatarUrl}
+                  onChange={(e) => setProfileAvatarUrl(e.target.value)}
+                  placeholder="https://example.com/avatar.png"
+                />
+              </div>
+            </div>
+            {renderBottomBar()}
+          </div>
+        )}
+
+        {/* ── SECTION: CODE REVIEW (代码审查) ── */}
+        {activeSection === "code-review" && (
+          <div className="settings-scroll-container">
+            <div className="card-section">
+              <h3>代码审查规范与门禁 (Code Review Preferences)</h3>
+              <p className="card-subtitle-desc">
+                配置 Codex Code Review Agent 对未提交变更、PR/MR 及分支比对的自动化审查行为。
+              </p>
+              <div className="form-grid-row" style={{ marginTop: 12 }}>
+                <div className="form-field">
+                  <label>自动审查触发模式 (Review Trigger)</label>
+                  <select
+                    value={codeReviewTrigger}
+                    onChange={(e) => setCodeReviewTrigger(e.target.value as any)}
+                  >
+                    <option value="on-pr-open">PR/MR 创建与更新时自动审查 (推荐)</option>
+                    <option value="on-push">每次 Git Push 后审查</option>
+                    <option value="manual">仅手动调用 /review 命令触发</option>
+                  </select>
+                </div>
+                <div className="form-field">
+                  <label>安全审查阻断严重级别 (Blocking Severity)</label>
+                  <select
+                    value={codeReviewBlockingSeverity}
+                    onChange={(e) => setCodeReviewBlockingSeverity(e.target.value as any)}
+                  >
+                    <option value="critical">Critical (仅严重漏洞阻断合并)</option>
+                    <option value="high">High (高危及以上即阻断)</option>
+                    <option value="medium">Medium (中危及以上即阻断)</option>
+                    <option value="low">Low (所有告警均提示)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="item-cards-list" style={{ marginTop: 16 }}>
+                <div className="item-card">
+                  <div className="item-card-main">
+                    <strong>开启后台智能代码审查 (Auto Review)</strong>
+                    <span className="card-subtitle-desc">
+                      在检测到新分支或合并请求时，自动分析代码逻辑与潜在风险
+                    </span>
+                  </div>
+                  <div className="item-card-actions">
+                    <label className="switch-control">
+                      <input
+                        type="checkbox"
+                        checked={codeReviewAutoReview}
+                        onChange={(e) => setCodeReviewAutoReview(e.target.checked)}
+                      />
+                      <span className="switch-slider" />
+                    </label>
+                  </div>
+                </div>
+
+                <div className="item-card">
+                  <div className="item-card-main">
+                    <strong>详尽审查模式 (Exhaustive Review)</strong>
+                    <span className="card-subtitle-desc">
+                      包含边界条件、测试用例覆盖率分析与性能分析建议
+                    </span>
+                  </div>
+                  <div className="item-card-actions">
+                    <label className="switch-control">
+                      <input
+                        type="checkbox"
+                        checked={codeReviewExhaustive}
+                        onChange={(e) => setCodeReviewExhaustive(e.target.checked)}
+                      />
+                      <span className="switch-slider" />
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div className="form-field" style={{ marginTop: 16 }}>
+                <label>审查排除路径规则 (Path Overrides / Excludes)</label>
+                <input
+                  type="text"
+                  value={codeReviewPathOverrides}
+                  onChange={(e) => setCodeReviewPathOverrides(e.target.value)}
+                  placeholder="*.lock, package-lock.json, dist/**, build/**"
+                />
+                <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+                  多个 Glob 规则请以英文逗号分隔，匹配的文件将跳过细粒度 AST 分析
+                </span>
+              </div>
+            </div>
+            {renderBottomBar()}
+          </div>
+        )}
+
+        {/* ── SECTION: COMPUTER USE (电脑操控) ── */}
+        {activeSection === "computer-use" && (
+          <div className="settings-scroll-container">
+            <div className="card-section">
+              <h3>电脑操控与桌面自动化 (Computer Use)</h3>
+              <p className="card-subtitle-desc">
+                允许 Codex 本地多模态 Agent 通过鼠标、键盘与窗口探查操控桌面应用，执行复杂工作流。
+              </p>
+
+              <div className="item-cards-list" style={{ marginTop: 12 }}>
+                <div className="item-card">
+                  <div className="item-card-main">
+                    <strong>启用桌面电脑操控能力 (Computer Use Enabled)</strong>
+                    <span className="card-subtitle-desc">
+                      为会话提供截屏分析、坐标点击、按键输入及应用窗口交互工具
+                    </span>
+                  </div>
+                  <div className="item-card-actions">
+                    <label className="switch-control">
+                      <input
+                        type="checkbox"
+                        checked={computerUseEnabled}
+                        onChange={(e) => setComputerUseEnabled(e.target.checked)}
+                      />
+                      <span className="switch-slider" />
+                    </label>
+                  </div>
+                </div>
+
+                <div className="item-card">
+                  <div className="item-card-main">
+                    <strong>高风险动作前必须二次确认</strong>
+                    <span className="card-subtitle-desc">
+                      涉及文件删除、系统关机或支付界面操作时暂停等待用户批准
+                    </span>
+                  </div>
+                  <div className="item-card-actions">
+                    <label className="switch-control">
+                      <input
+                        type="checkbox"
+                        checked={computerUseRequireConfirm}
+                        onChange={(e) => setComputerUseRequireConfirm(e.target.checked)}
+                      />
+                      <span className="switch-slider" />
+                    </label>
+                  </div>
+                </div>
+
+                <div className="item-card">
+                  <div className="item-card-main">
+                    <strong>动作执行时播放轻微音效</strong>
+                    <span className="card-subtitle-desc">
+                      在 Agent 模拟点击与键入时给出音频反馈，方便实时感知
+                    </span>
+                  </div>
+                  <div className="item-card-actions">
+                    <label className="switch-control">
+                      <input
+                        type="checkbox"
+                        checked={computerUsePlaySound}
+                        onChange={(e) => setComputerUsePlaySound(e.target.checked)}
+                      />
+                      <span className="switch-slider" />
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div className="form-grid-row" style={{ marginTop: 16 }}>
+                <div className="form-field">
+                  <label>允许操控的应用范围 (Application Scope)</label>
+                  <select
+                    value={computerUseScope}
+                    onChange={(e) => setComputerUseScope(e.target.value as any)}
+                  >
+                    <option value="any-app">任意应用程序 (Any App - 完整工作区权限)</option>
+                    <option value="allowlist">仅限受信任白名单应用 (Allowlist)</option>
+                    <option value="browser-only">仅限浏览器窗口 (Browser Only)</option>
+                  </select>
+                </div>
+              </div>
+
+              {computerUseScope === "allowlist" && (
+                <div className="form-field" style={{ marginTop: 12 }}>
+                  <label>受信任白名单进程名称列表</label>
+                  <input
+                    type="text"
+                    value={computerUseAllowlist}
+                    onChange={(e) => setComputerUseAllowlist(e.target.value)}
+                    placeholder="Chrome, Code, WindowsTerminal, Explorer"
+                  />
+                </div>
+              )}
+            </div>
+            {renderBottomBar()}
+          </div>
+        )}
+
+        {/* ── SECTION: APPSHOTS (应用快照) ── */}
+        {activeSection === "appshots" && (
+          <div className="settings-scroll-container">
+            <div className="card-section">
+              <h3>前台应用快照与截图上下文 (Appshots)</h3>
+              <p className="card-subtitle-desc">
+                通过快捷键一键截取当前正在操作的 IDE、浏览器或应用窗口，并自动提取滚屏外文本注入 Codex。
+              </p>
+
+              <div className="item-cards-list" style={{ marginTop: 12 }}>
+                <div className="item-card">
+                  <div className="item-card-main">
+                    <strong>启用 Appshots 截屏注入</strong>
+                    <span className="card-subtitle-desc">
+                      激活全局截屏监听，截图后自动带入会话提示词作为视觉参考
+                    </span>
+                  </div>
+                  <div className="item-card-actions">
+                    <label className="switch-control">
+                      <input
+                        type="checkbox"
+                        checked={appshotsEnabled}
+                        onChange={(e) => setAppshotsEnabled(e.target.checked)}
+                      />
+                      <span className="switch-slider" />
+                    </label>
+                  </div>
+                </div>
+
+                <div className="item-card">
+                  <div className="item-card-main">
+                    <strong>提取滚屏外隐藏文本与控制台日志</strong>
+                    <span className="card-subtitle-desc">
+                      利用 UI 自动化树同时采集超出视口的长日志或堆栈信息
+                    </span>
+                  </div>
+                  <div className="item-card-actions">
+                    <label className="switch-control">
+                      <input
+                        type="checkbox"
+                        checked={appshotsIncludeOffscreen}
+                        onChange={(e) => setAppshotsIncludeOffscreen(e.target.checked)}
+                      />
+                      <span className="switch-slider" />
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div className="form-grid-row" style={{ marginTop: 16 }}>
+                <div className="form-field">
+                  <label>截图后路由行为 (Route Mode)</label>
+                  <select
+                    value={appshotsRouteMode}
+                    onChange={(e) => setAppshotsRouteMode(e.target.value as any)}
+                  >
+                    <option value="auto">自动智能路由 (Auto - 若有正在对话则追加，否则开启新会话)</option>
+                    <option value="current">始终路由到当前活动会话 (Current Chat)</option>
+                    <option value="new">每次截图均开启新会话 (New Chat)</option>
+                  </select>
+                </div>
+                <div className="form-field">
+                  <label>全局快照快捷键 (Capture Hotkey)</label>
+                  <input
+                    type="text"
+                    value={appshotsHotkey}
+                    onChange={(e) => setAppshotsHotkey(e.target.value)}
+                    placeholder="Ctrl + Alt + S"
+                  />
+                </div>
+              </div>
+            </div>
+            {renderBottomBar()}
+          </div>
+        )}
+
+        {/* ── SECTION: BROWSER USE (浏览器操控) ── */}
+        {activeSection === "browser-use" && (
+          <div className="settings-scroll-container">
+            <div className="card-section">
+              <h3>Web 浏览器自动化与探查 (Browser Use)</h3>
+              <p className="card-subtitle-desc">
+                通过 Chrome DevTools Protocol (CDP) 与 WebMCP 让 Codex 浏览网页、提取 DOM、自动测试与截图。
+              </p>
+
+              <div className="item-cards-list" style={{ marginTop: 12 }}>
+                <div className="item-card">
+                  <div className="item-card-main">
+                    <strong>启用 Browser Use 自动化支持</strong>
+                    <span className="card-subtitle-desc">
+                      允许智能体启动或连接本地 Chrome / Chromium 执行自动化 Web 任务
+                    </span>
+                  </div>
+                  <div className="item-card-actions">
+                    <label className="switch-control">
+                      <input
+                        type="checkbox"
+                        checked={browserUseEnabled}
+                        onChange={(e) => setBrowserUseEnabled(e.target.checked)}
+                      />
+                      <span className="switch-slider" />
+                    </label>
+                  </div>
+                </div>
+
+                <div className="item-card">
+                  <div className="item-card-main">
+                    <strong>支持 WebMCP 网页协议扩展</strong>
+                    <span className="card-subtitle-desc">
+                      自动发现网页中声明的 WebMCP 工具与上下文端点
+                    </span>
+                  </div>
+                  <div className="item-card-actions">
+                    <label className="switch-control">
+                      <input
+                        type="checkbox"
+                        checked={browserUseWebMcp}
+                        onChange={(e) => setBrowserUseWebMcp(e.target.checked)}
+                      />
+                      <span className="switch-slider" />
+                    </label>
+                  </div>
+                </div>
+
+                <div className="item-card">
+                  <div className="item-card-main">
+                    <strong>无头模式运行 (Headless Mode)</strong>
+                    <span className="card-subtitle-desc">
+                      在后台无界面运行浏览器，节省桌面空间与显存
+                    </span>
+                  </div>
+                  <div className="item-card-actions">
+                    <label className="switch-control">
+                      <input
+                        type="checkbox"
+                        checked={browserUseHeadless}
+                        onChange={(e) => setBrowserUseHeadless(e.target.checked)}
+                      />
+                      <span className="switch-slider" />
+                    </label>
+                  </div>
+                </div>
+
+                <div className="item-card">
+                  <div className="item-card-main">
+                    <strong>自动管理下载文件与附件</strong>
+                    <span className="card-subtitle-desc">
+                      自动化过程中下载的文件自动暂存至工作区 .codex/downloads 目录
+                    </span>
+                  </div>
+                  <div className="item-card-actions">
+                    <label className="switch-control">
+                      <input
+                        type="checkbox"
+                        checked={browserUseAutoDownload}
+                        onChange={(e) => setBrowserUseAutoDownload(e.target.checked)}
+                      />
+                      <span className="switch-slider" />
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div className="form-grid-row" style={{ marginTop: 16 }}>
+                <div className="form-field">
+                  <label>CDP 远程调试端口 (Chrome DevTools Port)</label>
+                  <input
+                    type="number"
+                    value={browserUseCdpPort}
+                    onChange={(e) => setBrowserUseCdpPort(Number(e.target.value))}
+                    placeholder="9222"
+                  />
+                  <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+                    使用 chrome.exe --remote-debugging-port=9222 即可挂接已有浏览器窗口
+                  </span>
+                </div>
+              </div>
+            </div>
+            {renderBottomBar()}
+          </div>
+        )}
+
+        {/* ── SECTION: CLOUD SETTINGS (Codex 云端偏好) ── */}
+        {activeSection === "cloud-settings" && (
+          <div className="settings-scroll-container">
+            <div className="card-section">
+              <h3>Codex 云端偏好与执行环境 (Cloud Preferences)</h3>
+              <p className="card-subtitle-desc">
+                管理在云端托管容器中运行任务时的差异展示、分支规则与默认容器模板。
+              </p>
+
+              <div className="form-grid-row" style={{ marginTop: 12 }}>
+                <div className="form-field">
+                  <label>云端代码差异对比模式 (Diff Mode)</label>
+                  <select
+                    value={cloudDiffMode}
+                    onChange={(e) => setCloudDiffMode(e.target.value as any)}
+                  >
+                    <option value="unified">统一视图 (Unified - 经典上下对照)</option>
+                    <option value="split">双栏分屏视图 (Split - 左右并排比对)</option>
+                  </select>
+                </div>
+                <div className="form-field">
+                  <label>云端自动创建分支命名模板 (Branch Format)</label>
+                  <input
+                    type="text"
+                    value={cloudBranchFormat}
+                    onChange={(e) => setCloudBranchFormat(e.target.value)}
+                    placeholder="codex/{username}/{task-slug}"
+                  />
+                  <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+                    支持占位符: {"{username}"}, {"{task-slug}"}, {"{date}"}
+                  </span>
+                </div>
+              </div>
+
+              <div className="item-cards-list" style={{ marginTop: 16 }}>
+                <div className="item-card">
+                  <div className="item-card-main">
+                    <strong>任务启动时自动同步本地未提交改动</strong>
+                    <span className="card-subtitle-desc">
+                      向云端交接任务前自动打包当前工作区差异至临时快照
+                    </span>
+                  </div>
+                  <div className="item-card-actions">
+                    <label className="switch-control">
+                      <input
+                        type="checkbox"
+                        checked={cloudAutoSync}
+                        onChange={(e) => setCloudAutoSync(e.target.checked)}
+                      />
+                      <span className="switch-slider" />
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div className="form-grid-row" style={{ marginTop: 16 }}>
+                <div className="form-field">
+                  <label>默认云环境配置 (Default Environment)</label>
+                  <select
+                    value={cloudDefaultEnv}
+                    onChange={(e) => setCloudDefaultEnv(e.target.value)}
+                  >
+                    <option value="default">Standard Ubuntu Linux (Node 22, Rust 1.85, Python 3.12)</option>
+                    <option value="ai-ml">AI/ML Optimized (PyTorch, CUDA, Python 3.11)</option>
+                    <option value="minimal">Minimal Alpine (Ultra-fast startup)</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+            {renderBottomBar()}
           </div>
         )}
       </div>

@@ -43,6 +43,7 @@ import {
 import { callAppServer, tauriInvoke, tauriListen } from "./bridge";
 import { matchShortcut, matchRecentThreadIndex } from "./shortcuts";
 import { installNativeMenuHandler, installTrayHandler } from "./nativeShell";
+import { playNotificationChime } from "./sound";
 import {
   AppServerStatus,
   AttachedFileItem,
@@ -61,6 +62,8 @@ import {
   ThreadSummary,
   TurnData,
   TurnItem,
+  TurnCompletionPolicy,
+  NotificationSoundTheme,
   WorkspaceFileHit,
   WorkspaceRootItem,
   ShellExecResult,
@@ -238,38 +241,6 @@ function describeThreadStatus(status: { type: string; activeFlags?: string[] } |
   if (status.type === "systemError") return { label: "出错", tone: "error" };
   if (status.type === "idle") return { label: "空闲", tone: "idle" };
   return { label: "", tone: "" };
-}
-
-function playNotificationChime(kind: "nudge" | "done" = "done") {
-  try {
-    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-    if (!AudioCtx) return;
-    const ctx = new AudioCtx();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = "sine";
-    const now = ctx.currentTime;
-    if (kind === "done") {
-      osc.frequency.setValueAtTime(587.33, now); // D5
-      osc.frequency.exponentialRampToValueAtTime(880, now + 0.12); // A5
-      gain.gain.setValueAtTime(0.08, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(now);
-      osc.stop(now + 0.35);
-    } else {
-      osc.frequency.setValueAtTime(440, now);
-      gain.gain.setValueAtTime(0.06, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(now);
-      osc.stop(now + 0.2);
-    }
-  } catch {
-    // audio context blocked or unsupported
-  }
 }
 
 function mapTurnObject(t: any, idx: number): TurnData {
@@ -789,12 +760,20 @@ export const App: React.FC = () => {
     }
   }, []);
 
-  // 通知偏好（桌面系统通知 / 提示音 / 审批提醒）
+  // 通知偏好（桌面系统通知 / 提示音 / 审批提醒 / 轮次完成策略 / 音效主题）
   const [notifyPrefs, setNotifyPrefs] = useState<{
     desktop: boolean;
     sound: boolean;
     approval: boolean;
-  }>({ desktop: true, sound: true, approval: true });
+    turnCompletionPolicy: TurnCompletionPolicy;
+    notificationSoundTheme: NotificationSoundTheme;
+  }>({
+    desktop: true,
+    sound: true,
+    approval: true,
+    turnCompletionPolicy: "unfocused",
+    notificationSoundTheme: "default",
+  });
   const notifyPrefsRef = useRef(notifyPrefs);
   notifyPrefsRef.current = notifyPrefs;
   const applyNotifyPrefs = useCallback((prefs: any) => {
@@ -803,19 +782,27 @@ export const App: React.FC = () => {
       desktop: prefs.desktopNotifications !== false,
       sound: prefs.notificationSound !== false,
       approval: prefs.notifyOnApproval !== false,
+      turnCompletionPolicy: (prefs.turnCompletionPolicy as TurnCompletionPolicy) || "unfocused",
+      notificationSoundTheme: (prefs.notificationSoundTheme as NotificationSoundTheme) || "default",
     };
     setNotifyPrefs(next);
     notifyPrefsRef.current = next;
   }, []);
   const sendDesktopNotification = useCallback((title: string, body: string) => {
     if (!notifyPrefsRef.current.desktop) return;
-    const hidden = typeof document !== "undefined" ? document.hidden : false;
-    if (!hidden) return; // 窗口在前台时不弹系统通知，避免打扰
+    if (notifyPrefsRef.current.turnCompletionPolicy === "never") return;
+    const isWindowActive = typeof document !== "undefined" && document.hasFocus && document.hasFocus() && !document.hidden;
+    if (notifyPrefsRef.current.turnCompletionPolicy === "unfocused" && isWindowActive) return;
     tauriInvoke("show_desktop_notification", { title, body }).catch(() => {});
   }, []);
   const notifyChime = useCallback((kind: "nudge" | "done" = "done") => {
     if (!notifyPrefsRef.current.sound) return;
-    playNotificationChime(kind);
+    if (notifyPrefsRef.current.turnCompletionPolicy === "never" && kind === "done") return;
+    if (notifyPrefsRef.current.turnCompletionPolicy === "unfocused" && kind === "done") {
+      const isWindowActive = typeof document !== "undefined" && document.hasFocus && document.hasFocus() && !document.hidden;
+      if (isWindowActive) return;
+    }
+    playNotificationChime(kind, notifyPrefsRef.current.notificationSoundTheme);
   }, []);
 
   // Connect & Subscribe to App-Server Events on Mount
