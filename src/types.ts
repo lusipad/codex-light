@@ -288,7 +288,12 @@ export type MainViewRoute =
   | "worktrees"
   | "review"
   | "archive"
-  | "settings";
+  | "settings"
+  | "images"
+  | "gpts"
+  | "sites"
+  | "library"
+  | "cloud-environments";
 
 export type SettingsSectionSlug =
   | "general-settings"

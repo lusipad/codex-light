@@ -19,6 +19,7 @@ import {
   Save,
   Server,
   ShoppingBag,
+  Sparkles,
   Store,
   Trash2,
   WifiOff,
@@ -72,6 +73,7 @@ import {
 interface SkillsMcpViewProps {
   activeWorkspaceRoot: string;
   initialTab?: SubTab;
+  onStartSkillCreatorSession?: (prompt: string) => void;
 }
 
 type SubTab = "plugins" | "skills" | "mcp" | "apps" | "marketplaces";
@@ -214,6 +216,7 @@ function patchMarketplacePlugin(
 export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   activeWorkspaceRoot,
   initialTab,
+  onStartSkillCreatorSession,
 }) => {
   const [subTab, setSubTab] = useState<SubTab>(initialTab || "plugins");
 
@@ -1519,9 +1522,25 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
                   type="button"
                   className="mini-btn"
                   onClick={handleStartNewSkill}
+                  title="新建本地自定义技能"
                 >
-                  <Plus size={12} /> 新建技能
+                  <Plus size={12} /> 本地模版
                 </button>
+                {onStartSkillCreatorSession && (
+                  <button
+                    type="button"
+                    className="mini-btn"
+                    style={{
+                      background: "rgba(16, 163, 127, 0.15)",
+                      color: "#10a37f",
+                      border: "1px solid rgba(16, 163, 127, 0.3)",
+                    }}
+                    onClick={() => onStartSkillCreatorSession("$skill-creator ")}
+                    title="在会话中通过 $skill-creator 引导创建新技能"
+                  >
+                    <Sparkles size={12} /> $skill-creator 引导创建
+                  </button>
+                )}
               </div>
             </div>
             {remoteSkillsError && (

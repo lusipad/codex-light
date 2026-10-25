@@ -107,6 +107,23 @@ export const CodeReviewView: React.FC<CodeReviewViewProps> = ({
   const [prLoading, setPrLoading] = useState<boolean>(false);
   const [prError, setPrError] = useState<string | null>(null);
   const [copiedCmd, setCopiedCmd] = useState<boolean>(false);
+  const [selectedPr, setSelectedPr] = useState<GitPullRequestItem | null>(null);
+  const [checkoutLoading, setCheckoutLoading] = useState<boolean>(false);
+  const [checkoutMsg, setCheckoutMsg] = useState<string | null>(null);
+
+  const handleCheckoutBranch = async (branchName: string) => {
+    if (!workspacePath) return;
+    setCheckoutLoading(true);
+    setCheckoutMsg(null);
+    try {
+      await tauriInvoke("git_branch_checkout", { cwd: workspacePath, branch: branchName });
+      setCheckoutMsg(`✓ 成功检出分支: ${branchName}`);
+    } catch (err: any) {
+      setCheckoutMsg(`检出分支失败: ${String(err?.message || err)}`);
+    } finally {
+      setCheckoutLoading(false);
+    }
+  };
 
   const loadGhInfo = async () => {
     setGhLoading(true);
@@ -475,6 +492,13 @@ export const CodeReviewView: React.FC<CodeReviewViewProps> = ({
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 8 }}>
+                    <button
+                      type="button"
+                      className="secondary-btn-sm"
+                      onClick={() => setSelectedPr(pr)}
+                    >
+                      详情 / 检出
+                    </button>
                     {pr.url && (
                       <button
                         type="button"
@@ -502,6 +526,114 @@ export const CodeReviewView: React.FC<CodeReviewViewProps> = ({
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* PR Detail & Checkout Modal */}
+      {selectedPr && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0, 0, 0, 0.65)",
+            zIndex: 1000,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+          onClick={() => setSelectedPr(null)}
+        >
+          <div
+            style={{
+              width: 520,
+              background: "var(--bg-card, #222226)",
+              border: "1px solid var(--border-subtle, #333338)",
+              borderRadius: 12,
+              padding: 24,
+              display: "flex",
+              flexDirection: "column",
+              gap: 16,
+              boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <div>
+                <span style={{ fontSize: 13, color: "var(--accent-blue)", fontWeight: 600 }}>
+                  Pull Request #{selectedPr.number}
+                </span>
+                <h3 style={{ margin: "4px 0 0 0", fontSize: 16 }}>{selectedPr.title}</h3>
+              </div>
+              <button
+                type="button"
+                style={{ background: "none", border: "none", color: "#8e8e93", cursor: "pointer", fontSize: 16 }}
+                onClick={() => setSelectedPr(null)}
+              >
+                ✕
+              </button>
+            </div>
+
+            {checkoutMsg && (
+              <div style={{ padding: "8px 12px", borderRadius: 6, background: "rgba(16, 163, 127, 0.15)", color: "#10a37f", fontSize: 12 }}>
+                {checkoutMsg}
+              </div>
+            )}
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, background: "rgba(0,0,0,0.25)", padding: 14, borderRadius: 8, fontSize: 12 }}>
+              <div>
+                <span style={{ color: "#8e8e93" }}>源分支: </span>
+                <code style={{ color: "#e2e2e5" }}>{selectedPr.head_ref_name || "未知"}</code>
+              </div>
+              <div>
+                <span style={{ color: "#8e8e93" }}>目标分支: </span>
+                <code style={{ color: "#e2e2e5" }}>{selectedPr.base_ref_name || "main"}</code>
+              </div>
+              <div>
+                <span style={{ color: "#8e8e93" }}>作者: </span>
+                <strong>{selectedPr.author || "未知"}</strong>
+              </div>
+              <div>
+                <span style={{ color: "#8e8e93" }}>代码改动: </span>
+                <span style={{ color: "#10a37f" }}>+{selectedPr.additions || 0}</span> / <span style={{ color: "#ef4444" }}>-{selectedPr.deletions || 0}</span>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              {selectedPr.head_ref_name && (
+                <button
+                  type="button"
+                  className="secondary-btn-sm"
+                  disabled={checkoutLoading}
+                  onClick={() => handleCheckoutBranch(selectedPr.head_ref_name!)}
+                >
+                  {checkoutLoading ? "正在检出…" : `检出分支 (${selectedPr.head_ref_name})`}
+                </button>
+              )}
+              <button
+                type="button"
+                className="primary-btn-sm"
+                onClick={() => {
+                  onStartReview({
+                    kind: "branch",
+                    branch: selectedPr.head_ref_name || "main",
+                    instructions: `请全面审查 Pull Request #${selectedPr.number}: ${selectedPr.title}`,
+                  });
+                  setSelectedPr(null);
+                }}
+              >
+                在 Codex 中开始深度审查
+              </button>
+              {selectedPr.url && (
+                <button
+                  type="button"
+                  className="secondary-btn-sm"
+                  onClick={() => window.open(selectedPr.url, "_blank")}
+                >
+                  GitHub 查看
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       )}
 

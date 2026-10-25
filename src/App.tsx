@@ -92,6 +92,11 @@ import { TokenUsageMeter } from "./components/TokenUsageMeter";
 import { ToolCallCards } from "./components/ToolCallCards";
 import { TextSelectionToolbar } from "./components/TextSelectionToolbar";
 import { HotkeyWindow } from "./components/HotkeyWindow";
+import { ImagesView } from "./components/ImagesView";
+import { GptsView } from "./components/GptsView";
+import { SitesView } from "./components/SitesView";
+import { LibraryView } from "./components/LibraryView";
+import { CloudEnvironmentsView } from "./components/CloudEnvironmentsView";
 import { ThreadActionsMenu, ThreadActionItem } from "./components/ThreadActionsMenu";
 import {
   TokenUsageSnapshot,
@@ -3623,6 +3628,77 @@ export const App: React.FC = () => {
               <SkillsMcpView
                 activeWorkspaceRoot={activeWorkspace?.path || ""}
                 initialTab={activeRoute === "skills" ? "skills" : "plugins"}
+                onStartSkillCreatorSession={(prompt) => {
+                  startNewThread();
+                  setPromptInput(prompt);
+                  showAppToast("已启动 $skill-creator 引导会话", "info");
+                }}
+              />
+            </div>
+          </div>
+        ) : activeRoute === "images" ? (
+          <div className="full-route-view">
+            <div className="full-route-container">
+              <ImagesView
+                onStartChatWithImage={(_url, text) => {
+                  startNewThread();
+                  setPromptInput(text);
+                  showAppToast("已将图像与分析提示填入会话", "info");
+                }}
+                onOpenLibrary={() => setActiveRoute("library")}
+              />
+            </div>
+          </div>
+        ) : activeRoute === "gpts" ? (
+          <div className="full-route-view">
+            <div className="full-route-container">
+              <GptsView
+                onStartGptChat={(gpt) => {
+                  startNewThread();
+                  setPromptInput(gpt.promptStarter);
+                  showAppToast(`已载入 ${gpt.name} 提示词`, "info");
+                }}
+                onNavigatePlugins={() => setActiveRoute("plugins")}
+              />
+            </div>
+          </div>
+        ) : activeRoute === "sites" ? (
+          <div className="full-route-view">
+            <div className="full-route-container">
+              <SitesView
+                onStartChatForSite={(siteName) => {
+                  startNewThread();
+                  setPromptInput(`请帮我更新并优化站点「${siteName}」的前端代码与配置`);
+                  showAppToast(`已填入站点更新会话提示`, "info");
+                }}
+              />
+            </div>
+          </div>
+        ) : activeRoute === "library" ? (
+          <div className="full-route-view">
+            <div className="full-route-container">
+              <LibraryView
+                onInsertToChat={(item) => {
+                  setActiveRoute("home");
+                  setPromptInput((prev) =>
+                    prev
+                      ? `${prev}\n\n引用文档 [${item.name}]:\n${item.content || ""}`
+                      : `引用文档 [${item.name}]:\n${item.content || ""}`
+                  );
+                }}
+                onNavigateSites={() => setActiveRoute("sites")}
+              />
+            </div>
+          </div>
+        ) : activeRoute === "cloud-environments" ? (
+          <div className="full-route-view">
+            <div className="full-route-container">
+              <CloudEnvironmentsView
+                onStartChatInEnv={(envName) => {
+                  startNewThread();
+                  setPromptInput(`在云开发环境 [${envName}] 中执行全套构建与测试流水线`);
+                  showAppToast(`已在云环境 [${envName}] 开启会话`, "info");
+                }}
               />
             </div>
           </div>

@@ -13,6 +13,10 @@ import {
   EllipsisIcon,
   ClockIcon,
   GlobeIcon,
+  ImageIcon,
+  CloudIcon,
+  BookOpenIcon,
+  GptIcon,
 } from "./Icons";
 import { MainViewRoute } from "../types";
 import "./NavigationRail.css";
@@ -157,6 +161,11 @@ export const NavigationRail: React.FC<NavigationRailProps> = ({
         {[
           { route: "projects" as const, label: "项目", icon: <FolderIcon size={16} /> },
           { route: "worktrees" as const, label: "Worktrees", icon: <WorktreeIcon size={16} /> },
+          { route: "sites" as const, label: "Sites 托管", icon: <GlobeIcon size={16} /> },
+          { route: "library" as const, label: "资料库与 Space", icon: <BookOpenIcon size={16} /> },
+          { route: "images" as const, label: "图像中心", icon: <ImageIcon size={16} /> },
+          { route: "gpts" as const, label: "GPTs 探索与迁移", icon: <GptIcon size={16} /> },
+          { route: "cloud-environments" as const, label: "云开发环境", icon: <CloudIcon size={16} /> },
           { route: "inbox" as const, label: "收件箱", icon: <BellIcon size={16} />, badge: unreadInboxCount },
           { route: "archive" as const, label: "已归档的聊天", icon: <ArchiveIcon size={16} /> },
         ].map((item) => (
