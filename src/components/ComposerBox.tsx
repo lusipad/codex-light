@@ -14,6 +14,7 @@ import {
   CloseIcon,
   SparklesIcon,
   PaperclipIcon,
+  CameraIcon,
   ShieldIcon,
 } from "./Icons";
 import {
@@ -62,6 +63,7 @@ export interface ComposerBoxProps {
   // Attachments & Autocomplete
   attachedFiles: AttachedFileItem[];
   onAttachFiles: () => void;
+  onAppshot?: () => void;
   onAddAttachedFiles?: (files: AttachedFileItem[]) => void;
   onRemoveAttachedFile: (id: string) => void;
   workspaceFiles: string[];
@@ -141,6 +143,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
   onTogglePlanMode,
   attachedFiles,
   onAttachFiles,
+  onAppshot,
   onAddAttachedFiles,
   onRemoveAttachedFile,
   workspaceFiles,
@@ -698,6 +701,20 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
                       <span className="popover-item-title">添加文件或图像...</span>
                     </div>
                   </div>
+                  {onAppshot && (
+                    <div
+                      className="popover-menu-item"
+                      onClick={() => {
+                        setOpenMenu(null);
+                        onAppshot();
+                      }}
+                    >
+                      <div className="popover-item-header">
+                        <CameraIcon size={14} />
+                        <span className="popover-item-title">当前屏幕快照 (Appshot)</span>
+                      </div>
+                    </div>
+                  )}
                   <div
                     className="popover-menu-item"
                     onClick={() => {

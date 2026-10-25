@@ -1627,6 +1627,21 @@ export const App: React.FC = () => {
     }
   }, []);
 
+  const handleAppshot = useCallback(async () => {
+    try {
+      showAppToast("正在捕获屏幕快照…", "info");
+      const res = await tauriInvoke<{ path: string; name: string }>("capture_appshot");
+      const item = createAttachedFileItem(res.path, res.name, "image");
+      setAttachedFiles((prev) => mergeAttachmentItems(prev, [item]));
+      if (activeThreadId) {
+        void persistThreadAttachments(activeThreadId, [item]).catch(() => {});
+      }
+      showAppToast(`✓ 已添加屏幕快照: ${res.name}`, "success");
+    } catch (err: any) {
+      showAppToast(`截图失败: ${err?.message || String(err)}`, "error");
+    }
+  }, [activeThreadId, showAppToast]);
+
   const handleRemoveAttachedFile = useCallback(async (id: string) => {
     const file = attachedFiles.find((item) => item.id === id);
     if (!file) return;
@@ -3730,6 +3745,7 @@ export const App: React.FC = () => {
               onTogglePlanMode={handleTogglePlanMode}
               attachedFiles={attachedFiles}
               onAttachFiles={handleAttachFiles}
+              onAppshot={handleAppshot}
               onAddAttachedFiles={(newFiles) =>
                 setAttachedFiles((prev) => mergeAttachmentItems(prev, newFiles))
               }
@@ -4406,6 +4422,7 @@ export const App: React.FC = () => {
                   onTogglePlanMode={handleTogglePlanMode}
                   attachedFiles={attachedFiles}
                   onAttachFiles={handleAttachFiles}
+                  onAppshot={handleAppshot}
                   onAddAttachedFiles={(newFiles) =>
                     setAttachedFiles((prev) => mergeAttachmentItems(prev, newFiles))
                   }

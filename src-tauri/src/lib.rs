@@ -838,6 +838,90 @@ async fn pets_list_installed() -> Result<Vec<InstalledPetInfo>, String> {
     .map_err(|e| e.to_string())?
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppshotResult {
+    pub path: String,
+    pub name: String,
+}
+
+#[tauri::command]
+async fn capture_appshot() -> Result<AppshotResult, String> {
+    tokio::task::spawn_blocking(|| {
+        let home = std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .unwrap_or_default();
+        let appshots_dir = std::path::Path::new(&home).join(".codex").join("appshots");
+        let _ = std::fs::create_dir_all(&appshots_dir);
+
+        let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
+        let file_name = format!("appshot_{}.png", timestamp);
+        let out_path = appshots_dir.join(&file_name);
+        let out_path_str = out_path.to_string_lossy().to_string();
+
+        #[cfg(target_os = "windows")]
+        {
+            let ps_script = format!(
+                "Add-Type -AssemblyName System.Windows.Forms; \
+                 Add-Type -AssemblyName System.Drawing; \
+                 $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; \
+                 $bitmap = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height; \
+                 $graphics = [System.Drawing.Graphics]::FromImage($bitmap); \
+                 $graphics.CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size); \
+                 $bitmap.Save('{}', [System.Drawing.Imaging.ImageFormat]::Png); \
+                 $graphics.Dispose(); \
+                 $bitmap.Dispose();",
+                out_path_str.replace('\\', "\\\\")
+            );
+
+            let mut cmd = std::process::Command::new("powershell");
+            cmd.args(["-NoProfile", "-NonInteractive", "-Command", &ps_script]);
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::process::CommandExt;
+                cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            }
+            let status = cmd.status().map_err(|e| e.to_string())?;
+            if !status.success() {
+                return Err("Failed to capture screen using Windows Drawing API".to_string());
+            }
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            let status = std::process::Command::new("screencapture")
+                .arg("-x")
+                .arg(&out_path_str)
+                .status()
+                .map_err(|e| e.to_string())?;
+            if !status.success() {
+                return Err("Failed to capture screen using screencapture".to_string());
+            }
+        }
+
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            let status = std::process::Command::new("grim")
+                .arg(&out_path_str)
+                .status()
+                .map_err(|e| e.to_string())?;
+            if !status.success() {
+                return Err("Failed to capture screen using grim".to_string());
+            }
+        }
+
+        if !out_path.exists() {
+            return Err("Appshot image was not saved".to_string());
+        }
+
+        Ok(AppshotResult {
+            path: out_path_str,
+            name: file_name,
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 async fn skills_list_local(workspace_root: Option<String>) -> Result<Vec<SkillInfoItem>, String> {
     tokio::task::spawn_blocking(move || {
@@ -1022,6 +1106,7 @@ pub fn run() {
             automations_refresh_schedule,
             automations_run_now,
             pets_list_installed,
+            capture_appshot,
             show_desktop_notification,
             exec_shell_command,
         ])
