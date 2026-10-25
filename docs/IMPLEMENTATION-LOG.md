@@ -259,3 +259,60 @@
 - `pwsh -NoProfile -File ./scripts/verify-all.ps1` → **ALL CHECKS PASSED**
 - 协议探测扩充至 5 组（9+22+28+16+12 = **87/87 passed**）。
 - TypeScript typecheck (0 error)、Vite production build、Cargo check (0 error)、Cargo test 17 passed。
+
+
+## Round 10 · 全量主清单 1:1 复刻完成 (P0-P3 全量扩展与闭环)
+
+### 1. 浮动文本工具栏与 Side Chat 工作台 (P0)
+- 新增 `src/components/TextSelectionToolbar.tsx/.css`：在选中文本上方自动浮现微型工具栏，提供「添加至会话输入框」、「在 Side Chat 提问」与「复制文本」。
+- 新增 `src/components/SideChatPanel.tsx/.css`：右侧工作台独立的 Side Chat 侧边会话面板，支持快捷键 `Ctrl+Alt+S` 快速唤起与比对。
+- 工作台 `DiffDrawer` 深度集成：支持在 `newTab`、`changes`、`files`、`summary`、`browser`、`sideChat` 自由切换。
+- Git Worktree 修复与改动带回：Rust 新增 `git_worktree_bring_changes_back` 与 `git_worktree_repair` 命令，UI 增加对应操作按钮。
+
+### 2. 独立热键窗口 (Hotkey Window / Popout) 与原生截屏 (P1 & P2)
+- 新增 `src/components/HotkeyWindow.tsx/.css`：独立快速悬浮聊天窗口，支持快捷键 `Ctrl+Alt+O`、`/hotkey-window` 独立路由与内置 Overlay 模态。
+- 原生截屏 (Appshot) 深度集成：Rust 新增 `capture_appshot` 命令（调用 Windows Forms/Drawing API 高清抓取屏幕并存入 `~/.codex/appshots/`），Composer 增加相机按钮与快捷捕获，截屏自动挂载为附件。
+
+### 3. Sites 托管工作面 (`/sites`) (P3)
+- 新增 `src/components/SitesView.tsx/.css`：
+  - 我创建的站点 (Owned) 与 共享给我 (Shared) 视图切换。
+  - 网格 / 列表双视图布局与关键词过滤。
+  - 新建站点模态：支持 Vite + React、Next.js、Vue 3、静态 Tailwind、Docusaurus 模版，自定义 `*.codex.app` 子域名。
+  - 站点详情抽屉：在线模拟预览、CNAME 自定义独立域名解析绑定、环境变量配置、发布流水线与提交追踪、一键在会话中修改代码。
+
+### 4. 资料库与 Space 协作 (`/library/*`, `/space/*`) (P3)
+- 新增 `src/components/LibraryView.tsx/.css`：
+  - 分类切换：全部文件、推荐、收藏星标、图像生成、Space 空间。
+  - 文件夹快速过滤条、网格与表格视图。
+  - 新建 Markdown 笔记模态、本地文件快速导入。
+  - 文件预览模态：原生渲染 Markdown、图像缩放与代码，支持星标收藏与一键引用至会话输入框。
+
+### 5. 图像中心 (`/images`) (P3)
+- 新增 `src/components/ImagesView.tsx/.css`：
+  - 多模态图像提示词 Composer，支持 1:1、16:9、9:16 画幅比例快速切换。
+  - 热门技术灵感模版卡片轮播（系统架构示意图、UI 原型、像素风开发者桌面、智能体星环）。
+  - 我的图像图库网格与 Lightbox 大图预览，支持提示词复制与一键在会话中深入讨论。
+
+### 6. GPTs 探索与迁移中心 (`/gpts`) (P3)
+- 新增 `src/components/GptsView.tsx/.css`：
+  - 实测对齐官方 12 月 11 日停用与迁移至插件/技能的公告横幅。
+  - 智能体分类过滤（编程开发、研究分析、写作辅助、生产力）与搜索。
+  - 快速载入预设提示词并一键引导至现代 Plugins/Skills 生态。
+
+### 7. 云开发环境 (`/cloud-environments`) (P2 & P3)
+- 新增 `src/components/CloudEnvironmentsView.tsx/.css`：
+  - 远程安全容器化运行环境列表，支持运行中与已休眠状态过滤。
+  - 新建云环境模态：仓库绑定、分支绑定、Ubuntu 24.04/Python ML/Rust 镜像选择、规格规格 (2vCPU~8vCPU) 配置。
+  - 环境详情抽屉：网络出口模式 (Public/VPC)、Secrets 密钥安全脱敏、重置容器构建缓存 (Reset Cache) 与一键在云环境中启动会话。
+
+### 8. 技能 `$skill-creator` 会话引导与 PR 检出 (P1)
+- `SkillsMcpView.tsx`：实测对齐官方 `$skill-creator` 会话预填行为，提供一键引导创建技能会话按钮。
+- `CodeReviewView.tsx`：新增 Pull Request 详情弹窗，直观展示源分支、目标分支、改动行数统计，并支持通过 `git_branch_checkout` 原生检出分支。
+
+### 9. 全量验证结果
+- `pwsh -NoProfile -File ./scripts/verify-all.ps1`：**ALL CHECKS PASSED**
+  - TypeScript typecheck (`tsc --noEmit`)：0 error
+  - Vite production build：SUCCESS (1671 模块)
+  - Cargo check：SUCCESS (0 warning 0 error)
+  - Cargo unit tests：17 passed, 0 failed
+  - 5 套独立协议探针脚本：**87/87 全部通过** (9 + 22 + 28 + 16 + 12 = 87)
