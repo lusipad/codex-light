@@ -1,0 +1,217 @@
+.hotkey-window-container {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 680px;
+  height: 520px;
+  margin: 0 auto;
+  background: var(--bg-surface, #1e1e20);
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
+  border-radius: 12px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+  font-family: inherit;
+}
+
+.hotkey-window-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: var(--bg-surface-elevated, #252528);
+  border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  user-select: none;
+}
+
+.hotkey-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.hotkey-brand-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #fff;
+}
+
+.hotkey-brand-badge svg {
+  color: var(--accent-color, #10a37f);
+}
+
+.hotkey-cwd-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--text-muted, #9999a0);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hotkey-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.hotkey-btn-icon {
+  background: transparent;
+  border: none;
+  color: var(--text-muted, #9999a0);
+  padding: 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.12s ease;
+}
+
+.hotkey-btn-icon:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.08));
+  color: #fff;
+}
+
+.hotkey-messages-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.hotkey-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted, #8a8a92);
+  font-size: 13px;
+  gap: 14px;
+}
+
+.hotkey-quick-starters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  max-width: 480px;
+}
+
+.starter-chip {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 6px 12px;
+  color: var(--text-primary, #e2e2e5);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.starter-chip:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.16);
+  color: #fff;
+}
+
+.hotkey-msg-row {
+  display: flex;
+  width: 100%;
+}
+
+.hotkey-msg-row.user {
+  justify-content: flex-end;
+}
+
+.hotkey-msg-row.assistant {
+  justify-content: flex-start;
+}
+
+.hotkey-msg-bubble {
+  max-width: 88%;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.hotkey-msg-row.user .hotkey-msg-bubble {
+  background: var(--bg-user-bubble, #2a2b32);
+  color: var(--text-primary, #e2e2e5);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.hotkey-msg-row.assistant .hotkey-msg-bubble {
+  background: var(--bg-surface-elevated, #252528);
+  color: var(--text-primary, #e2e2e5);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.hotkey-composer-bar {
+  padding: 10px 14px;
+  background: var(--bg-surface-elevated, #252528);
+  border-top: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hotkey-composer-bar textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg-input, #1c1c1e);
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.1));
+  border-radius: 8px;
+  color: var(--text-primary, #e2e2e5);
+  font-size: 13px;
+  line-height: 1.4;
+  padding: 8px 10px;
+  resize: none;
+  font-family: inherit;
+  outline: none;
+}
+
+.hotkey-composer-bar textarea:focus {
+  border-color: var(--accent-color, #10a37f);
+}
+
+.hotkey-composer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.hotkey-tip {
+  font-size: 11px;
+  color: var(--text-muted, #777780);
+}
+
+.hotkey-send-button {
+  background: var(--accent-color, #10a37f);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: opacity 0.12s ease;
+}
+
+.hotkey-send-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

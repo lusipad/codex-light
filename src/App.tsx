@@ -91,6 +91,7 @@ import { TurnDiffPanel } from "./components/TurnDiffPanel";
 import { TokenUsageMeter } from "./components/TokenUsageMeter";
 import { ToolCallCards } from "./components/ToolCallCards";
 import { TextSelectionToolbar } from "./components/TextSelectionToolbar";
+import { HotkeyWindow } from "./components/HotkeyWindow";
 import { ThreadActionsMenu, ThreadActionItem } from "./components/ThreadActionsMenu";
 import {
   TokenUsageSnapshot,
@@ -447,6 +448,7 @@ export const App: React.FC = () => {
   const [showSourcesPopover, setShowSourcesPopover] = useState<boolean>(false);
   const [initialWorkbenchTab, setInitialWorkbenchTab] = useState<"newTab" | "changes" | "files" | "summary" | "browser" | "sideChat">("changes");
   const [sideChatPrompt, setSideChatPrompt] = useState<string>("");
+  const [showPopoutModal, setShowPopoutModal] = useState<boolean>(false);
   const [pinnedSummaryVisible, setPinnedSummaryVisible] = useState<boolean>(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsSectionSlug>("general-settings");
 
@@ -2573,6 +2575,7 @@ export const App: React.FC = () => {
       if (threadId) void selectThread(String(threadId));
     },
     "new-chat": () => startNewThread(),
+    "new-standalone-chat": () => setShowPopoutModal((v) => !v),
     "toggle-sidebar": () => setSidebarCollapsed((v) => !v),
     "toggle-terminal": () => setShowTerminal((v) => !v),
     "toggle-changes": () => setShowRightDrawer((v) => !v),
@@ -2641,6 +2644,7 @@ export const App: React.FC = () => {
       setShowSessionParamsPopover(false);
       setShowExportPopover(false);
       setShowGoalModal(false);
+      setShowPopoutModal(false);
     },
   };
 
@@ -4465,6 +4469,22 @@ export const App: React.FC = () => {
             setAgentsMdInfo((prev) => ({ ...prev, content: newContent }));
           }}
         />
+      )}
+
+      {/* ── 5b. Hotkey Window / Quick Chat Popout Modal (Ctrl+Alt+O) ── */}
+      {showPopoutModal && (
+        <div className="hotkey-modal-overlay" onClick={() => setShowPopoutModal(false)}>
+          <div className="hotkey-modal-box" onClick={(e) => e.stopPropagation()}>
+            <HotkeyWindow
+              initialThreadId={activeThreadId}
+              onClose={() => setShowPopoutModal(false)}
+              onOpenMainApp={(tid) => {
+                setShowPopoutModal(false);
+                if (tid) void selectThread(tid);
+              }}
+            />
+          </div>
+        </div>
       )}
 
       {/* ── 6. Floating Mini Virtual Pet Companion Widget ── */}

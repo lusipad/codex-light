@@ -24,6 +24,13 @@ export const SHORTCUTS: ShortcutDef[] = [
     match: (e) => isMod(e) && !e.shiftKey && !e.altKey && key(e) === "n",
   },
   {
+    id: "new-standalone-chat",
+    keys: "Ctrl+Alt+O",
+    label: "新独立聊天 (Popout)",
+    group: "global",
+    match: (e) => isMod(e) && e.altKey && key(e) === "o",
+  },
+  {
     id: "toggle-sidebar",
     keys: "Ctrl+B",
     label: "折叠/展开侧边栏",
