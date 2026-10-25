@@ -425,6 +425,7 @@ export const App: React.FC = () => {
   const [showSessionParamsPopover, setShowSessionParamsPopover] = useState<boolean>(false);
   const [showExportPopover, setShowExportPopover] = useState<boolean>(false);
   const [showSourcesPopover, setShowSourcesPopover] = useState<boolean>(false);
+  const [showTokenMeterPopover, setShowTokenMeterPopover] = useState<boolean>(false);
   const [initialWorkbenchTab, setInitialWorkbenchTab] = useState<"newTab" | "changes" | "files" | "summary" | "browser" | "sideChat">("changes");
   const [sideChatPrompt, setSideChatPrompt] = useState<string>("");
   const [showPopoutModal, setShowPopoutModal] = useState<boolean>(false);
@@ -3521,6 +3522,48 @@ export const App: React.FC = () => {
           {/* Top Right Panel Toggle Icons & Environment Actions - 1:1 with Codex App */}
           <div className="top-nav-right">
             <div className="thread-header-actions-group">
+              {/* Context & Token Usage Meter Indicator */}
+              <div style={{ position: "relative" }}>
+                <button
+                  type="button"
+                  className={`window-chrome-icon-btn token-meter-trigger ${
+                    showTokenMeterPopover ? "active" : ""
+                  }`}
+                  onClick={() => setShowTokenMeterPopover((v) => !v)}
+                  title="上下文 Token 用量与速率限制"
+                  style={{
+                    padding: "0 6px",
+                    height: 28,
+                    display: "flex",
+                    alignItems: "center",
+                    borderRadius: 6,
+                  }}
+                >
+                  <TokenUsageMeter
+                    usage={tokenUsage}
+                    rateLimits={rateLimits}
+                    variant="compact"
+                  />
+                </button>
+
+                {showTokenMeterPopover && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: "calc(100% + 8px)",
+                      right: 0,
+                      zIndex: 1000,
+                    }}
+                  >
+                    <TokenUsageMeter
+                      usage={tokenUsage}
+                      rateLimits={rateLimits}
+                      variant="popover"
+                    />
+                  </div>
+                )}
+              </div>
+
               {/* 1. Chat Actions Menu (...) */}
               <ThreadActionsMenu
                 items={threadMenuItems}

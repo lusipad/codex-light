@@ -8,6 +8,7 @@ import {
   Play,
   Plus,
   RefreshCw,
+  Search,
   Target,
   Trash2,
   Zap,
@@ -245,6 +246,7 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
   const [statusFilter, setStatusFilter] = useState<
     "ALL" | "ACTIVE" | "PAUSED" | "COMPLETED"
   >("ALL");
+  const [searchQuery, setSearchQuery] = useState<string>("");
   const [showCreateForm, setShowCreateForm] = useState<boolean>(false);
 
   const [name, setName] = useState<string>("");
@@ -551,13 +553,21 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
   };
 
   const filteredItems = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
     return automations.filter((item) => {
       if (activeSubTab === "scheduled" && item.kind === "goal") return false;
       if (activeSubTab === "goals" && item.kind !== "goal") return false;
       if (statusFilter !== "ALL" && item.status !== statusFilter) return false;
+      if (
+        q &&
+        !item.name.toLowerCase().includes(q) &&
+        !item.prompt.toLowerCase().includes(q)
+      ) {
+        return false;
+      }
       return true;
     });
-  }, [automations, activeSubTab, statusFilter]);
+  }, [automations, activeSubTab, statusFilter, searchQuery]);
 
   const schedulerEntriesById = useMemo(() => {
     const map = new Map<string, SchedulerEntry>();
@@ -787,6 +797,25 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
                     : "已完成"}
             </button>
           ))}
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", position: "relative", marginLeft: "auto" }}>
+          <Search size={13} style={{ position: "absolute", left: 8, color: "var(--text-tertiary)", pointerEvents: "none" }} />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="搜索任务或目标..."
+            style={{
+              padding: "4px 8px 4px 26px",
+              fontSize: 12,
+              borderRadius: 6,
+              background: "var(--bg-input)",
+              color: "var(--text-primary)",
+              border: "1px solid var(--border-subtle)",
+              width: 170,
+            }}
+          />
         </div>
       </div>
 

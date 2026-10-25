@@ -552,6 +552,84 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
       keywords: string;
     }> = [
       {
+        slug: "general-settings",
+        title: "常规设置 (General Settings)",
+        subtitle: "默认工作区、Shell、终端位置与 App-Server 连接状态",
+        keywords: "常规 general shell terminal app-server",
+      },
+      {
+        slug: "notifications",
+        title: "通知与免打扰 (Notifications & Sound Themes)",
+        subtitle: "完成提示音主题、轮次通知策略与系统原生 Toast 提醒",
+        keywords: "通知 提示音 免打扰 sound toast chime notification",
+      },
+      {
+        slug: "profile",
+        title: "开发者个人资料 (Developer Profile)",
+        subtitle: "管理展示名称、用户名、开发者简介与头像",
+        keywords: "个人 资料 profile avatar username bio",
+      },
+      {
+        slug: "account",
+        title: "账号与额度 (Account & Rate Limits)",
+        subtitle: "查阅账号套餐、额度限制、Token 用量与活动统计",
+        keywords: "账号 额度 用量 计费 account usage plan quota credits",
+      },
+      {
+        slug: "code-review",
+        title: "代码审查规范 (Code Review Preferences)",
+        subtitle: "配置自动审查触发条件、阻断级别与路径排除规则",
+        keywords: "审查 评审 代码审查 code review pr diff severity",
+      },
+      {
+        slug: "git-settings",
+        title: "Git 自动化偏好 (Git Preferences)",
+        subtitle: "自动分支前缀、默认主分支、签署提交与 Conventional Commits",
+        keywords: "git 分支 prefix branch commit conventional",
+      },
+      {
+        slug: "worktrees",
+        title: "工作树策略 (Worktrees Strategy)",
+        subtitle: "独立实验工作区保留天数与依赖缓存共享软链",
+        keywords: "工作树 隔离 worktree retention cache",
+      },
+      {
+        slug: "appshots",
+        title: "应用快照 (Appshots)",
+        subtitle: "窗口截图注入、滚屏外长日志采集与全局截图快捷键",
+        keywords: "快照 截屏 窗口 appshots screenshot window",
+      },
+      {
+        slug: "computer-use",
+        title: "电脑操控与桌面自动化 (Computer Use)",
+        subtitle: "多模态桌面自动化、应用白名单与高风险操作二次确认",
+        keywords: "电脑 操控 自动化 computer use desktop automation",
+      },
+      {
+        slug: "browser-use",
+        title: "浏览器操控 (Browser Use)",
+        subtitle: "Chrome DevTools Protocol (CDP) 调试与 WebMCP 网页自动化",
+        keywords: "浏览器 browser cdp webmcp devtools",
+      },
+      {
+        slug: "cloud-settings",
+        title: "Codex 云端偏好 (Cloud Preferences)",
+        subtitle: "云端差异比对视图模式、云分支规范与默认容器环境",
+        keywords: "云端 偏好 cloud preferences diff branch container",
+      },
+      {
+        slug: "plugins-settings",
+        title: "插件与技能市场设置 (Plugins Settings)",
+        subtitle: "插件市场源、沙盒模式与自动更新策略",
+        keywords: "插件 技能 市场 plugins skills marketplace",
+      },
+      {
+        slug: "hooks-settings",
+        title: "生命周期挂钩 (Lifecycle Hooks)",
+        subtitle: "PreToolUse, PostToolUse 等 11 类生命周期实时事件",
+        keywords: "挂钩 生命周期 hooks pretooluse posttooluse",
+      },
+      {
         slug: "agent",
         title: "智能体与模型参数设置 (Agent & Hyperparameters)",
         subtitle: "调节 Temperature, Top-P, Tokens 上限, WebSearch 与沙盒",
@@ -580,6 +658,42 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
         title: "键盘快捷键一览 (Keyboard Shortcuts)",
         subtitle: "查看与设置 Ctrl+N, Ctrl+B, Ctrl+J, Ctrl+K 等快捷键",
         keywords: "快捷键 shortcuts hotkeys keybindings",
+      },
+      {
+        slug: "personalization",
+        title: "个性化与角色指令 (Personalization)",
+        subtitle: "定制 Codex 的回复语气、角色定位与代码风格偏好",
+        keywords: "个性化 指令 角色 persona instructions tone",
+      },
+      {
+        slug: "pets",
+        title: "虚拟宠物伴侣 (Mini & Pets)",
+        subtitle: "管理 Codex 桌面伴侣外观、缩放比例与跟随常显",
+        keywords: "宠物 伴侣 pets mini companion",
+      },
+      {
+        slug: "voice",
+        title: "智能语音输入 (Voice & Dictation)",
+        subtitle: "麦克风语音输入、Whisper 语音模型与静音自动发送",
+        keywords: "语音 听写 麦克风 voice whisper dictation microphone",
+      },
+      {
+        slug: "archived-chats",
+        title: "已归档聊天 (Archived Chats)",
+        subtitle: "检索、还原或永久删除历史归档的会话记录",
+        keywords: "归档 会话 历史 archive archived chats restore",
+      },
+      {
+        slug: "storage",
+        title: "存储空间与数据清理 (Storage & Cleanup)",
+        subtitle: "工作树缓存、会话历史与磁盘占用分析",
+        keywords: "存储 磁盘 清理 storage disk cache",
+      },
+      {
+        slug: "import",
+        title: "导入外部配置 (Import Settings)",
+        subtitle: "从 Cursor, VS Code, Windsurf, Claude 导入规则与设置",
+        keywords: "导入 import cursor vscode windsurf claude",
       },
     ];
 
