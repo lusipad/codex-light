@@ -1,0 +1,133 @@
+/* Official Codex Thread Find Bar - 1:1 Styling */
+.thread-find-bar {
+  position: absolute;
+  top: 12px;
+  right: 24px;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-surface-2, #202024);
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
+  border-radius: 8px;
+  padding: 4px 6px 4px 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.38);
+  font-size: 12.5px;
+  animation: findBarSlideDown 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes findBarSlideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.find-scope-pills {
+  display: flex;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
+  margin-right: 4px;
+}
+
+.find-scope-btn {
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-tertiary, #8e8e93);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.find-scope-btn:hover {
+  color: var(--text-primary, #ffffff);
+}
+
+.find-scope-btn.active {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text-primary, #ffffff);
+}
+
+.find-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.find-input {
+  width: 170px;
+  height: 26px;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-primary, #ffffff);
+  font-size: 12.5px;
+  padding: 0 4px;
+}
+
+.find-input::placeholder {
+  color: var(--text-tertiary, #8e8e93);
+}
+
+.find-match-count {
+  font-size: 11.5px;
+  color: var(--text-tertiary, #8e8e93);
+  padding: 0 4px;
+  white-space: nowrap;
+  user-select: none;
+  min-width: 48px;
+  text-align: right;
+}
+
+.find-match-count.no-results {
+  color: #ef4444;
+}
+
+.find-divider {
+  width: 1px;
+  height: 16px;
+  background: var(--border-subtle, rgba(255, 255, 255, 0.1));
+  margin: 0 2px;
+}
+
+.find-action-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary, #cccccc);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.find-action-btn:hover:not(:disabled) {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.08));
+  color: var(--text-primary, #ffffff);
+}
+
+.find-action-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* Highlight flash pulse on targeted match element */
+.find-highlight-pulse {
+  outline: 2px solid var(--accent-blue, #3b82f6) !important;
+  outline-offset: 4px;
+  border-radius: 6px;
+  transition: outline-color 0.8s ease;
+}

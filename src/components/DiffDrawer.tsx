@@ -819,6 +819,33 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     }
   };
 
+  const handleCopyGitApply = useCallback(async () => {
+    if (!diffContent.trim()) {
+      showToast("当前暂无改动差异可复制");
+      return;
+    }
+    const script = `git apply <<'EOF'\n${diffContent}\nEOF`;
+    try {
+      await navigator.clipboard.writeText(script);
+      showToast("✓ 已复制 git apply 补丁命令");
+    } catch {
+      showToast("复制失败");
+    }
+  }, [diffContent]);
+
+  const handleCopyRawPatch = useCallback(async () => {
+    if (!diffContent.trim()) {
+      showToast("当前暂无改动差异可复制");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(diffContent);
+      showToast("✓ 已复制 Diff 补丁内容");
+    } catch {
+      showToast("复制失败");
+    }
+  }, [diffContent]);
+
   const handleCommit = async () => {
     if (!commitMessage.trim()) return;
     setCommitting(true);
@@ -1325,6 +1352,22 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                 title="左右并排对比视图"
               >
                 并排
+              </button>
+              <button
+                type="button"
+                className="seg-btn"
+                onClick={handleCopyGitApply}
+                title="复制 git apply 命令到剪贴板"
+              >
+                git apply
+              </button>
+              <button
+                type="button"
+                className="seg-btn"
+                onClick={handleCopyRawPatch}
+                title="复制原始 Patch 补丁文本"
+              >
+                复制 Patch
               </button>
             </div>
           </div>

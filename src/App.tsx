@@ -27,6 +27,7 @@ import {
   SquarePlusIcon,
   EllipsisIcon,
   ArchiveIcon,
+  SearchIcon,
 } from "./components/Icons";
 import { ProjectSourcesPopover } from "./components/ProjectSourcesPopover";
 import { AppTitleBar } from "./components/AppTitleBar";
@@ -98,6 +99,7 @@ import { SitesView } from "./components/SitesView";
 import { LibraryView } from "./components/LibraryView";
 import { CloudEnvironmentsView } from "./components/CloudEnvironmentsView";
 import { ThreadActionsMenu, ThreadActionItem } from "./components/ThreadActionsMenu";
+import { ThreadFindBar } from "./components/ThreadFindBar";
 import {
   TokenUsageSnapshot,
   mergeTokenUsage,
@@ -480,6 +482,8 @@ export const App: React.FC = () => {
   const [petScale, setPetScale] = useState<number>(1.0);
   const [installedPets, setInstalledPets] = useState<InstalledPetItem[]>([]);
   const [showQuickSearch, setShowQuickSearch] = useState<boolean>(false);
+  const [showFindBar, setShowFindBar] = useState<boolean>(false);
+  const [findBarScope, setFindBarScope] = useState<"chat" | "diff">("chat");
 
   // Global Toast & Header inline rename
   const [appToast, setAppToast] = useState<{
@@ -2624,6 +2628,7 @@ export const App: React.FC = () => {
     "command-palette": () => setShowQuickSearch(true),
     "command-palette-alt": () => setShowQuickSearch(true),
     "file-search": () => setShowQuickSearch(true),
+    "find-in-chat": () => setShowFindBar((v) => !v),
     "rename-thread": () => {
       if (activeThreadObj) {
         setThreadTitleInput(
@@ -2685,6 +2690,7 @@ export const App: React.FC = () => {
       setShowExportPopover(false);
       setShowGoalModal(false);
       setShowPopoutModal(false);
+      setShowFindBar(false);
     },
   };
 
@@ -3027,6 +3033,12 @@ export const App: React.FC = () => {
         hint: "Ctrl+Alt+R",
       },
       {
+        id: "find_in_chat",
+        label: "在会话中查找",
+        icon: <SearchIcon size={14} />,
+        hint: "Ctrl+F",
+      },
+      {
         id: "toggle_thread_pin",
         label: pinned ? "取消置顶" : "置顶",
         icon: <PinIcon size={14} />,
@@ -3066,6 +3078,7 @@ export const App: React.FC = () => {
         icon: <CopyIcon size={14} />,
         children: [
           { id: "copy_markdown", label: "复制 Markdown", hint: "Ctrl+Shift+C" },
+          { id: "copy_last_code", label: "复制最后一段代码", hint: "Ctrl+Shift+;" },
           { id: "copy_cwd", label: "复制工作目录" },
           { id: "copy_deeplink", label: "复制深层链接" },
         ],
@@ -3105,6 +3118,8 @@ export const App: React.FC = () => {
             );
             setEditingThreadTitle(true);
           }
+        } else if (id === "find_in_chat") {
+          setShowFindBar(true);
         } else if (id === "toggle_thread_pin") {
           if (activeThreadId) {
             await handleTogglePinThread(activeThreadId, {} as any);
@@ -3135,6 +3150,8 @@ export const App: React.FC = () => {
             .join("\n");
           await navigator.clipboard.writeText(md);
           showAppToast("✓ 已复制会话 Markdown 到剪贴板", "success");
+        } else if (id === "copy_last_code") {
+          shortcutHandlersRef.current["copy-last-code-block"]?.();
         } else if (id === "copy_cwd") {
           if (activeWorkspace?.path) {
             await navigator.clipboard.writeText(activeWorkspace.path);
@@ -3858,6 +3875,17 @@ export const App: React.FC = () => {
           /* ── Active Local Conversation Stream (/local/:clientThreadId) ── */
           <>
             <div className="timeline-scroll-pane" ref={timelineScrollRef}>
+              <ThreadFindBar
+                open={showFindBar}
+                onClose={() => setShowFindBar(false)}
+                turns={turns}
+                scope={findBarScope}
+                onScopeChange={setFindBarScope}
+                onOpenDiff={() => {
+                  setInitialWorkbenchTab("changes");
+                  setShowRightDrawer(true);
+                }}
+              />
               <TextSelectionToolbar
                 containerRef={timelineScrollRef}
                 onAddToChat={(text) => {
@@ -4048,6 +4076,14 @@ export const App: React.FC = () => {
                               }}
                             >
                               ✏️ 编辑
+                            </button>
+                            <button
+                              type="button"
+                              className="turn-action-mini-btn"
+                              title="从当前回合分叉出会话 (Fork)"
+                              onClick={() => handleForkChat(turn.id)}
+                            >
+                              🌿 从此分叉
                             </button>
                           </div>
                         </div>

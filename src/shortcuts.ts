@@ -80,6 +80,13 @@ export const SHORTCUTS: ShortcutDef[] = [
     match: (e) => isMod(e) && !e.shiftKey && !e.altKey && key(e) === "p",
   },
   {
+    id: "find-in-chat",
+    keys: "Ctrl+F",
+    label: "在会话中查找",
+    group: "thread",
+    match: (e) => isMod(e) && !e.shiftKey && !e.altKey && key(e) === "f",
+  },
+  {
     id: "rename-thread",
     keys: "Ctrl+Alt+R",
     label: "重命名当前会话",
