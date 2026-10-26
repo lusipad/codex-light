@@ -31,9 +31,12 @@ pub struct PendingServerRequest {
     pub id: Value,
     pub method: String,
     pub params: Value,
+    pub generation: u64,
+    pub response_delivery_unknown: bool,
 }
 
 struct InnerState {
+    generation: u64,
     child: Option<Child>,
     stdin: Option<ChildStdin>,
     pending_requests: HashMap<u64, oneshot::Sender<Result<Value, String>>>,
@@ -42,16 +45,50 @@ struct InnerState {
     custom_cli_path: Option<String>,
 }
 
+impl InnerState {
+    fn resolve_server_request(&mut self, generation: u64, params: &Value) {
+        if self.generation != generation {
+            return;
+        }
+        let Some(id) = params.get("requestId") else { return };
+        let Some(thread_id) = params.get("threadId").and_then(Value::as_str) else { return };
+        let key = server_request_key(id);
+        if self.pending_server_requests.get(&key).is_some_and(|request| {
+            request.generation == generation
+                && request.params.get("threadId").and_then(Value::as_str)
+                    .or_else(|| request.params.get("conversationId").and_then(Value::as_str)) == Some(thread_id)
+        }) {
+            self.pending_server_requests.remove(&key);
+        }
+    }
+
+    fn close_generation(&mut self, generation: u64) -> bool {
+        if self.generation != generation {
+            return false;
+        }
+        self.status.connected = false;
+        self.status.connecting = false;
+        self.stdin = None;
+        self.pending_server_requests.clear();
+        for (_, tx) in self.pending_requests.drain() {
+            let _ = tx.send(Err("app-server connection closed".to_string()));
+        }
+        true
+    }
+}
+
 #[derive(Clone)]
 pub struct AppServerManager {
     inner: Arc<Mutex<InnerState>>,
     next_id: Arc<AtomicU64>,
+    lifecycle: Arc<Mutex<()>>,
 }
 
 impl AppServerManager {
     pub fn new() -> Self {
         Self {
             inner: Arc::new(Mutex::new(InnerState {
+                generation: 0,
                 child: None,
                 stdin: None,
                 pending_requests: HashMap::new(),
@@ -67,6 +104,7 @@ impl AppServerManager {
                 custom_cli_path: None,
             })),
             next_id: Arc::new(AtomicU64::new(1)),
+            lifecycle: Arc::new(Mutex::new(())),
         }
     }
 
@@ -130,18 +168,25 @@ impl AppServerManager {
     }
 
     pub async fn ensure_connected(&self, app: &AppHandle) -> Result<AppServerStatus, String> {
+        let _lifecycle = self.lifecycle.lock().await;
         {
             let guard = self.inner.lock().await;
             if guard.status.connected && guard.stdin.is_some() {
                 return Ok(guard.status.clone());
             }
         }
-        self.restart(app).await
+        self.restart_locked(app).await
     }
 
     pub async fn restart(&self, app: &AppHandle) -> Result<AppServerStatus, String> {
-        let binary_path = {
+        let _lifecycle = self.lifecycle.lock().await;
+        self.restart_locked(app).await
+    }
+
+    async fn restart_locked(&self, app: &AppHandle) -> Result<AppServerStatus, String> {
+        let (binary_path, generation) = {
             let mut guard = self.inner.lock().await;
+            guard.generation += 1;
             if let Some(mut old_child) = guard.child.take() {
                 let _ = old_child.start_kill();
             }
@@ -156,7 +201,7 @@ impl AppServerManager {
             let resolved = Self::resolve_codex_binary(guard.custom_cli_path.as_deref());
             guard.status.binary_path = resolved.clone();
             let _ = app.emit("app-server:status", guard.status.clone());
-            resolved
+            (resolved, guard.generation)
         };
 
         let mut cmd = if cfg!(target_os = "windows")
@@ -215,26 +260,27 @@ impl AppServerManager {
                     continue;
                 }
                 if let Ok(msg) = serde_json::from_str::<Value>(trimmed) {
-                    handle_incoming_message(&inner_stdout, &app_stdout, msg).await;
+                    handle_incoming_message(&inner_stdout, &app_stdout, generation, msg).await;
                 }
             }
             // EOF reached -> process exited
             let mut guard = inner_stdout.lock().await;
-            guard.status.connected = false;
-            guard.status.connecting = false;
-            guard.stdin = None;
-            for (_, tx) in guard.pending_requests.drain() {
-                let _ = tx.send(Err("app-server connection closed".to_string()));
+            if guard.close_generation(generation) {
+                let _ = app_stdout.emit("app-server:status", guard.status.clone());
             }
-            let _ = app_stdout.emit("app-server:status", guard.status.clone());
         });
 
         // Spawn stderr reader task
         let app_stderr = app.clone();
+        let inner_stderr = self.inner.clone();
         tokio::spawn(async move {
             let mut lines = BufReader::new(stderr).lines();
             while let Ok(Some(line)) = lines.next_line().await {
                 let trimmed = line.trim();
+                let guard = inner_stderr.lock().await;
+                if guard.generation != generation {
+                    break;
+                }
                 if !trimmed.is_empty() {
                     let _ = app_stderr.emit("app-server:stderr", trimmed.to_string());
                 }
@@ -254,12 +300,16 @@ impl AppServerManager {
             }
         });
 
-        match self
-            .send_raw_request("initialize", init_params, Duration::from_secs(15))
-            .await
-        {
+        let initialized = async {
+            let result = self
+                .send_raw_request("initialize", init_params, Duration::from_secs(15))
+                .await?;
+            self.send_raw_notification("initialized", None).await?;
+            Ok::<Value, String>(result)
+        }
+        .await;
+        match initialized {
             Ok(init_result) => {
-                let _ = self.send_raw_notification("initialized", None).await;
                 let user_agent = init_result
                     .get("userAgent")
                     .and_then(|v| v.as_str())
@@ -271,6 +321,9 @@ impl AppServerManager {
                     .map(|s| s.to_string());
 
                 let mut guard = self.inner.lock().await;
+                if guard.generation != generation || guard.stdin.is_none() {
+                    return Err("app-server connection closed during initialization".to_string());
+                }
                 guard.status.connected = true;
                 guard.status.connecting = false;
                 guard.status.user_agent = user_agent;
@@ -382,38 +435,68 @@ impl AppServerManager {
         &self,
         app: &AppHandle,
         id: Value,
+        generation: u64,
         result: Option<Value>,
         error: Option<Value>,
     ) -> Result<(), String> {
-        let key = server_request_key(&id);
-        let wire_id = {
-            let mut guard = self.inner.lock().await;
-            guard
-                .pending_server_requests
-                .remove(&key)
-                .map(|r| r.id)
-                .unwrap_or(id)
-        };
-        let response = if let Some(err) = error {
-            json!({ "id": wire_id, "error": err })
-        } else {
-            json!({ "id": wire_id, "result": result.unwrap_or_else(|| json!({})) })
-        };
-        self.write_json_line(&response).await?;
-        let _ = app.emit("app-server:server-request-resolved", json!({ "id": wire_id }));
+        let mut guard = self.inner.lock().await;
+        if guard.generation != generation {
+            return Err("Approval belongs to a previous app-server connection".to_string());
+        }
+        let InnerState { stdin, pending_server_requests, .. } = &mut *guard;
+        write_server_response(pending_server_requests, stdin.as_mut(), &id, generation, result, error).await?;
+        let _ = app.emit("app-server:server-request-resolved", json!({ "id": id, "generation": generation }));
         Ok(())
     }
 }
 
 fn server_request_key(id: &Value) -> String {
-    match id {
-        Value::String(s) => s.clone(),
-        Value::Number(n) => n.to_string(),
-        other => other.to_string(),
-    }
+    id.to_string()
 }
 
-async fn handle_incoming_message(inner: &Arc<Mutex<InnerState>>, app: &AppHandle, msg: Value) {
+async fn write_server_response<W: tokio::io::AsyncWrite + Unpin>(
+    pending: &mut HashMap<String, PendingServerRequest>,
+    writer: Option<&mut W>,
+    id: &Value,
+    generation: u64,
+    result: Option<Value>,
+    error: Option<Value>,
+) -> Result<(), String> {
+    let key = server_request_key(id);
+    let request = pending.get_mut(&key).ok_or("Approval is no longer pending")?;
+    if request.generation != generation {
+        return Err("Approval belongs to a previous app-server connection".to_string());
+    }
+    if request.response_delivery_unknown {
+        return Err("Approval response delivery is unknown; wait for resolution or reconnect before retrying".to_string());
+    }
+    let writer = writer.ok_or("codex app-server is not connected")?;
+    let response = if let Some(error) = error {
+        json!({ "id": request.id, "error": error })
+    } else {
+        json!({ "id": request.id, "result": result.unwrap_or_else(|| json!({})) })
+    };
+    let mut line = serde_json::to_vec(&response).map_err(|e| e.to_string())?;
+    line.push(b'\n');
+    // A failed or cancelled write may already have delivered bytes. Do not resend it.
+    request.response_delivery_unknown = true;
+    writer.write_all(&line).await.map_err(|e| format!("Approval response delivery is unknown: {}", e))?;
+    writer.flush().await.map_err(|e| format!("Approval response delivery is unknown: {}", e))?;
+    pending.remove(&key);
+    Ok(())
+}
+
+async fn handle_incoming_message(
+    inner: &Arc<Mutex<InnerState>>,
+    app: &AppHandle,
+    generation: u64,
+    msg: Value,
+) {
+    // Keep the generation check, mutations and event emission atomic with restart.
+    let mut guard = inner.lock().await;
+    if guard.generation != generation {
+        return;
+    }
     let has_id = msg.get("id").is_some();
     let has_method = msg.get("method").and_then(|m| m.as_str()).is_some();
     let has_result = msg.get("result").is_some();
@@ -422,10 +505,7 @@ async fn handle_incoming_message(inner: &Arc<Mutex<InnerState>>, app: &AppHandle
     // 1. Response to a client-initiated request
     if has_id && (has_result || has_error) {
         if let Some(id_u64) = msg.get("id").and_then(|v| v.as_u64()) {
-            let tx_opt = {
-                let mut guard = inner.lock().await;
-                guard.pending_requests.remove(&id_u64)
-            };
+            let tx_opt = guard.pending_requests.remove(&id_u64);
             if let Some(tx) = tx_opt {
                 if let Some(err) = msg.get("error") {
                     let err_msg = err
@@ -456,13 +536,12 @@ async fn handle_incoming_message(inner: &Arc<Mutex<InnerState>>, app: &AppHandle
             id: id.clone(),
             method,
             params,
+            generation,
+            response_delivery_unknown: false,
         };
-        {
-            let mut guard = inner.lock().await;
-            guard
-                .pending_server_requests
-                .insert(server_request_key(&id), req.clone());
-        }
+        let req = guard
+            .pending_server_requests
+            .entry(server_request_key(&id)).or_insert(req).clone();
         let _ = app.emit("app-server:server-request", req);
         return;
     }
@@ -474,6 +553,9 @@ async fn handle_incoming_message(inner: &Arc<Mutex<InnerState>>, app: &AppHandle
             .or_else(|| msg.get("result"))
             .cloned()
             .unwrap_or(Value::Null);
+        if method == "serverRequest/resolved" {
+            guard.resolve_server_request(generation, &params);
+        }
         let _ = app.emit(
             "app-server:notification",
             json!({
@@ -540,10 +622,9 @@ fn sanitize_codex_app_mcp_config(config: &mut Value) {
     }
 }
 
-/// Ported from scripts/desktop-patches/model-catalog-compat.cjs & appServerBridge.ts
+/// Enrich thread timing fields for the desktop UI; preserve runtime model capabilities.
 fn post_process_result(method: &str, mut result: Value) -> Value {
     match method {
-        "model/list" => patch_model_list_result(result),
         "thread/resume" | "thread/read" => {
             if let Some(thread) = result.get_mut("thread") {
                 enrich_thread_timings(thread);
@@ -560,79 +641,6 @@ fn post_process_result(method: &str, mut result: Value) -> Value {
         }
         _ => result,
     }
-}
-
-fn patch_model_list_result(mut result: Value) -> Value {
-    let models_opt = if result.is_array() {
-        result.as_array_mut()
-    } else {
-        result.get_mut("data").and_then(|d| d.as_array_mut())
-    };
-    let Some(models) = models_opt else {
-        return result;
-    };
-
-    let mut found_astra = false;
-    for model in models.iter_mut() {
-        let slug = model
-            .get("model")
-            .or_else(|| model.get("slug"))
-            .or_else(|| model.get("id"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        if slug == "gpt-6-astra" {
-            found_astra = true;
-            if let Some(obj) = model.as_object_mut() {
-                obj.insert("hidden".to_string(), Value::Bool(false));
-            }
-        } else if slug == "gpt-6.1-sol" {
-            if let Some(obj) = model.as_object_mut() {
-                obj.insert("hidden".to_string(), Value::Bool(false));
-            }
-        }
-    }
-
-    if !found_astra {
-        models.insert(0, create_astra_model());
-    }
-    result
-}
-
-fn create_astra_model() -> Value {
-    json!({
-        "id": "gpt-6-astra",
-        "model": "gpt-6-astra",
-        "upgrade": null,
-        "upgradeInfo": null,
-        "availabilityNux": null,
-        "displayName": "GPT-6-Astra",
-        "description": "Our most capable model for complex, demanding work.",
-        "modelSpecialty": null,
-        "hidden": false,
-        "supportedReasoningEfforts": [
-            { "reasoningEffort": "low", "description": "Fast responses with lighter reasoning" },
-            { "reasoningEffort": "medium", "description": "Balances speed and reasoning depth for everyday tasks" },
-            { "reasoningEffort": "high", "description": "Greater reasoning depth for complex problems" },
-            { "reasoningEffort": "xhigh", "description": "Extra high reasoning depth for complex problems" },
-            { "reasoningEffort": "max", "description": "Maximum reasoning depth for the hardest problems" },
-            { "reasoningEffort": "ultra", "description": "Maximum reasoning with automatic task delegation" }
-        ],
-        "defaultReasoningEffort": "medium",
-        "inputModalities": ["text", "image"],
-        "supportsPersonality": true,
-        "multiAgentVersion": "v2",
-        "additionalSpeedTiers": ["fast"],
-        "serviceTiers": [
-            {
-                "id": "priority",
-                "name": "Fast",
-                "description": "2x speed, increased usage"
-            }
-        ],
-        "defaultServiceTier": null,
-        "isDefault": false
-    })
 }
 
 fn enrich_thread_timings(thread: &mut Value) {
@@ -676,18 +684,167 @@ mod tests {
     use super::*;
 
     #[test]
-    fn patches_model_list_with_astra_and_unhides_sol() {
-        let raw = json!({
-            "data": [
-                { "id": "gpt-6.1-sol", "model": "gpt-6.1-sol", "hidden": true },
-                { "id": "gpt-5.4", "model": "gpt-5.4", "hidden": false }
-            ]
-        });
-        let patched = patch_model_list_result(raw);
-        let arr = patched.get("data").and_then(|d| d.as_array()).unwrap();
-        assert_eq!(arr[0].get("model").and_then(|v| v.as_str()), Some("gpt-6-astra"));
-        assert_eq!(arr[1].get("model").and_then(|v| v.as_str()), Some("gpt-6.1-sol"));
-        assert_eq!(arr[1].get("hidden").and_then(|v| v.as_bool()), Some(false));
+    fn server_request_ids_preserve_json_type() {
+        assert_ne!(server_request_key(&json!(7)), server_request_key(&json!("7")));
+    }
+
+    fn approval(id: Value) -> PendingServerRequest {
+        PendingServerRequest {
+            id, method: "item/commandExecution/requestApproval".to_string(),
+            params: json!({"threadId": "thread-a"}), generation: 2,
+            response_delivery_unknown: false,
+        }
+    }
+
+    fn approvals() -> HashMap<String, PendingServerRequest> {
+        [json!(7), json!("7")].into_iter()
+            .map(|id| (server_request_key(&id), approval(id))).collect()
+    }
+
+    #[tokio::test]
+    async fn approval_response_writes_once_and_preserves_wire_id_type() {
+        let mut pending = approvals();
+        let mut output = Vec::new();
+        write_server_response(&mut pending, Some(&mut output), &json!(7), 2, Some(json!({"decision": "decline"})), None).await.unwrap();
+        let payload: Value = serde_json::from_slice(&output).unwrap();
+        assert_eq!(payload, json!({"id": 7, "result": {"decision": "decline"}}));
+        let written = output.len();
+        assert!(write_server_response(&mut pending, Some(&mut output), &json!(7), 2, None, None).await.is_err());
+        assert_eq!(output.len(), written);
+        assert!(pending.contains_key(&server_request_key(&json!("7"))));
+        output.clear();
+        write_server_response(&mut pending, Some(&mut output), &json!("7"), 2, None, Some(json!({"code": -1}))).await.unwrap();
+        assert_eq!(serde_json::from_slice::<Value>(&output).unwrap(), json!({"id": "7", "error": {"code": -1}}));
+        assert!(pending.is_empty());
+    }
+
+    #[tokio::test]
+    async fn approval_without_stdin_or_with_stale_generation_does_not_consume_request() {
+        let mut pending = approvals();
+        let mut output = Vec::new();
+        assert!(write_server_response::<Vec<u8>>(&mut pending, None, &json!(7), 2, None, None).await.is_err());
+        assert!(!pending[&server_request_key(&json!(7))].response_delivery_unknown);
+        assert!(write_server_response(&mut pending, Some(&mut output), &json!(7), 1, None, None).await.is_err());
+        assert!(output.is_empty());
+        assert_eq!(pending.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn failed_approval_write_is_retained_but_cannot_be_resent() {
+        let mut pending = approvals();
+        let (mut writer, reader) = tokio::io::duplex(64);
+        drop(reader);
+        assert!(write_server_response(&mut pending, Some(&mut writer), &json!(7), 2, None, None).await.unwrap_err().contains("delivery is unknown"));
+        assert!(pending[&server_request_key(&json!(7))].response_delivery_unknown);
+        let mut output = Vec::new();
+        assert!(write_server_response(&mut pending, Some(&mut output), &json!(7), 2, None, None).await.is_err());
+        assert!(output.is_empty());
+    }
+
+    #[tokio::test]
+    async fn failed_approval_flush_keeps_unknown_delivery_state() {
+        struct FlushFailure(Vec<u8>);
+        impl tokio::io::AsyncWrite for FlushFailure {
+            fn poll_write(mut self: std::pin::Pin<&mut Self>, _: &mut std::task::Context<'_>, bytes: &[u8]) -> std::task::Poll<std::io::Result<usize>> {
+                self.0.extend_from_slice(bytes);
+                std::task::Poll::Ready(Ok(bytes.len()))
+            }
+            fn poll_flush(self: std::pin::Pin<&mut Self>, _: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
+                std::task::Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()))
+            }
+            fn poll_shutdown(self: std::pin::Pin<&mut Self>, _: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
+                std::task::Poll::Ready(Ok(()))
+            }
+        }
+        let mut pending = approvals();
+        let mut writer = FlushFailure(Vec::new());
+        assert!(write_server_response(&mut pending, Some(&mut writer), &json!(7), 2, None, None).await.unwrap_err().contains("delivery is unknown"));
+        assert!(!writer.0.is_empty());
+        assert!(pending[&server_request_key(&json!(7))].response_delivery_unknown);
+    }
+
+    #[tokio::test]
+    async fn interrupted_approval_write_cannot_be_repeated() {
+        let mut pending = approvals();
+        let (mut writer, _reader) = tokio::io::duplex(1);
+        assert!(tokio::time::timeout(Duration::from_millis(10),
+            write_server_response(&mut pending, Some(&mut writer), &json!(7), 2, None, None)
+        ).await.is_err());
+        assert!(pending[&server_request_key(&json!(7))].response_delivery_unknown);
+        let mut output = Vec::new();
+        assert!(write_server_response(&mut pending, Some(&mut output), &json!(7), 2, None, None).await.is_err());
+        assert!(output.is_empty());
+    }
+
+    #[tokio::test]
+    async fn concurrent_approval_responses_write_only_once_under_state_lock() {
+        let state = Arc::new(Mutex::new((approvals(), Vec::new())));
+        let respond = |state: Arc<Mutex<(HashMap<String, PendingServerRequest>, Vec<u8>)>>| async move {
+            let mut guard = state.lock().await;
+            let (pending, writer) = &mut *guard;
+            write_server_response(pending, Some(writer), &json!(7), 2, None, None).await
+        };
+        let (first, second) = tokio::join!(respond(state.clone()), respond(state.clone()));
+        assert_ne!(first.is_ok(), second.is_ok());
+        let guard = state.lock().await;
+        assert_eq!(guard.1.iter().filter(|byte| **byte == b'\n').count(), 1);
+    }
+
+    #[tokio::test]
+    async fn resolved_approval_requires_thread_generation_and_typed_id() {
+        let manager = AppServerManager::new();
+        let mut state = manager.inner.lock().await;
+        state.generation = 2;
+        state.pending_server_requests = approvals();
+        state.resolve_server_request(1, &json!({"threadId": "thread-a", "requestId": 7}));
+        state.resolve_server_request(2, &json!({"threadId": "thread-b", "requestId": 7}));
+        state.resolve_server_request(2, &json!({"requestId": 7}));
+        assert_eq!(state.pending_server_requests.len(), 2);
+        state.resolve_server_request(2, &json!({"threadId": "thread-a", "requestId": 7}));
+        assert!(!state.pending_server_requests.contains_key(&server_request_key(&json!(7))));
+        assert!(state.pending_server_requests.contains_key(&server_request_key(&json!("7"))));
+        state.resolve_server_request(2, &json!({"threadId": "thread-a", "requestId": "7"}));
+        assert!(state.pending_server_requests.is_empty());
+        let mut legacy = approval(json!(8));
+        legacy.params = json!({"conversationId": "thread-a"});
+        state.pending_server_requests.insert(server_request_key(&legacy.id), legacy);
+        state.resolve_server_request(2, &json!({"threadId": "thread-a", "requestId": 8}));
+        assert!(state.pending_server_requests.is_empty());
+        let mut scoped = approval(json!(9));
+        scoped.params = json!({"threadId": "thread-b", "conversationId": "thread-a"});
+        state.pending_server_requests.insert(server_request_key(&scoped.id), scoped);
+        state.resolve_server_request(2, &json!({"threadId": "thread-a", "requestId": 9}));
+        assert_eq!(state.pending_server_requests.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn stale_reader_cannot_disconnect_new_connection() {
+        let manager = AppServerManager::new();
+        let mut state = manager.inner.lock().await;
+        state.generation = 2;
+        state.status.connected = true;
+        let (tx, mut rx) = oneshot::channel();
+        state.pending_requests.insert(42, tx);
+        assert!(!state.close_generation(1));
+        assert!(state.status.connected);
+        assert!(matches!(rx.try_recv(), Err(oneshot::error::TryRecvError::Empty)));
+        assert!(state.close_generation(2));
+        assert!(!state.status.connected);
+        assert_eq!(rx.await.unwrap(), Err("app-server connection closed".to_string()));
+    }
+
+    #[test]
+    fn model_list_preserves_runtime_capabilities() {
+        let models = json!([
+            { "id": "gpt-6.1-sol", "hidden": true,
+              "supportedReasoningEfforts": [{"reasoningEffort": "low"}],
+              "additionalSpeedTiers": [] },
+            { "id": "gpt-6-astra", "hidden": true,
+              "supportedReasoningEfforts": [], "additionalSpeedTiers": ["fast"] }
+        ]);
+        for raw in [models.clone(), json!({"data": models, "nextCursor": "next"}), json!([]), json!({"data": []})] {
+            assert_eq!(post_process_result("model/list", raw.clone()), raw);
+        }
     }
 
     #[test]

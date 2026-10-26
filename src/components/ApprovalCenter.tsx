@@ -17,12 +17,15 @@ import {
   userInputResponse,
 } from "../protocol";
 import { PendingServerRequest } from "../types";
+import { pendingRequestKey, type RequestResponseState } from "../approvalRequests";
 import { ShieldIcon, HandApprovalIcon, CheckIcon, CloseIcon, DiffIcon } from "./Icons";
 
 interface ApprovalCenterProps {
   requests: PendingServerRequest[];
-  onRespond: (id: any, result: any) => void;
-  onRespondError: (id: any, message: string) => void;
+  onRespond: (id: any, result: any, generation: number) => void;
+  onRespondError: (id: any, message: string, generation: number) => void;
+  responseStates?: Record<string, RequestResponseState>;
+  onRefresh?: () => void;
 }
 
 /**
@@ -38,18 +41,34 @@ export const ApprovalCenter: React.FC<ApprovalCenterProps> = ({
   requests,
   onRespond,
   onRespondError,
+  responseStates = {},
+  onRefresh,
 }) => {
   if (!requests.length) return null;
   return (
     <div className="approval-center">
-      {requests.map((req) => (
-        <ApprovalCard
-          key={String(req.id)}
-          request={req}
-          onRespond={onRespond}
-          onRespondError={onRespondError}
-        />
-      ))}
+      {requests.map((req) => {
+        const key = pendingRequestKey(req);
+        const state = responseStates[key];
+        return (
+          <div key={key} id={`approval-${key}`}>
+            {state?.sending && <div role="status">正在发送响应…</div>}
+            {req.responseDeliveryUnknown ? (
+              <div role="alert">
+                无法确认响应是否已送达，已暂停重复提交。请等待服务器确认或连接恢复。
+                {onRefresh && <button type="button" onClick={onRefresh}>刷新状态</button>}
+              </div>
+            ) : state?.error && <div role="alert">{state.error}；请求仍待处理，可重试。</div>}
+            <fieldset disabled={Boolean(state?.sending || req.responseDeliveryUnknown)} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+              <ApprovalCard
+                request={req}
+                onRespond={(id, result) => onRespond(id, result, req.generation)}
+                onRespondError={(id, message) => onRespondError(id, message, req.generation)}
+              />
+            </fieldset>
+          </div>
+        );
+      })}
     </div>
   );
 };
@@ -436,6 +455,7 @@ const UserInputCard: React.FC<{
   };
 
   const submit = () => {
+    if (!canSubmit) return;
     const payload: Record<string, string[]> = {};
     for (const q of questions) {
       const custom = (freeform[q.id] || "").trim();
@@ -526,8 +546,10 @@ const UserInputCard: React.FC<{
                     }
                   }}
                   onKeyDown={(e) => {
+                    if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
                     if (e.key === "Enter") {
                       e.preventDefault();
+                      e.stopPropagation();
                       submit();
                     }
                   }}

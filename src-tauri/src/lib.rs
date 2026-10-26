@@ -90,12 +90,13 @@ async fn app_server_respond(
     app: AppHandle,
     state: State<'_, AppState>,
     id: Value,
+    generation: u64,
     result: Option<Value>,
     error: Option<Value>,
 ) -> Result<(), String> {
     state
         .app_server
-        .respond_to_server_request(&app, id, result, error)
+        .respond_to_server_request(&app, id, generation, result, error)
         .await
 }
 

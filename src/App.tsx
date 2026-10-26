@@ -1,6 +1,11 @@
+import { extractTextFromItem } from "./threadText";
+import { pendingRequestKey, requestThreadId, requestsForThread, type RequestResponseState } from "./approvalRequests";
+import { copyTextToClipboard } from "./clipboard";
+import { mergeTimelineItem, ThreadHistoryBuffer, isCurrentThreadRequest } from "./threadTimeline";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   OpenAIIcon,
+  CodexHomeIcon,
   BranchIcon,
   DiffIcon,
   TerminalIcon,
@@ -9,7 +14,6 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   WorktreeIcon,
-  CodexHeroIcon,
   BottomPanelIcon,
   RightPanelIcon,
   PlayIcon,
@@ -44,6 +48,7 @@ import { callAppServer, tauriInvoke, tauriListen } from "./bridge";
 import { matchShortcut, matchRecentThreadIndex } from "./shortcuts";
 import { installNativeMenuHandler, installTrayHandler } from "./nativeShell";
 import { playNotificationChime } from "./sound";
+import { getDefaultModel, getSupportedEfforts, modelSupportsFast } from "./modelCapabilities";
 import {
   AppServerStatus,
   AttachedFileItem,
@@ -118,38 +123,6 @@ import {
   buildGoalPrompt,
   goalStatusLabel,
 } from "./threadGoal";
-
-function extractTextFromItem(item: TurnItem): string {
-  if (typeof item.text === "string") return item.text;
-  if (typeof item.content === "string") return item.content;
-  if (Array.isArray(item.content)) {
-    return item.content
-      .map((part) => {
-        if (typeof part === "string") return part;
-        if (part && typeof part.text === "string") return part.text;
-        return "";
-      })
-      .filter(Boolean)
-      .join("\n");
-  }
-  if (Array.isArray((item as any).parts)) {
-    return (item as any).parts
-      .map((part: any) => {
-        if (typeof part === "string") return part;
-        if (part && typeof part.text === "string") return part.text;
-        return "";
-      })
-      .filter(Boolean)
-      .join("\n");
-  }
-  if (Array.isArray(item.summary)) {
-    return item.summary
-      .map((part) => (typeof part === "string" ? part : part?.text || ""))
-      .filter(Boolean)
-      .join("\n");
-  }
-  return "";
-}
 
 /** Reasoning items carry `summary[]` + `content[]` (and streamed text). */
 function extractReasoningText(item: TurnItem): string {
@@ -362,10 +335,28 @@ export const App: React.FC = () => {
   const [turnsCursor, setTurnsCursor] = useState<string | null>(null);
   const [hasMoreTurns, setHasMoreTurns] = useState<boolean>(false);
   const [loadingEarlierTurns, setLoadingEarlierTurns] = useState<boolean>(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [loadingThread, setLoadingThread] = useState(false);
+  const threadRequestRef = useRef(0);
+  const threadHistoryBufferRef = useRef(new ThreadHistoryBuffer());
+  const replayThreadNotificationRef = useRef<(payload: any) => void>(() => {});
+  const navigationRequestRef = useRef(0);
+  const turnLifecycleRef = useRef(0);
+  const finishedTurnIdsRef = useRef(new Set<string>());
+  const earlierRequestRef = useRef(false);
+  const followTimelineRef = useRef(true);
+  const prependScrollRef = useRef<{ height: number; top: number } | null>(null);
   const turnsCursorRef = useRef<string | null>(null);
   turnsCursorRef.current = turnsCursor;
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
   const [pendingRequests, setPendingRequests] = useState<PendingServerRequest[]>([]);
+  const pendingRequestsRef = useRef(pendingRequests);
+  pendingRequestsRef.current = pendingRequests;
+  const pendingRequestRevisionRef = useRef(0);
+  const respondingRequestsRef = useRef(new Set<string>());
+  const steerSendPendingRef = useRef(new Set<string>());
+  const [requestResponses, setRequestResponses] = useState<Record<string, RequestResponseState>>({});
+  const activePendingRequests = useMemo(() => requestsForThread(pendingRequests, activeThreadId), [pendingRequests, activeThreadId]);
   const [tokenUsage, setTokenUsage] = useState<TokenUsageSnapshot | null>(null);
   const [planSteps, setPlanSteps] = useState<Array<{ step: string; status: string }>>([]);
   const [turnDiffFiles, setTurnDiffFiles] = useState<
@@ -385,8 +376,9 @@ export const App: React.FC = () => {
 
   // Composer State
   const [promptInput, setPromptInput] = useState<string>("");
-  const [selectedModelId, setSelectedModelId] = useState<string>("gpt-6.1-sol");
-  const [reasoningEffort, setReasoningEffort] = useState<string>("low");
+  const [selectedModelId, setSelectedModelId] = useState<string>("");
+  const [defaultModelSelected, setDefaultModelSelected] = useState<boolean>(true);
+  const [reasoningEffort, setReasoningEffort] = useState<string>("");
   const [permissionMode, setPermissionMode] = useState<"ask" | "auto" | "full">("ask");
   const [useWorktree, setUseWorktree] = useState<boolean>(false);
   const [fastMode, setFastMode] = useState<boolean>(false);
@@ -419,6 +411,12 @@ export const App: React.FC = () => {
 
   // Phase 2, 4, 5: Follow-up Queue, Interactive AskUserInput, Pet Widget & Toolbar
   const [followupQueue, setFollowupQueue] = useState<QueuedFollowupPrompt[]>([]);
+  const queueListRequestRef = useRef(0);
+  const queueMutationThreadsRef = useRef(new Set<string>());
+  const steeredQueueItemsRef = useRef(new Map<string, "accepted" | "unknown">());
+  const [, setQueueMutationVersion] = useState(0);
+  const [queueNotice, setQueueNotice] = useState("");
+  const queueBusy = activeThreadId ? queueMutationThreadsRef.current.has(activeThreadId) : false;
   const [userInputAnswers, setUserInputAnswers] = useState<Record<string, string>>({});
   const [showGitMenu, setShowGitMenu] = useState<boolean>(false);
   const [showUsagePopover, setShowUsagePopover] = useState<boolean>(false);
@@ -680,15 +678,23 @@ export const App: React.FC = () => {
       const list = res?.data || res?.models || (Array.isArray(res) ? res : []);
       if (list.length > 0) {
         setModels(list);
+        const defaultModel = getDefaultModel(list);
+        setSelectedModelId((current) => current || defaultModel?.id || "");
+        setReasoningEffort((current) => current || defaultModel?.defaultReasoningEffort || "");
       }
     } catch (e) {
       console.warn("model/list failed:", e);
     }
   }, []);
 
-  const refreshPendingRequests = useCallback(async () => {
+  const refreshPendingRequests = useCallback(async function refreshPendingRequests() {
+    const revision = pendingRequestRevisionRef.current;
     try {
       const list = await tauriInvoke<PendingServerRequest[]>("app_server_pending_requests");
+      if (revision !== pendingRequestRevisionRef.current) {
+        void refreshPendingRequests();
+        return;
+      }
       if (Array.isArray(list)) setPendingRequests(list);
     } catch (e) {
       console.warn("app_server_pending_requests failed:", e);
@@ -700,6 +706,7 @@ export const App: React.FC = () => {
       const overview = await tauriInvoke<CodexConfigOverview>("config_read");
       if (overview) {
         setConfigOverview(overview);
+        setDefaultModelSelected(!overview.model);
         if (overview.model) setSelectedModelId(overview.model);
         if (overview.modelReasoningEffort) {
           setReasoningEffort(overview.modelReasoningEffort);
@@ -730,6 +737,35 @@ export const App: React.FC = () => {
       console.warn("config_read failed:", e);
     }
   }, []);
+
+  const handleSelectComposerModel = useCallback((modelId: string, useDefault: boolean) => {
+    const fallbackModel = getDefaultModel(models);
+    const targetId = useDefault ? fallbackModel?.id || "" : modelId;
+    const targetModel = models.find((model) => model.id === targetId) || fallbackModel;
+    setDefaultModelSelected(useDefault);
+    setSelectedModelId(targetId);
+    setReasoningEffort(
+      targetModel?.defaultReasoningEffort
+      || getSupportedEfforts(targetModel)[0]?.reasoningEffort
+      || ""
+    );
+    if (!modelSupportsFast(targetModel)) setFastMode(false);
+  }, [models]);
+
+  useEffect(() => {
+    const activeModel = models.find((model) => model.id === selectedModelId);
+    if (!activeModel) return;
+    const supported = getSupportedEfforts(activeModel).map((effort) => effort.reasoningEffort);
+    if (supported.length === 0 && reasoningEffort) {
+      setReasoningEffort("");
+    } else if (supported.length > 0 && !supported.includes(reasoningEffort)) {
+      const fallback = supported.includes(activeModel.defaultReasoningEffort || "")
+        ? activeModel.defaultReasoningEffort
+        : supported[0];
+      setReasoningEffort(fallback || "");
+    }
+    if (fastMode && !modelSupportsFast(activeModel)) setFastMode(false);
+  }, [models, selectedModelId, reasoningEffort, fastMode]);
 
   const refreshAccount = useCallback(async () => {
     try {
@@ -868,6 +904,11 @@ export const App: React.FC = () => {
       "app-server:status",
       (status) => {
         setAppServerStatus(status);
+        if (!status.connected) {
+          pendingRequestRevisionRef.current += 1;
+          setPendingRequests([]);
+          setRequestResponses({});
+        }
         if (status.connected) {
           refreshModels();
           refreshThreads();
@@ -877,15 +918,24 @@ export const App: React.FC = () => {
       }
     );
 
-    const unlistenNotification = tauriListen<any>(
-      "app-server:notification",
-      (payload) => {
+    const handleNotification = (payload: any) => {
         const { method, params } = payload || {};
         if (!method) return;
 
+        const eventThreadId = params?.threadId ?? params?.thread_id;
+        const eventTurnId = params?.turnId ?? params?.turn?.id ?? params?.turn_id;
+        const scopedEvent = method.startsWith("item/") || method.startsWith("turn/") ||
+          method === "codex/event/agent_message_delta" ||
+          method === NOTIFICATION.THREAD_COMPACTED || method === NOTIFICATION.THREAD_TOKEN_USAGE;
+        if (scopedEvent && eventThreadId !== activeThreadIdRef.current && method !== "turn/completed") return;
+        if (scopedEvent && eventThreadId === activeThreadIdRef.current &&
+          threadHistoryBufferRef.current.capture(payload, threadRequestRef.current)) return;
+
         if (method === "turn/started") {
-          setIsStreaming(true);
           const turnId = params?.turn?.id || params?.turnId || `turn-${Date.now()}`;
+          if (finishedTurnIdsRef.current.has(turnId)) return;
+          turnLifecycleRef.current += 1;
+          setIsStreaming(true);
           setActiveTurnId(turnId);
           setTurns((prev) => {
             if (prev.some((t) => t.id === turnId)) return prev;
@@ -901,14 +951,19 @@ export const App: React.FC = () => {
           });
           void flushPendingAttachmentSave(params.threadId);
         } else if (method === "turn/completed") {
-          setIsStreaming(false);
+          const isVisibleThread = eventThreadId === activeThreadIdRef.current;
+          if (isVisibleThread) {
+            if (eventTurnId) finishedTurnIdsRef.current.add(eventTurnId);
+            turnLifecycleRef.current += 1;
+            if (!activeTurnIdRef.current || activeTurnIdRef.current === eventTurnId) setIsStreaming(false);
+          }
           notifyChime("done");
           sendDesktopNotification(
             "Codex 回复已完成",
-            activeThreadObj?.name || activeThreadObj?.preview || "本轮任务已完成"
+            threadsRef.current.find((thread) => thread.id === eventThreadId)?.name || "本轮任务已完成"
           );
           const turnId = params?.turn?.id || params?.turnId;
-          if (!turnId || turnId === activeTurnIdRef.current) {
+          if (isVisibleThread && (!turnId || turnId === activeTurnIdRef.current)) {
             setActiveTurnId(null);
             setPlanSteps([]);
           }
@@ -916,7 +971,7 @@ export const App: React.FC = () => {
           const completedItems = Array.isArray(params?.turn?.items)
             ? params.turn.items
             : null;
-          setTurns((prev) =>
+          if (isVisibleThread) setTurns((prev) =>
             prev.map((t) => {
               const isTarget = t.id === turnId || (!turnId && t.status === "running");
               if (!isTarget) return t;
@@ -949,7 +1004,7 @@ export const App: React.FC = () => {
               }
               return {
                 ...t,
-                status: "completed",
+                status: params?.turn?.status ?? "completed",
                 completedAt: Date.now(),
                 durationMs: duration,
                 items,
@@ -969,7 +1024,7 @@ export const App: React.FC = () => {
                   title: "会话回复已完成",
                   subtitle: `turn ${String(turnId).slice(0, 8)}`,
                   kind: "thread_done" as const,
-                  threadId: activeThreadIdRef.current || undefined,
+                  threadId: eventThreadId || undefined,
                   createdAt: Date.now(),
                   read: false,
                 },
@@ -979,8 +1034,8 @@ export const App: React.FC = () => {
           }
 
           // Check official thread goal completion
-          if (serverGoalRef.current) {
-            const tid = activeThreadIdRef.current;
+          if (isVisibleThread && serverGoalRef.current) {
+            const tid = eventThreadId;
             if (tid) {
               goalGet(tid).then((g) => {
                 if (tid === activeThreadIdRef.current) {
@@ -999,149 +1054,33 @@ export const App: React.FC = () => {
         ) {
           const textDelta = params?.delta || params?.text || "";
           if (!textDelta) return;
-          setTurns((prev) => {
-            const list = [...prev];
-            let lastTurn = list[list.length - 1];
-            if (!lastTurn) {
-              lastTurn = {
-                id: `turn-${Date.now()}`,
-                status: "running",
-                startedAt: Date.now(),
-                items: [],
-              };
-              list.push(lastTurn);
-            }
-            const items = [...lastTurn.items];
-            const lastMsg = items.filter((i) => i.type === "agentMessage").pop();
-            if (!lastMsg) {
-              items.push({
-                id: params?.itemId || `msg-${Date.now()}`,
-                type: "agentMessage",
-                text: textDelta,
-              });
-            } else {
-              lastMsg.text = (lastMsg.text || "") + textDelta;
-            }
-            lastTurn.items = items;
-            return list;
-          });
+          setTurns((prev) => mergeTimelineItem(prev, eventTurnId, params?.itemId, (item) => ({
+            ...item, type: "agentMessage", text: (item.text || "") + textDelta,
+          })));
         } else if (
           method === "item/reasoning/delta" ||
           method === NOTIFICATION.ITEM_REASONING_SUMMARY_DELTA ||
-          method === NOTIFICATION.ITEM_REASONING_TEXT_DELTA
+          method === NOTIFICATION.ITEM_REASONING_TEXT_DELTA ||
+          method === NOTIFICATION.ITEM_REASONING_SUMMARY_PART
         ) {
-          const thoughtDelta = params?.delta || params?.text || "";
-          const isRawText = method === NOTIFICATION.ITEM_REASONING_TEXT_DELTA;
-          if (!thoughtDelta) return;
-          setTurns((prev) => {
-            const list = [...prev];
-            const lastTurn = list[list.length - 1];
-            if (!lastTurn) return prev;
-            const items = [...lastTurn.items];
-            const itemId = params?.itemId;
-            let thoughtIdx = -1;
-            if (itemId) thoughtIdx = items.findIndex((i) => i.id === itemId);
-            if (thoughtIdx < 0) {
-              thoughtIdx = items.map((i) => i.type).lastIndexOf("reasoning");
-            }
-            if (thoughtIdx < 0) {
-              items.push({
-                id: itemId || `thought-${Date.now()}`,
-                type: "reasoning",
-                text: isRawText ? "" : thoughtDelta,
-                reasoningText: isRawText ? thoughtDelta : "",
-              } as any);
-            } else {
-              const existing: any = { ...items[thoughtIdx] };
-              if (isRawText) {
-                existing.reasoningText = (existing.reasoningText || "") + thoughtDelta;
-              } else {
-                existing.text = (existing.text || "") + thoughtDelta;
-              }
-              items[thoughtIdx] = existing;
-            }
-            lastTurn.items = items;
-            return list;
-          });
-        } else if (method === NOTIFICATION.ITEM_REASONING_SUMMARY_PART) {
-          setTurns((prev) => {
-            const list = [...prev];
-            const lastTurn = list[list.length - 1];
-            if (!lastTurn) return prev;
-            const items = [...lastTurn.items];
-            const idx = items.map((i) => i.type).lastIndexOf("reasoning");
-            if (idx >= 0) {
-              const existing: any = { ...items[idx] };
-              existing.text = (existing.text || "") + "\n\n";
-              items[idx] = existing;
-              lastTurn.items = items;
-            }
-            return list;
-          });
+          const field = method === NOTIFICATION.ITEM_REASONING_TEXT_DELTA ? "reasoningText" : "text";
+          const delta = method === NOTIFICATION.ITEM_REASONING_SUMMARY_PART ? "\n\n" : params?.delta || params?.text || "";
+          setTurns((prev) => mergeTimelineItem(prev, eventTurnId, params?.itemId, (item) => ({
+            ...item, type: "reasoning", [field]: (item[field] || "") + delta,
+          })));
         } else if (method === NOTIFICATION.ITEM_COMMAND_OUTPUT_DELTA) {
-          const outDelta = params?.delta || params?.output || "";
-          const itemId = params?.itemId;
-          setTurns((prev) => {
-            const list = [...prev];
-            const lastTurn = list[list.length - 1];
-            if (!lastTurn) return prev;
-            const items = [...lastTurn.items];
-            const existingIdx = items.findIndex(
-              (it) =>
-                (itemId && it.id === itemId) || it.type === "commandExecution"
-            );
-            if (existingIdx >= 0) {
-              items[existingIdx] = {
-                ...items[existingIdx],
-                output: (items[existingIdx].output || "") + outDelta,
-              };
-            } else {
-              items.push({
-                id: itemId || `cmd-${Date.now()}`,
-                type: "commandExecution",
-                command: params?.command || "command",
-                output: outDelta,
-              });
-            }
-            lastTurn.items = items;
-            return list;
-          });
+          setTurns((prev) => mergeTimelineItem(prev, eventTurnId, params?.itemId, (item) => ({
+            ...item, type: "commandExecution", command: item.command || params?.command || "command",
+            output: (item.output ?? item.aggregatedOutput ?? "") + (params?.delta || params?.output || ""),
+          })));
         } else if (method === "item/started" || method === "item/completed") {
           const item = params?.item;
           if (!item) return;
-          setTurns((prev) => {
-            const list = [...prev];
-            const lastTurn = list[list.length - 1];
-            if (!lastTurn) return prev;
-            const items = [...lastTurn.items];
-            const idx = items.findIndex((x) => x.id && x.id === item.id);
-            if (idx >= 0) {
-              items[idx] = { ...items[idx], ...item };
-            } else {
-              items.push(item);
-            }
-            lastTurn.items = items;
-            return list;
-          });
+          setTurns((prev) => mergeTimelineItem(prev, eventTurnId, item.id, (existing) => ({ ...existing, ...item })));
         } else if (method === NOTIFICATION.ITEM_PLAN_DELTA) {
-          const delta = params?.delta || "";
-          if (!delta) return;
-          setTurns((prev) => {
-            const list = [...prev];
-            const lastTurn = list[list.length - 1];
-            if (!lastTurn) return prev;
-            const items = [...lastTurn.items];
-            const itemId = params?.itemId;
-            let idx = itemId ? items.findIndex((i) => i.id === itemId) : -1;
-            if (idx < 0) idx = items.map((i) => i.type).lastIndexOf("plan");
-            if (idx < 0) {
-              items.push({ id: itemId || `plan-${Date.now()}`, type: "plan", text: delta } as any);
-            } else {
-              items[idx] = { ...items[idx], text: (items[idx].text || "") + delta } as any;
-            }
-            lastTurn.items = items;
-            return list;
-          });
+          setTurns((prev) => mergeTimelineItem(prev, eventTurnId, params?.itemId, (item) => ({
+            ...item, type: "plan", text: (item.text || "") + (params?.delta || ""),
+          })));
         } else if (method === NOTIFICATION.TURN_PLAN_UPDATED) {
           const plan = Array.isArray(params?.plan) ? params.plan : [];
           setPlanSteps(
@@ -1158,27 +1097,9 @@ export const App: React.FC = () => {
         } else if (method === NOTIFICATION.ITEM_FILE_CHANGE_PATCH) {
           const changes = Array.isArray(params?.changes) ? params.changes : [];
           if (!changes.length) return;
-          setTurns((prev) => {
-            const list = [...prev];
-            const lastTurn = list[list.length - 1];
-            if (!lastTurn) return prev;
-            const items = [...lastTurn.items];
-            const itemId = params?.itemId;
-            let idx = itemId ? items.findIndex((i) => i.id === itemId) : -1;
-            if (idx < 0) idx = items.map((i) => i.type).lastIndexOf("fileChange");
-            if (idx < 0) {
-              items.push({
-                id: itemId || `filechange-${Date.now()}`,
-                type: "fileChange",
-                status: "inProgress",
-                changes,
-              } as any);
-            } else {
-              items[idx] = { ...items[idx], changes } as any;
-            }
-            lastTurn.items = items;
-            return list;
-          });
+          setTurns((prev) => mergeTimelineItem(prev, eventTurnId, params?.itemId, (item) => ({
+            ...item, type: "fileChange", status: item.status || "inProgress", changes,
+          })));
         } else if (method === NOTIFICATION.THREAD_STATUS_CHANGED) {
           const tid = params?.threadId;
           const statusType = params?.status?.type ?? params?.status;
@@ -1221,9 +1142,7 @@ export const App: React.FC = () => {
             .catch(() => {});
         } else if (method === NOTIFICATION.THREAD_QUEUE_CHANGED) {
           const tid = params?.threadId;
-          if (!tid || tid === activeThreadIdRef.current) {
-            refreshThreadQueue(tid ?? undefined);
-          }
+          if (tid === activeThreadIdRef.current) void refreshThreadQueue(tid);
         } else if (method === NOTIFICATION.THREAD_GOAL_UPDATED) {
           const goal = params?.goal as ThreadGoal | undefined;
           if (goal) {
@@ -1255,8 +1174,8 @@ export const App: React.FC = () => {
           setAutoReview({ active: false, decision: decision ? String(decision) : null });
           setTimeout(() => setAutoReview(null), 8000);
         } else if (method === NOTIFICATION.THREAD_REVERTED) {
-          if (activeThreadIdRef.current) {
-            selectThread(activeThreadIdRef.current);
+          if (eventThreadId && eventThreadId === activeThreadIdRef.current) {
+            selectThread(eventThreadId);
           }
         } else if (
           method === NOTIFICATION.THREAD_COMPACTED
@@ -1290,8 +1209,13 @@ export const App: React.FC = () => {
         } else if (method === NOTIFICATION.SERVER_REQUEST_RESOLVED) {
           const resolvedId = params?.requestId ?? params?.id ?? params?.request_id;
           if (resolvedId !== undefined && resolvedId !== null) {
+            pendingRequestRevisionRef.current += 1;
+            const keys = new Set(pendingRequestsRef.current
+              .filter(r => r.id === resolvedId && requestThreadId(r) === params?.threadId)
+              .map(pendingRequestKey));
+            setRequestResponses(prev => Object.fromEntries(Object.entries(prev).filter(([key]) => !keys.has(key))));
             setPendingRequests((prev) =>
-              prev.filter((r) => String(r.id) !== String(resolvedId))
+              prev.filter((r) => !(r.id === resolvedId && requestThreadId(r) === params?.threadId))
             );
           }
         } else if (method === NOTIFICATION.THREAD_TOKEN_USAGE) {
@@ -1312,6 +1236,10 @@ export const App: React.FC = () => {
           if (tid) {
             setThreads((prev) => prev.filter((t) => t.id !== tid));
             if (activeThreadIdRef.current === tid) {
+              threadRequestRef.current += 1;
+              threadHistoryBufferRef.current.discard();
+              finishedTurnIdsRef.current.clear();
+              activeThreadIdRef.current = null;
               setActiveThreadId(null);
               setTurns([]);
               setActiveRoute("home");
@@ -1336,13 +1264,15 @@ export const App: React.FC = () => {
           console.error("[app-server error]", msg);
           showAppToast(`❌ ${msg}`, "error");
         }
-      }
-    );
+      };
+    replayThreadNotificationRef.current = handleNotification;
+    const unlistenNotification = tauriListen<any>("app-server:notification", handleNotification);
 
     const unlistenServerReq = tauriListen<PendingServerRequest>(
       "app-server:server-request",
       (req) => {
-        setPendingRequests((prev) => [...prev, req]);
+        pendingRequestRevisionRef.current += 1;
+        setPendingRequests((prev) => [...prev.filter(r => pendingRequestKey(r) !== pendingRequestKey(req)), req]);
         setInboxItems((prev) => [
           {
             id: `req-${req.id}-${Date.now()}`,
@@ -1351,6 +1281,7 @@ export const App: React.FC = () => {
               ? `$ ${req.params.command}`
               : req.method,
             kind: "approval",
+            threadId: requestThreadId(req),
             createdAt: Date.now(),
             read: false,
           },
@@ -1528,6 +1459,7 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
       const recentIndex = matchRecentThreadIndex(e);
       if (recentIndex !== null) {
         const target = threadsRef.current[recentIndex];
@@ -1549,8 +1481,14 @@ export const App: React.FC = () => {
 
   // Auto-scroll timeline
   useEffect(() => {
-    if (timelineScrollRef.current) {
-      timelineScrollRef.current.scrollTop = timelineScrollRef.current.scrollHeight;
+    const pane = timelineScrollRef.current;
+    if (!pane) return;
+    if (prependScrollRef.current) {
+      const previous = prependScrollRef.current;
+      pane.scrollTop = previous.top + pane.scrollHeight - previous.height;
+      prependScrollRef.current = null;
+    } else if (followTimelineRef.current) {
+      pane.scrollTop = pane.scrollHeight;
     }
   }, [turns, isStreaming]);
 
@@ -1577,8 +1515,8 @@ export const App: React.FC = () => {
   }, []);
 
   const handleRemoveWorkspace = useCallback(
-    async (path: string, e: React.MouseEvent) => {
-      e.stopPropagation();
+    async (path: string, e?: React.MouseEvent) => {
+      e?.stopPropagation();
       try {
         const updated = await tauriInvoke<WorkspaceRootItem[]>(
           "workspace_remove",
@@ -1689,6 +1627,7 @@ export const App: React.FC = () => {
   // Thread Navigation & Lifecycle
   const startNewThread = useCallback(
     async (workspacePath?: string) => {
+      const navigation = ++navigationRequestRef.current;
       const previousThreadId = activeThreadIdRef.current;
       if (previousThreadId) {
         const pending = attachedFilesRef.current.filter((file) => !file.persisted);
@@ -1700,9 +1639,19 @@ export const App: React.FC = () => {
           }
         }
       }
+      if (navigation !== navigationRequestRef.current) return;
       if (workspacePath) {
         handleSelectWorkspace(workspacePath);
       }
+      threadRequestRef.current += 1;
+      threadHistoryBufferRef.current.discard();
+      finishedTurnIdsRef.current.clear();
+      activeThreadIdRef.current = null;
+      earlierRequestRef.current = false;
+      setLoadingEarlierTurns(false);
+      setLoadingThread(false);
+      setHistoryError(null);
+      setIsStreaming(false);
       setActiveThreadId(null);
       setActiveTurnId(null);
       setActiveThreadStatus(null);
@@ -1720,6 +1669,7 @@ export const App: React.FC = () => {
   );
 
   const selectThread = useCallback(async (threadId: string) => {
+    const navigation = ++navigationRequestRef.current;
     const previousThreadId = activeThreadIdRef.current;
     if (previousThreadId && previousThreadId !== threadId) {
       const pending = attachedFilesRef.current.filter((file) => !file.persisted);
@@ -1731,6 +1681,23 @@ export const App: React.FC = () => {
         }
       }
     }
+    if (navigation !== navigationRequestRef.current) return;
+    const request = ++threadRequestRef.current;
+    const lifecycle = turnLifecycleRef.current;
+    const isCurrent = () => isCurrentThreadRequest(request, threadRequestRef.current, threadId, activeThreadIdRef.current);
+    activeThreadIdRef.current = threadId;
+    threadHistoryBufferRef.current.begin(request, threadId);
+    finishedTurnIdsRef.current.clear();
+    earlierRequestRef.current = false;
+    followTimelineRef.current = true;
+    prependScrollRef.current = null;
+    setLoadingEarlierTurns(false);
+    setLoadingThread(true);
+    setHistoryError(null);
+    setTurns([]);
+    setIsStreaming(false);
+    setTokenUsage(null);
+    setServerGoal(null);
     setAttachedFiles([]);
     setActiveThreadId(threadId);
     setActiveRoute("thread");
@@ -1740,12 +1707,14 @@ export const App: React.FC = () => {
     setTurnDiffFiles([]);
     setTurnsCursor(null);
     setHasMoreTurns(false);
+    let loadedHistoryForReplay: TurnData[] = [];
     try {
       // 遵循官方 Codex 分页协议：只读元数据，不携带已废弃的 includeTurns: true
       const fullRes = await callAppServer<any>("thread/read", {
         threadId,
         includeTurns: false,
       });
+      if (!isCurrent()) return;
       const threadStatus = fullRes?.thread?.status;
       if (threadStatus) {
         setActiveThreadStatus({
@@ -1764,22 +1733,29 @@ export const App: React.FC = () => {
           sortDirection: "desc",
           itemsView: "full",
         });
+        if (!isCurrent()) return;
         loadedTurns = normalizeTurnsFromList(page, true);
         if (page?.nextCursor) {
           setTurnsCursor(page.nextCursor);
           setHasMoreTurns(true);
         }
       } catch {
-        try {
-          const resumeRes = await callAppServer<any>("thread/resume", {
-            threadId,
-          });
-          loadedTurns = normalizeTurnsFromThread(resumeRes);
-        } catch (e) {
-          console.warn("Failed to resume thread turns fallback:", e);
-        }
+        if (!isCurrent()) return;
+        const resumeRes = await callAppServer<any>("thread/resume", { threadId });
+        if (!isCurrent()) return;
+        loadedTurns = normalizeTurnsFromThread(resumeRes);
       }
+      if (!isCurrent()) return;
+      loadedHistoryForReplay = loadedTurns;
+      finishedTurnIdsRef.current = new Set(loadedTurns
+        .filter((turn) => turn.status !== "running" && turn.status !== "inProgress")
+        .map((turn) => turn.id));
       setTurns(loadedTurns);
+      const running = loadedTurns.find((turn) => turn.status === "running" || turn.status === "inProgress");
+      if (running && lifecycle === turnLifecycleRef.current) {
+        setIsStreaming(true);
+        setActiveTurnId(running.id);
+      }
 
       // 同步工作区关联状态：若该会话属于某个已知工作区且尚未激活，则自动切换对应工作区
       const candidateCwd =
@@ -1797,20 +1773,27 @@ export const App: React.FC = () => {
         }
       }
     } catch (e) {
-      console.warn("Failed to read/resume thread:", e);
+      if (isCurrent()) setHistoryError(`加载会话失败: ${String(e)}`);
+    } finally {
+      if (isCurrent()) {
+        const buffered = threadHistoryBufferRef.current.release(request, threadId, loadedHistoryForReplay);
+        for (const event of buffered ?? []) replayThreadNotificationRef.current(event);
+        setLoadingThread(false);
+      }
     }
+    if (!isCurrent()) return;
     try {
       const restored = await listThreadAttachments(threadId);
-      if (threadId === activeThreadIdRef.current) {
+      if (isCurrent()) {
         setAttachedFiles(restored);
       }
     } catch (error) {
-      showAppToast(`加载会话附件失败: ${String(error)}`, "error");
+      if (isCurrent()) showAppToast(`加载会话附件失败: ${String(error)}`, "error");
     }
     // 同步服务端 thread goal（若存在）
     try {
       const goal = await goalGet(threadId);
-      if (threadId === activeThreadIdRef.current) {
+      if (isCurrent()) {
         setServerGoal(goal);
       }
     } catch {
@@ -1822,7 +1805,11 @@ export const App: React.FC = () => {
   const loadEarlierTurns = useCallback(async () => {
     const threadId = activeThreadIdRef.current;
     const cursor = turnsCursorRef.current;
-    if (!threadId || !cursor || loadingEarlierTurns) return;
+    if (!threadId || !cursor || earlierRequestRef.current) return;
+    const request = threadRequestRef.current;
+    const isCurrent = () => isCurrentThreadRequest(request, threadRequestRef.current, threadId, activeThreadIdRef.current);
+    earlierRequestRef.current = true;
+    setHistoryError(null);
     setLoadingEarlierTurns(true);
     try {
       const page = await callAppServer<any>("thread/turns/list", {
@@ -1832,7 +1819,13 @@ export const App: React.FC = () => {
         itemsView: "full",
         cursor,
       });
+      if (!isCurrent()) return;
       const older = normalizeTurnsFromList(page, true);
+      for (const turn of older) {
+        if (turn.status !== "running" && turn.status !== "inProgress") finishedTurnIdsRef.current.add(turn.id);
+      }
+      const pane = timelineScrollRef.current;
+      if (pane && older.length > 0) prependScrollRef.current = { height: pane.scrollHeight, top: pane.scrollTop };
       if (older.length > 0) {
         setTurns((prev) => {
           const existing = new Set(prev.map((t) => t.id));
@@ -1843,10 +1836,12 @@ export const App: React.FC = () => {
       setTurnsCursor(page?.nextCursor ?? null);
       setHasMoreTurns(Boolean(page?.nextCursor));
     } catch (e) {
-      console.warn("load earlier turns failed:", e);
-      showAppToast("加载更早的轮次失败", "error");
+      if (isCurrent()) setHistoryError(`加载更早的轮次失败: ${String(e)}`);
     } finally {
-      setLoadingEarlierTurns(false);
+      if (isCurrent()) {
+        earlierRequestRef.current = false;
+        setLoadingEarlierTurns(false);
+      }
     }
   }, [loadingEarlierTurns, showAppToast]);
 
@@ -1912,7 +1907,7 @@ export const App: React.FC = () => {
         collaborationMode: {
           mode: enabled ? "plan" : "default",
           settings: {
-            model: selectedModelId,
+            model: selectedModelId || undefined,
             reasoning_effort: reasoningEffort || null,
             developer_instructions: null,
           },
@@ -1962,7 +1957,7 @@ export const App: React.FC = () => {
       try {
         const threadRes = await callAppServer<any>("thread/start", {
           cwd,
-          model: selectedModelId,
+          model: selectedModelId || undefined,
           approvalPolicy: "on-request",
           approvalsReviewer: "user",
           sandbox: "workspace-write",
@@ -2061,24 +2056,44 @@ export const App: React.FC = () => {
 
     // If currently streaming and we have an activeThreadId, use turn/steer
     if (isStreaming && activeThreadId) {
+      const threadId = activeThreadId;
+      const turnId = activeTurnIdRef.current;
+      const request = threadRequestRef.current;
+      const isCurrent = () => isCurrentThreadRequest(request, threadRequestRef.current, threadId, activeThreadIdRef.current);
+      if (!turnId) {
+        showAppToast("当前没有可引导的轮次，输入已保留", "info");
+        return;
+      }
+      if (steerSendPendingRef.current.has(threadId)) return;
+      steerSendPendingRef.current.add(threadId);
       try {
-        const { errors } = await persistThreadAttachments(activeThreadId, attachedFiles);
+        const { errors } = await persistThreadAttachments(threadId, attachedFiles);
         if (errors.length > 0) throw new Error(errors[0].message);
+        if (!isCurrent()) return;
+        if (activeTurnIdRef.current !== turnId) {
+          showAppToast("当前轮次已变化，输入已保留", "info");
+          return;
+        }
         await callAppServer("turn/steer", {
-          threadId: activeThreadId,
-          expectedTurnId: activeTurnIdRef.current,
+          threadId,
+          expectedTurnId: turnId,
+          clientUserMessageId: crypto.randomUUID(),
           input: nativeInputs,
         });
-        if (!overrideText) {
-          setPromptInput("");
-          setAttachedFiles([]);
+        if (isCurrent() && !overrideText) {
+          setPromptInput(current => current === promptInput ? "" : current);
+          setAttachedFiles(current => current === attachedFiles ? [] : current);
         }
         return;
-      } catch {
-        // Fallback to normal flow
+      } catch (error) {
+        if (isCurrent()) showAppToast(`引导结果未确认，未自动重发，输入已保留：${String(error)}`, "error");
+        return;
+      } finally {
+        steerSendPendingRef.current.delete(threadId);
       }
     }
 
+    const sendRequest = threadRequestRef.current;
     const userTurn: TurnData = {
       id: `user-${Date.now()}`,
       status: "completed",
@@ -2123,7 +2138,7 @@ export const App: React.FC = () => {
       if (!currentThreadId) {
         const startRes = await callAppServer<any>("thread/start", {
           cwd: targetCwd || undefined,
-          model: selectedModelId,
+          model: selectedModelId || undefined,
           approvalPolicy,
           approvalsReviewer,
           sandbox: sandboxMode,
@@ -2133,7 +2148,10 @@ export const App: React.FC = () => {
           startRes?.thread?.id ||
           startRes?.conversationId ||
           `thread-${Date.now()}`;
-        setActiveThreadId(currentThreadId);
+        if (sendRequest === threadRequestRef.current) {
+          activeThreadIdRef.current = currentThreadId;
+          setActiveThreadId(currentThreadId);
+        }
         if (currentThreadId && targetCwd) {
           setWorkspaceHints((prev) => ({ ...prev, [currentThreadId!]: targetCwd }));
         }
@@ -2159,13 +2177,14 @@ export const App: React.FC = () => {
         threadId: currentThreadId,
         cwd: targetCwd || undefined,
         input: nativeInputs,
-        model: selectedModelId,
-        effort: reasoningEffort === "extra_high" ? "xhigh" : reasoningEffort,
+        model: selectedModelId || undefined,
+        effort: reasoningEffort || undefined,
         approvalPolicy,
         approvalsReviewer,
         sandboxPolicy,
-        serviceTier: fastMode ? "priority" : null,
+        serviceTier: fastMode && modelSupportsFast(models.find((model) => model.id === selectedModelId)) ? "priority" : null,
       });
+      if (sendRequest !== threadRequestRef.current) return;
       const startedTurnId =
         turnRes?.turn?.id || turnRes?.turnId || turnRes?.id || null;
       if (startedTurnId) {
@@ -2180,6 +2199,7 @@ export const App: React.FC = () => {
     } catch (err: any) {
       pendingAttachmentSaveRef.current = null;
       console.error("Turn start failed:", err);
+      if (sendRequest !== threadRequestRef.current) return;
       setIsStreaming(false);
       setTurns((prev) => [
         ...prev,
@@ -2208,6 +2228,7 @@ export const App: React.FC = () => {
     permissionMode,
     selectedModelId,
     reasoningEffort,
+    models,
     sessionTemperature,
     sessionTopP,
     sessionMaxTokens,
@@ -2247,7 +2268,7 @@ export const App: React.FC = () => {
         if (!threadId) {
           const startRes = await callAppServer<any>("thread/start", {
             cwd: activeWorkspace?.path || undefined,
-            model: selectedModelId,
+            model: selectedModelId || undefined,
             approvalPolicy: permissionMode === "full" ? "never" : "on-request",
             approvalsReviewer: permissionMode === "auto" ? "auto_review" : "user",
             sandbox:
@@ -2323,159 +2344,229 @@ export const App: React.FC = () => {
   }, [showAppToast]);
 
   const handleInterruptTurn = useCallback(async () => {
-    if (!activeThreadId) {
-      setIsStreaming(false);
-      return;
-    }
+    const threadId = activeThreadIdRef.current;
+    const turnId = activeTurnIdRef.current;
+    const request = threadRequestRef.current;
+    if (!threadId || !turnId) return;
     try {
-      const turnId = activeTurnIdRef.current;
-      if (turnId) {
-        await callAppServer("turn/interrupt", {
-          threadId: activeThreadId,
-          turnId,
-        });
-      }
+      await callAppServer("turn/interrupt", { threadId, turnId });
     } catch (e) {
-      console.warn("turn/interrupt failed:", e);
+      if (isCurrentThreadRequest(request, threadRequestRef.current, threadId, activeThreadIdRef.current)) {
+        showAppToast(`中断请求未确认，请检查运行状态：${String(e)}`, "error");
+      }
     }
     // 不在这里强制 setIsStreaming(false)：真实状态由 turn/completed 通知驱动
-  }, [activeThreadId]);
+  }, [showAppToast]);
 
   const handleSteerTurn = useCallback(
-    async (text: string) => {
-      if (!activeThreadId || !text.trim()) return;
+    async (text: string, queued?: QueuedFollowupPrompt) => {
+      const tid = activeThreadIdRef.current;
+      const turnId = activeTurnIdRef.current;
+      const request = threadRequestRef.current;
+      const key = `${tid}:${queued?.id}`;
+      if (!tid || !turnId || (!text.trim() && !queued?.input.length) || queueMutationThreadsRef.current.has(tid) || steeredQueueItemsRef.current.has(key)) return;
+      queueMutationThreadsRef.current.add(tid);
+      setQueueMutationVersion(v => v + 1);
+      const current = () => isCurrentThreadRequest(request, threadRequestRef.current, tid, activeThreadIdRef.current);
+      let accepted = false;
       try {
         await callAppServer("turn/steer", {
-          threadId: activeThreadId,
-          expectedTurnId: activeTurnIdRef.current,
-          input: [{ type: "text", text: text.trim() }],
+          threadId: tid,
+          expectedTurnId: turnId,
+          clientUserMessageId: queued?.clientUserMessageId ?? crypto.randomUUID(),
+          input: queued?.input ?? [{ type: "text", text: text.trim() }],
         });
-        setTurns((prev) => [
-          ...prev,
-          {
-            id: `steer-${Date.now()}`,
-            items: [
-              {
-                id: `st-${Date.now()}`,
-                type: "userMessage",
-                text: `[立即引导 Steer]: ${text.trim()}`,
-              },
-            ],
-          },
-        ]);
-      } catch (e) {
-        console.warn("turn/steer failed, falling back to server queue:", e);
-        try {
-          await callAppServer("thread/queue/add", {
-            threadId: activeThreadId,
-            clientUserMessageId: `ctn-${Date.now()}`,
-            input: [{ type: "text", text: text.trim() }],
-          });
-          await refreshThreadQueue(activeThreadId);
-        } catch (queueErr) {
-          console.warn("thread/queue/add failed, keep local queue:", queueErr);
-          setFollowupQueue((prev) => [
-            ...prev,
-            {
-              id: `q-${Date.now()}`,
-              text: text.trim(),
-              mode: "queue",
-              createdAt: Date.now(),
-            },
-          ]);
+        accepted = true;
+        if (queued) {
+          steeredQueueItemsRef.current.set(key, "accepted");
+          const result = await callAppServer<{ deleted: boolean }>("thread/queue/delete", { threadId: tid, queuedSubmissionId: queued.id });
+          if (result.deleted !== true) throw new Error("队列消息未移除");
+          steeredQueueItemsRef.current.delete(key);
+          if (current()) {
+            setFollowupQueue(prev => prev.filter(item => item.id !== queued.id));
+            await refreshThreadQueue(tid);
+          }
+        } else if (current()) {
+          setPromptInput(value => value === text ? "" : value);
         }
+      } catch (e) {
+        if (queued) steeredQueueItemsRef.current.set(key, accepted ? "accepted" : "unknown");
+        if (current()) {
+          const message = accepted ? "消息已引导到当前轮，但原队列清理失败；请重试取消清理，勿重复发送。" : `引导结果未确认，未自动重发：${String(e)}`;
+          setQueueNotice(message);
+          showAppToast(message, "error");
+        }
+      } finally {
+        queueMutationThreadsRef.current.delete(tid);
+        setQueueMutationVersion(v => v + 1);
       }
     },
-    [activeThreadId]
+    [showAppToast]
+  );
+
+  const submitServerResponse = useCallback(
+    async (requestId: any, generation: number, result: any, error: any) => {
+      const request = pendingRequestsRef.current.find(r => r.id === requestId && r.generation === generation);
+      if (!request || requestThreadId(request) !== activeThreadIdRef.current) return;
+      const key = pendingRequestKey(request);
+      if (request.responseDeliveryUnknown || respondingRequestsRef.current.has(key)) return;
+      respondingRequestsRef.current.add(key);
+      setRequestResponses(prev => ({ ...prev, [key]: { sending: true } }));
+      try {
+        await tauriInvoke("app_server_respond", {
+          id: requestId,
+          generation,
+          result,
+          error,
+        });
+        pendingRequestRevisionRef.current += 1;
+        setPendingRequests(prev => prev.filter(r => pendingRequestKey(r) !== key));
+        setRequestResponses(prev => { const next = { ...prev }; delete next[key]; return next; });
+      } catch (e) {
+        // Only a fresh backend snapshot can confirm that retrying is safe.
+        setPendingRequests(prev => prev.map(r => pendingRequestKey(r) === key ? { ...r, responseDeliveryUnknown: true } : r));
+        setRequestResponses(prev => ({ ...prev, [key]: { error: `响应发送失败：${String(e)}` } }));
+        await refreshPendingRequests();
+      } finally {
+        respondingRequestsRef.current.delete(key);
+        setRequestResponses(prev => prev[key] ? { ...prev, [key]: { ...prev[key], sending: false } } : prev);
+      }
+    },
+    [refreshPendingRequests]
   );
 
   const handleRespondServerRequest = useCallback(
-    async (requestId: any, result: any) => {
-      setPendingRequests((prev) =>
-        prev.filter((r) => String(r.id) !== String(requestId))
-      );
-      try {
-        await tauriInvoke("app_server_respond", {
-          id: requestId,
-          result,
-          error: null,
-        });
-      } catch (e) {
-        console.error("Failed to respond to server request:", e);
-      }
-    },
-    []
+    (requestId: any, result: any, generation: number) => submitServerResponse(requestId, generation, result, null),
+    [submitServerResponse]
   );
-
   const handleRespondServerRequestError = useCallback(
-    async (requestId: any, message: string) => {
-      setPendingRequests((prev) =>
-        prev.filter((r) => String(r.id) !== String(requestId))
-      );
-      try {
-        await tauriInvoke("app_server_respond", {
-          id: requestId,
-          result: null,
-          error: { code: -32000, message },
-        });
-      } catch (e) {
-        console.error("Failed to reject server request:", e);
-      }
-    },
-    []
+    (requestId: any, message: string, generation: number) => submitServerResponse(requestId, generation, null, { code: -32000, message }),
+    [submitServerResponse]
   );
 
   // 服务端消息队列（thread/queue/*）同步
   const refreshThreadQueue = useCallback(async (threadId?: string | null) => {
     const tid = threadId ?? activeThreadIdRef.current;
-    if (!tid) {
-      setFollowupQueue([]);
-      return;
-    }
+    if (!tid || tid !== activeThreadIdRef.current) return;
+    const request = threadRequestRef.current;
+    const listRequest = ++queueListRequestRef.current;
     try {
-      const res = await callAppServer<{ data?: any[] }>("thread/queue/list", {
-        threadId: tid,
-      });
-      const items = Array.isArray(res?.data) ? res.data : [];
+      const items: any[] = [];
+      let cursor: string | null = null;
+      do {
+        const res: { data?: any[]; nextCursor?: string | null } = await callAppServer("thread/queue/list", { threadId: tid, cursor });
+        if (!isCurrentThreadRequest(request, threadRequestRef.current, tid, activeThreadIdRef.current) || listRequest !== queueListRequestRef.current) return;
+        items.push(...(Array.isArray(res.data) ? res.data : []));
+        cursor = res.nextCursor ?? null;
+      } while (cursor);
       setFollowupQueue(
-        items.map((item) => {
-          const textPart = Array.isArray(item?.input)
-            ? item.input.find((i: any) => typeof i?.text === "string")
-            : null;
+        items.filter(item => typeof item.id === "string" && typeof item.clientUserMessageId === "string").map((item) => {
           return {
-            id: String(item?.id ?? item?.clientUserMessageId ?? `q-${Math.random()}`),
-            text: String(textPart?.text ?? ""),
+            id: item.id,
+            clientUserMessageId: item.clientUserMessageId,
+            input: Array.isArray(item.input) ? item.input : [],
+            text: (Array.isArray(item.input) ? item.input : []).filter((i: any) => typeof i.text === "string").map((i: any) => i.text).join("\n"),
             mode: "queue" as const,
             createdAt: Date.now(),
           };
         })
       );
     } catch (e) {
-      console.warn("thread/queue/list failed:", e);
+      if (isCurrentThreadRequest(request, threadRequestRef.current, tid, activeThreadIdRef.current) && listRequest === queueListRequestRef.current) setQueueNotice(`读取队列失败：${String(e)}`);
     }
   }, []);
 
   // 服务端在空闲时会自动消费队首消息；这里只提供「立即发送队首」的显式操作。
   const handleStartServerQueue = useCallback(async () => {
     const tid = activeThreadIdRef.current;
-    if (!tid) return;
     const first = followupQueue[0];
+    if (!tid || !first || queueMutationThreadsRef.current.has(tid) || steeredQueueItemsRef.current.has(`${tid}:${first.id}`)) return;
+    if (isStreaming) {
+      await handleSteerTurn(first.text, first);
+      return;
+    }
+    const request = threadRequestRef.current;
+    queueMutationThreadsRef.current.add(tid);
+    setQueueMutationVersion(v => v + 1);
     try {
       await callAppServer("thread/queue/start", {
         threadId: tid,
-        queuedSubmissionId: first?.id ?? null,
+        queuedSubmissionId: first.id,
       });
-      await refreshThreadQueue(tid);
+      if (isCurrentThreadRequest(request, threadRequestRef.current, tid, activeThreadIdRef.current)) {
+        setFollowupQueue(prev => prev.filter(item => item.id !== first.id));
+        await refreshThreadQueue(tid);
+      }
     } catch (e) {
-      console.warn("thread/queue/start failed:", e);
-      showAppToast("启动队列消息失败", "error");
+      if (isCurrentThreadRequest(request, threadRequestRef.current, tid, activeThreadIdRef.current)) showAppToast(`启动队列消息失败：${String(e)}`, "error");
+    } finally {
+      queueMutationThreadsRef.current.delete(tid);
+      setQueueMutationVersion(v => v + 1);
     }
-  }, [followupQueue, refreshThreadQueue, showAppToast]);
+  }, [followupQueue, isStreaming, handleSteerTurn, refreshThreadQueue, showAppToast]);
+
+  const handleEnqueueFollowup = useCallback(async () => {
+    const tid = activeThreadIdRef.current;
+    const text = promptInput;
+    const files = attachedFiles;
+    if (!tid || (!text.trim() && files.length === 0) || queueMutationThreadsRef.current.has(tid)) return;
+    const request = threadRequestRef.current;
+    queueMutationThreadsRef.current.add(tid);
+    setQueueMutationVersion(v => v + 1);
+    try {
+      const { errors } = await persistThreadAttachments(tid, files);
+      if (errors.length > 0) throw new Error(errors[0].message);
+      if (!isCurrentThreadRequest(request, threadRequestRef.current, tid, activeThreadIdRef.current)) return;
+      const input: any[] = text.trim() ? [{ type: "text", text: text.trim() }] : [];
+      for (const file of files) {
+        input.push(file.kind === "image" || /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(file.name)
+          ? { type: "localImage", path: file.path }
+          : { type: "mention", name: file.name, path: file.path });
+      }
+      const result = await callAppServer<{ queuedSubmission: { id: string } }>("thread/queue/add", { threadId: tid, clientUserMessageId: crypto.randomUUID(), input });
+      if (!result.queuedSubmission?.id) throw new Error("服务端未返回队列消息 ID");
+      if (isCurrentThreadRequest(request, threadRequestRef.current, tid, activeThreadIdRef.current)) {
+        setPromptInput(value => value === text ? "" : value);
+        setAttachedFiles(current => current === files ? [] : current);
+        await refreshThreadQueue(tid);
+      }
+    } catch (e) {
+      if (isCurrentThreadRequest(request, threadRequestRef.current, tid, activeThreadIdRef.current)) showAppToast(`加入队列失败，草稿已保留：${String(e)}`, "error");
+    } finally {
+      queueMutationThreadsRef.current.delete(tid);
+      setQueueMutationVersion(v => v + 1);
+    }
+  }, [promptInput, attachedFiles, refreshThreadQueue, showAppToast]);
+
+  const handleCancelQueuedFollowup = useCallback(async (item: QueuedFollowupPrompt) => {
+    const tid = activeThreadIdRef.current;
+    if (!tid || !item || queueMutationThreadsRef.current.has(tid)) return;
+    const request = threadRequestRef.current;
+    queueMutationThreadsRef.current.add(tid);
+    setQueueMutationVersion(v => v + 1);
+    try {
+      const result = await callAppServer<{ deleted: boolean }>("thread/queue/delete", { threadId: tid, queuedSubmissionId: item.id });
+      if (result.deleted !== true) throw new Error("服务端未确认删除");
+      steeredQueueItemsRef.current.delete(`${tid}:${item.id}`);
+      if (isCurrentThreadRequest(request, threadRequestRef.current, tid, activeThreadIdRef.current)) {
+        setQueueNotice("");
+        setFollowupQueue(prev => prev.filter(row => row.id !== item.id));
+        await refreshThreadQueue(tid);
+      }
+    } catch (e) {
+      if (isCurrentThreadRequest(request, threadRequestRef.current, tid, activeThreadIdRef.current)) showAppToast(`取消队列消息失败：${String(e)}`, "error");
+    } finally {
+      queueMutationThreadsRef.current.delete(tid);
+      setQueueMutationVersion(v => v + 1);
+    }
+  }, [refreshThreadQueue, showAppToast]);
 
   // 切换会话时载入该会话的服务端队列
   useEffect(() => {
+    queueListRequestRef.current += 1;
+    setFollowupQueue([]);
+    setQueueNotice("");
     if (activeThreadId) void refreshThreadQueue(activeThreadId);
-    else setFollowupQueue([]);
   }, [activeThreadId, refreshThreadQueue]);
 
   // Thread Pin, Rename, Archive
@@ -2637,9 +2728,19 @@ export const App: React.FC = () => {
     },
     "new-chat": () => startNewThread(),
     "new-standalone-chat": () => setShowPopoutModal((v) => !v),
+    "open-model-picker": () => {
+      const trigger = document.querySelector<HTMLButtonElement>(".model-effort-pill");
+      if (trigger) {
+        trigger.focus();
+        if (trigger.getAttribute("aria-expanded") !== "true") trigger.click();
+      }
+    },
     "toggle-sidebar": () => setSidebarCollapsed((v) => !v),
     "toggle-terminal": () => setShowTerminal((v) => !v),
     "toggle-changes": () => setShowRightDrawer((v) => !v),
+    "zoom-in": () => applyZoom(zoomRef.current + 0.1),
+    "zoom-out": () => applyZoom(zoomRef.current - 0.1),
+    "zoom-reset": () => applyZoom(1),
     "open-settings": () =>
       setActiveRoute((r) => (r === "settings" ? "home" : "settings")),
     "command-palette": () => setShowQuickSearch(true),
@@ -2730,6 +2831,17 @@ export const App: React.FC = () => {
     }
   }, [showAppToast]);
 
+  const applyZoom = useCallback(async (next: number) => {
+    zoomRef.current = Math.min(3, Math.max(0.5, next));
+    if ("__TAURI_INTERNALS__" in window) {
+      const { getCurrentWebview } = await import("@tauri-apps/api/webview");
+      await getCurrentWebview().setZoom(zoomRef.current);
+    } else {
+      (document.documentElement.style as any).zoom = String(zoomRef.current);
+    }
+    showAppToast(`界面缩放：${Math.round(zoomRef.current * 100)}%`, "info");
+  }, [showAppToast]);
+
   const handleAppCommand = useCallback(async (command: string, payload?: any) => {
     const shortcutAction = shortcutHandlersRef.current[command];
     if (shortcutAction) {
@@ -2754,9 +2866,7 @@ export const App: React.FC = () => {
     }
     if (command === "zoom-in" || command === "zoom-out" || command === "zoom-reset") {
       const next = command === "zoom-reset" ? 1 : zoomRef.current + (command === "zoom-in" ? 0.1 : -0.1);
-      zoomRef.current = Math.min(3, Math.max(0.5, next));
-      (document.documentElement.style as any).zoom = String(zoomRef.current);
-      showAppToast(`界面缩放：${Math.round(zoomRef.current * 100)}%`, "info");
+      await applyZoom(next);
       return;
     }
     if (command === "toggle-fullscreen") {
@@ -2804,7 +2914,7 @@ export const App: React.FC = () => {
       return;
     }
     showAppToast(`暂未实现命令：${command}`, "info");
-  }, [cycleTheme, handlePickNewFolder, showAppToast]);
+  }, [applyZoom, cycleTheme, handlePickNewFolder, showAppToast]);
   const appCommandRef = useRef(handleAppCommand);
   appCommandRef.current = handleAppCommand;
 
@@ -2916,7 +3026,7 @@ export const App: React.FC = () => {
     const data = {
       threadId: activeThreadId,
       title: threadTitle,
-      model: selectedModelId,
+      model: selectedModelId || undefined,
       reasoningEffort,
       workspace: activeWorkspace?.path,
       exportedAt: new Date().toISOString(),
@@ -2933,7 +3043,13 @@ export const App: React.FC = () => {
     showAppToast("✓ 对话已成功导出为 JSON 文件", "success");
   }, [turns, activeThreadObj, activeThreadId, selectedModelId, reasoningEffort, activeWorkspace, showAppToast]);
 
-  const handleCopyAllConversation = useCallback(() => {
+  const copyThreadText = useCallback(async (text: string, successMessage: string) => {
+    const copied = await copyTextToClipboard(text);
+    showAppToast(copied ? successMessage : "复制失败，请重试", copied ? "success" : "error");
+    return copied;
+  }, [showAppToast]);
+
+  const handleCopyAllConversation = useCallback(async () => {
     if (turns.length === 0) {
       showAppToast("当前会话暂无消息内容", "info");
       return;
@@ -2942,22 +3058,19 @@ export const App: React.FC = () => {
     turns.forEach((turn) => {
       turn.items.forEach((item) => {
         if (item.type === "userMessage") {
-          fullText += `[用户]:\n${item.text || ""}\n\n`;
+          fullText += `[用户]:\n${extractTextFromItem(item)}\n\n`;
         } else if (item.type === "agentMessage") {
-          fullText += `[Codex]:\n${item.text || ""}\n\n`;
+          fullText += `[Codex]:\n${extractTextFromItem(item)}\n\n`;
         } else if (item.type === "command") {
           const cmdStr = Array.isArray(item.command) ? item.command.join(" ") : item.command || "";
           fullText += `[执行命令]: ${cmdStr}\n\n`;
         }
       });
     });
-    navigator.clipboard.writeText(fullText.trim()).then(() => {
+    if (await copyThreadText(fullText.trim(), "✓ 已复制全部对话内容到剪贴板")) {
       setShowExportPopover(false);
-      showAppToast("✓ 已复制全部对话内容到剪贴板", "success");
-    }).catch((err) => {
-      showAppToast("复制失败: " + String(err), "error");
-    });
-  }, [turns, showAppToast]);
+    }
+  }, [turns, showAppToast, copyThreadText]);
 
   const handleClearCurrentThread = useCallback(() => {
     if (turns.length === 0) return;
@@ -3009,24 +3122,17 @@ export const App: React.FC = () => {
     } else if (action === "open_feedback") {
       showAppToast("反馈入口：可在设置 → 常规中查看应用信息", "info");
     } else if (action === "set_followup_queue") {
-      setFollowupQueue((prev) => [
-        ...prev,
-        { id: `q-${Date.now()}`, text: promptInput, mode: "queue", createdAt: Date.now() },
-      ]);
-      setPromptInput("");
+      void handleEnqueueFollowup();
     } else if (action === "set_followup_steer") {
-      if (promptInput.trim()) {
-        handleSteerTurn(promptInput);
-        setPromptInput("");
-      }
+      if (promptInput.trim()) void handleSteerTurn(promptInput);
     } else if (action === "open_side_chat") {
       setInitialWorkbenchTab("sideChat");
       setShowRightDrawer(true);
     } else if (action === "approve_recent_denial") {
-      if (pendingRequests.length > 0) {
-        const lastReq = pendingRequests[pendingRequests.length - 1];
-        void handleRespondServerRequest(lastReq.id, { decision: "approved" });
-        showAppToast("✓ 已批准当前待审批操作", "success");
+      if (activePendingRequests.length > 0) {
+        const lastReq = activePendingRequests[activePendingRequests.length - 1];
+        document.getElementById(`approval-${pendingRequestKey(lastReq)}`)?.scrollIntoView({ block: "center" });
+        showAppToast("请在当前会话的审批卡中确认操作", "info");
       } else {
         showAppToast("当前无待审批请求", "info");
       }
@@ -3063,8 +3169,9 @@ export const App: React.FC = () => {
     handleArchiveThread,
     handleTogglePinThread,
     handleSteerTurn,
+    handleEnqueueFollowup,
     handleRespondServerRequest,
-    pendingRequests,
+    activePendingRequests,
     activeThreadObj,
     activeThreadId,
     promptInput,
@@ -3519,9 +3626,9 @@ export const App: React.FC = () => {
             ) : null}
           </div>
 
-          {/* Top Right Panel Toggle Icons & Environment Actions - 1:1 with Codex App */}
+          {/* Top Right Panel Toggle Icons & Environment Actions */}
           <div className="top-nav-right">
-            <div className="thread-header-actions-group">
+            <div className={`thread-header-actions-group ${activeRoute === "home" || turns.length === 0 ? "home-active" : ""}`}>
               {/* Context & Token Usage Meter Indicator */}
               <div style={{ position: "relative" }}>
                 <button
@@ -3621,7 +3728,7 @@ export const App: React.FC = () => {
                   setInitialWorkbenchTab("newTab");
                   setShowRightDrawer(true);
                 }}
-                title="新标签页与多功能工作台"
+                title="新建标签页"
               >
                 <SquarePlusIcon size={16} />
               </button>
@@ -3907,55 +4014,56 @@ export const App: React.FC = () => {
               onNavigateRoute={(r) => setActiveRoute(r)}
             />
           </div>
-        ) : activeRoute === "home" || turns.length === 0 ? (
+        ) : activeRoute === "home" || (!activeThreadId && turns.length === 0) ? (
           /* ── Home / New Task View ── */
           <div className="home-hero-container">
-            <div className="home-hero-logo-wrap">
-              <CodexHeroIcon size={50} />
+            <div className="home-hero-center">
+              <div className="home-hero-logo-wrap">
+                <CodexHomeIcon />
+              </div>
+
+              <div className="home-greeting-wrap">
+                <h1 className="home-greeting-title">
+                  你想让我们在{" "}
+                  <button
+                    type="button"
+                    className="home-project-inline-btn"
+                    onClick={() => setShowHomeProjectPopover((v) => !v)}
+                    title="点击切换本地项目文件夹"
+                  >
+                    {projectName}
+                  </button>{" "}
+                  中构建什么？
+                </h1>
+
+                {showHomeProjectPopover && (
+                  <div className="home-project-popover-anchor">
+                    <WorkspacePopover
+                      workspaces={workspaces}
+                      activeWorkspacePath={activeWorkspace?.path || ""}
+                      hasAgentsMd={agentsMdInfo.found}
+                      onSelectWorkspace={handleSelectWorkspace}
+                      onRemoveWorkspace={handleRemoveWorkspace}
+                      onPickNewFolder={handlePickNewFolder}
+                      onOpenAgentsMd={() => setShowAgentsMdModal(true)}
+                      onClose={() => setShowHomeProjectPopover(false)}
+                    />
+                  </div>
+                )}
+              </div>
             </div>
 
-            <div style={{ position: "relative" }}>
-              <h1 className="home-greeting-title">
-                你想让我们在{" "}
-                <button
-                  type="button"
-                  className="home-project-inline-btn"
-                  onClick={() => setShowHomeProjectPopover((v) => !v)}
-                  title="点击切换本地项目文件夹"
-                >
-                  {projectName}
-                </button>{" "}
-                中构建什么？
-              </h1>
-
-              {showHomeProjectPopover && (
-                <div style={{ position: "absolute", top: "100%", left: "50%", transform: "translateX(-50%)", zIndex: 260 }}>
-                  <WorkspacePopover
-                    workspaces={workspaces}
-                    activeWorkspacePath={activeWorkspace?.path || ""}
-                    hasAgentsMd={agentsMdInfo.found}
-                    onSelectWorkspace={handleSelectWorkspace}
-                    onRemoveWorkspace={handleRemoveWorkspace}
-                    onPickNewFolder={handlePickNewFolder}
-                    onOpenAgentsMd={() => setShowAgentsMdModal(true)}
-                    onClose={() => setShowHomeProjectPopover(false)}
-                  />
-                </div>
+            <div className="home-composer-dock">
+              {serverGoal && serverGoal.status !== "complete" && (
+                <ThreadGoalBanner
+                  goal={serverGoal}
+                  onEdit={() => setShowGoalModal(true)}
+                  onTogglePause={handleToggleGoalPause}
+                  onClear={handleClearGoal}
+                />
               )}
-            </div>
 
-            {/* Official Thread Goal Banner mounted above home composer */}
-            {serverGoal && serverGoal.status !== "complete" && (
-              <ThreadGoalBanner
-                goal={serverGoal}
-                onEdit={() => setShowGoalModal(true)}
-                onTogglePause={handleToggleGoalPause}
-                onClear={handleClearGoal}
-              />
-            )}
-
-            {/* Official Two-Tier Composer Box */}
-            <ComposerBox
+              <ComposerBox
               variant="home"
               promptInput={promptInput}
               onPromptInputChange={setPromptInput}
@@ -3976,7 +4084,8 @@ export const App: React.FC = () => {
               onSelectPermissionMode={setPermissionMode}
               models={models}
               selectedModelId={selectedModelId}
-              onSelectModelId={setSelectedModelId}
+              defaultModelSelected={defaultModelSelected}
+              onSelectModel={handleSelectComposerModel}
               reasoningEffort={reasoningEffort}
               onSelectReasoningEffort={setReasoningEffort}
               fastMode={fastMode}
@@ -3996,12 +4105,20 @@ export const App: React.FC = () => {
               onSlashAction={handleSlashAction}
               textareaRef={composerTextareaRef}
             />
-
+            </div>
           </div>
         ) : (
           /* ── Active Local Conversation Stream (/local/:clientThreadId) ── */
           <>
-            <div className="timeline-scroll-pane" ref={timelineScrollRef}>
+            <div className="timeline-scroll-pane" ref={timelineScrollRef} onScroll={(event) => {
+              const pane = event.currentTarget;
+              followTimelineRef.current = pane.scrollHeight - pane.scrollTop - pane.clientHeight <= 64;
+            }}>
+              {loadingThread && <div role="status">正在加载会话…</div>}
+              {historyError && <div role="alert">{historyError} <button type="button" onClick={() => {
+                if (turnsCursorRef.current) void loadEarlierTurns();
+                else if (activeThreadId) void selectThread(activeThreadId);
+              }}>重试</button></div>}
               <ThreadFindBar
                 open={showFindBar}
                 onClose={() => setShowFindBar(false)}
@@ -4027,10 +4144,7 @@ export const App: React.FC = () => {
                   setInitialWorkbenchTab("sideChat");
                   setShowRightDrawer(true);
                 }}
-                onCopy={(text) => {
-                  navigator.clipboard.writeText(text);
-                  showAppToast("✓ 选区内容已复制到剪贴板", "info");
-                }}
+                onCopy={(text) => copyThreadText(text, "✓ 选区内容已复制到剪贴板")}
               />
               {/* Right-Side User Message Navigation Rail */}
               <div className="thread-user-message-navigation-rail">
@@ -4196,9 +4310,8 @@ export const App: React.FC = () => {
                               type="button"
                               className="turn-action-mini-btn"
                               title="复制提问内容"
-                              onClick={() => {
-                                navigator.clipboard.writeText(userText);
-                                showAppToast("✓ 已复制提问内容", "success");
+                              onClick={async () => {
+                                await copyThreadText(userText, "✓ 已复制提问内容");
                               }}
                             >
                               📋 复制
@@ -4520,18 +4633,17 @@ export const App: React.FC = () => {
                         />
                       ))}
 
-                      {messages.length > 0 && !isStreaming && (
+                      {messages.length > 0 && !(isStreaming && turn.id === activeTurnId) && (
                         <div className="turn-action-buttons-row left">
                           <button
                             type="button"
                             className="turn-action-mini-btn"
                             title="复制全部回答 Markdown"
-                            onClick={() => {
+                            onClick={async () => {
                               const ans = messages
                                 .map(extractTextFromItem)
                                 .join("\n\n");
-                              navigator.clipboard.writeText(ans);
-                              showAppToast("✓ 已复制回答 Markdown 内容", "success");
+                              await copyThreadText(ans, "✓ 已复制回答 Markdown 内容");
                             }}
                           >
                             📋 复制回答
@@ -4620,7 +4732,9 @@ export const App: React.FC = () => {
 
                 {/* Pending Server Requests: approvals / permissions / user input / option picker */}
                 <ApprovalCenter
-                  requests={pendingRequests}
+                  requests={activePendingRequests}
+                  responseStates={requestResponses}
+                  onRefresh={refreshPendingRequests}
                   onRespond={handleRespondServerRequest}
                   onRespondError={handleRespondServerRequestError}
                 />
@@ -4629,6 +4743,13 @@ export const App: React.FC = () => {
 
             {/* Floating Follow-up Composer */}
             <div className="floating-composer-dock">
+              <div className="floating-composer-inner">
+              {queueNotice && <div role="alert">{queueNotice}</div>}
+              {followupQueue[0] && steeredQueueItemsRef.current.has(`${activeThreadId}:${followupQueue[0].id}`) && (
+                <div role="alert">{steeredQueueItemsRef.current.get(`${activeThreadId}:${followupQueue[0].id}`) === "accepted"
+                  ? "此消息已发送，原队列清理未完成。请点击取消重试清理，勿重复发送。"
+                  : "此消息的引导结果未确认，已暂停重复发送。请核对运行结果，或取消原队列。"}</div>
+              )}
               {/* Follow-up Prompt Queue ("下一步 Up next") */}
               {followupQueue.length > 0 && (
                 <div className="floating-up-next-bar">
@@ -4647,6 +4768,7 @@ export const App: React.FC = () => {
                     <button
                       type="button"
                       className="mini-link-btn"
+                      disabled={queueBusy || steeredQueueItemsRef.current.has(`${activeThreadId}:${followupQueue[0].id}`)}
                       onClick={() => handleStartServerQueue()}
                     >
                       立即发送
@@ -4654,26 +4776,16 @@ export const App: React.FC = () => {
                     <button
                       type="button"
                       className="mini-link-btn"
-                      onClick={() => handleSteerTurn(followupQueue[0].text)}
+                      disabled={queueBusy || !isStreaming || steeredQueueItemsRef.current.has(`${activeThreadId}:${followupQueue[0].id}`)}
+                      onClick={() => handleSteerTurn(followupQueue[0].text, followupQueue[0])}
                     >
                       引导到当前轮 (Steer)
                     </button>
                     <button
                       type="button"
                       className="mini-link-btn danger"
-                      onClick={() => {
-                        const item = followupQueue[0];
-                        if (activeThreadId && item) {
-                          callAppServer("thread/queue/delete", {
-                            threadId: activeThreadId,
-                            queuedSubmissionId: item.id,
-                          })
-                            .then(() => refreshThreadQueue(activeThreadId))
-                            .catch(() => setFollowupQueue((prev) => prev.slice(1)));
-                        } else {
-                          setFollowupQueue((prev) => prev.slice(1));
-                        }
-                      }}
+                      disabled={queueBusy}
+                      onClick={() => handleCancelQueuedFollowup(followupQueue[0])}
                     >
                       取消
                     </button>
@@ -4691,7 +4803,6 @@ export const App: React.FC = () => {
                 />
               )}
 
-              <div className="floating-composer-inner">
                 <ComposerBox
                   variant="thread"
                   promptInput={promptInput}
@@ -4713,7 +4824,8 @@ export const App: React.FC = () => {
                   onSelectPermissionMode={setPermissionMode}
                   models={models}
                   selectedModelId={selectedModelId}
-                  onSelectModelId={setSelectedModelId}
+                  defaultModelSelected={defaultModelSelected}
+                  onSelectModel={handleSelectComposerModel}
                   reasoningEffort={reasoningEffort}
                   onSelectReasoningEffort={setReasoningEffort}
                   fastMode={fastMode}

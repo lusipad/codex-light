@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { copyTextToClipboard } from "../clipboard";
 import { tauriListen } from "../bridge";
 import {
   DirectoryEntryItem,
@@ -329,27 +330,6 @@ async function entryExistsInDir(
   } catch (fallbackError) {
     console.warn("fs_list_dir failed for existence check:", fallbackError);
     return null;
-  }
-}
-
-async function copyTextToClipboard(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    try {
-      const textarea = document.createElement("textarea");
-      textarea.value = text;
-      textarea.style.position = "fixed";
-      textarea.style.opacity = "0";
-      document.body.appendChild(textarea);
-      textarea.select();
-      const ok = document.execCommand("copy");
-      document.body.removeChild(textarea);
-      return ok;
-    } catch {
-      return false;
-    }
   }
 }
 

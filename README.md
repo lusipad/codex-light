@@ -5,11 +5,13 @@
 基于 [`codex-app-offline`](../README.md) 协议与能力契约重写的全功能、轻量化原生 **Codex 桌面客户端**。
 对标本机官方 **Codex App（Electron）** 的 Codex 模式基线能力（不含 ChatGPT 云端专属：Artifacts/云浏览器/实时语音/计费团队等）。
 
-> **最终交付报告：[docs/FINAL-REPORT.md](docs/FINAL-REPORT.md)**。对标差距分析、官方功能面清单与逐轮实施记录：
+> **阶段性交付报告：[docs/FINAL-REPORT.md](docs/FINAL-REPORT.md)**。对标差距分析、官方功能面清单与逐轮实施记录：
 > [`docs/CODEX-APP-PARITY-GAP.md`](docs/CODEX-APP-PARITY-GAP.md) ｜
 > [`docs/IMPLEMENTATION-LOG.md`](docs/IMPLEMENTATION-LOG.md) ｜
 > [`docs/research/parity-summary-v2.md`](docs/research/parity-summary-v2.md) ｜
 > [`docs/research/current-audit-v2.md`](docs/research/current-audit-v2.md)
+>
+> **最新复核（Round 11）**：[`docs/research/home-shell-composer-parity.md`](docs/research/home-shell-composer-parity.md)，包含首页/Composer 实测、真实交互和未完成的模拟页面差距。
 
 ## 核心特性（截至 Round 7）
 
@@ -33,7 +35,7 @@
    - `config/read|value/write|batchWrite`（`reloadUserConfig`）+ `configRequirements`、MCP 热重载
    - 实验特性 152 项开关、账号与额度（只读）、Hooks（真实 hooks 列表 + 实时运行记录）
    - 模型/推理档/approval policy/sandbox/web search/verbosity 等真实可写；删除 codex 不认识的伪造参数
-   - 原生菜单 + 托盘 + 15 组快捷键（快捷键分区展示真实注册表）
+   - 原生菜单 + 托盘 + 23 组快捷键（含缩放，快捷键分区展示真实注册表）
 6. **Codex 生态能力**
    - **Goal**：`thread/goal/*` 服务端驱动自主推进（替代自研 loop）
    - **自定义分区**：`threadSection/*` 侧栏分组 + 会话移动
@@ -65,7 +67,7 @@ pwsh -NoProfile -File ./scripts/verify-all.ps1 -Fast    # 跳过协议探测
 - `npm run build` ✅
 - `cargo check --manifest-path src-tauri/Cargo.toml` ✅（0 error / 0 warning）
 - `cargo test --manifest-path src-tauri/Cargo.toml automations` ✅（17 passed）
-- `scripts/protocol-verify/*.mjs`：对真实 `codex app-server` 的请求/响应形状校验（隔离 `CODEX_HOME`，不触碰 `~/.codex`）——9/9、22/22、28/28、16/16 全部通过
+- `scripts/protocol-verify/*.mjs`：对真实 `codex app-server` 的请求/响应形状校验（隔离 `CODEX_HOME`，不触碰 `~/.codex`）——9/9、22/22、28/28、16/16、12/12，共 87/87 通过
 
 ## 开发与构建命令
 
@@ -86,3 +88,5 @@ npm run tauri build
 - 官方 `thread/start` 无 `projectId` 参数 → 新建会话暂无法挂到项目实体。
 - 部分设置分区（Computer use / Appshots / Browser / Voice / Pets）依赖官方插件/服务，当前为本地偏好 UI。
 - 实时语音、账号登录/登出、多窗口、系统级通知与自动更新、`command/exec`/`process/*` 尚未接入（详见差距报告）。
+- Library / Images / Sites 当前仍有演示数据或模拟实现，不是官方云端功能；Quick Chat 尚非完整流式独立窗口。
+- Appearance 尚无 Light / Dark / System 模式入口；当前仅提供深色配色主题。

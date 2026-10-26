@@ -1,5 +1,6 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Check, Copy, Play, WrapText } from "lucide-react";
+import { copyTextToClipboard } from "../clipboard";
 
 interface MarkdownViewProps {
   content: string;
@@ -15,34 +16,43 @@ interface ParsedBlock {
 
 function splitMarkdownBlocks(raw: string): ParsedBlock[] {
   const blocks: ParsedBlock[] = [];
-  const regex = /```([a-zA-Z0-9_+#.-]*)[ \t]*\r?\n([\s\S]*?)```/g;
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-
-  while ((match = regex.exec(raw)) !== null) {
-    if (match.index > lastIndex) {
-      blocks.push({
-        kind: "text",
-        lang: "",
-        code: raw.slice(lastIndex, match.index),
-      });
+  let text: string[] = [];
+  let code: string[] = [];
+  let fence: { marker: string; length: number; indent: number; lang: string } | null = null;
+  const flushText = () => {
+    if (text.length) blocks.push({ kind: "text", lang: "", code: text.join("\n") });
+    text = [];
+  };
+  for (const line of raw.split(/\r?\n/)) {
+    if (fence) {
+      if (new RegExp(`^ {0,3}${fence.marker}{${fence.length},}[ \\t]*$`).test(line)) {
+        blocks.push({ kind: "code", lang: fence.lang, code: code.join("\n") });
+        fence = null;
+        code = [];
+      } else {
+        code.push(line.replace(new RegExp(`^ {0,${fence.indent}}`), ""));
+      }
+      continue;
     }
-    blocks.push({
-      kind: "code",
-      lang: (match[1] || "text").toLowerCase(),
-      code: match[2].replace(/\r?\n$/, ""),
-    });
-    lastIndex = regex.lastIndex;
+    const opening = /^( {0,3})(`{3,}|~{3,})(.*)$/.exec(line);
+    if (opening && !(opening[2][0] === "`" && opening[3].includes("`"))) {
+      flushText();
+      fence = {
+        marker: opening[2][0], length: opening[2].length, indent: opening[1].length,
+        lang: opening[3].trim().split(/\s+/)[0].toLowerCase() || "text",
+      };
+    } else {
+      text.push(line);
+    }
   }
-
-  if (lastIndex < raw.length) {
-    blocks.push({
-      kind: "text",
-      lang: "",
-      code: raw.slice(lastIndex),
-    });
-  }
+  if (fence) blocks.push({ kind: "code", lang: fence.lang, code: code.join("\n") });
+  flushText();
   return blocks;
+}
+
+function decodeFilePath(value: string): string {
+  try { return decodeURIComponent(value); }
+  catch { return value; }
 }
 
 function tokenizeCodeLine(line: string, lang: string): React.ReactNode {
@@ -163,7 +173,7 @@ function renderInlineSegments(
         return <span key={idx} className="md-unsupported-media">不支持的链接地址</span>;
       }
       if (href.startsWith("file://") && onOpenFile) {
-        const cleaned = decodeURIComponent(
+        const cleaned = decodeFilePath(
           href.replace(/^file:\/\/\/?/, "").replace(/#L\d+.*$/, "")
         );
         return (
@@ -184,7 +194,7 @@ function renderInlineSegments(
         !href.startsWith("mailto:") &&
         !href.startsWith("#")
       ) {
-        const cleaned = decodeURIComponent(href.replace(/#L\d+.*$/, ""));
+        const cleaned = decodeFilePath(href.replace(/#L\d+.*$/, ""));
         return (
           <button
             key={idx}
@@ -493,16 +503,39 @@ function renderTextParagraphs(
 
 export const MarkdownView: React.FC<MarkdownViewProps> = React.memo(
   ({ content, onRunCommand, onOpenFile }) => {
-    const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
+    const [copiedBlocks, setCopiedBlocks] = useState<Record<number, boolean>>({});
+    const [copyingBlocks, setCopyingBlocks] = useState<Record<number, boolean>>({});
+    const copyingRef = useRef(new Set<number>());
+    const mountedRef = useRef(true);
+    const copyTimersRef = useRef(new Map<number, ReturnType<typeof setTimeout>>());
+    useEffect(() => {
+      mountedRef.current = true;
+      return () => {
+        mountedRef.current = false;
+        for (const timer of copyTimersRef.current.values()) clearTimeout(timer);
+        copyTimersRef.current.clear();
+      };
+    }, []);
     const [wrappedBlocks, setWrappedBlocks] = useState<Record<number, boolean>>(
       {}
     );
     const blocks = splitMarkdownBlocks(content || "");
 
-    const handleCopy = (code: string, idx: number) => {
-      navigator.clipboard.writeText(code);
-      setCopiedIdx(idx);
-      setTimeout(() => setCopiedIdx(null), 1500);
+    const handleCopy = async (code: string, idx: number) => {
+      if (copyingRef.current.has(idx)) return;
+      copyingRef.current.add(idx);
+      setCopyingBlocks((prev) => ({ ...prev, [idx]: true }));
+      const copied = await copyTextToClipboard(code);
+      copyingRef.current.delete(idx);
+      if (!mountedRef.current) return;
+      setCopyingBlocks((prev) => ({ ...prev, [idx]: false }));
+      if (!copied) return;
+      clearTimeout(copyTimersRef.current.get(idx));
+      setCopiedBlocks((prev) => ({ ...prev, [idx]: true }));
+      copyTimersRef.current.set(idx, setTimeout(() => {
+        copyTimersRef.current.delete(idx);
+        setCopiedBlocks((prev) => ({ ...prev, [idx]: false }));
+      }, 2000));
     };
 
     const toggleWrap = (idx: number) => {
@@ -553,9 +586,14 @@ export const MarkdownView: React.FC<MarkdownViewProps> = React.memo(
                     <button
                       type="button"
                       className="code-action-btn"
-                      onClick={() => handleCopy(block.code, idx)}
+                      aria-busy={copyingBlocks[idx] || undefined}
+                      aria-disabled={copyingBlocks[idx] || undefined}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (!copiedBlocks[idx]) void handleCopy(block.code, idx);
+                      }}
                     >
-                      {copiedIdx === idx ? (
+                      {copiedBlocks[idx] ? (
                         <>
                           <Check size={12} />
                           <span>已复制</span>

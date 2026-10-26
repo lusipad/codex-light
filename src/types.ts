@@ -11,6 +11,8 @@ export interface PendingServerRequest {
   id: string | number;
   method: string;
   params: any;
+  generation: number;
+  responseDeliveryUnknown: boolean;
 }
 
 export interface WorkspaceRootItem {
@@ -86,8 +88,10 @@ export interface ModelInfo {
   tags?: string[];
   contextWindow?: number;
   defaultReasoningEffort?: string;
-  supportedReasoningEfforts?: ModelReasoningOption[];
+  supportedReasoningEfforts?: Array<ModelReasoningOption | string>;
   additionalSpeedTiers?: string[];
+  serviceTiers?: Array<{ id: string; name?: string; description?: string }>;
+  isDefault?: boolean;
 }
 
 export interface ThreadSummary {
@@ -366,6 +370,8 @@ export interface StorageStatsOverview {
 
 export interface QueuedFollowupPrompt {
   id: string;
+  clientUserMessageId: string;
+  input: any[];
   text: string;
   mode: "queue" | "steer";
   createdAt: number;

@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { copyTextToClipboard } from "../clipboard";
 import { CopyIcon, MessagePlusIcon, SparklesIcon } from "./Icons";
 import "./TextSelectionToolbar.css";
 
@@ -6,7 +7,7 @@ export interface TextSelectionToolbarProps {
   containerRef: React.RefObject<HTMLElement | null>;
   onAddToChat: (text: string) => void;
   onAskInSideChat: (text: string) => void;
-  onCopy?: (text: string) => void;
+  onCopy?: (text: string) => boolean | Promise<boolean>;
 }
 
 export const TextSelectionToolbar: React.FC<TextSelectionToolbarProps> = ({
@@ -18,6 +19,20 @@ export const TextSelectionToolbar: React.FC<TextSelectionToolbarProps> = ({
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
   const [selectedText, setSelectedText] = useState<string>("");
   const [copied, setCopied] = useState<boolean>(false);
+  const [copying, setCopying] = useState(false);
+  const copyingRef = useRef(false);
+  const selectedTextRef = useRef(selectedText);
+  selectedTextRef.current = selectedText;
+  const mountedRef = useRef(true);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     const handleMouseUp = () => {
@@ -34,7 +49,6 @@ export const TextSelectionToolbar: React.FC<TextSelectionToolbarProps> = ({
         setSelectedText("");
         return;
       }
-
       // Ensure the selection is within our container
       const container = containerRef.current;
       if (container && selection.rangeCount > 0) {
@@ -114,17 +128,30 @@ export const TextSelectionToolbar: React.FC<TextSelectionToolbarProps> = ({
         type="button"
         className="selection-tool-btn"
         onClick={async () => {
-          if (onCopy) {
-            onCopy(selectedText);
-          } else {
-            await navigator.clipboard.writeText(selectedText);
+          if (copyingRef.current || copied) return;
+          copyingRef.current = true;
+          setCopying(true);
+          const text = selectedText;
+          let success = false;
+          try {
+            success = await (onCopy ? onCopy(text) : copyTextToClipboard(text));
+          } catch {
+            // Keep the selection available for retry when a custom writer rejects.
+          } finally {
+            copyingRef.current = false;
+            if (mountedRef.current) setCopying(false);
           }
+          if (!success || !mountedRef.current || selectedTextRef.current !== text) return;
           setCopied(true);
-          setTimeout(() => {
+          if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+          copyTimerRef.current = setTimeout(() => {
+            if (selectedTextRef.current !== text) return;
             setPosition(null);
             window.getSelection()?.removeAllRanges();
           }, 800);
         }}
+        aria-busy={copying || undefined}
+        aria-disabled={copying || undefined}
         title="复制选中文本"
       >
         <CopyIcon size={13} />

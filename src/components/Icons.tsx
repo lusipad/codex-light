@@ -1,5 +1,17 @@
 import React from "react";
 
+export function CodexHomeIcon({ size = 56 }: { size?: number }) {
+  const clipId = React.useId();
+  const outline = "M247.429 247.43C257.73 208.911 292.871 180.543 334.638 180.543C359.555 180.543 382.115 190.64 398.449 206.964C405.906 204.97 413.743 203.905 421.829 203.905C471.681 203.906 512.096 244.32 512.096 294.173C512.096 302.259 511.031 310.096 509.037 317.553C525.361 333.887 535.458 356.446 535.458 381.364C535.458 423.131 507.09 458.271 468.571 468.572C458.271 507.091 423.131 535.459 381.364 535.459C356.446 535.459 333.886 525.362 317.552 509.037C310.095 511.031 302.258 512.097 294.172 512.097C244.319 512.097 203.906 471.682 203.906 421.829C203.906 413.743 204.969 405.905 206.963 398.448C190.639 382.115 180.543 359.555 180.543 334.638C180.543 292.871 208.91 257.73 247.429 247.43Z";
+  return (
+    <svg width={size} height={size} viewBox="149 149 418 418" fill="none" aria-hidden="true">
+      <defs><clipPath id={clipId}><path d={outline} /></clipPath></defs>
+      <path d={outline} stroke="currentColor" strokeWidth={41.162} clipPath={`url(#${clipId})`} />
+      <path d="M436.706 408.738H370.021M276.533 309.154L303.468 357.831C304.433 359.575 304.412 361.698 303.414 363.423L276.533 409.854" stroke="currentColor" strokeWidth={24} strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export function OpenAIIcon({ size = 20, className = "" }: { size?: number; className?: string }) {
   return (
     <svg
@@ -251,23 +263,6 @@ export function PaperclipIcon({ size = 16 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-    </svg>
-  );
-}
-
-export function CodexHeroIcon({ size = 48 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 48 48" fill="none">
-      <rect x="2" y="2" width="44" height="44" rx="13" fill="url(#codex_hero_grad)" stroke="rgba(255,255,255,0.12)" strokeWidth="1" />
-      <circle cx="24" cy="24" r="13" stroke="rgba(255,255,255,0.88)" strokeWidth="2.2" />
-      <path d="M19.5 21L23 24L19.5 27" stroke="rgba(255,255,255,0.92)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-      <line x1="25" y1="27" x2="29" y2="27" stroke="rgba(255,255,255,0.92)" strokeWidth="2.2" strokeLinecap="round" />
-      <defs>
-        <linearGradient id="codex_hero_grad" x1="24" y1="2" x2="24" y2="46" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#2f2f2f" />
-          <stop offset="1" stopColor="#1b1b1b" />
-        </linearGradient>
-      </defs>
     </svg>
   );
 }

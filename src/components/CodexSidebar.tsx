@@ -27,6 +27,7 @@ import {
   moveThreadToSection,
   updateSection,
 } from "../threadSections";
+import { ThreadActionsMenu, ThreadActionItem } from "./ThreadActionsMenu";
 
 export interface CodexSidebarProps {
   collapsed: boolean;
@@ -46,14 +47,14 @@ export interface CodexSidebarProps {
   onNavigate: (route: MainViewRoute) => void;
   onStartNewChat: (workspacePath?: string) => void;
   onSelectWorkspace: (path: string) => void;
-  onRemoveWorkspace: (path: string, e: React.MouseEvent) => void;
+  onRemoveWorkspace: (path: string, e?: React.MouseEvent) => void;
   onPickNewFolder: () => void;
   onSelectThread: (threadId: string) => void;
   onTogglePinThread: (threadId: string, e: React.MouseEvent) => void;
   onArchiveThread: (thread: ThreadSummary, e: React.MouseEvent) => void;
   onDeleteThread?: (thread: ThreadSummary, e: React.MouseEvent) => void;
   onRenameThread: (threadId: string, newName: string) => void;
-  onRevealPath?: (path: string, e: React.MouseEvent) => void;
+  onRevealPath?: (path: string, e?: React.MouseEvent) => void;
   onOpenAgentsMd: () => void;
   onOpenQuickSearch?: () => void;
   onToggleCollapse?: () => void;
@@ -425,12 +426,6 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
     setExpandedProjects((prev) => ({ ...prev, [normPath(wsPath)]: true }));
   };
 
-  const startRename = (t: ThreadSummary, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setRenamingThreadId(t.id);
-    setRenamingText(t.name || t.preview || "未命名聊天");
-  };
-
   const commitRename = (threadId: string) => {
     if (renamingText.trim()) {
       onRenameThread(threadId, renamingText.trim());
@@ -587,14 +582,6 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
     setThreadMenuMoveOpen(false);
   };
 
-  const openThreadMenuFromButton = (
-    thread: ThreadSummary,
-    e: React.MouseEvent<HTMLButtonElement>
-  ) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    openThreadMenu(thread, rect.left, rect.bottom + 4, e);
-  };
-
   const renderThreadMenu = () => {
     if (!threadMenu) return null;
     const thread = threads.find((t) => t.id === threadMenu.threadId);
@@ -731,25 +718,10 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
     );
   };
 
-  const formatRelativeTime = (ts?: number) => {
-    if (!ts) return "";
-    const ms = ts > 1e11 ? ts : ts * 1000;
-    const now = Date.now();
-    const diff = now - ms;
-    if (diff < 60000) return "刚刚";
-    if (diff < 3600000) return `${Math.floor(diff / 60000)}m`;
-    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h`;
-    if (diff < 86400000 * 2) return "昨天";
-    const d = new Date(ms);
-    return `${d.getMonth() + 1}/${d.getDate()}`;
-  };
-
   const renderThreadRow = (t: ThreadSummary, indented = false) => {
     const isActive = activeRoute === "thread" && activeThreadId === t.id;
     const isPinned = pinnedThreadIds.includes(t.id);
     const currentSectionId = sectionIdOfThread(t);
-    const threadWs = getThreadWorkspace(t);
-    const timeHint = formatRelativeTime(t.updatedAt || t.createdAt);
 
     return (
       <div
@@ -757,7 +729,14 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
         className={`sidebar-thread-row ${isActive ? "active" : ""} ${
           indented ? "indented" : ""
         }`}
+        tabIndex={0}
         onClick={() => onSelectThread(t.id)}
+        onKeyDown={(e) => {
+          if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
+            e.preventDefault();
+            onSelectThread(t.id);
+          }
+        }}
         onContextMenu={(e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -796,36 +775,15 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
               {t.name || t.preview || "新聊天"}
             </span>
           )}
-          {!indented && threadWs && (
-            <span
-              className="sidebar-thread-project-badge"
-              title={`所属项目: ${threadWs.path}`}
-            >
-              {threadWs.label || threadWs.path.split(/[/\\]/).pop()}
-            </span>
-          )}
-          {timeHint && (
-            <span className="sidebar-thread-time-hint">{timeHint}</span>
-          )}
         </div>
         <div className="sidebar-thread-actions">
-          {sectionsAvailable && (
-            <button
-              type="button"
-              className="thread-icon-btn"
-              title="移动到分区"
-              onClick={(e) => openThreadMenuFromButton(t, e)}
-            >
-              <EllipsisIcon size={12} />
-            </button>
-          )}
           <button
             type="button"
             className="thread-icon-btn"
-            title="重命名"
-            onClick={(e) => startRename(t, e)}
+            title={isPinned ? "取消置顶" : "置顶聊天"}
+            onClick={(e) => onTogglePinThread(t.id, e)}
           >
-            ✏️
+            <PinIcon size={12} />
           </button>
           <button
             type="button"
@@ -835,24 +793,6 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
           >
             <ArchiveIcon size={12} />
           </button>
-          <button
-            type="button"
-            className="thread-icon-btn"
-            title={isPinned ? "取消置顶" : "置顶聊天"}
-            onClick={(e) => onTogglePinThread(t.id, e)}
-          >
-            <PinIcon size={12} />
-          </button>
-          {onDeleteThread && (
-            <button
-              type="button"
-              className="thread-icon-btn danger"
-              title="彻底删除聊天"
-              onClick={(e) => onDeleteThread(t, e)}
-            >
-              🗑️
-            </button>
-          )}
         </div>
       </div>
     );
@@ -983,7 +923,9 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
         )}
 
         {/* Section A2: 自定义分区 (threadSection/*) —— 协议不可用时整块隐藏 */}
-        {sectionsAvailable && (
+        {sectionsAvailable && (showSectionCreator || sections.some((section) =>
+          !isBuiltinEmptySection(section, (threadsBySection[section.id] || []).length)
+        )) && (
           <>
             <div className="sidebar-section-header-row" style={{ marginTop: 10 }}>
               <span className="sidebar-section-label">自定义分区</span>
@@ -1212,12 +1154,29 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
               const isSelectedWs = normPath(activeWorkspace?.path) === normPath(ws.path);
               const expanded = isProjectExpanded(ws.path);
               const projectThreads = threadsByProject[normPath(ws.path)] || [];
+              const projectName = ws.label || ws.path.split(/[/\\]/).pop();
+              const projectActions: ThreadActionItem[] = [
+                { id: "manage", label: "项目设置与来源", icon: <FilterIcon size={13} /> },
+              ];
+              if (onRevealPath) {
+                projectActions.unshift({ id: "reveal", label: "在文件资源管理器中打开", icon: <FolderIcon size={13} /> });
+              }
+              if (workspaces.length > 1) {
+                projectActions.push({ id: "remove", label: "移除项目", icon: <CloseIcon size={12} />, danger: true, separatorBefore: true });
+              }
 
               return (
                 <div key={ws.path} className="sidebar-project-group">
                   <div
                     className={`sidebar-project-row ${isSelectedWs ? "selected" : ""}`}
+                    tabIndex={0}
                     onClick={() => handleSelectProject(ws.path)}
+                    onKeyDown={(e) => {
+                      if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
+                        e.preventDefault();
+                        handleSelectProject(ws.path);
+                      }
+                    }}
                     title={ws.path}
                   >
                     <div className="sidebar-project-left">
@@ -1226,40 +1185,28 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
                         onClick={(e) => toggleProjectExpand(ws.path, e)}
                         title={expanded ? "点击折叠" : "点击展开"}
                       >
-                        {expanded ? (
-                          <ChevronDownIcon size={13} />
-                        ) : (
-                          <ChevronRightIcon size={13} />
-                        )}
+                        <FolderIcon size={14} />
                       </span>
-                      <span className="sidebar-project-name">
-                        {ws.label || ws.path.split(/[/\\]/).pop()}
-                      </span>
-                      {projectThreads.length > 0 && (
-                        <span className="project-count-badge" title={`${projectThreads.length} 个会话`}>
-                          {projectThreads.length}
-                        </span>
-                      )}
+                      <span className="sidebar-project-name">{projectName}</span>
                     </div>
 
-                    <div className="sidebar-project-actions">
-                      {onRevealPath && (
-                        <button
-                          type="button"
-                          className="thread-icon-btn"
-                          title="在系统文件管理器中打开文件夹"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onRevealPath(ws.path, e);
-                          }}
-                        >
-                          📂
-                        </button>
-                      )}
+                    <div className="sidebar-project-actions" onClick={(e) => e.stopPropagation()}>
+                      <ThreadActionsMenu
+                        items={projectActions}
+                        align="right"
+                        buttonClassName="thread-icon-btn"
+                        label={<EllipsisIcon size={12} />}
+                        triggerAriaLabel={`${projectName} 的项目操作`}
+                        onSelect={(id) => {
+                          if (id === "reveal") onRevealPath?.(ws.path);
+                          if (id === "manage") onNavigate("projects");
+                          if (id === "remove") onRemoveWorkspace(ws.path);
+                        }}
+                      />
                       <button
                         type="button"
                         className="thread-icon-btn"
-                        title="在此项目中新建聊天"
+                        title={`在 ${projectName} 中开启新聊天`}
                         onClick={(e) => {
                           e.stopPropagation();
                           onSelectWorkspace(ws.path);
@@ -1268,16 +1215,6 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
                       >
                         <PlusIcon size={12} />
                       </button>
-                      {workspaces.length > 1 && (
-                        <button
-                          type="button"
-                          className="thread-icon-btn"
-                          title="移除项目"
-                          onClick={(e) => onRemoveWorkspace(ws.path, e)}
-                        >
-                          <CloseIcon size={11} />
-                        </button>
-                      )}
                     </div>
                   </div>
 
@@ -1300,14 +1237,14 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
         <div className="sidebar-section-header-row" style={{ marginTop: 12 }}>
           <span className="sidebar-section-label">
             {activityOnly
-              ? `待处理活动 (${mainChatThreads.length})`
+              ? "活动"
               : organizeMode === "list"
-              ? `全部聊天 (${mainChatThreads.length})`
+              ? "聊天"
               : filterScope === "current" && activeWorkspace
-              ? `${activeWorkspace.label || activeWorkspace.path.split(/[/\\]/).pop()} 的会话 (${mainChatThreads.length})`
+              ? `${activeWorkspace.label || activeWorkspace.path.split(/[/\\]/).pop()} 的会话`
               : filterScope === "all"
-              ? `全部最近聊天 (${mainChatThreads.length})`
-              : `独立聊天 (${mainChatThreads.length})`}
+              ? "全部最近聊天"
+              : "最近"}
           </span>
           <div className="sidebar-section-tools">
             <button
@@ -1346,6 +1283,25 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
                 ✕
               </button>
             </div>
+
+            {sectionsAvailable && (
+              <>
+                <button
+                  type="button"
+                  className="popover-menu-item"
+                  disabled={sectionBusy}
+                  onClick={() => {
+                    setShowSectionCreator(true);
+                    setNewSectionName("");
+                    setRenamingSectionId(null);
+                    setShowOrganizeMenu(false);
+                  }}
+                >
+                  <span className="popover-item-title"><PlusIcon size={12} /> 新建分区</span>
+                </button>
+                <div className="popover-divider" />
+              </>
+            )}
 
             <div style={{ fontSize: 11, fontWeight: 500, color: "var(--text-tertiary)", marginBottom: 4 }}>组织方式 (Organize)</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 2, marginBottom: 8 }}>

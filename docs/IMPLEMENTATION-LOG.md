@@ -355,3 +355,116 @@
   - Cargo check：SUCCESS (0 warning 0 error)
   - Cargo unit tests：17 passed, 0 failed
   - 5 套独立协议探针脚本：**87/87 全部通过** (9 + 22 + 28 + 16 + 12 = 87)
+
+---
+
+## Round 11 — 首页 / 侧栏 / Composer 真实对齐与报告纠偏
+
+### 1. 先功能文档调研，再开发
+- 新增 `docs/research/home-shell-composer-parity.md`：官方 26.928.21956 / build 12404 的功能、模型/权限实测、CSS 变体、当前模拟实现和最终验证结果。
+- 只读实测官方首页、模型紧凑菜单、模型选择器与权限菜单；未改变官方设置、未发送任务。
+- 官方 CSS 证据保存到 `.ref/reference/css/`，官方与当前前后截图保存到 `.ref/reference/round11/`。
+- 修正 `docs/FINAL-REPORT.md` 的“全量 1:1 已完成”旧结论：Library / Images / Sites / Quick Chat 的模拟或缺失不能按路由覆盖计为真实完成。
+
+### 2. Composer 真实能力与官方交互
+- 新增 `src/modelCapabilities.ts`：归一化字符串与 `{reasoningEffort,description}` 对象、默认模型与 Fast 能力解析。
+- 新增 `src/components/ModelSelector.tsx/.css`：官方风格紧凑模型菜单、动态模型列表、默认推荐模型集、Fast 开关和原生 range 推理滑块。
+- `src/App.tsx` 移除硬编码初始模型；默认推荐与显式模型分开记录，模型切换恢复默认档，不支持 Fast 时关闭并禁止发送 `priority`。
+- 权限三档改为官方实测文案、340px 菜单、风险态、键盘 Escape 与焦点返回；协议映射保持合法。
+
+### 3. 首页与侧栏结构 / 视觉
+- Home 拆为独立居中 Hero 与底部 Composer dock；Home 顶栏只保留“新建标签页”。
+- 首页图标改用现有 OpenAI 轮廓图标，移除自绘终端方块；标题、项目虚线、Composer 圆角/表面/阴影统一为主题 token。
+- 侧栏移除时间、数量徽标与空“自定义分区”；行内保留置顶/归档，项目设置/打开目录/移除、重命名/删除等仍可从菜单到达。
+- 项目操作复用 `ThreadActionsMenu`；项目与会话行增加 `tabIndex`、Enter/Space 和 `:focus-within`，不仅依赖 hover。
+- 样式按 4px 网格、32/38 Hero、22px Composer 校准；Composer 外框/内层/底部与官方扣除 69px 窗口高度差后均为约 1px 差。
+
+### 4. 原生窗口与快捷键
+- 缩放改用 Tauri `getCurrentWebview().setZoom`，浏览器保留 CSS zoom 回退；新增 `core:webview:allow-set-webview-zoom` capability。
+- 补齐 `core:window:allow-close|minimize|toggle-maximize|set-fullscreen`，原生关闭按钮已实测退出。
+- `src/shortcuts.ts` 注册 `Ctrl++`、`Ctrl+-`、`Ctrl+0`（总数 23），与视图菜单共用 `applyZoom`；实测放大和恢复 100%。
+
+### 5. 实际验证
+- `pwsh -NoProfile -File ./scripts/verify-all.ps1`：**ALL CHECKS PASSED**
+  - TypeScript：0 error；Vite：1680 模块；Cargo check：0 error / 0 warning；Cargo test：17 passed。
+  - 5 套隔离协议探针：**87/87 passed**。
+- 真实 UI：模型切换与默认档、键盘滑块、Fast on/off、权限三档并恢复、项目/会话菜单、侧栏整理、新建标签、原生关闭与缩放均通过。
+- 辅助函数：无 Fast、对象/字符串档归一化、默认模型、23 项快捷键匹配均通过。
+- 960×640 受控视口无横向溢出；Light / Dark / System 主题入口仍缺，未宣称亮色功能完成。
+
+### 6. 保留的真实差距
+- Library / Images / Sites 仍有演示数据或模拟生成/部署，Quick Chat 仍有固定延时与占位回复，实时语音未接入。
+- Light / Dark / System 主题模式与持久化尚未实现；当前只有深色配色主题。
+- 原生最大化窗口未能通过边框完成最小尺寸拖拽，窄布局使用受控视口验收，未伪装为原生窄窗口通过。
+
+
+## 逐页计划 00/01 — 首页与外壳首轮（2026-10-25，开发中）
+
+- 开发前建立 `docs/research/pages/01-home-shell.md`，重新校验 asar 的版本、哈希和首页 JS 字节一致性；清单在 `.ref/parity/00/manifest.json`。
+- `src/styles.css` 校准 Electron dark 主表面；`Icons.tsx` 与 `App.tsx` 恢复 Codex 静态首页标识。
+- `ModelSelector.tsx` 复用现有菜单补齐键盘打开、焦点进入/返回、外部点击关闭、aria-controls 与 Fast 反向操作标签。
+- 标准验证与最终前端/原生构建通过；原生菜单键盘、滑块、Fast 恢复及输入框关闭实测已记录。
+- 未完成：同尺寸官方动态参考、Hero 动画、导航 gate、窄窗/中文输入完整回归；连接状态异常正在排查。不是整页已验收。
+
+### 01 首轮后端真实性与连接修复
+
+- 原生测试发现旧 reader EOF 可清除新连接，已串行化连接生命周期并按代次隔离旧消息/退出。
+- 移除 model/list 强行注入 Astra 和解除 hidden 的后处理，原始模型能力按回归断言保留。
+- 完整 cargo test 22/22；最终 verify-all ALL CHECKS PASSED，日志见 `.ref/parity/01/verify-all.log`。
+- 用户按物理 Escape 停止 Computer Use，已停止所有界面输入。最终 Rust 修复尚未重建 EXE/原生复测，旧产物不包含此修复；01 单元继续保持开发中。
+
+## 逐页计划 02 — 会话基础页首轮（2026-10-25，待验收）
+
+- 根据用户“开始开发下一页”进入02，保留01未验收状态。先建立 `docs/research/pages/02-thread-basics.md`，核对官方 asar、app-server 消息结构与围栏规则，再修改代码。
+- `App.tsx` 按 thread/turn/item 身份处理交错事件，隔离过期历史请求，补充失败重试、前插历史视口补偿与近底部跟随；旧回答操作区在新轮次输出时保持稳定。
+- `MarkdownView.tsx` 修复未闭合/更长/波浪号代码围栏与畸形百分号文件链接。`ThreadFindBar.tsx` 修复结构化文本查找、结果索引、组合输入与键盘冒泡。
+- 最小复用：原文本提取迁至 `threadText.ts`，事件合并与请求身份判断放入 `threadTimeline.ts`；无新增依赖。
+- 新增内容回归与事件回放脚本并接入标准检查。内容回归从旧版5/12扩展至修复后17/17；完整 verify-all 通过。最后操作区修复后重新通过前端构建、两套回归、全量 Rust 单测22/22和 Release 构建。
+- 浏览器隔离样本验证真实 App 的后台事件、交错消息、延迟历史、错误重试及滚动；前插历史锚点偏差约0.304px。原生 Release 使用独立数据目录，经真实 app-server 读取固定消息，验证中文、代码、表格、Ctrl+F、下一处和 Escape；未调用模型生成。
+- 产物 `dist-artifacts/02-thread-basics/CodexNative.exe` 已包含01连接修复，原生显示已连接。源码及产物指纹、日志、截图见 `.ref/parity/02/`。
+- 未完成：官方同尺寸视觉对照、真实模型链路、历史快照与 partial delta 重叠时序、复制失败恢复；完整页1:1与用户验收仍未通过。详细范围和证据见页面调研文档。
+
+## 逐页计划 02 — 复制与历史加载续修（2026-10-26）
+
+- 重新校验官方asar哈希，先定位共享chunk的复制Promise/false处理、hydration缓冲回放和终态轮次started guard，再修复；定位证据保存至 `.ref/parity/02/reference/`。
+- `App.tsx` / `threadTimeline.ts` 改为历史安装后重放代次绑定的事件，修复完整历史被增量后缀覆盖；失败释放、切页失效、legacy事件、命令输出均保留。结束轮次忽略迟到started，避免错误恢复运行。
+- `MarkdownView.tsx` 等待每个代码块真正复制成功，独立pending防重复，失败可重试，清理成功提示计时器。DiffDrawer已有复制helper迁至 `clipboard.ts`复用，没有新增依赖或另建复制框架。
+- 新增 `verify-clipboard.mjs` 并接入标准脚本，覆盖5类故障路径。扩充timeline回放，直接执行实际App的started分支，终态回归先真实断言失败再通过；内容17/17保持通过。
+- 浏览器真实组件和App隔离协议验证包括：延迟/拒绝/回退复制、卸载、完整历史含/不含缓冲、完成权威项、读取失败释放、跨会话失效、结束轮次迟到started与新轮次正常运行。固定测试数据均明确标注，不冒充真实模型输出。
+- 最终标准检查 `verify-all-20261026-final.log` 为ALL CHECKS PASSED，含87项协议探针；无独立lint配置，不编造lint结果。原有bundle/混合导入/DEP0190及开发模式popover属性提示仍存在。
+- 最终Release构建通过，产物 `dist-artifacts/02-thread-basics-20261026/CodexNative.exe` 与源码指纹记录在 `build-20261026.json`。独立home原生复测历史读取、已结束状态、实际代码复制值、查找2/2与Escape通过，截图对应最后重建的EXE。
+- 剩余：官方同尺寸像素对照、真实模型生成/中断，以及官方后缀策略对重复字符串/部分重叠的消歧边界。本轮不宣称协议强一致或整页1:1已验收。
+
+## 逐页计划 02 — 其他会话复制入口补查（2026-10-26）
+
+- 先按官方复制Promise/false逻辑复查剩余入口，实际App callback回归先确认“复制提问”提前成功断言失败，再修改。
+- App提问、回答、选区、全会话复制复用已有helper和统一结果提示；全会话文本不再漏掉结构化提问。选区工具栏等待回调结果、失败保留重试，清理计时器并隔离旧选区/卸载结果。
+- 修改限于 `src/App.tsx`、`src/components/TextSelectionToolbar.tsx` 与原剪贴板回归脚本；无依赖、无样式重做。扩充13类自动检查，浏览器故障及最终原生提问/回答复制通过。
+- 最终完整标准检查、87协议探针、Release构建通过；产物`dist-artifacts/02-thread-basics-copy-20261026/CodexNative.exe`。源码指纹、日志与实际证据见`.ref/parity/02/`本轮message-copy文件。
+- 同时完成03只读预调研，记录审批串会话、响应失败丢请求/已解决请求复活、IME与空输入提交等问题，见`docs/research/pages/03-thread-execution.md`。本轮没有03产品改动，不跨页标为验收通过。
+
+## 逐页计划 03 — 审批与提问首轮（2026-10-26）
+
+- 先fetch官方审批文档、核对固定asar与CLI0.159.2新schema，再开发E01–E04。01/02未验收状态保留。
+- `App.tsx` / `approvalRequests.ts`：按会话显示请求，typed ID与generation防误匹配，发送期间保留卡片并防重复；失败刷新状态，无法确认投递时禁重发；过期列表不复活已解决请求。移除快捷入口不匹配协议的假批准，改定位实际审批卡。
+- `ApprovalCenter.tsx` / `types.ts`：闭包传递本地代次，发送/错误/未知状态可见；Enter遵循按钮校验并保护中文组合输入。复用原卡片与协议构造函数，无新增依赖或公共样式重做。
+- `app_server.rs` / `lib.rs`：请求查找/写入/移除原子化，失败或取消写入保留未知标记、禁止重发；resolved按thread/代次/typed ID清理，兼容旧conversationId。
+- `verify-approval.mjs`接入标准脚本；前端隔离与旧IME/空提交均有真实失败回归，后端typed ID先红后绿。最终完整检查与87探针通过，全量Rust30/30，Release构建通过。
+- 产物`dist-artifacts/03-approvals-20261026/CodexNative.exe`，源码与产物指纹、日志见`.ref/parity/03/`。浏览器故障集成通过；原生以真实CLI独立home验证连接与历史读取。
+- 原生本地模拟CLI启动被自动审批拒绝，未返回具体原因；没有原生完整输入回传结果。真实模型/命令审批、物理IME、官方像素对照和03其余范围继续待验证，不将首轮修复标为整页验收通过。
+
+## 逐页计划 03 — 队列、Steer与中断续修（2026-10-26）
+
+- 开发前核对官方Steer文档、固定asar队列及CLI schema；先红后绿覆盖错误Steer落入新轮、队列分页、鼠标交互容器。
+- `App.tsx`/`types.ts`：真实分页与队列身份、跨会话/乱序隔离、真实增删启动、原消息Steer及成功清理、失败/未知投递防重；中断等待完成通知。复用现有Composer容器修复鼠标穿透，无新依赖/CSS。
+- 新`verify-queue.mjs`、`verify-turn-controls.mjs`共17组回归接入标准检查。完整检查及87协议探针、Release构建exit0；固定App故障场景和跨会话实测通过。浏览器中断失败toast未捕获，未冒报通过。
+- 产物`dist-artifacts/03-queue-steer-20261026/CodexNative.exe`；真实CLI隔离home原生连接/历史回归通过，源码与EXE指纹`build-queue-steer.json`。详细证据见03页面文档与`.ref/parity/03/verification.md`。
+- 真实任务队列/Steer/中断、物理IME、官方同尺寸视觉和03剩余范围继续待验证；本子范围已自验交付，整页未验收。
+
+## 逐页计划03 — 排队内容与send-now真实状态补查（2026-10-26）
+
+- 先重新读取官方Steer文档、固定asar队列sendNow/full input证据并写验收预期；实际callback先红（运行中错误queue/start）后绿。
+- 仅`src/App.tsx`产品改动：运行中立即发送复用Steer及清理逻辑；排队复用附件保存并保留完整input/纯附件，失败/切会话/新稿保护。无新增依赖或CSS。
+- `verify-queue.mjs`扩为14组，加turn-controls共20组回归；新增真实CLI空闲边界探针6项，接入verify-all。最终标准检查、协议检查与Release通过，新EXE真实CLI连接和隔离历史回归通过。
+- 产物`dist-artifacts/03-queue-input-20261026/CodexNative.exe`。调研、原始RPC、完整日志、源码/产物指纹、原生截图见03页面记录和`.ref/parity/03/`本轮queue-input/input-final/idle-turn文件。
+- 新登记Alt+Enter提示与实际处理不一致，尚未修复；真实活跃任务、物理IME和官方视觉未验证，03整页及用户验收状态不变。

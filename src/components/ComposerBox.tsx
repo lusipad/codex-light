@@ -28,6 +28,7 @@ import {
 import { ComposerAutocomplete, AutocompleteItem } from "./ComposerAutocomplete";
 import { ComposerAttachmentChip } from "./ComposerAttachmentChip";
 import { createAttachedFileItem } from "../threadAttachments";
+import { ModelSelector } from "./ModelSelector";
 
 export interface ComposerBoxProps {
   variant: "home" | "thread";
@@ -53,7 +54,8 @@ export interface ComposerBoxProps {
   // Model, effort, speed, plan mode
   models: ModelInfo[];
   selectedModelId: string;
-  onSelectModelId: (id: string) => void;
+  defaultModelSelected: boolean;
+  onSelectModel: (id: string, useDefault: boolean) => void;
   reasoningEffort: string;
   onSelectReasoningEffort: (effort: string) => void;
   fastMode: boolean;
@@ -73,15 +75,6 @@ export interface ComposerBoxProps {
   textareaRef?: React.RefObject<HTMLTextAreaElement | null>;
 }
 
-const EFFORT_OPTIONS = [
-  { id: "low", shortLabel: "轻度", fullLabel: "轻度 (Low)", desc: "快速响应，轻量级推理" },
-  { id: "medium", shortLabel: "中等", fullLabel: "中等 (Medium)", desc: "平衡速度与推理深度" },
-  { id: "high", shortLabel: "高", fullLabel: "高 (High)", desc: "深度推演复杂逻辑与边界" },
-  { id: "xhigh", shortLabel: "极高", fullLabel: "极高 (xHigh)", desc: "高强度推理，适合疑难重构" },
-  { id: "max", shortLabel: "最高", fullLabel: "最高 (Max)", desc: "最大推理深度，适合最难的问题" },
-  { id: "ultra", shortLabel: "极限", fullLabel: "极限 (Ultra)", desc: "最大推理深度并自动委派子任务" },
-];
-
 const PERMISSION_OPTIONS: Array<{
   id: "ask" | "auto" | "full";
   shortLabel: string;
@@ -91,27 +84,22 @@ const PERMISSION_OPTIONS: Array<{
   {
     id: "ask",
     shortLabel: "请求批准",
-    title: "默认权限（请求批准）",
-    desc: "读取工作区文件，运行命令或写入文件前请求批准",
+    title: "请求批准",
+    desc: "编辑外部文件和使用互联网时始终询问",
   },
   {
     id: "auto",
-    shortLabel: "自动",
-    title: "自动（工作区读写）",
-    desc: "允许在当前工作区内自动修改文件并执行安全命令",
+    shortLabel: "帮我批准",
+    title: "帮我批准",
+    desc: "仅对检测到的风险操作请求批准",
   },
   {
     id: "full",
-    shortLabel: "完整访问权限",
-    title: "完整访问权限 (Full Access)",
-    desc: "无沙盒限制自主执行命令、访问外部目录与网络",
+    shortLabel: "完全访问",
+    title: "完全访问权限",
+    desc: "可不受限制地访问互联网和你电脑上的任何文件",
   },
 ];
-
-function formatShortModelName(model: ModelInfo): string {
-  const name = model.displayName || model.id;
-  return name.replace(/^GPT-/i, "");
-}
 
 export const ComposerBox: React.FC<ComposerBoxProps> = ({
   variant,
@@ -134,7 +122,8 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
   onSelectPermissionMode,
   models,
   selectedModelId,
-  onSelectModelId,
+  defaultModelSelected,
+  onSelectModel,
   reasoningEffort,
   onSelectReasoningEffort,
   fastMode,
@@ -159,10 +148,10 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
     "project" | "env" | "branch" | "plus" | "permission" | "model" | null
   >(null);
   const [newBranchInput, setNewBranchInput] = useState("");
-  const [modelSearch, setModelSearch] = useState("");
   const [isDictating, setIsDictating] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const recognitionRef = useRef<any>(null);
+  const permissionTriggerRef = useRef<HTMLButtonElement | null>(null);
 
   // Toggle real Speech Recognition
   const toggleDictation = () => {
@@ -289,40 +278,8 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
     return () => document.removeEventListener("mousedown", handleOutsideClick);
   }, []);
 
-  const allModels = React.useMemo(() => models || [], [models]);
-
-  const activeModel = allModels.find((m) => m.id === selectedModelId) || {
-    id: selectedModelId,
-    displayName: selectedModelId,
-  };
-
-  const availableEfforts = React.useMemo(() => {
-    const supported = (activeModel as any).supportedReasoningEfforts;
-    if (Array.isArray(supported) && supported.length > 0) {
-      const filtered = EFFORT_OPTIONS.filter((e) => supported.includes(e.id));
-      return filtered.length > 0 ? filtered : EFFORT_OPTIONS;
-    }
-    return EFFORT_OPTIONS;
-  }, [activeModel]);
-
-  const activeEffort =
-    availableEfforts.find((e) => e.id === reasoningEffort) ||
-    availableEfforts[0] ||
-    EFFORT_OPTIONS[0];
-
   const activePermission =
     PERMISSION_OPTIONS.find((p) => p.id === permissionMode) || PERMISSION_OPTIONS[0];
-
-  const filteredModels = React.useMemo(() => {
-    if (!modelSearch.trim()) return allModels;
-    const q = modelSearch.toLowerCase();
-    return allModels.filter(
-      (m) =>
-        m.id.toLowerCase().includes(q) ||
-        (m.displayName && m.displayName.toLowerCase().includes(q)) ||
-        (m.description && m.description.toLowerCase().includes(q))
-    );
-  }, [allModels, modelSearch]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
@@ -365,6 +322,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
     if (autocompleteMode) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -665,7 +623,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
             planMode
               ? "计划模式：描述你想实现的目标，Codex 将先分步制定计划再执行..."
               : variant === "home"
-              ? "随心输入 (@ 引用文件或技能，/ 快捷命令)"
+              ? "随心输入"
               : isStreaming
               ? "输入后续引导或排队消息... (Enter 立即引导 / Alt+Enter 加入队列)"
               : "随心输入 (@ 引用文件或技能，/ 快捷命令)"
@@ -748,17 +706,20 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
               )}
             </div>
 
-            {/* Permission Mode Pill (Matches "✋ 请求批准 ⌄" in ref-1-home.png) */}
             <div className="composer-dropdown-anchor">
               <button
+                ref={permissionTriggerRef}
                 type="button"
                 className={`composer-inline-pill ${
                   permissionMode === "full" ? "danger-accent" : ""
                 }`}
+                aria-label="更改权限"
+                aria-haspopup="menu"
+                aria-expanded={openMenu === "permission"}
                 onClick={() =>
                   setOpenMenu((m) => (m === "permission" ? null : "permission"))
                 }
-                title="沙盒与命令批准策略"
+                title="更改权限"
               >
                 {permissionMode === "full" ? (
                   <ShieldIcon size={14} />
@@ -770,25 +731,40 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
               </button>
 
               {openMenu === "permission" && (
-                <div className="composer-popover-menu bottom-left" style={{ minWidth: 290 }}>
-                  <div className="popover-section-label">权限模式 (Permissions)</div>
+                <div
+                  className="composer-popover-menu bottom-left permission-popover"
+                  role="menu"
+                  aria-label="更改权限"
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      setOpenMenu(null);
+                      permissionTriggerRef.current?.focus({ preventScroll: true });
+                    }
+                  }}
+                >
+                  <div className="permission-popover-heading">应如何批准 ChatGPT 操作？</div>
                   {PERMISSION_OPTIONS.map((opt) => {
                     const isSelected = opt.id === permissionMode;
                     return (
-                      <div
+                      <button
                         key={opt.id}
-                        className={`popover-menu-item ${isSelected ? "selected" : ""}`}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={isSelected}
+                        className={`popover-menu-item permission-option ${isSelected ? "selected" : ""} ${opt.id === "full" ? "danger" : ""}`}
                         onClick={() => {
                           onSelectPermissionMode(opt.id);
                           setOpenMenu(null);
+                          requestAnimationFrame(() => permissionTriggerRef.current?.focus({ preventScroll: true }));
                         }}
                       >
                         <div className="popover-item-body">
                           <span className="popover-item-title">{opt.title}</span>
                           <span className="popover-item-desc">{opt.desc}</span>
                         </div>
-                        {isSelected && <CheckIcon size={14} />}
-                      </div>
+                        {isSelected && <CheckIcon size={13} />}
+                      </button>
                     );
                   })}
                 </div>
@@ -798,106 +774,18 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
 
           {/* Right: Combined Model+Effort Dropdown + Mic + Send */}
           <div className="composer-bottom-right">
-            {/* Combined Model + Effort Dropdown (Matches "6.1 Sol 轻度 ⌄" in ref-1-home.png) */}
-            <div className="composer-dropdown-anchor">
-              <button
-                type="button"
-                className="composer-inline-pill model-effort-pill"
-                onClick={() => {
-                  setOpenMenu((m) => (m === "model" ? null : "model"));
-                  setModelSearch("");
-                }}
-                title="选择模型、推理强度与生成速度"
-              >
-                <span>
-                  {formatShortModelName(activeModel)} {activeEffort.shortLabel}
-                </span>
-                <ChevronDownIcon size={11} />
-              </button>
-
-              {openMenu === "model" && (
-                <div className="composer-popover-menu bottom-right" style={{ minWidth: 330 }}>
-                  <input
-                    type="text"
-                    className="popover-search-input"
-                    placeholder="搜索模型..."
-                    value={modelSearch}
-                    onChange={(e) => setModelSearch(e.target.value)}
-                    autoFocus
-                  />
-
-                  <div className="popover-section-label">模型 (Model)</div>
-                  <div style={{ maxHeight: 190, overflowY: "auto" }}>
-                    {filteredModels.map((m) => {
-                      const isSelected = m.id === selectedModelId;
-                      return (
-                        <div
-                          key={m.id}
-                          className={`popover-menu-item ${isSelected ? "selected" : ""}`}
-                          onClick={() => onSelectModelId(m.id)}
-                        >
-                          <div className="popover-item-body">
-                            <div className="popover-item-header">
-                              <span className="popover-item-title">
-                                {m.displayName || m.id}
-                              </span>
-                              {m.tags?.map((tag) => (
-                                <span
-                                  key={tag}
-                                  className={`popover-badge ${
-                                    tag === "推荐" || tag === "旗舰"
-                                      ? "recommended"
-                                      : tag === "极速"
-                                      ? "fast"
-                                      : ""
-                                  }`}
-                                >
-                                  {tag}
-                                </span>
-                              ))}
-                            </div>
-                            {m.description && (
-                              <span className="popover-item-desc">{m.description}</span>
-                            )}
-                          </div>
-                          {isSelected && <CheckIcon size={14} />}
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  <div className="popover-divider" />
-                  <div className="popover-section-label">推理强度 (Reasoning Effort)</div>
-                  <div className="effort-segmented-bar">
-                    {availableEfforts.map((eff) => (
-                      <button
-                        key={eff.id}
-                        type="button"
-                        className={`effort-segment-btn ${
-                          reasoningEffort === eff.id ? "active" : ""
-                        }`}
-                        onClick={() => onSelectReasoningEffort(eff.id)}
-                        title={eff.desc}
-                      >
-                        {eff.shortLabel}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className="popover-divider" />
-                  <div
-                    className={`popover-menu-item ${fastMode ? "selected" : ""}`}
-                    onClick={onToggleFastMode}
-                  >
-                    <div className="popover-item-body">
-                      <span className="popover-item-title">⚡ 快速模式 (Fast 2x Speed)</span>
-                      <span className="popover-item-desc">优先低延迟高吞吐通道生成</span>
-                    </div>
-                    {fastMode && <CheckIcon size={14} />}
-                  </div>
-                </div>
-              )}
-            </div>
+            <ModelSelector
+              models={models}
+              selectedModelId={selectedModelId}
+              defaultModelSelected={defaultModelSelected}
+              reasoningEffort={reasoningEffort}
+              fastMode={fastMode}
+              open={openMenu === "model"}
+              onOpenChange={(open) => setOpenMenu(open ? "model" : null)}
+              onSelectModel={onSelectModel}
+              onSelectReasoningEffort={onSelectReasoningEffort}
+              onToggleFastMode={onToggleFastMode}
+            />
 
             {/* Mic / Voice Dictation Button */}
             <button

@@ -18,52 +18,52 @@ const code = (e: KeyboardEvent) => e.code || "";
 export const SHORTCUTS: ShortcutDef[] = [
   {
     id: "new-chat",
-    keys: "Ctrl+N",
+    keys: "Ctrl+N / Ctrl+Shift+O",
     label: "新建会话",
     group: "global",
-    match: (e) => isMod(e) && !e.shiftKey && !e.altKey && key(e) === "n",
+    match: (e) => isMod(e) && !e.altKey && ((!e.shiftKey && key(e) === "n") || (e.shiftKey && key(e) === "o")),
   },
   {
     id: "new-standalone-chat",
     keys: "Ctrl+Alt+O",
     label: "新独立聊天 (Popout)",
     group: "global",
-    match: (e) => isMod(e) && e.altKey && key(e) === "o",
+    match: (e) => isMod(e) && e.altKey && !e.shiftKey && key(e) === "o",
   },
   {
     id: "toggle-sidebar",
-    keys: "Ctrl+B",
+    keys: "Ctrl+B / Ctrl+Shift+S",
     label: "折叠/展开侧边栏",
     group: "panels",
-    match: (e) => isMod(e) && !e.shiftKey && !e.altKey && key(e) === "b",
+    match: (e) => isMod(e) && !e.altKey && ((!e.shiftKey && key(e) === "b") || (e.shiftKey && key(e) === "s")),
   },
   {
     id: "toggle-terminal",
-    keys: "Ctrl+J",
+    keys: "Ctrl+J / Ctrl+`",
     label: "切换底部终端",
     group: "panels",
-    match: (e) => isMod(e) && !e.shiftKey && !e.altKey && key(e) === "j",
+    match: (e) => isMod(e) && !e.shiftKey && !e.altKey && (key(e) === "j" || code(e) === "Backquote"),
   },
   {
     id: "toggle-changes",
     keys: "Ctrl+Alt+B",
     label: "切换变更面板",
     group: "panels",
-    match: (e) => isMod(e) && e.altKey && key(e) === "b",
+    match: (e) => isMod(e) && e.altKey && !e.shiftKey && key(e) === "b",
   },
   {
     id: "open-settings",
     keys: "Ctrl+,",
     label: "打开设置",
     group: "global",
-    match: (e) => isMod(e) && key(e) === ",",
+    match: (e) => isMod(e) && !e.shiftKey && !e.altKey && key(e) === ",",
   },
   {
     id: "command-palette",
     keys: "Ctrl+K",
     label: "命令面板 / 快速搜索",
     group: "global",
-    match: (e) => isMod(e) && !e.altKey && key(e) === "k",
+    match: (e) => isMod(e) && !e.shiftKey && !e.altKey && key(e) === "k",
   },
   {
     id: "command-palette-alt",
@@ -91,14 +91,14 @@ export const SHORTCUTS: ShortcutDef[] = [
     keys: "Ctrl+Alt+R",
     label: "重命名当前会话",
     group: "thread",
-    match: (e) => isMod(e) && e.altKey && key(e) === "r",
+    match: (e) => isMod(e) && e.altKey && !e.shiftKey && key(e) === "r",
   },
   {
     id: "pin-thread",
     keys: "Ctrl+Alt+P",
     label: "置顶/取消置顶当前会话",
     group: "thread",
-    match: (e) => isMod(e) && e.altKey && key(e) === "p",
+    match: (e) => isMod(e) && e.altKey && !e.shiftKey && key(e) === "p",
   },
   {
     id: "archive-thread",
@@ -119,7 +119,7 @@ export const SHORTCUTS: ShortcutDef[] = [
     keys: "Ctrl+Alt+F",
     label: "派生当前会话",
     group: "thread",
-    match: (e) => isMod(e) && e.altKey && key(e) === "f",
+    match: (e) => isMod(e) && e.altKey && !e.shiftKey && key(e) === "f",
   },
   {
     id: "open-review-tab",
@@ -133,14 +133,14 @@ export const SHORTCUTS: ShortcutDef[] = [
     keys: "Ctrl+Alt+C",
     label: "打开代码审查",
     group: "global",
-    match: (e) => isMod(e) && e.altKey && key(e) === "c",
+    match: (e) => isMod(e) && e.altKey && !e.shiftKey && key(e) === "c",
   },
   {
     id: "open-side-chat",
     keys: "Ctrl+Alt+S",
     label: "打开侧边独立对话",
     group: "panels",
-    match: (e) => isMod(e) && e.altKey && key(e) === "s",
+    match: (e) => isMod(e) && e.altKey && !e.shiftKey && key(e) === "s",
   },
   {
     id: "copy-working-dir",
@@ -148,6 +148,34 @@ export const SHORTCUTS: ShortcutDef[] = [
     label: "复制当前工作目录",
     group: "global",
     match: (e) => isMod(e) && e.shiftKey && !e.altKey && key(e) === "c",
+  },
+  {
+    id: "zoom-in",
+    keys: "Ctrl++",
+    label: "放大",
+    group: "global",
+    match: (e) => isMod(e) && !e.altKey && (key(e) === "+" || key(e) === "=" || code(e) === "NumpadAdd"),
+  },
+  {
+    id: "zoom-out",
+    keys: "Ctrl+-",
+    label: "缩小",
+    group: "global",
+    match: (e) => isMod(e) && !e.altKey && (key(e) === "-" || code(e) === "NumpadSubtract"),
+  },
+  {
+    id: "zoom-reset",
+    keys: "Ctrl+0",
+    label: "实际大小",
+    group: "global",
+    match: (e) => isMod(e) && !e.altKey && !e.shiftKey && (key(e) === "0" || code(e) === "Digit0" || code(e) === "Numpad0"),
+  },
+  {
+    id: "open-model-picker",
+    keys: "Ctrl+Shift+M",
+    label: "打开模型选择器",
+    group: "composer",
+    match: (e) => isMod(e) && e.shiftKey && !e.altKey && key(e) === "m",
   },
   {
     id: "escape",
@@ -158,15 +186,17 @@ export const SHORTCUTS: ShortcutDef[] = [
   },
 ];
 
-/** Alt+1..9 jumps to the Nth recent thread (handled separately for numeric keys). */
+/** Ctrl+Alt+1..6 opens the Nth recent chat on Windows. */
 export function matchRecentThreadIndex(e: KeyboardEvent): number | null {
-  if (!(e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey)) return null;
-  const m = /^([1-9])$/.exec(e.key || "");
+  if (e.isComposing || e.keyCode === 229) return null;
+  if (!(e.altKey && e.ctrlKey && !e.metaKey && !e.shiftKey)) return null;
+  const m = /^([1-6])$/.exec(e.key || "");
   return m ? Number(m[1]) - 1 : null;
 }
 
 /** Return the matching shortcut id for a keyboard event, or null. */
 export function matchShortcut(e: KeyboardEvent): string | null {
+  if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return null;
   for (const shortcut of SHORTCUTS) {
     try {
       if (shortcut.match(e)) return shortcut.id;

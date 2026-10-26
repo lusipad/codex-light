@@ -33,6 +33,13 @@ function Invoke-Step {
 }
 
 try {
+  Invoke-Step "Keyboard shortcut regression" { node scripts/verify-shortcuts.mjs }
+  Invoke-Step "Thread content regression" { node scripts/verify-thread-content.mjs }
+  Invoke-Step "Clipboard failure regression" { node scripts/verify-clipboard.mjs }
+  Invoke-Step "Approval lifecycle regression" { node scripts/verify-approval.mjs }
+  Invoke-Step "Turn controls regression" { node scripts/verify-turn-controls.mjs }
+  Invoke-Step "Thread queue regression" { node scripts/verify-queue.mjs }
+  Invoke-Step "Thread identity replay" { node scripts/verify-thread-timeline.mjs }
   Invoke-Step "TypeScript typecheck (tsc --noEmit)" { npx tsc --noEmit }
   Invoke-Step "Frontend production build (vite)" { npm run build }
   Invoke-Step "Rust check (cargo check)" {
@@ -49,6 +56,7 @@ try {
       "scripts/protocol-verify/verify-batch3-shapes.mjs",
       "scripts/protocol-verify/verify-batch4-shapes.mjs",
       "scripts/protocol-verify/verify-attachments.mjs"
+      "scripts/protocol-verify/verify-idle-turn-controls.mjs"
     )
     foreach ($probe in $probes) {
       Invoke-Step "Protocol probe: $probe" { node $probe }
