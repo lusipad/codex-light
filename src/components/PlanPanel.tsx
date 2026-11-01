@@ -12,6 +12,7 @@ export interface PlanStep {
 export interface PlanPanelProps {
   steps: PlanStep[];
   title?: string;
+  explanation?: string | null;
   defaultCollapsed?: boolean;
 }
 
@@ -93,6 +94,7 @@ function StepStatusIcon({ status }: { status: PlanStepStatus }) {
 export const PlanPanel: React.FC<PlanPanelProps> = ({
   steps,
   title = "执行计划",
+  explanation,
   defaultCollapsed = false,
 }) => {
   const [collapsed, setCollapsed] = useState<boolean>(defaultCollapsed);
@@ -130,6 +132,7 @@ export const PlanPanel: React.FC<PlanPanelProps> = ({
 
       {!collapsed && (
         <div className="plan-panel-body">
+          {explanation && <div className="plan-panel-explanation">{explanation}</div>}
           <div
             className="plan-panel-progress"
             role="progressbar"

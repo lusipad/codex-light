@@ -140,6 +140,7 @@ export const HotkeyWindow: React.FC<HotkeyWindowProps> = ({
         await callAppServer("turn/start", {
           threadId: activeTid,
           input: [{ type: "text", text }],
+          summary: "auto",
         });
 
         // Poll for result briefly

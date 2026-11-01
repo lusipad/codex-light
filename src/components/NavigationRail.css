@@ -36,24 +36,6 @@
   font-size: 14px;
 }
 
-.nav-rail-profile-status {
-  position: absolute;
-  right: 5px;
-  bottom: 5px;
-  width: 7px;
-  height: 7px;
-  border: 1.5px solid var(--bg-secondary);
-  border-radius: 50%;
-}
-
-.nav-rail-profile-status.online {
-  background: #38a169;
-}
-
-.nav-rail-profile-status.offline {
-  background: #737373;
-}
-
 .nav-rail-popover {
   position: fixed;
   inset: auto;
@@ -69,6 +51,18 @@
 
 .nav-rail-popover::backdrop {
   background: transparent;
+}
+
+.nav-rail-help-popover {
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+}
+
+.nav-rail-menu-separator {
+  height: 1px;
+  margin: 5px 0;
+  background: var(--border-default);
 }
 
 .nav-rail-menu-item {

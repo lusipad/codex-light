@@ -7,7 +7,7 @@
   width: 100%;
   height: var(--app-titlebar-height);
   color: var(--text-secondary);
-  background: var(--bg-secondary);
+  background: var(--bg-titlebar);
   user-select: none;
   -webkit-app-region: drag;
 }
@@ -142,8 +142,7 @@
 .app-window-controls {
   display: flex;
   align-items: stretch;
-  align-self: center;
-  height: 36px;
+  height: 100%;
 }
 
 .app-window-control {

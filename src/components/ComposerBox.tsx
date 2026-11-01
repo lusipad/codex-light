@@ -35,6 +35,7 @@ export interface ComposerBoxProps {
   promptInput: string;
   onPromptInputChange: (val: string) => void;
   onSendMessage: () => void;
+  onQueueMessage: () => void;
   onInterruptTurn?: () => void;
   isStreaming: boolean;
   // Workspace & Git
@@ -106,6 +107,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
   promptInput,
   onPromptInputChange,
   onSendMessage,
+  onQueueMessage,
   onInterruptTurn,
   isStreaming,
   workspaces,
@@ -349,10 +351,23 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
       }
     } catch {}
 
+    if (e.key !== "Enter" || e.altKey) return;
+    const modifier = e.metaKey || e.ctrlKey;
+    if (e.repeat && modifier) {
+      e.preventDefault();
+      return;
+    }
+    const shouldQueue = isStreaming && modifier &&
+      (sendShortcutPref === "cmd-enter" ? e.shiftKey : !e.shiftKey);
+    if (shouldQueue) {
+      e.preventDefault();
+      onQueueMessage();
+      return;
+    }
     const shouldSend =
       sendShortcutPref === "cmd-enter"
-        ? (e.metaKey || e.ctrlKey) && e.key === "Enter"
-        : e.key === "Enter" && !e.shiftKey;
+        ? modifier && !e.shiftKey
+        : !e.shiftKey;
 
     if (shouldSend) {
       e.preventDefault();
@@ -625,12 +640,13 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
               : variant === "home"
               ? "随心输入"
               : isStreaming
-              ? "输入后续引导或排队消息... (Enter 立即引导 / Alt+Enter 加入队列)"
+              ? "输入后续引导或排队消息..."
               : "随心输入 (@ 引用文件或技能，/ 快捷命令)"
           }
           value={promptInput}
           onChange={handleInputChange}
           onKeyDown={handleKeyDown}
+          onPointerDown={() => setOpenMenu(null)}
         />
 
         {/* Bottom Controls inside Input Surface */}
@@ -812,7 +828,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
                 type="button"
                 className="send-action-btn"
                 disabled={!promptInput.trim() && attachedFiles.length === 0}
-                onClick={onSendMessage}
+                onClick={() => onSendMessage()}
                 title="发送 (Enter)"
               >
                 <SendIcon size={15} />

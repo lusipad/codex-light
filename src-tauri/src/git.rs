@@ -520,6 +520,490 @@ pub fn list_worktrees(target_path: Option<String>) -> Vec<GitWorktreeInfo> {
     results
 }
 
+/// Resolves an existing Codex-managed worktree for a project move.
+///
+/// This function is intentionally read-only: it never creates, repairs, removes,
+/// or checks out a worktree. Ownership is read from the official
+/// `codex-thread.json` worktree metadata rather than git config.
+pub(crate) fn resolve_thread_project_worktree(
+    thread_id: &str,
+    current_cwd: &str,
+    target_root: &str,
+) -> Option<(String, String)> {
+    let managed_root = normalize_fs_path(&codex_home_dir().join("worktrees").to_string_lossy());
+    resolve_thread_project_worktree_at_roots(thread_id, current_cwd, target_root, &[managed_root])
+}
+
+fn resolve_thread_project_worktree_at_roots(
+    thread_id: &str,
+    current_cwd: &str,
+    target_root: &str,
+    managed_roots: &[String],
+) -> Option<(String, String)> {
+    if thread_id.trim().is_empty() {
+        return None;
+    }
+    let current_path = normalize_fs_path(current_cwd);
+    let target_path = normalize_fs_path(target_root);
+    if current_path.is_empty() || target_path.is_empty() || !Path::new(&target_path).is_dir() {
+        return None;
+    }
+    let current_git_root = find_git_root(&current_path)?;
+    let target_git_root = find_git_root(&target_path)?;
+    if !same_git_common_dir(&current_git_root, &target_git_root) {
+        return None;
+    }
+    let target_relative = relative_path(&target_git_root, &target_path)?;
+
+    let raw = run_git(&current_git_root, &["worktree", "list", "--porcelain"]).ok()?;
+    let mut candidates = Vec::new();
+    let mut path: Option<String> = None;
+    for line in raw.lines().chain(std::iter::once("")) {
+        if let Some(rest) = line.strip_prefix("worktree ") {
+            if let Some(previous) = path.take() {
+                candidates.push(previous);
+            }
+            path = Some(rest.trim().to_string());
+        } else if line.trim().is_empty() {
+            if let Some(previous) = path.take() {
+                candidates.push(previous);
+            }
+        }
+    }
+
+    let mut owned = Vec::new();
+    let mut current_worktree = None;
+    for candidate in candidates {
+        let candidate_path = normalize_fs_path(&candidate);
+        if !Path::new(&candidate_path).is_dir() {
+            continue;
+        }
+        let Some(candidate_root) = find_git_root(&candidate_path) else {
+            continue;
+        };
+        if !same_git_common_dir(&target_git_root, &candidate_root) {
+            continue;
+        }
+        let metadata_path = run_git(
+            &candidate_path,
+            &[
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                "codex-thread.json",
+            ],
+        )
+        .ok()
+        .map(|s| normalize_fs_path(s.trim()));
+        let metadata = metadata_path.and_then(|path| fs::read_to_string(path).ok());
+        let owner_matches = metadata
+            .as_deref()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+            .and_then(|value| {
+                (value.get("version").and_then(|v| v.as_i64()) == Some(1)
+                    && value.get("ownerThreadId").and_then(|v| v.as_str()) == Some(thread_id))
+                .then_some(true)
+            })
+            .unwrap_or(false);
+        let candidate_is_managed = managed_roots
+            .iter()
+            .any(|root| path_is_within(&candidate_path, root));
+        if path_is_within(&current_path, &candidate_path)
+            && (candidate_is_managed || owner_matches)
+        {
+            current_worktree = Some(candidate_path);
+            break;
+        }
+        if owner_matches {
+            let created = fs::metadata(&candidate_path)
+                .and_then(|m| m.created())
+                .ok();
+            let modified = fs::metadata(&candidate_path)
+                .and_then(|m| m.modified())
+                .ok();
+            owned.push((candidate_path, created, modified));
+        }
+    }
+    if let Some(worktree_root) = current_worktree {
+        return map_worktree_target(target_path, target_relative, worktree_root);
+    }
+    if owned.is_empty() {
+        return None;
+    }
+    owned.sort_by(|(left_path, left_created, left_modified), (right_path, right_created, right_modified)| {
+        right_created
+            .or(*right_modified)
+            .cmp(&left_created.or(*left_modified))
+            .then_with(|| right_path.to_lowercase().cmp(&left_path.to_lowercase()))
+    });
+    let (worktree_root, _, _) = owned.into_iter().next()?;
+    map_worktree_target(target_path, target_relative, worktree_root)
+}
+
+fn map_worktree_target(
+    target_path: String,
+    target_relative: String,
+    worktree_root: String,
+) -> Option<(String, String)> {
+    let workspace_root = if target_relative.is_empty() {
+        worktree_root
+    } else {
+        normalize_fs_path(
+            &Path::new(&worktree_root)
+                .join(target_relative)
+                .to_string_lossy(),
+        )
+    };
+    if !Path::new(&workspace_root).is_dir() {
+        return None;
+    }
+    Some((target_path, workspace_root))
+}
+
+fn relative_path(root: &str, path: &str) -> Option<String> {
+    let root = Path::new(root);
+    let path = Path::new(path);
+    path.strip_prefix(root).ok().map(|relative| {
+        relative
+            .to_string_lossy()
+            .trim_matches(['\\', '/'])
+            .to_string()
+    })
+}
+
+fn path_is_within(path: &str, root: &str) -> bool {
+    let path = normalize_fs_path(path).to_lowercase();
+    let root = normalize_fs_path(root).to_lowercase();
+    path == root || path.starts_with(&(root + std::path::MAIN_SEPARATOR.to_string().as_str()))
+}
+
+fn same_git_common_dir(left: &str, right: &str) -> bool {
+    let common = |root: &str| {
+        let value = run_git(
+            root,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        )
+        .ok()?;
+        Some(normalize_fs_path(value.trim()).to_lowercase())
+    };
+    common(left).is_some() && common(left) == common(right)
+}
+
+#[cfg(test)]
+mod project_worktree_tests {
+    use super::*;
+    use serde_json::json;
+
+    struct Fixture {
+        root: PathBuf,
+        repo: String,
+        worktree: String,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let root = std::env::temp_dir()
+                .join(format!("codex-project-worktree-{}", uuid::Uuid::new_v4()));
+            let repo_path = root.join("repo");
+            fs::create_dir_all(repo_path.join("nested")).unwrap();
+            fs::write(repo_path.join("nested/file.txt"), "fixture").unwrap();
+            let repo = normalize_fs_path(&repo_path.to_string_lossy());
+            run_git(&repo, &["init", "--quiet"]).unwrap();
+            run_git(&repo, &["add", "."]).unwrap();
+            run_git(
+                &repo,
+                &[
+                    "-c",
+                    "user.name=Fixture",
+                    "-c",
+                    "user.email=fixture@example.invalid",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "--quiet",
+                    "-m",
+                    "fixture",
+                ],
+            )
+            .unwrap();
+            let worktree = root
+                .join("managed")
+                .join("owned")
+                .to_string_lossy()
+                .to_string();
+            run_git(
+                &repo,
+                &["worktree", "add", "--quiet", "--detach", &worktree],
+            )
+            .unwrap();
+            Self {
+                root,
+                repo,
+                worktree: normalize_fs_path(&worktree),
+            }
+        }
+
+        fn owner(&self, thread_id: &str) {
+            self.set_owner(&self.worktree, thread_id);
+        }
+
+        fn set_owner(&self, worktree: &str, thread_id: &str) {
+            let path = run_git(
+                worktree,
+                &[
+                    "rev-parse",
+                    "--path-format=absolute",
+                    "--git-path",
+                    "codex-thread.json",
+                ],
+            )
+            .unwrap();
+            fs::write(path.trim(), json!({"version": 1, "ownerThreadId": thread_id}).to_string())
+                .unwrap();
+        }
+
+        fn add_worktree(&self, relative_path: &str) -> String {
+            let worktree = self.root.join(relative_path).to_string_lossy().to_string();
+            run_git(
+                &self.repo,
+                &["worktree", "add", "--quiet", "--detach", &worktree],
+            )
+            .unwrap();
+            normalize_fs_path(&worktree)
+        }
+
+        fn target(&self) -> String {
+            Path::new(&self.repo)
+                .join("nested")
+                .to_string_lossy()
+                .to_string()
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let target = fs::canonicalize(&self.root).unwrap();
+            let temp_root = fs::canonicalize(std::env::temp_dir()).unwrap();
+            assert!(target.starts_with(temp_root));
+            assert!(target
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("codex-project-worktree-"));
+            fs::remove_dir_all(target).unwrap();
+        }
+    }
+
+    #[test]
+    fn project_worktree_reuses_owned_checkout_and_maps_nested_source() {
+        let fixture = Fixture::new();
+        fixture.owner("thread-a");
+        let target = fixture.target();
+        let managed_root = fixture.root.join("managed").to_string_lossy().to_string();
+        let before = run_git(&fixture.repo, &["worktree", "list", "--porcelain"]).unwrap();
+        let result = resolve_thread_project_worktree_at_roots(
+            "thread-a",
+            &fixture.repo,
+            &target,
+            &[managed_root],
+        );
+        assert_eq!(
+            result,
+            Some((
+                target,
+                normalize_fs_path(
+                    &Path::new(&fixture.worktree)
+                        .join("nested")
+                        .to_string_lossy()
+                ),
+            ))
+        );
+        assert_eq!(
+            before,
+            run_git(&fixture.repo, &["worktree", "list", "--porcelain"]).unwrap()
+        );
+        assert_eq!(
+            resolve_thread_project_worktree_at_roots(
+                "other-thread",
+                &fixture.repo,
+                &fixture.target(),
+                &[fixture.root.join("managed").to_string_lossy().to_string()],
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn project_worktree_does_not_treat_shared_git_config_as_ownership() {
+        let fixture = Fixture::new();
+        run_git(
+            &fixture.worktree,
+            &["config", "codex.ownerThreadId", "thread-a"],
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_thread_project_worktree_at_roots(
+                "thread-a",
+                &fixture.repo,
+                &fixture.target(),
+                &[fixture.root.join("managed").to_string_lossy().to_string()],
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn project_worktree_managed_current_requires_same_repository() {
+        let fixture = Fixture::new();
+        let target = fixture.target();
+        let managed_root = fixture.root.join("managed").to_string_lossy().to_string();
+        assert_eq!(
+            resolve_thread_project_worktree_at_roots(
+                "thread-a",
+                &fixture.worktree,
+                &target,
+                &[managed_root.clone()],
+            ),
+            Some((
+                target,
+                normalize_fs_path(
+                    &Path::new(&fixture.worktree)
+                        .join("nested")
+                        .to_string_lossy()
+                ),
+            ))
+        );
+        let unrelated = Fixture::new();
+        assert_eq!(
+            resolve_thread_project_worktree_at_roots(
+                "thread-a",
+                &fixture.worktree,
+                &unrelated.target(),
+                &[managed_root],
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn project_worktree_prefers_current_managed_worktree_to_other_owned_worktree() {
+        let fixture = Fixture::new();
+        let external = fixture.add_worktree("external/owned");
+        fixture.set_owner(&external, "thread-a");
+        let target = fixture.target();
+        let result = resolve_thread_project_worktree_at_roots(
+            "thread-a",
+            &fixture.worktree,
+            &target,
+            &[fixture.root.join("managed").to_string_lossy().to_string()],
+        );
+        assert_eq!(
+            result,
+            Some((
+                target,
+                normalize_fs_path(
+                    &Path::new(&fixture.worktree)
+                        .join("nested")
+                        .to_string_lossy()
+                ),
+            ))
+        );
+    }
+
+    #[test]
+    fn project_worktree_can_reuse_owned_worktree_outside_managed_roots() {
+        let fixture = Fixture::new();
+        let external = fixture.add_worktree("external/owned");
+        fixture.set_owner(&external, "thread-a");
+        let target = fixture.target();
+        assert_eq!(
+            resolve_thread_project_worktree_at_roots(
+                "thread-a",
+                &fixture.repo,
+                &target,
+                &[fixture.root.join("managed").to_string_lossy().to_string()],
+            ),
+            Some((
+                target,
+                normalize_fs_path(&Path::new(&external).join("nested").to_string_lossy()),
+            ))
+        );
+    }
+
+    #[test]
+    fn project_worktree_uses_creation_time_before_modified_time() {
+        let fixture = Fixture::new();
+        let older = fixture.add_worktree("external/older");
+        fixture.set_owner(&older, "thread-a");
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let newer = fixture.add_worktree("external/newer");
+        fixture.set_owner(&newer, "thread-a");
+        fs::write(Path::new(&older).join("new-file.txt"), "touch directory").unwrap();
+        let target = fixture.target();
+        assert_eq!(
+            resolve_thread_project_worktree_at_roots(
+                "thread-a",
+                &fixture.repo,
+                &target,
+                &[fixture.root.join("managed").to_string_lossy().to_string()],
+            ),
+            Some((
+                target,
+                normalize_fs_path(&Path::new(&newer).join("nested").to_string_lossy()),
+            ))
+        );
+    }
+
+    #[test]
+    fn project_worktree_rejects_missing_mapping_and_invalid_owner_metadata() {
+        let fixture = Fixture::new();
+        fixture.owner("thread-a");
+        fs::create_dir_all(Path::new(&fixture.repo).join("untracked-dir")).unwrap();
+        let target = Path::new(&fixture.repo)
+            .join("untracked-dir")
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(
+            resolve_thread_project_worktree_at_roots(
+                "thread-a",
+                &fixture.repo,
+                &target,
+                &[fixture.root.join("managed").to_string_lossy().to_string()],
+            ),
+            None
+        );
+        let config = run_git(
+            &fixture.worktree,
+            &[
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                "codex-thread.json",
+            ],
+        )
+        .unwrap();
+        fs::write(config.trim(), r#"{"version":2,"ownerThreadId":"thread-a"}"#).unwrap();
+        assert_eq!(
+            resolve_thread_project_worktree_at_roots(
+                "thread-a",
+                &fixture.repo,
+                &fixture.target(),
+                &[fixture.root.join("managed").to_string_lossy().to_string()],
+            ),
+            None
+        );
+        assert_eq!(
+            resolve_thread_project_worktree_at_roots(
+                "thread-a",
+                &fixture.repo,
+                &fixture.root.to_string_lossy(),
+                &[fixture.root.join("managed").to_string_lossy().to_string()],
+            ),
+            None
+        );
+    }
+}
+
 /// Ported from web-gateway/gateway/src/ipc/codex/pendingWorktrees.ts
 pub fn create_codex_worktree(
     source_cwd: &str,

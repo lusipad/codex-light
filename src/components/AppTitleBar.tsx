@@ -1,4 +1,4 @@
-import React, { useId, useRef, useState } from "react";
+import React, { useEffect, useId, useRef, useState } from "react";
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
@@ -87,10 +87,14 @@ function MinimizeIcon() {
   );
 }
 
-function MaximizeIcon() {
+function MaximizeIcon({ maximized }: { maximized: boolean }) {
   return (
     <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
-      <rect x="2.5" y="2.5" width="9" height="9" rx="1" fill="none" stroke="currentColor" strokeWidth="1.1" />
+      {maximized ? (
+        <path d="M4.5 4.5V2.5h7v7h-2m-7-5h7v7h-7z" fill="none" stroke="currentColor" strokeWidth="1.1" />
+      ) : (
+        <rect x="2.5" y="2.5" width="9" height="9" rx="1" fill="none" stroke="currentColor" strokeWidth="1.1" />
+      )}
     </svg>
   );
 }
@@ -107,6 +111,30 @@ export const AppTitleBar: React.FC<AppTitleBarProps> = ({
   const instanceId = useId().replace(/:/g, "");
   const triggerRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
+  const [maximized, setMaximized] = useState(false);
+
+  useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
+    let disposed = false;
+    let revision = 0;
+    let unlisten: (() => void) | undefined;
+    void import("@tauri-apps/api/window").then(async ({ getCurrentWindow }) => {
+      if (disposed) return;
+      const appWindow = getCurrentWindow();
+      const refresh = async () => {
+        const currentRevision = ++revision;
+        const next = await appWindow.isMaximized();
+        if (!disposed && currentRevision === revision) setMaximized(next);
+      };
+      const stop = await appWindow.onResized(() => {
+        void refresh().catch(console.error);
+      });
+      if (disposed) { stop(); return; }
+      unlisten = stop;
+      await refresh();
+    }).catch(console.error);
+    return () => { disposed = true; unlisten?.(); };
+  }, []);
 
   const runCommand = (command: string, popover: HTMLElement) => {
     (popover as any).hidePopover?.();
@@ -250,8 +278,8 @@ export const AppTitleBar: React.FC<AppTitleBarProps> = ({
         <button type="button" className="app-window-control" onClick={() => void runWindowCommand("minimize")} aria-label="最小化" title="最小化">
           <MinimizeIcon />
         </button>
-        <button type="button" className="app-window-control" onClick={() => void runWindowCommand("maximize")} aria-label="最大化或还原" title="最大化或还原">
-          <MaximizeIcon />
+        <button type="button" className="app-window-control" onClick={() => void runWindowCommand("maximize")} aria-label={maximized ? "还原" : "最大化"} title={maximized ? "还原" : "最大化"}>
+          <MaximizeIcon maximized={maximized} />
         </button>
         <button type="button" className="app-window-control close" onClick={() => void runWindowCommand("close")} aria-label="关闭" title="关闭">
           <CloseIcon size={14} />

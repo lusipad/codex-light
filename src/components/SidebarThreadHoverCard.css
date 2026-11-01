@@ -1,0 +1,120 @@
+.sidebar-thread-hover-card {
+  position: fixed;
+  z-index: 450;
+  display: flex;
+  width: min(320px, calc(100vw - 16px));
+  min-width: min(224px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
+  overflow: auto;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border: 0.5px solid var(--border-default);
+  border-radius: 12px;
+  background: var(--bg-tertiary);
+  box-shadow: var(--shadow-lg);
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 20px;
+  pointer-events: auto;
+}
+
+.sidebar-thread-hover-title-row {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 4px;
+  padding-bottom: 2px;
+}
+
+.sidebar-thread-hover-heading {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.sidebar-thread-hover-title,
+.sidebar-thread-hover-title-row input {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-primary);
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  text-align: left;
+  text-overflow: ellipsis;
+}
+
+.sidebar-thread-hover-title {
+  display: -webkit-box;
+  margin-left: -6px;
+  padding-top: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  cursor: pointer;
+}
+
+.sidebar-thread-hover-title:hover,
+.sidebar-thread-hover-title:focus-visible {
+  background: var(--bg-hover);
+}
+
+.sidebar-thread-hover-title-row input {
+  border: 1px solid var(--border-focus);
+  outline: 0;
+}
+
+.sidebar-thread-hover-time {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 1px;
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.sidebar-thread-hover-environment {
+  display: flex;
+  height: 20px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.sidebar-thread-hover-unread {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-blue);
+}
+
+.sidebar-thread-hover-meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+}
+
+.sidebar-thread-hover-meta svg {
+  flex: 0 0 16px;
+  color: var(--text-tertiary);
+}
+
+.sidebar-thread-hover-meta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -1155,6 +1155,20 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
             <span className="pm-mono" title={pluginSourceDetail(plugin)}>
               {pluginSourceLabel(plugin)}
             </span>
+            {plugin.source?.type === "local" && (
+              <button
+                type="button"
+                className="secondary-btn-sm"
+                style={{ padding: "1px 6px", fontSize: 11 }}
+                title={`在系统文件管理器中打开目录: ${pluginSourceDetail(plugin)}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  tauriInvoke("reveal_path_in_explorer", { path: (plugin.source as any).path });
+                }}
+              >
+                <FolderOpen size={11} /> 目录
+              </button>
+            )}
             {!options.browse && <span className="pm-mono">{plugin.id}</span>}
           </div>
           {isOpen && <div className="pm-detail-panel">{renderPluginDetail()}</div>}
@@ -1606,6 +1620,19 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
                 />
               </div>
               <div className="editor-actions">
+                {(selectedSkill?.path || readOnlyRemoteSkill?.path) && (
+                  <button
+                    type="button"
+                    className="secondary-btn-sm"
+                    title="在系统文件管理器中打开技能目录"
+                    onClick={() => {
+                      const p = selectedSkill?.path || readOnlyRemoteSkill?.path;
+                      if (p) tauriInvoke("reveal_path_in_explorer", { path: p });
+                    }}
+                  >
+                    <FolderOpen size={13} /> 打开目录
+                  </button>
+                )}
                 {selectedSkill && !selectedSkill.installed && (
                   <button
                     type="button"

@@ -59,6 +59,13 @@ export const SHORTCUTS: ShortcutDef[] = [
     match: (e) => isMod(e) && !e.shiftKey && !e.altKey && key(e) === ",",
   },
   {
+    id: "show-keyboard-shortcuts",
+    keys: "Ctrl+/",
+    label: "键盘快捷键",
+    group: "global",
+    match: (e) => isMod(e) && !e.shiftKey && !e.altKey && key(e) === "/",
+  },
+  {
     id: "command-palette",
     keys: "Ctrl+K",
     label: "命令面板 / 快速搜索",
@@ -185,6 +192,22 @@ export const SHORTCUTS: ShortcutDef[] = [
     match: (e) => key(e) === "escape",
   },
 ];
+
+const THREAD_CONTEXT_SHORTCUTS = new Set([
+  "find-in-chat",
+  "rename-thread",
+  "pin-thread",
+  "archive-thread",
+  "fork-thread",
+  "copy-last-code-block",
+]);
+
+export function availableShortcuts(context: { hasActiveThread: boolean; hasWorkspace: boolean }): ShortcutDef[] {
+  return SHORTCUTS.filter(shortcut =>
+    (context.hasActiveThread || !THREAD_CONTEXT_SHORTCUTS.has(shortcut.id)) &&
+    (context.hasWorkspace || shortcut.id !== "copy-working-dir")
+  );
+}
 
 /** Ctrl+Alt+1..6 opens the Nth recent chat on Windows. */
 export function matchRecentThreadIndex(e: KeyboardEvent): number | null {

@@ -1,0 +1,86 @@
+.rename-thread-dialog {
+  width: 420px;
+  max-width: 92vw;
+  max-height: calc(100dvh - 32px);
+  margin: auto;
+  padding: 20px;
+  border: 0;
+  border-radius: 24px;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--bg-tertiary) 90%, transparent);
+  box-shadow: 0 0 0 0.5px var(--border-default), var(--shadow-lg);
+  backdrop-filter: blur(24px);
+  font-size: 14px;
+}
+
+.rename-thread-dialog::backdrop {
+  background: #0002;
+}
+
+.rename-thread-dialog form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.rename-thread-dialog h2 {
+  margin: 0;
+  padding-right: 20px;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 28px;
+}
+
+.rename-thread-dialog p {
+  margin: 4px 0 0;
+  color: var(--text-tertiary);
+  line-height: 21px;
+}
+
+.rename-thread-dialog input {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.rename-thread-dialog footer {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.rename-thread-dialog button {
+  padding: 8px 16px;
+  border: 1px solid var(--border-default);
+  border-radius: 9999px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.rename-thread-dialog button:hover {
+  background: var(--bg-hover);
+}
+
+.rename-thread-dialog button.rename-thread-save {
+  background: var(--text-primary);
+  color: var(--bg-primary);
+}
+
+.rename-thread-dialog button.rename-thread-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  padding: 4px;
+  border: 0;
+  border-radius: 4px;
+  color: var(--text-secondary);
+}

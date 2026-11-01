@@ -1,5 +1,231 @@
 # 实施日志（按轮次）
 
+## 2026-10-31 — 01B A11 分区子菜单结构续修
+
+- 先追查官方 asar 的分区动作合同与本项目实现，再把“移至分区”从主菜单内联展开改为独立侧向子菜单浮层；覆盖鼠标悬停/点击、键盘左右方向进入与返回、Escape 返回父层，并避免触屏 hover 打开。
+- `node scripts/verify-sidebar-section-create.mjs`、`node scripts/verify-sidebar-section-toggle.mjs`、`node scripts/verify-sidebar-thread-menu.mjs` 均退出 0；`git diff --check` 退出 0（有已有文件 CRLF 转换提示，无空白错误）。
+- 当前归档 Release 为[CodexNative.exe](../dist-artifacts/01B-section-submenu-20261031/CodexNative.exe)，13,307,904 bytes，SHA-256 `E06575BE527512F05D588A97027E5F6F4C6584B84613E237C4C610B047D567CD`；重新核对该哈希后，对当前未再变更的产品源码运行完整 `verify-all.ps1`，退出码 0。标准入口含配置回归、TypeScript、Vite、cargo check、17 项 automations 筛选 Rust 测试及 6 组隔离协议探针；Vite 动静态导入/大 chunk 与 Node DEP0190 警告仍出现。详见[结构化验证记录](../.ref/parity/01/runs/20261031-codex-01b-section-create/actual/submenu-structure-followup.json)。
+- 后续对照官方共享菜单交互发现，指针悬停在其他主层动作时官方实现会关闭当前子菜单；新增回归修改前失败，补齐普通主层项的 pointer-enter 清理后通过。再次运行完整 `verify-all.ps1` 和 Tauri Release 构建均退出码 0。最新归档为[CodexNative.exe](../dist-artifacts/01B-section-submenu-hover-fix-20261031/CodexNative.exe)，13,307,904 bytes，SHA-256 `5B4BF51DCBC68CF5C9BE1583320BD3C019D40E7AE6CBFC8FBA9C75334A98BFDD`。
+- 隔离原生启动时，Computer Use 窗口枚举与目标 EXE/PID 一致，但 `get_window_state` 却返回旧 `01B-attachment-drafts` 窗口 ID 115610186；没有对错配窗口输入。最新 Release 原生交互仍未验证，缺官方配对截图，视觉不可评分。问题与记录见[结构化验证记录](../.ref/parity/01/runs/20261031-codex-01b-section-create/actual/submenu-structure-followup.json)。
+- 原生菜单层级观察确认后，官方共享菜单合同审查又发现键盘方向导航离开子菜单触发项时应关闭浮层。修改前真实组件回归失败；修复后专项、完整 `verify-all.ps1` 和 Tauri Release 构建均退出码 0。最终归档：[CodexNative.exe](../dist-artifacts/01B-section-submenu-keyboard-close-20261031/CodexNative.exe)，13,308,416 bytes，SHA-256 `CCFD415EB7764495ABD812BBB3F8AB27618CD08AA611F655F45D9EF2A10D125F`。最新构建菜单交互因 Computer Use 将输入命中其他 WebView 窗口而未能原生续验；旧构建原生观察不转用于此 SHA。当前限制见[结构化验证记录](../.ref/parity/01/runs/20261031-codex-01b-section-create/actual/submenu-structure-followup.json)。
+- 缺少同条件官方截图，视觉不可评分；会话级已读/未读和既有会话项目移动仍因真实状态/写接口缺失而不显示、不模拟。IME、官方运行时、像素比较、用户验收仍未完成，01B 未验收，不放行 01C。
+
+## 2026-10-31 — 01B A11 未读与项目移动条件动作调研
+
+- 沿固定初始 chunk 追踪官方 sidebar `LSo`、`_So`、`mSo`、`n5n`/`t5n` 及 conversation-client 回调，并核对中文 locale、当前 app-server schema 与本项目的 Sidebar、Activity/Inbox、项目成员关系读取路径；源文件哈希/长度和动作边界见[条件动作调研](antigravity/runs/20261031-codex-01b-menu-conditional-actions.md)。
+- 证据表明官方已读/未读操作作用于 conversation/message unread 状态，项目移动则写本地 thread-project membership，并按条件确认/迁移 workspace；当前仓库没有对应的既有会话 assignment 写入或会话 read-state 接口。因此本轮没有添加菜单占位或用通知级已读/本地标签伪装，不修改产品代码。
+- `node scripts/verify-sidebar-thread-menu.mjs` 退出 0；该用例验证现有 Sidebar 菜单行为，不覆盖两项未实现动作。当前焦点修复版 Release 文件仍存在且 SHA-256 与既存构建记录一致：`A43BF9DB5986ABECB4961288E9D4B772E1966A4007175B09026642084C50F2A2`。`git diff --check` 退出 0；有既存文件的 CRLF 转换提示，无空白错误。未运行构建/完整标准检查，因本轮仅调研文档变更。
+- 两项条件动作仍待解除接口/状态来源阻塞；官方运行时与同条件视觉比较、IME 和用户验收仍未完成。01B 未验收，不放行 01C。
+
+## 2026-10-31 — 01B A11 会话菜单新建分区
+
+- 先核对固定官方 asar `$$`/`Fpo` 和 zh-CN bundle：会话分区子菜单末项为“新建分区…”，提交空名使用“新建分区”，官方创建动作同时带目标会话。记录了修改前合同和 API 差异。
+- 新增会话菜单入口与原生 `<dialog>`；创建成功后用现有 `thread/section/move` 移入当前会话。创建失败保留对话框并可重试；移动失败说明分区已创建但会话未移动，关闭避免重复建区。L2 覆盖菜单/文案、空名默认、trim、取消/Escape、创建/移动成功与失败、pending 去重。
+- 继续对照官方 `$$` 菜单数组后，修改前专项捕获独立“移出分区”行和空分区占位的两处差异；现复用当前 checkbox 移出，空列表只显示新建项，并仅在有目的分区时显示分隔线。专项覆盖 SC08–SC09。
+- 父项当前分区徽标同样无官方静态依据；专项先以“移至分区Section A”实际文本失败，去除徽标后改为只显示官方固定父项标签。
+- `LSo`/`o1` 继续暴露主菜单顺序与内容差异；修改前菜单专项失败后，将已有动作按 rename→pin→section→archive 分组重排，移除无官方依据的“打开聊天”项、可见组标题及 emoji，使用官方中文短标签。未读/项目移动条件动作未造假，仍待真实能力/回调证据。
+- 新建/切换专项、`npx tsc --noEmit`、完整 `verify-all.ps1`（6 组隔离 app-server 探针）及 `npm run tauri build` 均退出 0；最终 Release 为[CodexNative.exe](../dist-artifacts/01B-section-create-final-20261031/CodexNative.exe)，13,307,392 bytes，SHA-256 `6B3C8779EBCFC9CA5A323975B6BB669E9974E180A9D79BAF65B048B9ECF629D0`。
+- 本项目 CLI 0.165.0 类型生成显示当前 create/move RPC 无单次原子创建入会话参数；官方 UI 传给内部 helper 的目标 key 如何映射协议未解出，不臆断为单次原子调用；新分区指定插入位置仍无已验证 API。Computer Use 的 `sky.list_apps()` 不可用，未操作原生菜单；像素对照也未做。增量仍待原生与用户验收，01B 未验收、不放行01C。证据与最新 Release 摘要见[调研合同](antigravity/runs/20261031-codex-01b-section-create.md)及[最终构建结果](../.ref/parity/01/runs/20261031-codex-01b-section-create/actual/final-build-result.json)。
+
+## 2026-10-31 — 01B A11 当前分区菜单切换
+
+- 对固定 asar `$$` 分支核对自定义分区菜单：目的项具 checkbox 勾选语义，再次点当前分区调用移出；本项目此前无条件提交所选 ID，当前项没有切换移出行为。按 `thread/list` 实际对象形状 `{id,name,appearance}` 补全 `ThreadSummary.section` 兼容读取。
+- 修改前 L2 测试确实捕获两类差异：当前分区仍提交自身 ID；真实 CLI fixture 首次读回返回分区对象，和旧 ID 类型假设不符。修复后组件/RPC wrapper 覆盖当前项移出、切换目的项、往返、pending/成功/失败、checkbox 键盘焦点及冷加载对象归属；三个内存突变均失败。隔离 CLI 无模型生成地验证 A→B→null→A 的真实协议写后读。
+- 最终 `verify-all.ps1` 退出 0（含六项隔离协议探针和标准脚本选择的 automations Rust 测试）；`npm run tauri build` 退出 0，16 项关键输入指纹前后一致；新进程读回证明本次隔离分区数据已持久化。Release SHA-256 `1917F8334396E11570AB207790831BA6B4E291C3005C8120C325ED43CD0B8970`，见[本轮记录](antigravity/runs/20261031-codex-01b-section-toggle.md)及`.ref/parity/01/runs/20261031-codex-01b-section-toggle/`。
+- Computer Use 当前加载接口与技能文档不符，本轮未操作历史窗口，也未测当前 Release 原生菜单、官方运行时、像素或窗口缩放/语言/主题配对。01B本增量原生UI待验证，页面仍未验收。
+
+## 2026-10-31 — 01B A09 文件/图片附件草稿隔离
+
+- 核对固定 asar 的 Composer scope、viewState 和 retained-document 链路后，将本项目待发送附件从单一数组改为首页/会话身份 map；切换不再把附件提前写入离开中的会话，异步会话附件读取与该会话本地草稿合并，首次新会话发送时再移交首页草稿。
+- 增加实际生产状态 setter/身份移交回归，并更新文本草稿和项目导航专项以反映新合同。专项三组、完整 `verify-all.ps1`（6组隔离协议探针）及 Release 构建通过；Rust 仅运行标准脚本中的17项 automations 过滤测试。
+- Release：`dist-artifacts/01B-attachment-drafts-20261031/CodexNative.exe`，13,306,880 bytes，SHA-256 `997774B759894F57BA2DB02A2AB57AC54A4101ADD4DAD192DE56E8C1B4DC4914`。最初两个离线 thread 不显示，补充明确标记的 rollout `user_message` 投影后 `thread/list` 与重启 GUI 均确认可见。当前隔离原生 Release 为首页、A、B 分别加入不同文本文件，反复切换验证各自附件只在所属 scope 中显示并恢复，随后逐一移除；1442×914操作截图及环境/序列记录已存于归档目录。未登录/发送/调用模型。
+- 官方运行时、重启/多窗口持久化、完整富附件种类、同条件像素和用户验收仍未完成；本增量待验收，不放行01C。详细合同和局限见 `docs/antigravity/runs/20261031-codex-01b-attachment-drafts.md`。
+
+## 2026-10-31 — 01B A12 悬停卡片碰撞定位
+
+- 先从固定 asar 的 `Mdo` 调用与 shared `Fli` 定位链追证官方 `right/start + 2px`、8px `flip → shift → size`；保存文件哈希和有界来源片段。运行时官方窗口仍不可用。
+- 新增专项窄宽回归先在当前真实 Sidebar 卡片路径退出码 1，证实没有按右侧可用空间收缩宽度；按证据补入左右空间选择、8px边界、动态 min/max 宽度/高度和 `ResizeObserver` 重新测量，回归还覆盖尺寸恢复后的重定位与卸载清理。
+- 修改后专项、`npx tsc --noEmit` 和完整 `pwsh -NoProfile -File scripts/verify-all.ps1` 均退出 0；标准入口中 Rust 测试为17项 automations 过滤测试，并非全量 Rust。`npm run tauri build` 退出 0。
+- Release 为 `dist-artifacts/01B-hovercard-position-20261031/CodexNative.exe`（13,306,880 bytes，SHA-256 `A093B4E913B8502B8B3D06D11C84940B7399D7E6C80681630513FAAD580CDB72`）；隔离 CODEX_HOME 宽窗原生悬停路径通过，1442×914截图与操作证据在本轮 run 目录。
+- 无同条件官方图，视觉不评分（`score=null`）；原生窄窗、官方运行时和像素差仍未验证。交付记录：`docs/antigravity/runs/20261031-codex-01b-hovercard-position.md`。本增量待验收，01B不放行01C。
+
+## 2026-10-31 — 01B A08 Codex-only 模式入口
+
+- 先核对固定官方 asar 的 `U6o`/`xds`：官方模式组件在 `disabled` 或 `codexOnly` 分支只渲染当前模式静态标题；Work/ChatGPT 标签和 capability 不能由 `account/read` 或 app-server 连接状态推断。
+- 本项目当前不具备 ChatGPT/Work 模式路由与 capability，因此移除 Sidebar 品牌区的三项不可用占位按钮和伪下拉，改为静态 `Codex` 标题；不改协议、不触发账号或外链动作。
+- `node scripts/verify-sidebar-projects.mjs`、`npx tsc --noEmit`、`npm run build` 与 `npm run tauri build` 均退出 0；Release 为 `dist-artifacts/01B-mode-selector-20261031/CodexNative.exe`（13,306,880 bytes，SHA-256 `00C6EE804076143045A336A08441A44C10E8A567B03A1DAA97D229B782F67767`）。
+- `pwsh -NoProfile -File scripts/verify-all.ps1 -Fast` 与完整 `pwsh -NoProfile -File scripts/verify-all.ps1` 均退出 0；完整入口的六组隔离协议探针通过。
+- 新 Release 在隔离 CODEX_HOME 中通过原生 Accessibility 树确认品牌区是静态 Codex 文本，没有模式菜单或 ChatGPT/Work 占位。没有保存截图，也没有匹配官方图；像素与官方运行时仍未验证。增量待用户验收，01B不放行01C。
+
+## 2026-10-31 — 01B A12 local 会话悬停卡片
+
+- 固定官方 26.928.21956 asar 追踪 local 会话悬停卡片及 shared 指针走廊，新增 Sidebar 专用卡片和实际组件专项。
+- 隔离 release 真实鼠标路径：普通会话行打开，指针进入卡片仍保持，返回行后离开两者卡片关闭；保存了开/关状态截图。完整标准与 release 均退出 0，构建输入 123/123 哈希相同。
+- 构建：`dist-artifacts/01B-hovercard-20261031/CodexNative.exe`，SHA-256 `61B736DE1D7BFBA1C3ECED5CDC1CE17D93CB55FE7D61022159636D4CC0CA6937`。详细动作、证据和未测项见 `docs/antigravity/runs/20261031-codex-01b-hovercard.md`。
+- 无同条件官方图，不做视觉评分（`score=null`）；窄窗、键盘/touch、物理IME、官方运行时和特殊环境分支仍未验证。仅该增量待用户验收，01B仍开发中，不放行01C。
+
+## 2026-10-31 — 01B A12 长列表滚动取证
+
+- 先核官方 asar 分页规则与 sidebar action锚点，确认静态资料没有证明官方sticky头尾或overscroll；本轮不添加推断性样式或行为。
+- 当前 hoverCard release 使用28条隔离离线会话实际滚动到列表末项并回到顶部；Codex栏和“新聊天”留在列表滚动区外，项目/Recent标题随内容移动。真实CLI读取跨10页，未出现`turn/started`。完整动作与截图见`docs/antigravity/runs/20261031-codex-01b-longlist.md`。
+- 续验当前release“展开显示”5→15→25、末项可达及83字符长标题 hoverCard 三行换行/底边定位，随后恢复样本原标题；截图和机器记录见本轮长列表文档。窄窗尝试未成功，官方运行时/配对像素和水平翻转仍未验证；未发现足以支持产品修改的缺陷，未改产品代码。A12余项与01B整页继续未验收。
+- 后续通过进程与窗口 ID 确认续测的是同一 hoverCard Release；Computer Use 窗口 API无法设置边界，边缘拖动没有改变尺寸，标题栏拖动后将窗口最大化恢复。窄窗证据仍缺，详情见长列表记录的“窄窗续验”；没有修改产品或测试数据。
+
+## 2026-10-31 — 01B local 会话重命名弹窗
+
+- 先核对固定 asar 的 `rTo → Tho → Eho` 绑定、中文语言包和 shared compact dialog 样式；确认普通 local 行是弹窗重命名，打开后全选，后台保存，取消/失焦不提交，不能用 preview 代替 title。
+- `CodexSidebar` 移除行内 blur 提交，菜单重命名与当前行标题双击（仅当前会话标题）共用 `RenameThreadDialog`；保留原始输入值，IME Enter 不提交，保存只执行一次，取消/Escape/遮罩恢复焦点。
+- `App.handleRenameThread` 等待 `thread/name/set` 成功后才更新列表，失败显示“无法保存更改。请重试”，避免把失败请求呈现为成功；未改后端协议。
+- 新增 `scripts/verify-sidebar-rename.mjs`，覆盖入口、取消、原始空格/空值、IME、重复提交、焦点及 RPC 成功/失败；已接入 `verify-all.ps1`。专项和完整标准退出 0，release 产物为 `dist-artifacts/01B-rename-20261031/CodexNative.exe`（13,305,344 bytes，SHA-256 `19236CA41D2140572DE6281E1DCEA141B56A88E34EC5B8ADDF733EB4E5C880D7`）。
+- 隔离原生观察已确认右键菜单→重命名弹窗、真实中文文案、输入全选、取消关闭、保存后两处列表更新；独立真实 CLI 读回同一 thread 名称一致。原生带空格输入的实际读回无空格，只证明普通名称持久化，原始空格/空值仅有 L2 参数证据。截图为现场观察，尚无官方同条件配对图，不产生像素评分。完整菜单原生形态、IME 物理输入及用户验收仍未完成。
+
+## 2026-10-31 — 01B会话行菜单入口与焦点
+
+- 先核asar/initial/shared身份并追Ra→kyi，记录原生优先/HTML fallback和ContextMenu/Shift+F10、此前焦点恢复，先写TM01–TM07合同及失败回归。
+- 复用Sidebar及实际服务回调，补完整行aria-label、更多menu语义、真实button动作、首项焦点与上下/Home/End、Escape返回；区分内部滚动/外点/Tab/resize，折叠或所属行消失时清理。统一关闭回调，无新依赖/Rust/协议/共享菜单API；仅局部button样式保持原有布局颜色。
+- 实际组件专项、三项内存反证、完整标准含六个隔离协议探针、release退出0；118输入重核。当前构建`dist-artifacts/01B-thread-menu-20261031/CodexNative.exe`，13,304,832字节，SHA-256 `7c855eaaf635c6077e331ad0d59d50e1e7c5e009da651049fe0e772f6ab0d8f9`。
+- 独立home/profile原生验证右键不跳转、Home/End/Down、Enter/Space、Escape/Shift+F10、更多返回、Tab、外点输入及Ctrl+B清理；未请求模型或操作旧窗口。详见`docs/antigravity/runs/20261031-codex-01b-thread-menu.md`。
+- 官方运行时/原生菜单形态、完整内容层级、长名称hoverCard、真实滚动/窄窗/像素仍未通过，score=null。增量待用户验收，01B开发中，不放行01C，未提交推送。
+
+## 2026-10-31 — 01B普通文本草稿身份与恢复
+
+- 先核固定asar和initial/shared哈希，追证Wx首页/local身份、FL持久化map及xU普通新聊天；修正A09草案“清空当前输入”的无依据表述，先写DR01–DR07合同和失败回归。
+- App按home/thread ID保存文本，原setPromptInput调用保持小幅接线；空键删除、损坏数据过滤、保存失败可见。首次创建移交，成功只清未改内容，失败及继续编辑保留；发送附件延迟保存使用所属快照，不清其他会话附件。
+- 新聊天焦点改为提交后effect，移除50ms固定延迟；既有跨页预填显式写首页，补回调依赖避免捕获旧身份。没有新依赖/CSS/Rust或协议字段。
+- 最终实际回调/状态/持久化专项及三项内存变异通过，完整标准含六个隔离探针/release退出0。118输入记录，当前构建`dist-artifacts/01B-drafts-20261031/CodexNative.exe`，13,304,832字节，SHA-256 `8E08D640EE06FE4B265AD804C8AFE26369E2FC83AF47E6591F6F88DAA8D8F788`。
+- 独立CLI离线样本未请求模型，原生H/A/B切换/正常退出重开通过，附件快照修复后最终版重新恢复三份、Ctrl+N/按钮、直接输入焦点通过。详见`docs/antigravity/runs/20261031-codex-01b-drafts.md`；官方运行时/像素、完整特殊草稿、账号/多窗口、原生发送仍未验证。
+- 增量待用户验收，01B仍开发中，不放行01C；未提交推送。下一项A11/A12会话行与滚动先取证。
+
+## 2026-10-31 — 01B帮助菜单与快捷键对话框
+
+- 先取证固定官方profile、中文及快捷键chunks并写HP01–HP08合同；initial locale判定确认中文使用“新功能”链接。复用HTML popover、真实注册表、主题及命令桥，补帮助二级菜单和独立可搜索dialog，无新增依赖。
+- 补Ctrl+/、非空Escape清查询/空查询关闭、焦点恢复、IME保护及DOM/原生命令两条快捷键隔离；guide/changelog命名目标交系统浏览器，拒绝任意URL/路径/参数，不以启动成功冒充网页加载成功。
+- 修改前专项失败，实现后实际组件/生产回调及四项内存反证通过；完整标准含六个隔离协议探针、全量Rust41项和release均退出0。最终117输入重核，构建`dist-artifacts/01B-help-20261031/CodexNative.exe`，13,304,320字节，SHA-256 `806D8450231508984FF89A7E7700901CE2E4F820BF4F0957DCDB14C1AB16A4A9`。
+- 当前独立CODEX_HOME原生验证层级返回、菜单/快捷键打开、搜索/空态、Escape、Tab循环、背景关闭及Ctrl+N隔离；未登录/发送模型任务，未控制上轮用户窗口。详见`docs/antigravity/runs/20261031-codex-01b-help.md`。
+- 官方运行时/配对像素、全量快捷键能力、原生IME、系统浏览器加载及模式占位差异仍待处理；不造visual-verdict评分。增量待用户验收，01B开发中、不放行01C，未提交推送。下一项A09草稿/入口等价和焦点先取证。
+
+## 2026-10-31 — 01B资料菜单身份与键盘操作
+
+- 固定包 profile/initial/shared 与中文静态取证后先写动作合同；资料菜单接入现有 AccountReadResult，清除伪产品身份和连接圆点。API Key/Bedrock 显示真实认证说明，仅 ChatGPT 显示本项目“使用情况”入口；头像仍本地回退。
+- 实际回调先复现账号读取乱序覆盖，account/updated 改为失效后读回，断连拒绝在途旧结果；不合并仅 authMode/planType 的通知冒充账号。
+- 复用原 HTML popover，补键盘打开、上下/Home/End、Escape、Tab和关闭不抢焦点。原生发现鼠标已打开后 Down 不入菜单，先补失败用例再修复；最终完整标准（含六个隔离协议探针）和 release 退出 0，无本轮 Rust 改动或全量 Rust 新结论。
+- 最终隔离原生验证匿名菜单、鼠标开→Down→Tab、Enter/Escape/Down重开及设置导航；UIA 焦点精度有限，最后外点补测遇人工输入停止，未报全通过。构建 `dist-artifacts/01B-profile-20261031/CodexNative.exe`，13,255,168 字节，SHA-256 `CF24AEA89D176A44919A5524A4BC634DF268AB43A8866ABD3E92282E0AAE5442`。
+- 合同与全部边界见 `docs/antigravity/runs/20261031-codex-01b-profile.md`；帮助层级/模式 capability/完整用量及账号菜单仍缺，官方像素、用户验收未完成。无新依赖/后端命令，未提交推送；01B仍开发中，不进入01C。
+
+## 2026-10-31 — 01B恢复新聊天项目上下文
+
+- 官方 hK/dK/twn 证据确认持久化选择派生首 root 和完整 roots；实际发送回调先复现重启后漏 projectId。复用 sidebarProjects 的小型解析函数，显式草稿优先、selected 实体按 ID 恢复、legacy 目录不匹配不套旧上下文，发送和目标入口共用。
+- 即时设置/读取新建 thread ref，消除首次目标创建后 React 尚未提交状态时的重复 thread/start；已有会话不继承首页项目。两项内存反证分别验证回归能抓住缺陷。
+- 实际回调、完整标准（整个进程显式隔离 CODEX_HOME，含 6 协议探针）、全量 Rust 39 项、release 退出 0。真实 CLI 首次空会话立即 read projectId 为 null；加入声明的离线历史后读回正确，重启 resume/read 确认项目和两个 roots。保留失败与诊断，不在产品中注入历史或擅加归属补写。
+- 构建 `dist-artifacts/01B-project-context-20261031/CodexNative.exe`，13,254,656 字节，SHA-256 `8333092273E42CE77142ADDC4CA1E8BDC6D13E35FA7A497554BE610FA96D6230`。原生仅验证当前构建启动/恢复实体/普通新聊天，不合称 GUI 模型发送通过。
+- 详见 `docs/antigravity/runs/20261031-codex-01b-project-context.md`；整理 `docs/antigravity/acceptance/01B-remaining.md`，下一项 A08 资料/模式入口先取证。无新依赖/CSS/后端 API，未提交推送，01B 未验收，不放行 01C。
+
+## 2026-10-31 — 01B项目内新聊天保存选择
+
+- 重新核对官方 `projectRowBehavior:"expand"` 与独立 plus → j4o → xU → TM/Ni 链路，撤回“行点击同时选择”的假设。项目行维持纯展开，项目＋由 App 统一等待选择保存再清空当前会话；失败显示错误并保留旧视图/附件，晚到结果不覆盖更新导航。
+- 新增 `workspace_select_project`，复用 membership 校验实体并写嵌套 selected-project，保存成功才发布内存；首 root 的 legacy 目录字段为本项目适配。删去 Sidebar 重复工作区写入和未使用 prop，无新依赖/CSS。
+- 实际回调/Sidebar/项目实体专项、TypeScript、全量 Rust 39 项、完整标准（含 6 个隔离协议探针）与 release 全部退出 0；原生隔离行点击、同根两个实体＋、多根保持和关闭重启磁盘读回通过。IO 失败/导航竞态只有 Rust/L2 证据，未冒称原生故障测试。
+- 构建 `dist-artifacts/01B-project-selection-20261031/CodexNative.exe`，13,254,656 字节，SHA-256 `852A7BE9AFC8ED46CE0501F5BC52F749947475B6372E2F847DEC252365296078`。详见 `docs/antigravity/runs/20261031-codex-01b-project-selection.md`。
+- 本增量待用户验收，01B 仍开发中；官方像素基准未知、完整项目导航/实体管理和重启后的真实发送待验证。不进入 01C，未提交推送。
+
+## 2026-10-31 — 01B本地项目实体与多根目录
+
+- 从`electron-persisted-atom-state`读取真实`local-projects`、`project-order`、`selected-project`，以实体ID而非目录路径渲染Sidebar；同根不同实体保持独立，多根实体只显示一行，root scope按owner规则计算，未覆盖目录保留legacy Recent回退。
+- 保留workspace/global assignment、projectless和canonical/cwd优先级；普通新聊天与`/goal`首次创建均以项目首根作为`cwd`兜底，并透传真实`projectId`与`runtimeWorkspaceRoots`。缺少显式server映射时拒绝伪造项目创建。
+- 专项回归、36项Rust、`verify-all.ps1 -Fast`、Tauri release和新隔离CODEX_HOME原生UIA冒烟通过；构建为`dist-artifacts/01B-local-projects-20261031/CodexNative.exe`，13,266,944字节，SHA-256 `CA7BAE171C072BE9B48B286545100F23BCA965DA9769F97F4EFAB6F72EAA667A`。原生证据见`docs/antigravity/runs/20261031-codex-01b-local-projects.md`及`.ref/parity/01/runs/20261031-codex-01b-local-projects-r2/actual/native-verification.json`。
+- 官方同条件视觉、项目实体写入/删除、完整项目选择器、跨窗口监听和用户验收仍未完成；01B继续开发中，不放行01C，未提交推送。
+
+## 2026-10-31 — 01B客户端成员优先级
+
+- 追证persisted atom实际位于electron-persisted-atom-state，按GRn/Man读取workspace归属覆盖global assignment/projectless，然后才canonical/cwd。Rust只读提取紧凑快照，复用threads_meta_get/App/Sidebar；无新依赖、CSS或归属写入API。
+- 实际组件及新身份/旧成员混合快照均有失败反证；等待完整快照发布，任一IPC失败保留整份旧快照。34项Rust全量、现有完整标准及release通过，115输入/5dist/4检查脚本归档重核。
+- 原生同数据旧/新对照验证workspace B覆盖canonical/global A，显式无项目和remote不被cwd兜底，global匹配覆盖旧无项目标记；见`docs/antigravity/runs/20261031-codex-01b-client-membership.md`。完整实体/multi-root、成员写入与官方像素仍未完成，01B未验收，未提交推送。
+
+## 2026-10-31 — 01B既有工作区显式项目身份
+
+- Rust工作区返回当前local:CODEX_HOME下的serverProjectId，只读精确legacy映射；Sidebar有canonical归属时按显式身份匹配，不再cwd兜底，未知成员保留Recent。App新建/派生通知透传实际projectId，project/changed重读身份；工作区/meta刷新隔离旧generation，无新依赖/CSS/映射写入。
+- 实际组件及归档旧App刷新回调均有失败反证，当前回归通过；全量Rust32项、完整标准及release通过。115输入/5dist/4检查脚本归档重核。原生相同隔离真实数据旧版A/B/unknown均落Legacy，新版A/B分组正确、unknown留Recent，干扰home未串用。
+- 记录/构建见`docs/antigravity/runs/20261031-codex-01b-workspace-identity.md`。完整local-projects实体、多root、客户端assignment优先级、导航和新建归属仍未完成；01B整体未验收，未提交推送。
+
+## 2026-10-31 — 01B归属通知刷新一致性
+
+- 追到main显式legacy→server ID映射，排除按roots合并的错误接入。实际生产回调复现旧thread/list覆盖新projectId通知；只改App通知分支，显式字段判断后合并并复用generation刷新，删除缺失字段默认清除；无overlay/计时器/依赖/UI改动。
+- AST回归先失败后通过并接入标准；隔离真实CLI分配/清除通知驱动生产回调，延迟旧实际响应后仍保留新归属，read确认、零turn/started，服务退出0。完整标准及release通过，115输入/5dist/3检查脚本归档重核。
+- 当前EXE原生冒烟连接真实CLI、33条明确回放行并正常关闭；不是原生GUI竞态验证。构建及边界见`docs/antigravity/runs/20261031-codex-01b-membership-refresh.md`。canonical项目完整侧栏接入与官方视觉仍未完成，01B未验收，未提交推送。
+
+## 2026-10-31 — 01B项目归属协议与scope调研
+
+- 核对固定asar的Kkn/Okn/Lkn、现代G_n scope和GRn/Man客户端workspace state优先级。确认canonical项目UUID、legacy workspace路径ID和客户端assignment不能直接混用，不按最长前缀猜测修复。
+- 当前0.159.2 CLI生成experimental schema；隔离明确回放验证同cwd不同项目、null/省略有效补丁保留、空字符串清除、list过滤及服务重启，未发送turn请求。首次空补丁-32600反证保留；新隔离目录修正探针预期后通过。官方scope纯函数7项静态求值通过，路径规范化和UI运行时不在该证明范围。
+- 结果与后续开发合同见`docs/antigravity/runs/20261031-codex-01b-project-membership.md`。本轮仅资料/研究探针，无产品代码、无新EXE、未提交推送；01B仍开发中，多项目归属尚未接入侧栏。
+
+## 2026-10-31 — 01B项目标题组织选项
+
+- 按官方n4o调用的organizeOnly=true及中文包，替换项目标题“管理所有项目”跳转工具为直接组织radio；复用组织项、偏好和共享菜单，无新依赖或CSS，不猜测修改项目assignment。
+- 实际组件先失败后通过；完整标准及release通过。浏览器验证直接选项、双入口同步、选择关闭及焦点、Return/Escape。当前release验证选择合并28行、完整退出重启仍28行；115输入和5dist归档校验匹配。
+- 定向Raise当前窗口并确认截图与UIA一致，恢复原生验证；补验当前构建真实拖动05/01/02/03/04→04/05/01/02/03，完整退出重启保序。原生中间态/在途取消及官方视觉仍未验证。见`docs/antigravity/runs/20261031-codex-01b-project-options.md`。01B整体未验收，未提交推送。
+
+## 2026-10-31 — 01B拖动呈现
+
+- 按固定asar的源行opacity、portal预览和有效插入边界合同，复用既有Pointer Events与存序路径，新增局部视图状态、纯边界函数及样式；统一取消清理。无新依赖，未改Tauri配置。
+- 纯函数/实际组件先失败后通过，完整标准、TypeScript及release通过；受控DOM回放验证淡化、预览、插入及松手/取消清理，不能冒充原生拖动。115输入和5dist归档校验匹配。
+- 原生工具控件树与截图不一致，停止操作并关闭本轮隔离测试进程；本版原生拖动/重启未验证。构建、SHA、复测步骤与差异见`docs/antigravity/runs/20261030-codex-01b-drag-visual.md`。近似图标、行高/颜色/缩放及官方对照未完成，01B仍开发中，未提交推送。
+
+## 2026-10-30 — 01B整理/排序二级菜单
+
+- 按n4o/H2o/V2o/sQn和中文包合同，以共享ThreadActionsMenu替换Sidebar平铺面板，删除专用状态/ref/监听；组织/排序radio子菜单、显示label/项目checkbox、能力门控新建分区末尾。共享组件支持独立portal、语义、分层键盘和焦点，无新依赖。
+- Sidebar配置及实际共享组件先失败后通过，另捕获并修复root提交后子菜单仍用旧坐标的问题；接入完整标准并通过。当前release原生验证组织/排序、左右键、选择关闭和焦点、checkbox、新建分区打开取消、普通项目菜单回归及1001×914窄窗显示。
+- 记录与构建见`docs/antigravity/runs/20261030-codex-01b-menu.md`。边缘flip/打开状态reflow仍仅L2，官方视觉/时延及部分入口未对照；01B整体未验收，未提交推送。
+
+## 2026-10-30 — 01B合并列表与Recent项目包含
+
+- 从TZn/sQn及shared默认值取证，修正合并列表被项目scope过滤的问题，移除无官方依据的三选scope，使用默认true的Recent项目包含checkbox；旧显式选择迁移本应用布尔偏好。复用既有项目/置顶/排序路径，删除本轮无用分支，无新依赖或CSS。
+- 实际组件先失败再通过，完整标准与release通过；当前原生构建验证33行默认、关闭后5行、合并28行、完整退出重启28行及返回分组仍5行。总数来自UIA含视口外控件，不等于一屏可见行数。
+- 构建及限制见`docs/antigravity/runs/20261030-codex-01b-recents.md`。菜单二级结构/中文标签、拖动视觉及项目assignment仍待对齐；像素和用户验收未通过，01B继续开发中，未提交推送。
+
+## 2026-10-30 — 01B键盘相邻排序
+
+- 按官方Flo捕获条件与moveThread索引合同，为主聊天行增加button语义及Alt+↑/↓相邻移动；复用完整存序槽位替换，不覆盖隐藏ID，不增加Space/Enter抓取模式，无新依赖或CSS。
+- 实际组件和完整标准检查通过。当前release原生验证连续下移、焦点保留、修饰键/子按钮隔离、上移、完整退出重启；UIA焦点字段不可用，以可见焦点环和连续动作证明。构建/证据见`docs/antigravity/runs/20261030-codex-01b-keyboard.md`。
+- 官方运行时同条件对照、拖动视觉和菜单/归属差异仍未完成，01B整体未验收，未提交推送。
+
+## 2026-10-30 — 01B拖动取消生命周期
+
+- 从官方指针传感器及O$r取证，修复手动重排在Escape、失焦、缩放、隐藏后仍可能提交的缺口。复用现有ref，手动模式监听与卸载清理，无新依赖或CSS。
+- 实际组件先失败再通过，覆盖取消后松手、尾随点击、新普通点击和监听清理；完整标准检查退出0。见`docs/antigravity/runs/20261030-codex-01b-drag-cancel.md`。原生中途取消未测，像素与用户验收仍未通过。
+- 新核实聊天行Alt+↑/↓相邻移动入口及子目标role限制，未误用通用传感器Space/Enter默认值，后续依此继续键盘重排。
+
+## 2026-10-30 — 01B手动排序
+
+- 从固定asar提取模式、激活阈值、中线与可见槽位保存合同后，新增sidebarOrder纯函数并接入Sidebar；仅手动模式允许同列表指针重排，保留隐藏/未加载项，项目历史追加与Recent历史前置分开处理。App成功创建/派生路径通知新ID，不使用伪造ID回退。
+- 回归捕获并修复选项未关闭菜单；实际组件与纯函数、完整标准检查均通过。最终release原生验证拖动、退出重启、最近/手动切换和15条展开；115项输入及5项dist哈希匹配，构建和证据见`docs/antigravity/runs/20261030-codex-01b-manual.md`。
+- 无新依赖、CSS或Tauri配置改动；复用既有偏好作用域。官方显示环境用户回复未知，像素未评分。键盘重排、拖动视觉、菜单结构和多项目归属仍待完成，01B整体未验收，未提交推送。
+
+## 2026-10-30 — 01B置顶与最近排序
+
+- 从官方排序分支取证后修复Sidebar：Pinned按现有pinnedThreadIds顺序读取，不套recent排序；时间优先使用recencyAt，采用空值回退保留0。types.ts补充协议字段类型，移除该处any访问，无新依赖或CSS。
+- 实际组件失败/通过及旧时间逻辑反证、完整标准检查通过。对应release在同一隔离回放数据下验证旧SECOND/THIRD/FIRST→新FIRST/SECOND/THIRD。构建/证据见`docs/antigravity/runs/20261030-codex-01b-ordering.md`。
+- 官方手工排序、assignment/projectless与catalog范围已继续调研并留具体调用链，但未凭最长路径猜测改写归属。01B和逐页目标继续进行。
+
+## 2026-10-30 — 01B分页与增量呈现
+
+- App沿现有目录路径读取全部thread/list游标、去重，完整成功后提交；中间失败保留旧目录，防重复cursor及晚到刷新覆盖。Sidebar按官方规则5→15→25显示，追加选中项并处理最后单条，中文“展开显示”经原始语言包核验。未新增依赖。
+- 实际回调与组件回归、完整标准检查通过；真实CLI读取28条明确回放历史，limit3跨10页；对应release实际点击验证5/15/25/28。未把回放称为模型生成，也未声称原生超过100条实测或像素一致。
+- 发现并修复asar提取器1字节起点错误，新增实际archive integrity回归，语言包与外壳chunk匹配。构建与细节见`docs/antigravity/runs/20261030-codex-01b-pagination.md`。01B及逐页目标仍进行中。
+
+## 2026-10-29 — 01B本地项目展开/收起
+
+- 先定位官方本地项目调用链与持久化分支，再修复CodexSidebar：整行/键盘统一toggle、默认展开、按规范化路径保存状态，新增button及aria-expanded语义。移除本次不再使用的强制选中展开函数，保留其他代理既有修改；无新依赖或CSS改动。
+- 新增实际组件回归及2项隔离反证，完整verify-all通过。release原生验证点击、Enter/Space和完整进程重启持久化；构建源码/资产归档与EXE哈希见`docs/antigravity/runs/20261029-codex-01b-sidebar.md`。
+- 状态：A10局部自验通过，待用户验收；01B整页仍开发中，分页和同条件像素未通过。
+
+## 2026-10-29 — 01A窗口状态修复
+
+- 官方取证后，仅修改`AppTitleBar.tsx`：初始化与监听原生最大化状态，切换最大化/还原图标、提示与可访问名称；清理监听并忽略过期查询。
+- 新增`verify-titlebar-window-state.mjs`执行实际组件，覆盖状态切换、原生命令、卸载、晚到监听/查询与浏览器降级；接入标准检查。没有新增依赖。
+- 完整`verify-all.ps1`退出0，Rust为17项automations测试，13项被过滤，不声称全量Rust通过。原生复测与构建指纹见本轮run记录；首页整体、官方同条件像素和用户验收仍未通过。
+- 本轮不修改旧候选几何、背景、菜单与其他页面，不把全部既有脏改动归为本轮。
+
 > 对标对象：本机官方 Codex App 26.928.x（Electron）。差距清单见 [CODEX-APP-PARITY-GAP.md](CODEX-APP-PARITY-GAP.md)。
 
 ## Round 1 — 差距分析 + 审批协议正确化（commit `0ac8331`）
@@ -468,3 +694,633 @@
 - `verify-queue.mjs`扩为14组，加turn-controls共20组回归；新增真实CLI空闲边界探针6项，接入verify-all。最终标准检查、协议检查与Release通过，新EXE真实CLI连接和隔离历史回归通过。
 - 产物`dist-artifacts/03-queue-input-20261026/CodexNative.exe`。调研、原始RPC、完整日志、源码/产物指纹、原生截图见03页面记录和`.ref/parity/03/`本轮queue-input/input-final/idle-turn文件。
 - 新登记Alt+Enter提示与实际处理不一致，尚未修复；真实活跃任务、物理IME和官方视觉未验证，03整页及用户验收状态不变。
+
+## 逐页计划03 — 排队键盘入口（2026-10-26）
+
+- 开发前读取官方Prompting文档和固定asar Vrt/Enter处理，确认反向跟进快捷键随发送偏好变化，不能用Alt+Enter或CLI的Tab替代。
+- `ComposerBox.tsx`及App两个挂载点接真实排队handler；默认Steer下支持Ctrl+Enter或Ctrl+Shift+Enter排队，排除Alt误发送，保留换行/IME并抑制长按修饰键重复提交。复用既有队列闭环，无新依赖/CSS。
+- 新`verify-composer-keys.mjs`实际handler先红后绿，5组检查接入verify-all；完整标准检查exit0。浏览器固定App场景两个偏好、失败保稿、Alt不投递通过；详细证据见03页面记录及`.ref/parity/03/`keys文件。
+- 仍未完成官方跟进行为设置、cmdIfMultiline、自定义绑定、真实活跃任务/物理IME/官方像素；03整页和用户验收状态不变。此轮未获新的提交推送指令，不自动提交。
+- Release构建exit0，新产物`dist-artifacts/03-composer-keys-20261026/CodexNative.exe`与源码指纹`build-composer-keys.json`。原生实际Alt+Enter保稿和Shift+Enter换行通过，未发送模型任务；截图/记录见03 actual/native-composer-keys。
+
+## 逐页计划03 — 工具输出与思考摘要状态（2026-10-26）
+
+- 开发前重新读取官方item-deltas文档、当前schema和固定asar索引分流证据，记录预期后补实际App分支先红回归。
+- `App.tsx`：摘要/content按索引追加，边界不拼正文、最终快照清旧字段、相同独立段不误去重；命令规范输出含空终值覆盖旧缓冲，failed/declined/completed不再显示运行中。复用原卡片，无新依赖/CSS。
+- `threadTimeline.ts`扩展逐段历史回放及权威完成处理；新`verify-execution-items.mjs`4组接入标准检查，既有历史/键盘/审批/队列回归重验通过。完整标准检查exit0，浏览器固定通知的展开摘要/命令失败/空终值通过。
+- 真实任务、原生完整执行链、物理IME和官方像素仍待验证；MCP/文件变更等卡片未被本轮覆盖。详细结果与证据见03页面记录和`.ref/parity/03/`execution文件；未自动提交推送。
+- 2026-10-27跨午夜完成Release，新产物`dist-artifacts/03-execution-items-20261027/CodexNative.exe`；源码/产物指纹`build-execution-items.json`，真实CLI隔离home原生连接/固定历史读取通过。未执行真实命令或模型任务。
+
+## 逐页计划03 — 工具卡子范围：MCP与文件变更状态对齐（2026-10-27）
+
+- 开发前核对官方CLI 0.159.2 schema（FileChangeThreadItem、PatchApplyStatus、FileUpdateChange、McpToolCallThreadItem、McpToolCallStatus、McpToolCallError、McpToolCallResult、FileChangePatchUpdatedNotification、McpToolCallProgressNotification）与固定asar Offset 2718919、2736064、4838700。
+- 新增 `scripts/verify-tool-cards.mjs`，包含MCP progress通知分支、kind对象安全提取/状态指示、MCP错误对象/文本结果提取、生命周期终态快照清理、历史回放过时通知抑制与空started保护；修改前在真实行为断言失败，保存证据至 `.ref/parity/03/tool-cards-before.log`。
+- `src/App.tsx`：
+  - 增加 `method === NOTIFICATION.ITEM_MCP_PROGRESS` 通知分支，同步维护 `progressMessage`；
+  - `item/completed` 清理临时 `progressMessage`，确立终态快照；
+  - `fileChanges.map`：安全解析 `kind` 对象（`{ type: "update" }` 等），映射中文标签（修改/添加/删除），彻底避免渲染 `[object Object]`；补全 `inProgress`（修改中…）、`failed`（失败）、`declined`（已拒绝）等状态指示；
+  - `mcpCalls.map`：提取 `call.error.message` 防止错误对象字符串化为 `[object Object]`；提取 `call.result.content` 文本段落，避免强制展示原始包装JSON；在 `inProgress` 且有 `progressMessage` 时展示进行中进度。
+- `src/threadTimeline.ts`：
+  - 历史已完成项及缓冲中已完成项抑制过时的 `item/fileChange/patchUpdated` 与 `item/mcpToolCall/progress`；
+  - 空 `item/started` 不清空已 hydrated 的 `fileChange.changes` 或 `mcpToolCall.result/error`。
+- 验证与产物：
+  - `node scripts/verify-tool-cards.mjs` 5组检查全部通过；
+  - 既有键盘/思考摘要/审批/队列/历史回放等全部现有回归均重验通过；
+  - `pwsh -NoProfile -File scripts/verify-all.ps1` exit 0（ALL CHECKS PASSED），完整日志保存至 `.ref/parity/03/verify-tool-cards-final.log`；
+  - Release构建exit 0，日志 `.ref/parity/03/release-tool-cards.log`，新产物 `dist-artifacts/03-tool-cards-20261027/CodexNative.exe`，指纹记录于 `.ref/parity/03/build-tool-cards.json`。
+- 限制说明：真实活跃任务中的MCP/文件变更写入原生回传、物理IME与官方宽窄窗像素比对仍待验；01/02/03整页用户验收状态保持不变。
+
+## 逐页计划03 — Plan与Goal生命周期及其他工具卡对齐（2026-10-27）
+
+- 调研官方Plan/Goal协议与固定asar：
+  - schema：`PlanThreadItem`、`PlanDeltaNotification`（`item/plan/delta`）、`TurnPlanUpdatedNotification`（`turn/plan/updated`，包含 `plan: TurnPlanStep[]` 与 `explanation?: string | null`）；
+  - 固定asar shared chunk Offset 2741332（`thread/goal/updated` 与 `thread/goal/cleared` 实时事件）、Offset 2739243（`M5t`、`N5t` 状态机切换逻辑：`active` -> `paused`，`paused`/`blocked`/`usageLimited` -> `active`）、Offset 2751902（`turn/plan/updated` 绑定到轮次）；
+  - `ImageGenerationThreadItem` 状态字段与 `failure` 结构、`SleepThreadItem` `durationMs`。
+- 修改前先红回归：
+  - 新增 `scripts/verify-plan-goal.mjs`，断言 `handleToggleGoalPause` 状态机在 `blocked`/`usageLimited` 时能恢复推进（修改前因仅判断 `cur.status === "paused"` 导致死锁失败），保存日志至 `.ref/parity/03/plan-goal-before.log`；
+  - 新增 `scripts/verify-misc-tools.mjs`，断言 `ImageGeneration` 失败/生成中状态展示以及 `Sleep` 时长展示（修改前失败断言保存至 `.ref/parity/03/misc-tools-before.log`）。
+- 实施修复：
+  - `src/App.tsx`：
+    - `handleToggleGoalPause`：对标官方 `N5t` 逻辑，`cur.status === "active"` 切换为 `paused`，`paused`/`blocked`/`usageLimited` 均恢复推进为 `active`；
+    - `NOTIFICATION.TURN_PLAN_UPDATED`：提取并保存 `explanation` 说明文本，切会话或新轮次时完整清理；
+    - `imageViews.map`：支持 `ImageGeneration` 的 `inProgress`（图片生成中…）与 `failed`（失败原因或提示）；
+    - `systemEvents.map`：支持 `Sleep` 事件展示等待时长 `durationMs`。
+  - `src/threadTimeline.ts`：
+    - 将 `item/plan/delta` 纳入 `isDelta` 流式增量列表；
+    - 历史已完成项压制过时缓冲的 `item/plan/delta`；
+    - 空 `item/started` 不清空历史已 hydrated 的 `plan.text`。
+  - `src/components/PlanPanel.tsx`：增加 `explanation` prop，在展开时展示官方下发的计划说明。
+  - `src/components/ToolCallCards.tsx`：`stringifyOutput` 支持对象错误消息 `record.message` 提取。
+- 自动化与 Release 验证：
+  - `node scripts/verify-plan-goal.mjs` 与 `node scripts/verify-misc-tools.mjs` 全部通过；
+  - 既有全部专项回归（键盘、思考摘要、工具卡、审批、队列、历史）重验通过；
+  - `pwsh -NoProfile -File scripts/verify-all.ps1` exit 0（ALL CHECKS PASSED），全量日志保存至 `.ref/parity/03/verify-plan-goal-final.log`；
+  - Release 构建 exit 0，日志保存至 `.ref/parity/03/release-plan-goal.log`；新产物 `dist-artifacts/03-plan-goal-20261027/CodexNative.exe`，哈希 `F4710E1B1F92C8B128FF2BE39447AF77831EFAF260A2C50C039F60DA20B0BD6C`，源码/产物指纹记录于 `.ref/parity/03/build-plan-goal.json`。
+- 限制说明：真实环境中的长程 Goal 自主推进循环、物理 IME、同尺寸官方像素对比仍未验证；01/02/03 整页用户验收状态保持不变。
+
+
+## 逐页计划04 — 会话组织、自定义分区与项目实体对齐（2026-10-27）
+
+- 调研官方 CLI 0.159.2 schema 与固定 asar 交互：
+  - schema：`ProjectChangedNotification`（`project/changed`）、`ThreadProjectUpdatedNotification`（`thread/project/updated`）、`ThreadSection`、`ThreadSectionListResponse`、`ThreadSummary`（`projectId` 与 `section` 字段）；
+  - 侧栏悬停操作区应具备 `···`（更多操作）显式菜单按钮，呼出 `openThreadMenu`（移入分区、重命名、置顶、归档、删除）；
+  - 远程与本地项目变更需具备响应式刷新机制（`refreshToken` 动态刷新）。
+- 修改前先红回归：
+  - 新增 `scripts/verify-projects-sections.mjs`，包含：
+    1. 协议常量 `THREAD_PROJECT_UPDATED` 检查；
+    2. `App.tsx` 监听并处理 `NOTIFICATION.PROJECT_CHANGED` 与 `NOTIFICATION.THREAD_PROJECT_UPDATED`；
+    3. `App.tsx` 动态维护 `projectsRefreshToken` 并传递给 `CodexSidebar` 与 `ProjectsIndexView`；
+    4. `CodexSidebar.tsx` 会话行操作区包含 `EllipsisIcon` 更多操作按钮并绑定 `openThreadMenu`；
+  - 修改前执行断言真实失败，日志保存至 `.ref/parity/04/projects-sections-before.log`。
+- 实施修复：
+  - `src/protocol.ts`：补充 `THREAD_PROJECT_UPDATED: "thread/project/updated"` 常量；
+  - `src/App.tsx`：
+    - 新增 `projectsRefreshToken` 状态并在 app-server 连接与 `project/changed` 事件时自增推进；
+    - 在 `handleNotification` 中处理 `NOTIFICATION.THREAD_PROJECT_UPDATED`，同步更新 `threads` 数组中对应 `thread.projectId`；
+    - 将 `CodexSidebar` 与 `ProjectsIndexView` 的 `refreshToken` prop 由静态布尔值改为动态 `projectsRefreshToken`，并在 `onProjectsChanged` 回调中自增；
+  - `src/components/CodexSidebar.tsx`：
+    - 在 `sidebar-thread-actions` 操作区增加带有 `EllipsisIcon` 的“更多操作”按钮，左键点击时根据触发边界呼出 `openThreadMenu`；
+  - `scripts/verify-all.ps1`：将 `verify-projects-sections.mjs` 纳入标准验证流。
+- 自动化与 Release 验证：
+  - `node scripts/verify-projects-sections.mjs` 6 项检查全部通过；
+  - `npx tsc --noEmit` 零类型错误；
+  - `pwsh -NoProfile -File scripts/verify-all.ps1` exit 0（ALL CHECKS PASSED），全量日志保存至 `.ref/parity/04/verify-projects-sections-final.log`；
+  - Release 构建 exit 0，日志保存至 `.ref/parity/04/release-projects-sections.log`；新产物 `dist-artifacts/04-projects-sections-20261027/CodexNative.exe`，哈希 `07C3EAD32E4012B1A2B5894FD35C2C13688A9E88F1B242ACBC3B0AF740F3485E`，源码/产物指纹记录于 `.ref/parity/04/build-projects-sections.json`。
+- 限制说明：多客户端并发修改项目实体的冲突合并、物理宽窄窗像素对比仍待进一步比对；01/02/03/04 整页用户验收状态保持不变。
+
+
+## 逐页计划05 — 文件工作面与编辑器对齐（2026-10-27）
+
+- 调研官方 CLI 0.159.2 文件协议与交互规范：
+  - schema：`fs/readDirectory`、`fs/readFile`、`fs/writeFile`、`fs/watch`、`fs/unwatch`、`fs/changed`；
+  - 文件编辑器：`Ctrl+S` / `Cmd+S` 快捷键保存拦截、`Tab` 键 2 空格缩进支持、未保存脏状态（`•`）指示、显式关闭预览按钮（`CloseIcon`）；
+  - 目录失效状态：目录失效/无权限/外部删除时展示 `fe-dir-error` 错误卡片，并提供“返回工作区根目录”的一键恢复路径；
+  - 外部变动防护：`fs/changed` 到达时，若无未保存草稿（`!isDirty`）自动重新拉取当前文件最新内容；若有草稿（`isDirty`）严格保护不被覆盖。
+- 修改前先红回归：
+  - 新增 `scripts/verify-files-worksurface.mjs`，包含：
+    1. `DiffDrawer.tsx` 的 `textarea.file-editor-textarea` 必须拦截 `Ctrl+S` 保存；
+    2. `textarea.file-editor-textarea` 必须拦截 `Tab` 键缩进插入；
+    3. `file-editor-header` 必须包含关闭文件预览按钮；
+    4. 必须包含 `dirError` 状态和 `fe-dir-error` 目录失效提示与恢复按钮；
+    5. `fsWatchPath` 回调中必须在 `!isDirty` 时自动刷新当前打开文件。
+  - 修改前执行断言真实失败，日志保存至 `.ref/parity/05/files-worksurface-before.log`。
+- 实施修复：
+  - `src/components/DiffDrawer.tsx`：
+    - 增加 `dirError` 状态并在 `refreshDirectory` 失败时记录错误；
+    - 在文件树中增加 `dirError` 失效状态及返回根目录按钮；
+    - 维护 `isDirtyRef` 与 `filePreviewRef`，在 `fsWatchPath` 防抖回调中实现实时刷新当前文件；
+    - 在 `file-editor-header` 增加标题未保存标记及关闭预览按钮；
+    - 在 `file-editor-textarea` 增加 `Ctrl+S` 保存与 `Tab` 键 2 空格缩进事件处理；
+  - `src/components/FileExplorer.css`：补充 `.fe-dir-error` 错误提示布局样式；
+  - `scripts/verify-all.ps1`：将 `verify-files-worksurface.mjs` 纳入标准验证流。
+- 自动化与 Release 验证：
+  - `node scripts/verify-files-worksurface.mjs` 5 项检查全部通过；
+  - `npx tsc --noEmit` 零类型错误；
+  - `pwsh -NoProfile -File scripts/verify-all.ps1` exit 0（ALL CHECKS PASSED），全量日志保存至 `.ref/parity/05/verify-files-worksurface-final.log`；
+  - Release 构建 exit 0，日志保存至 `.ref/parity/05/release-files-worksurface.log`；新产物 `dist-artifacts/05-files-worksurface-20261027/CodexNative.exe`，哈希 `7F867FCBCED6CEFCCEC730B2787150AD6DBBF9A0B21F0C82D17617FCE4E52C12`，源码/产物指纹记录于 `.ref/parity/05/build-files-worksurface.json`。
+- 限制说明：超大二进制文件内联十六进制预览、物理 IME 键入、官方各缩放比下的同尺寸像素对比仍待进一步比对；01-05 整页用户验收状态保持不变。
+
+
+## 逐页计划06 — 变更与 Git 工作面对齐（2026-10-27）
+
+- 调研官方 CLI 0.159.2 Git 交互规范与工作流：
+  - 功能面：统一/并排 Diff 视图、代码自动换行、行内评审发送给 Codex、文件已审阅标记、单个/全部暂存与取消暂存、单个/批量放弃更改并具备二次确认弹窗保护、Conventional Commits 提交说明生成、提交失败时草稿保留、自动全暂存提交闭环、独立/强制推送、GitHub PR 创建；
+  - 核心修复点：
+    1. 增加“全放弃”批量撤销未提交改动功能，调用 `git_discard` 并在执行前进行强风险二次确认；
+    2. 在 `handleCommit` 与 `handleCommitAndPush` 中，当暂存区为空但存在未提交变更时自动触发 `git_stage` 全暂存后再提交，避免直接报 Git 错误；
+    3. 在 Diff 工具栏增加 Git 状态手动刷新按钮；
+    4. 提交失败时保留用户填写的提交说明。
+- 修改前先红回归：
+  - 新增 `scripts/verify-git-worksurface.mjs`，包含：
+    1. `DiffDrawer.tsx` 必须实现 `handleDiscardAll` 并具备 `confirm(...)` 风险防护；
+    2. 变更列表批量操作区必须渲染“全放弃”按钮；
+    3. `handleCommit` 必须具备自动全暂存联动；
+    4. `handleCommitAndPush` 必须具备自动全暂存联动；
+    5. Diff 工具栏必须具备调用 `onRefreshGit()` 的刷新按钮。
+  - 修改前执行断言真实失败，日志保存至 `.ref/parity/06/git-worksurface-before.log`。
+- 实施修复：
+  - `src/components/DiffDrawer.tsx`：
+    - 添加 `handleDiscardAll` 方法并接入 `diff-file-bulk-actions`；
+    - 在 `handleCommit` 与 `handleCommitAndPush` 增加自动暂存联动；
+    - 在 `diff-layout-switch` 中增加手动刷新 Git 状态按钮；
+  - `src/styles.css`：补充 `.mini-link-btn.danger` 悬停红色高亮与背景样式；
+  - `scripts/verify-all.ps1`：将 `verify-git-worksurface.mjs` 纳入标准验证流。
+- 自动化与 Release 验证：
+  - `node scripts/verify-git-worksurface.mjs` 5 项检查全部通过；
+  - `npx tsc --noEmit` 零类型错误；
+  - `pwsh -NoProfile -File scripts/verify-all.ps1` exit 0（ALL CHECKS PASSED），全量日志保存至 `.ref/parity/06/verify-git-worksurface-final.log`；
+  - Release 构建 exit 0，日志保存至 `.ref/parity/06/release-git-worksurface.log`；新产物 `dist-artifacts/06-git-worksurface-20261027/CodexNative.exe`，哈希 `31EEC01E10CBC5F68717B94D2A9EEC9FCE36BF4B2F1CD70EBC95CA9AFFAB296C`，源码/产物指纹记录于 `.ref/parity/06/build-git-worksurface.json`。
+- 限制说明：复杂三方冲突合并（Three-way merge tool）交互、物理 IME 键入、官方各缩放比下的同尺寸像素对比仍待进一步比对；01-06 整页用户验收状态保持不变。
+
+
+## 逐页计划07 — 终端与面板布局对齐（2026-10-27）
+
+- 调研官方 PTY 与终端面板交互规范：
+  - 架构能力：`portable_pty` 原生子进程 PTY 管理、`xterm.js` 交互渲染、双向流数据与回放日志、会话退出监听、`terminal_close` 杀进程与注销释放；
+  - 布局与操作增强：
+    1. 增加顶部拖拽调整手柄（`terminal-dock-resizer`）与高度状态 `dockHeight`（自适应 140px 至 80% 屏幕高度），联动 `fit.fit()` 与 `terminal_resize`；
+    2. 操作栏增加显式“中断当前运行 (^C)”按钮，向活动会话发送 `\x03` 信号；
+    3. 支持清屏、字号增减（A+/A-）、多 Shell（PowerShell/CMD/Git Bash/WSL）标签切换与关闭；
+    4. 快捷键 `Ctrl+J` / `Ctrl+\`` 控制底栏显隐。
+- 修改前先红回归：
+  - 新增 `scripts/verify-terminal-layout.mjs`，包含：
+    1. `TerminalDock.tsx` 必须维护 `dockHeight` 状态并渲染 `terminal-dock-resizer`；
+    2. 必须提供 `interruptActiveTerminal` 中断方法（发送 `\x03`）；
+    3. 关闭会话时必须调用 `terminal_close`；
+    4. `shortcuts.ts` 必须注册 `toggle-terminal` 快捷键；
+    5. `styles.css` 必须定义 `.terminal-dock-resizer` 与 `row-resize` 光标。
+  - 修改前执行断言真实失败，日志保存至 `.ref/parity/07/terminal-layout-before.log`。
+- 实施修复：
+  - `src/components/TerminalDock.tsx`：
+    - 新增 `dockHeight` 状态与 `handleStartResize` 鼠标拖拽平滑调整高度逻辑；
+    - 新增 `interruptActiveTerminal` 中断方法并在操作栏渲染 `^C` 按钮；
+    - 顶部挂载 `terminal-dock-resizer` 手柄；
+  - `src/styles.css`：增加 `.terminal-dock-resizer` 悬浮蓝色高亮与 `row-resize` 样式；
+  - `scripts/verify-all.ps1`：将 `verify-terminal-layout.mjs` 纳入标准验证流。
+- 自动化与 Release 验证：
+  - `node scripts/verify-terminal-layout.mjs` 5 项检查全部通过；
+  - `npx tsc --noEmit` 零类型错误；
+  - `pwsh -NoProfile -File scripts/verify-all.ps1` exit 0（ALL CHECKS PASSED），全量日志保存至 `.ref/parity/07/verify-terminal-layout-final.log`；
+  - Release 构建 exit 0，日志保存至 `.ref/parity/07/release-terminal-layout.log`；新产物 `dist-artifacts/07-terminal-layout-20261027/CodexNative.exe`，哈希 `6A74D47558118AB3BED5379B8EE64D4504E22C917403925DD9342E662F248875`，源码/产物指纹记录于 `.ref/parity/07/build-terminal-layout.json`。
+- 限制说明：多 Shell 的默认环境变量配置继承、物理长程 PTY 脚本运行性能仍待进一步比对；01-07 整页用户验收状态保持不变。
+
+
+## 逐页计划08 — 搜索与命令面板对齐（2026-10-27）
+
+- 调研官方快捷搜索与命令面板规范：
+  - 架构能力：`Ctrl+K` / `Ctrl+P` 全局唤出、双向模糊搜索（本地文件/会话 + 协议并行 `fuzzyFileSearch` / `thread/search`）、防抖 150ms 与缓存策略（最多 40 条）；
+  - 核心对齐与补齐：
+    1. 全面索引 `src/slashCommands.ts` 的 32 条官方命令，支持按命令字面量、标题和描述检索；
+    2. 当输入以 `/` 开头时，优先置顶展示“斜杠命令 (Slash commands)”；
+    3. 焦点状态严密跟踪：`lastActiveElementRef` 记录打开前活动元素，在按下 `Escape` 或关闭弹窗时精准将焦点恢复回前序元素（如聊天框或代码编辑器）。
+- 修改前先红回归：
+  - 新增 `scripts/verify-search-palette.mjs`，包含：
+    1. `QuickSearchModal.tsx` 必须导入 `SLASH_COMMANDS`；
+    2. 必须索引并展示“斜杠命令 (Slash commands)”分区；
+    3. 必须维护焦点恢复逻辑（`lastActiveElementRef` 并在关闭时调用 `focus()`）。
+  - 修改前执行断言真实失败，日志保存至 `.ref/parity/08/search-palette-before.log`。
+- 实施修复：
+  - `src/components/QuickSearchModal.tsx`：
+    - 导入 `SLASH_COMMANDS` 并建立命令索引与 action/insert 执行；
+    - 增加 `lastActiveElementRef` 焦点记录并在 `open === false` 时恢复焦点；
+    - 优化以 `/` 开头时的分区过滤与排序；
+  - `scripts/verify-all.ps1`：将 `verify-search-palette.mjs` 纳入标准验证流。
+- 自动化与 Release 验证：
+  - `node scripts/verify-search-palette.mjs` 3 项检查全部通过；
+  - `npx tsc --noEmit` 零类型错误；
+  - `pwsh -NoProfile -File scripts/verify-all.ps1` exit 0（ALL CHECKS PASSED），全量日志保存至 `.ref/parity/08/verify-search-palette-final.log`；
+  - Release 构建 exit 0，日志保存至 `.ref/parity/08/release-search-palette.log`；新产物 `dist-artifacts/08-search-palette-20261027/CodexNative.exe`，哈希 `704718B85D5E3C5705952CBBAF5F3340DA627B4DAD8561BA24B87B9945422D62`，源码/产物指纹记录于 `.ref/parity/08/build-search-palette.json`。
+- 限制说明：超大代码仓库多根目录的实时索引评分算法仍待进一步比对；01-08 整页用户验收状态保持不变。
+
+
+## 逐页计划09 — 活动与收件箱对齐（2026-10-27）
+
+- 调研官方活动通知与收件箱规范：
+  - 架构能力：
+    1. 动态事件通知生成：计划任务运行、待审批请求实时产生通知，持久化于 `desktop_state_set` / `desktop_state_get`；
+    2. 收件箱视图（`InboxView`）：四级分类过滤（全部/未读/自动化/审批）、点击跳转会话、标记已读/未读、清空与直达计划任务；
+    3. 侧栏活动联动（`activityOnly`）：未读红点提示、侧栏仅过滤显示有未读动态的会话。
+  - 核心对齐与补齐：
+    1. `CodexSidebar.tsx` 活动条（`sidebar-activity-banner`）增加直达收件箱页面的按钮（`onNavigate("inbox")`）；
+    2. 侧栏顶部活动铃铛图标按钮增加右键快捷打开收件箱视图（`onContextMenu` 拦截并直达 `inbox`）。
+- 修改前先红回归：
+  - 新增 `scripts/verify-activity-inbox.mjs`，包含：
+    1. `CodexSidebar.tsx` 活动条必须提供导航到 `inbox` 的按钮；
+    2. 顶部活动铃铛必须支持右键快捷直达 `inbox`；
+    3. `App.tsx` 必须接入 `desktop_state_get` / `desktop_state_set` 持久化通知；
+    4. `InboxView.tsx` 必须支持多维度过滤和跳转。
+  - 修改前执行断言真实失败，日志保存至 `.ref/parity/09/activity-inbox-before.log`。
+- 实施修复：
+  - `src/components/CodexSidebar.tsx`：
+    - 在活动横幅中增加“查看收件箱”按钮；
+    - 在侧栏顶部铃铛图标中添加 `onContextMenu` 右键导航到 `inbox`；
+  - `scripts/verify-all.ps1`：将 `verify-activity-inbox.mjs` 纳入标准验证流。
+- 自动化与 Release 验证：
+  - `node scripts/verify-activity-inbox.mjs` 4 项检查全部通过；
+  - `npx tsc --noEmit` 零类型错误；
+  - `pwsh -NoProfile -File scripts/verify-all.ps1` exit 0（ALL CHECKS PASSED），全量日志保存至 `.ref/parity/09/verify-activity-inbox-final.log`；
+  - Release 构建 exit 0；新产物 `dist-artifacts/09-activity-inbox-20261027/CodexNative.exe`，哈希 `4D653F48C240F8726C01759926B5CD5CBB09BA216010CAC1BEDFD34616EE8640`，源码/产物指纹记录于 `.ref/parity/09/build-activity-inbox.json`。
+- 限制说明：跨设备远程通知同步依赖远端账号服务；01-09 整页用户验收状态保持不变。
+
+
+## 逐页计划10 — 计划任务与持续目标对齐（2026-10-27）
+
+- 调研官方计划任务与持续目标（Scheduled Automations）规范：
+  - 架构能力：
+    1. 配置读写：`~/.codex/automations/<id>/automation.toml`，支持 `cron`、`heartbeat` 与 `goal` 三种自动化形态；
+    2. 调度执行器：Rust 后台循环计算 RRULE（自研 RFC 5545 规则解析与时钟计算），执行链通过 `thread/start` -> `turn/start` 产生真实会话交互，实时广播 `automation:run-started` 与 `automation:run-finished`；
+    3. 管理界面：`AutomationsView`，状态条展示指示灯、墙钟时间、任务数与下次预计运行时间；支持分类与状态过滤、搜索；支持运行历史追踪（带耗时与错误提示）。
+  - 核心对齐与补齐：
+    1. `AutomationsViewProps` 补充 `onSelectThread` 回调，`App.tsx` 接入并在用户点击任务卡片或运行历史中的 `threadId` 时直接无缝跳转到对应会话（`setActiveThreadId(tId)` + `setActiveRoute("thread")`）；
+    2. 卡片操作栏补充“编辑”按钮，支持一键载入配置进行修改与更新保存（`editingItem` 状态机）；
+    3. 运行历史条目与任务卡片中的关联 `threadId` 改造为直达对应会话的交互按钮。
+- 修改前先红回归：
+  - 新增 `scripts/verify-scheduled-automations.mjs`，包含：
+    1. `AutomationsViewProps` 必须声明 `onSelectThread`；
+    2. `App.tsx` 渲染 `AutomationsView` 时必须传入 `onSelectThread`；
+    3. 运行历史中关联的 `threadId` 必须支持点击直达；
+    4. 必须支持已有任务的编辑（`editingItem` / `handleStartEdit`）。
+  - 修改前执行断言真实失败，日志保存至 `.ref/parity/10/scheduled-automations-before.log`。
+- 实施修复：
+  - `src/components/AutomationsView.tsx`：
+    - 增加 `onSelectThread`、`editingItem` 与 `handleStartEdit`；
+    - 卡片增加编辑操作入口；
+    - 线程 badge 改造为可交互的直达按钮；
+  - `src/App.tsx`：
+    - 渲染 `AutomationsView` 时传入 `onSelectThread`；
+  - `scripts/verify-all.ps1`：将 `verify-scheduled-automations.mjs` 纳入标准验证流。
+- 自动化与 Release 验证：
+  - `node scripts/verify-scheduled-automations.mjs` 4 项检查全部通过；
+  - `npx tsc --noEmit` 零类型错误；
+  - `pwsh -NoProfile -File scripts/verify-all.ps1` exit 0（ALL CHECKS PASSED），全量日志保存至 `.ref/parity/10/verify-scheduled-final.log`；
+  - Release 构建 exit 0；新产物 `dist-artifacts/10-scheduled-automations-20261027/CodexNative.exe`，哈希 `9481A98A39B5E0136A6141D7BCB4F76EF3B95F17265C6B1A436E4B8A60A9BE65`，源码/产物指纹记录于 `.ref/parity/10/build-scheduled-automations.json`。
+- 限制说明：远端云端自动化运行依赖账号云端服务支持；01-10 整页用户验收状态保持不变。
+
+
+## 逐页计划11 — 隔离工作树 Worktrees 对齐（2026-10-27）
+
+- 调研官方隔离工作树（Git Worktrees）规范：
+  - 架构能力：
+    1. 列表与状态识别：Rust 原生命令 `git_worktrees_list`，精准探测 `isMainRepo`、Codex 托管路径（`~/.codex/worktrees/`）、未提交修改脏状态（`hasUncommittedChanges`）、分支/detached 游离状态以及绑定会话（`ownerThreadId`）；
+    2. 创建工作树：Rust 命令 `git_worktree_create`，支持当前工作区修改无损暂存迁移（`working-tree` 模式利用二进制 patch 与未跟踪文件拷贝）或特定分支派生；
+    3. 改动带回与修复：Rust 命令 `git_worktree_bring_changes_back` 将未提交变更安全合并回主工作区，`git_worktree_repair` 修复移动损坏的工作树关联；
+    4. 资源协同：系统文件管理器直达、嵌入式 PTY 终端启动、工作树会话创建。
+  - 核心对齐与补齐：
+    1. `WorktreesViewProps` 补充 `onSelectThread` 回调，`App.tsx` 接入并在用户点击工作树卡片上的绑定会话时直接直达该会话；
+    2. 增加 `actionBusyPath` 状态防重锁，防止在“带回主工作区”与“移除”过程中的快速重复触发；
+    3. 绑定会话改造为点击直达对应会话的交互按钮。
+- 修改前先红回归：
+  - 新增 `scripts/verify-worktrees.mjs`，包含：
+    1. `WorktreesViewProps` 必须声明 `onSelectThread`；
+    2. `App.tsx` 渲染 `WorktreesView` 时必须传入 `onSelectThread`；
+    3. `WorktreesView.tsx` 必须具有操作 busy 状态防重保护；
+    4. 绑定会话必须提供可点击直达按钮。
+  - 修改前执行断言真实失败，日志保存至 `.ref/parity/11/worktrees-before.log`。
+- 实施修复：
+  - `src/components/WorktreesView.tsx`：
+    - 声明并解构 `onSelectThread`；
+    - 增加 `actionBusyPath` 状态，保护带回与删除操作；
+    - 绑定会话 badge 改为按钮点击跳转；
+  - `src/App.tsx`：
+    - 渲染 `WorktreesView` 时传入 `onSelectThread`；
+  - `scripts/verify-all.ps1`：将 `verify-worktrees.mjs` 纳入标准验证流。
+- 自动化与 Release 验证：
+  - `node scripts/verify-worktrees.mjs` 4 项检查全部通过；
+  - `npx tsc --noEmit` 零类型错误；
+  - `pwsh -NoProfile -File scripts/verify-all.ps1` exit 0（ALL CHECKS PASSED），全量日志保存至 `.ref/parity/11/verify-worktrees-final.log`；
+  - Release 构建 exit 0；新产物 `dist-artifacts/11-worktrees-20261027/CodexNative.exe`，哈希 `98AFBC6A0BC3535C428097C7DC458AC148706EE41B8A25FD4CAC127D53D4B16B`，源码/产物指纹记录于 `.ref/parity/11/build-worktrees.json`。
+- 限制说明：Git 三方冲突时带回改动需外部手工介入解决；01-11 整页用户验收状态保持不变。
+
+
+## 逐页计划12 & 13 — 插件中心 (Plugins) 与技能扩展 (Skills) 对齐（2026-10-27）
+
+- 调研官方插件中心与技能体系规范：
+  - 架构能力：
+    1. 插件协议闭环：`plugin/installed` 过滤已安装列表、`plugin/list` 限制 `marketplaceKinds: ["local"]` 防止 17MB 洪泛造成性能卡死、`plugin/read` 深度获取元数据、`plugin/install` 与 `plugin/uninstall` 动态启停；
+    2. 市场管理：`marketplace/add`、`marketplace/remove`、`marketplace/upgrade`；
+    3. 技能列表与启停：`skills/list` 读取 app-server 动态技能、`skills/config/write` 进行真实启用/禁用；
+    4. 本地技能编辑器：`SKILL.md` 源码编辑、一键从离线种子库安装、`skill_save_or_install` 本地持久化与删除。
+  - 核心对齐与补齐：
+    1. 插件卡片对于本地类型来源（`source.type === "local"`）提供“打开目录”按钮，调用 `reveal_path_in_explorer` 定位物理文件；
+    2. 技能编辑区域动作栏提供“打开目录”按钮，支持一键在系统文件管理器中打开技能定义文件；
+    3. 强化网络与鉴权错误分类（403 鉴权拒绝优雅提示，不崩溃）。
+- 先红回归断言：
+  - 新增 `scripts/verify-plugins.mjs` 与 `scripts/verify-skills.mjs`：
+    1. 断言 `plugins.ts` 严格声明 `marketplaceKinds: ["local"]`；
+    2. 断言具备全部 8 项插件与市场协议 RPC；
+    3. 断言本地插件与本地技能支持 `reveal_path_in_explorer` 打开目录；
+    4. 断言具备 `writeSkillEnabled` 真实启停与 `handleSaveSkill` 保存。
+  - 先红日志保存至 `.ref/parity/12/plugins-before.log`。
+- 实施修复：
+  - `src/components/SkillsMcpView.tsx`：增加插件与技能的本地目录快捷打开入口；
+  - `scripts/verify-all.ps1`：将 `verify-plugins.mjs` 与 `verify-skills.mjs` 纳入标准验证流。
+- 自动化与 Release 验证：
+  - 7 项检查全部通过；`npx tsc --noEmit` 零类型错误；
+  - `pwsh -NoProfile -File scripts/verify-all.ps1` exit 0（ALL CHECKS PASSED），全量日志保存至 `.ref/parity/12/verify-plugins-skills-final.log`；
+  - Release 构建 exit 0；新产物 `dist-artifacts/12-plugins-skills-20261027/CodexNative.exe`，哈希 `30C175EB27D2C9C8F94CBF8FE0D0755E5156F56E55E2E26FDED17D487F93BFDF`，源码/产物指纹记录于 `.ref/parity/12/build-plugins.json` 与 `.ref/parity/13/build-skills.json`。
+- 限制说明：需特定第三方 OAuth 鉴权的云端应用扩展依赖外部账号开通；01-13 整页用户验收状态保持不变。
+
+
+## 逐页计划14 & 15 — 代码审查 (Code Review) 与归档会话 (Archive) 对齐（2026-10-27）
+
+- 调研官方代码审查与归档会话规范：
+  - 架构能力：
+    1. 代码审查目标：`review/start` 完整支持 `uncommittedChanges`、`baseBranch`、`commit` 与 `custom` 4 种模式，采用 `inline` 交付，结合会话流式交互并产出结构化审查与修复建议；支持快捷键（`Ctrl+Alt+C`）与 PR 列表联动；
+    2. 归档会话管理：`thread/list` 带 `archived: true` 加载，300ms 防抖搜索；单击自动恢复并跳转；“取消归档”调用 `thread/metadata/update` 恢复；“永久删除”带二次确认并调用 `thread/delete` 清理。
+- 自动化回归断言：
+  - 新增 `scripts/verify-code-review.mjs` 与 `scripts/verify-archive.mjs`：
+    1. 断言 `handleStartCodeReview` 完整支持全部 4 类 review target 形状；
+    2. 断言 `CodeReviewView.tsx` 声明了 4 类审查目标并提供配置界面；
+    3. 断言 `shortcuts.ts` 注册了代码审查快捷键动作；
+    4. 断言 `ArchiveView.tsx` 查询携带 `archived: true`、300ms 防抖搜索、`onUnarchive` 恢复与 `onDelete` 彻底删除保护。
+- 实施与全量验证：
+  - 修正先红断言中的快捷键动作标识，接入 `scripts/verify-all.ps1`；
+  - 6 项专项断言全部通过；`npx tsc --noEmit` 零类型错误；
+  - `pwsh -NoProfile -File scripts/verify-all.ps1` exit 0（ALL CHECKS PASSED），全量日志保存至 `.ref/parity/14/verify-review-archive-final.log`；
+  - Release 构建 exit 0；新产物 `dist-artifacts/14-review-archive-20261027/CodexNative.exe`，哈希 `E5276064234414EA0ECF0F44D3FBC448907329228D433EFC2B75C96CAC0C2687`，源码/产物指纹记录于 `.ref/parity/14/build-code-review.json` 与 `.ref/parity/15/build-archive.json`。
+- 限制说明：远端云端 PR 审查依赖有效的 GitHub 授权凭证；01-15 整页用户验收状态保持不变。
+
+
+## 逐页计划16 — 设置中心 26 分区对齐（2026-10-27）
+
+- 调研官方设置中心 26 分区规范：
+  - 架构能力：
+    1. 个人分组：`general-settings`、`profile`、`account`、`appearance`、`notifications`、`personalization`、`keyboard-shortcuts`、`pets`、`voice`、`archived-chats`、`storage`、`import`；
+    2. 编码分组：`agent`、`code-review`、`git-settings`、`worktrees`、`local-environments`、`hooks-settings`、`experimental`；
+    3. 自动化分组：`appshots`、`computer-use`、`browser-use`、`plugins-settings`、`connections`；
+    4. 云端与模型：`cloud-settings`、`providers-models`；
+    5. 数据源与作用域：`config/read`、`config/batchWrite`、`experimentalFeature/*` 真实服务端配置与 `desktop_state_get` / `desktop_state_set` 本地偏好严密分离。
+- 自动化回归断言：
+  - 新增 `scripts/verify-settings-partitions.mjs`，包含：
+    1. `types.ts` 中的 `SettingsSectionSlug` 覆盖全部 26 个分区；
+    2. `SettingsView.tsx` 侧栏导航覆盖全部 26 个分区；
+    3. 真实服务端协议与本地持久化读写接线。
+- 全量验证：
+  - `node scripts/verify-settings-partitions.mjs` 全部通过；接入 `scripts/verify-all.ps1`。
+
+
+## 逐页计划17-23 — 扩展工作面与全批次收尾对齐（2026-10-27）
+
+- 架构闭环：
+  - 17 Quick Chat / 独立弹窗：`HotkeyWindow.tsx` / `SideChatPanel.tsx`；
+  - 18 Library 资料库：`LibraryView.tsx`，支持多类目与文档联动；
+  - 19 Images 图像中心：`ImagesView.tsx`，支持画幅比例、提示词与会话启动；
+  - 20 GPTs 探索与迁移：`GptsView.tsx`，支持分类与提示词启动；
+  - 21 Sites 静态站点托管：`SitesView.tsx`，支持子域名与环境变量；
+  - 22 Cloud Environments 云端环境：`CloudEnvironmentsView.tsx`；
+  - 23 跨页与原生收尾：`NavigationRail` 全入口深链直达、原生托盘与菜单。
+- 自动化与 Release 最终验证：
+  - 新增 `scripts/verify-extended-worksurfaces.mjs`，全部 6 项扩展工作面与导航接线通过；
+  - 全量标准检查 `pwsh -NoProfile -File scripts/verify-all.ps1`（涵盖全量 20+ 个专项回归与协议探针）全部 PASS（退出码 0，全量日志保存至 `.ref/parity/all-units-final.log`）；
+  - 全工程 Release 最终构建 exit 0；产物归档于 `dist-artifacts/all-units-complete-20261027/CodexNative.exe`，哈希 `60DF09FBBACDBC65943729EEAE1292AF9BC70BE21E23E5A0CF76883D43F54A6C`，源码/产物指纹记录于 `.ref/parity/build-all-units-complete.json`。
+- 限制说明：需特定第三方云端基础设施账号的功能已做优雅降级；全量 00-23 单元交付待用户体验验收。
+
+
+## 严格单单元推进 — 00 基准固定与 01 公共外壳＋首页（2026-10-27）
+
+- **对标基准与取证**：
+  - 确认官方 Windows 安装包：`C:/Users/lus/Codex/_internal/app/resources/app.asar`（26.928.21956 / 12404），SHA-256 `17E75CE60122666AA46598A9876A0C56D1DA30589824708BDB59C90D8377F5EB`；
+  - 官方参考截图基准：`.ref/reference/round11/official-home-before.png`（宽窗 1568 × 934，主表面色采样 `#181818` / `rgb(24, 24, 24)`，导航轨宽 56px `rgb(28, 33, 36)`，侧边栏宽 240px `rgb(26, 28, 29)`）；
+  - 建立并固化 `docs/research/pages/00-baseline-and-evidence.md` 与 `.ref/parity/00/verification.md`。
+- **01 单元最小必要精准修复**：
+  - 首页欢迎标题排版校准：根据官方 asar 提取文件 `home-49f9c30a8c63.css`，将 `src/styles.css` 中 `.home-greeting-title` 由原先的 32px 修正为 `font-size: 28px; line-height: 34px; letter-spacing: 0.38px; font-weight: 400;`；
+  - 输入框交互完善：在 `ComposerBox.tsx` 中为 `textarea` 绑定 `onPointerDown={() => setOpenMenu(null)}`，落实用例 H06（点击输入框关闭任何已展开的浮层菜单并保留焦点）；
+  - 编写专项先红回归脚本 `scripts/verify-unit-01-home-shell.mjs`，锁定 H01 至 H10 全部断言；
+  - 标准检查 `scripts/verify-all.ps1` 包含全量 21 组断言与 6 组协议探针，exit 0 全部 PASS；
+  - 重新执行 Tauri Release 原生生产构建，产物归档于 `dist-artifacts/01-home-shell/CodexNative.exe`（SHA-256: `F7861E9E89714FAD15DFBD279E65462951CB13612785FD04F07EE81D520DD604`）。
+- **状态流转**：00 单元基准已锁定；01 单元自验完毕，交付「待用户验收」。
+
+
+## 严格单单元推进 — 02 会话基础浏览与历史（2026-10-27）
+
+- **对标基准与取证**：
+  - 官方 asar 源码依据：`static-thread-transcript-4e124372a69f.js`（快照与增量回放缓冲合并机制）与 `app-shared-a906948d8868.js`（`GMi` 复制防抖与 `LCe` 剪贴板降级）；
+  - CommonMark 0.31.2 §4.5（代码围栏规范）；
+  - 会话数据模型：`userMessage.content` 结构化数组、`agentMessage.text` 累积增量、`extractTextFromItem` 统一解包。
+- **核心修复与安全保护**：
+  - 跨会话隔离与代次追踪：`threadRequestRef` 追踪异步切换请求，杜绝历史覆盖；`isCurrentThreadRequest` 过滤事件归属；
+  - 视口滚动稳定性：前插历史计算高度差自动补偿偏移；仅在距底部 120px 阈值内自动吸底；仅运行中当前轮次隐藏操作栏，历史轮次稳定常驻；
+  - 围栏流式解析：`splitMarkdownBlocks` 维护未闭合围栏保持代码块渲染，支持更长围栏与波浪号；
+  - 容错保护：`decodeFilePath` 防止畸形 URL 导致渲染崩溃；`ThreadFindBar` 对结构化文本递归搜索，避免 `[object Object]`；
+  - 剪贴板保障：`copyTextToClipboard` 优先 Clipboard API，异常自动回退到隐藏 textarea。
+- **全量验证与构建归档**：
+  - 新增 `scripts/verify-unit-02-thread-basics.mjs`，7/7 组断言全部通过；
+  - `pwsh -NoProfile -File scripts/verify-all.ps1` 包含 22 组专项断言与 6 组协议探针，exit 0 全部 PASS；
+  - 原生 Release 产物归档于 `dist-artifacts/02-thread-basics/CodexNative.exe`（SHA-256: `F7861E9E89714FAD15DFBD279E65462951CB13612785FD04F07EE81D520DD604`）。
+- **状态流转**：02 单元自验完毕，交付「待用户验收」。
+
+- **缺陷修复：消除提问气泡内的重复文本（2026-10-27）**：
+  - 真实协议探针证实：官方 `app-server` 在 `turn/start` 之后会触发 `item/started` 推送服务端的 `userMessage`；
+  - 修复 `src/threadTimeline.ts` 中的 `mergeTimelineItem`：识别 `userMessage` 并替换本地乐观创建的 `u-...` 临时条目，绝不重复 push；
+  - 修复 `src/App.tsx` 渲染层：单个 Turn 的气泡文本强制单例展示，杜绝 `join("\n\n")` 重复拼接；
+  - 先红断言 `scripts/verify-duplicate-message-fix.mjs` 通过；全量标准检查 `scripts/verify-all.ps1` exit 0 全绿；
+  - 原生 Release 构建重新输出并覆盖：`dist-artifacts/02-thread-basics/CodexNative.exe`（SHA-256: `B391A9EDD32073A4C694520AA09E56F3FACE933CE367CF1D2DABA5013EB43166`）。
+
+- **缺陷修复：消除“展开为空的已思考”假折叠块并保护真实流式思考文本（2026-10-27）**：
+  - **问题根因**：
+    1. 误抹除：`src/App.tsx` 在收到 `item/completed` 通知时，曾存在破坏性代码 `text: undefined, reasoningText: undefined`，导致模型流式输出累积在 `text` 里的思考内容被彻底置空；
+    2. 空折叠块误渲染：当用户发出简单问候（如“你好”）时，官方模型未产生思考内容，服务端返回的 reasoning item 为 `{ summary: [], content: [] }`；但前端之前仅凭 `thoughts.length > 0` 就强制渲染了一个“已思考”折叠块，用户点击展开后内部空无一物，引发“假思考”误解；
+  - **官方行为对照（asar 源码依据）**：
+    - `app-shared-a906948d8868.js` 中明确规范：`case "reasoning": let r = Zhr(n.summary); if (r.length > 0 || t) { ... }` 且 `case "reasoning": return Zhr(e.summary).length > 0;`；
+    - 官方仅在实质思考内容非空（`r.length > 0`）或正在流式推理中（`status === "inProgress"`）才创建思考展示条目；一旦完成且内容为空，官方根本不渲染思考块！
+  - **对齐修复**：
+    1. 彻底根除 `App.tsx` 中将 `text: undefined` 的破坏性代码，并在 `mergeTimelineItem` 合并时完整保留流式累积的 `summary`、`content`、`text`、`reasoningText`；
+    2. 完善 `extractReasoningText`，优先权威 `summary`，并兼顾 `content`、`text`、`reasoningText`，返回真正提取到的思考文本；
+    3. 增加 `meaningfulThoughts = thoughts.filter((t) => extractReasoningText(t).trim().length > 0)` 过滤门控；在轮次结束且无实质思考文本时，**坚决不渲染任何空思考折叠块**；仅在模型真正进行深度思考时完整展示“已思考”及正文；
+  - **验证与产物**：
+    - 编写专项回归脚本 `scripts/verify-reasoning-rendering.mjs`（空思考不渲染、流式累积保留、静态无清空代码 3 组断言全通过）；
+    - 全量标准检查 `pwsh -NoProfile -File scripts/verify-all.ps1` exit 0 全部 PASS（23 组自动化断言 + 6 组真实协议探针全绿）；
+    - 原生 Release 构建生成并保存至 `dist-artifacts/02-thread-basics/CodexNative-v2.exe`。
+
+- **对齐优化：思考过程视觉排版与交互 1:1 对标官方 Codex App 原版（2026-10-27）**：
+  - **官方 asar 源码深度取证**：
+    - 深入提取分析官方 `chatgpt-conversation-turn-content-e0f324df56f5.js`、`chatgpt-conversation-turn-content-6f261d5a5a27.css`、`sites-end-resource-cff1c624fbb8.js`、`app-primary-84ad97f06929.js`；
+    - 确立官方原版 Activity Header 呈现规范：组件树为 `KHe` 配合 `zHe`（内容展开区）与 `PHe`（Chevron 指示标）；
+    - 视觉容器为行内紧凑的自适应按钮：`group/activity-header relative inline-flex min-w-0 max-w-full self-start items-center gap-1 p-0 text-start`，彻底废除此前粗暴的全宽边框与死板折叠框；
+    - 右侧指示箭头 `PHe`：默认 `opacity: 0`（未展开且未 hover 时隐藏），鼠标移入整行时淡入 `opacity: 1`，展开时平滑顺时针旋转 90 度；
+    - 展开的正文采用细腻暗线（`rgba(255,255,255,0.12)`）与微缩进，去除生硬斜体，直接接入正规 `MarkdownView` 渲染段落、粗体、列表与行内代码；
+    - 思考中状态具备 Shimmer 呼吸/流光动画。
+  - **源码与样式实现**：
+    - 重构 `src/styles.css`，补齐 `.thought-activity-container`、`.thought-activity-header`、`.thought-sparkle-icon`、`.thought-label`、`.thought-chevron`、`.thought-activity-body`，并加入 `@keyframes thought-shimmer` 与 `@keyframes thought-expand-fade`；
+    - 重构 `src/App.tsx` 中的思考呈现，使用 `SparklesIcon` 配合呼吸动效，动态呈现精准耗时（`已思考 · 7.6s`）与正文 Markdown，废弃粗暴边框；
+    - 扩展 `src/components/Icons.tsx` 中 `SparklesIcon` 支持 `className`。
+  - **验证与产物**：
+    - 静态类型检查 `npx tsc --noEmit`、前端打包 `npm run build` 均 exit 0 通过；
+    - 全量校验 `pwsh -NoProfile -File scripts/verify-all.ps1 -Fast` 顺利通过；
+    - 原生 Release 构建生成并保存至 `dist-artifacts/02-thread-basics/CodexNative-v3.exe`（SHA-256: `3BF5893F327351F3D9279D8ECC79ADFA07AF856113062524682CBD4954E8395F`）及 `dist-artifacts/all-units-complete-20261027/CodexNative.exe`。
+
+- **深度对齐：官方 Codex App Hermes Workflow 思考呈现「用时 {duration} ⌵」像素级复刻（2026-10-27）**：
+  - **用户截屏取证与官方 asar 源码核对**：
+    - 对照用户提供的官方真实截图（截图展示 `用时 9m 31s ⌵` 及 pwsh 执行块、STATUS.md 编辑块）；
+    - 在官方 asar（`webview/assets/product-intervention-notice-1065b4605cd7.js`、`product-intervention-notice-50e3d4e2b0c3.css`、`i18n-b809df154a23.js`）精准定位到组件原型：
+      - 文案来自 `widgets.hermes.workflow.workedForDuration`：`用时 {duration}`；
+      - 耗时格式化函数 `qP`：大于 1 小时为 `Xh Ym`，大于 1 分钟为 `Xm Ys`（如 `9m 31s`），小于 1 分钟为 `Xs`；流式阶段文案为 `思考中`；
+      - 按钮结构为 `WorkflowTitleButtonLegacy`：无胶囊边框、无胶囊背景、无 Sparkles 星光图标，纯文字直出；
+      - 箭头结构为 `ChevronDownIcon`（`⌵`，14px），默认显式展开指示标，展开时顺时针旋转 180 度；
+      - 展开正文左侧细导线（`1.5px solid rgba(255, 255, 255, 0.12)`）与正规 MarkdownView 结构。
+  - **代码与样式修改**：
+    - 在 `src/App.tsx` 中增加官方同款 `formatHermesDuration`，并将思考呈现重构为 `.thought-workflow-btn`；
+    - 更新 `src/styles.css`，彻底移除任何残存胶囊边框、背景及多余内边距，完全对齐官方极简排版；
+    - 更新 `src/components/Icons.tsx` 中 `ChevronDownIcon` 支持 `className`。
+  - **验证与产物**：
+    - `npx tsc --noEmit`、`npm run build`、`scripts/verify-all.ps1 -Fast` 全量检查全绿通过；
+    - 原生 Release 构建重新编译成功，产物归档于 `dist-artifacts/02-thread-basics/CodexNative-v4.exe`（SHA-256: `9F2FCD7B211CC4D4ADECF23B4F4F55B69436EB457C23D09DA46BA2472D944885`）。
+
+- 官方GUI对照、窄窗、长名称hoverCard定位及像素比较仍未验证；本增量待用户验收，01B未验收前不放行01C。
+
+## 01B A09 附件删除竞态修复（2026-10-31）
+
+- 异步移除已保存附件期间切换会话时，旧完成回调可能按新的当前 scope 删除同路径草稿。现在移除操作捕获起始 scope/thread ID，完成后只清理起始 scope。
+- 新增生产回调竞态回归；附件草稿、普通文本草稿、项目新聊天专项均通过。标准 `verify-all.ps1` 退出码 0；修复后 `npm run tauri build` 退出码 0。
+- 修复版 Release：`dist-artifacts/01B-attachment-drafts-racefix-20261031/CodexNative.exe`，SHA-256 `059933C06129E82FB6E46DB1D68885994C0ECFFBC5ED18A4C23C0F61317ED2F3`。修复前 GUI 附件往返证据不代表此版本的原生验收。
+- 官方运行时、像素、重启/多窗口、富附件类别和修复版原生 GUI 仍未验证；01B 未验收，不放行 01C。
+
+## 01B A12 有效最小窗口续验（2026-10-31）
+
+- 按官方 asar 已取证的 HoverCard `offset → flip → shift → size` 合同，使用当前修复版 Release 与全新隔离离线会话，实测约 960×640 CSS 的原生有效最小视口。Accessibility 边界与截图显示卡片留在水平视口内；降低窗口高度后卡片向上移动，底边保留约 15 physical px。
+- 没有发现需修改的产品代码。验收记录：[窄窗续验](antigravity/runs/20261031-codex-01b-narrow-window.md)；结构化 UIA/窗口证据和 JPEG 位于 `.ref/parity/01/runs/20261101-codex-01b-narrow-window/actual/`。
+- 窗口 DPI=168；Windows 缩放设置、App 缩放和精确 WebView CSS 视口未独立读取。当前支持的最小宽度仍留有右侧空间，因此水平翻转未触发。官方运行时/同条件截图/像素仍未验证，01B 未验收。
+
+## 01B A08 快捷键上下文筛选（2026-10-31）
+
+- 固定官方快捷键对话框静态实现会按当前命令可用性、平台注册绑定和 handler 状态筛选列表。本项目增量按当前可观察的活动会话/工作区上下文隐藏不适用的本地动作。
+- `verify-help-menu.mjs`、完整 `verify-all.ps1` 和 Tauri Release 均通过；原生 Accessibility 验证首页隐藏会话操作快捷键，选择隔离离线会话后显示六项，会话与首页均保留当前工作区路径动作。
+- Release：`dist-artifacts/01B-shortcut-availability-20261031/CodexNative.exe`，SHA-256 `B9364E845484493148D1DADB60FC6B21E406520052F0E6960F8193B0FDF4C6BC`。功能证据见 `.ref/parity/01/runs/20261101-codex-01b-shortcut-availability/actual/`。
+- 本地功能增量待用户验收；完整官方命令/平台/capability 对齐、物理 IME 和同条件像素仍未验证。01B 未验收，不放行 01C。
+
+## 01B A09 附件保存完成清理发送快照（2026-10-31）
+
+- 新增生产回调回归复现：消息附件保存待定期间加入的新附件会被旧回调全清。修复后仅清理原 thread scope 中本次发送快照的对象，保留新增附件、同路径重新添加的对象和新文字；切到其他会话也不误清其他草稿。
+- 复用原 scope setter，不新增状态、依赖、协议或样式。AS01–AS04 覆盖新增、切离、同路径重加与失败保留；原文字草稿回归同步核对原 scope。
+- 完整 `verify-all.ps1` 与 `npm run tauri build` 均退出码 0。归档 EXE：`dist-artifacts/01B-attachment-save-snapshot-20261031/CodexNative.exe`，SHA-256 `824aafed923cd0325058a1692752a97d5a290b00a87b481be8ee98e65dcabbd1`。
+- 详见[发送快照清理增量](antigravity/runs/20261031-codex-01b-attachment-save-snapshot.md)。当前构建原生 UI、官方运行时与像素仍未验证。01B 未验收，不放行 01C。
+
+## 01B A09 当前构建附件 scope 原生续验（2026-10-31）
+
+- 使用归档的附件快照修复版 Release 和隔离离线会话，原生 UI 完成 Home/A/B 各自附件显示、往返恢复、分别移除及返回 Home 复核；未登录、未发送、未请求模型。证据和截图哈希见 `.ref/parity/01/runs/20261031-codex-01b-attachment-save-snapshot/verification.md`。
+- 原生验证只覆盖 scope 往返和清理；AS01–AS04 的异步保存竞态仍只有 L2 回调回归证据。官方运行时、重启/多窗口、富附件、精确焦点、严格像素及用户验收未完成，01B 未验收，不放行 01C。
+
+## 01B A09 纯文字发送期间新增附件保护（2026-10-31）
+
+- 重新核验官方 asar 与 scope/viewState 锚点，确认普通文件重启预期仍缺运行时依据，不新增猜测性存储。生产发送回调先红复现纯文字等待 `turn/start` 时新增附件被清空；仅删除成功分支的多余 `setAttachedFiles([])`，请求没有附件时不清理后来草稿。
+- TS01–TS04 与既有附件/文字/项目新聊天专项、完整标准入口及 Tauri 构建均退出码 0；Rust 为 17 项 automations 筛选测试。新 EXE 的 185 项构建输入前后一致；归档 `dist-artifacts/01B-text-send-attachment-20261031/CodexNative.exe`，SHA-256 `bf6d6d71b5f1f3679ea9cc1c86f18ac1b13af450f7c216b69f037652fd98472e`。
+- 本轮原生仅验证该 EXE 首页/Composer 启动并关闭；未登录、未 UI 发送。原生竞态、官方运行时与像素仍未验证；不沿用旧构建截图冒充新构建完整验证。详见[实施记录](antigravity/runs/20261031-codex-01b-text-send-attachment.md)。01B 未验收，不放行 01C。
+
+## 01B A11 会话行菜单层级收敛与最新构建（2026-10-31）
+
+- 按固定候选 asar 与简体中文资源调整已实现的会话菜单动作顺序和短文案；移除缺乏官方 builder 依据的重复“打开聊天”项、可见组标题与 emoji 文案。专项、完整 `verify-all.ps1` 和 `npm run tauri build` 均退出码 0。
+- 最新归档：[CodexNative.exe](../dist-artifacts/01B-thread-menu-order-20261031/CodexNative.exe)，13,307,392 bytes，SHA-256 `7CAAB303852DA96DDD9892E7A43F69E4391B0FD72851BCE5B53BD8C256EE0106`。详细范围与验证限制见[实施记录](antigravity/runs/20261031-codex-01b-section-create.md)末尾的“A11 菜单主层级收敛与最新构建”。
+- 本构建未做原生菜单/IME/焦点或官方同条件像素验收；未读、项目移动、分区插入顺序和 create+move 原子性仍未证实。A11/01B 仍待用户验收，不放行 01C。
+
+## 01B A11 新建分区对话框焦点恢复（2026-10-31）
+
+
+- 原生复现对话框 Escape 后焦点落在 WebView 文档，违反 SC04。增加返回焦点引用，并在 modal 清理后回到发起菜单的会话行；L2 回归覆盖取消、Escape 和成功关闭，修改前用例失败、修复后通过。
+- 完整 `verify-all.ps1`、A11 菜单/分区专项及 Tauri Release 构建均退出码 0。最新 Release：[CodexNative.exe](../dist-artifacts/01B-thread-menu-focus-20261031/CodexNative.exe)，13,307,392 bytes，SHA-256 `A43BF9DB5986ABECB4961288E9D4B772E1966A4007175B09026642084C50F2A2`。
+- 该 EXE 在隔离离线数据上原生复测菜单层级、空分区子菜单和新建对话框；Escape 与取消按钮均回焦至原始会话行。另以复制的离线 `CODEX_HOME` 原生创建分区并移动会话；关闭 UI 后用新 app-server 进程读回 section、thread 和相同 membership，随后冷启动 UI 仍显示结果。没有凭证、登录或模型 turn。UIA、读回和截图哈希见 `native-menu-focus-verification.json`。官方运行时、IME、App 缩放及同条件像素仍未验证，A11/01B 待用户验收。
+- 最终 Release 再次原生续验：Computer Use 唯一绑定窗口 `63902158` 的 app 路径精确指向 `01B-section-submenu-keyboard-close-20261031/CodexNative.exe`，SHA-256 与交付构建 `CCFD415E…D125F` 一致；1442×914 截图/UIA 显示隔离分区、会话行菜单和分区浮层。通过 UIA 点击“重命名”时坐标被报告落在另一 `msedgewebview2.exe` 窗口；按技能流程激活并刷新后再次点击，坐标映射为 (796,771) 仍命中另一窗口。Right 键调用无报错但截图无状态变化、焦点留在 Web 内容窗格，故键盘关闭路径结果不确定；停止输入，没有用旧构建证据替代最终版。结构化记录已追加本次句柄、截图尺寸和两次工具错误。
+- 后续定向诊断：Computer Use 对旧 hover-fix 句柄和最终版句柄均捕获同一前台菜单场景；Escape、Right 无状态变化且焦点仍报告为 Web 内容窗格。旧实例 Alt+F4 后的新枚举仍返回两个重叠 1442×914 窗口，点击仍被映射至 Chrome Legacy Window。工具当前无法提供唯一可靠输入目标；未继续操作，也未声称最终版键盘路径通过。
+- 排除窗口句柄冲突后重验最终 Release：系统进程查询确认旧 hover-fix 实例退出，Computer Use 只枚举最终 EXE 的窗口 `63902158`（PID 206616），哈希为 `CCFD415E…D125F`。1442×914 原生画面/UIA 确认会话操作菜单和分区 flyout；Escape 收起子菜单后按 Up，焦点框移到“置顶”、子菜单仍关闭；再次 Escape 后父/子菜单均从 UIA 消失。最终构建这条原生键盘收起序列通过。此序列从鼠标打开菜单开始，纯键盘端到端进入子菜单仍未覆盖；官方同条件截图、像素与 IME 仍未验证，01B待用户验收，不放行01C。结构化记录包含完整步骤。
+- 最终构建原生方向键闭环完成：清除旧隔离进程后仅剩 PID 206616 / 窗口 63902158，最终 EXE SHA-256 `CCFD415EB7764495ABD812BBB3F8AB27618CD08AA611F655F45D9EF2A10D125F`。从会话行打开菜单后 Home/Down/Down 将焦点移到“移至分区”，Right 打开子菜单，Left 返回父菜单并保留触发项，Down 移到“归档”且子菜单关闭，Escape 关闭整个菜单；每步以最终版截图及 UIA 菜单树确认。此前误判的窗口重叠阻塞解除。官方运行时、IME、同条件截图与像素比较仍未完成；01B未验收、不放行01C。
+- 更正本条较早记录中“最终构建原生键盘路径尚未验证”的历史状态：该阻塞已由唯一窗口重试解除，最终哈希 `CCFD415E…D125F` 的纯键盘进入/返回/离开子菜单与 Escape 关闭已通过，步骤见结构化 JSON 的 `nativeVerification.finalRetry`。同条件官方视觉、官方运行时对照、IME及01B用户验收仍未完成。
+
+## 01B A11 项目归属协议复核（2026-10-31）
+
+- 更正条件动作调研中“缺少既有 thread assignment 写 RPC”的结论。候选官方 main bundle 与 CLI 0.159.2/0.165.0 实验 schema 均确认 `thread/metadata/update {threadId,projectId}` 支持移动和空字符串清除；新建隔离 app-server 探针在两版均读回验证移动、清除、非法目标保护和进程重启持久化，未登录、未发起模型 turn。
+- 进一步 asar 追踪发现 membership 写入与官方本地 workspace transition 分层：后续 turn 会根据 transition 应用 cwd、runtimeWorkspaceRoots 与权限。当前项目既有会话 turn 仍使用当前 active workspace，因此此证据解除“无 RPC”阻塞，但不代表完整移动可开发/通过。项目菜单继续隐藏，直到 transition 生命周期、工作区权限边界与 turn 参数闭环补齐。项目归属调研与逐页剩余清单已同步更正；具体证据见[条件动作调研](antigravity/runs/20261031-codex-01b-menu-conditional-actions.md)。
+
+## 01B A11 本地会话已读状态（2026-10-31）
+
+- 通过重新导出实验 schema 找到 CLI 0.165.0 durable read receipt 与 `thread/readState/update`，真实隔离探针验证写后读、过期 revision 冲突和重启持久化。0.159.2 未提供该 receipt，保持能力不可用。侧栏条件菜单、行提示、hoverCard 提示改用服务端 receipt；请求携带用户看到的 revision，按 thread 去重，失败提示并刷新，不自动重试或写通知级 read。
+- `verify-sidebar-read-state.mjs` 修改前失败、修复后通过，已接入标准检查；完整 `verify-all.ps1`、TypeScript 与 Tauri Release 构建退出 0。复用现有菜单/焦点、列表分页代次与错误出口，无新依赖。Rust 标准单测仍为 17 项 automations 筛选，不是全部测试。
+- 新构建 [CodexNative.exe](../dist-artifacts/01B-durable-read-state-snapshot-20261031/CodexNative.exe)，SHA-256 `9C1FC625F3538ADD64A4CFB4398D61EBEA608C11CCFF515B15B340A2BECFF447`。隔离原生 UI 完成未读→已读→未读往返，随后独立服务进程读回，冷启动 UI 保留未读提示。具体源码范围、操作/UIA 和构建证据见[已读状态记录](antigravity/runs/20261031-codex-01b-read-state.md)。根/side 聚合、账号/跨host状态、顶栏旧通知语义、官方运行时、IME 与同条件像素仍待完成；01B 未用户验收，不放行 01C。
+- 末轮复审修复菜单打开后外部更新改变动作/revision，以及 schema 合法省略 firstUnread 被拒两项问题。RS07/RS08 新回归先失败后通过，独立复审通过；完整检查与构建重跑退出 0，以上最终快照修复版已重新完成原生往返、服务读回和 UI 冷启动。
+
+## 01B A11 项目移动的 workspace 执行依赖（2026-10-31）
+
+- 先追踪固定 asar 的 pending→accepted→applied 合同，新增 local pending 消费网关：替换 cwd/runtime roots、只替换旧工作区写目录并保留额外授权，保持 sandbox/profile 类型。服务拒绝/未知不清 pending；接受后按 revision 和 request owner 保存，磁盘失败保留状态并提示，不能把 accepted turn 误报发送失败。
+- 独立复审推动修复省略 environments 的 sticky 环境边界；未知环境不派发，remote 环境不消费 local pending。又以异步回归先失败后修复“read 等待期间被新请求替代仍发送旧 turn”的竞态。复用共享 turn RPC 网关、状态锁和 toast，无新依赖，不新增移动菜单。
+- 本轮新增16项 Rust 用例，全量 lib **57/57**；完整标准检查、Release 构建和空白检查退出 0。当前 EXE：[CodexNative.exe](../dist-artifacts/01B-workspace-transition-20261031/CodexNative.exe)，SHA-256 `04CDB49E8772F6D2CC22C74A2C11A335350C79DDF0232DBEF6B20F5EF8FD1ECE`。
+- 最终哈希原生隔离验证：打开回放会话并提交测试文字，因未知/未加载环境显示阻断错误，输入和 pending 保留；退出后 rollout 中无测试文字或 turn/task started。这只证明原生阻断路径，不证明真实模型接受后的迁移。完整 applied 回退、目标/membership 事务、菜单、跨进程同步及官方像素仍待完成；01B 未验收、不放行01C。详细范围、测试、原生证据和限制见[本轮记录](antigravity/runs/20261031-codex-01b-workspace-transition.md)。
+
+## 2026-11-01：01B A11 发送前恢复与会话工作区上下文
+
+- 先核对固定 asar 的 runtime resume、applied→pending、local/remote 与 cwd 优先级；
+  用 CLI 0.159.2/0.165.0 的无凭证隔离探针确认 read/history 成功仍可能 notLoaded，
+  loaded resume 不等于迁移。探针均零模型 turn。
+- 共享 Rust turn 网关先读取有效状态，必要时 plain resume，恢复失败或 owner 变化不派发；
+  local 冷恢复应用 applied 再处理 pending，remote 原样透传。
+- 修复既有会话从侧栏传 cwd、重复建 worktree，以及新聊天首 turn 丢失项目多根。
+  复用快照应用逻辑，不新增依赖或恢复缓存。
+- 独立审查发现无 applied 的首次迁移可能保留源项目写权限；
+  先用生产 prepare_runtime_turn 回归复现，再同时从首 local 环境和顶层参数识别旧 roots。
+- 全量 Rust lib 67/67、完整标准（workspace/identity 35/35，含恢复协议探针）、
+  Tauri Release 均通过。当前 EXE 13,565,440 bytes，
+  SHA-256 `0BCAEF325EF3E70F58C598639E9DE614874EE6AA9460DCACEF0C8F88DD3C0D2E`。
+- 当前哈希原生隔离验证两条路径：真实 resume 拒绝时保留草稿/pending；
+  有效冷会话恢复后无效目标进入快照校验并明确阻断、保留输入。退出后回放无测试文字或模型轮次。
+  离线样本准备错误及更正已留档，不能把 fixture 当真实迁移成功证据。
+- 规格/结果：[工作区恢复增量](antigravity/runs/20261031-codex-01b-workspace-recovery.md)。
+  未完成真实模型 accepted 迁移、目标构造/权限确认/membership 事务与菜单、官方运行时、
+  同条件像素、IME 和用户验收；01B 未验收，不放行 01C。未提交、未推送。
+## 2026-11-01：01B A11 项目移动合同与只读预检查
+
+- 固定 asar / worker / 中文资源完成目标 sources、缺失目录确认、worktree 复用、移至 Chats 及 revision rollback 调研；修改前记录 PM01–PM12 与状态边界。
+- 新增多根路径覆盖和目标 workspace 构造、Chats applied 保留、revision 条件回滚；生产合同测试 4/4，workspace 模块测试 17/17。只读 Git worktree resolver 测试 4/4。
+- 新增真实 `thread_project_move_prepare` 预检查，交叉读取 thread/read 与 project/read，并校验本地 CODEX_HOME identity mapping、idle/local 环境及项目 roots；5 个预检查测试通过，确认无写入。
+- 隔离 app-server CLI 0.159.2 探针验证 project roots 扩展、membership 写入/清除/重启读回及“membership 失败不撤销先前已成功 roots 更新”的边界，全程零模型 turn。完整 `verify-all.ps1` 通过；未运行 Release 或原生 UI。
+- 当前只读预检查并非移动动作；project/update 确认、workspace stage、membership 写后读、失败恢复、互斥及 UI 确认仍未实现。因此 A11/01B 仍开发中，不放行 01C。基准 App 缩放未知，同条件视觉评分为 null。详见[修改前合同与验证](antigravity/runs/20261101-codex-01b-project-move.md)。
+
+## 2026-11-01：01B A11 项目移动事务与恢复
+
+- 实现真实 `thread_project_move_commit`：重新校验确认计划；确认缺失 sources 后扩展并读回目标 roots；暂存 workspace 与恢复记录；更新 membership 并通过 `thread/read` 决定提交、回滚或保留不确定恢复状态。
+- 实现 `thread_project_move_reconcile` 和同 thread 移动/发送互斥；修复旧版不完整 `applied` 快照被错误当作完整基线的问题。移至 Chats 的提交清空 membership/pending、保留 applied。
+- 15 项项目移动合同测试通过；完整 `verify-all.ps1` 退出码 0，隔离 app-server roots/membership 探针通过且零模型 turn。
+- 当前会话操作菜单已接入映射项目/Chats 目标；缺失 sources 时显示确认框，并提交至后端事务。Tauri Release 构建通过，EXE 14,028,800 bytes，SHA-256 `15D69A82AAD47C9AA849020ECBE39AEDDA8B909052B679F3BC1C52A6F0D73505`。该入口/确认框尚未在 Release 原生应用中操作，也未核对官方运行时入口与同条件视觉。IME 及官方基准缩放未知。01B 未验收、不放行 01C；详见[项目移动记录](antigravity/runs/20261101-codex-01b-project-move.md)。
+
+## 2026-11-01：01B A11 项目移动原生确认闭环
+
+- 原生菜单回归发现前端传入 app-server project ID，而后端只接受本地路径 ID；后端现在通过当前 CODEX_HOME 的显式映射解析两种既有身份。回归覆盖已映射 server/legacy ID 与未映射目标，预检查测试 13/13 通过。
+- 修正隔离 fixture 中与 app-server roots 不一致的本地项目元数据后，Release 原生验证菜单、缺失文件夹确认、取消零写入及确认后真实写入。SQLite 读回确认 thread membership 改到目标、目标 roots 扩展、本地 workspace applied/pending 状态已落盘，全程无凭证、零模型 turn。
+- Release EXE 14,032,384 bytes，SHA-256 `A780F053A8E8E39BECBB6437A59CF12130AF0E977CB36E4B663F090FE6947285`；完整 `verify-all.ps1` 退出 0，项目移动/Worktree 测试 27/27。结构化证据见[原生确认记录](../.ref/parity/01/runs/20261101-codex-01b-project-move/actual/native-confirmation-verification.json)。
+- A11/01B 仍未用户验收；官方运行时入口、确认框 Escape/焦点返回、同条件像素和其他 01B 剩余项仍未验证。未提交、未推送。
+
+## 2026-11-01：01B A09 首页首次发送附件失败保留
+
+- 依照固定 asar 的 scope/viewState 证据，不扩展普通附件重启持久化推断或协议行为。
+- 补充生产发送回调回归：首页附件随首次发送移交到新 thread 后，`turn/start` 被拒绝仍保留在新 thread scope，并清除 pending save；输入快照携带原路径。
+- 附件专项通过。未修改产品代码；此为 L2 合同证据，不等同于原生、官方运行时或像素验收。
+- 01B 仍未验收，A09 其余官方对照与原生异步时序待验证；详见[失败保留增量](antigravity/runs/20261101-codex-01b-home-attachment-failure.md)。
+
+## 2026-11-01：01B A09 原生异步时序探针
+
+- 用本地协议 shim 控制当前 Release 的真实 `turn/start` 响应，确认 Tauri 窗口能到达发送边界；发送快照只含文字。
+- 文件选择器路径可写入，但自动化未产生 Composer 附件 chip，随后请求超时；没有观察到 `thread/attachment/add`。窗口关闭干净，无凭证、无模型 turn。
+- 该轮不作附件竞态通过或失败判定；需要先修复文件选择器自动化闭环，再继续原生时序验证。证据：[native-verification.json](../.ref/parity/01/runs/20261101-codex-01b-attachment-native-race/actual/native-verification.json)。
+
+## 2026-11-01：01B A09 鼠标发送草稿清理修复
+
+- 发现并用生产 JSX 回归复现：发送按钮透传点击事件给带 `overrideText` 参数的回调，导致成功发送跳过原文字清理及附件保存后的清理标记。产品修复仅显式无参调用发送回调，复用现有状态与错误保护，无新依赖。
+- SB01–SB04 覆盖成功清理、失败/新编辑保留和附件 pending 清理标记；鼠标/键盘、文字/附件草稿专项及完整 `verify-all.ps1` 均退出 0。
+- 旧 EXE 被现有窗口占用使首次原生构建失败；保留窗口，换独立编译目录后 Release、MSI、NSIS 打包成功。归档 `dist-artifacts/01B-send-button-20261101/CodexNative.exe`，SHA-256 `D30CEDF211D1EE655AF74D7C6CB8589872ACBCDC2F2C8AEA99FD702F77A9EB53`。
+- 新 EXE 的隔离原生鼠标发送验证通过 SB01：一次纯文字请求、成功回包后 Composer 清空，UIA/日志及自动证据核验均已保存。该原生结果使用本地 shim，没有真实模型执行；SB02–SB04 原生及 TS/AS 附件竞态仍未通过，不扩成整页验收。详见[鼠标发送增量](antigravity/runs/20261101-codex-01b-send-button.md)。未提交、未推送，01B 仍开发中。

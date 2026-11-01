@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { callAppServer, isTauriRuntime } from "../bridge";
 import { MainViewRoute, ProjectScriptCommands, SettingsSectionSlug, SkillInfoItem, ThreadSummary, WorkspaceFileHit } from "../types";
+import { SLASH_COMMANDS } from "../slashCommands";
 
 export interface QuickSearchModalProps {
   open: boolean;
@@ -256,6 +257,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   );
   const [remoteLoading, setRemoteLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const lastActiveElementRef = useRef<HTMLElement | null>(null);
   /** 查询词 -> 协议结果缓存：避免每次渲染/重复输入重复请求 app-server。 */
   const remoteCacheRef = useRef<
     Map<string, { files: RemoteFileResult[]; threads: RemoteThreadResult[] }>
@@ -267,9 +269,14 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
 
   useEffect(() => {
     if (open) {
+      lastActiveElementRef.current = document.activeElement as HTMLElement | null;
       setQuery("");
       setSelectedIndex(0);
       setTimeout(() => inputRef.current?.focus(), 40);
+    } else {
+      if (lastActiveElementRef.current && typeof lastActiveElementRef.current.focus === "function") {
+        lastActiveElementRef.current.focus();
+      }
     }
   }, [open]);
 
@@ -335,6 +342,40 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
         ? remoteResults
         : null;
     const results: SearchResultItem[] = [];
+
+    // ── 0. 斜杠命令索引 (Slash commands) ──
+    const isSlashOnly = q.startsWith("/");
+    const matchingSlashCommands = SLASH_COMMANDS.filter((cmd) => {
+      if (!q) return false;
+      const cleanQ = q.startsWith("/") ? q.slice(1) : q;
+      return (
+        cmd.command.toLowerCase().includes(q) ||
+        cmd.title.toLowerCase().includes(cleanQ) ||
+        cmd.description.toLowerCase().includes(cleanQ)
+      );
+    });
+    const slashItems: SearchResultItem[] = matchingSlashCommands.map((cmd) => ({
+      id: `slash-${cmd.id}`,
+      category: "action",
+      section: "斜杠命令 (Slash commands)",
+      title: `${cmd.command} ${cmd.title}`,
+      subtitle: cmd.description,
+      rightLabel: cmd.kind === "action" ? "动作" : "指令",
+      icon: <Command size={14} />,
+      onSelect: () => {
+        if (cmd.kind === "action" && cmd.action) {
+          onTriggerCommand(cmd.command);
+        } else if (cmd.insertText) {
+          onTriggerCommand(cmd.insertText);
+        } else {
+          onTriggerCommand(cmd.command);
+        }
+        onClose();
+      },
+    }));
+    if (isSlashOnly) {
+      results.push(...slashItems);
+    }
 
     // Quick Actions
     const defaultActions: SearchResultItem[] = [
@@ -423,6 +464,10 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
           a.subtitle?.toLowerCase().includes(q)
       )
     );
+
+    if (!isSlashOnly && slashItems.length > 0) {
+      results.push(...slashItems);
+    }
 
     // Threads —— 协议结果优先，本地结果按 id 去重补充。
     const remoteThreads = remote?.threads ?? [];

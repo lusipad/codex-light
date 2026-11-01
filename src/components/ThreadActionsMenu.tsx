@@ -12,6 +12,8 @@ export interface ThreadActionItem {
   hint?: string;
   separatorBefore?: boolean;
   children?: ThreadActionItem[];
+  type?: "radio" | "checkbox" | "label";
+  checked?: boolean;
 }
 
 export interface ThreadActionsMenuProps {
@@ -44,8 +46,12 @@ export const ThreadActionsMenu: React.FC<ThreadActionsMenuProps> = ({
   const [open, setOpen] = useState<boolean>(false);
   const [activeSubmenuId, setActiveSubmenuId] = useState<string | null>(null);
   const [position, setPosition] = useState<MenuPosition | null>(null);
+  const [submenuPosition, setSubmenuPosition] = useState<MenuPosition | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const submenuRef = useRef<HTMLDivElement>(null);
+  const submenuTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const focusSubmenuRef = useRef(false);
 
   const safeItems = Array.isArray(items) ? items : [];
 
@@ -53,15 +59,42 @@ export const ThreadActionsMenu: React.FC<ThreadActionsMenuProps> = ({
     setOpen(false);
     setActiveSubmenuId(null);
     setPosition(null);
+    setSubmenuPosition(null);
+    focusSubmenuRef.current = false;
     if (refocusTrigger) {
       triggerRef.current?.focus();
     }
   }, []);
 
+  const updateSubmenuPosition = useCallback(() => {
+    const trigger = submenuTriggerRef.current;
+    const submenu = submenuRef.current;
+    if (!trigger || !submenu) return;
+    const anchor = trigger.getBoundingClientRect();
+    const rect = submenu.getBoundingClientRect();
+    const left = anchor.right + MENU_GAP + rect.width <= window.innerWidth - VIEWPORT_MARGIN
+      ? anchor.right + MENU_GAP
+      : anchor.left - MENU_GAP - rect.width;
+    setSubmenuPosition({
+      left: Math.max(VIEWPORT_MARGIN, Math.min(left, window.innerWidth - rect.width - VIEWPORT_MARGIN)),
+      top: Math.max(VIEWPORT_MARGIN, Math.min(anchor.top - 4, window.innerHeight - rect.height - VIEWPORT_MARGIN)),
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!open || !activeSubmenuId) return;
+    updateSubmenuPosition();
+    if (focusSubmenuRef.current) {
+      focusSubmenuRef.current = false;
+      submenuRef.current?.querySelector<HTMLButtonElement>('[role^="menuitem"]:not(:disabled)')?.focus();
+    }
+  }, [open, activeSubmenuId, position, updateSubmenuPosition]);
+
   const updatePosition = useCallback(() => {
     const trigger = triggerRef.current;
     if (!trigger) return;
     const rect = trigger.getBoundingClientRect();
+    const menuWidth = menuRef.current?.getBoundingClientRect().width ?? 230;
     const spaceBelow = window.innerHeight - rect.bottom - MENU_GAP;
     const openUpwards = spaceBelow < 380 && rect.top > spaceBelow;
 
@@ -72,9 +105,9 @@ export const ThreadActionsMenu: React.FC<ThreadActionsMenuProps> = ({
       next.top = rect.bottom + MENU_GAP;
     }
     if (align === "right") {
-      next.right = Math.max(VIEWPORT_MARGIN, window.innerWidth - rect.right);
+      next.right = Math.max(VIEWPORT_MARGIN, Math.min(window.innerWidth - rect.right, window.innerWidth - menuWidth - VIEWPORT_MARGIN));
     } else {
-      next.left = Math.max(VIEWPORT_MARGIN, Math.min(rect.left, window.innerWidth - VIEWPORT_MARGIN));
+      next.left = Math.max(VIEWPORT_MARGIN, Math.min(rect.left, window.innerWidth - menuWidth - VIEWPORT_MARGIN));
     }
     setPosition(next);
   }, [align]);
@@ -83,13 +116,13 @@ export const ThreadActionsMenu: React.FC<ThreadActionsMenuProps> = ({
     if (!open) return;
     updatePosition();
 
-    const handleReflow = () => updatePosition();
+    const handleReflow = () => { updatePosition(); updateSubmenuPosition(); };
     window.addEventListener("resize", handleReflow);
     window.addEventListener("scroll", handleReflow, true);
 
     const raf = window.requestAnimationFrame(() => {
       const firstItem = menuRef.current?.querySelector<HTMLButtonElement>(
-        '[role="menuitem"]:not(:disabled)'
+        '[role^="menuitem"]:not(:disabled)'
       );
       firstItem?.focus();
     });
@@ -99,7 +132,7 @@ export const ThreadActionsMenu: React.FC<ThreadActionsMenuProps> = ({
       window.removeEventListener("scroll", handleReflow, true);
       window.cancelAnimationFrame(raf);
     };
-  }, [open, updatePosition]);
+  }, [open, updatePosition, updateSubmenuPosition]);
 
   useEffect(() => {
     if (!open) return;
@@ -109,6 +142,7 @@ export const ThreadActionsMenu: React.FC<ThreadActionsMenuProps> = ({
       if (!target) return;
       if (triggerRef.current?.contains(target)) return;
       if (menuRef.current?.contains(target)) return;
+      if (submenuRef.current?.contains(target)) return;
       closeMenu(false);
     };
 
@@ -128,8 +162,33 @@ export const ThreadActionsMenu: React.FC<ThreadActionsMenuProps> = ({
   }, [open, closeMenu]);
 
   const handleMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    const menu = menuRef.current;
+    const menu = event.currentTarget;
     if (!menu) return;
+    if (event.key === "ArrowLeft" && menu === submenuRef.current) {
+      event.preventDefault();
+      event.stopPropagation();
+      setActiveSubmenuId(null);
+      setSubmenuPosition(null);
+      submenuTriggerRef.current?.focus();
+      return;
+    }
+    if (event.key === "ArrowRight" && menu === menuRef.current) {
+      const button = document.activeElement as HTMLButtonElement | null;
+      const item = safeItems.find((candidate) => candidate.id === button?.getAttribute("data-menu-item-id"));
+      if (item?.children?.length && !item.disabled && button) {
+        event.preventDefault();
+        event.stopPropagation();
+        submenuTriggerRef.current = button;
+        focusSubmenuRef.current = true;
+        if (activeSubmenuId === item.id) {
+          focusSubmenuRef.current = false;
+          submenuRef.current?.querySelector<HTMLButtonElement>('[role^="menuitem"]:not(:disabled)')?.focus();
+        } else {
+          setActiveSubmenuId(item.id);
+        }
+      }
+      return;
+    }
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp" && event.key !== "Home" && event.key !== "End") {
       if (event.key === "Tab") {
         closeMenu(false);
@@ -141,12 +200,20 @@ export const ThreadActionsMenu: React.FC<ThreadActionsMenuProps> = ({
     );
     if (focusable.length === 0) return;
     event.preventDefault();
+    event.stopPropagation();
+    const focusItem = (button: HTMLButtonElement | undefined) => {
+      button?.focus();
+      if (menu === menuRef.current && button?.getAttribute("data-menu-item-id") !== activeSubmenuId) {
+        setActiveSubmenuId(null);
+        setSubmenuPosition(null);
+      }
+    };
     if (event.key === "Home") {
-      focusable[0]?.focus();
+      focusItem(focusable[0]);
       return;
     }
     if (event.key === "End") {
-      focusable[focusable.length - 1]?.focus();
+      focusItem(focusable[focusable.length - 1]);
       return;
     }
     const step = event.key === "ArrowDown" ? 1 : -1;
@@ -157,18 +224,76 @@ export const ThreadActionsMenu: React.FC<ThreadActionsMenuProps> = ({
           ? 0
           : focusable.length - 1
         : (currentIndex + step + focusable.length) % focusable.length;
-    focusable[nextIndex]?.focus();
+    focusItem(focusable[nextIndex]);
   };
 
-  const handleSelect = (item: ThreadActionItem) => {
-    if (item.disabled) return;
+  const handleSelect = (item: ThreadActionItem, button: HTMLButtonElement) => {
+    if (item.disabled || item.type === "label") return;
     if (item.children && item.children.length > 0) {
-      setActiveSubmenuId((prev) => (prev === item.id ? null : item.id));
+      submenuTriggerRef.current = button;
+      focusSubmenuRef.current = true;
+      if (activeSubmenuId === item.id) {
+        focusSubmenuRef.current = false;
+        submenuRef.current?.querySelector<HTMLButtonElement>('[role^="menuitem"]:not(:disabled)')?.focus();
+      } else {
+        setActiveSubmenuId(item.id);
+      }
       return;
     }
-    closeMenu(false);
+    closeMenu(true);
     onSelect(item.id);
   };
+
+  const renderItem = (item: ThreadActionItem, submenu = false) => {
+    const hasChildren = !submenu && Boolean(item.children?.length);
+    const isSubmenuOpen = hasChildren && activeSubmenuId === item.id;
+    return (
+      <React.Fragment key={item.id}>
+        {item.separatorBefore && <div className="thread-actions-separator" role="separator" />}
+        {item.type === "label" ? (
+          <div className="thread-actions-label">{item.label}</div>
+        ) : (
+          <div
+            className={`thread-actions-item-wrap ${hasChildren ? "has-submenu" : ""}`}
+            onMouseEnter={(event) => {
+              if (submenu) return;
+              if (hasChildren && !item.disabled) {
+                submenuTriggerRef.current = event.currentTarget.querySelector("button");
+                focusSubmenuRef.current = false;
+                setActiveSubmenuId(item.id);
+              } else {
+                setActiveSubmenuId(null);
+                setSubmenuPosition(null);
+              }
+            }}
+          >
+            <button
+              type="button"
+              data-menu-item-id={item.id}
+              role={item.type === "radio" ? "menuitemradio" : item.type === "checkbox" ? "menuitemcheckbox" : "menuitem"}
+              aria-checked={item.type === "radio" || item.type === "checkbox" ? !!item.checked : undefined}
+              aria-haspopup={hasChildren ? "menu" : undefined}
+              aria-expanded={hasChildren ? isSubmenuOpen : undefined}
+              className={`thread-actions-item${item.danger ? " is-danger" : ""}${isSubmenuOpen ? " is-active" : ""}`}
+              disabled={item.disabled}
+              onClick={(event) => handleSelect(item, event.currentTarget)}
+              title={item.hint || item.label}
+            >
+              {item.icon && <span className="thread-actions-item-icon">{item.icon}</span>}
+              <span className="thread-actions-item-label">{item.label}</span>
+              {item.hint && <span className="thread-actions-item-hint">{item.hint}</span>}
+              {(item.type === "radio" || item.type === "checkbox") && (
+                <span className="thread-actions-item-check" aria-hidden="true">{item.checked ? "✓" : ""}</span>
+              )}
+              {hasChildren && <span className="thread-actions-item-arrow"><ChevronRightIcon size={13} /></span>}
+            </button>
+          </div>
+        )}
+      </React.Fragment>
+    );
+  };
+
+  const activeSubmenu = safeItems.find((item) => item.id === activeSubmenuId);
 
   const triggerClassName = ["thread-actions-trigger", open ? "is-open" : "", buttonClassName || ""]
     .filter(Boolean)
@@ -215,76 +340,24 @@ export const ThreadActionsMenu: React.FC<ThreadActionsMenuProps> = ({
             {safeItems.length === 0 ? (
               <div className="thread-actions-empty">暂无可用操作</div>
             ) : (
-              safeItems.map((item) => {
-                const hasChildren = Boolean(item.children && item.children.length > 0);
-                const isSubmenuOpen = activeSubmenuId === item.id;
-
-                return (
-                  <React.Fragment key={item.id}>
-                    {item.separatorBefore && (
-                      <div className="thread-actions-separator" role="separator" />
-                    )}
-                    <div
-                      className={`thread-actions-item-wrap ${hasChildren ? "has-submenu" : ""}`}
-                      onMouseEnter={() => {
-                        if (hasChildren) setActiveSubmenuId(item.id);
-                      }}
-                      onMouseLeave={() => {
-                        if (hasChildren) setActiveSubmenuId(null);
-                      }}
-                    >
-                      <button
-                        type="button"
-                        role="menuitem"
-                        className={`thread-actions-item${item.danger ? " is-danger" : ""}${isSubmenuOpen ? " is-active" : ""}`}
-                        disabled={item.disabled}
-                        onClick={() => handleSelect(item)}
-                        title={item.hint || item.label}
-                      >
-                        {item.icon && <span className="thread-actions-item-icon">{item.icon}</span>}
-                        <span className="thread-actions-item-label">{item.label}</span>
-                        {item.hint && <span className="thread-actions-item-hint">{item.hint}</span>}
-                        {hasChildren && (
-                          <span className="thread-actions-item-arrow">
-                            <ChevronRightIcon size={13} />
-                          </span>
-                        )}
-                      </button>
-
-                      {hasChildren && isSubmenuOpen && (
-                        <div className="thread-actions-submenu" role="menu">
-                          {item.children!.map((subItem) => (
-                            <React.Fragment key={subItem.id}>
-                              {subItem.separatorBefore && (
-                                <div className="thread-actions-separator" role="separator" />
-                              )}
-                              <button
-                                type="button"
-                                role="menuitem"
-                                className={`thread-actions-item${subItem.danger ? " is-danger" : ""}`}
-                                disabled={subItem.disabled}
-                                onClick={() => {
-                                  closeMenu(false);
-                                  onSelect(subItem.id);
-                                }}
-                                title={subItem.hint || subItem.label}
-                              >
-                                {subItem.icon && <span className="thread-actions-item-icon">{subItem.icon}</span>}
-                                <span className="thread-actions-item-label">{subItem.label}</span>
-                                {subItem.hint && <span className="thread-actions-item-hint">{subItem.hint}</span>}
-                              </button>
-                            </React.Fragment>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </React.Fragment>
-                );
-              })
+              safeItems.map((item) => renderItem(item))
             )}
           </div>,
           document.body
         )}
+      {open && activeSubmenu?.children?.length && createPortal(
+        <div
+          ref={submenuRef}
+          className="thread-actions-submenu"
+          role="menu"
+          aria-label={activeSubmenu.label}
+          style={{ top: submenuPosition?.top, left: submenuPosition?.left }}
+          onKeyDown={handleMenuKeyDown}
+        >
+          {activeSubmenu.children.map((item) => renderItem(item, true))}
+        </div>,
+        document.body
+      )}
     </div>
   );
 };

@@ -12,12 +12,14 @@ import { GitWorktreeInfo } from "../types";
 
 interface WorktreesViewProps {
   activeWorkspaceRoot: string;
+  onSelectThread?: (threadId: string) => void;
   onStartChatInWorktree: (worktreePath: string) => void;
   onOpenTerminalInWorktree?: (worktreePath: string) => void;
 }
 
 export const WorktreesView: React.FC<WorktreesViewProps> = ({
   activeWorkspaceRoot,
+  onSelectThread,
   onStartChatInWorktree,
   onOpenTerminalInWorktree,
 }) => {
@@ -28,6 +30,7 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
   );
   const [selectedBranch, setSelectedBranch] = useState<string>("HEAD");
   const [creating, setCreating] = useState<boolean>(false);
+  const [actionBusyPath, setActionBusyPath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -77,7 +80,9 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
   };
 
   const handleDeleteWorktree = async (wt: GitWorktreeInfo) => {
+    if (actionBusyPath) return;
     if (!confirm(`确定要移除 Worktree "${wt.path}" 吗？`)) return;
+    setActionBusyPath(wt.path);
     try {
       await tauriInvoke("git_worktree_delete", {
         worktreePath: wt.path,
@@ -87,6 +92,8 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
       notify(`✓ 已移除工作树: ${wt.path}`);
     } catch (err: any) {
       notify(`删除失败: ${err?.message || String(err)}`);
+    } finally {
+      setActionBusyPath(null);
     }
   };
 
@@ -214,7 +221,20 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
                       </span>
                       <span>主仓库: {wt.gitDir}</span>
                       {wt.ownerThreadId && (
-                        <span>绑定会话: {wt.ownerThreadId.slice(0, 12)}...</span>
+                        <button
+                          type="button"
+                          className="tag-badge"
+                          style={{
+                            cursor: onSelectThread ? "pointer" : "default",
+                            border: "1px solid var(--border-subtle)",
+                            background: "var(--bg-card)",
+                            padding: "1px 6px",
+                          }}
+                          onClick={() => onSelectThread?.(wt.ownerThreadId!)}
+                          title={`跳转到绑定会话: ${wt.ownerThreadId}`}
+                        >
+                          绑定会话: {wt.ownerThreadId.slice(0, 10)}… ↗
+                        </button>
                       )}
                     </div>
                   </div>
@@ -249,7 +269,10 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
               type="button"
               className="secondary-btn-sm accent-border"
               title="将此隔离 Worktree 中的改动应用合并回当前主工作区"
+              disabled={actionBusyPath === wt.path}
               onClick={async () => {
+                if (actionBusyPath) return;
+                setActionBusyPath(wt.path);
                 try {
                   const res = await tauriInvoke<string>("git_worktree_bring_changes_back", {
                     worktreePath: wt.path,
@@ -259,6 +282,8 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
                   await refresh();
                 } catch (err: any) {
                   notify(`带回失败: ${err?.message || String(err)}`);
+                } finally {
+                  setActionBusyPath(null);
                 }
               }}
             >

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
+  Edit2,
   CheckCircle2,
   Clock,
   History,
@@ -30,6 +31,7 @@ import { AutomationItem, ModelInfo } from "../types";
 interface AutomationsViewProps {
   activeWorkspaceRoot: string;
   models: ModelInfo[];
+  onSelectThread?: (threadId: string) => void;
   onRunAutomationNow: (item: AutomationItem) => void;
 }
 
@@ -237,6 +239,7 @@ function applyFinishedEvent(
 export const AutomationsView: React.FC<AutomationsViewProps> = ({
   activeWorkspaceRoot,
   models,
+  onSelectThread,
   onRunAutomationNow,
 }) => {
   const [automations, setAutomations] = useState<AutomationItem[]>([]);
@@ -248,6 +251,7 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
   >("ALL");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [showCreateForm, setShowCreateForm] = useState<boolean>(false);
+  const [editingItem, setEditingItem] = useState<AutomationItem | null>(null);
 
   const [name, setName] = useState<string>("");
   const [kind, setKind] = useState<"cron" | "heartbeat" | "goal">("cron");
@@ -411,21 +415,36 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
     });
   }, [scheduler]);
 
+  const handleStartEdit = (item: AutomationItem) => {
+    setEditingItem(item);
+    setName(item.name);
+    setKind(
+      item.kind === "cron" || item.kind === "heartbeat" || item.kind === "goal"
+        ? item.kind
+        : "cron"
+    );
+    setRrule(item.rrule);
+    setPrompt(item.prompt);
+    setExecEnv(item.executionEnvironment === "local" ? "local" : "worktree");
+    setSelectedModel(item.model || "");
+    setShowCreateForm(true);
+  };
+
   const handleCreate = async () => {
     if (!name.trim() || !prompt.trim()) return;
     const item: AutomationItem = {
-      id: "",
+      id: editingItem ? editingItem.id : "",
       kind,
       name: name.trim(),
       prompt: prompt.trim(),
-      status: "ACTIVE",
+      status: editingItem ? editingItem.status : "ACTIVE",
       rrule: rrule.trim() || "FREQ=DAILY;BYHOUR=9;BYMINUTE=0",
-      cwds: [activeWorkspaceRoot],
+      cwds: editingItem ? editingItem.cwds : [activeWorkspaceRoot],
       executionEnvironment: execEnv,
       model: selectedModel || null,
-      reasoningEffort: "medium",
-      targetThreadId: null,
-      createdAt: Date.now(),
+      reasoningEffort: editingItem ? editingItem.reasoningEffort : "medium",
+      targetThreadId: editingItem ? editingItem.targetThreadId : null,
+      createdAt: editingItem ? editingItem.createdAt : Date.now(),
       updatedAt: Date.now(),
     };
     const updated = await tauriInvoke<AutomationItem[]>("automation_save", {
@@ -434,6 +453,7 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
     setAutomations(updated);
     setName("");
     setPrompt("");
+    setEditingItem(null);
     setShowCreateForm(false);
     void syncScheduleAfterConfigChange();
   };
@@ -848,7 +868,7 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
       {/* Create Automation / Goal Form */}
       {showCreateForm && (
         <div className="card-section">
-          <h3>创建计划任务或长期目标</h3>
+          <h3>{editingItem ? "编辑计划任务或长期目标" : "创建计划任务或长期目标"}</h3>
           <div className="form-grid-row">
             <div className="form-field">
               <label>任务 / 目标名称</label>
@@ -944,12 +964,17 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
               onClick={handleCreate}
               disabled={!name.trim() || !prompt.trim()}
             >
-              <Plus size={14} /> 保存到 automation.toml
+              {editingItem ? <Edit2 size={14} /> : <Plus size={14} />} {editingItem ? "保存修改" : "保存到 automation.toml"}
             </button>
             <button
               type="button"
               className="secondary-btn"
-              onClick={() => setShowCreateForm(false)}
+              onClick={() => {
+                setShowCreateForm(false);
+                setEditingItem(null);
+                setName("");
+                setPrompt("");
+              }}
             >
               取消
             </button>
@@ -1044,7 +1069,20 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
                         </span>
                         <span>运行次数: {entry?.runCount ?? 0}</span>
                         {itemThreadId && (
-                          <span title={itemThreadId}>线程: {shortId(itemThreadId)}</span>
+                          <button
+                            type="button"
+                            className="tag-badge"
+                            style={{
+                              cursor: onSelectThread ? "pointer" : "default",
+                              border: "1px solid var(--border-subtle)",
+                              background: "var(--bg-card)",
+                              padding: "2px 6px",
+                            }}
+                            onClick={() => onSelectThread?.(itemThreadId)}
+                            title={`跳转到关联会话：${itemThreadId}`}
+                          >
+                            线程: {shortId(itemThreadId)} ↗
+                          </button>
                         )}
                         {entry?.lastError && (
                           <span
@@ -1071,6 +1109,14 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
                     >
                       <Zap size={13} />{" "}
                       {runBusyId === item.id ? "触发中…" : "立即运行"}
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-btn-sm"
+                      onClick={() => handleStartEdit(item)}
+                      title="编辑任务配置"
+                    >
+                      <Edit2 size={12} /> 编辑
                     </button>
                     <button
                       type="button"
@@ -1160,9 +1206,19 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
                       {runStatusLabel(record.status)}
                     </span>
                     {record.threadId && (
-                      <span className="tag-badge" title={record.threadId}>
-                        线程 {shortId(record.threadId)}
-                      </span>
+                      <button
+                        type="button"
+                        className="tag-badge"
+                        style={{
+                          cursor: onSelectThread ? "pointer" : "default",
+                          border: "1px solid var(--border-subtle)",
+                          background: "var(--bg-card)",
+                        }}
+                        onClick={() => onSelectThread?.(record.threadId!)}
+                        title={`跳转到关联会话：${record.threadId}`}
+                      >
+                        线程 {shortId(record.threadId)} ↗
+                      </button>
                     )}
                   </div>
                   {record.error && (

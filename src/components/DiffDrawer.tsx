@@ -27,6 +27,7 @@ import {
 } from "../fsClient";
 import {
   CheckIcon,
+  CloseIcon,
   CopyIcon,
   DiffIcon,
   DownloadIcon,
@@ -565,6 +566,15 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   const [isDirty, setIsDirty] = useState(false);
   const [savingFile, setSavingFile] = useState(false);
   const [dirLoading, setDirLoading] = useState(false);
+  const [dirError, setDirError] = useState<string | null>(null);
+  const isDirtyRef = useRef(isDirty);
+  useEffect(() => {
+    isDirtyRef.current = isDirty;
+  }, [isDirty]);
+  const filePreviewRef = useRef(filePreview);
+  useEffect(() => {
+    filePreviewRef.current = filePreview;
+  }, [filePreview]);
   const [watchActive, setWatchActive] = useState(false);
   const [explorerDraft, setExplorerDraft] = useState<ExplorerDraft | null>(null);
   const [explorerBusy, setExplorerBusy] = useState(false);
@@ -698,10 +708,12 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
       }
       if (seq !== dirLoadSeqRef.current) return;
       setDirEntries(entries);
+      setDirError(null);
     } catch (listingError) {
       console.warn("directory listing failed:", listingError);
       if (seq !== dirLoadSeqRef.current) return;
       setDirEntries([]);
+      setDirError(String(listingError));
     } finally {
       if (seq === dirLoadSeqRef.current) setDirLoading(false);
     }
@@ -746,14 +758,25 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     let stopWatch: FsUnwatch | null = null;
     setWatchActive(false);
 
-    fsWatchPath(currentDir, () => {
+    fsWatchPath(currentDir, (event) => {
       if (disposed) return;
       if (fsWatchTimerRef.current !== null) {
         window.clearTimeout(fsWatchTimerRef.current);
       }
       fsWatchTimerRef.current = window.setTimeout(() => {
         fsWatchTimerRef.current = null;
-        if (!disposed) void refreshDirectory(currentDir);
+        if (!disposed) {
+          void refreshDirectory(currentDir);
+          const currentPreview = filePreviewRef.current;
+          if (currentPreview && !isDirtyRef.current) {
+            const curPath = currentPreview.path.replace(/\\/g, "/").toLowerCase();
+            const paths = event?.changedPaths || [];
+            const isTargetChanged = paths.length === 0 || paths.some((p) => p.replace(/\\/g, "/").toLowerCase() === curPath);
+            if (isTargetChanged) {
+              void openFilePreview(currentPreview.path, { silent: true });
+            }
+          }
+        }
       }, 300);
     })
       .then((unwatch) => {
@@ -827,6 +850,22 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     }
   };
 
+  const handleDiscardAll = async () => {
+    const count = displayedEntries.length;
+    if (count === 0) return;
+    if (!confirm(`确定放弃全部 ${count} 个文件的未提交更改吗？此操作无法撤销。`)) return;
+    try {
+      for (const entry of displayedEntries) {
+        await invoke("git_discard", { cwd, filePath: entry.path });
+      }
+      setSelectedFile(null);
+      onRefreshGit();
+      showToast(`已还原全部 ${count} 个文件`);
+    } catch (e) {
+      showToast(`放弃更改失败: ${String(e)}`);
+    }
+  };
+
   const handleCopyGitApply = useCallback(async () => {
     if (!diffContent.trim()) {
       showToast("当前暂无改动差异可复制");
@@ -886,6 +925,10 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     }
     setCommitting(true);
     try {
+      const hasStaged = gitStatus?.entries.some((e) => e.staged);
+      if (!hasStaged && (gitStatus?.entries.length || 0) > 0) {
+        await invoke("git_stage", { cwd, filePath: null });
+      }
       await invoke("git_commit_changes", { cwd, message: messageToUse });
       setCommitMessage("");
       onRefreshGit();
@@ -910,6 +953,10 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     }
     setCommitting(true);
     try {
+      const hasStaged = gitStatus?.entries.some((e) => e.staged);
+      if (!hasStaged && (gitStatus?.entries.length || 0) > 0) {
+        await invoke("git_stage", { cwd, filePath: null });
+      }
       await invoke("git_commit_changes", { cwd, message: messageToUse });
       setCommitMessage("");
       onRefreshGit();
@@ -1448,6 +1495,17 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
               >
                 复制 Patch
               </button>
+              <button
+                type="button"
+                className="seg-btn"
+                onClick={() => {
+                  onRefreshGit();
+                  showToast("已刷新 Git 状态");
+                }}
+                title="刷新 Git 变更状态"
+              >
+                <RefreshIcon size={11} />
+              </button>
             </div>
           </div>
 
@@ -1561,6 +1619,14 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                         onClick={() => handleUnstage()}
                       >
                         全取消
+                      </button>
+                      <button
+                        type="button"
+                        className="mini-link-btn danger"
+                        onClick={handleDiscardAll}
+                        title="放弃工作区中全部未提交的修改"
+                      >
+                        全放弃
                       </button>
                     </div>
                   </div>
@@ -1987,6 +2053,23 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                   <span className="diff-file-path">{hit.relPath}</span>
                 </div>
               ))
+            ) : dirError ? (
+              <div className="empty-hint-small fe-dir-error">
+                <span>⚠️ 目录无法访问或已失效</span>
+                {cwd && currentDir !== cwd && (
+                  <button
+                    type="button"
+                    className="ghost-btn compact"
+                    style={{ marginTop: 8 }}
+                    onClick={() => {
+                      setDirError(null);
+                      setCurrentDir(cwd);
+                    }}
+                  >
+                    返回工作区根目录
+                  </button>
+                )}
+              </div>
             ) : dirEntries.length === 0 ? (
               <div className="empty-hint-small">
                 {dirLoading ? "正在加载目录…" : "目录为空"}
@@ -2064,6 +2147,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
               <div className="file-editor-header">
                 <span className="file-editor-title" title={filePreview.path}>
                   {filePreview.path.split(/[\\/]/).pop()}
+                  {isDirty ? " •" : ""}
                 </span>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, flex: 1 }}>
                   <input
@@ -2092,6 +2176,18 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                     {savingFile ? "保存中..." : isDirty ? "保存修改" : "已保存"}
                   </button>
                 )}
+                <button
+                  type="button"
+                  className="diff-tab-close"
+                  title="关闭预览"
+                  style={{ marginLeft: 4 }}
+                  onClick={() => {
+                    setFilePreview(null);
+                    setIsDirty(false);
+                  }}
+                >
+                  <CloseIcon size={12} />
+                </button>
               </div>
               {filePreview.isImage && filePreview.base64DataUrl ? (
                 <div className="file-image-preview">
@@ -2106,6 +2202,26 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                   onChange={(e) => {
                     setEditedContent(e.target.value);
                     setIsDirty(true);
+                  }}
+                  onKeyDown={(e) => {
+                    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+                      e.preventDefault();
+                      if (isDirty && !savingFile) {
+                        void saveEditedFile();
+                      }
+                    } else if (e.key === "Tab") {
+                      e.preventDefault();
+                      const target = e.currentTarget;
+                      const start = target.selectionStart;
+                      const end = target.selectionEnd;
+                      const val = target.value;
+                      const next = val.substring(0, start) + "  " + val.substring(end);
+                      setEditedContent(next);
+                      setIsDirty(true);
+                      window.requestAnimationFrame(() => {
+                        target.selectionStart = target.selectionEnd = start + 2;
+                      });
+                    }
                   }}
                   spellCheck={false}
                 />

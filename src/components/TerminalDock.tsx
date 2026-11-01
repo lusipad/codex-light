@@ -35,6 +35,7 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
 }) => {
   const [selectedShell, setSelectedShell] = useState<string>("powershell.exe");
   const [fontSize, setFontSize] = useState<number>(13);
+  const [dockHeight, setDockHeight] = useState<number>(260);
   const [tabs, setTabs] = useState<SessionTab[]>([
     {
       id: "term-1",
@@ -253,6 +254,43 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
     setActiveTabId(id);
   };
 
+  const interruptActiveTerminal = () => {
+    invoke("terminal_write", {
+      sessionId: activeTabId,
+      data: "\x03",
+    }).catch(() => {});
+  };
+
+  const handleStartResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startHeight = dockHeight;
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const deltaY = startY - moveEvent.clientY;
+      const newHeight = Math.max(140, Math.min(window.innerHeight * 0.8, startHeight + deltaY));
+      setDockHeight(newHeight);
+      const curr = xtermMapRef.current.get(activeTabId);
+      if (curr) {
+        try {
+          curr.fit.fit();
+          invoke("terminal_resize", {
+            sessionId: activeTabId,
+            cols: curr.term.cols,
+            rows: curr.term.rows,
+          }).catch(() => {});
+        } catch {
+          // ignore
+        }
+      }
+    };
+    const onMouseUp = () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+  };
+
   const clearActiveTerminal = () => {
     const entry = xtermMapRef.current.get(activeTabId);
     if (entry) {
@@ -290,7 +328,8 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
   if (!open) return null;
 
   return (
-    <div className="terminal-dock">
+    <div className="terminal-dock" style={{ height: dockHeight }}>
+      <div className="terminal-dock-resizer" onMouseDown={handleStartResize} title="拖动调整终端高度" />
       <div className="terminal-dock-header">
         <div className="terminal-tabs">
           {tabs.map((t) => (
@@ -350,6 +389,14 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
             title="放大终端字号"
           >
             A+
+          </button>
+          <button
+            className="icon-btn"
+            onClick={interruptActiveTerminal}
+            title="中断当前运行 (Ctrl+C)"
+            style={{ fontWeight: 600, fontSize: 11 }}
+          >
+            ^C
           </button>
           <button
             className="icon-btn"

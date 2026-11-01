@@ -4,6 +4,12 @@
 
 export type RequestId = string | number;
 
+export function isThreadReadState(value: any): value is import("./types").ThreadReadState {
+  return !!value && typeof value.revision === "string" && value.revision.length > 0 &&
+    (value.firstUnread == null || value.firstUnread?.type === "threadStart" ||
+      (value.firstUnread?.type === "turn" && typeof value.firstUnread.turnId === "string"));
+}
+
 export interface ServerRequestEnvelope {
   id: RequestId;
   method: string;
@@ -335,6 +341,8 @@ export const NOTIFICATION = {
   THREAD_CLOSED: "thread/closed",
   THREAD_REVERTED: "thread/reverted",
   THREAD_NAME_UPDATED: "thread/name/updated",
+  THREAD_PROJECT_UPDATED: "thread/project/updated",
+  THREAD_READ_STATE_CHANGED: "thread/readState/changed",
   THREAD_GOAL_UPDATED: "thread/goal/updated",
   THREAD_GOAL_CLEARED: "thread/goal/cleared",
   THREAD_QUEUE_CHANGED: "thread/queue/changed",

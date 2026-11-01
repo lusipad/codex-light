@@ -16,6 +16,7 @@ function stringifyOutput(value: unknown): string {
   }
   if (typeof value === "object") {
     const record = value as Record<string, unknown>;
+    if (typeof record.message === "string") return record.message;
     if (typeof record.text === "string") return record.text;
     if (record.output != null) return stringifyOutput(record.output);
     if (record.content != null) return stringifyOutput(record.content);

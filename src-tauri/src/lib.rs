@@ -5,6 +5,7 @@ pub mod git;
 pub mod menu;
 pub mod state;
 pub mod terminal;
+mod thread_workspace;
 
 use app_server::{AppServerManager, AppServerStatus, PendingServerRequest};
 use config_skills::{
@@ -21,7 +22,7 @@ use state::{
 };
 use std::collections::HashMap;
 use std::fs;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 use terminal::{TerminalManager, TerminalSessionInfo};
 
 pub struct AppState {
@@ -62,7 +63,31 @@ async fn app_server_call(
     method: String,
     params: Option<Value>,
 ) -> Result<Value, String> {
-    let res = state.app_server.call(&app, &method, params.clone()).await?;
+    let res = if method == "turn/start" {
+        let (result, warning) = state
+            .desktop_state
+            .call_turn_with_workspace(
+                params.clone().unwrap_or(Value::Null),
+                |rpc_method, request| {
+                    let app = &app;
+                    let state = &state;
+                    async move { state.app_server.call(app, &rpc_method, Some(request)).await }
+                },
+            )
+            .await?;
+        if let Some(message) = warning {
+            let _ = app.emit(
+                "thread-workspace:sync-warning",
+                json!({
+                    "threadId": params.as_ref().and_then(|params| params.get("threadId")),
+                    "message": message,
+                }),
+            );
+        }
+        result
+    } else {
+        state.app_server.call(&app, &method, params.clone()).await?
+    };
     if method == "thread/start" {
         let tid = res
             .get("threadId")
@@ -141,6 +166,78 @@ fn workspace_set_active(
 }
 
 #[tauri::command]
+fn workspace_select_project(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<Value, String> {
+    let workspaces = state.desktop_state.select_local_project(&project_id)?;
+    Ok(json!({
+        "workspaces": workspaces,
+        "projectMembership": state.desktop_state.sidebar_project_membership(),
+    }))
+}
+
+#[tauri::command]
+async fn thread_project_move_prepare(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    thread_id: String,
+    target_project_id: Option<String>,
+) -> Result<Value, String> {
+    state
+        .desktop_state
+        .prepare_thread_project_move_with_rpc(
+            &thread_id, target_project_id.as_deref(), |method, params| {
+                let app = &app;
+                let state = &state;
+                async move { state.app_server.call(app, &method, Some(params)).await }
+            },
+        ).await
+}
+
+#[tauri::command]
+async fn thread_project_move_commit(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    thread_id: String,
+    target_project_id: Option<String>,
+    plan: Value,
+    confirm_missing_sources: bool,
+) -> Result<Value, String> {
+    let state_path = state::desktop_global_state_path();
+    state.desktop_state.commit_thread_project_move_with_rpc(
+        &thread_id,
+        target_project_id.as_deref(),
+        &plan,
+        confirm_missing_sources,
+        &state_path,
+        |method, params| {
+            let app = &app;
+            let state = &state;
+            async move { state.app_server.call(app, &method, Some(params)).await }
+        },
+    ).await
+}
+
+#[tauri::command]
+async fn thread_project_move_reconcile(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    thread_id: String,
+) -> Result<Value, String> {
+    let state_path = state::desktop_global_state_path();
+    state.desktop_state.reconcile_thread_project_move_with_rpc(
+        &thread_id,
+        &state_path,
+        |method, params| {
+            let app = &app;
+            let state = &state;
+            async move { state.app_server.call(app, &method, Some(params)).await }
+        },
+    ).await
+}
+
+#[tauri::command]
 async fn pick_folder_dialog() -> Result<Option<String>, String> {
     let picked = tokio::task::spawn_blocking(|| rfd::FileDialog::new().pick_folder())
         .await
@@ -175,11 +272,9 @@ async fn fs_list_dir(
     path: String,
     show_hidden: Option<bool>,
 ) -> Result<Vec<DirectoryEntryItem>, String> {
-    tokio::task::spawn_blocking(move || {
-        list_directory_entries(&path, show_hidden.unwrap_or(false))
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    tokio::task::spawn_blocking(move || list_directory_entries(&path, show_hidden.unwrap_or(false)))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -226,7 +321,9 @@ fn thread_record_workspace(
     thread_id: String,
     cwd: String,
 ) -> Result<(), String> {
-    state.desktop_state.record_thread_workspace(&thread_id, &cwd);
+    state
+        .desktop_state
+        .record_thread_workspace(&thread_id, &cwd);
     Ok(())
 }
 
@@ -234,12 +331,12 @@ fn thread_record_workspace(
 fn threads_meta_get(state: State<'_, AppState>) -> Result<Value, String> {
     let pinned: Vec<String> = state.desktop_state.list_pinned_threads();
     let archived: Vec<Value> = state.desktop_state.list_archived_threads();
-    let workspace_hints: HashMap<String, String> =
-        state.desktop_state.get_thread_workspace_hints();
+    let workspace_hints: HashMap<String, String> = state.desktop_state.get_thread_workspace_hints();
     Ok(json!({
         "pinnedThreadIds": pinned,
         "archivedThreads": archived,
         "workspaceHints": workspace_hints,
+        "projectMembership": state.desktop_state.sidebar_project_membership(),
     }))
 }
 
@@ -291,11 +388,19 @@ async fn thread_delete(
     state.desktop_state.remove_thread_record(&thread_id);
     let _ = state
         .app_server
-        .call(&app, "thread/delete", Some(json!({ "threadId": &thread_id })))
+        .call(
+            &app,
+            "thread/delete",
+            Some(json!({ "threadId": &thread_id })),
+        )
         .await;
     let _ = state
         .app_server
-        .call(&app, "thread/archive", Some(json!({ "threadId": &thread_id })))
+        .call(
+            &app,
+            "thread/archive",
+            Some(json!({ "threadId": &thread_id })),
+        )
         .await;
     Ok(())
 }
@@ -330,7 +435,11 @@ fn reveal_path_in_explorer(path: String) -> Result<(), String> {
     }
     #[cfg(target_os = "linux")]
     {
-        let target = if p.is_dir() { p } else { p.parent().unwrap_or(p) };
+        let target = if p.is_dir() {
+            p
+        } else {
+            p.parent().unwrap_or(p)
+        };
         std::process::Command::new("xdg-open")
             .arg(target)
             .spawn()
@@ -386,6 +495,74 @@ fn open_path_external(path: String) -> Result<(), String> {
     Ok(())
 }
 
+fn help_link_command(target: &str) -> Result<std::process::Command, String> {
+    let url = match target {
+        "guide" => "https://learn.chatgpt.com/docs/quickstart",
+        "changelog" => "https://developers.openai.com/codex/changelog",
+        _ => return Err("未知帮助链接".to_string()),
+    };
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        use std::os::windows::process::CommandExt;
+        let mut command = std::process::Command::new("explorer.exe");
+        command.creation_flags(0x08000000);
+        command
+    };
+    #[cfg(target_os = "macos")]
+    let mut command = std::process::Command::new("open");
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = std::process::Command::new("xdg-open");
+    command.arg(url);
+    Ok(command)
+}
+
+#[tauri::command]
+fn open_help_link(target: String) -> Result<(), String> {
+    help_link_command(&target)?
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod help_link_tests {
+    use super::help_link_command;
+
+    #[test]
+    fn rejects_arbitrary_urls_paths_and_shell_arguments() {
+        for target in [
+            "",
+            "https://example.invalid",
+            "file:///C:/Windows",
+            "guide & calc",
+            "guide\n",
+            "--help",
+            "changelog?x=1",
+        ] {
+            assert!(help_link_command(target).is_err(), "accepted {target:?}");
+        }
+    }
+
+    #[test]
+    fn official_link_is_a_single_argument_without_a_shell() {
+        let command = help_link_command("guide").unwrap();
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            vec![std::ffi::OsStr::new(
+                "https://learn.chatgpt.com/docs/quickstart"
+            )]
+        );
+        let program = command.get_program().to_string_lossy();
+        assert!(["explorer.exe", "open", "xdg-open"].contains(&program.as_ref()));
+        let command = help_link_command("changelog").unwrap();
+        assert_eq!(command.get_args().count(), 1);
+        assert_eq!(
+            command.get_args().next().unwrap(),
+            "https://developers.openai.com/codex/changelog"
+        );
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectScriptCommands {
@@ -419,7 +596,11 @@ fn detect_project_scripts_internal(cwd: &str) -> ProjectScriptCommands {
                     if scripts.contains_key("dev") {
                         run_cmd = format!("{} run dev", pm);
                     } else if scripts.contains_key("start") {
-                        run_cmd = if pm == "npm" { "npm start".to_string() } else { format!("{} start", pm) };
+                        run_cmd = if pm == "npm" {
+                            "npm start".to_string()
+                        } else {
+                            format!("{} start", pm)
+                        };
                     } else if scripts.contains_key("serve") {
                         run_cmd = format!("{} run serve", pm);
                     }
@@ -452,7 +633,10 @@ fn detect_project_scripts_internal(cwd: &str) -> ProjectScriptCommands {
         };
     }
 
-    if root.join("pyproject.toml").is_file() || root.join("requirements.txt").is_file() || root.join("Pipfile").is_file() {
+    if root.join("pyproject.toml").is_file()
+        || root.join("requirements.txt").is_file()
+        || root.join("Pipfile").is_file()
+    {
         let run_cmd = if root.join("main.py").is_file() {
             "python main.py".to_string()
         } else if root.join("app.py").is_file() {
@@ -587,7 +771,10 @@ fn git_worktree_delete(worktree_path: String, git_dir: Option<String>) -> Result
 }
 
 #[tauri::command]
-async fn git_worktree_bring_changes_back(worktree_path: String, target_cwd: String) -> Result<String, String> {
+async fn git_worktree_bring_changes_back(
+    worktree_path: String,
+    target_cwd: String,
+) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
         git::bring_worktree_changes_back(&worktree_path, &target_cwd)
     })
@@ -597,11 +784,9 @@ async fn git_worktree_bring_changes_back(worktree_path: String, target_cwd: Stri
 
 #[tauri::command]
 async fn git_worktree_repair(cwd: String) -> Result<String, String> {
-    tokio::task::spawn_blocking(move || {
-        git::repair_worktrees(&cwd)
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    tokio::task::spawn_blocking(move || git::repair_worktrees(&cwd))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -805,18 +990,37 @@ async fn pets_list_installed() -> Result<Vec<InstalledPetInfo>, String> {
                     if pet_json.is_file() {
                         if let Ok(content) = std::fs::read_to_string(&pet_json) {
                             if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
-                                let id = val.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-                                let display_name = val.get("displayName").and_then(|v| v.as_str()).unwrap_or(&id).to_string();
-                                let description = val.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
-                                let sprite_version_number = val.get("spriteVersionNumber").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
-                                let sheet_rel = val.get("spritesheetPath").and_then(|v| v.as_str()).unwrap_or("spritesheet.webp");
+                                let id = val
+                                    .get("id")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or_default()
+                                    .to_string();
+                                let display_name = val
+                                    .get("displayName")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or(&id)
+                                    .to_string();
+                                let description = val
+                                    .get("description")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string());
+                                let sprite_version_number =
+                                    val.get("spriteVersionNumber")
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(1) as u32;
+                                let sheet_rel = val
+                                    .get("spritesheetPath")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("spritesheet.webp");
                                 let sheet_path = p.join(sheet_rel);
                                 let mut sheet_data_url = None;
                                 if sheet_path.is_file() {
                                     if let Ok(bytes) = std::fs::read(&sheet_path) {
                                         use base64::Engine;
-                                        let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                                        sheet_data_url = Some(format!("data:image/webp;base64,{}", b64));
+                                        let b64 = base64::engine::general_purpose::STANDARD
+                                            .encode(&bytes);
+                                        sheet_data_url =
+                                            Some(format!("data:image/webp;base64,{}", b64));
                                     }
                                 }
                                 result.push(InstalledPetInfo {
@@ -981,11 +1185,7 @@ async fn automations_run_now(app: AppHandle, id: String) -> Result<Value, String
 /// Show a native OS notification (Windows toast / macOS / Linux).
 /// Frontend gates this by user preference before calling.
 #[tauri::command]
-fn show_desktop_notification(
-    app: AppHandle,
-    title: String,
-    body: String,
-) -> Result<(), String> {
+fn show_desktop_notification(app: AppHandle, title: String, body: String) -> Result<(), String> {
     use tauri_plugin_notification::NotificationExt;
     app.notification()
         .builder()
@@ -1046,6 +1246,10 @@ pub fn run() {
             workspace_add,
             workspace_remove,
             workspace_set_active,
+            workspace_select_project,
+            thread_project_move_prepare,
+            thread_project_move_commit,
+            thread_project_move_reconcile,
             pick_folder_dialog,
             pick_files_dialog,
             workspace_agents_md,
@@ -1062,6 +1266,7 @@ pub fn run() {
             thread_delete,
             reveal_path_in_explorer,
             open_path_external,
+            open_help_link,
             detect_project_scripts,
             git_status,
             git_diff,

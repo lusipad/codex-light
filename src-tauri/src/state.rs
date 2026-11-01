@@ -13,6 +13,198 @@ const ACTIVE_WORKSPACE_ROOTS_KEY: &str = "active-workspace-roots";
 const PINNED_THREAD_IDS_KEY: &str = "pinned-thread-ids";
 const ARCHIVED_THREADS_KEY: &str = "archivedThreads";
 const THREAD_WORKSPACE_HINTS_KEY: &str = "thread-workspace-root-hints";
+const PERSISTED_ATOM_STATE_KEY: &str = "electron-persisted-atom-state";
+const LOCAL_PROJECTS_ATOM_KEY: &str = "local-projects";
+const PROJECT_ORDER_ATOM_KEY: &str = "project-order";
+const SELECTED_PROJECT_ATOM_KEY: &str = "selected-project";
+
+fn workspace_server_project_id(
+    state: &Map<String, Value>,
+    identity: &str,
+    legacy_id: &str,
+) -> Option<String> {
+    state
+        .get("app-server-project-id-by-legacy-project-id-by-host")?
+        .get(identity)?
+        .get(legacy_id)?
+        .as_str()
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned)
+}
+
+fn is_project_assignment(value: &Value) -> bool {
+    matches!(
+        value.get("projectKind").and_then(Value::as_str),
+        Some("local" | "remote")
+    ) && value.get("projectId").and_then(Value::as_str).is_some()
+}
+
+fn read_sidebar_project_membership(state: &Map<String, Value>) -> Value {
+    let assignments: Map<String, Value> = state
+        .get("thread-project-assignments")
+        .and_then(Value::as_object)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter(|(_, value)| is_project_assignment(value))
+                .map(|(id, value)| (id.clone(), value.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let projectless: Vec<String> = state
+        .get("projectless-thread-ids")
+        .and_then(Value::as_array)
+        .map(|ids| {
+            ids.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut workspace_assignments = Map::new();
+    let mut local_projects = Vec::new();
+    let mut selected_project_id = Value::Null;
+    if let Some(atoms) = state
+        .get(PERSISTED_ATOM_STATE_KEY)
+        .and_then(Value::as_object)
+    {
+        for (key, value) in atoms {
+            let Some(id) = key
+                .strip_prefix("thread-workspace-state-v1:")
+                .filter(|id| !id.is_empty())
+            else {
+                continue;
+            };
+            let assignment = value
+                .get("projectMembership")
+                .filter(|value| !value.is_null())
+                .or_else(|| value.get("project"));
+            if let Some(assignment) =
+                assignment.filter(|value| value.is_null() || is_project_assignment(value))
+            {
+                workspace_assignments.insert(id.to_owned(), assignment.clone());
+            }
+        }
+
+        let project_identity = format!("local:{}", codex_home_dir().to_string_lossy());
+        let mut parsed_projects: Vec<(String, Value)> = Vec::new();
+        if let Some(projects) = atoms
+            .get(LOCAL_PROJECTS_ATOM_KEY)
+            .and_then(Value::as_object)
+        {
+            for (map_id, value) in projects {
+                let Some(project) = value.as_object() else {
+                    continue;
+                };
+                let Some(id) = project
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|id| !id.is_empty() && *id == map_id)
+                else {
+                    continue;
+                };
+                let name = project
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty());
+                let created_at = project.get("createdAt").filter(|value| value.is_number());
+                let Some(name) = name else { continue };
+                let Some(created_at) = created_at else {
+                    continue;
+                };
+                let Some(root_paths) = project.get("rootPaths").and_then(Value::as_array) else {
+                    continue;
+                };
+                let roots: Vec<String> = root_paths
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(normalize_fs_path)
+                    .filter(|path| !path.is_empty())
+                    .collect();
+                if id.is_empty() || roots.is_empty() || roots.len() != root_paths.len() {
+                    continue;
+                }
+                let mut item = Map::new();
+                item.insert("id".to_string(), Value::String(id.to_string()));
+                item.insert("name".to_string(), Value::String(name.to_string()));
+                item.insert("rootPaths".to_string(), json!(roots));
+                item.insert("createdAt".to_string(), created_at.clone());
+                if let Some(server_id) = workspace_server_project_id(state, &project_identity, id) {
+                    item.insert("serverProjectId".to_string(), Value::String(server_id));
+                }
+                parsed_projects.push((id.to_string(), Value::Object(item)));
+            }
+        }
+
+        let project_ids: std::collections::HashSet<String> =
+            parsed_projects.iter().map(|(id, _)| id.clone()).collect();
+        let mut ordered_ids = std::collections::HashSet::new();
+        if let Some(order) = atoms.get(PROJECT_ORDER_ATOM_KEY).and_then(Value::as_array) {
+            for id in order.iter().filter_map(Value::as_str) {
+                if let Some(value) = parsed_projects
+                    .iter()
+                    .find(|(project_id, _)| project_id == id)
+                    .map(|(_, value)| value)
+                {
+                    if ordered_ids.insert(id.to_string()) {
+                        local_projects.push(value.clone());
+                    }
+                }
+            }
+        }
+        local_projects.extend(
+            parsed_projects
+                .into_iter()
+                .filter(|(id, _)| !ordered_ids.contains(id))
+                .map(|(_, value)| value),
+        );
+
+        selected_project_id = atoms
+            .get(SELECTED_PROJECT_ATOM_KEY)
+            .and_then(|value| {
+                value
+                    .as_object()
+                    .filter(|project| project.get("type").and_then(Value::as_str) == Some("local"))
+                    .and_then(|project| project.get("projectId"))
+                    .and_then(Value::as_str)
+                    .filter(|id| project_ids.contains(*id))
+                    .map(|id| Value::String(id.to_string()))
+            })
+            .unwrap_or(Value::Null);
+    }
+    json!({
+        "threadProjectAssignments": assignments,
+        "projectlessThreadIds": projectless,
+        "workspaceProjectAssignments": workspace_assignments,
+        "localProjects": local_projects,
+        "selectedProjectId": selected_project_id,
+    })
+}
+
+fn persist_state_map(state: &Map<String, Value>, state_path: &Path) -> Result<(), String> {
+    if let Some(parent) = state_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let temporary = state_path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
+    let bytes = serde_json::to_vec_pretty(&Value::Object(state.clone()))
+        .map_err(|error| error.to_string())?;
+    match fs::write(&temporary, bytes).and_then(|_| fs::rename(&temporary, state_path)) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ = fs::remove_file(&temporary);
+            Err(error.to_string())
+        }
+    }
+}
+
+fn project_id_matches(value: &Value, expected: Option<&str>) -> bool {
+    match expected {
+        Some(expected) => value.as_str() == Some(expected),
+        None => value.is_null(),
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -22,6 +214,7 @@ pub struct WorkspaceRootItem {
     pub label: String,
     pub active: bool,
     pub has_agents_md: bool,
+    pub server_project_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,9 +290,599 @@ pub fn normalize_fs_path(raw: &str) -> String {
     }
 }
 
+fn select_local_project_in_state(
+    state: &mut Map<String, Value>,
+    project_id: &str,
+) -> Result<(), String> {
+    let requested_id = project_id.trim();
+    if requested_id.is_empty() {
+        return Err("Project id is required".to_string());
+    }
+
+    let membership = read_sidebar_project_membership(state);
+    let project = membership["localProjects"]
+        .as_array()
+        .and_then(|projects| {
+            projects
+                .iter()
+                .find(|project| project["id"].as_str() == Some(requested_id))
+        })
+        .ok_or_else(|| format!("Unknown local project: {requested_id}"))?;
+    let first_root = project["rootPaths"][0].as_str().unwrap().to_string();
+    state
+        .get_mut(PERSISTED_ATOM_STATE_KEY)
+        .and_then(Value::as_object_mut)
+        .unwrap()
+        .insert(
+            SELECTED_PROJECT_ATOM_KEY.to_string(),
+            json!({ "type": "local", "projectId": requested_id }),
+        );
+    let mut saved_roots: Vec<String> = state
+        .get(DESKTOP_PROJECT_ROOTS_KEY)
+        .and_then(Value::as_array)
+        .map(|roots| {
+            roots
+                .iter()
+                .filter_map(Value::as_str)
+                .map(normalize_fs_path)
+                .filter(|path| !path.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    if !saved_roots
+        .iter()
+        .any(|path| path.eq_ignore_ascii_case(&first_root))
+    {
+        saved_roots.insert(0, first_root.clone());
+    }
+    state.insert(DESKTOP_PROJECT_ROOTS_KEY.to_string(), json!(saved_roots));
+    state.insert(
+        ACTIVE_WORKSPACE_ROOTS_KEY.to_string(),
+        json!([first_root.clone()]),
+    );
+    Ok(())
+}
+
 #[derive(Clone)]
 pub struct DesktopStateManager {
     state_map: Arc<Mutex<Map<String, Value>>>,
+    workspace_turn_owners: Arc<Mutex<HashMap<String, String>>>,
+}
+
+#[cfg(test)]
+mod workspace_transition_tests {
+    use super::*;
+
+    fn fixture() -> (DesktopStateManager, PathBuf) {
+        let map = json!({
+            "unrelated":"keep",
+            "electron-persisted-atom-state":{
+                "thread-workspace-state-v1:t":{
+                    "revision":"r1","project":{"projectKind":"local","projectId":"p"},
+                    "applied":{"cwd":"D:/old","projectSources":["D:/old"],"runtimeWorkspaceRoots":["D:/old"]},
+                    "pending":{"cwd":"D:/new","projectSources":["D:/new"],"runtimeWorkspaceRoots":["D:/new"]}
+                }
+            },
+            "thread-writable-roots":{"t":["D:/old","D:/extra"],"other":["D:/other"]}
+        });
+        let manager = DesktopStateManager {
+            state_map: Arc::new(Mutex::new(map.as_object().unwrap().clone())),
+            workspace_turn_owners: Arc::new(Mutex::new(HashMap::new())),
+        };
+        let directory = std::env::temp_dir().join(format!(
+            "codex-workspace-transition-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        (manager, directory)
+    }
+
+    fn params() -> Value {
+        json!({"threadId":"t","cwd":"D:/active","environments":[],"sandboxPolicy":{"type":"workspaceWrite","networkAccess":false}})
+    }
+
+    #[tokio::test]
+    async fn workspace_recovery_resumes_cold_thread_before_turn_and_uses_applied() {
+        let (manager, directory) = fixture();
+        manager
+            .state_map
+            .lock()
+            .unwrap()
+            .get_mut(PERSISTED_ATOM_STATE_KEY)
+            .unwrap()["thread-workspace-state-v1:t"]["pending"] = Value::Null;
+        let mut methods = Vec::new();
+        manager.call_turn_with_workspace_at_path(
+            json!({"threadId":"t","sandboxPolicy":{"type":"workspaceWrite","networkAccess":false}}),
+            &directory.join("state.json"),
+            |method, request| {
+                methods.push(method.clone());
+                let result = match method.as_str() {
+                    "thread/read" => json!({"thread":{"status":{"type":"notLoaded"},"environments":null}}),
+                    "thread/resume" => {
+                        assert_eq!(request, json!({"threadId":"t"}), "unknown host must not receive local overrides");
+                        json!({"thread":{"status":{"type":"idle"},"cwd":"D:/stale",
+                            "environments":[{"environmentId":"local","cwd":"D:/stale","runtimeWorkspaceRoots":["D:/stale"]}]}})
+                    },
+                    "turn/start" => {
+                        assert_eq!(request["environments"][0]["cwd"], "D:/old");
+                        assert_eq!(request["environments"][0]["runtimeWorkspaceRoots"], json!(["D:/old"]));
+                        assert_eq!(request["cwd"], Value::Null);
+                        assert!(!request["sandboxPolicy"]["writableRoots"].as_array().unwrap().contains(&json!("D:/stale")));
+                        json!({"turn":{"id":"accepted"}})
+                    },
+                    _ => panic!("unexpected method"),
+                };
+                std::future::ready(Ok(result))
+            },
+        ).await.unwrap();
+        assert_eq!(methods, ["thread/read", "thread/resume", "turn/start"]);
+        assert!(
+            !directory.join("state.json").exists(),
+            "plain recovery must not commit a transition"
+        );
+        fs::remove_dir(&directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn workspace_recovery_resume_failure_or_unknown_environment_never_dispatches() {
+        for response in [
+            Err("resume unavailable".to_string()),
+            Ok(json!({"thread":{"status":{"type":"notLoaded"},"environments":[]}})),
+            Ok(json!({"thread":{"status":{"type":"idle"},"environments":null}})),
+        ] {
+            let (manager, directory) = fixture();
+            let before = manager.state_map.lock().unwrap().clone();
+            let mut methods = Vec::new();
+            let result = manager.call_turn_with_workspace_at_path(params(), &directory.join("state.json"), |method, _| {
+                methods.push(method.clone());
+                std::future::ready(if method == "thread/read" {
+                    Ok(json!({"thread":{"status":{"type":"notLoaded"},"environments":null}}))
+                } else {
+                    assert_eq!(method, "thread/resume");
+                    response.clone()
+                })
+            }).await;
+            assert!(result.is_err());
+            assert_eq!(methods, ["thread/read", "thread/resume"]);
+            assert_eq!(*manager.state_map.lock().unwrap(), before);
+            assert!(manager.workspace_turn_owners.lock().unwrap().is_empty());
+            assert!(!directory.join("state.json").exists());
+            fs::remove_dir(&directory).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn workspace_recovery_cold_remote_preserves_request_and_local_pending() {
+        let (manager, directory) = fixture();
+        let before = manager.state_map.lock().unwrap().clone();
+        let original = json!({"threadId":"t","input":[]});
+        let mut methods = Vec::new();
+        manager
+            .call_turn_with_workspace_at_path(
+                original.clone(),
+                &directory.join("state.json"),
+                |method, request| {
+                    methods.push(method.clone());
+                    let result = match method.as_str() {
+                        "thread/read" => {
+                            json!({"thread":{"status":{"type":"notLoaded"},"environments":null}})
+                        }
+                        "thread/resume" => {
+                            assert_eq!(request, json!({"threadId":"t"}));
+                            json!({"thread":{"status":{"type":"idle"},"cwd":"/remote",
+                        "environments":[{"environmentId":"remote","cwd":"/remote"}]},
+                        "sandbox":{"type":"readOnly"}})
+                        }
+                        "turn/start" => {
+                            assert_eq!(request, original);
+                            json!({"turn":{"id":"remote-accepted"}})
+                        }
+                        _ => panic!("unexpected method"),
+                    };
+                    std::future::ready(Ok(result))
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(methods, ["thread/read", "thread/resume", "turn/start"]);
+        assert_eq!(*manager.state_map.lock().unwrap(), before);
+        assert!(!directory.join("state.json").exists());
+        fs::remove_dir(&directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn workspace_recovery_superseded_resume_never_dispatches_old_turn() {
+        let (manager, directory) = fixture();
+        let file = directory.join("state.json");
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        let old_manager = manager.clone();
+        let old_file = file.clone();
+        let old = tokio::spawn(async move {
+            let mut channels = Some((ready_tx, release_rx));
+            old_manager.call_turn_with_workspace_at_path(params(), &old_file, |method, _| {
+                let channels = if method == "thread/resume" { channels.take() } else { None };
+                async move {
+                    if method == "thread/read" {
+                        return Ok(json!({"thread":{"status":{"type":"notLoaded"},"environments":null}}));
+                    }
+                    assert_eq!(method, "thread/resume", "superseded recovery must never dispatch");
+                    let (ready_tx, release_rx) = channels.unwrap();
+                    ready_tx.send(()).unwrap();
+                    release_rx.await.unwrap();
+                    Ok(json!({"thread":{"status":{"type":"idle"},"environments":[]}}))
+                }
+            }).await
+        });
+        ready_rx.await.unwrap();
+        manager
+            .call_turn_with_workspace_at_path(params(), &file, |method, _| async move {
+                if method == "thread/read" {
+                    return Ok(json!({"thread":{"status":{"type":"idle"},"environments":[]}}));
+                }
+                assert_eq!(method, "turn/start", "loaded thread must not resume");
+                Ok(json!({"turn":{"id":"latest"}}))
+            })
+            .await
+            .unwrap();
+        release_tx.send(()).unwrap();
+        assert!(old.await.unwrap().is_err());
+        assert!(manager.workspace_turn_owners.lock().unwrap().is_empty());
+        fs::remove_file(&file).unwrap();
+        fs::remove_dir(&directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn workspace_transition_accepts_before_commit_and_survives_reload() {
+        let (manager, directory) = fixture();
+        let file = directory.join("state.json");
+        let (result, warning) = manager
+            .call_turn_with_workspace_at_path(params(), &file, |method, request| {
+                if method == "thread/read" {
+                    return std::future::ready(Ok(json!({"thread":{"environments":[]}})));
+                }
+                assert_eq!(method, "turn/start");
+                assert_eq!(request["cwd"], "D:/new");
+                assert_eq!(
+                    request["sandboxPolicy"]["writableRoots"],
+                    json!(["D:/extra", "D:/new"])
+                );
+                assert!(
+                    !file.exists(),
+                    "nothing is committed before the RPC accepts"
+                );
+                std::future::ready(Ok(json!({"turn":{"id":"accepted","status":"inProgress"}})))
+            })
+            .await
+            .unwrap();
+        assert!(warning.is_none());
+        assert_eq!(
+            result["turn"]["status"], "inProgress",
+            "do not wait for turn completion"
+        );
+        let reloaded: Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+        let state = &reloaded[PERSISTED_ATOM_STATE_KEY]["thread-workspace-state-v1:t"];
+        assert_eq!(state["pending"], Value::Null);
+        assert_eq!(state["applied"]["cwd"], "D:/new");
+        assert_eq!(
+            reloaded["thread-writable-roots"]["other"],
+            json!(["D:/other"])
+        );
+        assert_eq!(reloaded["unrelated"], "keep");
+        assert_eq!(
+            *manager.state_map.lock().unwrap(),
+            *reloaded.as_object().unwrap()
+        );
+        assert!(manager.workspace_turn_owners.lock().unwrap().is_empty());
+        fs::remove_file(&file).unwrap();
+        fs::remove_dir(&directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn workspace_transition_rejection_and_unknown_acceptance_preserve_pending() {
+        let (manager, directory) = fixture();
+        let before = manager.state_map.lock().unwrap().clone();
+        let file = directory.join("state.json");
+        for message in ["rejected", "timeout: outcome unknown", "cancelled"] {
+            let error = manager
+                .call_turn_with_workspace_at_path(params(), &file, |method, _| async move {
+                    if method == "thread/read" {
+                        return Ok(json!({"thread":{"environments":[]}}));
+                    }
+                    Err(message.to_owned())
+                })
+                .await
+                .unwrap_err();
+            assert_eq!(error, message);
+            assert_eq!(*manager.state_map.lock().unwrap(), before);
+            assert!(!file.exists());
+        }
+        let (result, warning) = manager
+            .call_turn_with_workspace_at_path(params(), &file, |method, _| async move {
+                if method == "thread/read" {
+                    return Ok(json!({"thread":{"environments":[]}}));
+                }
+                Ok(json!({"unexpected":"no acceptance ID"}))
+            })
+            .await
+            .unwrap();
+        assert_eq!(result["unexpected"], "no acceptance ID");
+        assert!(warning.is_some());
+        assert_eq!(*manager.state_map.lock().unwrap(), before);
+        assert!(manager.workspace_turn_owners.lock().unwrap().is_empty());
+        fs::remove_dir(&directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn workspace_transition_save_failure_returns_accepted_turn_without_publishing_state() {
+        let (manager, directory) = fixture();
+        let before = manager.state_map.lock().unwrap().clone();
+        // Replacing a directory as a file fails on both Windows and Unix.
+        let (result, warning) = manager
+            .call_turn_with_workspace_at_path(params(), &directory, |method, _| async move {
+                if method == "thread/read" {
+                    return Ok(json!({"thread":{"environments":[]}}));
+                }
+                Ok(json!({"turn":{"id":"already-accepted"}}))
+            })
+            .await
+            .unwrap();
+        assert_eq!(result["turn"]["id"], "already-accepted");
+        assert!(warning.unwrap().contains("请勿重复发送"));
+        assert_eq!(*manager.state_map.lock().unwrap(), before);
+        assert_eq!(fs::read_dir(&directory).unwrap().count(), 0);
+        fs::remove_dir(&directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn workspace_transition_new_revision_retains_pending_but_records_accepted_workspace() {
+        let (manager, directory) = fixture();
+        let file = directory.join("state.json");
+        manager
+            .call_turn_with_workspace_at_path(params(), &file, |method, _| {
+                if method == "thread/read" {
+                    return std::future::ready(Ok(json!({"thread":{"environments":[]}})));
+                }
+                let mut map = manager.state_map.lock().unwrap();
+                let current = &mut map.get_mut(PERSISTED_ATOM_STATE_KEY).unwrap()
+                    ["thread-workspace-state-v1:t"];
+                current["revision"] = json!("r2");
+                current["pending"]["cwd"] = json!("D:/next");
+                current["pending"]["runtimeWorkspaceRoots"] = json!(["D:/next"]);
+                current["projectMembership"] = json!({"projectKind":"local","projectId":"p-next"});
+                std::future::ready(Ok(json!({"turn":{"id":"accepted-r1"}})))
+            })
+            .await
+            .unwrap();
+        let reloaded: Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+        let current = &reloaded[PERSISTED_ATOM_STATE_KEY]["thread-workspace-state-v1:t"];
+        assert_eq!(current["applied"]["cwd"], "D:/new");
+        assert_eq!(current["pending"]["cwd"], "D:/next");
+        assert_eq!(current["revision"], "r2");
+        assert_eq!(current["projectMembership"]["projectId"], "p-next");
+        fs::remove_file(&file).unwrap();
+        fs::remove_dir(&directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn workspace_transition_late_old_response_cannot_overwrite_newer_accepted_turn() {
+        let (manager, directory) = fixture();
+        let file = directory.join("state.json");
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        let old_manager = manager.clone();
+        let old_file = file.clone();
+        let old = tokio::spawn(async move {
+            let mut channels = Some((ready_tx, release_rx));
+            old_manager
+                .call_turn_with_workspace_at_path(params(), &old_file, |method, _| {
+                    let channels = if method == "turn/start" {
+                        channels.take()
+                    } else {
+                        None
+                    };
+                    async move {
+                        let Some((ready_tx, release_rx)) = channels else {
+                            return Ok(json!({"thread":{"environments":[]}}));
+                        };
+                        ready_tx.send(()).unwrap();
+                        release_rx.await.unwrap();
+                        Ok(json!({"turn":{"id":"old-accepted"}}))
+                    }
+                })
+                .await
+        });
+        ready_rx.await.unwrap();
+        {
+            let mut map = manager.state_map.lock().unwrap();
+            let current =
+                &mut map.get_mut(PERSISTED_ATOM_STATE_KEY).unwrap()["thread-workspace-state-v1:t"];
+            current["revision"] = json!("r2");
+            current["pending"]["cwd"] = json!("D:/latest");
+            current["pending"]["runtimeWorkspaceRoots"] = json!(["D:/latest"]);
+        }
+        manager
+            .call_turn_with_workspace_at_path(params(), &file, |method, _| async move {
+                if method == "thread/read" {
+                    return Ok(json!({"thread":{"environments":[]}}));
+                }
+                Ok(json!({"turn":{"id":"new-accepted"}}))
+            })
+            .await
+            .unwrap();
+        release_tx.send(()).unwrap();
+        assert_eq!(old.await.unwrap().unwrap().0["turn"]["id"], "old-accepted");
+        let reloaded: Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+        let current = &reloaded[PERSISTED_ATOM_STATE_KEY]["thread-workspace-state-v1:t"];
+        assert_eq!(current["applied"]["cwd"], "D:/latest");
+        assert_eq!(current["pending"], Value::Null);
+        assert!(manager.workspace_turn_owners.lock().unwrap().is_empty());
+        fs::remove_file(&file).unwrap();
+        fs::remove_dir(&directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn workspace_transition_omitted_environments_respect_sticky_remote_selection() {
+        let (manager, directory) = fixture();
+        let file = directory.join("state.json");
+        let before = manager.state_map.lock().unwrap().clone();
+        let mut original = params();
+        original.as_object_mut().unwrap().remove("environments");
+        let mut methods = Vec::new();
+        manager
+            .call_turn_with_workspace_at_path(original.clone(), &file, |method, request| {
+                methods.push(method.clone());
+                let result = if method == "thread/read" {
+                    assert_eq!(request, json!({"threadId":"t","includeTurns":false}));
+                    json!({"thread":{"environments":[{"environmentId":"remote","cwd":"/remote"}]}})
+                } else {
+                    assert_eq!(
+                        request, original,
+                        "do not reset sticky environments or inject local cwd"
+                    );
+                    json!({"turn":{"id":"remote-accepted"}})
+                };
+                std::future::ready(Ok(result))
+            })
+            .await
+            .unwrap();
+        assert_eq!(methods, ["thread/read", "turn/start"]);
+        assert_eq!(*manager.state_map.lock().unwrap(), before);
+        assert!(
+            !file.exists(),
+            "local pending is not committed by a remote turn"
+        );
+        fs::remove_dir(&directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn workspace_transition_unknown_effective_environment_blocks_before_dispatch() {
+        for read_result in [
+            Ok(json!({"thread":{"environments":null}})),
+            Ok(json!({"thread":{}})),
+            Err("thread/read unavailable".to_owned()),
+        ] {
+            let (manager, directory) = fixture();
+            let before = manager.state_map.lock().unwrap().clone();
+            let mut original = params();
+            original.as_object_mut().unwrap().remove("environments");
+            let mut methods = Vec::new();
+            let result = manager
+                .call_turn_with_workspace_at_path(
+                    original,
+                    &directory.join("state.json"),
+                    |method, _| {
+                        methods.push(method);
+                        std::future::ready(read_result.clone())
+                    },
+                )
+                .await;
+            assert!(result.is_err());
+            let expected = if read_result.is_ok() {
+                vec!["thread/read", "thread/resume"]
+            } else {
+                vec!["thread/read"]
+            };
+            assert_eq!(
+                methods, expected,
+                "unknown environment must never dispatch the turn"
+            );
+            assert_eq!(*manager.state_map.lock().unwrap(), before);
+            assert!(manager.workspace_turn_owners.lock().unwrap().is_empty());
+            fs::remove_dir(&directory).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn workspace_transition_resolved_local_selection_is_used_in_target_request() {
+        for environments in [
+            json!([]),
+            json!([{"environmentId":"local","cwd":"D:/old","keep":true}]),
+        ] {
+            let (manager, directory) = fixture();
+            let file = directory.join("state.json");
+            let mut original = params();
+            original.as_object_mut().unwrap().remove("environments");
+            manager
+                .call_turn_with_workspace_at_path(original, &file, |method, request| {
+                    let result = if method == "thread/read" {
+                        json!({"thread":{"environments":environments}})
+                    } else {
+                        if environments.as_array().unwrap().is_empty() {
+                            assert_eq!(request["cwd"], "D:/new");
+                            assert!(
+                                request.get("environments").is_none(),
+                                "do not change sticky selection"
+                            );
+                        } else {
+                            assert_eq!(request["cwd"], Value::Null);
+                            assert_eq!(request["environments"][0]["cwd"], "D:/new");
+                            assert_eq!(request["environments"][0]["keep"], true);
+                        }
+                        json!({"turn":{"id":"local-accepted"}})
+                    };
+                    std::future::ready(Ok(result))
+                })
+                .await
+                .unwrap();
+            assert_eq!(
+                manager.get_value(PERSISTED_ATOM_STATE_KEY)["thread-workspace-state-v1:t"]
+                    ["pending"],
+                Value::Null
+            );
+            fs::remove_file(&file).unwrap();
+            fs::remove_dir(&directory).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn workspace_transition_superseded_environment_read_does_not_dispatch_old_turn() {
+        let (manager, directory) = fixture();
+        let file = directory.join("state.json");
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        let old_manager = manager.clone();
+        let old_file = file.clone();
+        let old = tokio::spawn(async move {
+            let mut original = params();
+            original.as_object_mut().unwrap().remove("environments");
+            let mut channels = Some((ready_tx, release_rx));
+            old_manager
+                .call_turn_with_workspace_at_path(original, &old_file, |method, _| {
+                    assert_eq!(
+                        method, "thread/read",
+                        "a superseded preflight must not start a stale turn"
+                    );
+                    let (ready_tx, release_rx) = channels.take().unwrap();
+                    async move {
+                        ready_tx.send(()).unwrap();
+                        release_rx.await.unwrap();
+                        Ok(json!({"thread":{"environments":[]}}))
+                    }
+                })
+                .await
+        });
+        ready_rx.await.unwrap();
+        manager
+            .call_turn_with_workspace_at_path(params(), &file, |method, _| async move {
+                if method == "thread/read" {
+                    return Ok(json!({"thread":{"environments":[]}}));
+                }
+                Ok(json!({"turn":{"id":"new-accepted"}}))
+            })
+            .await
+            .unwrap();
+        release_tx.send(()).unwrap();
+        assert!(old.await.unwrap().is_err());
+        assert_eq!(
+            manager.get_value(PERSISTED_ATOM_STATE_KEY)["thread-workspace-state-v1:t"]["applied"]
+                ["cwd"],
+            "D:/new"
+        );
+        assert!(manager.workspace_turn_owners.lock().unwrap().is_empty());
+        fs::remove_file(&file).unwrap();
+        fs::remove_dir(&directory).unwrap();
+    }
 }
 
 impl DesktopStateManager {
@@ -113,6 +896,7 @@ impl DesktopStateManager {
         }
         Self {
             state_map: Arc::new(Mutex::new(initial)),
+            workspace_turn_owners: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -126,9 +910,573 @@ impl DesktopStateManager {
         }
     }
 
+    pub(crate) async fn call_turn_with_workspace<F, R>(
+        &self,
+        params: Value,
+        send: F,
+    ) -> Result<(Value, Option<String>), String>
+    where
+        F: FnMut(String, Value) -> R,
+        R: std::future::Future<Output = Result<Value, String>>,
+    {
+        self.call_turn_with_workspace_at_path(params, &desktop_global_state_path(), send)
+            .await
+    }
+
+    async fn call_turn_with_workspace_at_path<F, R>(
+        &self,
+        params: Value,
+        state_path: &Path,
+        mut send: F,
+    ) -> Result<(Value, Option<String>), String>
+    where
+        F: FnMut(String, Value) -> R,
+        R: std::future::Future<Output = Result<Value, String>>,
+    {
+        let thread_id = params["threadId"].as_str().unwrap_or_default().to_owned();
+        if self.state_map.lock().unwrap()
+            .get("thread-project-move-recovery")
+            .and_then(Value::as_object)
+            .is_some_and(|recovery| recovery.contains_key(&thread_id))
+        {
+            return Err("会话项目移动结果尚待确认，请先恢复项目状态；本次没有发送。".into());
+        }
+        let key = format!("thread-workspace-state-v1:{thread_id}");
+        let token = uuid::Uuid::new_v4().to_string();
+        let (workspace, retained) = {
+            let mut owners = self.workspace_turn_owners.lock().unwrap();
+            if owners.get(&thread_id).is_some_and(|owner| owner.starts_with("move:")) {
+                return Err("会话正在移动到其他项目，请稍后重试；本次没有发送。".into());
+            }
+            let guard = self.state_map.lock().unwrap();
+            let atoms = guard.get(PERSISTED_ATOM_STATE_KEY).unwrap_or(&Value::Null);
+            let retained = &guard.get("thread-writable-roots").unwrap_or(&Value::Null)[&thread_id];
+            owners.insert(thread_id.clone(), token.clone());
+            (atoms[&key].clone(), retained.clone())
+        };
+        let sent = async {
+            let mut current = send(
+                "thread/read".into(),
+                json!({"threadId":thread_id,"includeTurns":false}),
+            )
+            .await?;
+            if self.workspace_turn_owners.lock().unwrap().get(&thread_id) != Some(&token) {
+                return Err("本次尚未发送的请求已被更新的发送操作替代。".into());
+            }
+            let resumed = current["thread"]["status"]["type"] == "notLoaded"
+                || current["thread"]["environments"].is_null();
+            if resumed {
+                current = send("thread/resume".into(), json!({"threadId":thread_id})).await?;
+            }
+            if self.workspace_turn_owners.lock().unwrap().get(&thread_id) != Some(&token) {
+                return Err("本次尚未发送的请求已被更新的发送操作替代。".into());
+            }
+            if current["thread"]["status"]["type"] == "notLoaded"
+                || !current["thread"]["environments"].is_array()
+            {
+                return Err("会话执行环境尚未恢复，输入和工作区状态已保留，本次没有发送。".into());
+            }
+            let prepared = crate::thread_workspace::prepare_runtime_turn(
+                &workspace, &retained, params, &current, resumed,
+            )?;
+            if self.workspace_turn_owners.lock().unwrap().get(&thread_id) != Some(&token) {
+                return Err("本次尚未发送的请求已被更新的发送操作替代。".into());
+            }
+            let result = send("turn/start".into(), prepared.params).await?;
+            Ok::<_, String>((result, prepared.commit))
+        }
+        .await;
+        // Ownership is checked even when this request has no pending workspace:
+        // a newer remote/plain send must also supersede an older local send.
+        let mut owners = self.workspace_turn_owners.lock().unwrap();
+        let current = owners.get(&thread_id) == Some(&token);
+        if current {
+            owners.remove(&thread_id);
+        }
+        let (result, commit) = sent?;
+        if !current || commit.is_none() {
+            return Ok((result, None));
+        }
+        if result["turn"]["id"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .is_none()
+        {
+            return Ok((
+                result,
+                Some("服务未返回已接受轮次的 ID，待迁移工作区已保留，请勿自动重发。".into()),
+            ));
+        }
+        let commit = commit.unwrap();
+        let mut guard = self.state_map.lock().unwrap();
+        let mut next = guard.clone();
+        let Some(workspace) = next
+            .get_mut(PERSISTED_ATOM_STATE_KEY)
+            .and_then(Value::as_object_mut)
+            .and_then(|atoms| atoms.get_mut(&key))
+            .filter(|state| state.is_object())
+        else {
+            return Ok((result, None));
+        };
+        crate::thread_workspace::apply_accepted(workspace, &commit);
+        let retained = next
+            .entry("thread-writable-roots")
+            .or_insert_with(|| json!({}));
+        if !retained.is_object() {
+            return Ok((
+                result,
+                Some("轮次已开始，但保留目录状态无效，工作区迁移尚未保存。".into()),
+            ));
+        }
+        retained[&thread_id] = json!(commit.writable_roots);
+        // Write a sibling file and replace only after the complete state is on disk.
+        // A failed save must neither clear pending in memory nor report send failure.
+        let persist = || -> Result<(), String> {
+            if let Some(parent) = state_path.parent() {
+                fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            }
+            let temporary = state_path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
+            let bytes = serde_json::to_vec_pretty(&next).map_err(|error| error.to_string())?;
+            let saved =
+                fs::write(&temporary, bytes).and_then(|_| fs::rename(&temporary, state_path));
+            if saved.is_err() {
+                let _ = fs::remove_file(&temporary);
+            }
+            saved.map_err(|error| error.to_string())
+        };
+        if let Err(error) = persist() {
+            return Ok((
+                result,
+                Some(format!(
+                    "轮次已开始，但工作区迁移保存失败；待迁移状态已保留，请勿重复发送：{error}"
+                )),
+            ));
+        }
+        *guard = next;
+        Ok((result, None))
+    }
+
     pub fn get_value(&self, key: &str) -> Value {
         let guard = self.state_map.lock().unwrap();
         guard.get(key).cloned().unwrap_or(Value::Null)
+    }
+
+    pub fn sidebar_project_membership(&self) -> Value {
+        read_sidebar_project_membership(&self.state_map.lock().unwrap())
+    }
+
+    /// Builds the read-only portion of a project move.
+    ///
+    /// This deliberately does not write local atoms or call app-server.  A
+    /// caller must use the returned plan to obtain confirmation and then
+    /// perform a fresh live `thread/read`/`project/read` before implementing a
+    /// commit transaction.  Keeping this boundary explicit prevents a stale
+    /// UI plan from changing membership or workspace state.
+    #[cfg(test)]
+    fn prepare_thread_project_move(
+        &self,
+        thread_id: &str,
+        target_project_id: Option<&str>,
+    ) -> Result<Value, String> {
+        let thread_id = thread_id.trim();
+        if thread_id.is_empty() {
+            return Err("缺少会话 ID，无法准备项目移动。".to_string());
+        }
+        let guard = self.state_map.lock().unwrap();
+        prepare_thread_project_move_in_state(&guard, thread_id, target_project_id)
+    }
+
+    pub(crate) async fn prepare_thread_project_move_with_rpc<F, R>(
+        &self, thread_id: &str, target_project_id: Option<&str>, mut read: F,
+    ) -> Result<Value, String>
+    where
+        F: FnMut(String, Value) -> R,
+        R: std::future::Future<Output = Result<Value, String>>,
+    {
+        let thread_id = thread_id.trim();
+        if thread_id.is_empty() {
+            return Err("缺少会话 ID，无法准备项目移动。".to_string());
+        }
+        let original = self.state_map.lock().unwrap().clone();
+        let current = read("thread/read".to_string(), json!({
+            "threadId": thread_id, "includeTurns": false,
+        })).await?;
+        let mut thread = current["thread"].clone();
+        if thread["id"].as_str() != Some(thread_id) {
+            return Err("服务返回的会话身份不匹配，无法准备项目移动。".to_string());
+        }
+        if thread["status"]["type"].as_str() == Some("notLoaded") {
+            let resumed = read("thread/resume".to_string(), json!({"threadId":thread_id})).await?;
+            thread = resumed["thread"].clone();
+            if thread["id"].as_str() != Some(thread_id) {
+                return Err("恢复后的会话身份不匹配，无法准备项目移动。".to_string());
+            }
+        }
+        if thread["status"]["type"].as_str() != Some("idle") {
+            return Err("会话尚未恢复或正在执行，无法准备项目移动。".to_string());
+        }
+        let environments = thread["environments"].as_array()
+            .ok_or("无法确认会话的执行环境，不能准备项目移动。")?;
+        if environments.iter().any(|environment| environment["environmentId"] != "local") {
+            return Err("当前会话包含远程执行环境，不能使用本地项目移动。".to_string());
+        }
+        let assignment = match thread.get("projectId") {
+            Some(Value::Null) => None,
+            Some(Value::String(id)) if !id.is_empty() => Some(json!({
+                "projectKind": "local", "projectId": id,
+            })),
+            _ => return Err("服务未返回明确的项目归属，无法准备项目移动。".to_string()),
+        };
+        let mut plan = prepare_thread_project_move_for_assignment(
+            &original, thread_id, target_project_id, assignment,
+        )?;
+        let mut validated = Vec::<String>::new();
+        for field in ["sourceProject", "targetProject"] {
+            let project = &plan[field];
+            let Some(server_id) = project["serverProjectId"].as_str().map(str::to_owned) else { continue };
+            if validated.contains(&server_id) { continue; }
+            let response = read("project/read".to_string(), json!({"projectId":server_id})).await?;
+            let live = &response["project"];
+            let roots = live["roots"].as_array()
+                .ok_or("服务未返回项目文件夹，无法准备项目移动。")?
+                .iter().map(|root| root["path"].as_str().map(str::to_owned))
+                .collect::<Option<Vec<String>>>()
+                .ok_or("服务返回了无效的项目文件夹。")?;
+            if live["id"].as_str() != Some(&server_id)
+                || json!(roots) != project["rootPaths"] {
+                return Err("项目身份或文件夹与本地实体不一致，请刷新项目后重试。".to_string());
+            }
+            // Validate all source paths as well as the target before claiming
+            // that the live project sources can be used by a later commit.
+            crate::thread_workspace::project_target(&roots, None)?;
+            validated.push(server_id);
+        }
+        let cwd = thread["cwd"].as_str().filter(|cwd| !cwd.is_empty())
+            .ok_or("会话缺少工作目录，无法准备项目移动。")?;
+        let source_roots: Vec<String> = plan["sourceProject"]["rootPaths"].as_array()
+            .map(|roots| roots.iter().filter_map(Value::as_str).map(str::to_owned).collect())
+            .unwrap_or_default();
+        let mut runtime_roots = environments.first()
+            .and_then(|environment| environment.get("runtimeWorkspaceRoots"))
+            .filter(|roots| roots.is_array())
+            .or_else(|| current.get("runtimeWorkspaceRoots").filter(|roots| roots.is_array()))
+            .cloned();
+        if runtime_roots.is_none() {
+            let root = if source_roots.len() == 1
+                && crate::thread_workspace::missing_project_sources(&[cwd.to_owned()], &source_roots).is_empty() {
+                source_roots[0].clone()
+            } else { cwd.to_owned() };
+            runtime_roots = Some(json!([root]));
+        }
+        plan["appliedFallback"] = json!({
+            "cwd":cwd,"projectSources":source_roots,"runtimeWorkspaceRoots":runtime_roots,
+        });
+        if let Some(target_root) = plan["targetProject"]["rootPaths"][0].as_str() {
+            let worktree = crate::git::resolve_thread_project_worktree(thread_id, cwd, target_root);
+            let roots: Vec<String> = plan["targetProject"]["rootPaths"].as_array().unwrap()
+                .iter().filter_map(Value::as_str).map(str::to_owned).collect();
+            plan["workspaceTarget"] = crate::thread_workspace::project_target(
+                &roots, worktree.as_ref().map(|(source, root)| (source.as_str(), root.as_str())),
+            )?;
+        }
+        if *self.state_map.lock().unwrap() != original {
+            return Err("项目或工作区状态在读取期间已变化，请重新准备移动计划。".to_string());
+        }
+        plan["liveValidated"] = json!(true);
+        plan["requiredLiveValidation"] = json!(["commit-revalidation"]);
+        Ok(plan)
+    }
+
+    pub(crate) async fn commit_thread_project_move_with_rpc<F, R>(
+        &self,
+        thread_id: &str,
+        target_project_id: Option<&str>,
+        confirmed_plan: &Value,
+        confirm_missing_sources: bool,
+        state_path: &Path,
+        mut call: F,
+    ) -> Result<Value, String>
+    where
+        F: FnMut(String, Value) -> R,
+        R: std::future::Future<Output = Result<Value, String>>,
+    {
+        let thread_id = thread_id.trim();
+        if thread_id.is_empty() {
+            return Err("缺少会话 ID，无法移动项目。".into());
+        }
+        let token = format!("move:{}", uuid::Uuid::new_v4());
+        {
+            let mut owners = self.workspace_turn_owners.lock().unwrap();
+            if owners.contains_key(thread_id) {
+                return Err("会话正在执行其他操作，请稍后重试。".into());
+            }
+            owners.insert(thread_id.to_owned(), token.clone());
+        }
+
+        let result = self.commit_thread_project_move_owned(
+            thread_id,
+            target_project_id,
+            confirmed_plan,
+            confirm_missing_sources,
+            state_path,
+            &mut call,
+        ).await;
+        let mut owners = self.workspace_turn_owners.lock().unwrap();
+        if owners.get(thread_id) == Some(&token) {
+            owners.remove(thread_id);
+        }
+        result
+    }
+
+    pub(crate) async fn reconcile_thread_project_move_with_rpc<F, R>(
+        &self,
+        thread_id: &str,
+        state_path: &Path,
+        mut read: F,
+    ) -> Result<Value, String>
+    where
+        F: FnMut(String, Value) -> R,
+        R: std::future::Future<Output = Result<Value, String>>,
+    {
+        let thread_id = thread_id.trim();
+        if thread_id.is_empty() {
+            return Err("缺少会话 ID，无法恢复项目移动。".into());
+        }
+        let token = format!("move:{}", uuid::Uuid::new_v4());
+        {
+            let mut owners = self.workspace_turn_owners.lock().unwrap();
+            if owners.contains_key(thread_id) {
+                return Err("会话正在执行其他操作，请稍后重试。".into());
+            }
+            owners.insert(thread_id.to_owned(), token.clone());
+        }
+        let result = async {
+            let recovery = self.state_map.lock().unwrap()
+                .get("thread-project-move-recovery")
+                .and_then(Value::as_object)
+                .and_then(|records| records.get(thread_id))
+                .cloned()
+                .ok_or("此会话没有待恢复的项目移动。")?;
+            let response = read("thread/read".into(), json!({
+                "threadId":thread_id,"includeTurns":false,
+            })).await?;
+            if response["thread"]["id"].as_str() != Some(thread_id) {
+                return Err("服务返回的会话身份不匹配，恢复状态保持不变。".into());
+            }
+            let actual = response["thread"].get("projectId");
+            if actual.and_then(Value::as_str) == recovery["targetProjectId"].as_str()
+                && (recovery["targetProjectId"].is_string() || actual.is_some_and(Value::is_null))
+            {
+                self.finish_project_move(thread_id, state_path)?;
+                Ok(json!({"recovered":true,"membership":"target"}))
+            } else if project_id_matches(
+                actual.unwrap_or(&Value::Null),
+                recovery["sourceProjectId"].as_str(),
+            ) && (recovery["sourceProjectId"].is_string() || actual.is_some_and(Value::is_null))
+            {
+                self.rollback_project_move(thread_id, state_path)?;
+                Ok(json!({"recovered":true,"membership":"source"}))
+            } else {
+                Err("服务端归属与源/目标均不匹配，恢复记录保留且发送仍被阻止。".into())
+            }
+        }.await;
+        let mut owners = self.workspace_turn_owners.lock().unwrap();
+        if owners.get(thread_id) == Some(&token) {
+            owners.remove(thread_id);
+        }
+        result
+    }
+
+    async fn commit_thread_project_move_owned<F, R>(
+        &self,
+        thread_id: &str,
+        target_project_id: Option<&str>,
+        confirmed_plan: &Value,
+        confirm_missing_sources: bool,
+        state_path: &Path,
+        call: &mut F,
+    ) -> Result<Value, String>
+    where
+        F: FnMut(String, Value) -> R,
+        R: std::future::Future<Output = Result<Value, String>>,
+    {
+        if confirmed_plan["liveValidated"] != true {
+            return Err("移动计划未通过服务端验证，请重新检查。".into());
+        }
+        let fresh = {
+            let mut read = |method: String, params: Value| call(method, params);
+            self.prepare_thread_project_move_with_rpc(
+                thread_id, target_project_id, &mut read,
+            ).await?
+        };
+        for field in [
+            "sourceServerProjectId",
+            "targetServerProjectId",
+            "sourceProject",
+            "targetProject",
+            "missingSources",
+            "workspaceTarget",
+            "appliedFallback",
+            "workspaceState",
+        ] {
+            if confirmed_plan[field] != fresh[field] {
+                return Err("移动计划已变化，请重新检查并确认后重试。".into());
+            }
+        }
+        let missing = fresh["missingSources"].as_array().cloned().unwrap_or_default();
+        if !missing.is_empty() && !confirm_missing_sources {
+            return Err("目标项目需要新增文件夹访问权限，尚未获得确认。".into());
+        }
+
+        let target_id = fresh["targetServerProjectId"].as_str().map(str::to_owned);
+        if let (Some(target_id), Some(target)) = (target_id.as_deref(), fresh["targetProject"].as_object()) {
+            if !missing.is_empty() {
+                let mut roots: Vec<String> = target["rootPaths"].as_array()
+                    .into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect();
+                roots.extend(missing.iter().filter_map(Value::as_str).map(str::to_owned));
+                let response = call("project/update".into(), json!({
+                    "projectId": target_id,
+                    "roots": roots.iter().map(|path| json!({"path":path})).collect::<Vec<_>>(),
+                })).await;
+                let updated = call("project/read".into(), json!({"projectId":target_id})).await?;
+                let readback_roots: Vec<String> = updated["project"]["roots"].as_array()
+                    .into_iter().flatten().filter_map(|root| root["path"].as_str().map(str::to_owned)).collect();
+                if updated["project"]["id"].as_str() != Some(target_id)
+                    || readback_roots != roots {
+                    return Err(match response {
+                        Ok(_) => "目标项目文件夹写入后读回不一致，尚未移动会话。".into(),
+                        Err(error) => format!("无法确认目标项目文件夹更新：{error}"),
+                    });
+                }
+            }
+        }
+
+        let key = format!("thread-workspace-state-v1:{thread_id}");
+        let revision = uuid::Uuid::new_v4().to_string();
+        let assignment = target_id.as_ref().map(|id| json!({"projectKind":"local","projectId":id}));
+        {
+            let mut guard = self.state_map.lock().unwrap();
+            let mut staged = guard.clone();
+            let atoms = staged.entry(PERSISTED_ATOM_STATE_KEY).or_insert_with(|| json!({}));
+            if !atoms.is_object() {
+                return Err("本地工作区状态无效，项目未移动。".into());
+            }
+            let previous = atoms.get(&key).cloned().unwrap_or(Value::Null);
+            atoms[&key] = crate::thread_workspace::stage_project_move(
+                &previous,
+                assignment.as_ref().unwrap_or(&Value::Null),
+                &fresh["appliedFallback"],
+                &fresh["workspaceTarget"],
+                &revision,
+            );
+            let recovery = staged.entry("thread-project-move-recovery").or_insert_with(|| json!({}));
+            if !recovery.is_object() {
+                return Err("项目移动恢复状态无效，项目未移动。".into());
+            }
+            recovery[thread_id] = json!({
+                "revision":revision,
+                "previousWorkspace":previous,
+                "sourceProjectId":fresh["sourceServerProjectId"],
+                "targetProjectId":fresh["targetServerProjectId"],
+                "assignment":assignment,
+            });
+            persist_state_map(&staged, state_path)?;
+            *guard = staged;
+        }
+
+        let update_result = call("thread/metadata/update".into(), json!({
+            "threadId":thread_id,
+            "projectId":target_id.as_deref().unwrap_or(""),
+        })).await;
+        let readback = call("thread/read".into(), json!({"threadId":thread_id,"includeTurns":false})).await;
+        match readback {
+            Ok(value) if value["thread"]["id"].as_str() == Some(thread_id)
+                && value["thread"]["projectId"].as_str() == target_id.as_deref() =>
+            {
+                self.finish_project_move(thread_id, state_path)?;
+                Ok(json!({"moved":true,"projectMembership":self.sidebar_project_membership()}))
+            }
+            Ok(value) if project_id_matches(&value["thread"]["projectId"], fresh["sourceServerProjectId"].as_str()) => {
+                self.rollback_project_move(thread_id, state_path)?;
+                Err(update_result.err().unwrap_or_else(|| "服务端未保存项目归属，移动已撤销。".into()))
+            }
+            Ok(_) | Err(_) => {
+                self.persist_project_move_error(thread_id, state_path, update_result.err())?;
+                Err("无法确认服务端项目归属，移动状态已保留并阻止发送；请重试恢复。".into())
+            }
+        }
+    }
+
+    fn finish_project_move(&self, thread_id: &str, state_path: &Path) -> Result<(), String> {
+        let mut guard = self.state_map.lock().unwrap();
+        let mut next = guard.clone();
+        let recovery = next.get("thread-project-move-recovery")
+            .and_then(Value::as_object).and_then(|items| items.get(thread_id))
+            .cloned().ok_or("缺少项目移动恢复记录。")?;
+        let assignment = recovery["assignment"].clone();
+        let workspace = next.get_mut(PERSISTED_ATOM_STATE_KEY)
+            .and_then(Value::as_object_mut)
+            .and_then(|atoms| atoms.get_mut(&format!("thread-workspace-state-v1:{thread_id}")))
+            .ok_or("项目移动工作区状态已丢失。")?;
+        workspace["projectMembership"] = assignment.clone();
+        workspace["projectMembershipRevision"] = json!(recovery["revision"]);
+        let global = next.entry("thread-project-assignments").or_insert_with(|| json!({}));
+        if !global.is_object() {
+            return Err("会话项目归属状态无效。".into());
+        }
+        if let Some(assignment) = assignment.as_object() {
+            global[thread_id] = Value::Object(assignment.clone());
+            if let Some(projectless) = next.get_mut("projectless-thread-ids").and_then(Value::as_array_mut) {
+                projectless.retain(|id| id.as_str() != Some(thread_id));
+            }
+        } else {
+            global.as_object_mut().unwrap().remove(thread_id);
+            let projectless = next.entry("projectless-thread-ids").or_insert_with(|| json!([]));
+            if !projectless.is_array() { return Err("聊天归属状态无效。".into()); }
+            if !projectless.as_array().unwrap().iter().any(|id| id.as_str() == Some(thread_id)) {
+                projectless.as_array_mut().unwrap().push(json!(thread_id));
+            }
+        }
+        next.get_mut("thread-project-move-recovery").and_then(Value::as_object_mut).unwrap().remove(thread_id);
+        persist_state_map(&next, state_path)?;
+        *guard = next;
+        Ok(())
+    }
+
+    fn rollback_project_move(&self, thread_id: &str, state_path: &Path) -> Result<(), String> {
+        let mut guard = self.state_map.lock().unwrap();
+        let mut next = guard.clone();
+        let recovery = next.get("thread-project-move-recovery")
+            .and_then(Value::as_object).and_then(|items| items.get(thread_id))
+            .cloned().ok_or("缺少项目移动恢复记录。")?;
+        let key = format!("thread-workspace-state-v1:{thread_id}");
+        if let Some(workspace) = next.get_mut(PERSISTED_ATOM_STATE_KEY)
+            .and_then(Value::as_object_mut).and_then(|atoms| atoms.get_mut(&key)) {
+            *workspace = crate::thread_workspace::rollback_project_move(
+                workspace, recovery["revision"].as_str().unwrap_or_default(), &recovery["previousWorkspace"],
+            );
+            if workspace.is_null() {
+                next.get_mut(PERSISTED_ATOM_STATE_KEY).and_then(Value::as_object_mut).unwrap().remove(&key);
+            }
+        }
+        next.get_mut("thread-project-move-recovery").and_then(Value::as_object_mut).unwrap().remove(thread_id);
+        persist_state_map(&next, state_path)?;
+        *guard = next;
+        Ok(())
+    }
+
+    fn persist_project_move_error(
+        &self, thread_id: &str, state_path: &Path, error: Option<String>,
+    ) -> Result<(), String> {
+        let mut guard = self.state_map.lock().unwrap();
+        let mut next = guard.clone();
+        if let Some(record) = next.get_mut("thread-project-move-recovery")
+            .and_then(Value::as_object_mut).and_then(|items| items.get_mut(thread_id)) {
+            record["lastError"] = json!(error);
+        }
+        persist_state_map(&next, state_path)?;
+        *guard = next;
+        Ok(())
     }
 
     pub fn set_value(&self, key: &str, value: Value) {
@@ -183,6 +1531,7 @@ impl DesktopStateManager {
             .cloned()
             .or_else(|| roots.first().cloned())
             .unwrap_or_default();
+        let project_identity = format!("local:{}", codex_home_dir().to_string_lossy());
 
         roots
             .into_iter()
@@ -197,6 +1546,11 @@ impl DesktopStateManager {
                 let has_agents_md = find_agents_md(&path).is_some();
                 WorkspaceRootItem {
                     id: path.clone(),
+                    server_project_id: workspace_server_project_id(
+                        &guard,
+                        &project_identity,
+                        &path,
+                    ),
                     path,
                     label,
                     active,
@@ -316,6 +1670,28 @@ impl DesktopStateManager {
         self.list_workspace_roots()
     }
 
+    pub fn select_local_project(&self, project_id: &str) -> Result<Vec<WorkspaceRootItem>, String> {
+        self.select_local_project_at_path(project_id, &desktop_global_state_path())?;
+        Ok(self.list_workspace_roots())
+    }
+
+    fn select_local_project_at_path(
+        &self,
+        project_id: &str,
+        state_path: &Path,
+    ) -> Result<(), String> {
+        let mut guard = self.state_map.lock().unwrap();
+        let mut next = guard.clone();
+        select_local_project_in_state(&mut next, project_id)?;
+        if let Some(parent) = state_path.parent() {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        let serialized = serde_json::to_string_pretty(&next).map_err(|error| error.to_string())?;
+        fs::write(state_path, serialized).map_err(|error| error.to_string())?;
+        *guard = next;
+        Ok(())
+    }
+
     pub fn list_pinned_threads(&self) -> Vec<String> {
         let guard = self.state_map.lock().unwrap();
         guard
@@ -362,10 +1738,7 @@ impl DesktopStateManager {
             .and_then(|v| v.as_object())
             .cloned()
             .unwrap_or_default();
-        hints.insert(
-            thread_id.to_string(),
-            Value::String(normalize_fs_path(cwd)),
-        );
+        hints.insert(thread_id.to_string(), Value::String(normalize_fs_path(cwd)));
         guard.insert(THREAD_WORKSPACE_HINTS_KEY.to_string(), Value::Object(hints));
         Self::save_locked(&guard);
     }
@@ -383,7 +1756,10 @@ impl DesktopStateManager {
         self.set_archived_threads(archived);
 
         let mut guard = self.state_map.lock().unwrap();
-        if let Some(hints) = guard.get_mut(THREAD_WORKSPACE_HINTS_KEY).and_then(|v| v.as_object_mut()) {
+        if let Some(hints) = guard
+            .get_mut(THREAD_WORKSPACE_HINTS_KEY)
+            .and_then(|v| v.as_object_mut())
+        {
             hints.remove(thread_id);
         }
         Self::save_locked(&guard);
@@ -401,6 +1777,149 @@ impl DesktopStateManager {
             })
             .unwrap_or_default()
     }
+}
+
+#[cfg(test)]
+fn project_assignment_for_thread(state: &Map<String, Value>, thread_id: &str) -> Option<Value> {
+    let workspace = state
+        .get(PERSISTED_ATOM_STATE_KEY)
+        .and_then(Value::as_object)
+        .and_then(|atoms| atoms.get(&format!("thread-workspace-state-v1:{thread_id}")));
+    if let Some(assignment) = workspace.and_then(|workspace| {
+        workspace.get("projectMembership").filter(|value| !value.is_null())
+            .or_else(|| workspace.get("project"))
+    }) {
+        if assignment.is_null() || is_project_assignment(assignment) {
+            return (!assignment.is_null()).then(|| assignment.clone());
+        }
+    }
+    state
+        .get("thread-project-assignments")
+        .and_then(Value::as_object)
+        .and_then(|entries| entries.get(thread_id))
+        .filter(|value| is_project_assignment(value))
+        .cloned()
+}
+
+fn local_project_for_server_id(state: &Map<String, Value>, server_id: &str) -> Option<Value> {
+    read_sidebar_project_membership(state)["localProjects"]
+        .as_array()
+        .and_then(|projects| {
+            projects.iter().find(|project| {
+                project["serverProjectId"].as_str() == Some(server_id)
+            })
+        })
+        .cloned()
+}
+
+fn local_project_for_legacy_id(state: &Map<String, Value>, legacy_id: &str) -> Option<Value> {
+    read_sidebar_project_membership(state)["localProjects"]
+        .as_array()
+        .and_then(|projects| {
+            projects.iter().find(|project| project["id"].as_str() == Some(legacy_id))
+        })
+        .cloned()
+}
+
+#[cfg(test)]
+fn prepare_thread_project_move_in_state(
+    state: &Map<String, Value>,
+    thread_id: &str,
+    target_project_id: Option<&str>,
+) -> Result<Value, String> {
+    let current_assignment = project_assignment_for_thread(state, thread_id);
+    prepare_thread_project_move_for_assignment(state, thread_id, target_project_id, current_assignment)
+}
+
+fn prepare_thread_project_move_for_assignment(
+    state: &Map<String, Value>,
+    thread_id: &str,
+    target_project_id: Option<&str>,
+    current_assignment: Option<Value>,
+) -> Result<Value, String> {
+    if current_assignment
+        .as_ref()
+        .is_some_and(|assignment| assignment["projectKind"] != "local")
+    {
+        return Err("远程项目会话不能使用本地项目移动。".to_string());
+    }
+
+    let source_project = current_assignment
+        .as_ref()
+        .and_then(|assignment| assignment["projectId"].as_str())
+        .and_then(|server_id| local_project_for_server_id(state, server_id));
+    if current_assignment.is_some() && source_project.is_none() {
+        return Err("当前会话的项目身份未映射到本机项目，无法移动。".to_string());
+    }
+
+    if target_project_id.is_some_and(|id| id.trim().is_empty()) {
+        return Err("目标项目 ID 不能为空；移到聊天时必须使用空目标。".to_string());
+    }
+    let target_project = match target_project_id.map(str::trim) {
+        Some(legacy_id) => {
+            let project = local_project_for_server_id(state, legacy_id)
+                .or_else(|| local_project_for_legacy_id(state, legacy_id))
+                .ok_or_else(|| "目标不是当前 CODEX_HOME 映射的本地项目。".to_string())?;
+            if project["serverProjectId"].as_str().is_none() {
+                return Err("目标本地项目尚未映射到 app-server 身份。".to_string());
+            }
+            Some(project)
+        }
+        None => None,
+    };
+
+    let source_server_id = source_project
+        .as_ref()
+        .and_then(|project| project["serverProjectId"].as_str());
+    let target_server_id = target_project
+        .as_ref()
+        .and_then(|project| project["serverProjectId"].as_str());
+    let same_membership = source_server_id.is_some() && source_server_id == target_server_id;
+    let source_roots: Vec<String> = source_project
+        .as_ref()
+        .and_then(|project| project["rootPaths"].as_array())
+        .map(|roots| roots.iter().filter_map(Value::as_str).map(str::to_owned).collect())
+        .unwrap_or_default();
+    let target_roots: Vec<String> = target_project
+        .as_ref()
+        .and_then(|project| project["rootPaths"].as_array())
+        .map(|roots| roots.iter().filter_map(Value::as_str).map(str::to_owned).collect())
+        .unwrap_or_default();
+
+    let workspace_target = if target_roots.is_empty() {
+        Value::Null
+    } else {
+        crate::thread_workspace::project_target(&target_roots, None)?
+    };
+    let missing_sources = if target_project.is_some() {
+        crate::thread_workspace::missing_project_sources(&source_roots, &target_roots)
+    } else {
+        Vec::new()
+    };
+    let workspace_state = state
+        .get(PERSISTED_ATOM_STATE_KEY)
+        .and_then(Value::as_object)
+        .and_then(|atoms| atoms.get(&format!("thread-workspace-state-v1:{thread_id}")))
+        .cloned()
+        .unwrap_or(Value::Null);
+
+    Ok(json!({
+        "threadId": thread_id,
+        "sourceProject": source_project,
+        "targetProject": target_project,
+        "sourceServerProjectId": source_server_id,
+        "targetServerProjectId": target_server_id,
+        "membershipProjectId": target_server_id.unwrap_or(""),
+        "sameMembership": same_membership,
+        "missingSources": missing_sources,
+        "requiresConfirmation": !missing_sources.is_empty(),
+        "workspaceTarget": workspace_target,
+        "workspaceState": workspace_state,
+        "liveValidated": false,
+        "requiredLiveValidation": ["thread/read", "project/read", "local-environment", "idle-status", "worktree-resolution"],
+        "writesPerformed": false,
+        "commitAvailable": false,
+    }))
 }
 
 pub fn find_agents_md(root_dir: &str) -> Option<(String, String)> {
@@ -422,7 +1941,10 @@ pub fn find_agents_md(root_dir: &str) -> Option<(String, String)> {
     None
 }
 
-pub fn list_directory_entries(dir_path: &str, show_hidden: bool) -> Result<Vec<DirectoryEntryItem>, String> {
+pub fn list_directory_entries(
+    dir_path: &str,
+    show_hidden: bool,
+) -> Result<Vec<DirectoryEntryItem>, String> {
     let normalized = normalize_fs_path(dir_path);
     let path = Path::new(&normalized);
     if !path.exists() {
@@ -643,3 +2165,773 @@ pub fn search_workspace_files(
     results
 }
 
+#[cfg(test)]
+mod workspace_identity_tests {
+    use super::*;
+
+    #[test]
+    fn workspace_identity_uses_only_explicit_current_home_and_host_mapping() {
+        let value = json!({
+            "app-server-project-id-by-legacy-project-id-by-host": {
+                "local:D:/home": {"legacy-A": "server-A", "legacy-B": "server-B"},
+                "local:D:/other": {"legacy-A": "other-home"},
+                "remote:D:/home": {"legacy-A": "remote-project"}
+            }
+        });
+        let state = value.as_object().unwrap();
+        assert_eq!(
+            workspace_server_project_id(state, "local:D:/home", "legacy-A"),
+            Some("server-A".into())
+        );
+        assert_eq!(
+            workspace_server_project_id(state, "local:D:/home", "legacy-B"),
+            Some("server-B".into())
+        );
+        assert_eq!(
+            workspace_server_project_id(state, "local:D:/missing", "legacy-A"),
+            None
+        );
+        assert_eq!(
+            workspace_server_project_id(state, "local:D:/home", "legacy-C"),
+            None
+        );
+        assert_eq!(
+            workspace_server_project_id(state, "local:d:/home", "legacy-A"),
+            None
+        );
+    }
+
+    #[test]
+    fn workspace_identity_missing_invalid_and_empty_values_are_unmapped() {
+        for mapping in [
+            Value::Null,
+            json!([]),
+            json!({}),
+            json!({"local:D:/home": null}),
+            json!({"local:D:/home": {"legacy": 7}}),
+            json!({"local:D:/home": {"legacy": ""}}),
+        ] {
+            let state = json!({"app-server-project-id-by-legacy-project-id-by-host": mapping});
+            assert_eq!(
+                workspace_server_project_id(state.as_object().unwrap(), "local:D:/home", "legacy"),
+                None
+            );
+        }
+        assert_eq!(
+            workspace_server_project_id(&Map::new(), "local:D:/home", "legacy"),
+            None
+        );
+    }
+
+    #[test]
+    fn workspace_membership_reads_nested_atoms_and_membership_before_legacy_project() {
+        let local = json!({"projectKind": "local", "projectId": "A"});
+        let remote = json!({"projectKind": "remote", "projectId": "B", "hostId": "other"});
+        let state = json!({
+            "thread-project-assignments": {"global": local, "remote": remote, "bad": 7},
+            "projectless-thread-ids": ["none", 7],
+            "thread-workspace-state-v1:decoy": {"project": null},
+            "electron-persisted-atom-state": {
+                "unrelated": {"project": null},
+                "thread-workspace-state-v1:override": {"project": local, "projectMembership": remote, "applied": {"cwd": "private-runtime-path"}},
+                "thread-workspace-state-v1:fallback": {"project": local, "projectMembership": null},
+                "thread-workspace-state-v1:none": {"project": null},
+                "thread-workspace-state-v1:bad": {"project": "corrupt"},
+                "thread-workspace-state-v1:missing": {},
+                "thread-workspace-state-v1:": {"project": null}
+            }
+        });
+        let actual = read_sidebar_project_membership(state.as_object().unwrap());
+        assert_eq!(
+            actual["threadProjectAssignments"],
+            json!({"global": local, "remote": remote})
+        );
+        assert_eq!(actual["projectlessThreadIds"], json!(["none"]));
+        assert_eq!(
+            actual["workspaceProjectAssignments"],
+            json!({"override": remote, "fallback": local, "none": null})
+        );
+        assert_eq!(actual["localProjects"], json!([]));
+        assert_eq!(actual["selectedProjectId"], Value::Null);
+    }
+
+    #[test]
+    fn workspace_membership_reads_ordered_entities_roots_and_current_home_server_identity() {
+        let home_identity = format!("local:{}", codex_home_dir().to_string_lossy());
+        let state = json!({
+            "app-server-project-id-by-legacy-project-id-by-host": {
+                (home_identity): { "multi": "server-multi", "same-root": "server-same" },
+                "local:D:/another-home": { "multi": "wrong-home-id" }
+            },
+            "electron-persisted-atom-state": {
+                "local-projects": {
+                    "multi": { "id": "multi", "name": "Multi root", "rootPaths": ["D:/shared", "D:/second"], "createdAt": 10, "updatedAt": 11 },
+                    "same-root": { "id": "same-root", "name": "Same root", "rootPaths": ["D:/shared"], "createdAt": 12, "updatedAt": 13 },
+                    "bad": { "id": "bad", "name": "Bad root", "rootPaths": ["D:/bad", 4], "createdAt": 14 },
+                    "missing-time": { "id": "missing-time", "name": "Missing time", "rootPaths": ["D:/missing"] }
+                },
+                "project-order": ["same-root", "missing", "multi"],
+                "selected-project": { "type": "local", "projectId": "multi" }
+            }
+        });
+        let actual = read_sidebar_project_membership(state.as_object().unwrap());
+        assert_eq!(actual["selectedProjectId"], "multi");
+        assert_eq!(
+            actual["localProjects"],
+            json!([
+                { "id": "same-root", "name": "Same root", "rootPaths": ["D:/shared"], "createdAt": 12, "serverProjectId": "server-same" },
+                { "id": "multi", "name": "Multi root", "rootPaths": ["D:/shared", "D:/second"], "createdAt": 10, "serverProjectId": "server-multi" }
+            ])
+        );
+        assert_eq!(
+            actual["localProjects"][0]["id"],
+            actual["localProjects"][0]["id"]
+        );
+        assert_ne!(
+            actual["localProjects"][0]["id"], actual["localProjects"][1]["id"],
+            "same-root entities must retain separate identities"
+        );
+        assert_eq!(
+            actual["localProjects"][1]["rootPaths"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn workspace_membership_ignores_bad_entity_cache_and_invalid_selected_project() {
+        let state = json!({
+            "electron-persisted-atom-state": {
+                "local-projects": {
+                    "wrong-id": { "id": "other-id", "name": "Mismatch", "rootPaths": ["D:/bad"], "createdAt": 1 },
+                    "empty": { "id": "empty", "name": "Empty", "rootPaths": [], "createdAt": 1 },
+                    "blank-name": { "id": "blank-name", "name": "   ", "rootPaths": ["D:/bad"], "createdAt": 1 }
+                },
+                "project-order": ["wrong-id", "empty", "blank-name"],
+                "selected-project": { "type": "remote", "projectId": "remote-project" }
+            }
+        });
+        let actual = read_sidebar_project_membership(state.as_object().unwrap());
+        assert_eq!(actual["localProjects"], json!([]));
+        assert_eq!(actual["selectedProjectId"], Value::Null);
+    }
+
+    #[test]
+    fn workspace_membership_missing_or_invalid_caches_do_not_create_projectless_markers() {
+        for state in [
+            json!({}),
+            json!({"thread-project-assignments": [], "projectless-thread-ids": {}, "electron-persisted-atom-state": []}),
+        ] {
+            assert_eq!(
+                read_sidebar_project_membership(state.as_object().unwrap()),
+                json!({
+                    "threadProjectAssignments": {}, "projectlessThreadIds": [], "workspaceProjectAssignments": {},
+                    "localProjects": [], "selectedProjectId": null
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn selecting_local_project_writes_nested_atom_and_first_active_root_without_touching_assignments(
+    ) {
+        let mut state = json!({
+            "thread-project-assignments": {
+                "thread-1": {"projectKind": "local", "projectId": "server-p1"}
+            },
+            "projectless-thread-ids": ["thread-2"],
+            "active-workspace-roots": ["D:/old"],
+            "electron-persisted-atom-state": {
+                "local-projects": {
+                    "p1": {"id": "p1", "name": "One", "rootPaths": ["D:/one", "D:/one-extra"], "createdAt": 1},
+                    "p2": {"id": "p2", "name": "Two", "rootPaths": ["D:/two"], "createdAt": 2}
+                },
+                "selected-project": {"type": "local", "projectId": "p2"},
+                "thread-workspace-state-v1:thread-1": {
+                    "projectMembership": {"projectKind": "local", "projectId": "server-p1"}
+                }
+            }
+        });
+        let map = state.as_object_mut().unwrap();
+        select_local_project_in_state(map, "p1").unwrap();
+        assert_eq!(
+            map["electron-persisted-atom-state"]["selected-project"],
+            json!({
+                "type": "local", "projectId": "p1"
+            })
+        );
+        assert_eq!(map["active-workspace-roots"], json!(["D:/one"]));
+        assert_eq!(map["electron-saved-workspace-roots"][0], "D:/one");
+        assert_eq!(
+            map["thread-project-assignments"]["thread-1"]["projectId"],
+            "server-p1"
+        );
+        assert_eq!(map["projectless-thread-ids"], json!(["thread-2"]));
+        assert_eq!(
+            read_sidebar_project_membership(map)["selectedProjectId"],
+            "p1"
+        );
+    }
+
+    #[test]
+    fn selecting_unknown_or_invalid_local_project_is_atomic() {
+        let original = json!({
+            "active-workspace-roots": ["D:/old"],
+            "electron-persisted-atom-state": {
+                "local-projects": {
+                    "bad": {"id": "other", "name": "Bad", "rootPaths": ["D:/bad"], "createdAt": 1},
+                    "empty": {"id": "empty", "name": "Empty", "rootPaths": [], "createdAt": 2},
+                    "mixed": {"id": "mixed", "name": "Mixed", "rootPaths": ["D:/valid", 7], "createdAt": 3}
+                },
+                "selected-project": {"type": "local", "projectId": "old"}
+            }
+        });
+        for requested in ["", "missing", "bad", "empty", "mixed"] {
+            let mut state = original.clone();
+            let error = select_local_project_in_state(state.as_object_mut().unwrap(), requested)
+                .unwrap_err();
+            assert!(!error.is_empty());
+            assert_eq!(
+                state, original,
+                "failed selection must not partially mutate state"
+            );
+        }
+    }
+
+    #[test]
+    fn selecting_local_project_persists_before_publishing_and_keeps_memory_on_io_failure() {
+        let original = json!({
+            "electron-persisted-atom-state": {
+                "local-projects": {
+                    "p1": {"id": "p1", "name": "One", "rootPaths": ["D:/one", "D:/two"], "createdAt": 1}
+                },
+                "selected-project": {"type": "local", "projectId": "old"}
+            }
+        });
+        let manager = DesktopStateManager {
+            state_map: Arc::new(Mutex::new(original.as_object().unwrap().clone())),
+            workspace_turn_owners: Arc::new(Mutex::new(HashMap::new())),
+        };
+        let test_dir =
+            std::env::temp_dir().join(format!("codex-project-selection-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&test_dir).unwrap();
+        // A directory cannot be opened as a file, on both Windows and Unix.
+        assert!(manager
+            .select_local_project_at_path("p1", &test_dir)
+            .is_err());
+        assert_eq!(
+            *manager.state_map.lock().unwrap(),
+            *original.as_object().unwrap()
+        );
+
+        let state_path = test_dir.join("nested").join("state.json");
+        manager
+            .select_local_project_at_path("p1", &state_path)
+            .unwrap();
+        let saved: Value = serde_json::from_str(&fs::read_to_string(&state_path).unwrap()).unwrap();
+        assert_eq!(
+            saved["electron-persisted-atom-state"]["selected-project"]["projectId"],
+            "p1"
+        );
+        assert_eq!(saved["active-workspace-roots"], json!(["D:/one"]));
+        assert_eq!(
+            saved.as_object().unwrap(),
+            &*manager.state_map.lock().unwrap()
+        );
+        assert_eq!(
+            read_sidebar_project_membership(saved.as_object().unwrap())["selectedProjectId"],
+            "p1"
+        );
+        fs::remove_file(&state_path).unwrap();
+        fs::remove_dir(state_path.parent().unwrap()).unwrap();
+        fs::remove_dir(&test_dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod project_move_prepare_tests {
+    use super::*;
+
+    fn manager() -> DesktopStateManager {
+        let identity = format!("local:{}", codex_home_dir().to_string_lossy());
+        let state = json!({
+            "app-server-project-id-by-legacy-project-id-by-host": {
+                (identity): {"source":"server-source","target":"server-target"}
+            },
+            "thread-project-assignments": {
+                "thread":{"projectKind":"local","projectId":"server-source"}
+            },
+            "electron-persisted-atom-state": {
+                "local-projects": {
+                    "source":{"id":"source","name":"Source","rootPaths":["D:/source","D:/extra"],"createdAt":1},
+                    "target":{"id":"target","name":"Target","rootPaths":["D:/target"],"createdAt":2},
+                    "unmapped":{"id":"unmapped","name":"Unmapped","rootPaths":["D:/unmapped"],"createdAt":3}
+                },
+                "thread-workspace-state-v1:thread":{
+                    "revision":"r1","project":{"projectKind":"local","projectId":"server-source"},
+                    "applied":{"cwd":"D:/source"},"pending":null
+                }
+            }
+        });
+        DesktopStateManager {
+            state_map: Arc::new(Mutex::new(state.as_object().unwrap().clone())),
+            workspace_turn_owners: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    fn live(method: &str, params: &Value) -> Value {
+        match method {
+            "thread/read" => json!({"thread":{
+                "id":"thread","projectId":"server-source","cwd":"D:/source",
+                "status":{"type":"idle"},"environments":[{"environmentId":"local"}]
+            }}),
+            "project/read" => {
+                let id = params["projectId"].as_str().unwrap();
+                let roots = if id == "server-source" { vec!["D:/source","D:/extra"] } else { vec!["D:/target"] };
+                json!({"project":{"id":id,"roots":roots.into_iter().map(|path| json!({"path":path})).collect::<Vec<_>>()}})
+            },
+            _ => panic!("read-only prepare attempted {method}"),
+        }
+    }
+
+    #[test]
+    fn project_move_prepare_is_read_only_and_rejects_unknown_or_blank_targets() {
+        let manager = manager();
+        let before = manager.state_map.lock().unwrap().clone();
+        let plan = manager.prepare_thread_project_move("thread", Some("target")).unwrap();
+        assert_eq!(plan["missingSources"], json!(["D:/source","D:/extra"]));
+        assert_eq!(plan["workspaceTarget"]["runtimeWorkspaceRoots"], json!(["D:/target"]));
+        assert_eq!(plan["writesPerformed"], false);
+        assert_eq!(plan["commitAvailable"], false);
+        for target in ["unknown", "unmapped", "", "  "] {
+            assert!(manager.prepare_thread_project_move("thread", Some(target)).is_err());
+        }
+        assert_eq!(*manager.state_map.lock().unwrap(), before);
+    }
+
+    #[test]
+    fn project_move_prepare_accepts_only_explicitly_mapped_server_ids_or_legacy_ids() {
+        let manager = manager();
+        let server_id_plan = manager
+            .prepare_thread_project_move("thread", Some("server-target"))
+            .unwrap();
+        let legacy_id_plan = manager
+            .prepare_thread_project_move("thread", Some("target"))
+            .unwrap();
+
+        assert_eq!(server_id_plan["targetServerProjectId"], "server-target");
+        assert_eq!(legacy_id_plan["targetServerProjectId"], "server-target");
+        for target in ["unknown-server-project", "unmapped"] {
+            assert!(manager.prepare_thread_project_move("thread", Some(target)).is_err());
+        }
+    }
+
+    #[test]
+    fn project_move_prepare_chats_preserves_workspace_and_membership_override_precedes_legacy() {
+        let manager = manager();
+        let plan = manager.prepare_thread_project_move("thread", None).unwrap();
+        assert!(plan["workspaceTarget"].is_null());
+        assert_eq!(plan["membershipProjectId"], "");
+        assert_eq!(plan["workspaceState"]["applied"]["cwd"], "D:/source");
+        manager.state_map.lock().unwrap().get_mut(PERSISTED_ATOM_STATE_KEY).unwrap()
+            ["thread-workspace-state-v1:thread"]["projectMembership"] =
+                json!({"projectKind":"remote","projectId":"remote","hostId":"host"});
+        assert!(manager.prepare_thread_project_move("thread", Some("target")).is_err());
+    }
+
+    #[tokio::test]
+    async fn project_move_live_prepare_reads_membership_and_both_projects_without_writing() {
+        let manager = manager();
+        let before = manager.state_map.lock().unwrap().clone();
+        let mut requests = Vec::new();
+        let plan = manager.prepare_thread_project_move_with_rpc("thread", Some("target"), |method, params| {
+            requests.push((method.clone(), params.clone()));
+            std::future::ready(Ok(live(&method, &params)))
+        }).await.unwrap();
+        assert_eq!(requests.iter().map(|(method, _)| method.as_str()).collect::<Vec<_>>(),
+            ["thread/read","project/read","project/read"]);
+        assert_eq!(plan["liveValidated"], true);
+        assert_eq!(plan["commitAvailable"], false);
+        assert_eq!(*manager.state_map.lock().unwrap(), before);
+    }
+
+    #[tokio::test]
+    async fn project_move_prepare_resumes_unloaded_idle_thread_without_starting_a_turn() {
+        let manager = manager();
+        let before = manager.state_map.lock().unwrap().clone();
+        let mut requests = Vec::new();
+        let plan = manager.prepare_thread_project_move_with_rpc("thread", Some("target"), |method, params| {
+            requests.push((method.clone(), params.clone()));
+            let response = match method.as_str() {
+                "thread/read" => json!({"thread":{
+                    "id":"thread","projectId":"server-source","cwd":"D:/source",
+                    "status":{"type":"notLoaded"},"environments":null
+                }}),
+                "thread/resume" => json!({"thread":live_thread(Some("server-source"))["thread"]}),
+                "project/read" => {
+                    let id = params["projectId"].as_str().unwrap();
+                    if id == "server-source" {
+                        project_read(id, &["D:/source","D:/extra"])
+                    } else {
+                        project_read(id, &["D:/target"])
+                    }
+                }
+                _ => panic!("unexpected prepare request {method}"),
+            };
+            std::future::ready(Ok(response))
+        }).await.unwrap();
+        assert_eq!(requests.iter().map(|(method, _)| method.as_str()).collect::<Vec<_>>(),
+            ["thread/read","thread/resume","project/read","project/read"]);
+        assert_eq!(requests[1].1, json!({"threadId":"thread"}));
+        assert_eq!(plan["liveValidated"], true);
+        assert_eq!(plan["writesPerformed"], false);
+        assert_eq!(*manager.state_map.lock().unwrap(), before);
+    }
+
+    #[tokio::test]
+    async fn project_move_live_prepare_rejects_unknown_running_remote_and_stale_roots() {
+        for invalid in [
+            json!({"id":"other","projectId":"server-source","status":{"type":"idle"},"environments":[]}),
+            json!({"id":"thread","projectId":"server-source","status":{"type":"active"},"environments":[]}),
+            json!({"id":"thread","projectId":"server-source","status":{"type":"idle"},"environments":null}),
+            json!({"id":"thread","projectId":"server-source","status":{"type":"idle"},"environments":[{"environmentId":"remote"}]}),
+            json!({"id":"thread","projectId":"unknown","status":{"type":"idle"},"environments":[]}),
+            json!({"id":"thread","status":{"type":"idle"},"environments":[]}),
+        ] {
+            let manager = manager();
+            let before = manager.state_map.lock().unwrap().clone();
+            assert!(manager.prepare_thread_project_move_with_rpc("thread", Some("target"), |method, _| {
+                assert_eq!(method, "thread/read");
+                std::future::ready(Ok(json!({"thread":invalid})))
+            }).await.is_err());
+            assert_eq!(*manager.state_map.lock().unwrap(), before);
+        }
+        let manager = manager();
+        assert!(manager.prepare_thread_project_move_with_rpc("thread", Some("target"), |method, params| {
+            let response = if method == "project/read" {
+                json!({"project":{"id":params["projectId"],"roots":[{"path":"D:/changed"}]}})
+            } else { live(&method, &params) };
+            std::future::ready(Ok(response))
+        }).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn project_move_live_prepare_detects_state_changes_during_reads() {
+        let manager = manager();
+        assert!(manager.prepare_thread_project_move_with_rpc("thread", Some("target"), |method, params| {
+            if method == "project/read" {
+                manager.state_map.lock().unwrap().get_mut(PERSISTED_ATOM_STATE_KEY).unwrap()
+                    ["thread-workspace-state-v1:thread"]["revision"] = json!("changed");
+            }
+            std::future::ready(Ok(live(&method, &params)))
+        }).await.is_err());
+    }
+
+    fn project_read(id: &str, roots: &[&str]) -> Value {
+        json!({"project":{
+            "id":id,
+            "roots":roots.iter().map(|path| json!({"path":path})).collect::<Vec<_>>()
+        }})
+    }
+
+    fn live_thread(project_id: Option<&str>) -> Value {
+        json!({"thread":{
+            "id":"thread","projectId":project_id,"cwd":"D:/source",
+            "status":{"type":"idle"},"environments":[
+                {"environmentId":"local","runtimeWorkspaceRoots":["D:/source","D:/extra"]}
+            ]
+        }})
+    }
+
+    fn test_state_path() -> (PathBuf, PathBuf) {
+        let directory = std::env::temp_dir().join(format!("codex-project-move-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&directory).unwrap();
+        (directory.clone(), directory.join("state.json"))
+    }
+
+    fn cleanup_test_state(directory: &Path, state_path: &Path) {
+        if state_path.exists() { fs::remove_file(state_path).unwrap(); }
+        fs::remove_dir(directory).unwrap();
+    }
+
+    async fn get_target_plan(manager: &DesktopStateManager) -> Value {
+        manager.prepare_thread_project_move_with_rpc("thread", Some("target"), |method, params| {
+            let response = match method.as_str() {
+                "thread/read" => live_thread(Some("server-source")),
+                "project/read" if params["projectId"] == "server-source" => project_read("server-source", &["D:/source","D:/extra"]),
+                "project/read" => project_read("server-target", &["D:/target"]),
+                _ => panic!("unexpected prepare request {method}"),
+            };
+            std::future::ready(Ok(response))
+        }).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn project_move_commit_expands_roots_stages_then_reads_back_membership() {
+        let manager = manager();
+        let plan = get_target_plan(&manager).await;
+        let (directory, state_path) = test_state_path();
+        let mut methods = Vec::new();
+        let mut roots_expanded = false;
+        manager.commit_thread_project_move_with_rpc(
+            "thread", Some("target"), &plan, true, &state_path,
+            |method, params| {
+                methods.push(method.clone());
+                let response = match method.as_str() {
+                    "thread/read" => {
+                        if methods.iter().filter(|method| method.as_str() == "thread/read").count() > 1 {
+                            live_thread(Some("server-target"))
+                        } else { live_thread(Some("server-source")) }
+                    }
+                    "project/read" if params["projectId"] == "server-source" => project_read("server-source", &["D:/source","D:/extra"]),
+                    "project/read" if roots_expanded => project_read("server-target", &["D:/target","D:/source","D:/extra"]),
+                    "project/read" => project_read("server-target", &["D:/target"]),
+                    "project/update" => {
+                        roots_expanded = true;
+                        assert_eq!(params["roots"], json!([
+                            {"path":"D:/target"},{"path":"D:/source"},{"path":"D:/extra"}
+                        ]));
+                        json!({})
+                    }
+                    "thread/metadata/update" => {
+                        assert_eq!(params["threadId"], "thread");
+                        assert_eq!(params["projectId"], "server-target");
+                        json!({})
+                    }
+                    _ => panic!("unexpected commit request {method}"),
+                };
+                std::future::ready(Ok(response))
+            },
+        ).await.unwrap();
+        assert!(roots_expanded);
+        assert_eq!(methods.iter().filter(|method| method.as_str() == "project/update").count(), 1);
+        assert_eq!(methods.iter().filter(|method| method.as_str() == "thread/metadata/update").count(), 1);
+        let state: Value = serde_json::from_str(&fs::read_to_string(&state_path).unwrap()).unwrap();
+        let workspace = &state[PERSISTED_ATOM_STATE_KEY]["thread-workspace-state-v1:thread"];
+        assert_eq!(workspace["project"]["projectId"], "server-target");
+        assert_eq!(workspace["projectMembership"]["projectId"], "server-target");
+        assert_eq!(workspace["pending"]["cwd"], "D:/target");
+        assert!(state["thread-project-move-recovery"]["thread"].is_null());
+        assert_eq!(state["thread-project-assignments"]["thread"]["projectId"], "server-target");
+        cleanup_test_state(&directory, &state_path);
+    }
+
+    #[tokio::test]
+    async fn project_move_commit_to_chats_clears_membership_and_pending_but_keeps_applied() {
+        let manager = manager();
+        {
+            let mut state = manager.state_map.lock().unwrap();
+            state[PERSISTED_ATOM_STATE_KEY]["thread-workspace-state-v1:thread"] = json!({
+                "revision":"old",
+                "project":{"projectKind":"local","projectId":"server-source"},
+                "applied":{
+                    "cwd":"D:/source","projectSources":["D:/source","D:/extra"],
+                    "runtimeWorkspaceRoots":["D:/source","D:/extra"]
+                },
+                "pending":{
+                    "cwd":"D:/pending","projectSources":["D:/pending"],
+                    "runtimeWorkspaceRoots":["D:/pending"]
+                }
+            });
+        }
+        let plan = manager.prepare_thread_project_move_with_rpc(
+            "thread", None, |method, params| {
+                let response = match method.as_str() {
+                    "thread/read" => live_thread(Some("server-source")),
+                    "project/read" if params["projectId"] == "server-source" =>
+                        project_read("server-source", &["D:/source","D:/extra"]),
+                    _ => panic!("unexpected Chats prepare request {method}"),
+                };
+                std::future::ready(Ok(response))
+            },
+        ).await.unwrap();
+        let (directory, state_path) = test_state_path();
+        let mut requests = Vec::new();
+        manager.commit_thread_project_move_with_rpc(
+            "thread", None, &plan, false, &state_path,
+            |method, params| {
+                requests.push((method.clone(), params.clone()));
+                let response = match method.as_str() {
+                    "thread/read" if requests.len() == 1 => live_thread(Some("server-source")),
+                    "thread/read" => live_thread(None),
+                    "project/read" if params["projectId"] == "server-source" =>
+                        project_read("server-source", &["D:/source","D:/extra"]),
+                    "thread/metadata/update" => {
+                        assert_eq!(params["projectId"], "");
+                        json!({})
+                    }
+                    _ => panic!("unexpected Chats commit request {method}"),
+                };
+                std::future::ready(Ok(response))
+            },
+        ).await.unwrap();
+        assert_eq!(
+            requests.iter().map(|(method, _)| method.as_str()).collect::<Vec<_>>(),
+            ["thread/read", "project/read", "thread/metadata/update", "thread/read"]
+        );
+        let saved: Value = serde_json::from_str(&fs::read_to_string(&state_path).unwrap()).unwrap();
+        let workspace = &saved[PERSISTED_ATOM_STATE_KEY]["thread-workspace-state-v1:thread"];
+        assert_eq!(workspace["project"], Value::Null);
+        assert_eq!(workspace["pending"], Value::Null);
+        assert_eq!(workspace["applied"]["cwd"], "D:/source");
+        assert_eq!(saved["thread-project-assignments"]["thread"], Value::Null);
+        assert!(saved["projectless-thread-ids"].as_array().unwrap().contains(&json!("thread")));
+        assert_eq!(manager.sidebar_project_membership()["projectlessThreadIds"], json!(["thread"]));
+        cleanup_test_state(&directory, &state_path);
+    }
+
+    #[tokio::test]
+    async fn project_move_owner_blocks_a_concurrent_turn_for_the_same_thread() {
+        let manager = manager();
+        let plan = get_target_plan(&manager).await;
+        let (directory, state_path) = test_state_path();
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        let moving = {
+            let manager = manager.clone();
+            let moving_state_path = state_path.clone();
+            tokio::spawn(async move {
+                let mut entered_tx = Some(entered_tx);
+                let mut release_rx = Some(release_rx);
+                manager.commit_thread_project_move_with_rpc(
+                    "thread", Some("target"), &plan, true, &moving_state_path,
+                    |method, _| {
+                        let entered = entered_tx.take();
+                        let release = release_rx.take();
+                        async move {
+                            if let Some(entered) = entered {
+                                let _ = entered.send(());
+                                let _ = release.unwrap().await;
+                            }
+                            Err(format!("stop after {method}"))
+                        }
+                    },
+                ).await
+            })
+        };
+        entered_rx.await.unwrap();
+        let turn = manager.call_turn_with_workspace_at_path(
+            json!({"threadId":"thread"}),
+            &directory.join("other.json"),
+            |_, _| std::future::ready(Ok(Value::Null)),
+        ).await.unwrap_err();
+        assert!(turn.contains("正在移动"), "{turn}");
+        release_tx.send(()).unwrap();
+        let move_error = moving.await.unwrap().unwrap_err();
+        assert!(move_error.contains("stop after thread/read"), "{move_error}");
+        cleanup_test_state(&directory, &state_path);
+    }
+
+    #[tokio::test]
+    async fn project_move_commit_requires_permission_confirmation_before_any_write() {
+        let manager = manager();
+        let plan = get_target_plan(&manager).await;
+        let before = manager.state_map.lock().unwrap().clone();
+        let (directory, state_path) = test_state_path();
+        let mut methods = Vec::new();
+        let error = manager.commit_thread_project_move_with_rpc(
+            "thread", Some("target"), &plan, false, &state_path,
+            |method, params| {
+                methods.push(method.clone());
+                let response = match method.as_str() {
+                    "thread/read" => live_thread(Some("server-source")),
+                    "project/read" if params["projectId"] == "server-source" => project_read("server-source", &["D:/source","D:/extra"]),
+                    "project/read" => project_read("server-target", &["D:/target"]),
+                    _ => panic!("confirmation failure must not write ({method})"),
+                };
+                std::future::ready(Ok(response))
+            },
+        ).await.unwrap_err();
+        assert!(error.contains("尚未获得确认"));
+        assert!(!methods.iter().any(|method| method.ends_with("/update")));
+        assert!(!state_path.exists());
+        assert_eq!(*manager.state_map.lock().unwrap(), before);
+        cleanup_test_state(&directory, &state_path);
+    }
+
+    #[tokio::test]
+    async fn project_move_commit_rolls_back_when_membership_remains_at_source() {
+        let manager = manager();
+        let plan = get_target_plan(&manager).await;
+        let (directory, state_path) = test_state_path();
+        let mut roots_expanded = false;
+        let result = manager.commit_thread_project_move_with_rpc(
+            "thread", Some("target"), &plan, true, &state_path,
+            |method, params| {
+                let response = match method.as_str() {
+                    "thread/read" => live_thread(Some("server-source")),
+                    "project/read" if params["projectId"] == "server-source" => project_read("server-source", &["D:/source","D:/extra"]),
+                    "project/read" if roots_expanded => project_read("server-target", &["D:/target","D:/source","D:/extra"]),
+                    "project/read" => project_read("server-target", &["D:/target"]),
+                    "project/update" => { roots_expanded = true; json!({}) }
+                    "thread/metadata/update" => json!({"error":"rejected"}),
+                    _ => panic!("unexpected commit request {method}"),
+                };
+                if method == "thread/metadata/update" {
+                    std::future::ready(Err("membership rejected".into()))
+                } else {
+                    std::future::ready(Ok(response))
+                }
+            },
+        ).await.unwrap_err();
+        assert_eq!(result, "membership rejected");
+        assert!(roots_expanded, "official order retains already accepted target roots");
+        let persisted: Value = serde_json::from_str(&fs::read_to_string(&state_path).unwrap()).unwrap();
+        assert_eq!(persisted[PERSISTED_ATOM_STATE_KEY]["thread-workspace-state-v1:thread"]["project"]["projectId"], "server-source");
+        assert!(persisted["thread-project-move-recovery"]["thread"].is_null());
+        assert_eq!(persisted["thread-project-assignments"]["thread"]["projectId"], "server-source");
+        cleanup_test_state(&directory, &state_path);
+    }
+
+    #[tokio::test]
+    async fn project_move_commit_preserves_recovery_record_and_blocks_sends_when_readback_is_unknown() {
+        let manager = manager();
+        let plan = get_target_plan(&manager).await;
+        let (directory, state_path) = test_state_path();
+        let mut thread_reads = 0;
+        let mut roots_expanded = false;
+        let error = manager.commit_thread_project_move_with_rpc(
+            "thread", Some("target"), &plan, true, &state_path,
+            |method, params| {
+                let result = match method.as_str() {
+                    "thread/read" if params["threadId"] == "thread" => {
+                        // The first thread/read is preflight; the second is ambiguous commit readback.
+                        thread_reads += 1;
+                        if thread_reads == 1 { Ok(live_thread(Some("server-source"))) }
+                        else { Err("readback unavailable".into()) }
+                    }
+                    "project/read" if params["projectId"] == "server-source" => Ok(project_read("server-source", &["D:/source","D:/extra"])),
+                    "project/read" if roots_expanded => Ok(project_read("server-target", &["D:/target","D:/source","D:/extra"])),
+                    "project/read" => Ok(project_read("server-target", &["D:/target"])),
+                    "project/update" => { roots_expanded = true; Err("response lost after write".into()) }
+                    "thread/metadata/update" => Err("response lost".into()),
+                    _ => panic!("unexpected request {method}"),
+                };
+                std::future::ready(result)
+            },
+        ).await.unwrap_err();
+        assert!(error.contains("阻止发送"));
+        assert!(manager.state_map.lock().unwrap()["thread-project-move-recovery"]["thread"].is_object());
+        assert!(fs::read_to_string(&state_path).unwrap().contains("thread-project-move-recovery"));
+        let reconciled = manager.reconcile_thread_project_move_with_rpc(
+            "thread", &state_path, |method, _| {
+                assert_eq!(method, "thread/read");
+                std::future::ready(Ok(live_thread(Some("server-target"))))
+            },
+        ).await.unwrap();
+        assert_eq!(reconciled["membership"], "target");
+        assert!(manager.state_map.lock().unwrap()["thread-project-move-recovery"]["thread"].is_null());
+        let turn = manager.call_turn_with_workspace_at_path(
+            json!({"threadId":"thread"}),
+            &directory.join("other.json"),
+            |method, _| {
+                assert_eq!(method, "thread/read", "reconciliation should unblock send preflight");
+                std::future::ready(Ok(live_thread(Some("server-target"))))
+            },
+        ).await.unwrap_err();
+        assert!(turn.contains("权限设置"), "{turn}");
+        cleanup_test_state(&directory, &state_path);
+    }
+}

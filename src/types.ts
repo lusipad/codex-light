@@ -21,6 +21,8 @@ export interface WorkspaceRootItem {
   label: string;
   active: boolean;
   hasAgentsMd: boolean;
+  /** Explicit legacy-id mapping for this local host and CODEX_HOME, never inferred from cwd. */
+  serverProjectId?: string | null;
 }
 
 export interface DirectoryEntryItem {
@@ -29,6 +31,29 @@ export interface DirectoryEntryItem {
   isDirectory: boolean;
   size: number;
   mtimeMs: number;
+}
+
+export interface ThreadProjectAssignment {
+  projectKind: "local" | "remote";
+  projectId: string;
+  hostId?: string;
+  projectOrigin?: string;
+}
+
+export interface SidebarProjectMembership {
+  threadProjectAssignments: Record<string, ThreadProjectAssignment>;
+  projectlessThreadIds: string[];
+  workspaceProjectAssignments: Record<string, ThreadProjectAssignment | null>;
+  localProjects?: SidebarLocalProject[];
+  selectedProjectId?: string | null;
+}
+
+export interface SidebarLocalProject {
+  id: string;
+  name: string;
+  rootPaths: string[];
+  createdAt: number;
+  serverProjectId?: string | null;
 }
 
 export interface FilePreviewResult {
@@ -94,6 +119,11 @@ export interface ModelInfo {
   isDefault?: boolean;
 }
 
+export interface ThreadReadState {
+  revision: string;
+  firstUnread?: { type: "threadStart" } | { type: "turn"; turnId: string } | null;
+}
+
 export interface ThreadSummary {
   id: string;
   name?: string | null;
@@ -101,12 +131,15 @@ export interface ThreadSummary {
   cwd?: string | null;
   createdAt?: number;
   updatedAt?: number;
+  recencyAt?: number | null;
   model?: string | null;
   status?: { type: string } | string;
-  /** 会话所属自定义分区 id（`thread/list` 的 `section` 字段），null 表示未分组。 */
-  section?: string | null;
+  /** 会话所属自定义分区（`thread/list` 的 `section` 对象），null 表示未分组。 */
+  section?: string | { id: string; name?: string; appearance?: unknown } | null;
   /** 会话所属项目实体 id（`thread/list` 的 `projectId` 字段），null 表示未关联项目。 */
   projectId?: string | null;
+  /** Durable local receipt from thread/list.readStates; absent means unsupported/ineligible. */
+  readState?: ThreadReadState | null;
 }
 
 export interface TurnItem {

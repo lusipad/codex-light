@@ -96,6 +96,7 @@ export const SideChatPanel: React.FC<SideChatPanelProps> = ({
         const turnRes = await callAppServer<{ turn?: { id: string; status?: string } }>("turn/start", {
           threadId,
           input: [{ type: "text", text }],
+          summary: "auto",
         }).catch(() => null);
 
         // Fallback simulate or await result

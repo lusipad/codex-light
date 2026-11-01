@@ -33,6 +33,7 @@ import {
   ArchiveIcon,
   SearchIcon,
   BellIcon,
+  FolderIcon,
 } from "./components/Icons";
 import { ProjectSourcesPopover } from "./components/ProjectSourcesPopover";
 import { AppTitleBar } from "./components/AppTitleBar";
@@ -45,6 +46,7 @@ import {
   removeThreadAttachment,
 } from "./threadAttachments";
 import { callAppServer, tauriInvoke, tauriListen } from "./bridge";
+import type { AccountReadResult } from "./config";
 import { matchShortcut, matchRecentThreadIndex } from "./shortcuts";
 import { installNativeMenuHandler, installTrayHandler } from "./nativeShell";
 import { playNotificationChime } from "./sound";
@@ -71,6 +73,8 @@ import {
   NotificationSoundTheme,
   WorkspaceFileHit,
   WorkspaceRootItem,
+  SidebarProjectMembership,
+  SidebarLocalProject,
   ShellExecResult,
   ProjectScriptCommands,
   GitCommitInfo,
@@ -85,6 +89,7 @@ import { SettingsView, applyColorTheme } from "./components/SettingsView";
 import { WorkspacePopover } from "./components/WorkspacePopover";
 import { AgentsMdModal } from "./components/AgentsMdModal";
 import { NavigationRail } from "./components/NavigationRail";
+import { KeyboardShortcutsDialog } from "./components/KeyboardShortcutsDialog";
 import { CodexSidebar } from "./components/CodexSidebar";
 import { ComposerBox } from "./components/ComposerBox";
 import { ProjectsIndexView } from "./components/ProjectsIndexView";
@@ -114,6 +119,7 @@ import {
   mergeTokenUsage,
   mergeRateLimits,
   NOTIFICATION,
+  isThreadReadState,
 } from "./protocol";
 import {
   ThreadGoal,
@@ -123,26 +129,52 @@ import {
   buildGoalPrompt,
   goalStatusLabel,
 } from "./threadGoal";
+import { resolveNewThreadProject, threadStartProjectParams } from "./sidebarProjects";
 
 /** Reasoning items carry `summary[]` + `content[]` (and streamed text). */
 function extractReasoningText(item: TurnItem): string {
+  if (!item) return "";
+  if (Array.isArray(item.summary) && item.summary.length > 0) {
+    const sum = item.summary
+      .map((v: any) => (typeof v === "string" ? v : v?.text || ""))
+      .filter((v: string) => Boolean(v && v.trim()))
+      .join("\n");
+    if (sum.trim()) return sum;
+  }
   const parts: string[] = [];
   const push = (v: any) => {
     if (typeof v === "string" && v.trim()) parts.push(v);
     else if (v && typeof v.text === "string" && v.text.trim()) parts.push(v.text);
   };
-  if (Array.isArray(item.summary)) item.summary.forEach(push);
   if (typeof item.text === "string" && item.text.trim()) parts.push(item.text);
   if (Array.isArray(item.content)) item.content.forEach(push);
   if (Array.isArray(item.reasoningText)) item.reasoningText.forEach(push);
   else if (typeof item.reasoningText === "string" && item.reasoningText.trim()) {
     parts.push(item.reasoningText);
   }
-  if (!parts.length) return extractTextFromItem(item);
+  if (!parts.length) {
+    const fallback = extractTextFromItem(item);
+    return fallback ? fallback.trim() : "";
+  }
   return Array.from(new Set(parts)).join("\n");
 }
 
 /** Count added/removed lines in a unified diff snippet. */
+/** Format duration into official Hermes workflow duration style (e.g. "9m 31s", "12s", "1h 5m"). */
+function formatHermesDuration(seconds: number): string {
+  const s = Math.max(1, Math.round(seconds));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const remSec = s % 60;
+  if (h > 0) {
+    return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  }
+  if (m > 0) {
+    return remSec > 0 ? `${m}m ${remSec}s` : `${m}m`;
+  }
+  return `${remSec}s`;
+}
+
 function countDiffLines(diff: string): { additions: number; deletions: number } {
   let additions = 0;
   let deletions = 0;
@@ -288,7 +320,28 @@ export const App: React.FC = () => {
     setRouteHistoryVersion((version) => version + 1);
     setActiveRoute(history.entries[nextIndex]);
   }, []);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
+    if (typeof window !== "undefined" && window.innerWidth <= 960) {
+      return true;
+    }
+    return false;
+  });
+
+  // 960px 官方响应式侧边栏折叠机制 (对应官方 app-initial:1351772 zIt: window.innerWidth <= 960)
+  useEffect(() => {
+    let prevWidth = window.innerWidth;
+    const handleResize = () => {
+      const currentWidth = window.innerWidth;
+      if (currentWidth <= 960 && prevWidth > 960) {
+        setSidebarCollapsed(true);
+      } else if (currentWidth > 960 && prevWidth <= 960) {
+        setSidebarCollapsed(false);
+      }
+      prevWidth = currentWidth;
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
   const [activityOnly, setActivityOnly] = useState(false);
   const [showRightDrawer, setShowRightDrawer] = useState<boolean>(false);
   const [showTerminal, setShowTerminal] = useState<boolean>(false);
@@ -327,8 +380,13 @@ export const App: React.FC = () => {
 
   // Threads, Pinned, Hints & Conversation State
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
+  const [sidebarCreatedThread, setSidebarCreatedThread] = useState<Pick<ThreadSummary, "id" | "cwd" | "projectId"> | null>(null);
+  const pendingNewThreadProjectRef = useRef<SidebarLocalProject | null>(null);
   const [pinnedThreadIds, setPinnedThreadIds] = useState<string[]>([]);
   const [workspaceHints, setWorkspaceHints] = useState<Record<string, string>>({});
+  const [sidebarProjectMembership, setSidebarProjectMembership] = useState<SidebarProjectMembership>({
+    threadProjectAssignments: {}, projectlessThreadIds: [], workspaceProjectAssignments: {},
+  });
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [activeTurnId, setActiveTurnId] = useState<string | null>(null);
   const [turns, setTurns] = useState<TurnData[]>([]);
@@ -359,10 +417,15 @@ export const App: React.FC = () => {
   const activePendingRequests = useMemo(() => requestsForThread(pendingRequests, activeThreadId), [pendingRequests, activeThreadId]);
   const [tokenUsage, setTokenUsage] = useState<TokenUsageSnapshot | null>(null);
   const [planSteps, setPlanSteps] = useState<Array<{ step: string; status: string }>>([]);
+  const [planExplanation, setPlanExplanation] = useState<string | null>(null);
   const [turnDiffFiles, setTurnDiffFiles] = useState<
     Array<{ path: string; kind: string; diff: string; additions: number; deletions: number }>
   >([]);
-  const [accountInfo, setAccountInfo] = useState<any>(null);
+  const [accountInfo, setAccountInfo] = useState<AccountReadResult | null>(null);
+  const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(false);
+  const keyboardShortcutsOpenRef = useRef(showKeyboardShortcuts);
+  keyboardShortcutsOpenRef.current = showKeyboardShortcuts;
+  const accountReadRequestRef = useRef(0);
   const [rateLimits, setRateLimits] = useState<any>(null);
   const [activeThreadStatus, setActiveThreadStatus] = useState<{
     type: string;
@@ -375,7 +438,41 @@ export const App: React.FC = () => {
   const [inboxItems, setInboxItems] = useState<InboxNotificationItem[]>([]);
 
   // Composer State
-  const [promptInput, setPromptInput] = useState<string>("");
+  const [promptDrafts, setPromptDrafts] = useState<Record<string, string>>(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem("codex_composer_prompt_drafts_v1") || "{}");
+      if (!stored || typeof stored !== "object" || Array.isArray(stored)) return {};
+      return Object.fromEntries(Object.entries(stored).filter(([key, value]) =>
+        (key === "home" || key.startsWith("thread:")) && typeof value === "string"
+      )) as Record<string, string>;
+    } catch {
+      return {};
+    }
+  });
+  const promptDraftKey = activeThreadId ? `thread:${activeThreadId}` : "home";
+  const promptInput = promptDrafts[promptDraftKey] ?? "";
+  const setThreadPrompt = useCallback((threadId: string | null, update: React.SetStateAction<string>) => {
+    const key = threadId ? `thread:${threadId}` : "home";
+    setPromptDrafts((previous) => {
+      const value = typeof update === "function" ? update(previous[key] ?? "") : update;
+      if (value === previous[key] || (!value && !(key in previous))) return previous;
+      const next = { ...previous };
+      if (value) next[key] = value;
+      else delete next[key];
+      return next;
+    });
+  }, []);
+  const setPromptInput = useCallback((update: React.SetStateAction<string>) => {
+    setThreadPrompt(activeThreadId, update);
+  }, [activeThreadId, setThreadPrompt]);
+  const moveHomePromptToThread = useCallback((threadId: string) => {
+    setPromptDrafts((previous) => {
+      if (!previous.home) return previous;
+      const next = { ...previous, [`thread:${threadId}`]: previous.home };
+      delete next.home;
+      return next;
+    });
+  }, []);
   const [selectedModelId, setSelectedModelId] = useState<string>("");
   const [defaultModelSelected, setDefaultModelSelected] = useState<boolean>(true);
   const [reasoningEffort, setReasoningEffort] = useState<string>("");
@@ -385,10 +482,34 @@ export const App: React.FC = () => {
   const [planMode, setPlanMode] = useState<boolean>(false);
   const planModeRef = useRef<boolean>(false);
   planModeRef.current = planMode;
-  const [attachedFiles, setAttachedFiles] = useState<AttachedFileItem[]>([]);
-  const attachedFilesRef = useRef<AttachedFileItem[]>([]);
-  attachedFilesRef.current = attachedFiles;
-  const pendingAttachmentSaveRef = useRef<{ threadId: string; clearComposer: boolean } | null>(null);
+  const [composerAttachmentDrafts, setComposerAttachmentDrafts] = useState<Record<string, AttachedFileItem[]>>({});
+  const attachmentScopeRef = useRef("home");
+  const attachedFiles = composerAttachmentDrafts[attachmentScopeRef.current] ?? [];
+  const setScopedAttachedFiles = useCallback((key: string, update: React.SetStateAction<AttachedFileItem[]>) => {
+    setComposerAttachmentDrafts((previous) => {
+      const current = previous[key] ?? [];
+      const nextFiles = typeof update === "function" ? update(current) : update;
+      if (nextFiles === current) return previous;
+      const next = { ...previous };
+      if (nextFiles.length > 0) next[key] = nextFiles;
+      else delete next[key];
+      return next;
+    });
+  }, []);
+  const setAttachedFiles = useCallback((update: React.SetStateAction<AttachedFileItem[]>) => {
+    setScopedAttachedFiles(attachmentScopeRef.current, update);
+  }, [setScopedAttachedFiles]);
+  const moveHomeAttachmentsToThread = useCallback((threadId: string) => {
+    setComposerAttachmentDrafts((previous) => {
+      const home = previous.home;
+      if (!home?.length) return previous;
+      const key = `thread:${threadId}`;
+      const next = { ...previous, [key]: mergeAttachmentItems(previous[key] ?? [], home) };
+      delete next.home;
+      return next;
+    });
+  }, []);
+  const pendingAttachmentSaveRef = useRef<{ threadId: string; clearComposer: boolean; prompt: string; files: AttachedFileItem[] } | null>(null);
   const [expandedThoughts, setExpandedThoughts] = useState<Record<string, boolean>>({});
 
   // Project Picker Popover on Home Title & AGENTS.md Modal
@@ -439,6 +560,7 @@ export const App: React.FC = () => {
   });
   const [customInstructions, setCustomInstructions] = useState<string>("");
   const [toneStyle, setToneStyle] = useState<string>("pragmatic");
+  const [projectsRefreshToken, setProjectsRefreshToken] = useState<number>(0);
 
   // In-session Hyperparameters
   const [sessionTemperature, setSessionTemperature] = useState<number>(0.2);
@@ -447,6 +569,7 @@ export const App: React.FC = () => {
   const [sessionWebSearch, setSessionWebSearch] = useState<"disabled" | "cached" | "live">("cached");
   const [sessionAllowNetwork, setSessionAllowNetwork] = useState<boolean>(true);
   const [sessionVerbosity, setSessionVerbosity] = useState<"low" | "medium" | "high">("medium");
+  const [reasoningSummary, setReasoningSummary] = useState<string>("auto");
 
   const [petVisible, setPetVisible] = useState<boolean>(false);
   const [selectedPetSpecies, setSelectedPetSpecies] = useState<PetSpeciesId>("codex");
@@ -471,6 +594,14 @@ export const App: React.FC = () => {
   } | null>(null);
   const [editingThreadTitle, setEditingThreadTitle] = useState(false);
   const [threadTitleInput, setThreadTitleInput] = useState("");
+  const [projectMoveConfirmation, setProjectMoveConfirmation] = useState<{
+    threadId: string;
+    targetProjectId: string | null;
+    projectName: string;
+    plan: any;
+  } | null>(null);
+  const [projectMoveBusy, setProjectMoveBusy] = useState(false);
+  const projectMoveCancelRef = useRef<HTMLButtonElement>(null);
 
   const showAppToast = useCallback(
     (message: string, type: "info" | "success" | "error" = "info") => {
@@ -482,6 +613,14 @@ export const App: React.FC = () => {
     },
     []
   );
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("codex_composer_prompt_drafts_v1", JSON.stringify(promptDrafts));
+    } catch (error) {
+      showAppToast(`草稿保存失败，当前输入仍保留：${String(error)}`, "error");
+    }
+  }, [promptDrafts, showAppToast]);
 
   const toggleBookmark = useCallback(
     (turnId: string) => {
@@ -508,9 +647,9 @@ export const App: React.FC = () => {
     const pending = pendingAttachmentSaveRef.current;
     if (!pending || pending.threadId !== threadId) return;
     pendingAttachmentSaveRef.current = null;
-    const files = attachedFilesRef.current;
+    const files = pending.files;
     if (files.length === 0) {
-      if (pending.clearComposer) setPromptInput("");
+      if (pending.clearComposer) setThreadPrompt(threadId, value => value === pending.prompt ? "" : value);
       return;
     }
     const { errors } = await persistThreadAttachments(threadId, files);
@@ -519,10 +658,10 @@ export const App: React.FC = () => {
       return;
     }
     if (pending.clearComposer) {
-      setPromptInput("");
-      setAttachedFiles([]);
+      setThreadPrompt(threadId, value => value === pending.prompt ? "" : value);
+      setScopedAttachedFiles(`thread:${threadId}`, current => current.filter(file => !files.includes(file)));
     }
-  }, [showAppToast]);
+  }, [showAppToast, setThreadPrompt, setScopedAttachedFiles]);
 
   // Official Thread Goal State (`thread/goal/*`)
   const [serverGoal, setServerGoal] = useState<ThreadGoal | null>(null);
@@ -532,11 +671,17 @@ export const App: React.FC = () => {
   const handleSaveGoalRef = useRef<((objective: string) => Promise<void>) | null>(null);
 
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [composerFocusRequest, setComposerFocusRequest] = useState(0);
+  useEffect(() => {
+    if (composerFocusRequest > 0) composerTextareaRef.current?.focus();
+  }, [composerFocusRequest]);
   const timelineScrollRef = useRef<HTMLDivElement | null>(null);
   const activeThreadIdRef = useRef<string | null>(null);
   activeThreadIdRef.current = activeThreadId;
+  attachmentScopeRef.current = activeThreadId ? `thread:${activeThreadId}` : "home";
   const activeTurnIdRef = useRef<string | null>(null);
   activeTurnIdRef.current = activeTurnId;
+  const pendingTurnIdRef = useRef<string | null>(null);
   const workspaceWatchIdRef = useRef<string | null>(null);
   const fsRefreshTimerRef = useRef<any>(null);
 
@@ -545,14 +690,17 @@ export const App: React.FC = () => {
   }, [workspaces]);
 
   // 1. Load Workspaces & Thread Metadata from Rust DesktopStateManager
+  const refreshWorkspaceGenerationRef = useRef(0);
   const refreshWorkspacesAndMeta = useCallback(async () => {
+    const generation = ++refreshWorkspaceGenerationRef.current;
+    let wsList: WorkspaceRootItem[] | undefined;
     try {
-      const wsList = await tauriInvoke<WorkspaceRootItem[]>("workspace_list");
-      if (wsList && wsList.length > 0) {
-        setWorkspaces(wsList);
-      }
+      wsList = await tauriInvoke<WorkspaceRootItem[]>("workspace_list");
+      if (generation !== refreshWorkspaceGenerationRef.current) return;
     } catch (e) {
+      if (generation !== refreshWorkspaceGenerationRef.current) return;
       console.warn("workspace_list failed:", e);
+      return;
     }
 
     try {
@@ -560,14 +708,22 @@ export const App: React.FC = () => {
         pinnedThreadIds: string[];
         archivedThreads: any[];
         workspaceHints: Record<string, string>;
+        projectMembership?: SidebarProjectMembership;
       }>("threads_meta_get");
+      if (generation !== refreshWorkspaceGenerationRef.current) return;
       if (meta) {
         setPinnedThreadIds(meta.pinnedThreadIds || []);
         setWorkspaceHints(meta.workspaceHints || {});
+        setSidebarProjectMembership(meta.projectMembership ?? {
+          threadProjectAssignments: {}, projectlessThreadIds: [], workspaceProjectAssignments: {},
+        });
       }
     } catch (e) {
+      if (generation !== refreshWorkspaceGenerationRef.current) return;
       console.warn("threads_meta_get failed:", e);
+      return;
     }
+    if (wsList && wsList.length > 0) setWorkspaces(wsList);
   }, []);
 
   // 2. Refresh Git Status & Branches for activeWorkspace
@@ -641,33 +797,72 @@ export const App: React.FC = () => {
   }, [activeWorkspace?.path]);
 
   // 4. Refresh Threads & Models from codex app-server
+  const refreshThreadsGenerationRef = useRef(0);
   const refreshThreads = useCallback(async () => {
-    try {
-      let res = await callAppServer<{
-        data?: ThreadSummary[];
-        threads?: ThreadSummary[];
-      }>("thread/list", { limit: 100, useStateDbOnly: true });
-      let list = res?.data || res?.threads || (Array.isArray(res) ? res : []);
-      if (!list || list.length === 0) {
+    const generation = ++refreshThreadsGenerationRef.current;
+    const readPages = async (stateDbOnly: boolean): Promise<ThreadSummary[] | null> => {
+      let cursor: string | null = null;
+      const visited = new Set<string>();
+      const items = new Map<string, ThreadSummary>();
+      do {
+        let response: { data?: ThreadSummary[]; threads?: ThreadSummary[]; nextCursor?: string | null; readStates?: Record<string, unknown> | null } | ThreadSummary[];
         try {
-          res = await callAppServer<any>("thread/list", { limit: 50 });
-          list = res?.data || res?.threads || (Array.isArray(res) ? res : []);
-        } catch {
-          // ignore fallback error
+          response = await callAppServer("thread/list", {
+            limit: 100,
+            archived: false,
+            sortKey: "updated_at",
+            sortDirection: "desc",
+            ...(stateDbOnly ? { useStateDbOnly: true } : {}),
+            ...(cursor !== null ? { cursor } : {}),
+          });
+        } catch (error) {
+          if (generation !== refreshThreadsGenerationRef.current) return null;
+          if (stateDbOnly && cursor === null) return readPages(false);
+          throw error;
         }
-      }
-      setThreads(list);
-    } catch (e) {
-      console.warn("thread/list with useStateDbOnly failed, falling back:", e);
-      try {
-        const res = await callAppServer<any>("thread/list", { limit: 50 });
-        const list = res?.data || res?.threads || (Array.isArray(res) ? res : []);
-        setThreads(list);
-      } catch {
-        // ignore
-      }
+        if (generation !== refreshThreadsGenerationRef.current) return null;
+        const page = Array.isArray(response) ? response : response.data || response.threads || [];
+        for (const thread of page) {
+          if (!items.has(thread.id)) {
+            const receipt = Array.isArray(response) ? undefined : response.readStates?.[thread.id];
+            items.set(thread.id, receipt !== undefined && isThreadReadState(receipt)
+              ? { ...thread, readState: receipt } : thread);
+          }
+        }
+        cursor = Array.isArray(response) ? null : response.nextCursor ?? null;
+        if (cursor !== null) {
+          if (visited.has(cursor)) throw new Error("thread/list returned a repeated cursor");
+          visited.add(cursor);
+        }
+      } while (cursor !== null);
+      if (stateDbOnly && items.size === 0) return readPages(false);
+      return [...items.values()];
+    };
+    try {
+      const list = await readPages(true);
+      if (list !== null && generation === refreshThreadsGenerationRef.current) setThreads(list);
+    } catch (error) {
+      if (generation === refreshThreadsGenerationRef.current) console.warn("thread/list refresh failed; previous list retained:", error);
     }
   }, []);
+
+  const readStateWritesRef = useRef(new Set<string>());
+  const handleSetThreadReadState = useCallback(async (threadId: string, expectedRevision: string, unread: boolean) => {
+    if (readStateWritesRef.current.has(threadId)) return;
+    readStateWritesRef.current.add(threadId);
+    try {
+      const result = await callAppServer<any>("thread/readState/update", {
+        threadId, expectedRevision, operation: { type: unread ? "unread" : "read" },
+      });
+      if (!isThreadReadState(result?.readState)) throw new Error("服务未返回有效会话已读状态");
+      await refreshThreads();
+    } catch (error) {
+      showAppToast(`更新会话已读状态失败：${String(error)}`, "error");
+      await refreshThreads();
+    } finally {
+      readStateWritesRef.current.delete(threadId);
+    }
+  }, [refreshThreads, showAppToast]);
 
   const refreshModels = useCallback(async () => {
     try {
@@ -768,14 +963,19 @@ export const App: React.FC = () => {
   }, [models, selectedModelId, reasoningEffort, fastMode]);
 
   const refreshAccount = useCallback(async () => {
+    const request = ++accountReadRequestRef.current;
     try {
-      const info = await callAppServer<any>("account/read", {});
-      setAccountInfo(info?.account ? info : (info ?? null));
+      const info = await callAppServer<AccountReadResult>("account/read", {});
+      if (request !== accountReadRequestRef.current) return;
+      setAccountInfo(info ?? null);
     } catch (e) {
+      if (request !== accountReadRequestRef.current) return;
+      setAccountInfo(null);
       console.warn("account/read failed:", e);
     }
     try {
       const limits = await callAppServer<any>("account/rateLimits/read", {});
+      if (request !== accountReadRequestRef.current) return;
       setRateLimits(limits ?? null);
     } catch (e) {
       console.warn("account/rateLimits/read failed:", e);
@@ -824,6 +1024,9 @@ export const App: React.FC = () => {
     };
     setNotifyPrefs(next);
     notifyPrefsRef.current = next;
+    if (typeof prefs.reasoningSummary === "string" && prefs.reasoningSummary) {
+      setReasoningSummary(prefs.reasoningSummary);
+    }
   }, []);
   const sendDesktopNotification = useCallback((title: string, body: string) => {
     if (!notifyPrefsRef.current.desktop) return;
@@ -889,6 +1092,7 @@ export const App: React.FC = () => {
           refreshThreads();
           refreshPendingRequests();
           refreshAccount();
+          setProjectsRefreshToken((prev) => prev + 1);
         }
       })
       .catch((err) => {
@@ -905,6 +1109,8 @@ export const App: React.FC = () => {
       (status) => {
         setAppServerStatus(status);
         if (!status.connected) {
+          accountReadRequestRef.current += 1;
+          setAccountInfo(null);
           pendingRequestRevisionRef.current += 1;
           setPendingRequests([]);
           setRequestResponses({});
@@ -939,6 +1145,17 @@ export const App: React.FC = () => {
           setActiveTurnId(turnId);
           setTurns((prev) => {
             if (prev.some((t) => t.id === turnId)) return prev;
+            const pendingId = typeof pendingTurnIdRef !== "undefined" ? pendingTurnIdRef?.current : null;
+            const pendingIdx = prev.findIndex((t) => (pendingId && t.id === pendingId) || t.id.startsWith("pending-") || t.id.startsWith("user-"));
+            if (pendingIdx >= 0) {
+              const updated = [...prev];
+              updated[pendingIdx] = {
+                ...updated[pendingIdx],
+                id: turnId,
+                status: "running",
+              };
+              return updated;
+            }
             return [
               ...prev,
               {
@@ -949,6 +1166,7 @@ export const App: React.FC = () => {
               },
             ];
           });
+          if (typeof pendingTurnIdRef !== "undefined" && pendingTurnIdRef) pendingTurnIdRef.current = null;
           void flushPendingAttachmentSave(params.threadId);
         } else if (method === "turn/completed") {
           const isVisibleThread = eventThreadId === activeThreadIdRef.current;
@@ -966,29 +1184,33 @@ export const App: React.FC = () => {
           if (isVisibleThread && (!turnId || turnId === activeTurnIdRef.current)) {
             setActiveTurnId(null);
             setPlanSteps([]);
+            setPlanExplanation(null);
           }
           const duration = params?.turn?.durationMs || params?.turnDurationMs;
           const completedItems = Array.isArray(params?.turn?.items)
             ? params.turn.items
             : null;
-          if (isVisibleThread) setTurns((prev) =>
-            prev.map((t) => {
+          if (isVisibleThread) setTurns((prev) => {
+            const filtered = prev.filter((t) => !(t.id.startsWith("pending-") || t.id.startsWith("user-")) || t.id === turnId);
+            return filtered.map((t) => {
               const isTarget = t.id === turnId || (!turnId && t.status === "running");
               if (!isTarget) return t;
               let items = t.items;
               if (completedItems && completedItems.length > 0) {
-                // 合并已完成 turn 的权威 items（本地流式累积可能缺 item）
+                const hasServerUserMsg = completedItems.some((it: any) => it.type === "userMessage" || it.type === "user");
+                const localItems = hasServerUserMsg
+                  ? t.items.filter((it: any) => it.type !== "userMessage" && it.type !== "user")
+                  : t.items;
                 const byId = new Map<string, any>();
-                for (const it of t.items) if (it?.id) byId.set(it.id, it);
+                for (const it of localItems) if (it?.id) byId.set(it.id, it);
                 for (const it of completedItems) {
                   const existing = it?.id ? byId.get(it.id) : undefined;
                   if (existing) byId.set(it.id, { ...existing, ...it });
                   else if (it?.id) byId.set(it.id, it);
-                  else items = [...items, it];
                 }
                 const merged: any[] = [];
                 const seen = new Set<string>();
-                for (const it of [...t.items, ...completedItems]) {
+                for (const it of [...localItems, ...completedItems]) {
                   if (!it?.id) continue;
                   if (seen.has(it.id)) {
                     const idx = merged.findIndex((m) => m.id === it.id);
@@ -998,8 +1220,7 @@ export const App: React.FC = () => {
                   seen.add(it.id);
                   merged.push(byId.get(it.id) ?? it);
                 }
-                // 保留本地暂未带 id 的条目
-                for (const it of t.items) if (!it?.id) merged.push(it);
+                for (const it of localItems) if (!it?.id) merged.push(it);
                 items = merged;
               }
               return {
@@ -1010,8 +1231,8 @@ export const App: React.FC = () => {
                 items,
                 error: params?.turn?.error ?? t.error,
               } as TurnData;
-            })
-          );
+            });
+          });
           refreshGitStatus();
           refreshThreads();
           if (turnId) {
@@ -1063,26 +1284,63 @@ export const App: React.FC = () => {
           method === NOTIFICATION.ITEM_REASONING_TEXT_DELTA ||
           method === NOTIFICATION.ITEM_REASONING_SUMMARY_PART
         ) {
-          const field = method === NOTIFICATION.ITEM_REASONING_TEXT_DELTA ? "reasoningText" : "text";
-          const delta = method === NOTIFICATION.ITEM_REASONING_SUMMARY_PART ? "\n\n" : params?.delta || params?.text || "";
-          setTurns((prev) => mergeTimelineItem(prev, eventTurnId, params?.itemId, (item) => ({
-            ...item, type: "reasoning", [field]: (item[field] || "") + delta,
-          })));
+          const isSummary = method === NOTIFICATION.ITEM_REASONING_SUMMARY_DELTA;
+          const isText = method === NOTIFICATION.ITEM_REASONING_TEXT_DELTA;
+          if (method === NOTIFICATION.ITEM_REASONING_SUMMARY_PART) return;
+          if (isSummary || isText) {
+            const index = isSummary ? (params?.summaryIndex ?? 0) : (params?.contentIndex ?? 0);
+            const delta = params?.delta || "";
+            setTurns((prev) => mergeTimelineItem(prev, eventTurnId, params?.itemId, (item) => {
+              const field = isSummary ? "summary" : "content";
+              const parts = Array.isArray(item[field]) ? [...item[field]] : [];
+              parts[index] = (parts[index] || "") + delta;
+              return { ...item, type: "reasoning", [field]: parts };
+            }));
+          } else {
+            const delta = params?.delta || params?.text || "";
+            setTurns((prev) => mergeTimelineItem(prev, eventTurnId, params?.itemId, (item) => ({
+              ...item, type: "reasoning", text: (item.text || "") + delta,
+            })));
+          }
         } else if (method === NOTIFICATION.ITEM_COMMAND_OUTPUT_DELTA) {
           setTurns((prev) => mergeTimelineItem(prev, eventTurnId, params?.itemId, (item) => ({
             ...item, type: "commandExecution", command: item.command || params?.command || "command",
-            output: (item.output ?? item.aggregatedOutput ?? "") + (params?.delta || params?.output || ""),
+            aggregatedOutput: (item.aggregatedOutput ?? item.output ?? "") + (params?.delta || params?.output || ""),
           })));
         } else if (method === "item/started" || method === "item/completed") {
           const item = params?.item;
           if (!item) return;
-          setTurns((prev) => mergeTimelineItem(prev, eventTurnId, item.id, (existing) => ({ ...existing, ...item })));
+          setTurns((prev) => mergeTimelineItem(prev, eventTurnId, item.id, (existing) => {
+            const merged = {
+              ...existing,
+              ...item,
+              ...(method === "item/completed" && item.type === "commandExecution" ? { output: undefined } : {}),
+              ...(method === "item/completed" && item.type === "mcpToolCall" ? { progressMessage: undefined } : {}),
+            };
+            if (item.type === "reasoning") {
+              if (existing.summary?.length && (!item.summary || item.summary.length === 0)) {
+                merged.summary = existing.summary;
+              }
+              if (existing.content?.length && (!item.content || item.content.length === 0)) {
+                merged.content = existing.content;
+              }
+              if (existing.text && !item.text) {
+                merged.text = existing.text;
+              }
+              if (existing.reasoningText && !item.reasoningText) {
+                merged.reasoningText = existing.reasoningText;
+              }
+            }
+            return merged;
+          }));
         } else if (method === NOTIFICATION.ITEM_PLAN_DELTA) {
           setTurns((prev) => mergeTimelineItem(prev, eventTurnId, params?.itemId, (item) => ({
             ...item, type: "plan", text: (item.text || "") + (params?.delta || ""),
           })));
         } else if (method === NOTIFICATION.TURN_PLAN_UPDATED) {
           const plan = Array.isArray(params?.plan) ? params.plan : [];
+          const explanation = typeof params?.explanation === "string" ? params.explanation : null;
+          setPlanExplanation(explanation);
           setPlanSteps(
             plan
               .map((p: any) => ({
@@ -1096,9 +1354,13 @@ export const App: React.FC = () => {
           setTurnDiffFiles(parseUnifiedDiffFiles(diff));
         } else if (method === NOTIFICATION.ITEM_FILE_CHANGE_PATCH) {
           const changes = Array.isArray(params?.changes) ? params.changes : [];
-          if (!changes.length) return;
           setTurns((prev) => mergeTimelineItem(prev, eventTurnId, params?.itemId, (item) => ({
             ...item, type: "fileChange", status: item.status || "inProgress", changes,
+          })));
+        } else if (method === NOTIFICATION.ITEM_MCP_PROGRESS) {
+          const message = typeof params?.message === "string" ? params.message : "";
+          setTurns((prev) => mergeTimelineItem(prev, eventTurnId, params?.itemId, (item) => ({
+            ...item, type: "mcpToolCall", status: item.status || "inProgress", progressMessage: message,
           })));
         } else if (method === NOTIFICATION.THREAD_STATUS_CHANGED) {
           const tid = params?.threadId;
@@ -1162,7 +1424,8 @@ export const App: React.FC = () => {
         } else if (method === NOTIFICATION.ACCOUNT_RATE_LIMITS) {
           setRateLimits((prev: any) => mergeRateLimits(prev, params));
         } else if (method === NOTIFICATION.ACCOUNT_UPDATED) {
-          setAccountInfo((prev: any) => ({ ...(prev || {}), ...(params || {}) }));
+          setAccountInfo(null);
+          void refreshAccount();
         } else if (method === NOTIFICATION.ITEM_AUTO_REVIEW_STARTED) {
           setAutoReview({ active: true, decision: null });
         } else if (method === NOTIFICATION.ITEM_AUTO_REVIEW_COMPLETED) {
@@ -1228,6 +1491,24 @@ export const App: React.FC = () => {
               prev.map((t) => (t.id === tid ? { ...t, name } : t))
             );
           }
+        } else if (method === NOTIFICATION.THREAD_READ_STATE_CHANGED) {
+          if (typeof params?.threadId === "string" && params.threadId && isThreadReadState(params.readState)) {
+            setThreads((prev) => prev.map((thread) => thread.id === params.threadId ? { ...thread, readState: params.readState } : thread));
+            refreshThreads();
+          }
+        } else if (method === NOTIFICATION.THREAD_PROJECT_UPDATED) {
+          const tid = params?.threadId ?? params?.thread_id;
+          const pid = params?.projectId !== undefined ? params.projectId : params?.project_id;
+          if (typeof tid === "string" && tid && (pid === null || typeof pid === "string")) {
+            setThreads((prev) =>
+              prev.map((t) => (t.id === tid ? { ...t, projectId: pid } : t))
+            );
+            refreshThreads();
+          }
+        } else if (method === NOTIFICATION.PROJECT_CHANGED) {
+          setProjectsRefreshToken((prev) => prev + 1);
+          refreshWorkspacesAndMeta();
+          refreshThreads();
         } else if (
           method === NOTIFICATION.THREAD_ARCHIVED ||
           method === NOTIFICATION.THREAD_DELETED
@@ -1267,6 +1548,10 @@ export const App: React.FC = () => {
       };
     replayThreadNotificationRef.current = handleNotification;
     const unlistenNotification = tauriListen<any>("app-server:notification", handleNotification);
+    const unlistenWorkspaceWarning = tauriListen<{ threadId?: string; message: string }>(
+      "thread-workspace:sync-warning",
+      ({ message }) => showAppToast(message, "error"),
+    );
 
     const unlistenServerReq = tauriListen<PendingServerRequest>(
       "app-server:server-request",
@@ -1299,6 +1584,7 @@ export const App: React.FC = () => {
     return () => {
       unlistenStatus.then((f) => f());
       unlistenNotification.then((f) => f());
+      unlistenWorkspaceWarning.then((f) => f());
       unlistenServerReq.then((f) => f());
     };
   }, [
@@ -1472,6 +1758,10 @@ export const App: React.FC = () => {
 
       const shortcutId = matchShortcut(e);
       if (!shortcutId) return;
+      if (shortcutId === "toggle-sidebar" && e.repeat) {
+        e.preventDefault();
+        return;
+      }
       e.preventDefault();
       runShortcutAction(shortcutId);
     };
@@ -1584,69 +1874,82 @@ export const App: React.FC = () => {
   );
 
   const handleAttachFiles = useCallback(async () => {
+    const scope = attachmentScopeRef.current;
     try {
       const files = await tauriInvoke<string[]>("pick_files_dialog");
       if (Array.isArray(files) && files.length > 0) {
         const additions = files.map((path) => createAttachedFileItem(path));
-        setAttachedFiles((prev) => mergeAttachmentItems(prev, additions));
+        setScopedAttachedFiles(scope, (prev) => mergeAttachmentItems(prev, additions));
       }
     } catch (e) {
       console.warn("pick_files_dialog failed:", e);
     }
-  }, []);
+  }, [setScopedAttachedFiles]);
 
   const handleAppshot = useCallback(async () => {
+    const scope = attachmentScopeRef.current;
     try {
       showAppToast("正在捕获屏幕快照…", "info");
       const res = await tauriInvoke<{ path: string; name: string }>("capture_appshot");
       const item = createAttachedFileItem(res.path, res.name, "image");
-      setAttachedFiles((prev) => mergeAttachmentItems(prev, [item]));
-      if (activeThreadId) {
-        void persistThreadAttachments(activeThreadId, [item]).catch(() => {});
-      }
+      setScopedAttachedFiles(scope, (prev) => mergeAttachmentItems(prev, [item]));
       showAppToast(`✓ 已添加屏幕快照: ${res.name}`, "success");
     } catch (err: any) {
       showAppToast(`截图失败: ${err?.message || String(err)}`, "error");
     }
-  }, [activeThreadId, showAppToast]);
+  }, [setScopedAttachedFiles, showAppToast]);
 
   const handleRemoveAttachedFile = useCallback(async (id: string) => {
+    const scope = attachmentScopeRef.current;
+    const threadId = activeThreadId;
     const file = attachedFiles.find((item) => item.id === id);
     if (!file) return;
-    if (file.persisted && activeThreadId) {
+    if (file.persisted && threadId) {
       try {
-        await removeThreadAttachment(activeThreadId, file);
+        await removeThreadAttachment(threadId, file);
       } catch (error) {
         showAppToast(`移除附件失败: ${String(error)}`, "error");
         return;
       }
     }
-    setAttachedFiles((prev) => prev.filter((item) => item.id !== id));
-  }, [attachedFiles, activeThreadId, showAppToast]);
+    setScopedAttachedFiles(scope, (prev) => prev.filter((item) => item.id !== id));
+  }, [attachedFiles, activeThreadId, setScopedAttachedFiles, showAppToast]);
 
   // Thread Navigation & Lifecycle
   const startNewThread = useCallback(
-    async (workspacePath?: string) => {
-      const navigation = ++navigationRequestRef.current;
-      const previousThreadId = activeThreadIdRef.current;
-      if (previousThreadId) {
-        const pending = attachedFilesRef.current.filter((file) => !file.persisted);
-        if (pending.length > 0) {
-          const { errors } = await persistThreadAttachments(previousThreadId, pending);
-          if (errors.length > 0) {
-            showAppToast(`附件尚未保存，未新建会话: ${errors[0].message}`, "error");
-            return;
-          }
-        }
+    async (workspacePath?: string, project?: SidebarLocalProject) => {
+      if (project && (!project.serverProjectId || project.rootPaths.length === 0)) {
+        showAppToast("暂时无法在此项目中新建聊天，请重试。", "error");
+        return;
       }
+      const navigation = ++navigationRequestRef.current;
       if (navigation !== navigationRequestRef.current) return;
-      if (workspacePath) {
+      if (project) {
+        ++refreshWorkspaceGenerationRef.current;
+        try {
+          const selected = await tauriInvoke<{
+            workspaces: WorkspaceRootItem[];
+            projectMembership: SidebarProjectMembership;
+          }>("workspace_select_project", { projectId: project.id });
+          if (navigation !== navigationRequestRef.current) return;
+          ++refreshWorkspaceGenerationRef.current;
+          setWorkspaces(selected.workspaces);
+          setSidebarProjectMembership(selected.projectMembership);
+        } catch (error) {
+          if (navigation === navigationRequestRef.current) {
+            showAppToast(`选择项目失败：${String(error)}`, "error");
+          }
+          return;
+        }
+      } else if (workspacePath) {
         handleSelectWorkspace(workspacePath);
       }
+      pendingNewThreadProjectRef.current = project ?? null;
       threadRequestRef.current += 1;
       threadHistoryBufferRef.current.discard();
       finishedTurnIdsRef.current.clear();
       activeThreadIdRef.current = null;
+      attachmentScopeRef.current = "home";
       earlierRequestRef.current = false;
       setLoadingEarlierTurns(false);
       setLoadingThread(false);
@@ -1659,33 +1962,24 @@ export const App: React.FC = () => {
       setTurnsCursor(null);
       setHasMoreTurns(false);
       setPlanSteps([]);
+      setPlanExplanation(null);
       setTurnDiffFiles([]);
       setTokenUsage(null);
-      setAttachedFiles([]);
       setActiveRoute("home");
-      setTimeout(() => composerTextareaRef.current?.focus(), 50);
+      setComposerFocusRequest((request) => request + 1);
     },
     [handleSelectWorkspace, showAppToast]
   );
 
   const selectThread = useCallback(async (threadId: string) => {
+    pendingNewThreadProjectRef.current = null;
     const navigation = ++navigationRequestRef.current;
-    const previousThreadId = activeThreadIdRef.current;
-    if (previousThreadId && previousThreadId !== threadId) {
-      const pending = attachedFilesRef.current.filter((file) => !file.persisted);
-      if (pending.length > 0) {
-        const { errors } = await persistThreadAttachments(previousThreadId, pending);
-        if (errors.length > 0) {
-          showAppToast(`附件尚未保存，未切换会话: ${errors[0].message}`, "error");
-          return;
-        }
-      }
-    }
     if (navigation !== navigationRequestRef.current) return;
     const request = ++threadRequestRef.current;
     const lifecycle = turnLifecycleRef.current;
     const isCurrent = () => isCurrentThreadRequest(request, threadRequestRef.current, threadId, activeThreadIdRef.current);
     activeThreadIdRef.current = threadId;
+    attachmentScopeRef.current = `thread:${threadId}`;
     threadHistoryBufferRef.current.begin(request, threadId);
     finishedTurnIdsRef.current.clear();
     earlierRequestRef.current = false;
@@ -1698,7 +1992,6 @@ export const App: React.FC = () => {
     setIsStreaming(false);
     setTokenUsage(null);
     setServerGoal(null);
-    setAttachedFiles([]);
     setActiveThreadId(threadId);
     setActiveRoute("thread");
     setActiveTurnId(null);
@@ -1785,7 +2078,7 @@ export const App: React.FC = () => {
     try {
       const restored = await listThreadAttachments(threadId);
       if (isCurrent()) {
-        setAttachedFiles(restored);
+        setAttachedFiles((current) => mergeAttachmentItems(restored, current));
       }
     } catch (error) {
       if (isCurrent()) showAppToast(`加载会话附件失败: ${String(error)}`, "error");
@@ -1859,6 +2152,7 @@ export const App: React.FC = () => {
           lastTurnId: fromTurnId || activeTurnId || undefined,
         });
         const newThreadId = res?.threadId || res?.thread?.id;
+        if (newThreadId) setSidebarCreatedThread({ id: String(newThreadId), cwd: res?.thread?.cwd || activeWorkspace?.path, projectId: res?.thread?.projectId });
         await refreshThreads();
         if (newThreadId) {
           await selectThread(String(newThreadId));
@@ -1964,6 +2258,7 @@ export const App: React.FC = () => {
         });
         const threadId = threadRes?.threadId || threadRes?.thread?.id;
         if (!threadId) throw new Error("无法为审查创建会话");
+        setSidebarCreatedThread({ id: threadId, cwd, projectId: threadRes?.thread?.projectId });
 
         let target: any;
         if (req.kind === "branch") {
@@ -2023,6 +2318,13 @@ export const App: React.FC = () => {
   const handleSendMessage = useCallback(async (overrideText?: string) => {
     const rawText = (typeof overrideText === "string" ? overrideText : promptInput).trim();
     if (!rawText && attachedFiles.length === 0) return;
+    const pendingProject = activeThreadIdRef.current ? null : resolveNewThreadProject(
+      pendingNewThreadProjectRef.current, sidebarProjectMembership, activeWorkspace?.path,
+    );
+    if (pendingProject && (!pendingProject.serverProjectId || pendingProject.rootPaths.length === 0)) {
+      showAppToast("暂时无法在此项目中新建聊天，请重试。", "error");
+      return;
+    }
 
     // Direct /goal command detection (官方 goal 走 thread/goal/* 协议)
     if (rawText === "/goal") {
@@ -2094,18 +2396,22 @@ export const App: React.FC = () => {
     }
 
     const sendRequest = threadRequestRef.current;
+    const tempTurnId = `pending-${Date.now()}`;
+    pendingTurnIdRef.current = tempTurnId;
     const userTurn: TurnData = {
-      id: `user-${Date.now()}`,
-      status: "completed",
+      id: tempTurnId,
+      status: "running",
       startedAt: Date.now(),
       items: [{ id: `u-${Date.now()}`, type: "userMessage", text: effectiveRawText }],
     };
     setTurns((prev) => [...prev, userTurn]);
     setIsStreaming(true);
+    setActiveTurnId(tempTurnId);
 
     try {
-      let targetCwd = activeWorkspace?.path || "";
-      if (useWorktree && targetCwd) {
+      let currentThreadId = activeThreadIdRef.current;
+      let targetCwd = currentThreadId ? "" : pendingProject?.rootPaths[0] || activeWorkspace?.path || "";
+      if (!currentThreadId && useWorktree && targetCwd) {
         try {
           const wt = await tauriInvoke<{ path: string }>("git_worktree_create", {
             sourceCwd: targetCwd,
@@ -2118,6 +2424,8 @@ export const App: React.FC = () => {
           console.warn("Worktree creation skipped:", wtErr);
         }
       }
+      const projectStartParams = currentThreadId ? {} : threadStartProjectParams(pendingProject, targetCwd || undefined);
+      const turnWorkspaceRoots = projectStartParams.runtimeWorkspaceRoots;
 
       const sandboxMode =
         permissionMode === "full"
@@ -2134,22 +2442,28 @@ export const App: React.FC = () => {
           ? { type: "dangerFullAccess" }
           : { type: "workspaceWrite", networkAccess: sessionAllowNetwork };
 
-      let currentThreadId = activeThreadId;
       if (!currentThreadId) {
         const startRes = await callAppServer<any>("thread/start", {
           cwd: targetCwd || undefined,
+          ...projectStartParams,
           model: selectedModelId || undefined,
           approvalPolicy,
           approvalsReviewer,
           sandbox: sandboxMode,
         });
-        currentThreadId =
+        const createdThreadId =
           startRes?.threadId ||
           startRes?.thread?.id ||
-          startRes?.conversationId ||
-          `thread-${Date.now()}`;
+          startRes?.conversationId;
+        if (typeof createdThreadId !== "string" || !createdThreadId) throw new Error("thread/start 未返回会话 ID");
+        currentThreadId = createdThreadId;
+        pendingNewThreadProjectRef.current = null;
+        setSidebarCreatedThread({ id: createdThreadId, cwd: targetCwd || undefined, projectId: startRes?.thread?.projectId });
         if (sendRequest === threadRequestRef.current) {
+          moveHomeAttachmentsToThread(currentThreadId);
+          moveHomePromptToThread(currentThreadId);
           activeThreadIdRef.current = currentThreadId;
+          attachmentScopeRef.current = `thread:${currentThreadId}`;
           setActiveThreadId(currentThreadId);
         }
         if (currentThreadId && targetCwd) {
@@ -2171,14 +2485,18 @@ export const App: React.FC = () => {
         pendingAttachmentSaveRef.current = {
           threadId: currentThreadId!,
           clearComposer: !overrideText,
+          prompt: promptInput,
+          files: attachedFiles,
         };
       }
       const turnRes = await callAppServer<any>("turn/start", {
         threadId: currentThreadId,
         cwd: targetCwd || undefined,
+        runtimeWorkspaceRoots: turnWorkspaceRoots,
         input: nativeInputs,
         model: selectedModelId || undefined,
         effort: reasoningEffort || undefined,
+        summary: reasoningSummary || "auto",
         approvalPolicy,
         approvalsReviewer,
         sandboxPolicy,
@@ -2188,10 +2506,27 @@ export const App: React.FC = () => {
       const startedTurnId =
         turnRes?.turn?.id || turnRes?.turnId || turnRes?.id || null;
       if (startedTurnId) {
-        setActiveTurnId(String(startedTurnId));
+        const turnIdStr = String(startedTurnId);
+        setActiveTurnId(turnIdStr);
+        setTurns((prev) => {
+          if (prev.some((t) => t.id === turnIdStr)) {
+            return prev.filter((t) => t.id !== tempTurnId);
+          }
+          const pendingIdx = prev.findIndex((t) => t.id === tempTurnId);
+          if (pendingIdx >= 0) {
+            const updated = [...prev];
+            updated[pendingIdx] = {
+              ...updated[pendingIdx],
+              id: turnIdStr,
+              status: "running",
+            };
+            return updated;
+          }
+          return prev;
+        });
+        pendingTurnIdRef.current = null;
         if (!overrideText && attachedFiles.length === 0) {
-          setPromptInput("");
-          setAttachedFiles([]);
+          setThreadPrompt(currentThreadId, value => value === promptInput ? "" : value);
         }
       } else {
         pendingAttachmentSaveRef.current = null;
@@ -2201,29 +2536,20 @@ export const App: React.FC = () => {
       console.error("Turn start failed:", err);
       if (sendRequest !== threadRequestRef.current) return;
       setIsStreaming(false);
-      setTurns((prev) => [
-        ...prev,
-        {
-          id: `err-${Date.now()}`,
-          status: "failed",
-          startedAt: Date.now(),
-          items: [
-            {
-              id: `err-item-${Date.now()}`,
-              type: "agentMessage",
-              text: `⚠️ 执行出错: ${err?.message || err}`,
-            },
-          ],
-        },
-      ]);
+      setTurns((prev) => prev.map((t) => t.id === tempTurnId ? { ...t, status: "failed", items: [...t.items, { id: `err-item-${Date.now()}`, type: "agentMessage", text: `⚠️ 执行出错: ${err?.message || err}` }] } : t));
     }
   }, [
     promptInput,
+    setPromptInput,
+    setThreadPrompt,
+    moveHomePromptToThread,
+    moveHomeAttachmentsToThread,
     attachedFiles,
     planMode,
     isStreaming,
     activeThreadId,
     activeWorkspace?.path,
+    sidebarProjectMembership,
     useWorktree,
     permissionMode,
     selectedModelId,
@@ -2266,8 +2592,13 @@ export const App: React.FC = () => {
       try {
         let threadId = activeThreadIdRef.current;
         if (!threadId) {
+          const pendingProject = resolveNewThreadProject(
+            pendingNewThreadProjectRef.current, sidebarProjectMembership, activeWorkspace?.path,
+          );
+          const targetCwd = pendingProject?.rootPaths[0] || activeWorkspace?.path || "";
           const startRes = await callAppServer<any>("thread/start", {
-            cwd: activeWorkspace?.path || undefined,
+            cwd: targetCwd || undefined,
+            ...threadStartProjectParams(pendingProject, targetCwd || undefined),
             model: selectedModelId || undefined,
             approvalPolicy: permissionMode === "full" ? "never" : "on-request",
             approvalsReviewer: permissionMode === "auto" ? "auto_review" : "user",
@@ -2276,6 +2607,10 @@ export const App: React.FC = () => {
           });
           threadId = startRes?.threadId || startRes?.thread?.id || null;
           if (!threadId) throw new Error("无法为目标创建会话");
+          pendingNewThreadProjectRef.current = null;
+          moveHomePromptToThread(threadId);
+          activeThreadIdRef.current = threadId;
+          setSidebarCreatedThread({ id: threadId, cwd: targetCwd || undefined, projectId: startRes?.thread?.projectId });
           setActiveThreadId(threadId);
           setActiveRoute("thread");
           refreshThreads();
@@ -2292,10 +2627,12 @@ export const App: React.FC = () => {
     },
     [
       activeWorkspace?.path,
+      sidebarProjectMembership,
       selectedModelId,
       permissionMode,
       refreshThreads,
       handleSendMessage,
+      moveHomePromptToThread,
       showAppToast,
     ]
   );
@@ -2308,7 +2645,8 @@ export const App: React.FC = () => {
     const tid = activeThreadIdRef.current;
     const cur = serverGoalRef.current;
     if (!tid || !cur) return;
-    const nextStatus = cur.status === "paused" ? "active" : "paused";
+    if (cur.status === "budgetLimited" || cur.status === "complete") return;
+    const nextStatus = cur.status === "active" ? "paused" : "active";
     try {
       const goal = await goalSet(tid, { status: nextStatus });
       setServerGoal(goal);
@@ -2401,7 +2739,7 @@ export const App: React.FC = () => {
         setQueueMutationVersion(v => v + 1);
       }
     },
-    [showAppToast]
+    [showAppToast, setPromptInput]
   );
 
   const submitServerResponse = useCallback(
@@ -2536,7 +2874,7 @@ export const App: React.FC = () => {
       queueMutationThreadsRef.current.delete(tid);
       setQueueMutationVersion(v => v + 1);
     }
-  }, [promptInput, attachedFiles, refreshThreadQueue, showAppToast]);
+  }, [promptInput, attachedFiles, refreshThreadQueue, showAppToast, setPromptInput]);
 
   const handleCancelQueuedFollowup = useCallback(async (item: QueuedFollowupPrompt) => {
     const tid = activeThreadIdRef.current;
@@ -2589,16 +2927,16 @@ export const App: React.FC = () => {
 
   const handleRenameThread = useCallback(
     async (threadId: string, newName: string) => {
-      setThreads((prev) =>
-        prev.map((t) => (t.id === threadId ? { ...t, name: newName } : t))
-      );
       try {
         await callAppServer("thread/name/set", { threadId, name: newName });
+        setThreads((prev) =>
+          prev.map((t) => (t.id === threadId ? { ...t, name: newName } : t))
+        );
       } catch {
-        // ignore if unsupported
+        showAppToast("无法保存更改。请重试", "error");
       }
     },
-    []
+    [showAppToast]
   );
 
   const handleArchiveThread = useCallback(
@@ -2665,6 +3003,7 @@ export const App: React.FC = () => {
           ...(turnId ? { lastTurnId: turnId } : {}),
         });
         const newThreadId = res?.thread?.id || res?.threadId || res?.id;
+        if (newThreadId) setSidebarCreatedThread({ id: String(newThreadId), cwd: res?.thread?.cwd || threadsRef.current.find((thread) => thread.id === currentId)?.cwd || undefined, projectId: res?.thread?.projectId });
         await refreshThreads();
         if (newThreadId) {
           selectThread(newThreadId);
@@ -2743,6 +3082,7 @@ export const App: React.FC = () => {
     "zoom-reset": () => applyZoom(1),
     "open-settings": () =>
       setActiveRoute((r) => (r === "settings" ? "home" : "settings")),
+    "show-keyboard-shortcuts": () => setShowKeyboardShortcuts((value) => !value),
     "command-palette": () => setShowQuickSearch(true),
     "command-palette-alt": () => setShowQuickSearch(true),
     "file-search": () => setShowQuickSearch(true),
@@ -2845,6 +3185,7 @@ export const App: React.FC = () => {
   const handleAppCommand = useCallback(async (command: string, payload?: any) => {
     const shortcutAction = shortcutHandlersRef.current[command];
     if (shortcutAction) {
+      if (keyboardShortcutsOpenRef.current && command !== "show-keyboard-shortcuts") return;
       shortcutAction(payload);
       return;
     }
@@ -2877,6 +3218,14 @@ export const App: React.FC = () => {
     }
     if (command === "documentation") {
       window.open("https://developers.openai.com/codex/", "_blank", "noopener,noreferrer");
+      return;
+    }
+    if (command === "user-guide" || command === "changelog") {
+      try {
+        await tauriInvoke("open_help_link", { target: command === "user-guide" ? "guide" : "changelog" });
+      } catch (error) {
+        showAppToast(`无法打开帮助链接：${String(error)}`, "error");
+      }
       return;
     }
     if (command === "open-config-toml") {
@@ -3175,6 +3524,7 @@ export const App: React.FC = () => {
     activeThreadObj,
     activeThreadId,
     promptInput,
+    setPromptInput,
     showAppToast,
     setFollowupQueue,
   ]);
@@ -3195,15 +3545,76 @@ export const App: React.FC = () => {
     [inboxItems]
   );
 
+  const moveThreadToProject = useCallback(async (threadId: string, targetProjectId: string | null) => {
+    if (!threadId || projectMoveBusy) return;
+    const target = (sidebarProjectMembership.localProjects || [])
+      .find((project) => project.serverProjectId === targetProjectId);
+    const projectName = targetProjectId === null ? "聊天" : target?.name;
+    if (targetProjectId !== null && !projectName) {
+      showAppToast("目标项目当前不可用，请刷新后重试。", "error");
+      return;
+    }
+
+    setProjectMoveBusy(true);
+    try {
+      const plan = await tauriInvoke<any>("thread_project_move_prepare", {
+        threadId,
+        targetProjectId,
+      });
+      if (plan.requiresConfirmation) {
+        setProjectMoveConfirmation({
+          threadId,
+          targetProjectId,
+          projectName: projectName!,
+          plan,
+        });
+        return;
+      }
+      const result = await tauriInvoke<any>("thread_project_move_commit", {
+        threadId,
+        targetProjectId,
+        plan,
+        confirmMissingSources: false,
+      });
+      if (result.projectMembership) setSidebarProjectMembership(result.projectMembership);
+      await refreshThreads();
+      showAppToast(`已将会话移至「${projectName}」`, "success");
+    } catch (error) {
+      showAppToast(`移动会话失败：${String(error)}`, "error");
+    } finally {
+      setProjectMoveBusy(false);
+    }
+  }, [
+    projectMoveBusy,
+    sidebarProjectMembership.localProjects,
+    refreshThreads,
+    showAppToast,
+  ]);
+
   const threadMenuItems: ThreadActionItem[] = useMemo(() => {
     const pinned = !!(activeThreadId && pinnedThreadIds.includes(activeThreadId));
     const isUnread = !!(activeThreadId && activityThreadIds.includes(activeThreadId));
+    const moveTargets: ThreadActionItem[] = (sidebarProjectMembership.localProjects || [])
+      .filter((project) => project.serverProjectId)
+      .map((project) => ({
+        id: `move_project:${project.id}`,
+        label: project.name,
+      }));
+    moveTargets.push({ id: "move_project:__chats__", label: "聊天" });
     return [
       {
         id: "rename_thread",
         label: "重命名",
         icon: <PencilIcon size={14} />,
         hint: "Ctrl+Alt+R",
+      },
+      {
+        id: "move_thread_project",
+        label: "移至项目",
+        icon: <FolderIcon size={14} />,
+        separatorBefore: true,
+        disabled: projectMoveBusy || !activeThreadId,
+        children: moveTargets,
       },
       {
         id: "find_in_chat",
@@ -3284,12 +3695,30 @@ export const App: React.FC = () => {
         separatorBefore: true,
       },
     ];
-  }, [activeThreadId, pinnedThreadIds, activityThreadIds]);
+  }, [
+    activeThreadId,
+    pinnedThreadIds,
+    activityThreadIds,
+    sidebarProjectMembership.localProjects,
+    projectMoveBusy,
+  ]);
 
   const handleThreadMenuAction = useCallback(
     async (id: string) => {
       try {
-        if (id === "rename_thread") {
+        if (id.startsWith("move_project:")) {
+          const projectId = id.slice("move_project:".length);
+          const targetProject = (sidebarProjectMembership.localProjects || [])
+            .find((project) => project.id === projectId);
+          if (projectId !== "__chats__" && !targetProject?.serverProjectId) {
+            showAppToast("目标项目当前不可用，请刷新后重试。", "error");
+            return;
+          }
+          const targetProjectId = projectId === "__chats__"
+            ? null
+            : targetProject!.serverProjectId!;
+          await moveThreadToProject(activeThreadId!, targetProjectId);
+        } else if (id === "rename_thread") {
           if (activeThreadId) {
             setThreadTitleInput(
               activeThreadObj?.name || activeThreadObj?.preview || "本地聊天"
@@ -3398,6 +3827,8 @@ export const App: React.FC = () => {
       turns,
       showAppToast,
       activityThreadIds,
+      sidebarProjectMembership.localProjects,
+      moveThreadToProject,
     ]
   );
 
@@ -3406,6 +3837,30 @@ export const App: React.FC = () => {
     activeWorkspace?.path?.split(/[/\\]/).pop() ||
     "codex-app-offline";
   const threadStatusChip = describeThreadStatus(activeThreadStatus);
+  const confirmProjectMove = async () => {
+    if (!projectMoveConfirmation || projectMoveBusy) return;
+    setProjectMoveBusy(true);
+    try {
+      const result = await tauriInvoke<any>("thread_project_move_commit", {
+        threadId: projectMoveConfirmation.threadId,
+        targetProjectId: projectMoveConfirmation.targetProjectId,
+        plan: projectMoveConfirmation.plan,
+        confirmMissingSources: true,
+      });
+      if (result.projectMembership) setSidebarProjectMembership(result.projectMembership);
+      await refreshThreads();
+      showAppToast(`已将会话移至「${projectMoveConfirmation.projectName}」`, "success");
+      setProjectMoveConfirmation(null);
+    } catch (error) {
+      showAppToast(`移动会话失败：${String(error)}`, "error");
+    } finally {
+      setProjectMoveBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (projectMoveConfirmation) projectMoveCancelRef.current?.focus();
+  }, [projectMoveConfirmation]);
 
   return (
     <>
@@ -3418,6 +3873,57 @@ export const App: React.FC = () => {
         onToggleSidebar={() => setSidebarCollapsed((value) => !value)}
         onCommand={(command) => void handleAppCommand(command)}
       />
+      {projectMoveConfirmation && (
+        <div
+          className="codex-modal-overlay"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !projectMoveBusy) setProjectMoveConfirmation(null);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && !projectMoveBusy) setProjectMoveConfirmation(null);
+          }}
+        >
+          <section
+            className="codex-modal-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="project-move-title"
+            aria-describedby="project-move-description"
+            style={{ width: 440, height: "auto", maxHeight: "80vh", flexDirection: "column", padding: 20 }}
+          >
+            <h2 id="project-move-title" style={{ margin: "0 0 10px", fontSize: 16, fontWeight: 600 }}>
+              将文件夹添加到 {projectMoveConfirmation.projectName}？
+            </h2>
+            <p id="project-move-description" style={{ margin: "0 0 10px", color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.5 }}>
+              {projectMoveConfirmation.projectName} 中的所有聊天都将获得这些文件夹的访问权限：
+            </p>
+            <ul style={{ margin: "0 0 20px", paddingLeft: 20, overflowY: "auto", color: "var(--text-primary)", fontSize: 13 }}>
+              {(projectMoveConfirmation.plan.missingSources || []).map((path: string) => (
+                <li key={path} style={{ overflowWrap: "anywhere", marginBottom: 4 }}>{path}</li>
+              ))}
+            </ul>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button
+                type="button"
+                className="btn-outline"
+                ref={projectMoveCancelRef}
+                disabled={projectMoveBusy}
+                onClick={() => setProjectMoveConfirmation(null)}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={projectMoveBusy}
+                onClick={() => void confirmProjectMove()}
+              >
+                {projectMoveBusy ? "正在移动…" : "继续"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
       <div className="codex-app-layout">
       {/* ── 1. Far-Left Vertical Icon Navigation Rail ── */}
       <NavigationRail
@@ -3425,6 +3931,7 @@ export const App: React.FC = () => {
         sidebarCollapsed={sidebarCollapsed}
         unreadInboxCount={unreadInboxCount}
         appServerConnected={appServerStatus.connected}
+        accountInfo={accountInfo}
         petVisible={petVisible}
         onTogglePet={() => setPetVisible((v) => !v)}
         onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
@@ -3445,6 +3952,7 @@ export const App: React.FC = () => {
         threads={threads}
         pinnedThreadIds={pinnedThreadIds}
         workspaceHints={workspaceHints}
+        projectMembership={sidebarProjectMembership}
         activeThreadId={activeThreadId}
         unreadInboxCount={unreadInboxCount}
         activityOnly={activityOnly}
@@ -3454,7 +3962,6 @@ export const App: React.FC = () => {
         hasAgentsMd={agentsMdInfo.found}
         onNavigate={(route) => setActiveRoute(route)}
         onStartNewChat={startNewThread}
-        onSelectWorkspace={handleSelectWorkspace}
         onRemoveWorkspace={handleRemoveWorkspace}
         onPickNewFolder={handlePickNewFolder}
         onSelectThread={selectThread}
@@ -3462,11 +3969,14 @@ export const App: React.FC = () => {
         onArchiveThread={handleArchiveThread}
         onDeleteThread={handleDeleteThread}
         onRenameThread={handleRenameThread}
+        onSetThreadReadState={handleSetThreadReadState}
+        onMoveThreadToProject={moveThreadToProject}
         onRevealPath={handleRevealPath}
         onOpenAgentsMd={() => setShowAgentsMdModal(true)}
         onOpenQuickSearch={() => setShowQuickSearch(true)}
         onToggleCollapse={() => setSidebarCollapsed((v) => !v)}
-        refreshToken={appServerStatus.connected ? 1 : 0}
+        refreshToken={projectsRefreshToken}
+        createdThread={sidebarCreatedThread}
         onThreadsChanged={refreshThreads}
         onShowToast={showAppToast}
       />
@@ -3835,8 +4345,8 @@ export const App: React.FC = () => {
             onRevealPath={handleRevealPath}
             onDeleteThread={handleDeleteThread}
             onRenameThread={handleRenameThread}
-            refreshToken={appServerStatus.connected ? 1 : 0}
-            onProjectsChanged={refreshThreads}
+            refreshToken={projectsRefreshToken}
+            onProjectsChanged={() => { setProjectsRefreshToken((c) => c + 1); refreshThreads(); }}
             onThreadsChanged={refreshThreads}
             onShowToast={showAppToast}
           />
@@ -3879,6 +4389,10 @@ export const App: React.FC = () => {
               <AutomationsView
                 activeWorkspaceRoot={activeWorkspace?.path || ""}
                 models={models}
+                onSelectThread={(tId) => {
+                  setActiveThreadId(tId);
+                  setActiveRoute("thread");
+                }}
                 onRunAutomationNow={(item) => {
                   if (item.kind === "goal") {
                     void handleSaveGoal(item.prompt);
@@ -3901,7 +4415,7 @@ export const App: React.FC = () => {
                 initialTab={activeRoute === "skills" ? "skills" : "plugins"}
                 onStartSkillCreatorSession={(prompt) => {
                   startNewThread();
-                  setPromptInput(prompt);
+                  setThreadPrompt(null, prompt);
                   showAppToast("已启动 $skill-creator 引导会话", "info");
                 }}
               />
@@ -3913,7 +4427,7 @@ export const App: React.FC = () => {
               <ImagesView
                 onStartChatWithImage={(_url, text) => {
                   startNewThread();
-                  setPromptInput(text);
+                  setThreadPrompt(null, text);
                   showAppToast("已将图像与分析提示填入会话", "info");
                 }}
                 onOpenLibrary={() => setActiveRoute("library")}
@@ -3926,7 +4440,7 @@ export const App: React.FC = () => {
               <GptsView
                 onStartGptChat={(gpt) => {
                   startNewThread();
-                  setPromptInput(gpt.promptStarter);
+                  setThreadPrompt(null, gpt.promptStarter);
                   showAppToast(`已载入 ${gpt.name} 提示词`, "info");
                 }}
                 onNavigatePlugins={() => setActiveRoute("plugins")}
@@ -3939,7 +4453,7 @@ export const App: React.FC = () => {
               <SitesView
                 onStartChatForSite={(siteName) => {
                   startNewThread();
-                  setPromptInput(`请帮我更新并优化站点「${siteName}」的前端代码与配置`);
+                  setThreadPrompt(null, `请帮我更新并优化站点「${siteName}」的前端代码与配置`);
                   showAppToast(`已填入站点更新会话提示`, "info");
                 }}
               />
@@ -3967,7 +4481,7 @@ export const App: React.FC = () => {
               <CloudEnvironmentsView
                 onStartChatInEnv={(envName) => {
                   startNewThread();
-                  setPromptInput(`在云开发环境 [${envName}] 中执行全套构建与测试流水线`);
+                  setThreadPrompt(null, `在云开发环境 [${envName}] 中执行全套构建与测试流水线`);
                   showAppToast(`已在云环境 [${envName}] 开启会话`, "info");
                 }}
               />
@@ -3978,6 +4492,10 @@ export const App: React.FC = () => {
             <div className="full-route-container">
               <WorktreesView
                 activeWorkspaceRoot={activeWorkspace?.path || ""}
+                onSelectThread={(tId) => {
+                  setActiveThreadId(tId);
+                  setActiveRoute("thread");
+                }}
                 onStartChatInWorktree={(wtPath) => {
                   setUseWorktree(true);
                   startNewThread(wtPath);
@@ -4069,6 +4587,7 @@ export const App: React.FC = () => {
               onPromptInputChange={setPromptInput}
               onSendMessage={handleSendMessage}
               onInterruptTurn={handleInterruptTurn}
+              onQueueMessage={handleEnqueueFollowup}
               isStreaming={isStreaming}
               workspaces={workspaces}
               activeWorkspace={activeWorkspace}
@@ -4272,10 +4791,20 @@ export const App: React.FC = () => {
                       i.type === "assistant" ||
                       !knownNonMessageTypes.has(i.type)
                   );
+                  const meaningfulThoughts = thoughts.filter(
+                    (t) => extractReasoningText(t).trim().length > 0
+                  );
+                  const isCurrentlyThinking =
+                    isStreaming &&
+                    turn.status === "running" &&
+                    thoughts.length > 0 &&
+                    messages.length === 0;
+                  const shouldShowThoughts =
+                    meaningfulThoughts.length > 0 || isCurrentlyThinking;
                   const isExpanded = expandedThoughts[turn.id] ?? false;
 
                   const hasAssistantContent =
-                    thoughts.length > 0 ||
+                    meaningfulThoughts.length > 0 ||
                     commands.length > 0 ||
                     fileChanges.length > 0 ||
                     planItems.length > 0 ||
@@ -4286,7 +4815,10 @@ export const App: React.FC = () => {
                     messages.length > 0 ||
                     (isStreaming && turn.status === "running");
 
-                  const userText = userItems.map(extractTextFromItem).join("\n\n");
+                  const effectiveUserItems = userItems.length > 1
+                    ? [userItems.find((it) => !it.id?.startsWith("u-") && !it.id?.startsWith("pending-")) || userItems[0]]
+                    : userItems;
+                  const userText = effectiveUserItems.map(extractTextFromItem).join("\n\n");
                   const isBookmarked = (activeThreadId && bookmarkedTurnIds[activeThreadId]?.includes(turn.id)) || false;
 
                   return (
@@ -4391,10 +4923,11 @@ export const App: React.FC = () => {
                             ) : null}
                           </div>
 
-                      {thoughts.length > 0 && (
-                        <div className="thought-accordion">
-                          <div
-                            className="thought-header"
+                      {shouldShowThoughts && (
+                        <div className="thought-activity-container">
+                          <button
+                            type="button"
+                            className={`thought-workflow-btn ${isExpanded ? "expanded" : ""}`}
                             onClick={() =>
                               setExpandedThoughts((prev) => ({
                                 ...prev,
@@ -4402,37 +4935,44 @@ export const App: React.FC = () => {
                               }))
                             }
                           >
-                            <BrainIcon size={14} />
-                            <span>
-                              {isStreaming && turn.status === "running"
-                                ? "正在思考..."
-                                : `已思考 ${
-                                    thoughts.length > 1
-                                      ? `(${thoughts.length} 段)`
-                                      : ""
-                                  }`}
+                            <span className={`thought-workflow-title ${isCurrentlyThinking ? "anim-shimmer-pulse" : ""}`}>
+                              {isCurrentlyThinking
+                                ? "思考中"
+                                : (() => {
+                                    const dur = turn.durationMs
+                                      ? turn.durationMs / 1000
+                                      : turn.completedAt && turn.startedAt
+                                      ? (turn.completedAt - turn.startedAt) / 1000
+                                      : null;
+                                    return dur !== null
+                                      ? `用时 ${formatHermesDuration(dur)}`
+                                      : "已思考一段时间";
+                                  })()}
                             </span>
-                            {isExpanded ? (
-                              <ChevronDownIcon size={12} />
-                            ) : (
-                              <ChevronRightIcon size={12} />
-                            )}
-                          </div>
+                            <span className={`thought-workflow-arrow ${isExpanded ? "rotated" : ""}`}>
+                              <ChevronDownIcon size={14} />
+                            </span>
+                          </button>
                           {isExpanded && (
-                            <div className="thought-body">
-                              {thoughts.map(extractReasoningText).join("\n\n")}
+                            <div className="thought-workflow-body">
+                              <MarkdownView
+                                content={
+                                  meaningfulThoughts.length > 0
+                                    ? meaningfulThoughts.map(extractReasoningText).join("\n\n")
+                                    : "正在深入思考中…"
+                                }
+                                onOpenFile={(filePath) => {
+                                  setSelectedPreviewFile(filePath);
+                                  setShowRightDrawer(true);
+                                }}
+                              />
                             </div>
                           )}
                         </div>
                       )}
 
                       {commands.map((cmd, cIdx) => {
-                        const outText =
-                          cmd.output ||
-                          cmd.aggregatedOutput ||
-                          cmd.stdout ||
-                          cmd.stderr ||
-                          "";
+                        const outText = cmd.aggregatedOutput ?? cmd.output ?? "";
                         return (
                           <div key={cmd.id || cIdx} className="command-exec-card">
                             <div className="command-exec-header">
@@ -4455,6 +4995,9 @@ export const App: React.FC = () => {
                                 {cmd.exitCode !== undefined &&
                                 cmd.exitCode !== null
                                   ? `exit ${cmd.exitCode}`
+                                  : cmd.status === "failed" ? "失败"
+                                  : cmd.status === "declined" ? "已拒绝"
+                                  : cmd.status === "completed" ? "完成"
                                   : "运行中..."}
                               </span>
                             </div>
@@ -4481,7 +5024,12 @@ export const App: React.FC = () => {
                           changes.length > 1
                             ? `${changes[0]?.path || "文件"} 等 ${changes.length} 个文件`
                             : primaryPath || "Modified file";
-                        const kind = changes[0]?.kind;
+                        const rawKind = changes[0]?.kind;
+                        const kindType = typeof rawKind === "object" && rawKind !== null
+                          ? String(rawKind.type || "update")
+                          : String(rawKind || "");
+                        const kindLabelMap: Record<string, string> = { add: "添加", delete: "删除", update: "修改" };
+                        const kindLabel = kindLabelMap[kindType] || kindType;
                         return (
                           <div
                             key={fc.id || fIdx}
@@ -4498,16 +5046,27 @@ export const App: React.FC = () => {
                               <span title={changes.map((c: any) => c?.path).filter(Boolean).join("\n")}>
                                 {summaryText}
                               </span>
-                              {kind && (
-                                <span className={`file-change-kind kind-${kind}`}>
-                                  {kind}
+                              {kindType && (
+                                <span className={`file-change-kind kind-${kindType}`} title={kindLabel}>
+                                  {kindLabel}
                                 </span>
                               )}
                             </div>
-                            <span className="diff-stats-badge">
-                              <span className="diff-plus">+{additions}</span>{" "}
-                              <span className="diff-minus">-{deletions}</span>
-                            </span>
+                            <div className="file-change-right">
+                              {fc.status === "inProgress" && (
+                                <span className="file-change-status in-progress">修改中…</span>
+                              )}
+                              {fc.status === "failed" && (
+                                <span className="file-change-status failed">失败</span>
+                              )}
+                              {fc.status === "declined" && (
+                                <span className="file-change-status declined">已拒绝</span>
+                              )}
+                              <span className="diff-stats-badge">
+                                <span className="diff-plus">+{additions}</span>{" "}
+                                <span className="diff-minus">-{deletions}</span>
+                              </span>
+                            </div>
                           </div>
                         );
                       })}
@@ -4526,12 +5085,28 @@ export const App: React.FC = () => {
 
                       {mcpCalls.map((call, mcIdx) => {
                         const status = String(call.status || "completed");
-                        const resultText =
-                          typeof call.result === "string"
-                            ? call.result
-                            : call.result != null
-                            ? JSON.stringify(call.result, null, 2)
-                            : "";
+                        const errText = call.error && typeof call.error === "object"
+                          ? (call.error.message || JSON.stringify(call.error, null, 2))
+                          : call.error ? String(call.error) : "";
+                        let resultText = "";
+                        if (typeof call.result === "string") {
+                          resultText = call.result;
+                        } else if (call.result && typeof call.result === "object") {
+                          if (Array.isArray(call.result.content)) {
+                            resultText = call.result.content
+                              .map((c: any) => (typeof c === "string" ? c : c?.text || (c?.type ? `[${c.type}]` : "")))
+                              .filter(Boolean)
+                              .join("\n");
+                          }
+                          if (!resultText && call.result.structuredContent) {
+                            resultText = typeof call.result.structuredContent === "string"
+                              ? call.result.structuredContent
+                              : JSON.stringify(call.result.structuredContent, null, 2);
+                          }
+                          if (!resultText) {
+                            resultText = JSON.stringify(call.result, null, 2);
+                          }
+                        }
                         return (
                           <div key={call.id || mcIdx} className="mcp-call-card">
                             <div className="mcp-call-header">
@@ -4550,11 +5125,14 @@ export const App: React.FC = () => {
                                   : status}
                               </span>
                             </div>
+                            {status === "inProgress" && call.progressMessage && (
+                              <div className="mcp-call-progress">{call.progressMessage}</div>
+                            )}
                             {resultText && (
                               <pre className="mcp-call-result">{resultText}</pre>
                             )}
-                            {call.error && (
-                              <div className="mcp-call-error">{String(call.error)}</div>
+                            {errText && (
+                              <div className="mcp-call-error">{errText}</div>
                             )}
                           </div>
                         );
@@ -4585,6 +5163,19 @@ export const App: React.FC = () => {
 
                       {imageViews.map((img, imIdx) => {
                         const path = img.path || img.savedPath || "";
+                        const isGen = img.type === "imageGeneration";
+                        const isFailed = img.status === "failed" || Boolean(img.failure);
+                        const isInProgress = img.status === "inProgress";
+                        const failMsg = img.failure && typeof img.failure === "object"
+                          ? (img.failure.message || "生成失败")
+                          : typeof img.failure === "string" ? img.failure : "";
+                        const titleText = !isGen
+                          ? "查看图片"
+                          : isFailed
+                          ? `图片生成失败${failMsg ? `：${failMsg}` : ""}`
+                          : isInProgress
+                          ? "图片生成中…"
+                          : "生成图片";
                         return (
                           <div
                             key={img.id || imIdx}
@@ -4596,7 +5187,7 @@ export const App: React.FC = () => {
                               }
                             }}
                           >
-                            <span>🖼️ {img.type === "imageView" ? "查看图片" : "生成图片"}</span>
+                            <span>🖼️ {titleText}</span>
                             <span className="mono ellipsis" title={path}>
                               {path.split(/[/\\]/).pop() || ""}
                             </span>
@@ -4610,7 +5201,7 @@ export const App: React.FC = () => {
                         else if (evt.type === "enteredReviewMode") text = "🔍 已进入代码审查模式 (Entered review mode)";
                         else if (evt.type === "exitedReviewMode") text = "✓ 已退出代码审查模式 (Exited review mode)";
                         else if (evt.type === "hookPrompt") text = `🪝 触发钩子提示：${(evt as any).hookName || "Hook"}`;
-                        else if (evt.type === "sleep") text = "💤 等待操作完成...";
+                        else if (evt.type === "sleep") text = evt.durationMs != null ? `💤 等待操作完成 (${evt.durationMs}ms)...` : "💤 等待操作完成...";
                         return (
                           <div key={evt.id || sIdx} className="timeline-system-pill">
                             {text}
@@ -4690,7 +5281,7 @@ export const App: React.FC = () => {
                               ? "正在执行命令..."
                               : fileChanges.length > 0
                               ? "正在修改文件..."
-                              : thoughts.length > 0
+                              : meaningfulThoughts.length > 0 || (isStreaming && thoughts.length > 0)
                               ? "正在深入思考中..."
                               : "正在准备回复..."}
                           </span>
@@ -4716,7 +5307,7 @@ export const App: React.FC = () => {
                 )}
 
                 {planSteps.length > 0 && (
-                  <PlanPanel steps={planSteps} defaultCollapsed={false} />
+                  <PlanPanel steps={planSteps} explanation={planExplanation} defaultCollapsed={false} />
                 )}
 
                 {turnDiffFiles.length > 0 && (
@@ -4809,6 +5400,7 @@ export const App: React.FC = () => {
                   onPromptInputChange={setPromptInput}
                   onSendMessage={handleSendMessage}
                   onInterruptTurn={handleInterruptTurn}
+                  onQueueMessage={handleEnqueueFollowup}
                   isStreaming={isStreaming}
                   workspaces={workspaces}
                   activeWorkspace={activeWorkspace}
@@ -4901,6 +5493,13 @@ export const App: React.FC = () => {
       )}
 
       {/* ── 5b. Hotkey Window / Quick Chat Popout Modal (Ctrl+Alt+O) ── */}
+      {showKeyboardShortcuts && (
+        <KeyboardShortcutsDialog
+          onClose={() => setShowKeyboardShortcuts(false)}
+          hasActiveThread={activeThreadObj !== null}
+          hasWorkspace={activeWorkspace?.path != null}
+        />
+      )}
       {showPopoutModal && (
         <div className="hotkey-modal-overlay" onClick={() => setShowPopoutModal(false)}>
           <div className="hotkey-modal-box" onClick={(e) => e.stopPropagation()}>
