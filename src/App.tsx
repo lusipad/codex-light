@@ -1,4 +1,5 @@
 import { usePetPreferences } from "./petPreferences";
+import { mergeHookRoots } from "./hooksSettingsModel";
 import { threadHasActivity, threadNeedsAttention } from "./threadActivity";
 import { useExternalImports } from "./externalImport";
 import { useCodeReviewPreferences } from "./reviewPreferences";
@@ -5315,6 +5316,7 @@ export const App: React.FC = () => {
         ) : activeRoute === "settings" ? (
           <div className="settings-full-route-view">
             <SettingsView
+              workspaceRoots={mergeHookRoots(workspaces.map(workspace => workspace.path), sidebarProjectMembership.localProjects?.find(project => project.id === sidebarProjectMembership.selectedProjectId)?.rootPaths ?? [])}
               accountIdentity={modelAccountIdentity}
               onAccountChanged={() => void refreshAccount()}
               onNavigationGuardChange={setPersonalizationNavigationGuard}

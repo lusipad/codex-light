@@ -225,6 +225,7 @@ try {
   Invoke-Step "Rust archived deletion enumeration and partial results" { cargo test --manifest-path src-tauri/Cargo.toml --lib archive_delete }
   Invoke-Step "Settings center 26 partitions parity" { node scripts/verify-settings-partitions.mjs }
   Invoke-Step "Extended worksurfaces & cross-page parity (17-23)" { node scripts/verify-extended-worksurfaces.mjs }
+  Invoke-Step "Hooks source identity and trusted write boundaries" { node scripts/verify-hooks-settings-b.mjs }
   Invoke-Step "Hook state and settings regression" { node scripts/verify-hook-state.mjs }
   Invoke-Step "Plugin settings management" { node scripts/verify-plugin-settings.mjs }
   Invoke-Step "Plugin enablement and marketplace dependency regression" { node scripts/verify-plugin-management-b.mjs }

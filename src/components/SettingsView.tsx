@@ -183,6 +183,7 @@ interface SettingsViewProps {
   appServerStatus: AppServerStatus;
   models: ModelInfo[];
   activeWorkspaceRoot?: string;
+  workspaceRoots?: string[];
   accountIdentity?: string;
   onAccountChanged?: () => void;
   onNavigationGuardChange?: (guard: ((action: () => void) => boolean) | null) => void;
@@ -209,6 +210,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   appServerStatus,
   models,
   activeWorkspaceRoot = "",
+  workspaceRoots,
   accountIdentity,
   onAccountChanged,
   onNavigationGuardChange,
@@ -975,7 +977,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
         {/* ── SECTION 15: HOOKS SETTINGS (生命周期挂钩 · hooks/list + 实时运行) ── */}
         {activeSection === "hooks-settings" && (
-          <HooksSettings key={activeWorkspaceRoot} activeWorkspaceRoot={activeWorkspaceRoot} />
+          <HooksSettings key={activeWorkspaceRoot} activeWorkspaceRoot={activeWorkspaceRoot} workspaceRoots={workspaceRoots} connectionIdentity={JSON.stringify([connectionIdentity, accountIdentity])} />
         )}
 
         {/* ── SECTION 16: GIT SETTINGS (Git 偏好) ── */}
