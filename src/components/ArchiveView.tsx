@@ -1,14 +1,16 @@
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { callAppServer } from "../bridge";
-import { ThreadSummary } from "../types";
+import { ArchiveDeleteResult, ThreadSummary } from "../types";
+import "./RenameThreadDialog.css";
 import "./ArchiveView.css";
 
 export interface ArchiveViewProps {
   refreshToken?: number | string | null;
   onSelectThread: (threadId: string) => void;
   onUnarchive: (thread: ThreadSummary) => Promise<void> | void;
-  onDelete: (thread: ThreadSummary) => Promise<void> | void;
+  onDelete: (thread: ThreadSummary) => Promise<ArchiveDeleteResult>;
+  onDeleteAll: () => Promise<ArchiveDeleteResult>;
   onShowToast?: (message: string, type?: "info" | "success" | "error") => void;
 }
 
@@ -29,11 +31,62 @@ function formatRelative(seconds?: number): string {
   return new Date(ms).toLocaleDateString();
 }
 
+function ArchiveDeleteDialog({ all, onDecision, fallbackRef }: {
+  all: boolean;
+  onDecision: (confirmed: boolean) => void;
+  fallbackRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const decidedRef = useRef(false);
+  const confirmedRef = useRef(false);
+  const composingRef = useRef(false);
+  const decide = (confirmed: boolean) => {
+    if (decidedRef.current) return;
+    decidedRef.current = true;
+    confirmedRef.current = confirmed;
+    onDecision(confirmed);
+  };
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    const dialog = dialogRef.current;
+    dialog?.showModal();
+    cancelRef.current?.focus();
+    return () => {
+      dialog?.close();
+      if (!confirmedRef.current && previous?.isConnected && !previous.matches(":disabled, [inert]")) previous.focus({ preventScroll: true });
+      else fallbackRef.current?.focus({ preventScroll: true });
+    };
+  }, [fallbackRef]);
+  return <dialog ref={dialogRef} className="rename-thread-dialog archive-delete-dialog"
+    aria-labelledby="archive-delete-title" aria-describedby="archive-delete-description"
+    onCancel={event => { event.preventDefault(); if (!composingRef.current) decide(false); }}
+    onCompositionStart={() => { composingRef.current = true; }}
+    onCompositionEnd={() => { composingRef.current = false; }}
+    onKeyDown={event => {
+      event.stopPropagation();
+      if ((composingRef.current || event.nativeEvent.isComposing || event.keyCode === 229)
+        && (event.key === "Enter" || event.key === "Escape")) event.preventDefault();
+    }}>
+    <form onSubmit={event => { event.preventDefault(); if (!composingRef.current) decide(true); }}>
+      <header>
+        <h2 id="archive-delete-title">{all ? "删除所有已归档本地聊天？" : "删除已归档的聊天？"}</h2>
+        <p id="archive-delete-description">{all ? "这将永久删除所有本地已归档聊天记录" : "这将永久删除已归档的聊天"}</p>
+      </header>
+      <footer>
+        <button ref={cancelRef} type="button" onClick={() => decide(false)}>取消</button>
+        <button type="submit" className="archive-delete-confirm">删除</button>
+      </footer>
+    </form>
+  </dialog>;
+}
+
 export const ArchiveView: React.FC<ArchiveViewProps> = ({
   refreshToken,
   onSelectThread,
   onUnarchive,
   onDelete,
+  onDeleteAll,
   onShowToast,
 }) => {
   const [threads, setThreads] = useState<ArchivedThread[]>([]);
@@ -42,12 +95,14 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
   const [search, setSearch] = useState<string>("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [restoredThread, setRestoredThread] = useState<ArchivedThread | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ArchivedThread | "all" | null>(null);
+  const viewRef = useRef<HTMLDivElement>(null);
   const requestSeqRef = useRef(0);
   const mountedRef = useRef(true);
   const mutationPendingRef = useRef(false);
 
-  const load = useCallback(async (afterMutation = false) => {
-    if (mutationPendingRef.current && !afterMutation) return;
+  const load = useCallback(async (afterMutation = false, deletionExecuted = false) => {
+    if (mutationPendingRef.current && !afterMutation) return false;
     const seq = ++requestSeqRef.current;
     const isCurrent = () => mountedRef.current && seq === requestSeqRef.current;
     setLoading(true);
@@ -58,7 +113,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
       let cursor: string | null = null;
       do {
         const res: { data: ArchivedThread[]; nextCursor?: string | null } = await callAppServer("thread/list", {
-          archived: true, limit: 100, sortKey: "updated_at", sortDirection: "desc", cursor,
+          archived: true, limit: 100, sortKey: "updated_at", sortDirection: "desc", cursor, useStateDbOnly: true,
         });
         if (!isCurrent()) return;
         if (!Array.isArray(res?.data)) throw new Error("归档列表响应无效");
@@ -68,9 +123,11 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
         if (cursor !== null) cursors.add(cursor);
       } while (cursor !== null);
       setThreads(list);
+      return true;
     } catch (e: any) {
       if (!isCurrent()) return;
-      setError(String(e?.message || e));
+      setError(`${deletionExecuted ? "删除已执行，刷新失败：" : ""}${e?.message || e}`);
+      return false;
     } finally {
       if (isCurrent()) setLoading(false);
     }
@@ -86,29 +143,42 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
   }, [load, refreshToken]);
 
   const mutate = useCallback(
-    async (thread: ArchivedThread, action: "restore" | "delete") => {
+    async (thread: ArchivedThread | null, action: "restore" | "delete") => {
       if (mutationPendingRef.current) return;
       mutationPendingRef.current = true;
       ++requestSeqRef.current;
       setLoading(false);
-      setBusyId(thread.id);
+      setBusyId(thread?.id ?? "all");
       try {
-        if (action === "restore") await onUnarchive(thread);
-        else await onDelete(thread);
-        if (!mountedRef.current) return;
-        setThreads((current) => current.filter((item) => item.id !== thread.id));
-        if (action === "restore") setRestoredThread(thread);
-        else if (restoredThread?.id === thread.id) setRestoredThread(null);
-        onShowToast?.(action === "restore" ? "聊天已取消归档" : "已删除归档聊天", "success");
-        await load(true);
+        if (action === "restore" && thread) {
+          await onUnarchive(thread);
+          if (!mountedRef.current) return;
+          setThreads(current => current.filter(item => item.id !== thread.id));
+          setRestoredThread(thread);
+          onShowToast?.("聊天已取消归档", "success");
+          await load(true);
+        } else {
+          const result = thread ? await onDelete(thread) : await onDeleteAll();
+          if (!mountedRef.current) return;
+          const deleted = new Set(result.deletedThreadIds);
+          setThreads(current => current.filter(item => !deleted.has(item.id)));
+          if (restoredThread && deleted.has(restoredThread.id)) setRestoredThread(null);
+          if (result.error) onShowToast?.(`${deleted.size ? `已永久删除 ${deleted.size} 个归档聊天；` : ""}删除失败：${result.error}`, "error");
+          else onShowToast?.(deleted.size ? `已永久删除 ${deleted.size} 个归档聊天` : "没有删除聊天，归档状态可能已更改", deleted.size ? "success" : "info");
+          const refreshed = await load(true, deleted.size > 0);
+          if (mountedRef.current && !refreshed && deleted.size > 0) onShowToast?.("删除已执行，刷新失败，请重试刷新列表", "error");
+        }
       } catch (e: any) {
-        if (mountedRef.current) onShowToast?.(`${action === "restore" ? "恢复" : "删除"}失败：${e?.message || e}`, "error");
+        if (mountedRef.current) {
+          onShowToast?.(`${action === "restore" ? "恢复失败" : "删除结果未确认"}：${e?.message || e}`, "error");
+          if (action === "delete") await load(true);
+        }
       } finally {
         mutationPendingRef.current = false;
         if (mountedRef.current) setBusyId(null);
       }
     },
-    [onUnarchive, onDelete, onShowToast, load, restoredThread]
+    [onUnarchive, onDelete, onDeleteAll, onShowToast, load, restoredThread]
   );
 
   const handleUnarchive = useCallback(
@@ -117,16 +187,20 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
   );
 
   const handleDelete = useCallback(
-    async (thread: ArchivedThread) => {
-      if (mutationPendingRef.current) return;
-      const label = thread.name || thread.preview || thread.id;
-      if (!window.confirm(`确定要彻底删除归档会话「${label}」吗？此操作无法撤销。`)) {
-        return;
-      }
-      await mutate(thread, "delete");
+    (thread: ArchivedThread) => {
+      if (mutationPendingRef.current || loading) return;
+      setDeleteTarget(thread);
     },
-    [mutate]
+    [loading]
   );
+
+  const handleDeleteDecision = useCallback(async (confirmed: boolean) => {
+    const target = deleteTarget;
+    setDeleteTarget(null);
+    if (!confirmed || !target || mutationPendingRef.current || loading) return;
+    if (target === "all" && (error || threads.length === 0)) return;
+    await mutate(target === "all" ? null : target, "delete");
+  }, [deleteTarget, loading, error, threads.length, mutate]);
 
   const query = useDeferredValue(search.trim().toLocaleLowerCase());
   const visible = useMemo(() => threads.filter((thread) =>
@@ -134,7 +208,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
   ), [threads, query]);
 
   return (
-    <div className="archive-view">
+    <div className="archive-view" ref={viewRef} tabIndex={-1}>
       <header className="archive-header">
         <div>
           <h2 className="archive-title">已归档会话</h2>
@@ -143,6 +217,10 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
           </p>
         </div>
         <div className="archive-header-actions">
+          {!loading && !error && threads.length > 0 && (
+            <button type="button" className="archive-action danger" disabled={busyId !== null}
+              onClick={() => { if (!mutationPendingRef.current) setDeleteTarget("all"); }}>全部删除</button>
+          )}
           <input
             className="archive-search"
             type="text"
@@ -208,7 +286,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
                 <button
                   type="button"
                   className="archive-action danger"
-                  disabled={busyId !== null}
+                  disabled={loading || busyId !== null}
                   onClick={() => void handleDelete(thread)}
                   title="永久删除"
                 >
@@ -231,6 +309,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
       <footer className="archive-footer">
         共 {visible.length} 个归档会话{loading ? "（加载中…）" : ""}
       </footer>
+      {deleteTarget && <ArchiveDeleteDialog all={deleteTarget === "all"} onDecision={handleDeleteDecision} fallbackRef={viewRef} />}
     </div>
   );
 };

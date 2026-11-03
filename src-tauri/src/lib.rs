@@ -20,6 +20,7 @@ mod instance_transport;
 pub mod state;
 pub mod terminal;
 mod thread_workspace;
+mod archive_delete;
 
 use app_server::{AppServerManager, AppServerStatus, PendingServerRequest};
 use config_skills::{
@@ -658,6 +659,20 @@ async fn thread_archive_toggle(
     }
     state.desktop_state.set_archived_threads(archived.clone());
     Ok(archived)
+}
+
+#[tauri::command]
+async fn thread_delete_archived(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    thread_id: Option<String>,
+) -> Result<archive_delete::ArchivedDeleteResult, String> {
+    archive_delete::delete_archived(
+        thread_id.as_deref(),
+        |method, params| state.app_server.call(&app, method, Some(params)),
+        |id| state.desktop_state.remove_thread_record(id),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -1593,6 +1608,7 @@ pub fn run() {
             thread_toggle_pin,
             thread_archive_toggle,
             thread_delete,
+            thread_delete_archived,
             reveal_path_in_explorer,
             review_link_open,
             open_path_external,

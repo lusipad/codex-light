@@ -7,6 +7,11 @@ export interface AppServerStatus {
   lastError: string | null;
 }
 
+export interface ArchiveDeleteResult {
+  deletedThreadIds: string[];
+  error: string | null;
+}
+
 export interface PendingServerRequest {
   id: string | number;
   method: string;

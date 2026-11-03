@@ -73,6 +73,7 @@ import { playNotificationChime } from "./sound";
 import { findModel, getDefaultModel, getPickerModels, getSupportedEfforts, modelRequestName, modelSupportsFast } from "./modelCapabilities";
 import {
   AppServerStatus,
+  ArchiveDeleteResult,
   AttachedFileItem,
   CodexConfigOverview,
   DirectoryEntryItem,
@@ -3286,23 +3287,54 @@ export const App: React.FC = () => {
     [activeThreadId, startNewThread]
   );
 
-  // 归档页操作（thread/unarchive / thread_delete）
+  const archiveMutationPendingRef = useRef(false);
+  // Both archive entry points share the same service mutation boundary.
   const handleUnarchiveThread = useCallback(
     async (thread: ThreadSummary) => {
-      await callAppServer("thread/unarchive", { threadId: thread.id });
-      await refreshThreads();
-      setArchiveRefreshTick((v) => v + 1);
+      if (archiveMutationPendingRef.current) throw new Error("归档操作正在进行，请稍后重试");
+      archiveMutationPendingRef.current = true;
+      try {
+        await callAppServer("thread/unarchive", { threadId: thread.id });
+        await refreshThreads();
+        setArchiveRefreshTick((v) => v + 1);
+      } finally {
+        archiveMutationPendingRef.current = false;
+      }
     },
     [refreshThreads]
   );
 
-  const handleDeleteArchivedThread = useCallback(
-    async (thread: ThreadSummary) => {
-      await tauriInvoke("thread_delete", { threadId: thread.id });
-      await refreshThreads();
-      setArchiveRefreshTick((v) => v + 1);
+  const deleteArchivedThreads = useCallback(
+    async (threadId: string | null): Promise<ArchiveDeleteResult> => {
+      if (archiveMutationPendingRef.current) throw new Error("归档操作正在进行，请稍后重试");
+      archiveMutationPendingRef.current = true;
+      try {
+        const result = await tauriInvoke<ArchiveDeleteResult>("thread_delete_archived", { threadId });
+        if (!Array.isArray(result?.deletedThreadIds) ||
+          !result.deletedThreadIds.every(id => typeof id === "string" && id.length > 0) ||
+          new Set(result.deletedThreadIds).size !== result.deletedThreadIds.length ||
+          !(result.error === null || typeof result.error === "string")) {
+          throw new Error("删除结果未确认，请刷新归档列表后检查");
+        }
+        const deleted = new Set(result.deletedThreadIds);
+        setThreads(current => current.filter(thread => !deleted.has(thread.id)));
+        setPinnedThreadIds(current => current.filter(id => !deleted.has(id)));
+        await refreshThreads();
+        setArchiveRefreshTick(v => v + 1);
+        return result;
+      } finally {
+        archiveMutationPendingRef.current = false;
+      }
     },
     [refreshThreads]
+  );
+  const handleDeleteArchivedThread = useCallback(
+    (thread: ThreadSummary) => deleteArchivedThreads(thread.id),
+    [deleteArchivedThreads]
+  );
+  const handleDeleteAllArchivedThreads = useCallback(
+    () => deleteArchivedThreads(null),
+    [deleteArchivedThreads]
   );
 
   const handleForkChat = useCallback(
@@ -4798,6 +4830,7 @@ export const App: React.FC = () => {
                 onSelectThread={selectThread}
                 onUnarchive={handleUnarchiveThread}
                 onDelete={handleDeleteArchivedThread}
+                onDeleteAll={handleDeleteAllArchivedThreads}
                 onShowToast={showAppToast}
               />
             </div>
@@ -4990,6 +5023,7 @@ export const App: React.FC = () => {
                 onSelectThread: selectThread,
                 onUnarchive: handleUnarchiveThread,
                 onDelete: handleDeleteArchivedThread,
+                onDeleteAll: handleDeleteAllArchivedThreads,
                 onShowToast: showAppToast,
               }}
               notificationState={notificationState}

@@ -19,7 +19,7 @@ function walk(node) {
 walk(ast);
 assert.ok(archiveBranch && archiveChild, "ARS01: dedicated setting embeds shared ArchiveView");
 assert.ok(archiveBranch.getText(ast).includes(archiveChild.getText(ast)));
-const archiveViewProps = { refreshToken: "2:true", onSelectThread() {}, onUnarchive() {}, onDelete() {}, onShowToast() {} };
+const archiveViewProps = { refreshToken: "2:true", onSelectThread() {}, onUnarchive() {}, onDelete() {}, onDeleteAll() {}, onShowToast() {} };
 const ArchiveView = Symbol("ArchiveView");
 const React = { createElement: (type, props, ...children) => ({ type, props: props || {}, children }) };
 const tree = vm.runInNewContext(compile(`(${archiveBranch.getText(ast)})`), { activeSection: "archived-chats", archiveViewProps, React, ArchiveView });
@@ -38,7 +38,7 @@ function find(node) {
 }
 find(appAst);
 const props = settings.attributes.properties.find(p => p.name?.getText(appAst) === "archiveViewProps").initializer.expression;
-const bindings = { archiveRefreshTick: 63, appServerStatus: { connected: true }, selectThread() {}, handleUnarchiveThread() {}, handleDeleteArchivedThread() {}, showAppToast() {} };
+const bindings = { archiveRefreshTick: 63, appServerStatus: { connected: true }, selectThread() {}, handleUnarchiveThread() {}, handleDeleteArchivedThread() {}, handleDeleteAllArchivedThreads() {}, showAppToast() {} };
 const shared = vm.runInNewContext(compile(`(${props.getText(appAst)})`), bindings);
 for (const [key, value] of Object.entries(shared)) {
   const attribute = standalone.attributes.properties.find(p => p.name?.getText(appAst) === key);

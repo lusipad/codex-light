@@ -180,6 +180,9 @@ try {
   Invoke-Step "Model review file and line rendering regression" { node scripts/verify-review-findings-ui.mjs }
   Invoke-Step "Archive lifecycle parity" { node scripts/verify-archive.mjs }
   Invoke-Step "Archive pagination and real mutation regression" { node scripts/verify-archive-actions.mjs }
+  Invoke-Step "Archive bulk confirmation and actual result regression" { node scripts/verify-archive-bulk.mjs }
+  Invoke-Step "Archive shared service scope and partial result regression" { node scripts/verify-archive-service.mjs }
+  Invoke-Step "Rust archived deletion enumeration and partial results" { cargo test --manifest-path src-tauri/Cargo.toml --lib archive_delete }
   Invoke-Step "Settings center 26 partitions parity" { node scripts/verify-settings-partitions.mjs }
   Invoke-Step "Extended worksurfaces & cross-page parity (17-23)" { node scripts/verify-extended-worksurfaces.mjs }
   Invoke-Step "Hook state and settings regression" { node scripts/verify-hook-state.mjs }
@@ -227,6 +230,7 @@ Invoke-Step "TypeScript typecheck (tsc --noEmit)" { npx tsc --noEmit }
       "scripts/protocol-verify/verify-search-lifecycle.mjs"
       "scripts/protocol-verify/verify-project-move-roots.mjs"
       "scripts/protocol-verify/verify-archive-actions.mjs"
+      "scripts/protocol-verify/verify-archive-deletion.mjs"
       "scripts/protocol-verify/verify-plugin-preparation.mjs"
       "scripts/protocol-verify/verify-recommended-skills.mjs"
       "scripts/protocol-verify/verify-model-catalog.mjs"

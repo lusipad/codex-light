@@ -309,3 +309,6 @@ docs/research/pages/<编号>-<页面>.md   # 来源、功能、差距、实现�
 
 
 2026-11-03：14B按[真实审查终态与行评论合同](antigravity/specs/14-next-closure.md)实施，见[待验表](antigravity/acceptance/14B.md)。已接完整提示、真实thread/turn结果、失败/中断保文、离屏与重连、合法评论解析和文件行定位；限定增量自验完成、待用户验收；完整标准含协议及EXE/MSI/NSIS通过，205实际产品输入稳定。不将受控回放/组件截图当真实模型或官方原生像素验收。整14仍未验收。下一按[15B合同](antigravity/specs/15-next-closure.md)推进归档全部删除与执行前归档身份重查，本轮只调研。
+
+
+2026-11-03：15B[归档全部删除](antigravity/acceptance/15B.md)限定增量自验完成、待用户验收。真实执行前归档重查、实际ID/部分结果、两入口/确认/重读闭环；完整标准、Rust库259及EXE/MSI/NSIS通过，206输入稳定。原生/官方/像素和整15未验。新增[Store来源核验](research/reference-store-20261103.md)，下一按[16.01C合同](antigravity/specs/16-01-next-closure.md)推进动态打开方式，不将旧版资料自动当新版通过证据。

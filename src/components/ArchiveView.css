@@ -228,3 +228,7 @@
   font-size: calc(11.5px * var(--font-ui-scale, 1));
   color: var(--text-secondary);
 }
+
+.archive-delete-dialog button.archive-delete-confirm {
+  color: var(--text-danger, #ef4444);
+}

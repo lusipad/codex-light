@@ -8,7 +8,7 @@ const ast = ts.createSourceFile("ArchiveView.tsx", source, ts.ScriptTarget.Lates
 const callbacks = {};
 let visible;
 function walk(node) {
-  if (ts.isVariableDeclaration(node) && ["load", "mutate", "handleDelete", "handleUnarchive"].includes(node.name.getText(ast))) callbacks[node.name.getText(ast)] = node.initializer.getText(ast);
+  if (ts.isVariableDeclaration(node) && ["load", "mutate", "handleDelete", "handleDeleteDecision", "handleUnarchive"].includes(node.name.getText(ast))) callbacks[node.name.getText(ast)] = node.initializer.getText(ast);
   if (ts.isVariableDeclaration(node) && node.name.getText(ast) === "visible") visible = node.initializer.getText(ast);
   ts.forEachChild(node, walk);
 }
@@ -20,12 +20,12 @@ function mount() {
   const calls = [], mutations = [], notices = [], context = {
     useCallback: f => f, useMemo: f => f(), requestSeqRef: { current: 0 }, mountedRef: { current: true },
     mutationPendingRef: { current: false }, threads: [{ id: "keep", name: "Original" }], loading: false, error: null, busyId: null, restoredThread: null,
-    window: { confirm: () => true }, onShowToast: (...args) => notices.push(args),
+    deleteTarget: null, onShowToast: (...args) => notices.push(args),
   };
   context.callAppServer = (method, params) => { const p = deferred(); calls.push({ method, params, ...p }); return p.promise; };
-  for (const name of ["onDelete", "onUnarchive"]) context[name] = thread => { const p = deferred(); mutations.push({ name, thread, ...p }); return p.promise; };
-  for (const [setter, key] of [["setThreads", "threads"], ["setLoading", "loading"], ["setError", "error"], ["setBusyId", "busyId"], ["setRestoredThread", "restoredThread"]]) context[setter] = value => { context[key] = typeof value === "function" ? value(context[key]) : value; };
-  for (const name of ["load", "mutate", "handleDelete", "handleUnarchive"]) if (callbacks[name]) context[name] = vm.runInNewContext(compile(`(${callbacks[name]})`), context);
+  for (const name of ["onDelete", "onDeleteAll", "onUnarchive"]) context[name] = thread => { const p = deferred(); mutations.push({ name, thread, ...p }); return p.promise; };
+  for (const [setter, key] of [["setThreads", "threads"], ["setLoading", "loading"], ["setError", "error"], ["setBusyId", "busyId"], ["setRestoredThread", "restoredThread"], ["setDeleteTarget", "deleteTarget"]]) context[setter] = value => { context[key] = typeof value === "function" ? value(context[key]) : value; };
+  for (const name of ["load", "mutate", "handleDelete", "handleDeleteDecision", "handleUnarchive"]) if (callbacks[name]) context[name] = vm.runInNewContext(compile(`(${callbacks[name]})`), context);
   return { context, calls, mutations, notices };
 }
 {
@@ -60,8 +60,9 @@ for (const late of ["error", "success"]) {
   assert.equal(result[0].id, "b", "AA02: local search filters complete loaded data");
 }
 {
-  const v = mount(); v.context.window.confirm = () => false;
+  const v = mount();
   await v.context.handleDelete({ id: "keep" });
+  await v.context.handleDeleteDecision(false);
   assert.equal(v.mutations.length, 0, "AA03: cancellation does not write");
 }
 {
@@ -84,8 +85,11 @@ for (const late of ["error", "success"]) {
   assert.equal(v.context.mutationPendingRef.current, false);
 }
 {
-  const v = mount(), deleting = v.context.handleDelete({ id: "keep" });
-  v.mutations[0].reject(Error("unsupported")); await deleting;
+  const v = mount(); v.context.handleDelete({ id: "keep" });
+  const deleting = v.context.handleDeleteDecision(true);
+  v.mutations[0].reject(Error("unsupported")); await flush();
+  assert.equal(v.calls.length, 1, "AA04: uncertain delete result requires a real list read, never a write retry");
+  v.calls[0].resolve({ data: [{ id: "keep" }], nextCursor: null }); await deleting;
   assert.equal(v.context.threads[0].id, "keep");
   assert.ok(v.notices.some(([message]) => message.includes("unsupported")));
   assert.ok(!v.notices.some(([message, type]) => type === "success"), "AA04: rejected delete cannot be called successful");
