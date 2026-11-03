@@ -1,4 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { CircleX, Lightbulb } from "lucide-react";
 import {
   FolderIcon,
   LaptopIcon,
@@ -727,7 +728,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
               aria-controls={openMenu === "env" ? "composer-env-menu" : undefined}
               onKeyDown={(event) => handleComposerTriggerKeys(event, "env")}
               onClick={() => setOpenMenu((m) => (m === "env" ? null : "env"))}
-              title="选择聊天运行位置"
+              title="选择聊天的运行位置"
             >
               {useWorktree ? <WorktreeIcon size={13} /> : <LaptopIcon size={13} />}
               <span>{useWorktree ? "新工作树" : "本地"}</span>
@@ -735,8 +736,8 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
             </button>
 
             {openMenu === "env" && (
-              <div id="composer-env-menu" ref={menuRef} role="menu" aria-label="选择聊天运行位置" className="composer-popover-menu top-left" onKeyDown={handleComposerMenuKeys}>
-                <div className="popover-section-label">启动位置 (Start in)</div>
+              <div id="composer-env-menu" ref={menuRef} role="menu" aria-label="选择聊天的运行位置" className="composer-popover-menu top-left" onKeyDown={handleComposerMenuKeys}>
+                <div className="popover-section-label">工作位置</div>
                 <button
                   type="button"
                   role="menuitemradio"
@@ -750,9 +751,8 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
                   <div className="popover-item-body">
                     <div className="popover-item-header">
                       <LaptopIcon size={14} />
-                      <span className="popover-item-title">本地 (Work locally)</span>
+                      <span className="popover-item-title">本地</span>
                     </div>
-                    <span className="popover-item-desc">直接在当前项目目录中读取与修改代码</span>
                   </div>
                   {!useWorktree && <CheckIcon size={13} />}
                 </button>
@@ -769,9 +769,8 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
                   <div className="popover-item-body">
                     <div className="popover-item-header">
                       <WorktreeIcon size={14} />
-                      <span className="popover-item-title">新工作树 (New worktree)</span>
+                      <span className="popover-item-title">新建本地工作树</span>
                     </div>
-                    <span className="popover-item-desc">创建隔离的 Git Worktree 副本，互不干扰</span>
                   </div>
                   {useWorktree && <CheckIcon size={13} />}
                 </button>
@@ -868,21 +867,6 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
 
         {/* Right indicators on top bar */}
         <div className="composer-context-right">
-          {variant === "home" && (
-            <label className="composer-worktree-toggle">
-              <span>工作树</span>
-              <input
-                type="checkbox"
-                checked={useWorktree}
-                onChange={(event) => onSetUseWorktree(event.target.checked)}
-              />
-            </label>
-          )}
-          {planMode && (
-            <span className="composer-mode-badge plan" onClick={onTogglePlanMode} title="点击关闭计划模式">
-              🗺️ 计划模式
-            </span>
-          )}
           {fastMode && (
             <span className="composer-mode-badge fast" onClick={onToggleFastMode} title="点击关闭极速模式">
               ⚡ Fast
@@ -1087,6 +1071,14 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
                 </div>
               )}
             </div>
+            {planMode && (
+              <button type="button" className="composer-inline-pill composer-plan-indicator"
+                aria-label="计划" title="创建计划" onClick={onTogglePlanMode}>
+                <Lightbulb size={16} className="composer-plan-icon" aria-hidden="true" />
+                <CircleX size={16} className="composer-plan-dismiss-icon" aria-hidden="true" />
+                <span>计划</span>
+              </button>
+            )}
           </div>
 
           {/* Right: Combined Model+Effort Dropdown + Mic + Send */}

@@ -3,7 +3,7 @@ import { tauriListen } from "../bridge";
 import { serviceIdentity } from "../chatgptService";
 import { formatStorageBytes, readStorageUsage, storageFullness, type StorageUsage } from "../storageUsage";
 
-export function StorageSettings({ scope }: { scope: string }) {
+export function StorageSettings({ scope, onOpenLibrary }: { scope: string; onOpenLibrary?: (tab: "all" | "images") => void }) {
   const [snapshot, setSnapshot] = useState<{ scope: string; usage: StorageUsage } | null>(null);
   const [error, setError] = useState("");
   const [syncError, setSyncError] = useState("");
@@ -70,6 +70,10 @@ export function StorageSettings({ scope }: { scope: string }) {
       {usage.allowedBytes > 0 && <progress aria-label="云端存储空间已使用" max={usage.allowedBytes} value={Math.min(usage.usedBytes, usage.allowedBytes)} />}
       {fullness === "full" && <p role="status">云端存储空间已满。</p>}
       {fullness === "almostFull" && <p role="status">云端存储空间即将用完。</p>}
+      {onOpenLibrary && <div aria-label="管理存储空间">
+        <button type="button" className="secondary-btn-sm" onClick={() => onOpenLibrary("all")}>文件</button>
+        <button type="button" className="secondary-btn-sm" onClick={() => onOpenLibrary("images")}>图像</button>
+      </div>}
       <button type="button" className="secondary-btn" onClick={() => setRetry(value => value + 1)}>重新读取</button>
     </section>}
   </div>;

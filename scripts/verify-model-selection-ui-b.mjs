@@ -27,7 +27,7 @@ function mount(name, initial) {
     vm.runInNewContext(code, { exports, document, console, Promise,
       requestAnimationFrame(fn) { frames.push(fn); return frames.length; }, cancelAnimationFrame() {},
       window: { addEventListener(type, fn) { if (type === "codex:keyboard-command") listeners.add(fn); }, removeEventListener(type, fn) { listeners.delete(fn); } },
-      require: id => id === "react" ? react : id.endsWith(".css") || id.endsWith("Icons") ? {} :
+      require: id => id === "react" ? react : id === "lucide-react" ? new Proxy({}, { get: (_, key) => String(key) }) : id.endsWith(".css") || id.endsWith("Icons") ? {} :
         id.includes("ComposerAutocomplete") ? { getAutocompleteItems: () => [{ id: "model", type: "slash", action: "open_model_picker", insertText: "" }] } :
         id.includes("ModelSelector") || id.includes("AttachmentChip") ? {} :
         id.endsWith("/bridge") ? { isTauriRuntime: () => false } : id.endsWith("/fsClient") ? { baseNameFsPath: p => p.split("/").at(-1) } :

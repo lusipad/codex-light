@@ -60,6 +60,9 @@ try {
   Invoke-Step "Plugin preparation component lifecycle contracts" { node scripts/verify-plugin-preparation-ui.mjs }
   Invoke-Step "Worktree removal conversation and result contracts" { node scripts/verify-worktree-removal.mjs }
   Invoke-Step "Library authenticated service boundary regression" { node scripts/verify-library-service.mjs }
+  Invoke-Step "Library response mapping, paging and sorting" { node scripts/verify-library-data.mjs }
+  Invoke-Step "Library access and real client contracts" { node scripts/verify-library-read.mjs }
+  Invoke-Step "Library cleanup lifecycle and presentation regression" { node scripts/verify-library-cleanup.mjs }
   Invoke-Step "Images authenticated service and real result regression" { node scripts/verify-images-service.mjs }
   Invoke-Step "GPTs service and identity boundary regression" { node scripts/verify-gpts-service.mjs }
   Invoke-Step "Sites authenticated catalog and readonly settings regression" { node scripts/verify-sites-service.mjs }
@@ -223,6 +226,7 @@ try {
   Invoke-Step "Inbox history and persistence regression" { node scripts/verify-inbox-lifecycle.mjs }
   Invoke-Step "Scheduled & Automations parity" { node scripts/verify-scheduled-automations.mjs }
   Invoke-Step "Automation mutation and run regression" { node scripts/verify-automation-actions.mjs }
+  Invoke-Step "Automation local task table, detail and configuration lifecycle" { node scripts/verify-automation-ui.mjs }
   Invoke-Step "Worktrees worksurface parity" { node scripts/verify-worktrees.mjs }
   Invoke-Step "Worktree context and chat entry regression" { node scripts/verify-worktree-context.mjs }
   Invoke-Step "Plugins marketplace & management parity" { node scripts/verify-plugins.mjs }

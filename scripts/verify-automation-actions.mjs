@@ -30,7 +30,7 @@ function mount() {
     tauriInvoke(method, args) { const pending = deferred(); requests.push({ method, args, ...pending }); return pending.promise; },
     runAutomationNow(id) { return context.tauriInvoke("automations_run_now", { id }); },
   };
-  for (const name of ["Automations", "Name", "Prompt", "EditingItem", "ShowCreateForm", "WriteBusy", "RunBusyId", "RunThreads", "RunHistory", "SchedulerState", "Scheduler", "Kind", "Rrule", "ExecEnv", "SelectedModel"]) {
+  for (const name of ["Automations", "ListLoading", "ListError", "Name", "Prompt", "EditingItem", "ShowCreateForm", "WriteBusy", "RunBusyId", "RunThreads", "RunHistory", "SchedulerState", "Scheduler", "Kind", "Rrule", "ExecEnv", "SelectedModel"]) {
     const key = name[0].toLowerCase() + name.slice(1);
     context[`set${name}`] = value => { context[key] = typeof value === "function" ? value(context[key] ?? (key === "runHistory" ? [] : {})) : value; };
   }

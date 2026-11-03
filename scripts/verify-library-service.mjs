@@ -14,4 +14,4 @@ assert.ok(nodes(tree).some(node => node.props.role === "status"));
 assert.equal(nodes(tree).filter(node => ["button", "input", "form", "img"].includes(node.type)).length, 0, "no fake mutation, upload, note or demo image controls");
 assert.ok(!/DEFAULT_LIBRARY_ITEMS|fakeUpload|localStorage|Date.now|setTimeout|文件已删除|已创建/.test(source));
 const app = fs.readFileSync("src/App.tsx", "utf8"); assert.ok(app.includes("<LibraryView />")); assert.ok(!app.includes("onInsertToChat="));
-console.log("PASS LB01 production JSX: visible disconnected service, zero demo data/fake actions/local-storage mutation and removed synthetic reference callback; real authenticated operations remain unimplemented");
+console.log("PASS LB01 production JSX: visible disconnected service, zero demo data/fake actions/local-storage mutation and removed synthetic reference callback; default Library route remains disconnected; authenticated storage cleanup is verified separately");

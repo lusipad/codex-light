@@ -1,0 +1,95 @@
+import { callAppServer } from "./bridge";
+import { readChatgptService, serviceIdentity, shareAccessBootstrap, type ServiceIdentity } from "./chatgptService";
+import { parseLibraryImagesPage, parseLibraryNodesPage, type LibraryItem, type LibraryPage } from "./libraryData";
+
+export type LibraryTab = "all" | "images";
+export interface LibraryAccess { identity: ServiceIdentity; available: boolean; onedrive: boolean }
+
+const supportedPlans = new Set(["free", "go", "plus", "pro", "promax", "prolite", "free_workspace", "team",
+  "self_serve_business_prolite", "sci", "rosalind_academic", "business", "enterprise_cbp_trial",
+  "enterprise_cbp_view_only", "finserv", "law", "ent26", "education", "edu_plus", "edu_pro", "quorum",
+  "enterprise", "hc", "hc_consumption", "deprecated_enterprise", "edu", "deprecated_edu", "k12"]);
+const object = (value: unknown): value is Record<string, any> => value !== null && typeof value === "object" && !Array.isArray(value);
+
+/** Full, identity-bound snapshots only; partial/live Statsig evaluations remain unsupported. */
+export function decodeLibraryAccess(bootstrap: unknown, settings: unknown, account: unknown, identity: ServiceIdentity, accounts: unknown): LibraryAccess {
+  if (!object(account) || account.account?.type !== "chatgpt"
+    || (account.workspaceRouting?.chatgptAccountId != null && account.workspaceRouting.chatgptAccountId !== identity.accountId))
+    throw Error("无法确认当前账号的资料库访问资格。");
+  if (!object(accounts) || !Array.isArray(accounts.accounts) || !Array.isArray(accounts.account_ordering)
+    || !accounts.account_ordering.includes(identity.accountId)) throw Error("无法确认资料库账号。");
+  const selected = accounts.accounts.filter((entry: unknown) => object(entry) && entry.id === identity.accountId);
+  if (selected.length !== 1 || !supportedPlans.has(selected[0].plan_type)
+    || selected[0].can_access_with_session === false || selected[0].is_deactivated === true)
+    throw Error("无法确认当前账号的资料库访问资格。");
+  if (!object(bootstrap) || typeof bootstrap.statsigPayload !== "string") throw Error("无法读取资料库访问权限。");
+  const payload = JSON.parse(bootstrap.statsigPayload);
+  if (!object(payload) || payload.user?.userID !== identity.userId || payload.user?.customIDs?.account_id !== identity.accountId
+    || !object(payload.feature_gates) || payload.has_updates !== true || payload.is_delta === true || payload.isDelta === true
+    || payload.live_overlay != null || ![undefined, "init-v1", "init-v2"].includes(payload.response_format))
+    throw Error("资料库权限数据不完整或与当前账号不符。");
+  const compact = payload.response_format === "init-v2";
+  const lookup = (values: any, key: string) => {
+    let hash = 0;
+    for (let i = 0; i < key.length; ++i) hash = (Math.imul(hash, 31) + key.charCodeAt(i)) >>> 0;
+    return values?.[key] ?? values?.[String(hash)];
+  };
+  const gate = (key: string): boolean | undefined => {
+    const value = lookup(payload.feature_gates, key)?.[compact ? "v" : "value"];
+    if (value !== undefined && typeof value !== "boolean") throw Error("资料库权限格式无效。");
+    return value;
+  };
+  const layer = lookup(payload.layer_configs, "3017902351");
+  const layerValue = compact ? payload.values?.[layer?.v] : layer?.value;
+  const fileGate = gate("224248639"), layerGate = layerValue?.web_file_library_enabled;
+  if (layerGate !== undefined && typeof layerGate !== "boolean") throw Error("资料库权限格式无效。");
+  if (fileGate !== true && layerGate !== true) {
+    if (fileGate === false && layerGate === false) return { identity, available: false, onedrive: false };
+    throw Error("当前账号的资料库访问权限尚未确认。");
+  }
+  if (!object(settings) || (settings.flags !== undefined && !object(settings.flags))) throw Error("资料库地区设置响应无效。");
+  const country = settings.flags?.file_library_enabled_for_registration_country;
+  if (country !== undefined && typeof country !== "boolean") throw Error("资料库地区设置响应无效。");
+  if (country === false) return { identity, available: false, onedrive: false };
+  const onedrive = gate("3583034603");
+  if (onedrive === undefined) throw Error("无法确认资料库来源权限，请重试。");
+  return { identity, available: true, onedrive };
+}
+
+export async function readLibraryAccess(signal: AbortSignal): Promise<LibraryAccess> {
+  const identity = await serviceIdentity(signal);
+  const [bootstrap, settings, account, accounts] = await Promise.all([
+    shareAccessBootstrap(identity, signal), readChatgptService("library_settings", {}, identity, signal),
+    callAppServer("account/read", { refreshToken: false }),
+    readChatgptService("share_accounts", {}, identity, signal),
+  ]);
+  signal.throwIfAborted();
+  const after = await serviceIdentity(signal);
+  if (identity.accountId !== after.accountId || identity.userId !== after.userId || identity.generation !== after.generation)
+    throw Error("读取期间账号发生变化，请重试。");
+  return decodeLibraryAccess(bootstrap, settings, account, identity, accounts);
+}
+
+export async function readLibraryPage(access: LibraryAccess, tab: LibraryTab, cursor: string | null, signal: AbortSignal): Promise<LibraryPage> {
+  if (!access.available) throw Error("当前账号暂不支持资料库。");
+  if (tab === "images") return parseLibraryImagesPage(await readChatgptService("library_images", { cursor }, access.identity, signal));
+  return parseLibraryNodesPage(await readChatgptService("library_nodes", {
+    entry_surface: "library", cursor, categories: [], source: null, include_hidden_files: false, include_files: true,
+    include_saved_entities: true, defer_sharing_badges: true, include_sites: false,
+    include_folder_counts: false, include_onedrive: access.onedrive, hydrate_folder_thumbnails: true,
+  }, access.identity, signal));
+}
+
+export async function readLibraryImage(item: LibraryItem, access: LibraryAccess, signal: AbortSignal): Promise<string> {
+  if (!access.available) throw Error("当前账号暂不支持资料库。");
+  const params: Record<string, unknown> = {};
+  const id = /^libfile_fde\d+_/u.test(item.node.id) ? item.node.id : item.node.file_id;
+  if (typeof id === "string" && /^libfile_fde\d+_/u.test(id)) params.library_file_id = id;
+  else if (typeof id === "string" && id) params.file_id = id;
+  else throw Error("无法读取图像预览。");
+  if (typeof item.node.gizmo_id === "string" && item.node.gizmo_id) params.gizmo_id = item.node.gizmo_id;
+  const body = await readChatgptService("library_image", params, access.identity, signal);
+  if (!object(body) || typeof body.dataUrl !== "string" || !/^data:image\/(?:png|jpeg|gif|webp|avif);base64,[A-Za-z0-9+/]+=*$/u.test(body.dataUrl))
+    throw Error("无法读取图像预览。");
+  return body.dataUrl;
+}

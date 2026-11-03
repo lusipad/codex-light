@@ -8,7 +8,7 @@ const code = ts.transpileModule(fs.readFileSync("src/components/ComposerBox.tsx"
 }).outputText;
 const all = node => node && typeof node === "object" ? [node, ...node.children.flatMap(all)] : [];
 const text = node => node && typeof node === "object" ? node.children.map(text).join("") : typeof node === "string" ? node : "";
-function mount() {
+function mount(variant = "thread") {
   const hooks = [], effects = [], elements = new Map(), frames = [], calls = [];
   let cursor = 0, tree, active;
   const doc = {
@@ -35,7 +35,7 @@ function mount() {
     },
   };
   const props = {
-    composerEnterBehavior: "enter", variant: "thread", promptInput: "", isStreaming: false,
+    composerEnterBehavior: "enter", variant, promptInput: "", isStreaming: false,
     activeWorkspace: { label: "Alpha", path: "D:/alpha" },
     workspaces: [{ label: "Alpha", path: "D:/alpha" }, { label: "Beta", path: "D:/beta" }],
     gitStatus: { isGitRepo: true, branch: "main" }, gitBranches: ["main", "feature"],
@@ -95,7 +95,55 @@ function mount() {
   render();
   return { render, find, trigger, element, key, calls, props, get active() { return active; } };
 }
-for (const title of ["当前项目", "选择聊天运行位置", "切换或新建", "添加文件", "更改权限"]) {
+{
+  const view = mount("home");
+  view.props.onSetUseWorktree = value => {
+    view.calls.push(["onSetUseWorktree", value]);
+    view.props.useWorktree = value;
+  };
+  for (const next of [true, false]) {
+    assert.equal(view.find(n => n.type === "input" && n.props.type === "checkbox"), undefined,
+      "the local/worktree picker layout must not mix in the alternate utility-bar checkbox");
+    const trigger = view.trigger("选择聊天的运行位置");
+    assert.equal(text(trigger), view.props.useWorktree ? "新工作树" : "本地");
+    view.key(trigger, "ArrowDown");
+    assert.ok(view.find(n => n.props.className === "popover-section-label" && text(n) === "工作位置"));
+    const option = view.find(n => n.props.role === "menuitemradio" && text(n) === (next ? "新建本地工作树" : "本地"));
+    assert.ok(option);
+    assert.equal(option.props["aria-checked"], false);
+    option.props.onClick(); view.render();
+    assert.equal(view.find(n => n.props.role === "menu"), undefined);
+    assert.equal(text(view.trigger("选择聊天的运行位置")), next ? "新工作树" : "本地");
+  }
+  assert.deepEqual(view.calls, [["onSetUseWorktree", true], ["onSetUseWorktree", false]],
+    "the remaining execution-location picker must switch once per selection");
+}
+console.log("PASS home execution location: coherent picker layout, official labels, local/worktree round-trip and close");
+
+for (const variant of ["home", "thread"]) {
+  const view = mount(variant);
+  assert.equal(view.find(n => n.type === "button" && n.props["aria-label"] === "计划"), undefined);
+  view.props.planMode = true;
+  view.props.fastMode = true;
+  view.props.onTogglePlanMode = () => { view.calls.push(["onTogglePlanMode"]); view.props.planMode = false; };
+  view.render();
+  const indicator = view.find(n => n.type === "button" && n.props["aria-label"] === "计划");
+  assert.ok(indicator, `${variant}: active plan must be a keyboard-accessible footer button`);
+  assert.equal(indicator.props.type, "button", "Enter/Space use native button semantics, never form submit");
+  assert.equal(indicator.props.title, "创建计划");
+  assert.equal(text(indicator), "计划");
+  const footer = view.find(n => n.props.className === "composer-bottom-left");
+  assert.ok(all(footer).includes(indicator), "plan indicator belongs in the composer footer");
+  const top = view.find(n => n.props.className === "composer-context-right");
+  assert.doesNotMatch(text(top), /计划模式|🗺️/);
+  assert.match(text(top), /Fast/, "unresearched Fast indicator remains unchanged");
+  indicator.props.onClick(); view.render();
+  assert.deepEqual(view.calls, [["onTogglePlanMode"]], "one click exits plan without sending or changing work location");
+  assert.equal(view.find(n => n.type === "button" && n.props["aria-label"] === "计划"), undefined);
+}
+console.log("PASS active plan footer: home/thread visibility, button/label/tooltip, footer placement and single exit action");
+
+for (const title of ["当前项目", "选择聊天的运行位置", "切换或新建", "添加文件", "更改权限"]) {
   const view = mount();
   let trigger = view.trigger(title);
   assert.equal(trigger.props["aria-haspopup"], "menu", `${title} needs a real keyboard/menu entry`);

@@ -1,6 +1,6 @@
 # 16.18C 资料库清理工作面：只读开发合同
 
-状态：修改前调研完成，尚未开发。承接[16.18B配额](../acceptance/16-18B.md)；只读列表先闭环，删除、付款不在本批。不能把此前静态发现的POST接口泛化为所有列表的唯一读取路径。
+状态：修改前调研已执行，现已实施存储入口的根all/images只读增量，定向自验通过、完整标准检查中；尚未用户验收。承接[16.18B配额](../acceptance/16-18B.md)；只读列表先闭环，删除、付款不在本批。不能把此前静态发现的POST接口泛化为所有列表的唯一读取路径。
 
 ## 固定证据
 
@@ -20,7 +20,7 @@
 - `qMs/YMs`@9342726/9342877：cleanup未显式选排序时默认size desc，但仍受可排序场景限制。
 - `ONs`@9359351从P8.data.pages取当前已加载页，`xKi`@5725468合并按id去重，再`Jjs`@9330266本地排序；调用@9361068。混合结果ANs@9362248亦走该排序。
 - 导航根/目录优先；无大小、非有限或负大小排有效值之后，大小按方向，相同大小再按名称Collator。不能以简单全数组字节降序代替。
-- **只对已加载页重排，不宣称服务器全库size排序，也不先伪造抓齐所有页。** 未发现cleanup专属全页预抓；滚动取下一页的共享UI阈值仍待追踪，开发前补定位。
+- **只对已加载页重排，不宣称服务器全库size排序，也不先伪造抓齐所有页。** 未发现cleanup专属全页预抓；分页sentinel已在下方补充证据中定位。
 - `tNs`@9343763：cleanup初始list；`nNs`@9343822：根images非deleted强制grid。`gMs`@9336292：cleanup切换视图只写当前scope临时偏好，不写普通账号持久偏好。退出cleanup后不能污染普通Library展示。
 - 当前LibraryView.tsx实际仍是未连接占位；服务层已有nodes/favorites操作不代表这个页面已经读取。先真实列表/状态/分页与入口，再做有官方证据的结构校准；不把自建卡片当官方布局。
 
@@ -38,7 +38,7 @@
 
 实现前仍需补：上层scope/身份上下文完整构造链、运行时gate取得路径、官方实际布局与控件合同。删除资格、逐项结果、软删不释放配额及永久删除读回沿用16.18B调研边界，另开有权限且需确认的后续批次，不在只读阶段展示假删除成功。
 
-## 后续只读取证补充（尚未开发）
+## 修改前只读取证补充
 
 补充证据位于 `16-18C-research/extra/`：6项原始资源与asar entry integrity匹配，22条精确UTF-16锚点，另有notes.md。没有产品修改或真实HTTP。
 
@@ -47,3 +47,14 @@
 - providers另受外部账号库存、账号可见性/hiddenProviders与GoogleDrive3001618585、OneDrive3583034603、iManage1509044249等gate影响。候选列表不等于本账号可用列表；上游身份与scope构造仍未全部追完。
 - trash-banner Et@4119、分页渲染@9591共用list/grid sentinel：hasNextPage、总isFetching、fetchNextPage({cancelRefetch:false})，key为pages.length，不传rootRef/rootMargin。primary Awn@1632618使用IntersectionObserver，本路径默认viewport root、0px margin、threshold0；相交后disconnect再加载。无observer时直接触发；无下一页或正在fetch时不发请求。不得猜成“距底部300px”。
 - 真实zh-CN keys：libraryNext.results.loading=正在加载资料库、failed/pageFailed=文件加载失败。、retry=重试、loadMore=加载更多、size=大小、tabs.all=全部、view.grid/list=网格视图/列表视图。settings.chatGpt.storage.manageStorage=管理存储空间、files=文件、images=图像只证明译文，不能单独证明当前设置页布局/入口绑定。settings.storage.cleanup的聊天清理译文不适用于云端文件。
+
+## 实施前补齐的认证与资源合同
+
+access原文链已证明国家设置真实GET为 `/backend-api/settings/user`，与Wham custom instructions不同。root all的P8将provider收敛为native/native_shared及真实gate3583034603控制的OneDrive，主列表不必等待外部account inventory；独立CNs外部根目录仍是后续缺口。
+
+图像取证：initial `e0`@7136895 对libfile_fde类调用GET `/files/library/files/{id}/content_url`；其他file_id的`wia`@6111762默认GET `/files/download/{file_id}`，路径内#替换*，inline=true，可选gizmo_id；`Tia`@6112342附近处理retry上限15秒/最多10次。下载地址经JJ/M5i@5998263附近标准化，可能是相对content_redirect或signed绝对URL。不能直接信thumbnail_url替代此链。
+
+本地原生实现允许使用现有认证CurlTransport和网络策略取真实图像字节，以data URL交给renderer；每跳验证URL与身份，第三方URL不附带登录凭证。原生边界只接固定资源定位参数，不接renderer任意URL；返回非图像、处理中、失败或取消不得伪造预览。现有传输8MiB限制及尚未恢复的外部provider映射/特殊URL分支须保留明确限制，不能宣称所有图像已1:1。
+
+
+实施边界：当前仅设置→存储→文件/图像入口携带内部cleanup tab状态；主导航普通Library路线、推荐/收藏/目录、外部根、官方URL query规范化与深链尚未接通。LCR01仅入口tab部分通过，不将内部状态冒充官方URL合同闭环。只读结果不代表具备清理删除资格；完整缺口见阶段验收。

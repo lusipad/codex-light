@@ -196,6 +196,7 @@ interface SettingsViewProps {
   onRestartAppServer: (customCliPath?: string) => void | Promise<unknown>;
   onConfigUpdated: () => void;
   onNavigateRoute?: (route: MainViewRoute) => void;
+  onOpenLibraryStorage?: (tab: "all" | "images") => void;
   onRunEnvironmentCommand: (cwd: string, command: string) => void;
   environmentTarget?: { id: string; cwd: string; configPath: string | null; edit?: boolean };
   onRunEnvironmentAction?: (request: EnvironmentActionRunRequest) => Promise<void>;
@@ -227,6 +228,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onRestartAppServer,
   onConfigUpdated,
   onNavigateRoute,
+  onOpenLibraryStorage,
 }) => {
   const [activeSection, commitActiveSection] =
     useState<SettingsSectionSlug>(initialSection === "providers-models" ? "agent" : initialSection === "experimental" ? "general-settings" : initialSection);
@@ -934,7 +936,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         {activeSection === "pets" && <PetsSettings state={petPreferencesState} visible={petVisible} onSetVisible={onTogglePetVisible} />}
 
         {/* SECTION: STORAGE */}
-        {activeSection === "storage" && <StorageSettings scope={JSON.stringify([connectionIdentity, accountIdentity])} />}
+        {activeSection === "storage" && <StorageSettings scope={JSON.stringify([connectionIdentity, accountIdentity])} onOpenLibrary={onOpenLibraryStorage} />}
 
         {/* SECTION: ARCHIVED CHATS */}
         {activeSection === "archived-chats" && (

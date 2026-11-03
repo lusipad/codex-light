@@ -143,6 +143,7 @@ import { ImagesView } from "./components/ImagesView";
 import { GptsView } from "./components/GptsView";
 import { SitesView } from "./components/SitesView";
 import { LibraryView } from "./components/LibraryView";
+import { LibraryCleanupView } from "./components/LibraryCleanupView";
 import { CloudEnvironmentsView } from "./components/CloudEnvironmentsView";
 import { ThreadActionsMenu, ThreadActionItem } from "./components/ThreadActionsMenu";
 import { ThreadFindBar } from "./components/ThreadFindBar";
@@ -327,6 +328,7 @@ export const App: React.FC = () => {
   const promptStorageKey = isQuickChatWindow ? "codex_quick_chat_prompt_drafts_v1" : threadWindowId ? `codex_thread_window_drafts_v1:${threadWindowId}` : "codex_composer_prompt_drafts_v1";
   // Primary Route & Shell Layout State
   const [activeRoute, commitActiveRoute] = useState<MainViewRoute>(() => window.location.pathname === "/code-review" ? "code-review" : "home");
+  const [libraryCleanupTab, setLibraryCleanupTab] = useState<"all" | "images" | null>(null);
   const [remotePullRequestUrl, setRemotePullRequestUrl] = useState(() => window.location.pathname === "/code-review"
     ? new URLSearchParams(window.location.hash.slice(1)).get("pullRequest") ?? "" : "");
   const activeRouteRef = useRef(activeRoute);
@@ -4810,7 +4812,7 @@ export const App: React.FC = () => {
         petVisible={petVisible}
         onTogglePet={() => setPetVisible((v) => !v)}
         onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
-        onNavigate={(route) => setActiveRoute(route)}
+        onNavigate={(route) => { if (route === "library") setLibraryCleanupTab(null); setActiveRoute(route); }}
         onOpenUsage={() => {
           setSettingsInitialSection("usage");
           setActiveRoute("settings");
@@ -4835,7 +4837,7 @@ export const App: React.FC = () => {
         onToggleActivity={() => setActivityOnly((value) => !value)}
         onMarkAllRead={markAllThreadsRead}
         hasAgentsMd={agentsMdInfo.found}
-        onNavigate={(route) => setActiveRoute(route)}
+        onNavigate={(route) => { if (route === "library") setLibraryCleanupTab(null); setActiveRoute(route); }}
         onStartNewChat={startNewThread}
         onRemoveWorkspace={handleRemoveWorkspace}
         onPickNewFolder={handlePickNewFolder}
@@ -5316,8 +5318,8 @@ export const App: React.FC = () => {
             }}
           />
         ) : activeRoute === "scheduled" ? (
-          <div className="full-route-view">
-            <div className="full-route-container">
+          <div className="full-route-view automations-route">
+            <div className="full-route-container automations-route-container">
               <AutomationsView
                 activeWorkspaceRoot={activeWorkspace?.path || ""}
                 models={models}
@@ -5365,7 +5367,8 @@ export const App: React.FC = () => {
         ) : activeRoute === "library" ? (
           <div className="full-route-view">
             <div className="full-route-container">
-              <LibraryView />
+              {libraryCleanupTab ? <LibraryCleanupView tab={libraryCleanupTab} onTabChange={setLibraryCleanupTab}
+                scope={JSON.stringify([modelAccountIdentity, appServerStatus.connected, appServerStatus.binaryPath, appServerStatus.appServerVersion])} /> : <LibraryView />}
             </div>
           </div>
         ) : activeRoute === "cloud-environments" ? (
@@ -5412,6 +5415,7 @@ export const App: React.FC = () => {
         ) : activeRoute === "settings" ? (
           <div className="settings-full-route-view">
             <SettingsView
+              onOpenLibraryStorage={(tab) => { setLibraryCleanupTab(tab); setActiveRoute("library"); }}
               environmentTarget={environmentTarget}
               onRunEnvironmentAction={runEnvironmentAction}
               environmentProjects={mergeHookRoots(workspaces.map(workspace => workspace.path), sidebarProjectMembership.localProjects?.flatMap(project => project.rootPaths) ?? []).map(path => ({ path, name: sidebarProjectMembership.localProjects?.find(project => project.rootPaths.includes(path))?.name || workspaces.find(workspace => workspace.path === path)?.label || baseNameFsPath(path) || path }))}

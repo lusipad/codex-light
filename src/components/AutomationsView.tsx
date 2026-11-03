@@ -1,20 +1,19 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  AlertTriangle,
   Edit2,
+  Check,
+  ListFilter,
+  X,
   CheckCircle2,
   Clock,
-  History,
   Pause,
   Play,
   Plus,
-  RefreshCw,
   Search,
-  Target,
   Trash2,
-  Zap,
 } from "lucide-react";
 import { tauriInvoke } from "../bridge";
+import "./AutomationsView.css";
 import {
   getSchedulerStatus,
   isSchedulerUnavailableError,
@@ -34,35 +33,11 @@ interface AutomationsViewProps {
   onSelectThread?: (threadId: string) => void;
 }
 
-const PRESET_TEMPLATES = [
-  {
-    title: "每日代码质量与测试巡检",
-    kind: "cron" as const,
-    rrule: "FREQ=DAILY;BYHOUR=9;BYMINUTE=0",
-    prompt:
-      "扫描当前工作区最近 24 小时的 Git 提交，运行构建与单元测试，总结潜在缺陷或未覆盖的边界条件。",
-  },
-  {
-    title: "每周一依赖与安全漏洞审查",
-    kind: "cron" as const,
-    rrule: "FREQ=WEEKLY;BYDAY=MO;BYHOUR=10;BYMINUTE=0",
-    prompt:
-      "检查项目依赖配置（package.json / Cargo.toml 等），列出过期或有风险的依赖项并生成安全升级计划。",
-  },
-  {
-    title: "长期自治目标 (/goal 持续推进)",
-    kind: "goal" as const,
-    rrule: "FREQ=HOURLY;INTERVAL=1",
-    prompt:
-      "持续推进当前项目的里程碑开发计划：检查剩余未完成模块、编写实现代码、执行编译与自动化测试，直到所有验收指标全部通过。",
-  },
-];
-
 const SCHEDULE_PRESETS = [
   { label: "每天 09:00", rrule: "FREQ=DAILY;BYHOUR=9;BYMINUTE=0" },
   { label: "工作日 09:30", rrule: "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=9;BYMINUTE=30" },
   { label: "每周一 10:00", rrule: "FREQ=WEEKLY;BYDAY=MO;BYHOUR=10;BYMINUTE=0" },
-  { label: "每小时巡检", rrule: "FREQ=HOURLY;INTERVAL=1" },
+  { label: "每小时", rrule: "FREQ=HOURLY;INTERVAL=1" },
 ];
 
 const MAX_RUN_HISTORY = 20;
@@ -104,30 +79,6 @@ function formatDateTime(value?: number | null): string {
   }
 }
 
-function formatClock(value: number): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "—";
-  try {
-    return date.toLocaleTimeString("zh-CN", { hour12: false });
-  } catch {
-    return date.toISOString();
-  }
-}
-
-/** "3 小时后" / "2 分钟前" style relative label. */
-function formatRelativeTime(target: number, now: number): string {
-  const diff = target - now;
-  const abs = Math.abs(diff);
-  const minute = 60_000;
-  const hour = 3_600_000;
-  const day = 86_400_000;
-  const suffix = diff >= 0 ? "后" : "前";
-  if (abs < minute) return "即将";
-  if (abs < hour) return `${Math.round(abs / minute)} 分钟${suffix}`;
-  if (abs < day) return `${Math.round(abs / hour)} 小时${suffix}`;
-  return `${Math.round(abs / day)} 天${suffix}`;
-}
-
 function shortId(id?: string | null, length = 8): string {
   if (!id) return "";
   return id.length > length ? `${id.slice(0, length)}…` : id;
@@ -156,22 +107,6 @@ function runStatusColor(status?: string | null): string {
   }
   if (value === "failed" || value === "error") return "var(--accent-red)";
   return "var(--text-tertiary)";
-}
-
-function runStatusBackground(status?: string | null): string {
-  const value = (status || "").toLowerCase();
-  if (value === "running") return "rgba(58, 131, 247, 0.15)";
-  if (value === "completed" || value === "success" || value === "succeeded") {
-    return "rgba(16, 163, 127, 0.15)";
-  }
-  if (value === "failed" || value === "error") return "rgba(239, 68, 68, 0.15)";
-  return "rgba(255, 255, 255, 0.08)";
-}
-
-function noticeColor(kind: NoticeKind): string {
-  if (kind === "success") return "var(--accent-green)";
-  if (kind === "error") return "var(--accent-red)";
-  return "var(--accent-blue)";
 }
 
 function appendRunRecord(
@@ -235,12 +170,18 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
   onSelectThread,
 }) => {
   const [automations, setAutomations] = useState<AutomationItem[]>([]);
-  const [activeSubTab, setActiveSubTab] = useState<"all" | "scheduled" | "goals">(
-    "all"
-  );
-  const [statusFilter, setStatusFilter] = useState<
-    "ALL" | "ACTIVE" | "PAUSED" | "COMPLETED"
-  >("ALL");
+  const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "PAUSED" | "COMPLETED">("ACTIVE");
+  const [sortOrder, setSortOrder] = useState<"automatic" | "next_run_asc" | "updated_at_desc" | "title_asc">("automatic");
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [selectedAutomationId, setSelectedAutomationId] = useState<string | null>(null);
+  const [listLoading, setListLoading] = useState(true);
+  const [listError, setListError] = useState("");
+  const [clock, setClock] = useState(Date.now());
+  const rowTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const detailCloseRef = useRef<HTMLButtonElement | null>(null);
+  const filterMenuRef = useRef<HTMLDivElement | null>(null);
+  const filterFocusLastRef = useRef(false);
+  const configurationBaselineRef = useRef(JSON.stringify(["", "cron", SCHEDULE_PRESETS[0].rrule, "", "worktree", ""]));
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [showCreateForm, setShowCreateForm] = useState<boolean>(false);
   const [editingItem, setEditingItem] = useState<AutomationItem | null>(null);
@@ -260,7 +201,6 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
   const [runBusyId, setRunBusyId] = useState<string | null>(null);
   const [runHistory, setRunHistory] = useState<RunHistoryRecord[]>([]);
   const [runThreads, setRunThreads] = useState<Record<string, string>>({});
-  const [clock, setClock] = useState<number>(Date.now());
   const [notice, setNotice] = useState<Notice | null>(null);
   const writePendingRef = useRef(false);
   const runPendingRef = useRef(false);
@@ -269,11 +209,17 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
 
   const refresh = async () => {
     const request = ++listRequestRef.current;
+    setListLoading(true);
+    setListError("");
     try {
       const list = await tauriInvoke<AutomationItem[]>("automations_list");
       if (request === listRequestRef.current) setAutomations(list);
     } catch (error) {
-      if (request === listRequestRef.current) setNotice({ kind: "error", text: `读取任务失败：${String(error)}` });
+      if (request === listRequestRef.current) {
+        setListError(`读取任务失败：${String(error)}`);
+      }
+    } finally {
+      if (request === listRequestRef.current) setListLoading(false);
     }
   };
 
@@ -308,6 +254,17 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
     void loadScheduler({ silent: true });
   }, [loadScheduler]);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!filterOpen) return;
+    const controls = filterMenuRef.current?.querySelectorAll<HTMLButtonElement>("button");
+    controls?.[filterFocusLastRef.current ? controls.length - 1 : 0]?.focus();
+  }, [filterOpen]);
+
   // Recompute the scheduler plan after an automation is created/updated/deleted.
   // Degrades silently when the scheduler backend is not available yet.
   const syncScheduleAfterConfigChange = useCallback(async () => {
@@ -329,12 +286,6 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
       }
     }
   }, [loadScheduler]);
-
-  // Live "current time" for the scheduler status bar.
-  useEffect(() => {
-    const timer = window.setInterval(() => setClock(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
 
   // Auto-dismiss transient notices.
   useEffect(() => {
@@ -412,6 +363,10 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
 
   const handleStartEdit = (item: AutomationItem) => {
     if (writePendingRef.current) return;
+    configurationBaselineRef.current = JSON.stringify([
+      item.name, ["cron", "heartbeat", "goal"].includes(item.kind) ? item.kind : "cron", item.rrule,
+      item.prompt, item.executionEnvironment === "local" ? "local" : "worktree", item.model || "",
+    ]);
     setEditingItem(item);
     setName(item.name);
     setKind(
@@ -450,6 +405,8 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
       const updated = await tauriInvoke<AutomationItem[]>("automation_save", { item });
       ++listRequestRef.current;
       setAutomations(updated);
+      setListLoading(false);
+      setListError("");
       setName("");
       setPrompt("");
       setEditingItem(null);
@@ -460,6 +417,7 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
     } finally {
       writePendingRef.current = false;
       setWriteBusy(false);
+      setListLoading(false);
     }
   };
 
@@ -478,12 +436,15 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
       const updated = await tauriInvoke<AutomationItem[]>("automation_save", { item: next });
       ++listRequestRef.current;
       setAutomations(updated);
+      setListLoading(false);
+      setListError("");
       void syncScheduleAfterConfigChange();
     } catch (error) {
       setNotice({ kind: "error", text: `更新任务状态失败：${String(error)}` });
     } finally {
       writePendingRef.current = false;
       setWriteBusy(false);
+      setListLoading(false);
     }
   };
 
@@ -497,12 +458,15 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
       const updated = await tauriInvoke<AutomationItem[]>("automation_delete", { id });
       ++listRequestRef.current;
       setAutomations(updated);
+      setListLoading(false);
+      setListError("");
       void syncScheduleAfterConfigChange();
     } catch (error) {
       setNotice({ kind: "error", text: `删除任务失败：${String(error)}` });
     } finally {
       writePendingRef.current = false;
       setWriteBusy(false);
+      setListLoading(false);
     }
   };
 
@@ -589,40 +553,27 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
     }
   };
 
-  const filteredItems = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    return automations.filter((item) => {
-      if (activeSubTab === "scheduled" && item.kind === "goal") return false;
-      if (activeSubTab === "goals" && item.kind !== "goal") return false;
-      if (statusFilter !== "ALL" && item.status !== statusFilter) return false;
-      if (
-        q &&
-        !item.name.toLowerCase().includes(q) &&
-        !item.prompt.toLowerCase().includes(q)
-      ) {
-        return false;
-      }
-      return true;
-    });
-  }, [automations, activeSubTab, statusFilter, searchQuery]);
-
   const schedulerEntriesById = useMemo(() => {
     const map = new Map<string, SchedulerEntry>();
-    for (const entry of scheduler?.entries ?? []) {
-      map.set(entry.id, entry);
-    }
+    for (const entry of scheduler?.entries ?? []) map.set(entry.id, entry);
     return map;
   }, [scheduler]);
 
-  const configuredCount = scheduler?.entries?.length ?? automations.length;
-
-  const nextScheduledEntry = useMemo<SchedulerEntry | null>(() => {
-    const candidates = (scheduler?.entries ?? []).filter(
-      (entry) => typeof entry.nextRunAt === "number" && (entry.nextRunAt as number) > clock
-    );
-    candidates.sort((a, b) => (a.nextRunAt as number) - (b.nextRunAt as number));
-    return candidates[0] ?? null;
-  }, [scheduler, clock]);
+  const filteredItems = useMemo(() => {
+    const q = searchQuery.trim().toLocaleLowerCase();
+    const items = automations.filter(item => {
+      if (item.status === "DELETED") return false;
+      const status = item.status === "PAUSED" ? "PAUSED" : "ACTIVE";
+      if (statusFilter !== "ALL" && statusFilter !== status) return false;
+      const label = SCHEDULE_PRESETS.find(preset => preset.rrule === item.rrule)?.label ?? "自定义安排";
+      return !q || [item.name, item.prompt, ...item.cwds, label].some(value => value.toLocaleLowerCase().includes(q));
+    });
+    if (sortOrder === "title_asc") items.sort((a, b) => a.name.localeCompare(b.name, "zh-CN", { numeric: true, sensitivity: "base" }));
+    if (sortOrder === "updated_at_desc") items.sort((a, b) => b.updatedAt - a.updatedAt);
+    if (sortOrder === "next_run_asc") items.sort((a, b) =>
+      (schedulerEntriesById.get(a.id)?.nextRunAt ?? Infinity) - (schedulerEntriesById.get(b.id)?.nextRunAt ?? Infinity));
+    return items;
+  }, [automations, statusFilter, searchQuery, sortOrder, schedulerEntriesById]);
 
   const runningAutomationIds = useMemo(() => {
     const running = new Set<string>();
@@ -635,263 +586,136 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
     return running;
   }, [runHistory, scheduler]);
 
-  const schedulerDotColor =
-    schedulerState === "ready"
-      ? scheduler?.running
-        ? "var(--accent-green)"
-        : "var(--accent-amber)"
-      : schedulerState === "error"
-        ? "var(--accent-red)"
-        : schedulerState === "unavailable"
-          ? "var(--text-tertiary)"
-          : "var(--accent-blue)";
-
-  const schedulerStateText =
-    schedulerState === "ready"
-      ? scheduler?.running
-        ? "运行中"
-        : "未运行"
-      : schedulerState === "unavailable"
-        ? "不可用"
-        : schedulerState === "error"
-          ? "异常"
-          : "连接中…";
+  const selectedItem = automations.find(item => item.id === selectedAutomationId);
+  const selectedEntry = selectedItem ? schedulerEntriesById.get(selectedItem.id) : undefined;
+  const selectedRuns = selectedItem ? runHistory.filter(record => record.automationId === selectedItem.id) : [];
+  const stateOptions = [["ALL", "全部"], ["ACTIVE", "已开启"], ["PAUSED", "已暂停"], ["COMPLETED", "已完成"]] as const;
+  const sortOptions = [["automatic", "自动"], ["next_run_asc", "下次运行"], ["updated_at_desc", "最近更新"], ["title_asc", "名称"]] as const;
+  const scheduleLabel = (item: AutomationItem) => SCHEDULE_PRESETS.find(preset => preset.rrule === item.rrule)?.label ?? "自定义安排";
+  const configurationDirty = showCreateForm && JSON.stringify([name, kind, rrule, prompt, execEnv, selectedModel]) !== configurationBaselineRef.current;
+  const nextRunLabel = (item: AutomationItem) => {
+    if (item.status === "PAUSED") return "已暂停";
+    const nextRunAt = schedulerEntriesById.get(item.id)?.nextRunAt;
+    if (typeof nextRunAt !== "number" || !Number.isFinite(nextRunAt)) return "—";
+    const date = new Date(nextRunAt), today = new Date(clock), tomorrow = new Date(clock);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const day = date.toDateString();
+    const prefix = day === today.toDateString() ? "今天" : day === tomorrow.toDateString() ? "明天" : null;
+    return prefix ? `${prefix} ${date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false })}` : formatDateTime(nextRunAt);
+  };
+  const closeTaskPanel = () => {
+    if (writePendingRef.current) return;
+    if (configurationDirty && !confirm("放弃未保存的更改？")) return;
+    const returnToId = showCreateForm && editingItem ? editingItem.id : null;
+    setShowCreateForm(false);
+    setEditingItem(null);
+    setSelectedAutomationId(returnToId);
+    if (!returnToId) rowTriggerRef.current?.focus();
+  };
+  const startCreate = () => {
+    if (writePendingRef.current) return;
+    if (configurationDirty && !confirm("放弃未保存的更改？")) return;
+    configurationBaselineRef.current = JSON.stringify(["", "cron", SCHEDULE_PRESETS[0].rrule, "", "worktree", ""]);
+    setSelectedAutomationId(null);
+    setEditingItem(null);
+    setName(""); setPrompt(""); setKind("cron");
+    setRrule(SCHEDULE_PRESETS[0].rrule);
+    setExecEnv("worktree"); setSelectedModel("");
+    setShowCreateForm(true);
+    return true;
+  };
 
   return (
-    <div className="panel-page">
-      <div className="panel-page-header">
-        <div>
-          <h2>计划任务与长期目标 (`~/.codex/automations`)</h2>
-          <p className="subtitle">
-            管理定时执行的后台自动化任务 (`automation.toml`) 与多轮持续推进的 `/goal` 长期目标。
-          </p>
-        </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button
-            type="button"
-            className="primary-btn"
-            disabled={writeBusy}
-            onClick={() => setShowCreateForm((v) => !v)}
-          >
-            <Plus size={14} /> {showCreateForm ? "收起表单" : "新建任务 / 目标"}
-          </button>
-          <button type="button" className="secondary-btn" onClick={refresh}>
-            <RefreshCw size={14} /> 刷新
-          </button>
-        </div>
-      </div>
-
-      {/* Scheduler status bar */}
-      <div className="card-section">
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 12,
-            flexWrap: "wrap",
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <span
-              aria-hidden="true"
-              style={{
-                width: 9,
-                height: 9,
-                borderRadius: "50%",
-                background: schedulerDotColor,
-                flex: "0 0 auto",
-                boxShadow:
-                  schedulerState === "ready" && scheduler?.running
-                    ? "0 0 0 3px rgba(16, 163, 127, 0.16)"
-                    : "none",
-              }}
-            />
-            <strong style={{ fontSize: "calc(13.5px * var(--font-ui-scale, 1))" }}>
-              调度器{schedulerStateText}
-            </strong>
-            <span className="tag-badge">当前时间 {formatClock(clock)}</span>
-            <span className="tag-badge">已配置 {configuredCount} 个任务</span>
-            <span
-              className="tag-badge"
-              title={
-                nextScheduledEntry
-                  ? `${nextScheduledEntry.name} · ${formatDateTime(nextScheduledEntry.nextRunAt)}`
-                  : "暂无可预计的下次运行"
-              }
-            >
-              下次运行{" "}
-              {nextScheduledEntry
-                ? formatDateTime(nextScheduledEntry.nextRunAt)
-                : "暂无"}
-            </span>
-          </div>
-          <button
-            type="button"
-            className="secondary-btn"
-            onClick={handleRefreshSchedule}
-            disabled={schedulerBusy || schedulerState === "loading"}
-            title="重新计算下一次调度计划"
-          >
-            <RefreshCw size={14} /> {schedulerBusy ? "刷新中…" : "刷新调度"}
-          </button>
-        </div>
-
-        {schedulerState === "unavailable" && (
-          <p
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              margin: 0,
-              fontSize: "var(--text-xs)",
-              color: "var(--accent-amber)",
-            }}
-          >
-            <AlertTriangle size={13} /> 调度器不可用（后端未就绪）。任务的新建 / 编辑 /
-            启停 / 删除仍可正常使用；「立即运行」将回退为本地执行。
-          </p>
-        )}
-
-        {schedulerState === "error" && (
-          <p
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              margin: 0,
-              fontSize: "var(--text-xs)",
-              color: "var(--accent-red)",
-            }}
-          >
-            <AlertTriangle size={13} /> 调度器异常：{schedulerError || "未知错误"}
-            （任务 CRUD 不受影响，可尝试「刷新调度」重试）
-          </p>
-        )}
-
-        {nextScheduledEntry && (
-          <p style={{ margin: 0, fontSize: "var(--text-xs)", color: "var(--text-tertiary)" }}>
-            下次运行摘要：{nextScheduledEntry.name} 将于{" "}
-            {formatDateTime(nextScheduledEntry.nextRunAt)}（
-            {formatRelativeTime(nextScheduledEntry.nextRunAt as number, clock)}）触发，
-            可执行任务共 {scheduler?.entries.length ?? 0} 项。
-          </p>
-        )}
-
-        {notice && (
-          <p style={{ margin: 0, fontSize: "var(--text-xs)", color: noticeColor(notice.kind) }}>
-            {notice.text}
-          </p>
-        )}
-      </div>
-
-      {/* Sub-Tabs & Status Filter Bar */}
-      <div className="hub-filter-bar">
-        <div className="sub-tabs">
-          <button
-            type="button"
-            className={`sub-tab ${activeSubTab === "all" ? "active" : ""}`}
-            onClick={() => setActiveSubTab("all")}
-          >
-            <Clock size={14} />
-            <span>全部 ({automations.length})</span>
-          </button>
-          <button
-            type="button"
-            className={`sub-tab ${activeSubTab === "scheduled" ? "active" : ""}`}
-            onClick={() => setActiveSubTab("scheduled")}
-          >
-            <Clock size={14} />
-            <span>
-              计划任务 ({automations.filter((a) => a.kind !== "goal").length})
-            </span>
-          </button>
-          <button
-            type="button"
-            className={`sub-tab ${activeSubTab === "goals" ? "active" : ""}`}
-            onClick={() => setActiveSubTab("goals")}
-          >
-            <Target size={14} />
-            <span>
-              长期目标 /goal ({automations.filter((a) => a.kind === "goal").length})
-            </span>
-          </button>
-        </div>
-
-        <div className="status-pill-group">
-          {(["ALL", "ACTIVE", "PAUSED", "COMPLETED"] as const).map((st) => (
-            <button
-              key={st}
-              type="button"
-              className={`seg-btn ${statusFilter === st ? "active" : ""}`}
-              onClick={() => setStatusFilter(st)}
-            >
-              {st === "ALL"
-                ? "全部状态"
-                : st === "ACTIVE"
-                  ? "已开启"
-                  : st === "PAUSED"
-                    ? "已暂停"
-                    : "已完成"}
-            </button>
-          ))}
-        </div>
-
-        <div style={{ display: "flex", alignItems: "center", position: "relative", marginLeft: "auto" }}>
-          <Search size={13} style={{ position: "absolute", left: 8, color: "var(--text-tertiary)", pointerEvents: "none" }} />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="搜索任务或目标..."
-            style={{
-              padding: "4px 8px 4px 26px",
-              fontSize: "var(--text-xs)",
-              borderRadius: 6,
-              background: "var(--bg-input)",
-              color: "var(--text-primary)",
-              border: "1px solid var(--border-subtle)",
-              width: 170,
-            }}
-          />
-        </div>
-      </div>
-
-      {/* Quick Preset Templates */}
-      <div className="card-section">
-        <h3>推荐预设模板（点击一键填入）</h3>
-        <div className="preset-cards-grid">
-          {PRESET_TEMPLATES.map((tpl, i) => (
-            <div
-              key={i}
-              className="preset-template-card"
-              onClick={() => {
-                if (writePendingRef.current) return;
-                setEditingItem(null);
-                setName(tpl.title);
-                setKind(tpl.kind);
-                setRrule(tpl.rrule);
-                setPrompt(tpl.prompt);
-                setShowCreateForm(true);
-              }}
-            >
-              <div className="preset-template-title">
-                {tpl.kind === "goal" ? <Target size={14} /> : <Clock size={14} />}
-                <span>{tpl.title}</span>
-              </div>
-              <p className="preset-template-desc">{tpl.prompt}</p>
+    <section className="automation-page" aria-label="定时任务">
+      <header className="automation-page-header">
+        <h1>定时任务</h1>
+        <button type="button" className="automation-add" onClick={event => {
+          if (startCreate()) rowTriggerRef.current = event.currentTarget;
+        }} disabled={writeBusy}>
+          <Plus size={16} /> 添加
+        </button>
+      </header>
+      <div className="automation-layout">
+        <div className="automation-list-pane">
+          <div className="automation-toolbar">
+            <div className="automation-filter" onBlur={event => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFilterOpen(false);
+            }}>
+              <button type="button" className="automation-filter-trigger" aria-label="筛选和排序任务"
+                aria-haspopup="menu" aria-expanded={filterOpen} onClick={() => {
+                  filterFocusLastRef.current = false; setFilterOpen(value => !value);
+                }} onKeyDown={event => {
+                  if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+                  event.preventDefault(); filterFocusLastRef.current = event.key === "ArrowUp"; setFilterOpen(true);
+                }}>
+                <ListFilter size={16} /><span>{stateOptions.find(([value]) => value === statusFilter)?.[1]}</span>
+              </button>
+              {filterOpen && <div ref={filterMenuRef} className="automation-filter-menu" role="menu" aria-label="筛选和排序任务"
+                onKeyDown={event => {
+                  if (event.key === "Escape") {
+                    event.preventDefault(); setFilterOpen(false);
+                    event.currentTarget.parentElement?.querySelector("button")?.focus();
+                  } else if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+                    event.preventDefault();
+                    const controls = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>("button"));
+                    const index = controls.indexOf(document.activeElement as HTMLButtonElement);
+                    const next = event.key === "Home" ? 0 : event.key === "End" ? controls.length - 1 :
+                      (index + (event.key === "ArrowDown" ? 1 : -1) + controls.length) % controls.length;
+                    controls[next]?.focus();
+                  }
+                }}>
+                <span className="automation-menu-heading">状态</span>
+                {stateOptions.map(([value, label]) => <button type="button" key={value} role="menuitemradio"
+                  aria-checked={statusFilter === value} onClick={event => {
+                    setStatusFilter(value); setFilterOpen(false);
+                    event.currentTarget.closest(".automation-filter")?.querySelector("button")?.focus();
+                  }}>{label}{statusFilter === value && <Check size={14} />}</button>)}
+                <span className="automation-menu-heading">排序</span>
+                {sortOptions.map(([value, label]) => <button type="button" key={value} role="menuitemradio"
+                  aria-checked={sortOrder === value} onClick={event => {
+                    setSortOrder(value); setFilterOpen(false);
+                    event.currentTarget.closest(".automation-filter")?.querySelector("button")?.focus();
+                  }}>{label}{sortOrder === value && <Check size={14} />}</button>)}
+              </div>}
             </div>
-          ))}
+            <label className="automation-search"><Search size={15} />
+              <input aria-label="搜索任务" placeholder="搜索任务" maxLength={256} value={searchQuery}
+                onChange={event => setSearchQuery(event.target.value)} />
+            </label>
+          </div>
+          {notice && <p className={`automation-notice ${notice.kind}`} role={notice.kind === "error" ? "alert" : "status"}>{notice.text}</p>}
+          {listError ? <div className="automation-list-message" role="alert">
+            <p>{listError}</p><button type="button" className="secondary-btn" onClick={refresh}>重试</button>
+          </div> : listLoading ? <p className="automation-list-message" role="status">正在加载任务…</p> : <>
+            <div className="automation-table-heading" aria-hidden="true"><span>任务</span><span>下次运行</span><span>已安排</span></div>
+            {filteredItems.length === 0 ? <p className="automation-list-message">没有符合筛选条件的任务</p> :
+              <div className="automation-task-list" aria-label="任务列表">
+                {filteredItems.map(item => <div className="automation-task-row-wrap" key={item.id}>
+                  <button type="button" className={`automation-task-row ${selectedAutomationId === item.id ? "selected" : ""}`}
+                    aria-label={item.name} aria-expanded={selectedAutomationId === item.id} onClick={event => {
+                      if (writePendingRef.current) return;
+                      if (configurationDirty && !confirm("放弃未保存的更改？")) return;
+                      rowTriggerRef.current = event.currentTarget;
+                      setShowCreateForm(false); setEditingItem(null); setSelectedAutomationId(item.id);
+                    }}>
+                    <span className="automation-task-name"><Clock size={16} /><span>{item.name}</span>
+                      {runningAutomationIds.has(item.id) && <span className="automation-running">运行中…</span>}</span>
+                    <span className="automation-task-time">{nextRunLabel(item)}</span>
+                    <span className="automation-task-schedule">{scheduleLabel(item)}</span>
+                  </button>
+                </div>)}
+              </div>}
+          </>}
         </div>
-      </div>
-
-      {/* Create Automation / Goal Form */}
+        {(showCreateForm || selectedItem) && <aside className="automation-detail" aria-label={showCreateForm ? "任务配置" : "任务详情"}>
+          <header className="automation-detail-header"><h2>{showCreateForm ? editingItem ? "编辑定时任务" : "添加定时任务" : selectedItem?.name}</h2>
+            <button ref={detailCloseRef} type="button" className="automation-close" aria-label="关闭任务详情" disabled={writeBusy} onClick={closeTaskPanel}><X size={16} /></button>
+          </header>
       {showCreateForm && (
-        <fieldset className="card-section" disabled={writeBusy} style={{ minWidth: 0 }}>
-          <h3>{editingItem ? "编辑计划任务或长期目标" : "创建计划任务或长期目标"}</h3>
+        <fieldset className="automation-config-fieldset" disabled={writeBusy} style={{ minWidth: 0 }}>
           <div className="form-grid-row">
             <div className="form-field">
-              <label>任务 / 目标名称</label>
+              <label>名称</label>
               <input
                 type="text"
                 placeholder="例如：每日代码质量巡检 或 完成全量重构"
@@ -969,7 +793,7 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
             </div>
           </div>
           <div className="form-field" style={{ marginTop: 10 }}>
-            <label>Prompt 指令与验收标准</label>
+            <label>指令</label>
             <textarea
               rows={3}
               placeholder="输入触发时发送给 Codex Agent 的完整指令或长期目标验收条件..."
@@ -984,12 +808,15 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
               onClick={handleCreate}
               disabled={!name.trim() || !prompt.trim()}
             >
-              {editingItem ? <Edit2 size={14} /> : <Plus size={14} />} {editingItem ? "保存修改" : "保存到 automation.toml"}
+              {editingItem ? <Edit2 size={14} /> : <Plus size={14} />} {editingItem ? "保存修改" : "创建"}
             </button>
             <button
               type="button"
               className="secondary-btn"
               onClick={() => {
+                if (configurationDirty && !confirm("放弃未保存的更改？")) return;
+                if (editingItem) detailCloseRef.current?.focus();
+                else rowTriggerRef.current?.focus();
                 setShowCreateForm(false);
                 setEditingItem(null);
                 setName("");
@@ -1001,276 +828,44 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
           </div>
         </fieldset>
       )}
-
-      {/* Automations & Goals List */}
-      <div className="card-section">
-        <h3>任务列表 ({filteredItems.length})</h3>
-        {filteredItems.length === 0 ? (
-          <div className="empty-hint">
-            当前筛选条件下暂无计划任务，可点击上方预设卡片或「新建任务 / 目标」快速创建。
-          </div>
-        ) : (
-          <div className="item-cards-list">
-            {filteredItems.map((item) => {
-              const entry = schedulerEntriesById.get(item.id);
-              const itemRunning = runningAutomationIds.has(item.id);
-              const itemThreadId = runThreads[item.id];
-              const showSchedulerMeta =
-                schedulerState === "ready" || Boolean(entry) || Boolean(itemThreadId);
-              return (
-                <div key={item.id} className="item-card">
-                  <div className="item-card-main">
-                    <div className="item-card-title-row">
-                      {item.kind === "goal" ? (
-                        <Target size={15} className="accent-icon" />
-                      ) : (
-                        <Clock size={15} className="accent-icon" />
-                      )}
-                      <strong>{item.name}</strong>
-                      <span
-                        className={`tag-badge ${
-                          item.status === "ACTIVE" ? "accent" : ""
-                        }`}
-                      >
-                        {item.status}
-                      </span>
-                      <span className="tag-badge">
-                        {item.kind === "goal" ? "长期目标 /goal" : item.kind}
-                      </span>
-                      <span className="tag-badge">{item.executionEnvironment}</span>
-                      {itemRunning && (
-                        <span
-                          className="tag-badge"
-                          style={{
-                            color: "var(--accent-blue)",
-                            background: "rgba(58, 131, 247, 0.15)",
-                          }}
-                        >
-                          运行中…
-                        </span>
-                      )}
-                    </div>
-                    <p className="item-card-desc">{item.prompt}</p>
-                    <div className="item-card-meta">
-                      <span>周期: {item.rrule}</span>
-                      {item.cwds.length > 0 && <span>项目: {item.cwds[0]}</span>}
-                      {item.model && <span>模型: {item.model}</span>}
-                    </div>
-                    {showSchedulerMeta && (
-                      <div
-                        className="item-card-meta"
-                        style={{ flexWrap: "wrap", rowGap: 4 }}
-                      >
-                        <span
-                          title={
-                            entry?.nextRunAt
-                              ? formatDateTime(entry.nextRunAt)
-                              : "调度器尚未给出下次运行时间"
-                          }
-                        >
-                          下次运行:{" "}
-                          {entry?.nextRunAt
-                            ? `${formatDateTime(entry.nextRunAt)}（${formatRelativeTime(
-                                entry.nextRunAt,
-                                clock
-                              )}）`
-                            : "—"}
-                        </span>
-                        <span
-                          style={{ color: runStatusColor(entry?.lastStatus) }}
-                          title={entry?.lastError || undefined}
-                        >
-                          上次运行:{" "}
-                          {entry?.lastRunAt
-                            ? `${formatDateTime(entry.lastRunAt)} · ${runStatusLabel(
-                                entry.lastStatus
-                              )}`
-                            : runStatusLabel(entry?.lastStatus)}
-                        </span>
-                        <span>运行次数: {entry?.runCount ?? 0}</span>
-                        {itemThreadId && (
-                          <button
-                            type="button"
-                            className="tag-badge"
-                            style={{
-                              cursor: onSelectThread ? "pointer" : "default",
-                              border: "1px solid var(--border-subtle)",
-                              background: "var(--bg-card)",
-                              padding: "2px 6px",
-                            }}
-                            onClick={() => onSelectThread?.(itemThreadId)}
-                            title={`跳转到关联会话：${itemThreadId}`}
-                          >
-                            线程: {shortId(itemThreadId)} ↗
-                          </button>
-                        )}
-                        {entry?.lastError && (
-                          <span
-                            style={{ color: "var(--accent-red)" }}
-                            title={entry.lastError}
-                          >
-                            错误: {truncateText(entry.lastError, 60)}
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  <div className="item-card-actions">
-                    <button
-                      type="button"
-                      className="primary-btn-sm"
-                      onClick={() => handleRunNow(item)}
-                      disabled={runBusyId !== null}
-                      title={
-                        schedulerState === "unavailable"
-                          ? "调度器不可用（后端未就绪），将回退为本地立即运行"
-                          : "通过调度器立即执行一次"
-                      }
-                    >
-                      <Zap size={13} />{" "}
-                      {runBusyId === item.id ? "触发中…" : "立即运行"}
-                    </button>
-                    <button
-                      type="button"
-                      className="secondary-btn-sm"
-                      onClick={() => handleStartEdit(item)}
-                      title="编辑任务配置"
-                    >
-                      <Edit2 size={12} /> 编辑
-                    </button>
-                    <button
-                      type="button"
-                      className="secondary-btn-sm"
-                      onClick={() => handleToggleStatus(item)}
-                    >
-                      {item.status === "PAUSED" ? (
-                        <>
-                          <Play size={12} /> 启用
-                        </>
-                      ) : (
-                        <>
-                          <Pause size={12} /> 暂停
-                        </>
-                      )}
-                    </button>
-                    {item.status !== "COMPLETED" && (
-                      <button
-                        type="button"
-                        className="secondary-btn-sm"
-                        onClick={() => handleToggleStatus(item, "COMPLETED")}
-                        title="标记为已完成"
-                      >
-                        <CheckCircle2 size={12} /> 完成
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      className="danger-btn-sm"
-                      onClick={() => handleDelete(item.id)}
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
+          {!showCreateForm && selectedItem && <>
+            <p className="automation-detail-prompt">{selectedItem.prompt}</p>
+            <dl className="automation-detail-metadata">
+              <div><dt>状态</dt><dd>{selectedItem.status === "PAUSED" ? "已暂停" : selectedItem.status === "COMPLETED" ? "已完成" : "已开启"}</dd></div>
+              <div><dt>下次运行</dt><dd>{nextRunLabel(selectedItem)}</dd></div>
+              <div><dt>已安排</dt><dd>{scheduleLabel(selectedItem)}</dd></div>
+            </dl>
+            <div className="automation-detail-actions">
+              <button type="button" className="secondary-btn" onClick={() => handleRunNow(selectedItem)} disabled={runBusyId !== null}
+                title={schedulerState === "unavailable" ? "调度器不可用，任务尚未运行" : "立即运行"}>
+                <Play size={14} />{runBusyId === selectedItem.id ? "触发中…" : "立即运行"}</button>
+              <button type="button" className="secondary-btn" disabled={writeBusy} onClick={() => handleStartEdit(selectedItem)}><Edit2 size={14} />编辑</button>
+              <button type="button" className="secondary-btn" disabled={writeBusy} onClick={() => handleToggleStatus(selectedItem)}>
+                {selectedItem.status === "PAUSED" ? <Play size={14} /> : <Pause size={14} />}{selectedItem.status === "PAUSED" ? "启用" : "暂停"}</button>
+              <button type="button" className="danger-btn-sm" disabled={writeBusy} onClick={() => handleDelete(selectedItem.id)}><Trash2 size={14} />删除</button>
+              {selectedItem.kind === "goal" && selectedItem.status !== "COMPLETED" && <button type="button" className="secondary-btn" disabled={writeBusy}
+                onClick={() => handleToggleStatus(selectedItem, "COMPLETED")}><CheckCircle2 size={14} />完成</button>}
+            </div>
+            {(schedulerState === "unavailable" || schedulerState === "error") && <div className="automation-detail-error" role="status">
+              <p>{schedulerState === "unavailable" ? "调度器不可用，任务尚未运行。" : schedulerError}</p>
+              <button type="button" className="secondary-btn" onClick={handleRefreshSchedule} disabled={schedulerBusy}>{schedulerBusy ? "刷新中…" : "重试"}</button>
+            </div>}
+            <section className="automation-run-results" aria-label="上次运行"><h3>上次运行</h3>
+              {selectedRuns.length === 0 ? <p>{selectedEntry?.lastRunAt ? `${formatDateTime(selectedEntry.lastRunAt)} · ${runStatusLabel(selectedEntry.lastStatus)}` : "尚未运行"}</p> :
+                selectedRuns.map(record => <div className="automation-run-result" key={record.key}>
+                  <span style={{color:runStatusColor(record.status)}}>{runStatusLabel(record.status)}</span>
+                  <time>{formatDateTime(record.finishedAt ?? record.startedAt)}</time>
+                  {record.error && <p role="alert">{record.error}</p>}
+                  {record.threadId && <button type="button" className="secondary-btn" disabled={!onSelectThread}
+                    onClick={() => onSelectThread?.(record.threadId!)}>查看会话</button>}
+                </div>)}
+              {selectedRuns.length === 0 && runThreads[selectedItem.id] && <button type="button" className="secondary-btn" disabled={!onSelectThread}
+                onClick={() => onSelectThread?.(runThreads[selectedItem.id])}>查看会话</button>}
+              {selectedEntry?.lastError && <p role="alert">{selectedEntry.lastError}</p>}
+            </section>
+          </>}
+        </aside>}
       </div>
-
-      {/* Scheduler run history (latest 20, clearable) */}
-      <div className="card-section">
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 12,
-            flexWrap: "wrap",
-          }}
-        >
-          <h3 style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <History size={14} /> 运行历史（最近 {runHistory.length} /{" "}
-            {MAX_RUN_HISTORY} 条）
-          </h3>
-          <button
-            type="button"
-            className="secondary-btn"
-            onClick={() => {
-              setRunHistory([]);
-              setNotice({ kind: "info", text: "运行历史已清空。" });
-            }}
-            disabled={runHistory.length === 0}
-          >
-            <Trash2 size={13} /> 清空
-          </button>
-        </div>
-        {runHistory.length === 0 ? (
-          <div className="empty-hint">
-            尚未收到调度器运行事件。开启调度器或点击「立即运行」后，运行记录会实时出现在这里。
-          </div>
-        ) : (
-          <div className="item-cards-list">
-            {runHistory.map((record) => (
-              <div key={record.key} className="item-card">
-                <div className="item-card-main" style={{ flex: 1 }}>
-                  <div className="item-card-title-row">
-                    <strong>{record.name}</strong>
-                    <span
-                      className="tag-badge"
-                      style={{
-                        color: runStatusColor(record.status),
-                        background: runStatusBackground(record.status),
-                      }}
-                    >
-                      {runStatusLabel(record.status)}
-                    </span>
-                    {record.threadId && (
-                      <button
-                        type="button"
-                        className="tag-badge"
-                        style={{
-                          cursor: onSelectThread ? "pointer" : "default",
-                          border: "1px solid var(--border-subtle)",
-                          background: "var(--bg-card)",
-                        }}
-                        onClick={() => onSelectThread?.(record.threadId!)}
-                        title={`跳转到关联会话：${record.threadId}`}
-                      >
-                        线程 {shortId(record.threadId)} ↗
-                      </button>
-                    )}
-                  </div>
-                  {record.error && (
-                    <p
-                      className="item-card-desc"
-                      style={{ color: "var(--accent-red)", margin: 0 }}
-                      title={record.error}
-                    >
-                      {truncateText(record.error, 160)}
-                    </p>
-                  )}
-                </div>
-                <div className="item-card-actions">
-                  <span
-                    style={{
-                      fontSize: "calc(11.5px * var(--font-ui-scale, 1))",
-                      color: "var(--text-tertiary)",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {record.status === "running"
-                      ? `开始于 ${formatDateTime(record.startedAt)}`
-                      : `完成于 ${formatDateTime(
-                          record.finishedAt ?? record.startedAt
-                        )}`}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
+    </section>
   );
 };

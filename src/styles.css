@@ -2463,10 +2463,6 @@ html, body, #root {
   cursor: pointer;
   font-weight: 500;
 }
-.composer-mode-badge.plan {
-  background: rgba(58, 131, 247, 0.16);
-  color: #60a5fa;
-}
 .composer-mode-badge.fast {
   background: rgba(245, 158, 11, 0.16);
   color: #fbbf24;
@@ -2629,6 +2625,30 @@ html, body, #root {
 
 .composer-inline-pill.danger-accent {
   color: #f59e0b;
+}
+
+.composer-plan-indicator {
+  gap: 4px;
+  background: transparent;
+  color: var(--text-tertiary);
+}
+
+.composer-plan-indicator > svg {
+  flex-shrink: 0;
+}
+
+.composer-plan-indicator .composer-plan-dismiss-icon,
+.composer-plan-indicator:hover .composer-plan-icon {
+  display: none;
+}
+
+.composer-plan-indicator:hover .composer-plan-dismiss-icon {
+  display: block;
+}
+
+.composer-plan-indicator:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
 }
 
 .composer-popover-menu {
@@ -6882,23 +6902,6 @@ html, body, #root {
 
 .codex-two-tier-composer.home .composer-bottom-bar {
   padding: 2px 10px 6px;
-}
-
-.composer-worktree-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-secondary);
-  font-size: var(--text-xs);
-  cursor: pointer;
-}
-
-.composer-worktree-toggle input {
-  width: 15px;
-  height: 15px;
-  margin: 0;
-  accent-color: var(--accent-blue);
-  cursor: pointer;
 }
 
 .codex-sidebar.collapsed {

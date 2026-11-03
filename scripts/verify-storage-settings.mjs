@@ -11,7 +11,7 @@ assert.ok(!native.includes("storage_clean_cache"), "STG02: destructive Tauri com
 assert.ok(!backend.includes("pub fn clean_storage_cache"), "STG02: rollout-deleting implementation stays removed");
 assert.ok(!view.includes('"storage_clean_cache"'));
 assert.ok(native.includes("storage_stats_get"), "STG04: unrelated local-stat consumers remain supported");
-assert.ok(view.includes('activeSection === "storage" && <StorageSettings scope={JSON.stringify([connectionIdentity, accountIdentity])} />'));
+assert.ok(view.includes('activeSection === "storage" && <StorageSettings scope={JSON.stringify([connectionIdentity, accountIdentity])} onOpenLibrary={onOpenLibraryStorage} />'));
 assert.ok(!view.includes("setStorageStats") && !view.includes("const formatBytes"), "STG01: cloud quota never substitutes local disk usage");
 for (const suffix of ['<div className="header-right-btns">', 'saveBanner &&', 'errorBanner &&']) {
   assert.ok(view.includes(`activeSection !== "import" && activeSection !== "storage" && ${suffix}`), "STG03: no generic storage save/refresh/banner");
@@ -114,7 +114,10 @@ let h = surface(); h.render(); assert.match(h.text(), /正在读取云端/); h.e
 assert.match(h.text(), /900 MB/); assert.match(h.text(), /100 MB/); assert.match(h.text(), /即将用完/);
 assert.equal(h.nodes().find(node => node.type === "progress").props.value, body.used_bytes);
 assert.ok(!h.nodes().some(node => node.type === "input"));
-assert.doesNotMatch(h.text(), /文件数量|图像数量|升级|清理|尚未连接/); h.unmount();
+assert.doesNotMatch(h.text(), /文件数量|图像数量|升级|清理|尚未连接/);
+const opened = []; h.render({ onOpenLibrary: tab => opened.push(tab) });
+h.button("文件").props.onClick(); h.button("图像").props.onClick();
+assert.deepEqual(opened, ["all", "images"], "storage entries keep the explicit official cleanup tab"); h.unmount();
 h = surface(); h.control.read = async () => { throw Error("fixture unavailable"); }; await h.start();
 assert.match(h.text(), /fixture unavailable/); assert.ok(!h.nodes().some(node => node.type === "progress"));
 h.control.read = async request => ({ requestId: request.requestId, identity, body: { ...body, allowed_bytes: 0, used_bytes: 0, remaining_bytes: 0 } });
@@ -148,4 +151,4 @@ assert.match(h.text(), /900 MB/); assert.equal(h.calls.at(-1).expectedIdentity.g
 h = surface(); h.control.listen = async () => { throw Error("listener fixture failure"); }; await h.start();
 assert.match(h.text(), /同步失败/); assert.ok(h.button("重试同步")); h.unmount();
 console.log("PASS STG01-STG04 safety regressions; actual production storage client/parser/component: quota boundaries, schema errors, authenticated request envelope, late cancellation, account generation, scope change, retry and listener cleanup");
-console.log("NOT TESTED: real authenticated HTTP, official pixel parity, native GUI/IME, Library cleanup and upgrades");
+console.log("NOT TESTED: real authenticated HTTP, official pixel parity, native GUI/IME, complete Library cleanup and upgrades");
