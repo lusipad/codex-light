@@ -49,6 +49,7 @@ pub enum ServiceOperation {
     ShareAccounts,
     ShareUsers,
     ShareGroups,
+    WhamUsage,
 }
 
 #[derive(Clone, Deserialize)]
@@ -877,17 +878,51 @@ impl ChatgptService {
                         return Err(failure("account_changed", "Authenticated identity changed"));
                     }
                     let sent_integrity = session.integrity.clone();
-                    let http_request = build_http_request(&route, credentials, sent_integrity.as_deref(), &request.profile)?;
-                    let response = send_bounded(transport, http_request, registration.cancelled.clone(), Duration::from_secs(50)).await?;
+                    let mut http_request = build_http_request(&route, credentials, sent_integrity.as_deref(), &request.profile)?;
+                    let usage = matches!(request.operation, ServiceOperation::WhamUsage);
+                    if usage {
+                        // Fixed official Vyr/Qbr brand, not our executable's product name.
+                        http_request.headers.insert("OAI-App-Brand".into(), "chatgpt".into());
+                        http_request.headers.insert("x-openai-codex-pricing-chooser".into(), "1".into());
+                        share_network_allowed(&call, &http_request.url).await?;
+                        self.check_share_current(&request.expected_identity, &registration)?;
+                    }
+                    let response = send_bounded(transport, http_request, registration.cancelled.clone(), Duration::from_secs(if usage { 10 } else { 50 })).await?;
                     if self.generation() != generation {
                         return Err(failure("account_changed", "Authenticated identity changed"));
                     }
                     apply_integrity(&mut session.integrity, sent_integrity.as_deref(), response.headers.get("x-oai-is-update"));
-                    if response.status == 401 && attempt == 0 {
+                    if response.status == 401 && attempt == 0 && !(usage && account_instructions_ip_denied(&response)) {
                         self.prepare(&mut session, generation, &call, true).await?;
                         continue;
                     }
-                    return decode_response(response, request.request_id.clone(), request.expected_identity.clone());
+                    if usage && matches!(response.status, 401 | 403 | 404) {
+                        return Ok(ServiceResponse { request_id:request.request_id.clone(), identity:request.expected_identity.clone(),
+                            status:response.status, body:Value::Null, headers:BTreeMap::new() });
+                    }
+                    let decoded = decode_response(response, request.request_id.clone(), request.expected_identity.clone())?;
+                    if usage && wham_usage_identity(&decoded.body, &request.expected_identity)? {
+                        // The official personal-account payload may use an empty account_id.
+                        // Verify real membership; a renderer-supplied personal flag is not evidence.
+                        let credentials = session.credentials.as_ref().unwrap();
+                        if credentials.identity != request.expected_identity { return Err(failure("account_changed", "Authenticated identity changed")); }
+                        let integrity = session.integrity.clone();
+                        let account_request = build_http_request("/backend-api/wham/accounts/check", credentials, integrity.as_deref(), &request.profile)?;
+                        share_network_allowed(&call, &account_request.url).await?;
+                        self.check_share_current(&request.expected_identity, &registration)?;
+                        let account_response = send_bounded(transport, account_request, registration.cancelled.clone(), Duration::from_secs(50)).await?;
+                        self.check_share_current(&request.expected_identity, &registration)?;
+                        apply_integrity(&mut session.integrity, integrity.as_deref(), account_response.headers.get("x-oai-is-update"));
+                        if account_response.status == 401 && attempt == 0 && !account_instructions_ip_denied(&account_response) {
+                            self.prepare(&mut session, generation, &call, true).await?;
+                            continue;
+                        }
+                        let accounts = decode_response(account_response, request.request_id.clone(), request.expected_identity.clone())?;
+                        if !wham_usage_personal_account(&accounts.body, &request.expected_identity) {
+                            return Err(failure("account_changed", "Usage response does not match the selected account"));
+                        }
+                    }
+                    return Ok(decoded);
                 }
                 unreachable!()
             } => result,
@@ -1534,6 +1569,7 @@ fn resolve_route(operation: &ServiceOperation, params: &Value) -> ServiceResult<
                 "hydrate_folder_thumbnails",
             ],
         ),
+        ServiceOperation::WhamUsage => ("/backend-api/wham/usage".into(), &[]),
         ServiceOperation::ImagesInit => ("/backend-api/images/init".into(), &[]),
         ServiceOperation::ImagesStyles => (
             "/backend-api/images/styles".into(),
@@ -2112,6 +2148,26 @@ fn apply_integrity(
         return true;
     }
     false
+}
+
+/// Returns true only for the official empty-account personal payload requiring membership evidence.
+fn wham_usage_identity(body: &Value, identity: &ServiceIdentity) -> ServiceResult<bool> {
+    if !body.is_object() { return Err(failure("invalid_response", "Invalid usage response")); }
+    if body.get("user_id").and_then(Value::as_str) != Some(identity.user_id.as_str()) {
+        return Err(failure("account_changed", "Usage response does not match the authenticated user"));
+    }
+    match body.get("account_id").and_then(Value::as_str) {
+        Some(account) if account == identity.account_id => Ok(false),
+        Some("") => Ok(true),
+        _ => Err(failure("account_changed", "Usage response does not match the selected account")),
+    }
+}
+
+fn wham_usage_personal_account(body: &Value, identity: &ServiceIdentity) -> bool {
+    let Some(accounts) = body.get("accounts").and_then(Value::as_array) else { return false; };
+    let matching = accounts.iter().filter(|account| account.get("id").and_then(Value::as_str) == Some(identity.account_id.as_str())).collect::<Vec<_>>();
+    matching.len() == 1 && matching[0]["structure"] == "personal" && matching[0]["is_deactivated"] != true &&
+        matching[0]["can_access_with_session"] != false
 }
 
 // early-bootstrap-339 hT: a workspace IP refusal is not an expired-token response.
@@ -3382,6 +3438,124 @@ mod tests {
             "configRequirements/read" => Ok(json!({"requirements":null})),
             _ => Err("unexpected fixture RPC".into()),
         })
+    }
+
+    fn usage_request(id: &str) -> ServiceRequest {
+        let mut request = request(id);
+        request.operation = ServiceOperation::WhamUsage;
+        request
+    }
+
+    fn usage_body() -> Value {
+        json!({"user_id":"user-fixture","account_id":"account-fixture","plan_type":"pro",
+            "rate_limit":{"primary_window":{"used_percent":null,"reset_at":1800000000}},
+            "credits":{"balance":"0","unit":"credits"},"extra":null})
+    }
+
+    #[tokio::test]
+    async fn wham_usage_reads_fixed_brand_headers_and_preserves_missing_values() {
+        let service = ChatgptService::default();
+        let body = usage_body();
+        let transport = instructions_transport(&[200], &[body.clone()]);
+        let result = service.read_with(usage_request("usage-read"), share_rpc, &transport).await.unwrap();
+        assert_eq!(result.body, body);
+        assert!(result.body["rate_limit"]["primary_window"]["used_percent"].is_null());
+        assert!(result.body["rate_limit"].get("secondary_window").is_none());
+        assert_eq!(result.body["credits"]["balance"], "0");
+        let public = serde_json::to_string(&result).unwrap();
+        assert!(!public.contains(&fixture_token()));
+        let requests = transport.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].method, HttpMethod::Get);
+        assert_eq!(requests[0].url, "https://chatgpt.com/backend-api/wham/usage");
+        assert_eq!(requests[0].headers["OAI-App-Brand"], "chatgpt");
+        assert_eq!(requests[0].headers["x-openai-codex-pricing-chooser"], "1");
+        assert_eq!(requests[0].headers["ChatGPT-Account-Id"], "account-fixture");
+        assert!(requests[0].body.is_empty());
+        assert!(resolve_route(&ServiceOperation::WhamUsage, &json!({"url":"https://example.test"})).is_err());
+    }
+
+    #[tokio::test]
+    async fn wham_usage_unavailable_status_is_null_not_zero_and_get_refresh_is_bounded() {
+        for status in [401,403,404] {
+            let service = ChatgptService::default();
+            let transport = FakeTransport::new(if status == 401 { &[401,401] } else { std::slice::from_ref(&status) });
+            let result = service.read_with(usage_request("usage-unavailable"), share_rpc, &transport).await.unwrap();
+            assert!(result.body.is_null());
+            assert_eq!(result.status, status);
+            assert_eq!(transport.requests.lock().unwrap().len(), if status == 401 {2} else {1});
+        }
+        for (status, code) in [(429,"rate_limited"), (500,"service_error")] {
+            let service = ChatgptService::default();
+            let transport = FakeTransport::new(&[status]);
+            assert_eq!(service.read_with(usage_request("usage-failure"), share_rpc, &transport).await.err().unwrap().code, code);
+            assert_eq!(transport.requests.lock().unwrap().len(), 1);
+        }
+        let service = ChatgptService::default();
+        let transport = instructions_transport(&[401,200], &[json!({}),usage_body()]);
+        assert_eq!(service.read_with(usage_request("usage-refreshed"), share_rpc, &transport).await.unwrap().body, usage_body());
+        assert_eq!(transport.requests.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn wham_usage_rejects_other_users_accounts_and_unknown_identity_before_exposing_data() {
+        for body in [
+            json!({"user_id":"another-user","account_id":"account-fixture"}),
+            json!({"user_id":"user-fixture","account_id":"another-account"}),
+            json!({"user_id":"user-fixture"}), json!({}), json!([]),
+        ] {
+            let service = ChatgptService::default();
+            let transport = instructions_transport(&[200], &[body]);
+            assert!(service.read_with(usage_request("usage-mismatch"), share_rpc, &transport).await.is_err());
+            assert_eq!(transport.requests.lock().unwrap().len(), 1);
+        }
+        let service = ChatgptService::default();
+        let transport = FakeTransport::new(&[]);
+        let mut request = usage_request("usage-other-account");
+        request.expected_identity.account_id = "another-account".into();
+        assert_eq!(service.read_with(request, share_rpc, &transport).await.err().unwrap().code, "account_changed");
+        assert!(transport.requests.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn wham_usage_empty_account_requires_current_personal_membership_not_a_plan_guess() {
+        for structure in ["personal", "workspace", "unknown"] {
+            let service = ChatgptService::default();
+            let mut body = usage_body(); body["account_id"] = json!("");
+            let accounts = json!({"accounts":[{"id":"account-fixture","structure":structure}],"account_ordering":["account-fixture"]});
+            let transport = instructions_transport(&[200,200], &[body.clone(),accounts]);
+            let result = service.read_with(usage_request("usage-personal"), share_rpc, &transport).await;
+            if structure == "personal" { assert_eq!(result.unwrap().body, body); }
+            else { assert_eq!(result.err().unwrap().code, "account_changed"); }
+            let requests = transport.requests.lock().unwrap();
+            assert_eq!(requests.len(), 2);
+            assert_eq!(requests[1].url, "https://chatgpt.com/backend-api/wham/accounts/check");
+        }
+    }
+
+    #[tokio::test]
+    async fn wham_usage_network_policy_cancel_and_account_changes_do_not_release_stale_data() {
+        let service = ChatgptService::default();
+        let transport = FakeTransport::new(&[]);
+        let denied = |method, params| {
+            if method == "configRequirements/read" { std::future::ready(Ok(json!({"requirements":{"application":{"network":{"enabled":true,"domains":{}}}}}))) }
+            else { share_rpc(method, params) }
+        };
+        assert_eq!(service.read_with(usage_request("usage-network-denied"), denied, &transport).await.err().unwrap().code, "network_restricted");
+        assert!(transport.requests.lock().unwrap().is_empty());
+        for invalidate in [false,true] {
+            let service = ChatgptService::default();
+            let mut transport = instructions_transport(&[200], &[usage_body()]); transport.delay_ms=100;
+            let read = service.read_with(usage_request("usage-pending"), share_rpc, &transport);
+            let change = async {
+                while !transport.entered.load(Ordering::SeqCst) { tokio::task::yield_now().await; }
+                if invalidate { service.invalidate(); } else { service.cancel("usage-pending"); }
+            };
+            let result = tokio::join!(read,change).0;
+            assert_eq!(result.err().unwrap().code, if invalidate {"account_changed"} else {"cancelled"});
+            assert_eq!(transport.requests.lock().unwrap().len(),1);
+            assert!(service.active.lock().unwrap().is_empty());
+        }
     }
 
     fn instructions_request(id: &str) -> AccountInstructionsRequest {

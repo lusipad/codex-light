@@ -137,6 +137,8 @@ try {
   Invoke-Step "Rust account instructions authenticated transport contracts" { cargo test --locked --manifest-path src-tauri/Cargo.toml account_instructions_ }
   Invoke-Step "Personal Codex instructions isolated file regression" { cargo test --manifest-path src-tauri/Cargo.toml personal_instructions }
   Invoke-Step "Account identity, partial failure and lifecycle regression" { node scripts/verify-account-snapshot.mjs }
+  Invoke-Step "Account login, managed restrictions and cancellation regression" { node scripts/verify-account-session-b.mjs }
+  Invoke-Step "Rust fixed usage service and identity contracts" { cargo test --locked --manifest-path src-tauri/Cargo.toml wham_usage_ }
   Invoke-Step "Profile real identity and unavailable write regression" { node scripts/verify-profile-settings.mjs }
   Invoke-Step "MCP runtime status discovery regression" { node scripts/verify-mcp-status.mjs }
   Invoke-Step "General open target and shell regression" { node scripts/verify-general-open.mjs }

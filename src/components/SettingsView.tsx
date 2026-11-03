@@ -39,7 +39,8 @@ import {
   Trash2,
 } from "lucide-react";
 import { isTauriRuntime, tauriInvoke, tauriListen } from "../bridge";
-import { loadAccountSnapshot } from "../accountSnapshot";
+import { AccountSettings } from "./AccountSettings";
+import { UsageSettings } from "./UsageSettings";
 import {
   GRANULAR_APPROVAL_POLICY,
   VALID_CONFIG_KEYS,
@@ -47,9 +48,6 @@ import {
   getConfigValue,
   mcpServerReload,
   setConfigKeys,
-  type AccountRateLimitsResult,
-  type AccountReadResult,
-  type AccountUsageResult,
   type ConfigEdit,
 } from "../config";
 import {
@@ -167,7 +165,8 @@ const SETTINGS_NAV_GROUPS: Array<{
     items: [
       { slug: "general-settings", label: "常规设置", keywords: "general editor notification sleep" },
       { slug: "profile", label: "个人资料", keywords: "profile avatar username bio 个人 资料" },
-      { slug: "account", label: "账号与额度", keywords: "account plan usage rate limit quota credits 账号 额度 用量 计划" },
+      { slug: "account", label: "账户", keywords: "account login logout email 账户 登录 退出 邮箱" },
+      { slug: "usage", label: "使用情况和计费", keywords: "usage plan billing rate limit quota credits 用量 计划 额度 计费" },
       { slug: "appearance", label: "外观与主题", keywords: "appearance theme font color" },
       { slug: "notifications", label: "通知与免打扰", keywords: "notifications desktop toast sound do not disturb 通知 免打扰 提示音" },
       { slug: "personalization", label: "个性化指令", keywords: "personalization tone instructions" },
@@ -246,6 +245,7 @@ interface SettingsViewProps {
   models: ModelInfo[];
   activeWorkspaceRoot?: string;
   accountIdentity?: string;
+  onAccountChanged?: () => void;
   onNavigationGuardChange?: (guard: ((action: () => void) => boolean) | null) => void;
   initialSection?: SettingsSectionSlug;
   petVisible?: boolean;
@@ -271,6 +271,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   models,
   activeWorkspaceRoot = "",
   accountIdentity,
+  onAccountChanged,
   onNavigationGuardChange,
   initialSection = "general-settings",
   petVisible = false,
@@ -294,6 +295,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     if (personalizationNavigationGuardRef.current?.(apply) === false) return;
     apply();
   }, []);
+  const connectionIdentity = JSON.stringify([appServerStatus.connected, appServerStatus.binaryPath, appServerStatus.appServerVersion, appServerStatus.userAgent]);
   const [navSearch, setNavSearch] = useState("");
   const [config, setConfig] = useState<CodexConfigOverview | null>(null);
   const [customCliPath, setCustomCliPath] = useState<string>("");
@@ -316,14 +318,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [protocolConfig, setProtocolConfig] = useState<Record<string, unknown> | null>(null);
   const [protocolConfigAvailable, setProtocolConfigAvailable] = useState<boolean>(false);
   const [mcpServersSnapshot, setMcpServersSnapshot] = useState<string>("[]");
-
-  // Account & quota (account/*) — read only
-  const [accountInfo, setAccountInfo] = useState<AccountReadResult | null>(null);
-  const [accountRateLimits, setAccountRateLimits] = useState<AccountRateLimitsResult | null>(null);
-  const [accountUsage, setAccountUsage] = useState<AccountUsageResult | null>(null);
-  const [accountLoading, setAccountLoading] = useState<boolean>(false);
-  const [accountError, setAccountError] = useState<string | null>(null);
-  const accountRequest = useRef(0);
 
   // Appearance & Personalization state
   const [activeThemeId, setActiveThemeId] = useState<string>("codex");
@@ -516,35 +510,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }
   };
 
-  const loadAccountData = async () => {
-    const version = ++accountRequest.current;
-    setAccountLoading(true);
-    setAccountError(null);
-    setAccountInfo(null); setAccountRateLimits(null); setAccountUsage(null);
-    try {
-      const result = await loadAccountSnapshot();
-      if (version !== accountRequest.current) return;
-      setAccountInfo(result.info); setAccountRateLimits(result.rateLimits); setAccountUsage(result.usage);
-      setAccountError(result.error);
-    } catch (error) {
-      if (version === accountRequest.current) setAccountError(`无法读取账号数据：${toErrorMessage(error)}`);
-    } finally {
-      if (version === accountRequest.current) setAccountLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (activeSection !== "account") return;
-    let disposed = false;
-    let unlisten: (() => void) | undefined;
-    void tauriListen<any>("app-server:notification", event => {
-      if (!disposed && event.method === "account/updated") void loadAccountData();
-    }).then(stop => { if (disposed) stop(); else unlisten = stop; }).catch(error => {
-      if (!disposed) setAccountError(`账号更新监听失败：${toErrorMessage(error)}`);
-    });
-    return () => { disposed = true; accountRequest.current += 1; unlisten?.(); };
-  }, [activeSection]);
-
   useEffect(() => {
     loadConfig();
     tauriInvoke<string | null>("desktop_state_get", { key: "colorTheme" })
@@ -562,13 +527,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       setActiveSection(initialSection === "providers-models" ? "agent" : initialSection === "experimental" ? "general-settings" : initialSection);
     }
   }, [initialSection]);
-
-  useEffect(() => {
-    if (activeSection === "account") {
-      void loadAccountData();
-
-    }
-  }, [activeSection, activeWorkspaceRoot]);
 
   const flashSaved = (msg: string) => {
     setSaveBanner(msg);
@@ -847,92 +805,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     })).filter((g) => g.items.length > 0);
   }, [navSearch]);
 
-  const formatTokenCount = (tokens: number | null | undefined): string => {
-    if (tokens === null || tokens === undefined || Number.isNaN(Number(tokens))) {
-      return "—";
-    }
-    const value = Number(tokens);
-    if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(2)}B`;
-    if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
-    if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
-    return String(value);
-  };
-
-  const formatUnixSeconds = (seconds: number | null | undefined): string => {
-    if (!seconds) return "—";
-    try {
-      return new Date(seconds * 1000).toLocaleString();
-    } catch {
-      return "—";
-    }
-  };
-
-  const formatWindowDuration = (mins: number | null | undefined): string => {
-    if (!mins) return "额度窗口";
-    if (mins === 300) return "5 小时窗口";
-    if (mins === 10080) return "7 天窗口";
-    if (mins % 1440 === 0) return `${mins / 1440} 天窗口`;
-    if (mins % 60 === 0) return `${mins / 60} 小时窗口`;
-    return `${mins} 分钟窗口`;
-  };
-
-  const formatDurationSeconds = (seconds: number | null | undefined): string => {
-    if (!seconds) return "—";
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    if (hours > 0) return `${hours} 小时 ${minutes} 分钟`;
-    return `${Math.max(1, minutes)} 分钟`;
-  };
-
-  const usageLast14Days = useMemo(() => {
-    const buckets = accountUsage?.dailyUsageBuckets || [];
-    const byDate = new Map<string, number>();
-    for (const bucket of buckets) {
-      if (bucket?.startDate) byDate.set(bucket.startDate, bucket.tokens || 0);
-    }
-    const days: Array<{ date: string; label: string; tokens: number }> = [];
-    const today = new Date();
-    for (let offset = 13; offset >= 0; offset -= 1) {
-      const day = new Date(
-        today.getFullYear(),
-        today.getMonth(),
-        today.getDate() - offset
-      );
-      const iso = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(
-        2,
-        "0"
-      )}-${String(day.getDate()).padStart(2, "0")}`;
-      days.push({
-        date: iso,
-        label: `${String(day.getMonth() + 1).padStart(2, "0")}-${String(
-          day.getDate()
-        ).padStart(2, "0")}`,
-        tokens: byDate.get(iso) ?? 0,
-      });
-    }
-    return days;
-  }, [accountUsage]);
-
-  const accountRateSnapshot = useMemo(() => {
-    if (accountRateLimits?.rateLimits) return accountRateLimits.rateLimits;
-    const byId = accountRateLimits?.rateLimitsByLimitId;
-    if (byId) {
-      const first = Object.values(byId)[0];
-      if (first) return first;
-    }
-    return null;
-  }, [accountRateLimits]);
-
-  const accountDailyMaxTokens = useMemo(
-    () => Math.max(1, ...usageLast14Days.map((day) => day.tokens)),
-    [usageLast14Days]
-  );
-
-  const chatgptAccount =
-    accountInfo?.account && accountInfo.account.type === "chatgpt"
-      ? accountInfo.account
-      : null;
-
   const renderBottomBar = () => (
     <div className="settings-section-bottom-bar">
       <button type="button" className="primary-btn" onClick={handleSaveVisual}>
@@ -1000,7 +872,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </p>}
             {activeSection === "agent" && errorBanner && <p role="alert" className="error-banner">{errorBanner}</p>}
           </div>
-          {activeSection !== "cloud-settings" && activeSection !== "pets" && activeSection !== "computer-use" && activeSection !== "appshots" && activeSection !== "browser-use" && activeSection !== "voice" && activeSection !== "archived-chats" && activeSection !== "agent" && activeSection !== "personalization" && activeSection !== "account" && activeSection !== "profile" && activeSection !== "plugins-settings" && activeSection !== "hooks-settings" && activeSection !== "git-settings" && activeSection !== "local-environments" && activeSection !== "worktrees" && activeSection !== "code-review" && activeSection !== "import" && activeSection !== "storage" && <div className="header-right-btns">
+          {activeSection !== "cloud-settings" && activeSection !== "pets" && activeSection !== "computer-use" && activeSection !== "appshots" && activeSection !== "browser-use" && activeSection !== "voice" && activeSection !== "archived-chats" && activeSection !== "agent" && activeSection !== "personalization" && activeSection !== "account" && activeSection !== "usage" && activeSection !== "profile" && activeSection !== "plugins-settings" && activeSection !== "hooks-settings" && activeSection !== "git-settings" && activeSection !== "local-environments" && activeSection !== "worktrees" && activeSection !== "code-review" && activeSection !== "import" && activeSection !== "storage" && <div className="header-right-btns">
             <button type="button" className="secondary-btn" onClick={loadConfig}>
               <RefreshCw size={14} /> 刷新配置
             </button>
@@ -1014,12 +886,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>}
         </div>
 
-        {activeSection !== "cloud-settings" && activeSection !== "pets" && activeSection !== "computer-use" && activeSection !== "appshots" && activeSection !== "browser-use" && activeSection !== "voice" && activeSection !== "archived-chats" && activeSection !== "agent" && activeSection !== "personalization" && activeSection !== "account" && activeSection !== "profile" && activeSection !== "plugins-settings" && activeSection !== "hooks-settings" && activeSection !== "git-settings" && activeSection !== "local-environments" && activeSection !== "worktrees" && activeSection !== "code-review" && activeSection !== "import" && activeSection !== "storage" && saveBanner && (
+        {activeSection !== "cloud-settings" && activeSection !== "pets" && activeSection !== "computer-use" && activeSection !== "appshots" && activeSection !== "browser-use" && activeSection !== "voice" && activeSection !== "archived-chats" && activeSection !== "agent" && activeSection !== "personalization" && activeSection !== "account" && activeSection !== "usage" && activeSection !== "profile" && activeSection !== "plugins-settings" && activeSection !== "hooks-settings" && activeSection !== "git-settings" && activeSection !== "local-environments" && activeSection !== "worktrees" && activeSection !== "code-review" && activeSection !== "import" && activeSection !== "storage" && saveBanner && (
           <div className="success-banner">
             <Check size={14} /> {saveBanner}
           </div>
         )}
-        {activeSection !== "cloud-settings" && activeSection !== "pets" && activeSection !== "computer-use" && activeSection !== "appshots" && activeSection !== "browser-use" && activeSection !== "voice" && activeSection !== "archived-chats" && activeSection !== "agent" && activeSection !== "personalization" && activeSection !== "account" && activeSection !== "profile" && activeSection !== "plugins-settings" && activeSection !== "hooks-settings" && activeSection !== "git-settings" && activeSection !== "local-environments" && activeSection !== "worktrees" && activeSection !== "code-review" && activeSection !== "import" && activeSection !== "storage" && errorBanner && <div className="error-banner">{errorBanner}</div>}
+        {activeSection !== "cloud-settings" && activeSection !== "pets" && activeSection !== "computer-use" && activeSection !== "appshots" && activeSection !== "browser-use" && activeSection !== "voice" && activeSection !== "archived-chats" && activeSection !== "agent" && activeSection !== "personalization" && activeSection !== "account" && activeSection !== "usage" && activeSection !== "profile" && activeSection !== "plugins-settings" && activeSection !== "hooks-settings" && activeSection !== "git-settings" && activeSection !== "local-environments" && activeSection !== "worktrees" && activeSection !== "code-review" && activeSection !== "import" && activeSection !== "storage" && errorBanner && <div className="error-banner">{errorBanner}</div>}
 
         {/* SECTION: GENERAL SETTINGS */}
         {LOCAL_ONLY_SETTINGS_SECTIONS.includes(activeSection) && (
@@ -1566,357 +1438,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           connectionIdentity={`${appServerStatus.connected}:${appServerStatus.binaryPath}:${appServerStatus.appServerVersion ?? ""}:${appServerStatus.userAgent ?? ""}`}
           onNavigationGuardChange={registerPersonalizationNavigationGuard} />
 
-        {/* ── SECTION 22: ACCOUNT & QUOTA (账号与额度) ── */}
-        {activeSection === "account" && (
-          <div className="settings-scroll-container">
-            <div className="card-section">
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "flex-start",
-                  gap: 12,
-                }}
-              >
-                <div>
-                  <h3>账号信息 (`account/read`)</h3>
-                  <p className="card-subtitle-desc">
-                    只读视图：登录 / 登出请使用 Codex CLI 或官方客户端。数据来自 app-server
-                    的 account/read、account/rateLimits/read 与 account/usage/read。
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  className="secondary-btn"
-                  onClick={() => void loadAccountData()}
-                  disabled={accountLoading}
-                >
-                  <RefreshCw size={14} /> {accountLoading ? "读取中..." : "刷新账号数据"}
-                </button>
-              </div>
-
-              {accountError && (
-                <div className="error-banner" style={{ marginTop: 10 }}>
-                  {accountError}
-                </div>
-              )}
-
-              {chatgptAccount ? (
-                <div className="item-cards-list" style={{ marginTop: 12 }}>
-                  <div className="item-card">
-                    <div className="item-card-main">
-                      <div className="item-card-title-row">
-                        <strong>{chatgptAccount.email || "(邮箱未提供)"}</strong>
-                        <span className="tag-badge accent">ChatGPT</span>
-                        <span className="tag-badge">plan: {chatgptAccount.planType}</span>
-                      </div>
-                      <div className="item-card-meta">
-                        <span>账号类型: chatgpt</span>
-                        <span>
-                          需要 OpenAI 登录:{" "}
-                          {accountInfo?.requiresOpenaiAuth ? "是" : "否"}
-                        </span>
-                        {accountInfo?.workspaceRouting?.chatgptAccountId && (
-                          <span>
-                            Account ID: {accountInfo.workspaceRouting.chatgptAccountId}
-                          </span>
-                        )}
-                        {accountInfo?.workspaceRouting?.backendOrigin && (
-                          <span>
-                            Backend: {accountInfo.workspaceRouting.backendOrigin}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="empty-hint" style={{ marginTop: 12 }}>
-                  {accountLoading
-                    ? "正在读取账号信息..."
-                    : accountInfo?.account
-                      ? `当前为 ${
-                          accountInfo.account.type === "apiKey"
-                            ? "API Key"
-                            : "Amazon Bedrock"
-                        } 登录方式，无 ChatGPT 账号 / 额度信息。`
-                      : "未登录或账号信息不可用。"}
-                </div>
-              )}
-            </div>
-
-            <div className="card-section">
-              <h3>额度限额 (`account/rateLimits/read`)</h3>
-              {accountRateSnapshot ? (
-                <div style={{ display: "flex", flexDirection: "column", gap: 16, marginTop: 10 }}>
-                  {([
-                    { key: "primary", label: "主额度窗口", window: accountRateSnapshot.primary },
-                    { key: "secondary", label: "次额度窗口", window: accountRateSnapshot.secondary },
-                  ] as const).map(({ key, label, window }) => {
-                    if (!window) return null;
-                    const percent = Math.max(
-                      0,
-                      Math.min(100, window.usedPercent ?? 0)
-                    );
-                    const barColor =
-                      percent >= 90
-                        ? "#ef4444"
-                        : percent >= 70
-                          ? "#f59e0b"
-                          : "#3b82f6";
-                    return (
-                      <div key={key}>
-                        <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            gap: 12,
-                            fontSize: "calc(12.5px * var(--font-ui-scale, 1))",
-                            marginBottom: 6,
-                          }}
-                        >
-                          <span style={{ color: "var(--text-secondary)" }}>
-                            {label} · {formatWindowDuration(window.windowDurationMins)} ·
-                            重置时间: {formatUnixSeconds(window.resetsAt)}
-                          </span>
-                          <span className="mono-badge">{percent}% 已用</span>
-                        </div>
-                        <div
-                          style={{
-                            height: 8,
-                            borderRadius: 999,
-                            background: "rgba(255, 255, 255, 0.08)",
-                            overflow: "hidden",
-                          }}
-                        >
-                          <div
-                            style={{
-                              height: "100%",
-                              width: `${percent}%`,
-                              background: barColor,
-                              borderRadius: 999,
-                              transition: "width 0.2s ease",
-                            }}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
-
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                    <span className="tag-badge">
-                      plan:{" "}
-                      {accountRateSnapshot.planType ||
-                        chatgptAccount?.planType ||
-                        "—"}
-                    </span>
-                    {accountRateSnapshot.credits && (
-                      <span className="tag-badge">
-                        {accountRateSnapshot.credits.unlimited
-                          ? "额度: 无限"
-                          : accountRateSnapshot.credits.hasCredits
-                            ? `额度余额: ${accountRateSnapshot.credits.balance ?? "—"}`
-                            : "额度余额: 无"}
-                      </span>
-                    )}
-                    {typeof accountRateLimits?.rateLimitResetCredits
-                      ?.availableCount === "number" && (
-                      <span className="tag-badge">
-                        可用额度重置次数:{" "}
-                        {accountRateLimits.rateLimitResetCredits.availableCount}
-                      </span>
-                    )}
-                    {accountRateLimits?.ordinaryUsageAllowed === false && (
-                      <span className="tag-badge" style={{ color: "#ef4444" }}>
-                        ⚠️ 普通用量当前不可用
-                      </span>
-                    )}
-                    {accountRateSnapshot.spendControlReached && (
-                      <span className="tag-badge" style={{ color: "#f59e0b" }}>
-                        ⚠️ 已触达花费控制
-                      </span>
-                    )}
-                    {accountRateSnapshot.rateLimitReachedType && (
-                      <span className="tag-badge" style={{ color: "#f59e0b" }}>
-                        受限类型: {accountRateSnapshot.rateLimitReachedType}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div className="empty-hint" style={{ marginTop: 12 }}>
-                  {accountLoading
-                    ? "正在读取额度数据..."
-                    : "暂无额度数据（未登录或后端未返回）。"}
-                </div>
-              )}
-            </div>
-
-            <div className="card-section">
-              <h3>Token 用量统计 (`account/usage/read`)</h3>
-              {accountUsage ? (
-                <>
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns:
-                        "repeat(auto-fit, minmax(150px, 1fr))",
-                      gap: 10,
-                      marginTop: 10,
-                    }}
-                  >
-                    {[
-                      {
-                        label: "累计 Tokens",
-                        value: formatTokenCount(accountUsage.summary?.lifetimeTokens),
-                        hint: "lifetimeTokens",
-                      },
-                      {
-                        label: "单日峰值 Tokens",
-                        value: formatTokenCount(accountUsage.summary?.peakDailyTokens),
-                        hint: "peakDailyTokens",
-                      },
-                      {
-                        label: "当前连续天数",
-                        value:
-                          accountUsage.summary?.currentStreakDays != null
-                            ? `${accountUsage.summary.currentStreakDays} 天`
-                            : "—",
-                        hint: "currentStreakDays",
-                      },
-                      {
-                        label: "最长连续天数",
-                        value:
-                          accountUsage.summary?.longestStreakDays != null
-                            ? `${accountUsage.summary.longestStreakDays} 天`
-                            : "—",
-                        hint: "longestStreakDays",
-                      },
-                      {
-                        label: "最长单轮耗时",
-                        value: formatDurationSeconds(
-                          accountUsage.summary?.longestRunningTurnSec
-                        ),
-                        hint: "longestRunningTurnSec",
-                      },
-                    ].map((stat) => (
-                      <div
-                        key={stat.hint}
-                        style={{
-                          padding: "10px 12px",
-                          background: "var(--bg-input)",
-                          border: "1px solid var(--border-subtle)",
-                          borderRadius: 8,
-                        }}
-                      >
-                        <div
-                          style={{
-                            fontSize: "calc(11px * var(--font-ui-scale, 1))",
-                            color: "var(--text-tertiary)",
-                            marginBottom: 4,
-                          }}
-                        >
-                          {stat.label}
-                        </div>
-                        <div
-                          style={{
-                            fontSize: "var(--text-heading-sm)",
-                            fontWeight: 600,
-                            color: "var(--text-primary)",
-                          }}
-                        >
-                          {stat.value}
-                        </div>
-                        <div
-                          style={{
-                            fontSize: "calc(10px * var(--font-ui-scale, 1))",
-                            color: "var(--text-tertiary)",
-                            marginTop: 2,
-                          }}
-                        >
-                          {stat.hint}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  <h4 style={{ marginTop: 18, fontSize: "var(--text-sm)" }}>
-                    最近 14 天每日 Token 用量
-                  </h4>
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "flex-end",
-                      gap: 6,
-                      height: 120,
-                      marginTop: 10,
-                      padding: "0 2px",
-                    }}
-                  >
-                    {usageLast14Days.map((day) => {
-                      const heightPercent =
-                        day.tokens > 0
-                          ? Math.max(
-                              4,
-                              Math.round((day.tokens / accountDailyMaxTokens) * 100)
-                            )
-                          : 2;
-                      return (
-                        <div
-                          key={day.date}
-                          title={`${day.date}: ${formatTokenCount(day.tokens)} tokens`}
-                          style={{
-                            flex: 1,
-                            display: "flex",
-                            flexDirection: "column",
-                            alignItems: "center",
-                            justifyContent: "flex-end",
-                            gap: 4,
-                            height: "100%",
-                          }}
-                        >
-                          <div
-                            style={{
-                              width: "100%",
-                              height: `${heightPercent}%`,
-                              minHeight: 3,
-                              borderRadius: "4px 4px 0 0",
-                              background:
-                                day.tokens > 0
-                                  ? "var(--accent-blue)"
-                                  : "rgba(255, 255, 255, 0.08)",
-                            }}
-                          />
-                          <span
-                            style={{
-                              fontSize: "calc(9px * var(--font-ui-scale, 1))",
-                              color: "var(--text-tertiary)",
-                              writingMode: "vertical-rl",
-                              transform: "rotate(180deg)",
-                              lineHeight: 1,
-                            }}
-                          >
-                            {day.label}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <p className="card-subtitle-desc" style={{ marginTop: 12 }}>
-                    数据由 app-server 按账号聚合；dailyUsageBuckets 只包含实际有用量的日期，缺失日期按 0 处理。
-                  </p>
-                </>
-              ) : (
-                <div className="empty-hint" style={{ marginTop: 12 }}>
-                  {accountLoading
-                    ? "正在读取用量数据..."
-                    : "暂无用量数据（未登录或后端未返回）。"}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
+        {activeSection === "account" && <AccountSettings active accountIdentity={accountIdentity}
+          connectionIdentity={connectionIdentity} onAccountChanged={onAccountChanged} />}
+        {activeSection === "usage" && <UsageSettings accountIdentity={accountIdentity} connectionIdentity={connectionIdentity} />}
         {/* Profile writes require the authenticated account service. */}
         {activeSection === "profile" && <ProfileSettings />}
 

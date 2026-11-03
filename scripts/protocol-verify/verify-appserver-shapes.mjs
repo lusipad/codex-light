@@ -2,10 +2,15 @@
 // Uses only cheap/validation-only calls. Creates one empty thread and deletes it afterwards.
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 const outDir = ".ref/protocol-probe";
 fs.mkdirSync(outDir, { recursive: true });
-const cwd = process.cwd();
+const isolatedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-shapes-"));
+const codexHome = path.join(isolatedRoot, "home");
+const cwd = path.join(isolatedRoot, "workspace");
+fs.mkdirSync(codexHome); fs.mkdirSync(cwd);
 
 const child = spawn(process.platform === "win32" ? "codex.cmd" : "codex", [
   "app-server",
@@ -14,12 +19,25 @@ const child = spawn(process.platform === "win32" ? "codex.cmd" : "codex", [
 ], {
   shell: process.platform === "win32",
   windowsHide: true,
+  cwd,
+  env: { ...process.env, CODEX_HOME: codexHome, OPENAI_API_KEY: "", CODEX_API_KEY: "" },
   stdio: ["pipe", "pipe", "pipe"],
 });
 
 let buf = "";
 const waiters = new Map();
 let nextId = 1;
+let childExited = false;
+const closed = new Promise(resolve => child.once("exit", () => {
+  childExited = true;
+  for (const waiter of waiters.values()) waiter({ localTransportFailure: true });
+  waiters.clear(); resolve();
+}));
+child.on("error", () => {
+  childExited = true;
+  for (const waiter of waiters.values()) waiter({ localTransportFailure: true });
+  waiters.clear();
+});
 child.stdout.setEncoding("utf8");
 child.stdout.on("data", (c) => {
   buf += c;
@@ -47,10 +65,12 @@ child.stderr.on("data", (d) => {
 
 function rpc(method, params, timeoutMs = 30000) {
   const id = nextId++;
-  return new Promise((resolve) => {
-    const t = setTimeout(() => resolve({ error: { message: "timeout" } }), timeoutMs);
+  if (childExited) return Promise.reject(Error("app-server exited before RPC"));
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => { waiters.delete(String(id)); reject(Error(`${method}: timeout`)); }, timeoutMs);
     waiters.set(String(id), (msg) => {
       clearTimeout(t);
+      if (msg.localTransportFailure) { reject(Error(`${method}: app-server exited`)); return; }
       resolve(msg);
     });
     child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
@@ -71,6 +91,8 @@ try {
     capabilities: { experimentalApi: true, requestAttestation: false },
   });
   record("initialize", !init.error, errText(init));
+  if (init.error) throw Error("initialize failed; protocol shapes are unverified");
+  child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "initialized", params: {} }) + "\n");
 
   // 1. thread/start with the exact params App.tsx now sends
   const threadRes = await rpc("thread/start", {
@@ -167,7 +189,7 @@ try {
 
   fs.writeFileSync(
     outDir + "/_verify-shapes.json",
-    JSON.stringify({ generatedAt: new Date().toISOString(), results }, null, 2)
+    JSON.stringify({ generatedAt: new Date().toISOString(), isolatedRoot, results }, null, 2)
   );
   const failed = results.filter((r) => !r.ok);
   console.log(`\n${results.length - failed.length}/${results.length} passed`);
@@ -176,6 +198,9 @@ try {
   console.error("verification crashed:", e);
   process.exitCode = 2;
 } finally {
-  child.kill();
-  await new Promise((r) => setTimeout(r, 300));
+  child.stdin.end();
+  await Promise.race([closed, new Promise(resolve => setTimeout(resolve, 3000))]);
+  if (!childExited) child.kill();
+  // Retain the private fixture alongside its recorded path for failure diagnosis,
+  // as with the other isolated protocol probes; no real account data is used.
 }

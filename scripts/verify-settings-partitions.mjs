@@ -40,6 +40,7 @@ const EXPECTED_26_SLUGS = [
   "providers-models",
   "experimental",
   "account",
+  "usage",
   "code-review",
   "computer-use",
   "appshots",
@@ -86,4 +87,4 @@ assert.ok(
   "SettingsView.tsx: Must wire configRead, experimentalFeatureList, and desktop_state_set"
 );
 
-console.log(`PASS settings route compatibility, 24 current navigation entries and protocol wiring (not full page acceptance)`);
+console.log(`PASS settings route compatibility, ${EXPECTED_26_SLUGS.filter(slug => slug !== "providers-models" && slug !== "experimental").length} current navigation entries and protocol wiring (not full page acceptance)`);

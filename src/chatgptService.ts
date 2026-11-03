@@ -5,7 +5,7 @@ export interface CloudAccess { identity: ServiceIdentity; gateEvidence: "persona
 export type ServiceOperation = "library_favorites" | "library_nodes" | "images_init" | "images_styles" |
   "images_recent" | "gpts_discovery" | "gpts_category" | "gpts_search" | "gpts_detail" | "gpts_about" |
   "sites_access" | "sites_list" | "sites_shared" | "sites_detail" | "sites_environment" | "sites_domains" | "sites_share_access" | "github_repository" |
-  "share_accounts" | "share_users" | "share_groups";
+  "share_accounts" | "share_users" | "share_groups" | "wham_usage";
 
 function browserProfile() {
   const browser = (navigator as Navigator & { userAgentData?: {

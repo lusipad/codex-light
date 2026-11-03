@@ -1,0 +1,19 @@
+.usage-settings { max-width: 768px; margin-inline: auto; gap: 22px; font-size: var(--text-sm); }
+.usage-settings-heading, .usage-limit-heading, .usage-plan, .usage-credits { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.usage-settings h3, .usage-settings h4, .usage-settings h5 { margin: 0; font-size: var(--text-sm); font-weight: 500; }
+.usage-settings-heading h3 { font-size: var(--text-lg); }
+.usage-plan, .usage-credits { padding: 16px 0; border-bottom: 1px solid var(--border-subtle); }
+.usage-limits { display: flex; flex-direction: column; gap: 22px; }
+.usage-limit-section { display: flex; flex-direction: column; gap: 6px; }
+.usage-limit-group { display: flex; flex-direction: column; border-radius: 16px; overflow: hidden; box-shadow: inset 0 0 0 1px var(--border-subtle); }
+.usage-limit { min-width: 0; display: flex; flex-direction: column; gap: 5px; padding: 16px; }
+.usage-limit-label { font-weight: 500; }
+.usage-limit-heading { align-items: baseline; gap: 5px; font-size: var(--text-xs); color: var(--text-secondary); }
+.usage-limit-heading > span:last-child { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.usage-limit progress { display: block; appearance: none; width: 100%; height: 6px; border: 0; border-radius: 999px; overflow: hidden; background: var(--border-subtle); color: var(--text-primary); }
+.usage-limit progress::-webkit-progress-bar { background: var(--border-subtle); }
+.usage-limit progress::-webkit-progress-value { background: var(--text-primary); }
+.usage-limit progress::-moz-progress-bar { background: var(--text-primary); }
+.usage-limit progress.usage-limit-low::-webkit-progress-value { background: var(--text-warning, #e5a53c); }
+.usage-limit p, .usage-settings-notice { margin: 0; color: var(--text-secondary); font-size: var(--text-xs); line-height: 1.5; overflow-wrap: anywhere; }
+.usage-settings button:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 2px; }

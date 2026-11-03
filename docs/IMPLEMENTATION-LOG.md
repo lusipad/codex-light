@@ -1775,3 +1775,12 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 - 复用现有用户层身份/CAS、服务鉴权和导航保护；关联写部分失败展示实际快照，未知写/删除不重放。修复runtime catalog=false被配置true覆盖的回归，保留首败与修复后证据。无新依赖、无相邻重构。
 - 完整标准（非Fast）、全Rust318项、EXE/MSI/NSIS均退出0，255产品输入/原生helper稳定，许可五文件逐项哈希一致。隔离真实文件/SQLite探针、生产组件专项与受控浏览器覆盖通过；账号测试为隔离fixture，无真实账号写入。
 - [阶段待验记录](antigravity/acceptance/16-07C.md)与[本地EXE](../dist-artifacts/16-07C-memory-account-20261103/CodexNative.exe)已备。原生交互/IME/多窗、官方运行时、同条件像素及用户验收未完成，账号编辑器/统一gate另阶段；不声称整页或整App达成1:1。
+
+## 2026-11-03 — 16.08B 真实登录与基础用量
+
+- 先调研固定官方账户/Usage/桌面onboarding/中文与HTTP合同，再拆除自创诊断拼接页，新增真实登录、取消、匹配完成、API短时输入/清理与退出读回；复用既有桥和安全HTTPS打开，不新增依赖。
+- 固定wham_usage真实读取、账号/user/generation/个人membership核对，保留多组和未知值，剩余进度/秒与分钟/额度单位按证据实现；服务不可用的CLI数据明确标来源，不伪造余额或历史。删除本轮替换造成的旧页面状态、格式函数与渲染，不清理其他死代码。
+- 新生产hook/TSX专项与Rust五项通过，旧AC04生命周期用例迁移到新hook并扩展；恢复监听和API取消焦点缺陷已加回归修复，Chrome实际复验。原生/官方/像素与用户验收未由fixture替代。
+- 完整标准首轮旧协议探针初始化超时，并暴露timeout误判通过；修为自建隔离home/workspace、空认证、initialize/initialized与超时/进程退出失败，九项真实形状通过。清理临时fixture的EPERM尝试保留，最终与同类探针一样保留私有目录供诊断，未削弱业务断言。最终完整检查、全Rust与构建见[阶段待验表](antigravity/acceptance/16-08B.md)。
+
+16.08B最终完整标准、修复后专项、全Rust323与EXE/MSI/NSIS通过；260产品输入/helper稳定，许可五文件哈希匹配。[本地EXE](../dist-artifacts/16-08B-account-usage-20261103/CodexNative.exe)已归档。移除本轮形成且仅旧测试调用的accountSnapshot孤立模块，适用约束迁移至新生产hook专项。整页/整App仍未验收。

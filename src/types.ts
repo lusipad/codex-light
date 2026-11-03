@@ -387,6 +387,7 @@ export type SettingsSectionSlug =
   | "providers-models"
   | "experimental"
   | "account"
+  | "usage"
   | "code-review"
   | "computer-use"
   | "appshots"

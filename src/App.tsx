@@ -1118,6 +1118,7 @@ export const App: React.FC = () => {
 
   const refreshAccount = useCallback(async () => {
     const request = ++accountReadRequestRef.current;
+    setRateLimits(null);
     try {
       const info = await callAppServer<AccountReadResult>("account/read", {});
       if (request !== accountReadRequestRef.current) return;
@@ -1132,6 +1133,8 @@ export const App: React.FC = () => {
       if (request !== accountReadRequestRef.current) return;
       setRateLimits(limits ?? null);
     } catch (e) {
+      if (request !== accountReadRequestRef.current) return;
+      setRateLimits(null);
       console.warn("account/rateLimits/read failed:", e);
     }
   }, []);
@@ -1656,6 +1659,7 @@ export const App: React.FC = () => {
           setRateLimits((prev: any) => mergeRateLimits(prev, params));
         } else if (method === NOTIFICATION.ACCOUNT_UPDATED) {
           setAccountInfo(null);
+          setRateLimits(null);
           void refreshAccount();
         } else if (method === NOTIFICATION.ITEM_AUTO_REVIEW_STARTED) {
           setAutoReview({ active: true, decision: null });
@@ -4731,7 +4735,7 @@ export const App: React.FC = () => {
         onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
         onNavigate={(route) => setActiveRoute(route)}
         onOpenUsage={() => {
-          setSettingsInitialSection("account");
+          setSettingsInitialSection("usage");
           setActiveRoute("settings");
         }}
         onCommand={(command) => void handleAppCommand(command)}
@@ -5308,6 +5312,7 @@ export const App: React.FC = () => {
           <div className="settings-full-route-view">
             <SettingsView
               accountIdentity={modelAccountIdentity}
+              onAccountChanged={() => void refreshAccount()}
               onNavigationGuardChange={setPersonalizationNavigationGuard}
               archiveViewProps={{
                 refreshToken: `${archiveRefreshTick}:${appServerStatus.connected}`,
