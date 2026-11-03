@@ -73,3 +73,14 @@ PR审查入口尚无官方provider/account及exact base/head/merge-base输入与
 - 最新完整标准（非Fast）及原生构建进入最终归档，结果另见[阶段验收记录](acceptance/16-16B-local.md)，不沿用开发早期Fast结果。官方配对截图、原生GUI/IME、真实多窗及真实账号仍未验；没有视觉评分或像素通过声明。
 - 独立审核发现并修复第二处P2：同身份跨窗广播无条件刷新会静默取消本窗口在途保存。修改前回归退出1已留证；现将通知合并排队，保存结束后重读并保留失败/重试；身份、连接变化仍立即取消，卸载清空队列。新增成功/失败/双广播用例退出0，独立复核确认修复，无新增有证据P1/P2。
 - 最终非Fast完整标准退出0（含隔离协议），随后当前源码EXE/MSI/NSIS退出0；297项冻结产品输入在构建前后哈希一致，8项产物含5个许可已归档。见[本地增量验收表](acceptance/16-16B-local.md)。未另跑全Rust，不将专项组合写成全库通过；本地限定增量待用户验收，整16.16和全App目标继续active。
+
+## 2026-11-04 GitLab企业实例继续开发
+
+依据固定合同第9节，现已接模板GET与accessible links POST的真实服务路径、CODEX SKU/other surface、真实账号header和固定读取body；首个匹配授权link再做资格过滤，详情403/404忽略单项，其他错误独立返回gitlabInstancesError。详情按官方EXr严格验证原始URL、模板/service、管理员标记与hostname，不用URL规范化绕过。保存非null connector在宿主重新枚举真实成员后才CAS落盘。
+
+前端已接真实列表、hostname.localeCompare排序、默认与显式默认connector等价显示、已存失效项保留、独立失败/重试、保存失败不冒成功；客户端拒绝gate未知却带列表、无效项与重复connectorId。新增UI回归修改前退出1、修复后退出0，原有账号scope/跨窗/取消回归保留。Chrome生产组件与隔离IPC验证实例选择、失败保原值和显式重试，证据 `16-16B-gitlab/browser/`；临时tab/服务器已关闭，无真实账号请求、原生或官方配对像素结论。
+
+Rust初轮网络策略测试夹具路径错误已修复，review_专项13项及cargo check退出0；父线程复核补查JSON读取POST的Content-Type，专项和共享服务回归继续。前端UI/客户端/指令与TypeScript已通过，尚未运行本增量最终完整标准或重建原生包。07d98eb的旧构建不可用于验收本轮。后续主线是账号绑定PR工作面及精确远程比较，不能将实例保存当作已接远程审查。
+
+后续Content-Type断言先复现失败、补JSON header后共享服务88项通过；malformed实例name过滤为宿主边界增强。此后已转到[16.16C PR阅读工作面](acceptance/16-16C.md)，新增真实account和PR消费者；共享服务最终95项、provider5项及跨层返回解析通过。300项产品输入冻结后最终标准/原生包另行归档，不复用07d98eb构建。GitLab实例不再是仅默认/未接列表，但GitLab MR阅读和完整私人审查仍未完成。
+- 16.16C最终结果：完整标准非Fast退出0；其后默认账号响应connection兼容修复另经共享服务96项/provider5项及跨层解析通过。最终原生EXE/MSI/NSIS退出0、300项输入稳定、8项产物归档；以16.16C验收记录为准，不沿用上文开发中快照。

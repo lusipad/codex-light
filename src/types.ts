@@ -345,6 +345,7 @@ export type MainViewRoute =
   | "skills"
   | "worktrees"
   | "review"
+  | "code-review"
   | "archive"
   | "settings"
   | "images"

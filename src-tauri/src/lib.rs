@@ -2085,6 +2085,7 @@ pub fn run() {
             fs_search_files,
             code_review_preferences_get,
             review_provider::code_review_provider_read,
+            review_provider::code_review_pull_request_read,
             review_provider::code_review_provider_update,
             code_review_preferences_update,
             desktop_state_get,

@@ -1,4 +1,5 @@
 import { tauriInvoke } from "./bridge";
+import { parseRemotePullRequest, parseRemotePullRequestUrl, type RemotePullRequest } from "./remoteReview";
 
 export interface ServiceIdentity { accountId: string; userId: string; generation: number }
 export interface CloudAccess { identity: ServiceIdentity; gateEvidence: "personal-plan-branch" | "incomplete" }
@@ -8,6 +9,8 @@ export interface ReviewProviderAccess {
   capabilities: { githubInstances: boolean | null; gitlab: boolean | null; reviewTabDefault: boolean | null };
   githubConnections: { hostname: string; name?: string | null; connection: { connectorId: string; accountLinkId: string } }[] | null;
   githubConnectionsError: string | null;
+  gitlabInstances: { connectorId: string; hostname: string; name?: string | null }[] | null;
+  gitlabInstancesError: string | null;
 }
 export interface ReviewProviderPreferences {
   gitHostingProvider: string;
@@ -188,6 +191,13 @@ function reviewProviderResponse(result: { requestId: string; identity: ServiceId
     (body.capabilities.githubInstances === true
       ? !(Array.isArray(body.githubConnections) && body.githubConnectionsError === null) && !(body.githubConnections === null && typeof body.githubConnectionsError === "string" && body.githubConnectionsError.length > 0)
       : body.githubConnections !== null || body.githubConnectionsError !== null) ||
+    (body.capabilities.gitlab === true
+      ? !(Array.isArray(body.gitlabInstances) && body.gitlabInstancesError === null) && !(body.gitlabInstances === null && typeof body.gitlabInstancesError === "string" && body.gitlabInstancesError.length > 0)
+      : body.gitlabInstances !== null || body.gitlabInstancesError !== null) ||
+    (Array.isArray(body.gitlabInstances) && (body.gitlabInstances.some(item => !item ||
+      ![item.connectorId, item.hostname].every(value => typeof value === "string" && value.length > 0) ||
+      (item.name !== undefined && item.name !== null && typeof item.name !== "string")) ||
+      new Set(body.gitlabInstances.map(item => item.connectorId)).size !== body.gitlabInstances.length)) ||
     !body.preferences || typeof body.preferences.gitHostingProvider !== "string" ||
     (body.preferences.gitlabConnectorId !== null && typeof body.preferences.gitlabConnectorId !== "string") ||
     (body.preferences.githubConnection !== null && (!body.preferences.githubConnection ||
@@ -204,6 +214,16 @@ export async function readReviewProviderAccess(identity: ServiceIdentity, signal
     { request: { requestId, expectedIdentity: identity, profile: browserProfile() } }, signal,
   );
   return reviewProviderResponse(result, requestId, identity);
+}
+
+export async function readRemotePullRequest(url: string, identity: ServiceIdentity, signal: AbortSignal): Promise<RemotePullRequest> {
+  const target = parseRemotePullRequestUrl(url);
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; body: unknown }>(
+    "code_review_pull_request_read", requestId,
+    { request: { requestId, expectedIdentity: identity, profile: browserProfile() }, url: target.url }, signal,
+  );
+  return parseRemotePullRequest(responseBody(result, requestId, identity), target.url);
 }
 
 export async function updateReviewProviderPreference<K extends keyof ReviewProviderPreferences>(

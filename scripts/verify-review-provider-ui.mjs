@@ -8,7 +8,8 @@ const source = ts.transpileModule(fs.readFileSync("src/components/ReviewProvider
 } }).outputText;
 const identity = { accountId: "a", userId: "u", generation: 1 };
 const base = () => ({ identity, preferences: { gitHostingProvider: "github", githubConnection: null, gitlabConnectorId: null },
-  capabilities: { githubInstances: true, gitlab: false, reviewTabDefault: null }, githubConnections: [], githubConnectionsError: null });
+  capabilities: { githubInstances: true, gitlab: false, reviewTabDefault: null }, githubConnections: [], githubConnectionsError: null,
+  gitlabInstances: [], gitlabInstancesError: null });
 const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
 function harness(initial = base()) {
@@ -91,6 +92,33 @@ const gitlab = base(); gitlab.capabilities.gitlab = true; gitlab.preferences.git
 h = harness(gitlab); await h.start(); assert.equal(h.select("GitLab 实例").props.value, "unavailable");
 h.select("GitLab 实例").props.onChange({ target: { value: "default" } }); await flush(); h.render();
 assert.equal(h.writes[0][0], "gitlabConnectorId"); assert.equal(h.writes[0][1], null); h.unmount();
+
+// Real authorized GitLab instances are selectable; a failed request cannot become an empty inventory.
+const gitlabAvailable = { ...gitlab, gitlabInstances: [
+  { connectorId: "z-c", hostname: "z.git.example.com", name: "Z work" },
+  { connectorId: "a-c", hostname: "a.git.example.com", name: "A work" },
+] };
+h = harness(gitlabAvailable); await h.start();
+assert.match(h.text(), /a.git.example.com — A work/);
+const gitlabOptions = h.select("GitLab 实例").children.filter(node => node?.type === "option");
+assert.ok(gitlabOptions.findIndex(node => node.props.value === "a-c") < gitlabOptions.findIndex(node => node.props.value === "z-c"), "use the official JS hostname ordering");
+h.select("GitLab 实例").props.onChange({ target: { value: "a-c" } }); await flush(); h.render();
+assert.equal(h.select("GitLab 实例").props.value, "a-c");
+assert.equal(h.writes[0][1], "a-c"); assert.equal(h.writes[0][4], "old", "preserve actual saved CAS expectation");
+h.select("GitLab 实例").props.onChange({ target: { value: "forged-c" } }); await flush();
+assert.equal(h.writes.length, 1, "unknown connector cannot be selected by a forged DOM change"); h.unmount();
+const gitlabFailed = { ...gitlabAvailable, gitlabInstances: null, gitlabInstancesError: "GitLab links failed" };
+h = harness(gitlabFailed); await h.start();
+assert.equal(h.select("代码审查提供商").props.disabled, false);
+assert.equal(h.select("GitLab 实例").props.disabled, true);
+assert.match(h.text(), /GitLab links failed/); assert.doesNotMatch(h.text(), /授权列表尚未接入/);
+h.select("GitLab 实例").props.onChange({ target: { value: "default" } }); assert.equal(h.writes.length, 0);
+let gitlabRereads = 0; h.control.read = async () => { gitlabRereads++; return gitlabAvailable; };
+h.nodes().find(node => node.type === "button" && h.text(node) === "重试读取 GitLab 实例").props.onClick();
+h.render(); h.effects(); await flush(); h.render();
+assert.equal(gitlabRereads, 1); assert.equal(h.select("GitLab 实例").props.disabled, false); assert.equal(h.writes.length, 0); h.unmount();
+const explicitDefault = { ...gitlab, preferences: { ...gitlab.preferences, gitlabConnectorId: "connector_0c9786b2f41f41558056126bdb46c9bd" } };
+h = harness(explicitDefault); await h.start(); assert.equal(h.select("GitLab 实例").props.value, "default"); assert.equal(h.writes.length, 0); h.unmount();
 
 // CRB06: scope masks old data synchronously, aborts work, ignores late results and cleans late listeners.
 for (const fails of [false, true]) {

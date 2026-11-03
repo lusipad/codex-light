@@ -98,6 +98,11 @@ export function ReviewProviderSettings({ scope }: { scope: string }) {
   const connections = access?.githubConnections ?? [];
   const connectionIndex = selected ? connections.findIndex(item => item.hostname === selected.hostname &&
     item.connection.connectorId === selected.connectorId && item.connection.accountLinkId === selected.accountLinkId) : -1;
+  const gitlabError = access?.gitlabInstancesError;
+  const gitlabInstances = [...(access?.gitlabInstances ?? [])].sort((left, right) => left.hostname.localeCompare(right.hostname));
+  const gitlabSelected = access?.preferences.gitlabConnectorId;
+  const gitlabDefault = gitlabSelected === null || gitlabSelected === "connector_0c9786b2f41f41558056126bdb46c9bd";
+  const gitlabFound = gitlabInstances.some(item => item.connectorId === gitlabSelected);
   return <>
     {syncError && <p role="alert" className="error-banner">{syncError} <button type="button" className="secondary-btn-sm"
       onClick={() => setRetry(value => value + 1)}>重试同步</button></p>}
@@ -138,13 +143,22 @@ export function ReviewProviderSettings({ scope }: { scope: string }) {
       </>}
       {effective === "gitlab" && <>
         <label className="form-field"><span>GitLab 实例</span>
-          <select aria-label="GitLab 实例" disabled={busy} value={access.preferences.gitlabConnectorId === null ? "default" : "unavailable"}
-            onChange={event => { if (event.target.value === "default") void save({ field: "gitlabConnectorId", value: null }); }}>
+          <select aria-label="GitLab 实例" disabled={busy || !!gitlabError || access.gitlabInstances === null}
+            value={gitlabDefault ? "default" : gitlabFound ? gitlabSelected : "unavailable"}
+            onChange={event => {
+              if (busy || gitlabError || access.gitlabInstances === null) return;
+              if (event.target.value === "default") void save({ field: "gitlabConnectorId", value: null });
+              else if (gitlabInstances.some(item => item.connectorId === event.target.value))
+                void save({ field: "gitlabConnectorId", value: event.target.value });
+            }}>
             <option value="default">gitlab.com</option>
-            {access.preferences.gitlabConnectorId !== null && <option value="unavailable" disabled>已保存的企业连接（当前不可用）</option>}
+            {!gitlabDefault && !gitlabFound && <option value="unavailable" disabled>{gitlabError ? "已保存的企业连接（读取失败，保留原值）" : "已保存的企业连接（当前不可用）"}</option>}
+            {gitlabInstances.map(item => <option key={item.connectorId} value={item.connectorId}>{item.name ? `${item.hostname} — ${item.name}` : item.hostname}</option>)}
           </select>
         </label>
-        <p role="status">GitLab 企业连接授权列表尚未接入；已保存连接不会自动替换。</p>
+        {gitlabError && <p role="alert" className="error-banner">{gitlabError} <button type="button" className="secondary-btn-sm" disabled={busy}
+          onClick={() => setRetry(value => value + 1)}>重试读取 GitLab 实例</button></p>}
+        {!gitlabError && !gitlabDefault && !gitlabFound && <p role="status">已保存连接不在当前账号的 GitLab 可用列表中，未自动替换。</p>}
       </>}
       {busy && <p role="status">正在保存提供商设置…</p>}
     </>}

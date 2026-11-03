@@ -127,6 +127,8 @@ import { MiniPetWidget } from "./components/MiniPetWidget";
 import { QuickSearchModal } from "./components/QuickSearchModal";
 import { restoreInboxHistory } from "./inboxState";
 import { CodeReviewView, ReviewRequest } from "./components/CodeReviewView";
+import { RemoteReviewView } from "./components/RemoteReviewView";
+import { parseRemotePullRequestUrl } from "./remoteReview";
 import { ArchiveView } from "./components/ArchiveView";
 import { ThreadGoalBanner } from "./components/ThreadGoalBanner";
 import { ThreadGoalModal } from "./components/ThreadGoalModal";
@@ -324,7 +326,9 @@ export const App: React.FC = () => {
   const [threadEventsReady, setThreadEventsReady] = useState(false);
   const promptStorageKey = isQuickChatWindow ? "codex_quick_chat_prompt_drafts_v1" : threadWindowId ? `codex_thread_window_drafts_v1:${threadWindowId}` : "codex_composer_prompt_drafts_v1";
   // Primary Route & Shell Layout State
-  const [activeRoute, commitActiveRoute] = useState<MainViewRoute>("home");
+  const [activeRoute, commitActiveRoute] = useState<MainViewRoute>(() => window.location.pathname === "/code-review" ? "code-review" : "home");
+  const [remotePullRequestUrl, setRemotePullRequestUrl] = useState(() => window.location.pathname === "/code-review"
+    ? new URLSearchParams(window.location.hash.slice(1)).get("pullRequest") ?? "" : "");
   const activeRouteRef = useRef(activeRoute);
   activeRouteRef.current = activeRoute;
   const personalizationNavigationGuardRef = useRef<((action: () => void) => boolean) | null>(null);
@@ -338,6 +342,16 @@ export const App: React.FC = () => {
     if (personalizationNavigationGuardRef.current?.(apply) === false) return;
     apply();
   }, []);
+  const openRemotePullRequest = (url: string) => {
+    setRemotePullRequestUrl(parseRemotePullRequestUrl(url).url);
+    setActiveRoute("code-review");
+  };
+  useEffect(() => {
+    if (activeRoute === "code-review") {
+      const hash = remotePullRequestUrl ? `#${new URLSearchParams({ pullRequest: remotePullRequestUrl })}` : "";
+      window.history.replaceState(null, "", `/code-review${hash}`);
+    } else if (window.location.pathname === "/code-review") window.history.replaceState(null, "", "/");
+  }, [activeRoute, remotePullRequestUrl]);
   const deepLinkRouteRef = useRef({ route: activeRoute, revision: 0 });
   if (deepLinkRouteRef.current.route !== activeRoute) {
     deepLinkRouteRef.current = { route: activeRoute, revision: deepLinkRouteRef.current.revision + 1 };
@@ -5204,6 +5218,12 @@ export const App: React.FC = () => {
               />
             </div>
           </div>
+        ) : activeRoute === "code-review" ? (
+          <div className="full-route-view"><div className="full-route-container">
+            <RemoteReviewView url={remotePullRequestUrl}
+              scope={JSON.stringify([modelAccountIdentity, appServerStatus.connected, appServerStatus.binaryPath, appServerStatus.appServerVersion])}
+              onOpenUrl={openRemotePullRequest} onBack={() => setActiveRoute(turns.length > 0 ? "thread" : "home")} />
+          </div></div>
         ) : activeRoute === "review" ? (
           <div className="full-route-view">
             <div className="full-route-container">
@@ -5226,6 +5246,7 @@ export const App: React.FC = () => {
                   setShowRightDrawer(true);
                 }}
                 onStartReview={handleStartCodeReview}
+                onOpenRemotePullRequest={openRemotePullRequest}
                 onBack={() => setActiveRoute(turns.length > 0 ? "thread" : "home")}
               />
             </div>

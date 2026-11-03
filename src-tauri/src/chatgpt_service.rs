@@ -1177,6 +1177,152 @@ impl ChatgptService {
         })
     }
 
+    pub async fn review_pull_request<F,Fut>(&self, request_id:&str, identity:&ServiceIdentity, profile:&ServiceProfile, pull_request:&Value, connection:&Value, call:F)->ServiceResult<Value>
+    where F:Fn(&'static str,Value)->Fut,Fut:Future<Output=Result<Value,String>> {
+        self.review_pull_request_with(request_id,identity,profile,pull_request,connection,call,&CurlTransport).await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn review_pull_request_with<F,Fut,T>(&self,request_id:&str,identity:&ServiceIdentity,profile:&ServiceProfile,pull_request:&Value,connection:&Value,call:F,transport:&T)->ServiceResult<Value>
+    where F:Fn(&'static str,Value)->Fut,Fut:Future<Output=Result<Value,String>>,T:Transport {
+        let registration=self.register(request_id)?;
+        let result=tokio::select! {
+            _=cancelled(&registration.cancelled)=>Err(failure("cancelled","Pull request read cancelled")),
+            result=async {
+                let mut account_request=json!({"hostname":pull_request["hostname"]});
+                if !connection.is_null(){account_request["connection"]=connection.clone();}
+                let current=self.review_github_http("account",&account_request,identity,profile,&registration,&call,transport).await?;
+                let account=review_github_account(&current,pull_request,connection)?;
+                let mut pr=pull_request.clone();pr.as_object_mut().ok_or_else(||failure("invalid_request","Invalid pull request identity"))?.remove("url");
+                let payload=json!({"account":account,"pullRequest":pr});
+                let metadata=match self.review_github_http("gh-pr-metadata-v2",&payload,identity,profile,&registration,&call,transport).await {
+                    Err(error) if error.status==Some(405) || (error.status==Some(404) && error.code!="github_resource_not_found")=>
+                        self.review_github_http("gh-pr-metadata",&payload,identity,profile,&registration,&call,transport).await?,
+                    result=>result?,
+                };
+                let summaries=self.review_github_http("summaries",&json!({"account":account,"pullRequests":[pr]}),identity,profile,&registration,&call,transport).await?;
+                let summary=summaries.as_array().filter(|items|items.len()==1).and_then(|items|items.first()).ok_or_else(||failure("invalid_response","Pull request summary is incomplete"))?;
+                let description=self.review_github_http("gh-pr-body",&payload,identity,profile,&registration,&call,transport).await?;
+                let diff=self.review_github_http("gh-pr-diff",&payload,identity,profile,&registration,&call,transport).await?;
+                validate_review_read(&metadata,summary,&description,&diff)?;
+                Ok(json!({"pullRequest":pull_request,"account":account,"metadata":metadata,"summary":summary,"description":description["body"],"diff":{"headRevision":diff["headRevision"],"unifiedDiff":diff["unifiedDiff"]}}))
+            }=>result,
+        };
+        self.check_share_current(identity,&registration)?;
+        result
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn review_github_http<F,Fut,T>(&self,operation:&str,body:&Value,identity:&ServiceIdentity,profile:&ServiceProfile,registration:&Registration<'_>,call:&F,transport:&T)->ServiceResult<Value>
+    where F:Fn(&'static str,Value)->Fut,Fut:Future<Output=Result<Value,String>>,T:Transport {
+        if !["account","gh-pr-metadata-v2","gh-pr-metadata","summaries","gh-pr-body","gh-pr-diff"].contains(&operation) {
+            return Err(failure("invalid_request","Unsupported pull request operation"));
+        }
+        let mut session=self.session.lock().await;
+        self.check_share_current(identity,registration)?;
+        self.prepare(&mut session,identity.generation,call,false).await?;
+        for attempt in 0..2 {
+            self.check_share_current(identity,registration)?;
+            let credentials=session.credentials.as_ref().unwrap();
+            if &credentials.identity!=identity {return Err(failure("account_changed","Authenticated identity changed"));}
+            let integrity=session.integrity.clone();
+            let mut outgoing=build_http_request(&format!("/backend-api/wham/github/operations/{operation}"),credentials,integrity.as_deref(),profile)?;
+            outgoing.method=HttpMethod::Post;
+            outgoing.headers.insert("Content-Type".into(),"application/json".into());
+            outgoing.headers.insert("X-Codex-Expected-User-Id".into(),identity.user_id.clone());
+            outgoing.headers.insert("X-Codex-Expected-Account-Id".into(),identity.account_id.clone());
+            outgoing.body=serde_json::to_vec(body).map_err(|_|failure("invalid_request","Invalid pull request payload"))?;
+            share_network_allowed(call,&outgoing.url).await?;
+            self.check_share_current(identity,registration)?;
+            let response=send_bounded(transport,outgoing,registration.cancelled.clone(),Duration::from_secs(if operation=="gh-pr-diff" {60}else{15})).await?;
+            self.check_share_current(identity,registration)?;
+            apply_integrity(&mut session.integrity,integrity.as_deref(),response.headers.get("x-oai-is-update"));
+            if account_instructions_ip_denied(&response){return Err(ServiceError{code:"ip_not_authorized",message:"Current IP address is not authorized for this workspace",status:Some(401)});}
+            if response.status==401 && attempt==0 {self.prepare(&mut session,identity.generation,call,true).await?;continue;}
+            if !(200..300).contains(&response.status) {
+                let error:Value=serde_json::from_slice(&response.body).unwrap_or(Value::Null);
+                match review_error_code(&error) {
+                    Some("github_resource_not_found")=>return Err(ServiceError{code:"github_resource_not_found",message:"Pull request is unavailable to the selected account; check repository access and SSO",status:Some(response.status)}),
+                    Some("github_reauthentication_required")=>return Err(ServiceError{code:"github_reauthentication_required",message:"Selected GitHub connection requires authentication",status:Some(response.status)}),
+                    _=>{},
+                }
+            }
+            return Ok(decode_response(response,registration.id.clone(),identity.clone())?.body);
+        }
+        unreachable!()
+    }
+
+    pub async fn review_gitlab_instances<F, Fut>(&self, request_id: &str, identity: &ServiceIdentity, profile: &ServiceProfile, call: F) -> ServiceResult<Value>
+    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>> {
+        self.review_gitlab_instances_with(request_id, identity, profile, call, &CurlTransport).await
+    }
+
+    async fn review_gitlab_instances_with<F, Fut, T>(&self, request_id: &str, identity: &ServiceIdentity, profile: &ServiceProfile, call: F, transport: &T) -> ServiceResult<Value>
+    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>>, T: Transport {
+        let registration = self.register(request_id)?;
+        let result = tokio::select! {
+            _ = cancelled(&registration.cancelled) => Err(failure("cancelled", "GitLab instance read cancelled")),
+            result = async {
+                let (templates, accessible) = tokio::try_join!(
+                    self.review_gitlab_http("/backend-api/ps/connectors/by-template?template_id=templated_apps_GitLab", false, identity, profile, &registration, &call, transport),
+                    self.review_gitlab_http("/backend-api/aip/connectors/links/list_accessible", true, identity, profile, &registration, &call, transport),
+                )?;
+                let candidates = templates["connectors"].as_array().ok_or_else(|| failure("invalid_response", "GitLab connector inventory is incomplete"))?;
+                let links = accessible["links"].as_array().ok_or_else(|| failure("invalid_response", "GitLab authorizations are incomplete"))?;
+                let mut instances = Vec::new();
+                for candidate in candidates {
+                    if !crate::review_provider::gitlab_candidate_allowed(candidate, links) { continue; }
+                    let id = candidate["id"].as_str().unwrap();
+                    let route = format!("/backend-api/aip/connectors/{}?include_actions=false", encode_segment(id)?);
+                    let detail = match self.review_gitlab_http(&route, false, identity, profile, &registration, &call, transport).await {
+                        Ok(detail) => detail,
+                        Err(error) if matches!(error.status, Some(403 | 404)) => continue,
+                        Err(error) => return Err(error),
+                    };
+                    if let Some(instance) = crate::review_provider::gitlab_instance(&detail, id) { instances.push(instance); }
+                }
+                Ok(json!(instances))
+            } => result,
+        };
+        self.check_share_current(identity, &registration)?;
+        result
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn review_gitlab_http<F, Fut, T>(&self, route: &str, accessible: bool, identity: &ServiceIdentity, profile: &ServiceProfile,
+        registration: &Registration<'_>, call: &F, transport: &T) -> ServiceResult<Value>
+    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>>, T: Transport {
+        for attempt in 0..2 {
+            self.check_share_current(identity, registration)?;
+            // Release the session lock before transport so the two official inventory reads can overlap.
+            let (mut outgoing, integrity) = {
+                let mut session = self.session.lock().await;
+                self.prepare(&mut session, identity.generation, call, false).await?;
+                let credentials = session.credentials.as_ref().unwrap();
+                if &credentials.identity != identity { return Err(failure("account_changed", "Authenticated identity changed")); }
+                (build_http_request(route, credentials, session.integrity.as_deref(), profile)?, session.integrity.clone())
+            };
+            outgoing.headers.insert("OAI-Product-Sku".into(), "CODEX".into());
+            outgoing.headers.insert("X-Codex-Surface".into(), "other".into());
+            if accessible {
+                outgoing.method = HttpMethod::Post;
+                outgoing.headers.insert("Content-Type".into(), "application/json".into());
+                outgoing.body = br#"{"principals":[],"link_refresh_strategy":"BLOCKING"}"#.to_vec();
+            }
+            share_network_allowed(call, &outgoing.url).await?;
+            self.check_share_current(identity, registration)?;
+            let response = send_bounded(transport, outgoing, registration.cancelled.clone(), Duration::from_secs(50)).await?;
+            self.check_share_current(identity, registration)?;
+            let mut session = self.session.lock().await;
+            self.check_share_current(identity, registration)?;
+            apply_integrity(&mut session.integrity, integrity.as_deref(), response.headers.get("x-oai-is-update"));
+            if account_instructions_ip_denied(&response) { return Err(ServiceError { code:"ip_not_authorized", message:"Current IP address is not authorized for this workspace", status:Some(401) }); }
+            if response.status == 401 && attempt == 0 { self.prepare(&mut session, identity.generation, call, true).await?; continue; }
+            return Ok(decode_response(response, registration.id.clone(), identity.clone())?.body);
+        }
+        unreachable!()
+    }
+
     async fn read_with<F, Fut, T>(
         &self,
         request: ServiceRequest,
@@ -2672,6 +2818,49 @@ fn account_instructions_ip_denied(response: &HttpResponse) -> bool {
     body.pointer("/error/type").and_then(Value::as_str) == Some("ip_not_authorized") ||
         matches!(body.pointer("/error/code").and_then(Value::as_str),
             Some("ip_not_authorized" | "validate_whitelist_failed" | "workspace_ip_not_authorized"))
+}
+
+fn review_error_code(error:&Value)->Option<&str> {
+    // Fixed official Pct/aX priority; an unknown earlier code also wins.
+    [&error["extra"],error,&error["error"],&error["detail"],&error["detail"]["error"],&error["error"]["error"]]
+        .into_iter().find_map(|node| ["error_code","file_parse_error_code","code"].into_iter()
+            .find_map(|key|node[key].as_str().filter(|code|!code.is_empty())))
+}
+
+fn review_github_account(current:&Value,pull_request:&Value,connection:&Value)->ServiceResult<Value> {
+    let account=&current["currentUser"]["account"];
+    let hostname=account["hostname"].as_str().map(|value|value.trim().trim_end_matches('.').to_lowercase());
+    let login=account["login"].as_str().filter(|value| !value.is_empty() && value.trim()==*value && !value.chars().any(char::is_control));
+    let returned_connection=&account["connection"];
+    let valid_connection=returned_connection.is_null() || ["connectorId","accountLinkId"].iter().all(|key|
+        returned_connection[key].as_str().is_some_and(|value|!value.trim().is_empty() && !value.chars().any(char::is_control)));
+    if current["currentUser"]["status"]!="success" || hostname.as_deref()!=pull_request["hostname"].as_str() || login.is_none()
+        || !valid_connection || (!connection.is_null() && (returned_connection["connectorId"]!=connection["connectorId"] || returned_connection["accountLinkId"]!=connection["accountLinkId"])) {
+        return Err(failure("github_account_unavailable","GitHub account is unavailable or does not match the selected connection"));
+    }
+    let mut result=json!({"hostId":"local","hostname":hostname.unwrap(),"login":login.unwrap().to_lowercase()});
+    if !returned_connection.is_null(){result["connection"]=json!({"connectorId":returned_connection["connectorId"],"accountLinkId":returned_connection["accountLinkId"]});}
+    Ok(result)
+}
+
+fn validate_review_read(metadata:&Value,summary:&Value,description:&Value,diff:&Value)->ServiceResult<()> {
+    let nonempty=|value:&Value|value.as_str().is_some_and(|value|!value.trim().is_empty());
+    let nullable_string=|key:&str| summary.get(key).is_some_and(|value|value.is_null() || value.is_string());
+    if metadata["status"]!="success" || !nonempty(&metadata["headRevision"])
+        || !nonempty(&metadata["createdAt"]) || !metadata.get("authorLogin").is_some_and(|value|value.is_null() || value.is_string())
+        || !["additions","deletions","changedFiles"].iter().all(|key|metadata.get(key).is_some_and(|value|value.is_null()
+            || value.as_f64().is_some_and(|number|number>=0.0 && number<=9_007_199_254_740_991.0 && number.fract()==0.0)))
+        || description["status"]!="success" || !description["body"].is_string()
+        || diff["status"]!="success" || !nonempty(&diff["headRevision"]) || !diff["unifiedDiff"].is_string()
+        || summary["status"]!="success" || !nonempty(&summary["headRevision"]) || !["open","closed","merged"].contains(&summary["state"].as_str().unwrap_or(""))
+        || summary.get("isDraft").is_some_and(|value|!value.is_boolean())
+        || !["title","url","baseBranch","headBranch"].iter().all(|key|nullable_string(key)) {
+        return Err(failure("invalid_response","Pull request read response is incomplete or unavailable"));
+    }
+    if metadata["headRevision"]!=diff["headRevision"] || metadata["headRevision"]!=summary["headRevision"] {
+        return Err(failure("github_head_changed","Pull request changed while reading; reload the comparison"));
+    }
+    Ok(())
 }
 
 fn decode_response(
@@ -4327,6 +4516,231 @@ mod tests {
         json!({"user_id":"user-fixture","account_id":"account-fixture","plan_type":"pro",
             "rate_limit":{"primary_window":{"used_percent":null,"reset_at":1800000000}},
             "credits":{"balance":"0","unit":"credits"},"extra":null})
+    }
+
+    #[tokio::test]
+    async fn remote_review_fixed_account_transport_and_metadata_fallback() {
+        for fallback in [None,Some(404),Some(405)] {
+            let service=ChatgptService::default();
+            let account=json!({"currentUser":{"status":"success","account":{"hostname":"GITHUB.COM","login":"Viewer","connection":{"connectorId":"default-connector","accountLinkId":"default-authorization"}}}});
+            let metadata=remote_review_metadata();
+            let summary=json!([{"status":"success","title":"PR","url":"https://github.com/o/r/pull/1","baseBranch":"main","headBranch":"feature","state":"open","headRevision":"head","canMerge":false,"checks":[],"checksComplete":true,"ciStatus":"none","hasOpenPr":true,"hasPendingChecks":false,"headRepository":null,"isDraft":false,"mergeBlocker":null}]);
+            let mut statuses=vec![200];let mut bodies=vec![account];
+            if let Some(status)=fallback {statuses.push(status);bodies.push(json!({"error_code":"route_not_found"}));}
+            statuses.extend([200,200,200,200]);bodies.extend([metadata,summary,json!({"status":"success","body":"description"}),json!({"status":"success","headRevision":"head","unifiedDiff":""})]);
+            let transport=instructions_transport(&statuses,&bodies);
+            let pr=crate::review_provider::parse_pull_request_url("https://github.com/O/R/pull/1").unwrap();
+            let result=service.review_pull_request_with("remote-review",&identity(),&request("unused").profile,&pr,&Value::Null,share_rpc,&transport).await.unwrap();
+            if fallback.is_none() {
+                if let Some(path)=std::env::var_os("CODEX_REVIEW_READ_FIXTURE_OUTPUT") {
+                    std::fs::write(path,serde_json::to_vec_pretty(&result).unwrap()).unwrap();
+                }
+            }
+            assert_eq!(result["account"],json!({"hostId":"local","hostname":"github.com","login":"viewer","connection":{"connectorId":"default-connector","accountLinkId":"default-authorization"}}));
+            assert_eq!(result["description"],"description");assert_eq!(result["diff"]["unifiedDiff"],"");
+            let requests=transport.requests.lock().unwrap();
+            assert_eq!(requests.len(),if fallback.is_some(){6}else{5});
+            for outgoing in requests.iter(){
+                assert_eq!(outgoing.method,HttpMethod::Post);assert_eq!(outgoing.headers["Content-Type"],"application/json");
+                assert_eq!(outgoing.headers["X-Codex-Expected-User-Id"],"user-fixture");assert_eq!(outgoing.headers["X-Codex-Expected-Account-Id"],"account-fixture");
+                assert!(outgoing.url.starts_with("https://chatgpt.com/backend-api/wham/github/operations/"));
+            }
+            assert_eq!(requests[0].url,"https://chatgpt.com/backend-api/wham/github/operations/account");
+            assert_eq!(serde_json::from_slice::<Value>(&requests[0].body).unwrap(),json!({"hostname":"github.com"}));
+            let summary_call=requests.iter().find(|outgoing|outgoing.url.ends_with("/summaries")).unwrap();
+            assert_eq!(serde_json::from_slice::<Value>(&summary_call.body).unwrap(),json!({"account":{"hostId":"local","hostname":"github.com","login":"viewer","connection":{"connectorId":"default-connector","accountLinkId":"default-authorization"}},"pullRequests":[{"hostname":"github.com","owner":"o","repository":"r","number":1}]}));
+            for outgoing in requests.iter().skip(1) {
+                assert_eq!(serde_json::from_slice::<Value>(&outgoing.body).unwrap()["account"]["connection"],result["account"]["connection"]);
+            }
+            if fallback.is_some(){assert!(requests[2].url.ends_with("/gh-pr-metadata"));}
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_review_enterprise_account_mismatch_and_policy_prevent_pr_reads() {
+        let service=ChatgptService::default();let profile=request("unused").profile;
+        let pr=crate::review_provider::parse_pull_request_url("https://github.example.test/o/r/pull/1").unwrap();
+        let connection=json!({"connectorId":"enterprise","accountLinkId":"authorization"});
+        let transport=instructions_transport(&[200],&[json!({"currentUser":{"status":"success","account":{"hostname":"github.example.test","login":"viewer","connection":{"connectorId":"enterprise","accountLinkId":"forged"}}}})]);
+        assert_eq!(service.review_pull_request_with("remote-enterprise",&identity(),&profile,&pr,&connection,share_rpc,&transport).await.unwrap_err().code,"github_account_unavailable");
+        let requests=transport.requests.lock().unwrap();assert_eq!(requests.len(),1);
+        assert_eq!(serde_json::from_slice::<Value>(&requests[0].body).unwrap(),json!({"hostname":"github.example.test","connection":connection}));drop(requests);
+        let transport=instructions_transport(&[],&[]);
+        let denied=|method,params| if method=="configRequirements/read" {std::future::ready(Ok(json!({"requirements":{"application":{"network":{"enabled":true,"domains":{}}}}})))}else{share_rpc(method,params)};
+        assert_eq!(service.review_pull_request_with("remote-policy",&identity(),&profile,&pr,&connection,denied,&transport).await.unwrap_err().code,"network_restricted");
+        service.cancel("remote-pre-cancel");
+        assert_eq!(service.review_pull_request_with("remote-pre-cancel",&identity(),&profile,&pr,&connection,share_rpc,&transport).await.unwrap_err().code,"cancelled");
+        assert!(transport.requests.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn remote_review_resource_and_reauthentication_errors_do_not_fallback_or_cache_account() {
+        for (status,body,code) in [
+            (404,json!({"error_code":"github_resource_not_found"}),"github_resource_not_found"),
+            (404,json!({"detail":{"code":"github_resource_not_found"}}),"github_resource_not_found"),
+            (404,json!({"error":{"code":"github_resource_not_found"}}),"github_resource_not_found"),
+            (403,json!({"detail":{"error":{"code":"github_reauthentication_required"}}}),"github_reauthentication_required"),
+            (403,json!({"extra":{"code":"github_reauthentication_required"},"error_code":"github_resource_not_found"}),"github_reauthentication_required"),
+            (403,json!({"error_code":"other"}),"other"),
+        ] {
+            let service=ChatgptService::default();
+            let transport=instructions_transport(&[200,status],&[json!({"currentUser":{"status":"success","account":{"hostname":"github.com","login":"viewer"}}}),body]);
+            let pr=crate::review_provider::parse_pull_request_url("https://github.com/o/r/pull/1").unwrap();
+            let error=service.review_pull_request_with("remote-error",&identity(),&request("unused").profile,&pr,&Value::Null,share_rpc,&transport).await.unwrap_err();
+            assert_eq!(error.status,Some(status));if code!="other"{assert_eq!(error.code,code);}
+            assert_eq!(transport.requests.lock().unwrap().len(),2);
+            // A failed read does not seed any reusable GitHub account result.
+            let denied=instructions_transport(&[200],&[json!({"currentUser":{"status":"error"}})]);
+            assert_eq!(service.review_pull_request_with("remote-retry",&identity(),&request("unused").profile,&pr,&Value::Null,share_rpc,&denied).await.unwrap_err().code,"github_account_unavailable");
+            assert_eq!(denied.requests.lock().unwrap().len(),1);
+        }
+    }
+
+    #[test]
+    fn remote_review_default_account_preserves_real_response_connection() {
+        let connection=json!({"connectorId":"default-connector","accountLinkId":"default-authorization"});
+        let current=json!({"currentUser":{"status":"success","account":{"hostname":"github.com","login":"Viewer","connection":connection}}});
+        let account=review_github_account(&current,&json!({"hostname":"github.com"}),&Value::Null).unwrap();
+        assert_eq!(account["connection"],connection);
+        for invalid in [json!({"connectorId":"default-connector"}),json!({"connectorId":"","accountLinkId":"link"}),json!("not-a-connection")] {
+            let mut bad=current.clone();bad["currentUser"]["account"]["connection"]=invalid;
+            assert!(review_github_account(&bad,&json!({"hostname":"github.com"}),&Value::Null).is_err());
+        }
+        assert!(review_github_account(&current,&json!({"hostname":"github.com"}),&json!({"connectorId":"explicit","accountLinkId":"other"})).is_err());
+    }
+
+    #[test]
+    fn remote_review_error_code_matches_fixed_envelope_priority() {
+        for error in [json!({"detail":{"code":"github_resource_not_found"}}),json!({"error":{"code":"github_resource_not_found"}}),json!({"detail":{"error":{"file_parse_error_code":"github_resource_not_found"}}})] {
+            assert_eq!(review_error_code(&error),Some("github_resource_not_found"));
+        }
+        let conflict=json!({"extra":{"code":"github_reauthentication_required"},"error_code":"github_resource_not_found","error":{"code":"other"}});
+        assert_eq!(review_error_code(&conflict),Some("github_reauthentication_required"));
+        assert_eq!(review_error_code(&json!({"extra":{"error_code":"","file_parse_error_code":"x","code":"y"},"code":"z"})),Some("x"));
+        assert_eq!(review_error_code(&json!({"extra":{"code":"unknown"},"error_code":"github_resource_not_found"})),Some("unknown"));
+        assert_eq!(review_error_code(&json!({"error_code":"root","error":{"error_code":"error"},"detail":{"code":"detail"}})),Some("root"));
+        assert_eq!(review_error_code(&json!({"error":{"error_code":"error"},"detail":{"code":"detail"}})),Some("error"));
+        assert_eq!(review_error_code(&json!({"detail":{"code":"detail","error":{"code":"nested"}},"error":{"error":{"code":"last"}}})),Some("detail"));
+        assert_eq!(review_error_code(&json!({"other":{"error_code":"github_resource_not_found"}})),None);
+    }
+
+    fn remote_review_metadata()->Value {
+        json!({"status":"success","headRevision":"head","createdAt":"2026-11-04T00:00:00Z","authorLogin":null,"authorAvatarUrl":null,
+            "additions":0,"deletions":0,"changedFiles":0,"reactions":[],"viewerCanReact":false,"isAuthor":null,"isAutoMergeEnabled":false,"allowedMergeMethods":["merge","squash"]})
+    }
+
+    #[test]
+    fn remote_review_rejects_missing_consumed_metadata_and_summary_revision() {
+        let metadata=json!({"status":"success","headRevision":"head"});
+        let summary=json!({"status":"success","title":null,"url":null,"baseBranch":null,"headBranch":null,"state":"open"});
+        let description=json!({"status":"success","body":""});let diff=json!({"status":"success","headRevision":"head","unifiedDiff":""});
+        assert!(validate_review_read(&metadata,&summary,&description,&diff).is_err());
+    }
+
+    #[test]
+    fn remote_review_validates_accounts_shapes_and_matching_revisions() {
+        let pr=json!({"hostname":"github.example.test"});let connection=json!({"connectorId":"c","accountLinkId":"l"});
+        let good=json!({"currentUser":{"status":"success","account":{"hostname":"github.example.test","login":"Viewer","connection":connection}}});
+        assert!(review_github_account(&good,&pr,&connection).is_ok());
+        for patch in [json!({"hostname":"other.test"}),json!({"login":""}),json!({"connection":{"connectorId":"c","accountLinkId":"forged"}})] {
+            let mut bad=good.clone();bad["currentUser"]["account"].as_object_mut().unwrap().extend(patch.as_object().unwrap().clone());assert!(review_github_account(&bad,&pr,&connection).is_err());
+        }
+        let metadata=remote_review_metadata();let summary=json!({"status":"success","title":null,"url":null,"baseBranch":null,"headBranch":null,"state":"merged","headRevision":"head"});
+        let description=json!({"status":"success","body":""});let diff=json!({"status":"success","headRevision":"head","unifiedDiff":""});
+        assert!(validate_review_read(&metadata,&summary,&description,&diff).is_ok());
+        let mut changed=diff.clone();changed["headRevision"]=json!("new");assert_eq!(validate_review_read(&metadata,&summary,&description,&changed).unwrap_err().code,"github_head_changed");
+        let mut changed=summary.clone();changed["headRevision"]=json!("new");assert_eq!(validate_review_read(&metadata,&changed,&description,&diff).unwrap_err().code,"github_head_changed");
+        for field in ["createdAt","authorLogin","additions","deletions","changedFiles"] {
+            let mut bad=metadata.clone();bad.as_object_mut().unwrap().remove(field);assert!(validate_review_read(&bad,&summary,&description,&diff).is_err(),"{field}");
+        }
+        for value in [json!(-1),json!(0.5),json!(9_007_199_254_740_992u64),json!("1")] {
+            let mut bad=metadata.clone();bad["additions"]=value;assert!(validate_review_read(&bad,&summary,&description,&diff).is_err());
+        }
+        for patch in [json!({"status":"unavailable"}),json!({"unifiedDiff":null}),json!({"headRevision":""})] {
+            let mut bad=diff.clone();bad.as_object_mut().unwrap().extend(patch.as_object().unwrap().clone());assert!(validate_review_read(&metadata,&summary,&description,&bad).is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_review_cancel_and_account_change_drop_inflight_scope() {
+        for invalidate in [false,true] {
+            let service=ChatgptService::default();let mut transport=instructions_transport(&[200],&[json!({})]);transport.delay_ms=1000;
+            let identity=identity();let profile=request("unused").profile;let pr=crate::review_provider::parse_pull_request_url("https://github.com/o/r/pull/1").unwrap();
+            let reading=service.review_pull_request_with("remote-inflight",&identity,&profile,&pr,&Value::Null,share_rpc,&transport);
+            let interrupt=async{while !transport.entered.load(Ordering::SeqCst){tokio::task::yield_now().await;}if invalidate{service.invalidate();}else{service.cancel("remote-inflight");}};
+            let(result,())=tokio::join!(reading,interrupt);assert_eq!(result.unwrap_err().code,if invalidate{"account_changed"}else{"cancelled"});assert!(transport.dropped.load(Ordering::SeqCst));
+        }
+    }
+
+    #[tokio::test]
+    async fn review_gitlab_fixed_read_contract_filters_authorization_and_detail_permissions() {
+        let service=ChatgptService::default();
+        let candidate=|id| json!({"id":id,"template_id":"templated_apps_GitLab"});
+        let link=|id| json!({"connector_id":id,"id":format!("link-{id}")});
+        let mut transport=instructions_transport(&[200,200,403,200],&[
+            json!({"connectors":[candidate("denied"),candidate("available"),candidate("unauthorized")]}),
+            json!({"links":[link("denied"),link("available")]}),json!({}),
+            json!({"id":"available","service":"gitlab","template_id":"templated_apps_GitLab","base_url":"https://gitlab.example.test/api/v4","name":"Work"}),
+        ]);
+        transport.reserve_response_on_send=true;
+        let result=service.review_gitlab_instances_with("gitlab-read",&identity(),&request("unused").profile,share_rpc,&transport).await.unwrap();
+        assert_eq!(result,json!([{"connectorId":"available","hostname":"gitlab.example.test","name":"Work"}]));
+        let requests=transport.requests.lock().unwrap();
+        assert_eq!(requests.len(),4);
+        assert_eq!(requests[0].url,"https://chatgpt.com/backend-api/ps/connectors/by-template?template_id=templated_apps_GitLab");
+        assert_eq!(requests[0].method,HttpMethod::Get);
+        assert_eq!(requests[1].url,"https://chatgpt.com/backend-api/aip/connectors/links/list_accessible");
+        assert_eq!(requests[1].method,HttpMethod::Post);
+        assert_eq!(requests[1].headers.get("Content-Type").map(String::as_str),Some("application/json"));
+        assert_eq!(serde_json::from_slice::<Value>(&requests[1].body).unwrap(),json!({"principals":[],"link_refresh_strategy":"BLOCKING"}));
+        assert_eq!(requests[3].url,"https://chatgpt.com/backend-api/aip/connectors/available?include_actions=false");
+        for outgoing in requests.iter() {
+            assert_eq!(outgoing.headers["OAI-Product-Sku"],"CODEX");
+            assert_eq!(outgoing.headers["X-Codex-Surface"],"other");
+            assert_eq!(outgoing.headers["ChatGPT-Account-Id"],"account-fixture");
+        }
+    }
+
+    #[tokio::test]
+    async fn review_gitlab_failure_cancellation_identity_and_policy_do_not_become_empty_success() {
+        let profile=request("unused").profile;
+        let service=ChatgptService::default();
+        service.cancel("gitlab-cancel");
+        let transport=instructions_transport(&[],&[]);
+        assert_eq!(service.review_gitlab_instances_with("gitlab-cancel",&identity(),&profile,share_rpc,&transport).await.unwrap_err().code,"cancelled");
+        let mut stale=identity();stale.generation+=1;
+        assert_eq!(service.review_gitlab_instances_with("gitlab-stale",&stale,&profile,share_rpc,&transport).await.unwrap_err().code,"account_changed");
+        assert!(transport.requests.lock().unwrap().is_empty());
+        for (status,body) in [(500,json!({})),(200,json!({"not_connectors":[]}))] {
+            let mut transport=instructions_transport(&[status,200],&[body,json!({"links":[]})]);transport.reserve_response_on_send=true;
+            assert!(service.review_gitlab_instances_with("gitlab-failure",&identity(),&profile,share_rpc,&transport).await.is_err());
+        }
+        let mut transport=instructions_transport(&[200,200,500],&[
+            json!({"connectors":[{"id":"enterprise","template_id":"templated_apps_GitLab"}]}),
+            json!({"links":[{"id":"link","connector_id":"enterprise"}]}),json!({})]);transport.reserve_response_on_send=true;
+        assert_eq!(service.review_gitlab_instances_with("gitlab-detail-failure",&identity(),&profile,share_rpc,&transport).await.unwrap_err().status,Some(500));
+        let transport=instructions_transport(&[],&[]);
+        let denied=|method, params| if method=="configRequirements/read" { std::future::ready(Ok(json!({"requirements":{"application":{"network":{"enabled":true,"domains":{}}}}}))) } else { share_rpc(method,params) };
+        assert!(service.review_gitlab_instances_with("gitlab-policy",&identity(),&profile,denied,&transport).await.is_err());
+        assert!(transport.requests.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn review_gitlab_inflight_identity_change_and_cancel_drop_reads() {
+        for account_change in [false,true] {
+            let service=ChatgptService::default();
+            let mut transport=instructions_transport(&[200,200],&[json!({"connectors":[]}),json!({"links":[]})]);
+            transport.delay_ms=1000;transport.reserve_response_on_send=true;
+            let identity=identity();let profile=request("unused").profile;
+            let reading=service.review_gitlab_instances_with("gitlab-inflight",&identity,&profile,share_rpc,&transport);
+            let interrupt=async {
+                while !transport.entered.load(Ordering::SeqCst) { tokio::task::yield_now().await; }
+                if account_change { service.invalidate(); } else { service.cancel("gitlab-inflight"); }
+            };
+            let (result,())=tokio::join!(reading,interrupt);
+            assert_eq!(result.unwrap_err().code,if account_change { "account_changed" } else { "cancelled" });
+            assert!(transport.dropped.load(Ordering::SeqCst));
+        }
     }
 
     #[tokio::test]

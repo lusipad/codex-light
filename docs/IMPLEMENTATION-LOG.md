@@ -1891,3 +1891,11 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 - 提供商读取后端新增真实bootstrap gate/layer解码、固定GitHub连接GET、原生身份headers/网络策略/取消与15秒限时；官方SDK纯函数黄金hash校验。gate/连接4项及共享账号服务85项通过，客户端通过。暂未接UI或实施实例写入，不宣称整页完成，详见同轮实施记录。
 - 后续已接提供商/GitHub实例UI和原生验证写入：保存前重取gate与三字段成员资格、单字段merge/expectedValue同锁检查、失败不更新内存与跨窗重读；实例失败与provider可用状态分离，GitLab企业未接且拒绝非null写入。新增UI/原生持久化4项与前端检查通过。独立审核另复现并修复跨窗通知静默取消当前保存的P2，成功/失败/双广播回归与复核通过。最终完整标准及原生构建另记[本地阶段验收表](antigravity/acceptance/16-16B-local.md)，不沿用早期Fast；整16.16继续开发，GitLab授权枚举合同已补证。
 - 2026-11-04最终归档：完整标准非Fast（含隔离协议）及当前源码EXE/MSI/NSIS退出0，297项产品输入构建前后稳定，8项产物含5许可已归档；未另跑全Rust。按用户大阶段提交约定提交本地增量，不称整页完成。真实账号/原生多窗/IME/官方配对像素未验，下一GitLab企业授权枚举与真实审查消费者继续执行固定合同。
+
+## 2026-11-04 — 16.16C GitLab实例与真实账号PR阅读工作面
+
+- 按[修改前合同](antigravity/specs/16-16C-remote-review-surface.md)实施：补齐GitLab模板/首link授权/详情过滤和企业成员复核写入；新增真实GitHub account→摘要/metadata/body/diff固定读取、独立全局路由与导航轨消费者，不以本机gh登录代替选定账号。
+- 固定包补证纠正只读root.error_code的错误实现，先复现后按官方节点/字段优先序处理；补全实际消费字段与三方head核对，Rust实际返回JSON直接通过生产TS解析。旧PR详情弹窗绕过guard执行本地branch的行为在07d98eb复现失败，修复后回归通过。
+- 复用账号服务、CAS、form-field和Markdown；remoteContent分支隔离远程内容的本机文件/命令能力，旧聊天默认不变，无新依赖。浏览器夹具已验证正文/差异、失权清除与重读，实际修复URL input白底；不是官方/原生像素通过。
+- 定向共享Rust最终95项、provider5项、cargo check、Node行为/分享/账号/旧审查和TypeScript通过。300项产品输入冻结后运行非Fast完整标准，随后新原生构建；终态见[验收记录](antigravity/acceptance/16-16C.md)。fixed比较/私人review turn、侧面tab、inbox/search、GitLab MR/cloud、真实账号/原生GUI/配对像素均未完成，整个复刻目标继续active。
+- 最终归档：非Fast完整标准退出0后，仅默认账号connection兼容修复继续修改共享服务；先复现失败，修后共享服务96项/provider5项及Rust返回→生产TS贯通通过。标准/最终原生300项快照分别保留，差异仅该Rust文件。最终EXE/MSI/NSIS退出0、300项输入稳定、8项产物含5许可归档。构建警告及真实账号/原生GUI/官方配对像素限制见验收记录；本阶段待用户验收，不关闭全App目标。

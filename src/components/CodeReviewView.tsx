@@ -32,6 +32,7 @@ export interface CodeReviewViewProps {
   busy?: boolean;
   repositoryReady?: boolean;
   onStartReview: (req: ReviewRequest) => Promise<void> | void;
+  onOpenRemotePullRequest?: (url: string) => void;
   onBack?: () => void;
   lastResult?: string | null;
   reviewResult?: ReviewRun | null;
@@ -100,6 +101,7 @@ export const CodeReviewView: React.FC<CodeReviewViewProps> = ({
   busy = false,
   repositoryReady = true,
   onStartReview,
+  onOpenRemotePullRequest,
   onBack,
   lastResult,
   reviewResult,
@@ -242,7 +244,7 @@ export const CodeReviewView: React.FC<CodeReviewViewProps> = ({
           <div>
             <h2 className="review-title">代码审查与 PR 工作台</h2>
             <p className="review-subtitle">
-              对本地改动或 GitHub Pull Requests 执行 Codex 智能体审查，审查意见将流式返回。
+              对本地改动执行 Codex 智能体审查，审查意见将流式返回。
             </p>
           </div>
         </div>
@@ -541,7 +543,7 @@ export const CodeReviewView: React.FC<CodeReviewViewProps> = ({
                         type="button"
                         className="secondary-btn-sm"
                         disabled={prActionBusy}
-                        onClick={() => void runPrAction(isCurrent => openReviewLink(pr.url!, () => setSelectedPr(pr), isCurrent))}
+                        onClick={() => void runPrAction(isCurrent => openReviewLink(pr.url!, () => onOpenRemotePullRequest ? onOpenRemotePullRequest(pr.url!) : setSelectedPr(pr), isCurrent))}
                       >
                         打开链接
                       </button>
@@ -646,16 +648,10 @@ export const CodeReviewView: React.FC<CodeReviewViewProps> = ({
               <button
                 type="button"
                 className="primary-btn-sm"
-                onClick={() => {
-                  onStartReview({
-                    kind: "branch",
-                    branch: selectedPr.head_ref_name || "main",
-                    instructions: `请全面审查 Pull Request #${selectedPr.number}: ${selectedPr.title}`,
-                  });
-                  setSelectedPr(null);
-                }}
+                disabled={prActionBusy || busy}
+                onClick={() => void runPrAction(isCurrent => runPullRequestReview(selectedPr, onStartReview, isCurrent))}
               >
-                在 Codex 中开始深度审查
+                私人 PR 审查（未接入）
               </button>
               {selectedPr.url && (
                 <button

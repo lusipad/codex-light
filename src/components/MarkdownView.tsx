@@ -7,6 +7,7 @@ interface MarkdownViewProps {
   variant?: "default" | "user-message";
   onRunCommand?: (cmd: string) => void;
   onOpenFile?: (filePath: string) => void;
+  remoteContent?: boolean;
 }
 
 interface ParsedBlock {
@@ -116,7 +117,8 @@ function hasUnsafeImageProtocol(value: string): boolean {
 function renderInlineSegments(
   text: string,
   onOpenFile?: (filePath: string) => void,
-  userMessage = false
+  userMessage = false,
+  remoteContent = false
 ): React.ReactNode[] {
   const inlineRegex =
     /(`[^`]+`|!\[[^\]]*\]\([^)]+\)|\[[^\]]+\]\([^)]+\)|\*\*\*[^*]+\*\*\*|\*\*[^*]+\*\*|~~[^~]+~~|(?<!\*)\*[^*\s][^*]*\*(?!\*)|(?<!\w)_[^_\s][^_]*_(?!\w))/g;
@@ -154,10 +156,10 @@ function renderInlineSegments(
     const imgMatch = part.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
     if (imgMatch) {
       if (userMessage) {
-        return <React.Fragment key={idx}>!{renderInlineSegments(part.slice(1), onOpenFile, true)}</React.Fragment>;
+        return <React.Fragment key={idx}>!{renderInlineSegments(part.slice(1), onOpenFile, true, remoteContent)}</React.Fragment>;
       }
       const [, alt, src] = imgMatch;
-      if (hasUnsafeImageProtocol(src)) {
+      if (hasUnsafeImageProtocol(src) || (remoteContent && !/^https:\/\//i.test(src))) {
         return <span key={idx} className="md-unsupported-media">不支持的图片地址</span>;
       }
       return (
@@ -174,7 +176,7 @@ function renderInlineSegments(
     const linkMatch = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
     if (linkMatch) {
       const [, label, href] = linkMatch;
-      if (hasUnsafeExternalProtocol(href)) {
+      if (hasUnsafeExternalProtocol(href) || (remoteContent && !/^(?:https:\/\/|#)/i.test(href))) {
         return <span key={idx} className="md-unsupported-media">不支持的链接地址</span>;
       }
       if (href.startsWith("file://") && onOpenFile) {
@@ -227,21 +229,21 @@ function renderInlineSegments(
     if (part.startsWith("***") && part.endsWith("***") && part.length > 6) {
       return (
         <strong key={idx}>
-          <em>{renderInlineSegments(part.slice(3, -3), onOpenFile, userMessage)}</em>
+          <em>{renderInlineSegments(part.slice(3, -3), onOpenFile, userMessage, remoteContent)}</em>
         </strong>
       );
     }
     if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
       return (
         <strong key={idx}>
-          {renderInlineSegments(part.slice(2, -2), onOpenFile, userMessage)}
+          {renderInlineSegments(part.slice(2, -2), onOpenFile, userMessage, remoteContent)}
         </strong>
       );
     }
     if (part.startsWith("~~") && part.endsWith("~~") && part.length > 4) {
       return (
         <del key={idx}>
-          {renderInlineSegments(part.slice(2, -2), onOpenFile, userMessage)}
+          {renderInlineSegments(part.slice(2, -2), onOpenFile, userMessage, remoteContent)}
         </del>
       );
     }
@@ -251,7 +253,7 @@ function renderInlineSegments(
       part.length > 2
     ) {
       return (
-        <em key={idx}>{renderInlineSegments(part.slice(1, -1), onOpenFile, userMessage)}</em>
+        <em key={idx}>{renderInlineSegments(part.slice(1, -1), onOpenFile, userMessage, remoteContent)}</em>
       );
     }
 
@@ -276,7 +278,8 @@ function isTableSeparator(line: string): boolean {
 function renderTextParagraphs(
   text: string,
   onOpenFile?: (filePath: string) => void,
-  userMessage = false
+  userMessage = false,
+  remoteContent = false
 ) {
   const lines = text.split(/\r?\n/);
   const elements: React.ReactNode[] = [];
@@ -304,7 +307,7 @@ function renderTextParagraphs(
                   className="md-task-checkbox"
                 />
               )}
-              <span>{renderInlineSegments(item.text, onOpenFile, userMessage)}</span>
+              <span>{renderInlineSegments(item.text, onOpenFile, userMessage, remoteContent)}</span>
             </li>
           ))}
         </ul>
@@ -316,7 +319,7 @@ function renderTextParagraphs(
       elements.push(
         <ol key={`${keyPrefix}-ol`} start={startNum} className="md-list md-ol-list">
           {olItems.map((item, idx) => (
-            <li key={idx}>{renderInlineSegments(item.text, onOpenFile, userMessage)}</li>
+            <li key={idx}>{renderInlineSegments(item.text, onOpenFile, userMessage, remoteContent)}</li>
           ))}
         </ol>
       );
@@ -341,7 +344,7 @@ function renderTextParagraphs(
           )}
           {bodyLines.map((ql, qIdx) => (
             <p key={qIdx} className="md-blockquote-p">
-              {renderInlineSegments(ql, onOpenFile, userMessage)}
+              {renderInlineSegments(ql, onOpenFile, userMessage, remoteContent)}
             </p>
           ))}
         </blockquote>
@@ -391,7 +394,7 @@ function renderTextParagraphs(
                     key={hIdx}
                     style={{ textAlign: alignments[hIdx] || "left" }}
                   >
-                    {renderInlineSegments(h, onOpenFile, userMessage)}
+                    {renderInlineSegments(h, onOpenFile, userMessage, remoteContent)}
                   </th>
                 ))}
               </tr>
@@ -404,7 +407,7 @@ function renderTextParagraphs(
                       key={cIdx}
                       style={{ textAlign: alignments[cIdx] || "left" }}
                     >
-                      {renderInlineSegments(row[cIdx] ?? "", onOpenFile, userMessage)}
+                      {renderInlineSegments(row[cIdx] ?? "", onOpenFile, userMessage, remoteContent)}
                     </td>
                   ))}
                 </tr>
@@ -439,7 +442,7 @@ function renderTextParagraphs(
     if (headingMatch) {
       flushListsAndQuotes(`l-${i}`);
       const level = headingMatch[1].length;
-      const contentNode = renderInlineSegments(headingMatch[2], onOpenFile, userMessage);
+      const contentNode = renderInlineSegments(headingMatch[2], onOpenFile, userMessage, remoteContent);
       if (userMessage) {
         elements.push(React.createElement(`h${level}`, { key: i, className: `md-h${level}` }, contentNode));
       } else if (level === 1) {
@@ -509,7 +512,7 @@ function renderTextParagraphs(
     }
     elements.push(
       <p key={i} className="md-p">
-        {renderInlineSegments(paragraph.join("\n"), onOpenFile, userMessage)}
+        {renderInlineSegments(paragraph.join("\n"), onOpenFile, userMessage, remoteContent)}
       </p>
     );
   }
@@ -519,7 +522,8 @@ function renderTextParagraphs(
 }
 
 export const MarkdownView: React.FC<MarkdownViewProps> = React.memo(
-  ({ content, variant = "default", onRunCommand, onOpenFile }) => {
+  ({ content, variant = "default", onRunCommand, onOpenFile, remoteContent = false }) => {
+    if (remoteContent) { onRunCommand = undefined; onOpenFile = undefined; }
     const [copiedBlocks, setCopiedBlocks] = useState<Record<number, boolean>>({});
     const [copyingBlocks, setCopyingBlocks] = useState<Record<number, boolean>>({});
     const copyingRef = useRef(new Set<number>());
@@ -642,7 +646,7 @@ export const MarkdownView: React.FC<MarkdownViewProps> = React.memo(
           }
           return (
             <div key={idx} className="md-text-chunk">
-              {renderTextParagraphs(block.code, onOpenFile, userMessage)}
+              {renderTextParagraphs(block.code, onOpenFile, userMessage, remoteContent)}
             </div>
           );
         })}

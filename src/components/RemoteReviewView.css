@@ -1,0 +1,6 @@
+.remote-review-view { overflow: auto; min-height: 0; }
+.remote-review-url-form { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.remote-review-url-form .form-field { flex: 1 1 280px; margin: 0; min-width: 0; }
+.remote-review-summary h3 { margin: 8px 0; overflow-wrap: anywhere; }
+.remote-review-summary p, .remote-review-revision { color: var(--text-secondary); overflow-wrap: anywhere; }
+.remote-review-diff { overflow: auto; max-width: 100%; font-family: var(--font-mono); font-size: var(--text-sm); tab-size: 4; }

@@ -64,7 +64,7 @@ console.log("PASS AP-B02: exact username normalization/format without invented s
 
 const ipc = [], storage = new Map(); let response;
 const bridge = { tauriInvoke: async (command, args) => { ipc.push({ command, args }); return response(command, args); } };
-const transport = load("src/chatgptService.ts", { "./bridge": bridge }, {
+const transport = load("src/chatgptService.ts", { "./bridge": bridge, "./remoteReview": load("src/remoteReview.ts", {}) }, {
   crypto: { randomUUID: () => "fixture-request" }, navigator: { userAgent: "fixture", userAgentData: { platform: "Windows", brands: [{ brand: "Chromium", version: "130" }] } },
   localStorage: { getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value) },
 });

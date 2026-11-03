@@ -257,6 +257,7 @@ Invoke-Step "TypeScript typecheck (tsc --noEmit)" { npx tsc --noEmit }
   Invoke-Step "Code Review provider settings lifecycle and actual controls" { node scripts/verify-review-provider-ui.mjs }
   Invoke-Step "Rust review preferences contracts" { cargo test --manifest-path src-tauri/Cargo.toml review_preferences }
   Invoke-Step "Rust Code Review provider capability contracts" { cargo test --locked --manifest-path src-tauri/Cargo.toml review_provider --lib }
+  Invoke-Step "Remote PR surface identity, lifecycle and local-action boundaries" { node scripts/verify-remote-review.mjs }
   Invoke-Step "Rust worktree root contracts" { cargo test --manifest-path src-tauri/Cargo.toml worktree_root }
   Invoke-Step "Rust local environment file contracts" { cargo test --manifest-path src-tauri/Cargo.toml local_environment::tests }
   Invoke-Step "Rust check (cargo check)" {

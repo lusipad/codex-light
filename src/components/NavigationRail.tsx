@@ -240,7 +240,7 @@ export const NavigationRail: React.FC<NavigationRailProps> = ({
         >
           <EllipsisIcon size={18} />
         </button>
-        {routeButton("review", "代码审查", <FileCodeIcon size={18} />)}
+        {routeButton("code-review", "代码审查", <FileCodeIcon size={18} />)}
       </div>
 
       <div className="nav-rail-bottom">
