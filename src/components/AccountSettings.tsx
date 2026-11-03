@@ -1,15 +1,21 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useAccountSession } from "../accountSession";
+import { AccountDetails } from "./AccountDetails";
 import "./AccountSettings.css";
 
-export function AccountSettings({ active, accountIdentity = "", connectionIdentity, onAccountChanged }: {
+export function AccountSettings({ active, accountIdentity = "", connectionIdentity, onAccountChanged, onNavigationGuardChange }: {
   active: boolean; accountIdentity?: string; connectionIdentity: string; onAccountChanged?: () => void | Promise<void>;
+  onNavigationGuardChange?: (guard: ((action: () => void) => boolean) | null) => void;
 }) {
   const state = useAccountSession({ active, accountIdentity, connectionIdentity, onAccountChanged });
   const [apiEntry, setApiEntry] = useState(false);
   const [apiKey, setApiKey] = useState("");
   const apiInput = useRef<HTMLInputElement>(null);
   const apiEntryButton = useRef<HTMLButtonElement>(null);
+  const detailsGuard = useRef<((action: () => void) => boolean) | null>(null);
+  const registerDetailsGuard = useCallback((guard: ((action: () => void) => boolean) | null) => {
+    detailsGuard.current = guard; onNavigationGuardChange?.(guard);
+  }, [onNavigationGuardChange]);
   const currentContext = useRef({ active, accountIdentity, connectionIdentity, busy: false });
   useEffect(() => { setApiKey(""); setApiEntry(false); }, [active, accountIdentity, connectionIdentity]);
   useEffect(() => { if (state.info?.account) { setApiKey(""); setApiEntry(false); } }, [state.info?.account?.type]);
@@ -32,11 +38,11 @@ export function AccountSettings({ active, accountIdentity = "", connectionIdenti
     {state.error && <div role="alert" className="error-banner">{state.error}</div>}
     {state.loading && !state.info && <p role="status">正在加载…</p>}
     {state.info && account && <div>
-      <div className="account-settings-row"><span>姓名</span><span className="account-settings-value">未取得</span></div>
-      <div className="account-settings-row"><span>用户名</span><span className="account-settings-value">未取得</span></div>
-      <div className="account-settings-row"><span>电子邮箱</span><span className="account-settings-value">{account.type === "chatgpt" && account.email ? account.email : "未取得"}</span></div>
+      {account.type === "chatgpt" && <AccountDetails accountIdentity={accountIdentity} connectionIdentity={connectionIdentity} accountEmail={account.email} onNavigationGuardChange={registerDetailsGuard} />}
       <div className="account-settings-row"><span>账户状态</span><span className="account-settings-value">{account.type === "chatgpt" ? "已通过 ChatGPT 登录" : account.type === "apiKey" ? "已通过 API 密钥登录" : account.type === "amazonBedrock" ? "已通过 Amazon Bedrock 登录" : "无法识别的账户类型"}</span></div>
-      <div className="account-settings-actions"><button type="button" className="secondary-btn" disabled={busy} onClick={() => void state.logout()}>退出登录</button></div>
+      <div className="account-settings-actions"><button type="button" className="secondary-btn" disabled={busy} onClick={() => {
+        const logout = () => { void state.logout(); }; if (detailsGuard.current?.(logout) !== false) logout();
+      }}>退出登录</button></div>
     </div>}
     {state.info && !account && <div className="account-settings-login">
       <h3>登录或注册</h3>

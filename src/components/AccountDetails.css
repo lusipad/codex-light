@@ -1,0 +1,13 @@
+.account-details-value { color: var(--text-secondary); background: transparent; border: 0; padding: 4px 0; text-align: right; overflow-wrap: anywhere; font: inherit; cursor: pointer; }
+.account-details-value:disabled { cursor: default; }
+.account-details-value:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 2px; }
+.account-details-refresh { margin-top: 12px; }
+.account-details-dialog { width: min(420px, calc(100vw - 32px)); height: auto; padding: 24px; margin: auto; }
+.account-details-dialog:not([open]) { display: none; }
+.account-details-dialog[open] { display: block; }
+.account-details-dialog h3 { margin: 0 0 16px; }
+.account-details-dialog form { display: flex; flex-direction: column; gap: 12px; }
+.account-details-dialog input { min-height: 40px; width: 100%; padding: 8px 12px; color: var(--text-primary); background: var(--bg-primary); border: 1px solid var(--border-default); border-radius: 8px; font: inherit; }
+.account-details-dialog p { font-size: var(--text-sm); line-height: 1.5; }
+.account-details-help { color: var(--text-secondary); }
+.account-details-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }

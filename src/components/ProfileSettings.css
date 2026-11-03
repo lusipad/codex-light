@@ -1,0 +1,19 @@
+.public-profile-header { display: flex; align-items: flex-start; gap: 20px; padding: 16px 0; }
+.public-profile-picture { width: 80px; height: 80px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
+.public-profile-summary { flex: 1; min-width: 0; }
+.public-profile-summary h3 { margin: 0; font-size: var(--text-heading-md); }
+.public-profile-summary p { margin: 8px 0 0; overflow-wrap: anywhere; }
+.public-profile-username { color: var(--text-secondary); font-size: var(--text-sm); }
+.public-profile-bio { white-space: pre-wrap; }
+.public-profile-summary a { display: inline-block; margin-top: 12px; color: var(--accent-blue); }
+.public-profile-refresh { align-self: flex-start; }
+.public-profile-settings button:focus-visible, .public-profile-settings input:focus-visible, .public-profile-settings textarea:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 2px; }
+.public-profile-edit-dialog, .public-profile-discard-dialog { width: min(480px, calc(100vw - 32px)); height: auto; margin: auto; padding: 24px; overflow: auto; }
+.public-profile-edit-dialog:not([open]), .public-profile-discard-dialog:not([open]) { display: none; }
+.public-profile-edit-dialog[open] { display: flex; flex-direction: column; gap: 12px; }
+.public-profile-discard-dialog[open] { display: block; }
+.public-profile-edit-dialog h3, .public-profile-discard-dialog h3 { margin-top: 0; }
+.public-profile-edit-dialog input, .public-profile-edit-dialog textarea { width: 100%; padding: 10px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-primary); color: var(--text-primary); font: inherit; }
+.public-profile-edit-dialog label { font-size: var(--text-sm); font-weight: 500; }
+.public-profile-edit-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+@media (max-width: 640px) { .public-profile-header { flex-wrap: wrap; gap: 12px; } .public-profile-summary { min-width: 160px; } }

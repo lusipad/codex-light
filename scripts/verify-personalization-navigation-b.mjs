@@ -25,6 +25,7 @@ const context = {
   commitActiveRoute:route=>routeCommits.push(route),
   activeSectionRef:{current:'personalization'},commitActiveSection:section=>sectionCommits.push(section),
   onNavigationGuardChange:value=>forwarded.push(value),
+  settingsGuardsRef:{current:{personalization:null,account:null,profile:null}},
 };
 context.setActiveRoute=vm.runInNewContext(code(app,'setActiveRoute'),context);
 context.setActiveRoute('thread');
@@ -39,7 +40,20 @@ context.setActiveSection=vm.runInNewContext(code(settings,'setActiveSection'),co
 dirty=true;context.setActiveSection('agent');assert.deepEqual(sectionCommits,[]);assert.equal(context.activeSectionRef.current,'personalization');
 dirty=false;pending();assert.deepEqual(sectionCommits,['agent']);
 const register=vm.runInNewContext(code(settings,'registerPersonalizationNavigationGuard'),context);
+context.publishSettingsGuard=vm.runInNewContext(code(settings,'publishSettingsGuard'),context);
 register(guard);assert.equal(forwarded.at(-1),guard);register(null);assert.equal(forwarded.at(-1),null);assert.equal(context.personalizationNavigationGuardRef.current,null);
+const registerProfile=vm.runInNewContext(code(settings,'registerProfileNavigationGuard'),context);
+const registerAccount=vm.runInNewContext(code(settings,'registerAccountNavigationGuard'),context);
+register(guard);registerProfile(()=>true);registerProfile(null);
+assert.equal(forwarded.at(-1),guard,'profile cleanup must not erase the active instruction guard');
+register(null);
+let profilePending, profileDirty=true;
+const profileGuard=action=>{if(!profileDirty)return true;profilePending=action;return false};
+registerProfile(profileGuard);registerAccount(()=>true);registerAccount(null);
+assert.equal(forwarded.at(-1),profileGuard,'account cleanup must not erase the active public profile guard');
+context.setActiveSection('profile');assert.deepEqual(sectionCommits,['agent']);
+profileDirty=false;profilePending();assert.deepEqual(sectionCommits,['agent','profile']);
+registerProfile(null);assert.equal(forwarded.at(-1),null);
 context.personalizationNavigationGuardRef.current=guard;
 context.routeHistoryRef={current:{entries:['home','thread','settings'],index:2}};
 context.navigatingRouteHistoryRef={current:false};context.setRouteHistoryVersion=()=>{};

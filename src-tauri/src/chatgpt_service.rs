@@ -50,6 +50,9 @@ pub enum ServiceOperation {
     ShareUsers,
     ShareGroups,
     WhamUsage,
+    AccountMe,
+    ProfileIdentity,
+    ProfilePage,
 }
 
 #[derive(Clone, Deserialize)]
@@ -128,6 +131,30 @@ pub struct AccountInstructionsWriteRequest {
     pub expected_identity: ServiceIdentity,
     pub profile: ServiceProfile,
     pub contents: String,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileMutationOperation { AccountName, UsernameCheck, Username, Profile }
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProfileMutationRequest {
+    pub request_id: String,
+    pub expected_identity: ServiceIdentity,
+    pub profile: ServiceProfile,
+    pub operation: ProfileMutationOperation,
+    pub params: Value,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileMutationResponse {
+    pub request_id: String,
+    pub identity: ServiceIdentity,
+    pub body: Value,
+    pub readback: Value,
+    pub verification: &'static str,
 }
 
 #[derive(Serialize)]
@@ -357,6 +384,123 @@ impl Drop for Registration<'_> {
 }
 
 impl ChatgptService {
+    pub async fn profile_mutation<F, Fut>(&self, request: ProfileMutationRequest, call: F) -> ServiceResult<ProfileMutationResponse>
+    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>> {
+        self.profile_mutation_with(request, call, &CurlTransport).await
+    }
+
+    async fn profile_mutation_with<F, Fut, T>(&self, request: ProfileMutationRequest, call: F, transport: &T) -> ServiceResult<ProfileMutationResponse>
+    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>>, T: Transport {
+        let mut params = profile_mutation_params(request.operation, &request.params)?;
+        let registration = self.register(&request.request_id)?;
+        let identity = &request.expected_identity;
+        self.check_share_current(identity, &registration)?;
+        let (route, method, read_route) = match request.operation {
+            ProfileMutationOperation::AccountName => ("/backend-api/accounts/users/name", HttpMethod::Patch, "/backend-api/me"),
+            ProfileMutationOperation::UsernameCheck => ("/backend-api/wham/profiles/username/check", HttpMethod::Post, "/backend-api/profiles/me"),
+            ProfileMutationOperation::Username => ("/backend-api/wham/profiles/me", HttpMethod::Patch, "/backend-api/profiles/me"),
+            ProfileMutationOperation::Profile => ("/backend-api/profiles/me", HttpMethod::Patch, "/backend-api/profiles/me/page"),
+        };
+        let before = self.profile_http(read_route, HttpMethod::Get, None, &request, &registration, &call, transport).await?;
+        match request.operation {
+            ProfileMutationOperation::AccountName => {
+                validate_profile_read(&ServiceOperation::AccountMe, &before, identity)?;
+                if before.get("name") == params.get("name") { return Err(failure("invalid_request", "Account name is unchanged")); }
+            }
+            ProfileMutationOperation::Username | ProfileMutationOperation::UsernameCheck => {
+                validate_profile_read(&ServiceOperation::ProfileIdentity, &before, identity)?;
+                if !before["profile_details"].is_object() || !before["viewer_access"].is_object() { return Err(failure("invalid_response", "Profile permissions are unavailable")); }
+                if !profile_username_editable(&before) { return Err(failure("forbidden", "Username editing is not available for this profile")); }
+            }
+            ProfileMutationOperation::Profile => {
+                validate_profile_read(&ServiceOperation::ProfilePage, &before, identity)?;
+                if before.get("can_edit") != Some(&Value::Bool(true)) || !before["profile_details"].is_object() {
+                    return Err(failure("forbidden", "Public profile editing is not available"));
+                }
+                params.as_object_mut().unwrap().retain(|key, value| before["profile_details"].get(key) != Some(value));
+                if params.as_object().unwrap().is_empty() { return Err(failure("invalid_request", "Public profile is unchanged")); }
+            }
+        }
+        self.check_share_current(identity, &registration)?;
+        let body = self.profile_http(route, method, Some(&params), &request, &registration, &call, transport).await?;
+        if matches!(request.operation, ProfileMutationOperation::UsernameCheck) {
+            if !body.get("available").is_some_and(Value::is_boolean) { return Err(failure("invalid_response", "Invalid username availability response")); }
+            return Ok(ProfileMutationResponse { request_id:request.request_id, identity:identity.clone(), body, readback:Value::Null, verification:"not_applicable" });
+        }
+        let read = self.profile_http(read_route, HttpMethod::Get, None, &request, &registration, &call, transport).await;
+        self.check_share_current(identity, &registration)?;
+        let readback = match read {
+            Ok(readback) => readback,
+            Err(error) if matches!(error.code, "account_changed" | "cancelled") => return Err(error),
+            Err(_) => Value::Null,
+        };
+        let confirmed = match request.operation {
+            ProfileMutationOperation::AccountName => validate_profile_read(&ServiceOperation::AccountMe, &readback, identity).is_ok() && readback.get("name") == params.get("name"),
+            ProfileMutationOperation::Username => {
+                let saved = body.pointer("/profile/username").and_then(Value::as_str);
+                validate_profile_read(&ServiceOperation::ProfileIdentity, &readback, identity).is_ok() &&
+                    saved.is_some_and(|saved| saved.split('~').next() == params.get("username").and_then(Value::as_str)) &&
+                    readback.pointer("/profile_details/username").and_then(Value::as_str) == saved
+            },
+            ProfileMutationOperation::Profile => validate_profile_read(&ServiceOperation::ProfilePage, &readback, identity).is_ok() && params.as_object().unwrap().iter().all(|(key, expected)| readback["profile_details"].get(key) == Some(expected)),
+            ProfileMutationOperation::UsernameCheck => false,
+        };
+        if matches!(request.operation, ProfileMutationOperation::AccountName) && !readback.is_null() {
+            // A mismatched /me user is an identity error, not delayed profile synchronization.
+            if readback.get("id").and_then(Value::as_str) != Some(identity.user_id.as_str()) {
+                return Err(failure("account_changed", "Account profile does not match the authenticated user"));
+            }
+        }
+        Ok(ProfileMutationResponse { request_id:request.request_id, identity:identity.clone(), body, readback, verification:if confirmed {"confirmed"} else {"pending"} })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn profile_http<F, Fut, T>(&self, route: &'static str, method: HttpMethod, body: Option<&Value>, request: &ProfileMutationRequest,
+        registration: &Registration<'_>, call: &F, transport: &T) -> ServiceResult<Value>
+    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>>, T: Transport {
+        let identity = &request.expected_identity;
+        self.check_share_current(identity, registration)?;
+        let encoded = body.map(serde_json::to_vec).transpose().map_err(|_| failure("invalid_request", "Invalid profile request"))?.unwrap_or_default();
+        if encoded.len() > 256 * 1024 { return Err(failure("invalid_request", "Profile request exceeded transport limit")); }
+        let result = tokio::select! {
+            _ = cancelled(&registration.cancelled) => Err(failure("cancelled", "Service request cancelled; a sent profile write may already have applied")),
+            result = async {
+                let mut session = self.session.lock().await;
+                self.check_share_current(identity, registration)?;
+                self.prepare(&mut session, identity.generation, call, false).await?;
+                for attempt in 0..2 {
+                    self.check_share_current(identity, registration)?;
+                    let credentials = session.credentials.as_ref().unwrap();
+                    if &credentials.identity != identity { return Err(failure("account_changed", "Authenticated identity changed")); }
+                    let integrity = session.integrity.clone();
+                    let mut outgoing = build_http_request(route, credentials, integrity.as_deref(), &request.profile)?;
+                    outgoing.method = method; outgoing.body = encoded.clone();
+                    if body.is_some() { outgoing.headers.insert("Content-Type".into(), "application/json".into()); }
+                    share_network_allowed(call, &outgoing.url).await?;
+                    self.check_share_current(identity, registration)?;
+                    let response = send_bounded(transport, outgoing, registration.cancelled.clone(), Duration::from_secs(50)).await
+                        .map_err(|error| if method == HttpMethod::Patch { failure("profile_write_unknown", "Profile write outcome is unknown; read before retrying") } else { error })?;
+                    self.check_share_current(identity, registration)?;
+                    apply_integrity(&mut session.integrity, integrity.as_deref(), response.headers.get("x-oai-is-update"));
+                    if account_instructions_ip_denied(&response) { return Err(ServiceError { code:"ip_not_authorized", message:"Current IP address is not authorized for this workspace", status:Some(401) }); }
+                    if response.status == 401 && attempt == 0 { self.prepare(&mut session, identity.generation, call, true).await?; continue; }
+                    if method == HttpMethod::Patch && response.status >= 500 { return Err(failure("profile_write_unknown", "Profile write outcome is unknown; read before retrying")); }
+                    if method == HttpMethod::Patch && (200..300).contains(&response.status) {
+                        // Only the follow-up GET establishes persistence; an empty write response is not a failure.
+                        return Ok(serde_json::from_slice(&response.body).unwrap_or(Value::Null));
+                    }
+                    if method == HttpMethod::Patch {
+                        if let Some(error) = profile_moderation_error(&response) { return Err(error); }
+                    }
+                    return Ok(decode_response(response, registration.id.clone(), identity.clone())?.body);
+                }
+                unreachable!()
+            } => result,
+        };
+        self.check_share_current(identity, registration)?;
+        result
+    }
+
     pub async fn account_instructions_read<F, Fut>(
         &self, request: AccountInstructionsRequest, call: F,
     ) -> ServiceResult<AccountInstructionsResponse>
@@ -880,6 +1024,11 @@ impl ChatgptService {
                     let sent_integrity = session.integrity.clone();
                     let mut http_request = build_http_request(&route, credentials, sent_integrity.as_deref(), &request.profile)?;
                     let usage = matches!(request.operation, ServiceOperation::WhamUsage);
+                    let profile_read = matches!(request.operation, ServiceOperation::AccountMe | ServiceOperation::ProfileIdentity | ServiceOperation::ProfilePage);
+                    if profile_read {
+                        share_network_allowed(&call, &http_request.url).await?;
+                        self.check_share_current(&request.expected_identity, &registration)?;
+                    }
                     if usage {
                         // Fixed official Vyr/Qbr brand, not our executable's product name.
                         http_request.headers.insert("OAI-App-Brand".into(), "chatgpt".into());
@@ -892,15 +1041,17 @@ impl ChatgptService {
                         return Err(failure("account_changed", "Authenticated identity changed"));
                     }
                     apply_integrity(&mut session.integrity, sent_integrity.as_deref(), response.headers.get("x-oai-is-update"));
-                    if response.status == 401 && attempt == 0 && !(usage && account_instructions_ip_denied(&response)) {
+                    if response.status == 401 && attempt == 0 && !((usage || profile_read) && account_instructions_ip_denied(&response)) {
                         self.prepare(&mut session, generation, &call, true).await?;
                         continue;
                     }
-                    if usage && matches!(response.status, 401 | 403 | 404) {
+                    if (usage && matches!(response.status, 401 | 403 | 404)) ||
+                        (matches!(request.operation, ServiceOperation::ProfileIdentity | ServiceOperation::ProfilePage) && matches!(response.status, 403 | 404)) {
                         return Ok(ServiceResponse { request_id:request.request_id.clone(), identity:request.expected_identity.clone(),
                             status:response.status, body:Value::Null, headers:BTreeMap::new() });
                     }
                     let decoded = decode_response(response, request.request_id.clone(), request.expected_identity.clone())?;
+                    if profile_read { validate_profile_read(&request.operation, &decoded.body, &request.expected_identity)?; }
                     if usage && wham_usage_identity(&decoded.body, &request.expected_identity)? {
                         // The official personal-account payload may use an empty account_id.
                         // Verify real membership; a renderer-supplied personal flag is not evidence.
@@ -1570,6 +1721,9 @@ fn resolve_route(operation: &ServiceOperation, params: &Value) -> ServiceResult<
             ],
         ),
         ServiceOperation::WhamUsage => ("/backend-api/wham/usage".into(), &[]),
+        ServiceOperation::AccountMe => ("/backend-api/me".into(), &[]),
+        ServiceOperation::ProfileIdentity => ("/backend-api/profiles/me".into(), &[]),
+        ServiceOperation::ProfilePage => ("/backend-api/profiles/me/page".into(), &[]),
         ServiceOperation::ImagesInit => ("/backend-api/images/init".into(), &[]),
         ServiceOperation::ImagesStyles => (
             "/backend-api/images/styles".into(),
@@ -2148,6 +2302,107 @@ fn apply_integrity(
         return true;
     }
     false
+}
+
+// NPn/PPn consume only the proven HTTP root `detail` envelope. Never expose its message.
+fn profile_moderation_error(response: &HttpResponse) -> Option<ServiceError> {
+    if (200..300).contains(&response.status) { return None; }
+    let body: Value = serde_json::from_slice(&response.body).ok()?;
+    let detail = body.get("detail")?.as_object()?;
+    if !detail.get("message")?.is_string() { return None; }
+    let kind = detail.get("type").and_then(Value::as_str).or_else(|| detail.get("error_code").and_then(Value::as_str));
+    if kind != Some("profile_update_moderation_failed") { return None; }
+    let (code, message) = match detail.get("field").and_then(Value::as_str)? {
+        "display_name" => ("profile_name_rejected", "Profile display name did not pass moderation"),
+        "description" => ("profile_bio_rejected", "Profile description did not pass moderation"),
+        "profile_asset_pointer" => ("profile_photo_rejected", "Profile photo did not pass moderation"),
+        _ => return None,
+    };
+    Some(ServiceError { code, message, status:Some(response.status) })
+}
+
+fn profile_mutation_params(operation: ProfileMutationOperation, params: &Value) -> ServiceResult<Value> {
+    let object = params.as_object().ok_or_else(|| failure("invalid_request", "Profile parameters must be an object"))?;
+    if serde_json::to_vec(params).map_err(|_| failure("invalid_request", "Invalid profile request"))?.len() > 256 * 1024 {
+        return Err(failure("invalid_request", "Profile request exceeded transport limit"));
+    }
+    let keys: &[&str] = match operation { ProfileMutationOperation::AccountName => &["name"],
+        ProfileMutationOperation::Username | ProfileMutationOperation::UsernameCheck => &["username"], ProfileMutationOperation::Profile => &["display_name","description"] };
+    if object.is_empty() || object.keys().any(|key| !keys.contains(&key.as_str())) || object.values().any(|value| !value.is_string()) {
+        return Err(failure("invalid_request", "Unsupported profile parameters"));
+    }
+    let mut normalized = object.clone();
+    match operation {
+        ProfileMutationOperation::AccountName => {
+            if object["name"].as_str().unwrap().trim().is_empty() { return Err(failure("invalid_request", "Account name must not be blank")); }
+        }
+        ProfileMutationOperation::Username | ProfileMutationOperation::UsernameCheck => {
+            let input = object["username"].as_str().unwrap().trim();
+            let username = input.strip_prefix('@').unwrap_or(input).trim();
+            if !(3..=20).contains(&username.len()) || !username.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"._-".contains(&byte)) ||
+                username.as_bytes().first().is_some_and(|byte| b"._-".contains(byte)) || username.as_bytes().last().is_some_and(|byte| b"._-".contains(byte)) {
+                return Err(failure("invalid_request", "Username format is not supported"));
+            }
+            normalized.insert("username".into(), json!(username));
+        }
+        ProfileMutationOperation::Profile => {
+            for (key, value) in &mut normalized {
+                let raw = value.as_str().unwrap();
+                let text = if key == "description" { raw.replace("\r\n", " ").replace(['\r','\n','\u{2028}','\u{2029}'], " ").trim().to_owned() } else { raw.trim().to_owned() };
+                if (key == "display_name" && text.is_empty()) || text.encode_utf16().count() > if key == "display_name" {64} else {140} {
+                    return Err(failure("invalid_request", "Public profile text exceeds the supported format"));
+                }
+                *value = json!(text);
+            }
+        }
+    }
+    Ok(Value::Object(normalized))
+}
+
+fn profile_username_editable(body: &Value) -> bool {
+    body["profile_details"].is_object() && body["viewer_access"].is_object() &&
+        body.pointer("/viewer_access/can_edit_username") != Some(&Value::Bool(false)) &&
+        body.pointer("/viewer_access/can_edit_username").is_none_or(|value| value.is_null() || value.is_boolean())
+}
+
+fn validate_profile_read(operation: &ServiceOperation, body: &Value, identity: &ServiceIdentity) -> ServiceResult<()> {
+    let object = body.as_object().ok_or_else(|| failure("invalid_response", "Invalid account profile response"))?;
+    if matches!(operation, ServiceOperation::AccountMe) {
+        if object.get("id").and_then(Value::as_str) != Some(identity.user_id.as_str()) {
+            return Err(failure("account_changed", "Account profile does not match the authenticated user"));
+        }
+        for key in ["name", "first_name", "email", "email_domain_type", "phone_number", "picture"] {
+            if object.get(key).is_some_and(|value| !value.is_null() && !value.is_string()) {
+                return Err(failure("invalid_response", "Invalid account profile field"));
+            }
+        }
+    } else {
+        for key in ["profile_details", "viewer_access", "page"] {
+            if object.get(key).is_some_and(|value| !value.is_null() && !value.is_object()) {
+                return Err(failure("invalid_response", "Invalid public profile field"));
+            }
+        }
+        for key in ["is_self", "can_edit", "can_edit_username"] {
+            if object.get(key).is_some_and(|value| !value.is_null() && !value.is_boolean()) {
+                return Err(failure("invalid_response", "Invalid public profile permission"));
+            }
+        }
+        if let Some(viewer) = object.get("viewer_access").and_then(Value::as_object) {
+            for key in ["can_edit", "can_edit_username"] {
+                if viewer.get(key).is_some_and(|value| !value.is_null() && !value.is_boolean()) {
+                    return Err(failure("invalid_response", "Invalid public profile permission"));
+                }
+            }
+        }
+        if let Some(details) = object.get("profile_details").and_then(Value::as_object) {
+            for key in ["display_name", "username", "description", "profile_picture_url", "profile_url"] {
+                if details.get(key).is_some_and(|value| !value.is_null() && !value.is_string()) {
+                    return Err(failure("invalid_response", "Invalid public profile details"));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Returns true only for the official empty-account personal payload requiring membership evidence.
@@ -3438,6 +3693,187 @@ mod tests {
             "configRequirements/read" => Ok(json!({"requirements":null})),
             _ => Err("unexpected fixture RPC".into()),
         })
+    }
+
+    fn profile_request(operation: ProfileMutationOperation, params: Value) -> ProfileMutationRequest {
+        ProfileMutationRequest { request_id:"profile-fixture".into(), expected_identity:identity(), profile:request("unused").profile, operation, params }
+    }
+
+    fn profile_identity_body() -> Value {
+        json!({"profile_details":{"username":"old-name","display_name":"Public","description":"old bio"},"viewer_access":{"can_edit_username":true}})
+    }
+
+    #[tokio::test]
+    async fn profile_reads_are_fixed_and_account_me_id_cannot_cross_users() {
+        for (operation, path, body) in [
+            (ServiceOperation::AccountMe,"/backend-api/me",json!({"id":"user-fixture","name":null,"email":"fixture@example.test"})),
+            (ServiceOperation::ProfileIdentity,"/backend-api/profiles/me",profile_identity_body()),
+            (ServiceOperation::ProfilePage,"/backend-api/profiles/me/page",json!({"can_edit":true,"profile_details":{"display_name":"Different public name"}})),
+        ] {
+            let service = ChatgptService::default();
+            let transport = instructions_transport(&[200], &[body.clone()]);
+            let mut req = request("profile-read"); req.operation=operation;
+            assert_eq!(service.read_with(req, share_rpc, &transport).await.unwrap().body, body);
+            assert_eq!(transport.requests.lock().unwrap()[0].url, format!("https://chatgpt.com{path}"));
+        }
+        for operation in [ServiceOperation::ProfileIdentity,ServiceOperation::ProfilePage] {
+            for status in [403,404] {
+                let service = ChatgptService::default(); let transport=FakeTransport::new(&[status]);
+                let mut req=request("profile-restricted"); req.operation=operation.clone();
+                let result=service.read_with(req,share_rpc,&transport).await.unwrap();
+                assert!(result.body.is_null()); assert_eq!(result.status,status);
+            }
+        }
+        let service=ChatgptService::default(); let transport=instructions_transport(&[200], &[json!({"id":"another-user","name":"private fixture"})]);
+        let mut req=request("profile-wrong-user"); req.operation=ServiceOperation::AccountMe;
+        assert_eq!(service.read_with(req,share_rpc,&transport).await.err().unwrap().code,"account_changed");
+    }
+
+    #[tokio::test]
+    async fn profile_name_preserves_original_string_and_readback_delay_is_pending() {
+        for (read_status, readback, verification) in [
+            (200,json!({"id":"user-fixture","name":" New 名称 "}),"confirmed"),
+            (200,json!({"id":"user-fixture","name":"Old"}),"pending"),
+            (503,json!({}),"pending"),
+        ] {
+            let service=ChatgptService::default();
+            let transport=instructions_transport(&[200,200,read_status],&[json!({"id":"user-fixture","name":"Old"}),json!({"ok":true}),readback]);
+            let result=service.profile_mutation_with(profile_request(ProfileMutationOperation::AccountName,json!({"name":" New 名称 "})),share_rpc,&transport).await.unwrap();
+            assert_eq!(result.verification,verification);
+            let requests=transport.requests.lock().unwrap(); assert_eq!(requests.len(),3);
+            assert_eq!(requests[1].method,HttpMethod::Patch);
+            assert_eq!(requests[1].url,"https://chatgpt.com/backend-api/accounts/users/name");
+            assert_eq!(serde_json::from_slice::<Value>(&requests[1].body).unwrap(),json!({"name":" New 名称 "}));
+        }
+    }
+
+    #[tokio::test]
+    async fn profile_username_check_and_write_use_shared_format_and_precise_permissions() {
+        for params in [json!({"username":"ab"}),json!({"username":"Upper"}),json!({"username":".bad"}),json!({"username":"bad-"}),json!({"username":"@@name"}),json!({"username":"abc","url":"injected"})] {
+            assert!(profile_mutation_params(ProfileMutationOperation::Username, &params).is_err());
+        }
+        assert_eq!(profile_mutation_params(ProfileMutationOperation::Username,&json!({"username":" @name.data "})).unwrap(),json!({"username":"name.data"}));
+        for permission in [Some(json!(true)),None,Some(Value::Null),Some(json!(false)),Some(json!("true"))] {
+            let mut before=profile_identity_body();
+            if let Some(permission)=permission.clone() {before["viewer_access"]["can_edit_username"]=permission;} else {before["viewer_access"].as_object_mut().unwrap().remove("can_edit_username");}
+            let allowed=permission.is_none() || permission==Some(Value::Null) || permission==Some(json!(true));
+            let service=ChatgptService::default(); let transport=instructions_transport(&[200,200],&[before,json!({"available":false})]);
+            let result=service.profile_mutation_with(profile_request(ProfileMutationOperation::UsernameCheck,json!({"username":" @new-name "})),share_rpc,&transport).await;
+            if allowed {
+                let result=result.unwrap();assert_eq!(result.verification,"not_applicable");assert_eq!(result.body["available"],false);
+                let requests=transport.requests.lock().unwrap();assert_eq!(requests.len(),2);assert_eq!(requests[1].method,HttpMethod::Post);
+                assert_eq!(requests[1].url,"https://chatgpt.com/backend-api/wham/profiles/username/check");
+                assert_eq!(serde_json::from_slice::<Value>(&requests[1].body).unwrap(),json!({"username":"new-name"}));
+            } else {assert_eq!(result.err().unwrap().code,if permission==Some(json!(false)) {"forbidden"} else {"invalid_response"});assert_eq!(transport.requests.lock().unwrap().len(),1);}
+        }
+        let service=ChatgptService::default(); let mut after=profile_identity_body();after["profile_details"]["username"]=json!("new-name~actual-service-suffix");
+        let transport=instructions_transport(&[200,200,200],&[profile_identity_body(),json!({"profile":{"username":"new-name~actual-service-suffix"}}),after]);
+        let result=service.profile_mutation_with(profile_request(ProfileMutationOperation::Username,json!({"username":"new-name"})),share_rpc,&transport).await.unwrap();
+        assert_eq!(result.verification,"confirmed");assert_eq!(transport.requests.lock().unwrap()[1].url,"https://chatgpt.com/backend-api/wham/profiles/me");
+    }
+
+    #[tokio::test]
+    async fn profile_text_sends_only_changed_fields_and_own_page_can_edit_is_authoritative() {
+        for is_self in [None,Some(false),Some(true)] {
+            let mut page=json!({"can_edit":true,"profile_details":{"display_name":"Public","description":"old bio"}});
+            if let Some(is_self)=is_self {page["is_self"]=json!(is_self);}
+            let mut after=page.clone();after["profile_details"]["description"]=json!("new bio");
+            let service=ChatgptService::default();let transport=instructions_transport(&[200,200,200],&[page,json!({"description":"new bio"}),after]);
+            let result=service.profile_mutation_with(profile_request(ProfileMutationOperation::Profile,json!({"display_name":" Public ","description":" new\r\nbio "})),share_rpc,&transport).await.unwrap();
+            assert_eq!(result.verification,"confirmed");
+            let requests=transport.requests.lock().unwrap();assert_eq!(requests.len(),3);
+            assert_eq!(requests[1].url,"https://chatgpt.com/backend-api/profiles/me");
+            assert_eq!(serde_json::from_slice::<Value>(&requests[1].body).unwrap(),json!({"description":"new bio"}));
+        }
+        for page in [json!({}),json!({"can_edit":false,"profile_details":{}}),json!({"profile_details":{}})] {
+            let service=ChatgptService::default();let transport=instructions_transport(&[200],&[page]);
+            assert_eq!(service.profile_mutation_with(profile_request(ProfileMutationOperation::Profile,json!({"description":"fixture"})),share_rpc,&transport).await.err().unwrap().code,"forbidden");
+            assert_eq!(transport.requests.lock().unwrap().len(),1);
+        }
+        assert!(profile_mutation_params(ProfileMutationOperation::Profile,&json!({"profile_asset_pointer":"fake"})).is_err());
+        assert!(profile_mutation_params(ProfileMutationOperation::Profile,&json!({"display_name":" "})).is_err());
+        assert!(profile_mutation_params(ProfileMutationOperation::Profile,&json!({"description":"a".repeat(141)})).is_err());
+    }
+
+    #[tokio::test]
+    async fn profile_write_refreshes_only_explicit_401_and_pending_verification_never_rewrites() {
+        let before=json!({"id":"user-fixture","name":"Old"});let after=json!({"id":"user-fixture","name":"New"});
+        let service=ChatgptService::default();let transport=instructions_transport(&[200,401,200,200],&[before.clone(),json!({}),json!({}),after]);
+        assert_eq!(service.profile_mutation_with(profile_request(ProfileMutationOperation::AccountName,json!({"name":"New"})),share_rpc,&transport).await.unwrap().verification,"confirmed");
+        let requests=transport.requests.lock().unwrap();assert_eq!(requests.len(),4);assert_eq!(requests[1].body,requests[2].body);drop(requests);
+        let service=ChatgptService::default();let transport=instructions_transport(&[200,401],&[before.clone(),json!({"error":{"code":"workspace_ip_not_authorized"}})]);
+        assert_eq!(service.profile_mutation_with(profile_request(ProfileMutationOperation::AccountName,json!({"name":"New"})),share_rpc,&transport).await.err().unwrap().code,"ip_not_authorized");
+        assert_eq!(transport.requests.lock().unwrap().len(),2);
+        let service=ChatgptService::default();let transport=instructions_transport(&[200,500],&[before,json!({})]);
+        assert_eq!(service.profile_mutation_with(profile_request(ProfileMutationOperation::AccountName,json!({"name":"New"})),share_rpc,&transport).await.err().unwrap().code,"profile_write_unknown");
+        assert_eq!(transport.requests.lock().unwrap().len(),2);
+    }
+
+    #[tokio::test]
+    async fn profile_write_network_unknown_and_known_rejections_are_not_replayed() {
+        struct FailAfterRead { requests: Mutex<Vec<HttpRequest>> }
+        impl Transport for FailAfterRead {
+            fn send(&self, request: HttpRequest, _: Arc<AtomicBool>) -> TransportFuture<'_> {
+                let first = self.requests.lock().unwrap().is_empty();
+                self.requests.lock().unwrap().push(request);
+                Box::pin(async move {
+                    if first { Ok(HttpResponse {status:200,headers:BTreeMap::new(),body:serde_json::to_vec(&json!({"id":"user-fixture","name":"Old"})).unwrap()}) }
+                    else { Err(failure("transport_error","controlled fixture network failure")) }
+                })
+            }
+        }
+        let service=ChatgptService::default();let transport=FailAfterRead { requests:Mutex::new(vec![]) };
+        assert_eq!(service.profile_mutation_with(profile_request(ProfileMutationOperation::AccountName,json!({"name":"New"})),share_rpc,&transport).await.err().unwrap().code,"profile_write_unknown");
+        assert_eq!(transport.requests.lock().unwrap().len(),2);
+        for status in [400,403,404,409,422] {
+            let service=ChatgptService::default();let transport=instructions_transport(&[200,status],&[json!({"id":"user-fixture","name":"Old"}),json!({"private":"must not leak"})]);
+            let error=service.profile_mutation_with(profile_request(ProfileMutationOperation::AccountName,json!({"name":"New"})),share_rpc,&transport).await.err().unwrap();
+            assert_eq!(error.status,Some(status));assert!(!serde_json::to_string(&error).unwrap().contains("must not leak"));
+            assert_eq!(transport.requests.lock().unwrap().len(),2);
+        }
+    }
+
+    #[tokio::test]
+    async fn profile_moderation_maps_only_proven_detail_fields_and_never_replays_rejections() {
+        for (field, expected) in [("display_name","profile_name_rejected"),("description","profile_bio_rejected"),("profile_asset_pointer","profile_photo_rejected")] {
+            for discriminator in ["type","error_code"] {
+                let mut detail=json!({"field":field,"message":"private fixture must never cross IPC"});
+                detail[discriminator]=json!("profile_update_moderation_failed");
+                let service=ChatgptService::default();
+                let transport=instructions_transport(&[200,422],&[json!({"can_edit":true,"profile_details":{"display_name":"Old"}}),json!({"detail":detail})]);
+                let error=service.profile_mutation_with(profile_request(ProfileMutationOperation::Profile,json!({"display_name":"New"})),share_rpc,&transport).await.err().unwrap();
+                assert_eq!(error.code,expected);assert_eq!(error.status,Some(422));
+                assert!(!serde_json::to_string(&error).unwrap().contains("private fixture"));
+                assert_eq!(transport.requests.lock().unwrap().len(),2);
+            }
+        }
+        for body in [
+            json!({"error":{"type":"profile_update_moderation_failed","field":"display_name","message":"private fixture"}}),
+            json!({"type":"profile_update_moderation_failed","field":"display_name","message":"private fixture"}),
+            json!({"detail":{"type":"profile_update_moderation_failed","field":"unknown","message":"private fixture"}}),
+            json!({"detail":{"type":"profile_update_moderation_failed","field":"display_name"}}),
+            json!({"detail":{"type":"another_error","error_code":"profile_update_moderation_failed","field":"display_name","message":"private fixture"}}),
+        ] {
+            let service=ChatgptService::default();
+            let transport=instructions_transport(&[200,400],&[json!({"can_edit":true,"profile_details":{"display_name":"Old"}}),body]);
+            let error=service.profile_mutation_with(profile_request(ProfileMutationOperation::Profile,json!({"display_name":"New"})),share_rpc,&transport).await.err().unwrap();
+            assert_eq!(error.code,"service_error");assert_eq!(error.status,Some(400));
+            assert!(!serde_json::to_string(&error).unwrap().contains("private fixture"));
+            assert_eq!(transport.requests.lock().unwrap().len(),2);
+        }
+    }
+
+    #[tokio::test]
+    async fn profile_mutation_generation_and_cancellation_prevent_followup_reads_and_stale_results() {
+        for invalidate in [false,true] {
+            let service=ChatgptService::default();let mut transport=instructions_transport(&[200,200,200],&[json!({"id":"user-fixture","name":"Old"}),json!({}),json!({"id":"user-fixture","name":"New"})]);transport.delay_ms=20;
+            let write=service.profile_mutation_with(profile_request(ProfileMutationOperation::AccountName,json!({"name":"New"})),share_rpc,&transport);
+            let change=async {while transport.requests.lock().unwrap().len()<2 {tokio::task::yield_now().await;}if invalidate {service.invalidate();}else{service.cancel("profile-fixture");}};
+            let result=tokio::join!(write,change).0;
+            assert_eq!(result.err().unwrap().code,if invalidate {"account_changed"}else{"cancelled"});
+            assert_eq!(transport.requests.lock().unwrap().len(),2);
+            assert!(service.active.lock().unwrap().is_empty());
+        }
     }
 
     fn usage_request(id: &str) -> ServiceRequest {

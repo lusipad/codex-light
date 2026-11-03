@@ -139,7 +139,10 @@ try {
   Invoke-Step "Account identity, partial failure and lifecycle regression" { node scripts/verify-account-snapshot.mjs }
   Invoke-Step "Account login, managed restrictions and cancellation regression" { node scripts/verify-account-session-b.mjs }
   Invoke-Step "Rust fixed usage service and identity contracts" { cargo test --locked --manifest-path src-tauri/Cargo.toml wham_usage_ }
-  Invoke-Step "Profile real identity and unavailable write regression" { node scripts/verify-profile-settings.mjs }
+  Invoke-Step "Account profile sources and authenticated client contracts" { node scripts/verify-account-profile-client-b.mjs }
+  Invoke-Step "Account detail editors, username checks and navigation regression" { node scripts/verify-account-details-b.mjs }
+  Invoke-Step "Public profile real read/write and draft lifecycle regression" { node scripts/verify-profile-settings.mjs }
+  Invoke-Step "Rust account and public profile service contracts" { cargo test --locked --manifest-path src-tauri/Cargo.toml chatgpt_service::tests::profile_ }
   Invoke-Step "MCP runtime status discovery regression" { node scripts/verify-mcp-status.mjs }
   Invoke-Step "General open target and shell regression" { node scripts/verify-general-open.mjs }
   Invoke-Step "Workspace explicit open target and lifecycle regression" { node scripts/verify-workspace-open-targets.mjs }

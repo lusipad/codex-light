@@ -38,7 +38,7 @@ dialog-1f117777b264.js:641 PATCH `/wham/profiles/me` 带 ChatGPT-Account-ID，bo
 
 username-dialog-4f1bb773647f.js:947 可用性检查 POST `/wham/profiles/username/check`，queryKey 包含 accountId 和输入，retry=false、staleTime=10秒；计划与共享验证器还限制编辑。username-validation-ecf276223074.js 使用共享本地语法与后缀规则，不能凭印象写“英数字3到20位”之类规则。开发前必须继续追共享 src-575605e4d6c4.js/H4i 与检查响应形状；未取证的精确长度、字符、debounce 延迟不写成事实。过期检查结果不能启用新输入保存。
 
-公开页面只在非预览、自身/适用身份且 `can_edit===true` 时开启编辑；profile:168590 附近同时读取 `can_edit_username===false` 单独限制用户名。个人profile从workspace访问可能显示只读与切换个人账号提示。`viewer_access.can_edit` 是 `/profiles/me` 里的账户公开资料资格；page 里的顶层 can_edit/is_self 是页面资格，二者不能混成一个字段，更不能由登录/plan推出全部权限。
+公开页面在非预览、own route 或 `is_self===true` 且 `can_edit===true` 时开启编辑；固定设置页未传 profileUrl，属于 own route，不能另加 is_self 必须为 true 的门槛；profile:168590 附近同时读取 `can_edit_username===false` 单独限制用户名。个人profile从workspace访问可能显示只读与切换个人账号提示。`viewer_access.can_edit` 是 `/profiles/me` 里的账户公开资料资格；page 里的顶层 can_edit/is_self 是页面资格，二者不能混成一个字段，更不能由登录/plan推出全部权限。
 
 官方一些 username 分支把缺 can_edit_username 视为非明确拒绝；本项目未拿到完整 profile、权限/语法合同之前不得以缺字段强开可写。受限和解析未知须清楚分开。
 
@@ -73,3 +73,5 @@ page display_settings PATCH 当前可见调用没有 expected_version，不应�
 - AC09-B08：官方固定中文、布局/窄窗、弹层焦点与Escape、同尺寸截图和原生路径独立留证；适用专项、tsc、完整标准、Rust与同源码构建后阶段提交，未实测项不写通过。
 
 本合同未改产品或测试，未运行 Cargo，未调用真实账号网络或修改资料；仅下一阶段待实施资料。
+
+2026-11-03实施补记：本合同的基础账户字段与公开文本编辑已接入，详见[16.09B阶段待验](../acceptance/16-09B.md)；头像、完整资料与真实账号/官方原生像素验收仍未完成。

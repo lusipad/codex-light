@@ -195,6 +195,25 @@ async fn chatgpt_service_read(
 }
 
 #[tauri::command]
+async fn profile_mutation(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: chatgpt_service::ProfileMutationRequest,
+) -> Result<chatgpt_service::ProfileMutationResponse, chatgpt_service::ServiceError> {
+    let identity = request.expected_identity.clone();
+    let writes = !matches!(request.operation, chatgpt_service::ProfileMutationOperation::UsernameCheck);
+    let result = state.chatgpt_service.profile_mutation(request, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await;
+    if writes && (result.is_ok() || result.as_ref().err().is_some_and(|error| error.code == "profile_write_unknown")) {
+        let _ = app.emit("account-profile-changed", serde_json::json!({"identity":identity}));
+    }
+    result
+}
+
+#[tauri::command]
 async fn account_instructions_read(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -1657,6 +1676,7 @@ pub fn run() {
             image_save::generated_image_save,
             chatgpt_service_identity,
             chatgpt_service_read,
+            profile_mutation,
             account_instructions_read,
             account_instructions_write,
             share_thread_prepare,

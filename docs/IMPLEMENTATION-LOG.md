@@ -1784,3 +1784,12 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 - 完整标准首轮旧协议探针初始化超时，并暴露timeout误判通过；修为自建隔离home/workspace、空认证、initialize/initialized与超时/进程退出失败，九项真实形状通过。清理临时fixture的EPERM尝试保留，最终与同类探针一样保留私有目录供诊断，未削弱业务断言。最终完整检查、全Rust与构建见[阶段待验表](antigravity/acceptance/16-08B.md)。
 
 16.08B最终完整标准、修复后专项、全Rust323与EXE/MSI/NSIS通过；260产品输入/helper稳定，许可五文件哈希匹配。[本地EXE](../dist-artifacts/16-08B-account-usage-20261103/CodexNative.exe)已归档。移除本轮形成且仅旧测试调用的accountSnapshot孤立模块，适用约束迁移至新生产hook专项。整页/整App仍未验收。
+
+## 2026-11-03 — 16.09B 账户字段与公开资料编辑
+
+- 按固定官方包拆分 `/me` 与公开资料源，接通姓名、用户名及公开文本真实保存/GET读回；own route按page.can_edit授权，用户名独立权限。详细依据、动作与边界见[阶段待验](antigravity/acceptance/16-09B.md)。
+- 复用既有服务鉴权/取消/组织网络、导航guard和主题，无新依赖。待同步或未知送达保稿仅核验，审核错误按已证detail字段定向显示；移除本阶段造成的占位行为，不扩展头像/统计。
+- 修复旧generation用户名检查授权与相同props后端换身份旧稿风险，保留红绿/首败；旧harness适配未削弱原不变量。专项、8项Rust profile_及受控Chrome主要链通过；完整标准（非Fast）退出0。全量Rust/最终原生构建结果见阶段待验表最终记录。
+- 账户/资料整页、真实账号、原生交互、官方像素和用户验收均未完成，不以阶段提交放行这些缺口。
+
+16.09B最终交付：完整标准、全量Rust331项与EXE/MSI/NSIS均退出0，266项产品指纹/helper及许可五文件稳定。构建与未测原生/官方/像素边界见阶段待验表；按用户大阶段策略提交并在无分叉时推送。

@@ -5,7 +5,7 @@ export interface CloudAccess { identity: ServiceIdentity; gateEvidence: "persona
 export type ServiceOperation = "library_favorites" | "library_nodes" | "images_init" | "images_styles" |
   "images_recent" | "gpts_discovery" | "gpts_category" | "gpts_search" | "gpts_detail" | "gpts_about" |
   "sites_access" | "sites_list" | "sites_shared" | "sites_detail" | "sites_environment" | "sites_domains" | "sites_share_access" | "github_repository" |
-  "share_accounts" | "share_users" | "share_groups" | "wham_usage";
+  "share_accounts" | "share_users" | "share_groups" | "wham_usage" | "account_me" | "profile_identity" | "profile_page";
 
 function browserProfile() {
   const browser = (navigator as Navigator & { userAgentData?: {
@@ -90,6 +90,25 @@ export async function readChatgptService(
   return responseBody(result, requestId, identity);
 }
 
+export interface ProfileMutationResult {
+  verification: "confirmed" | "pending" | "not_applicable";
+  body: unknown;
+  readback: unknown;
+}
+
+export async function mutateAccountProfile(
+  operation: "account_name" | "username_check" | "username" | "profile", params: Record<string, unknown>,
+  identity: ServiceIdentity, signal: AbortSignal,
+): Promise<ProfileMutationResult> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<ProfileMutationResult & { requestId: string; identity: ServiceIdentity }>(
+    "profile_mutation", requestId, { request: { requestId, operation, params, expectedIdentity: identity, profile: browserProfile() } }, signal,
+  );
+  responseBody(result, requestId, identity);
+  if (!["confirmed", "pending", "not_applicable"].includes(result.verification)) throw Error("无法确认资料保存状态，请重新读取。");
+  return result;
+}
+
 export interface SharedThreadPreparation { preparationId: string; identity: ServiceIdentity }
 export interface SharedThreadPublication { shareId: string; shareUrl: string }
 export interface SharedThreadAsset { assetId: string; mimeType: string; bytesBase64: string }
@@ -169,6 +188,10 @@ export function serviceErrorMessage(error: unknown): string {
     network_error: "服务连接失败，请检查网络后重试。", timeout: "服务请求超时，请重试。",
     desktop_context_unavailable: "应用服务尚未连接，请连接后重试。",
     publish_unknown: "无法确认分享是否已发布。为避免重复发布，请先检查已有分享。",
+    profile_write_unknown: "无法确认资料是否已保存。请先重新读取核验，避免重复提交。",
+    profile_name_rejected: "显示名称未通过审核。请换一个名称重试。",
+    profile_bio_rejected: "简介未通过审核。请修改后重试。",
+    profile_photo_rejected: "头像未通过审核。请换一张图片重试。",
     share_audience_changed: "此分享的访问范围已改变，请重新准备分享。",
     share_missing: "分享准备已失效，请重新打开分享。",
     share_busy: "分享正在发布，请稍候。",

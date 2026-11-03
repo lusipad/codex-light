@@ -8,6 +8,11 @@ let failNotificationSubscription = false;
 const subscriptionCalls = [];
 const listeners = new Map(), windowListeners = new Map(), calls = [], frames = [];
 const react = {
+  useCallback(callback, deps) {
+    const index = cursor++, old = slots[index];
+    if (!old || deps.some((value, i) => !Object.is(value, old.deps[i]))) slots[index] = { deps, callback };
+    return slots[index].callback;
+  },
   createElement: (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity) }),
   useState(initial) {
     const index = cursor++;
@@ -44,7 +49,8 @@ function load(file, imports) {
   return exports;
 }
 const core = load("src/accountSession.ts", { "./bridge": bridge });
-const { AccountSettings } = load("src/components/AccountSettings.tsx", { "../accountSession": core });
+const AccountDetails = () => null;
+const { AccountSettings } = load("src/components/AccountSettings.tsx", { "../accountSession": core, "./AccountDetails": { AccountDetails } });
 const methods = core.managedLoginMethods;
 assert.equal(methods({}).status, "unsupported");
 for (const malformed of [undefined, [], "bad", { allowedLoginMethods: undefined }, { allowedLoginMethods: ["unknown"] }]) assert.equal(methods(malformed).status, "error");
@@ -111,11 +117,12 @@ clickChat(); clickChat(); render(); assert.equal(starts().length, beforeStarts +
 release({ type: "chatgpt", loginId: "login-one", authUrl: "https://auth.example/login" }); await tick();
 complete("wrong-id"); await tick(); assert.equal(notifyCount, 0); assert.ok(hasButton("取消登录"));
 account = { account: { type: "chatgpt", email: "fixture@example.invalid", planType: "plus" }, requiresOpenaiAuth: true };
-complete("login-one"); await tick(); assert.equal(notifyCount, 1); assert.ok(text(tree).includes("fixture@example.invalid"));
-assert.ok(text(tree).includes("姓名未取得")); assert.ok(text(tree).includes("用户名未取得")); assert.ok(!text(tree).includes("Developer"));
+complete("login-one"); await tick(); assert.equal(notifyCount, 1);
+assert.equal(nodes(tree).find(node => node.type === AccountDetails).props.accountEmail, "fixture@example.invalid");
+assert.ok(!text(tree).includes("Developer"));
 assert.ok(!text(tree).includes("Backend") && !text(tree).includes("account/read") && !text(tree).includes("AccountID"));
 logout = async () => { throw Error("logout denied"); }; button("退出登录").props.onClick(); await tick();
-assert.ok(text(tree).includes("logout denied")); assert.ok(text(tree).includes("fixture@example.invalid"));
+assert.ok(text(tree).includes("logout denied")); assert.equal(nodes(tree).find(node => node.type === AccountDetails).props.accountEmail, "fixture@example.invalid");
 logout = async () => ({}); button("退出登录").props.onClick(); await tick(); assert.ok(text(tree).includes("退出后仍检测到已登录账户"));
 logout = async () => { account = { account: null, requiresOpenaiAuth: true }; return {}; };
 button("退出登录").props.onClick(); await tick(); assert.equal(notifyCount, 2); assert.ok(hasButton("使用 ChatGPT 继续"));
@@ -140,7 +147,7 @@ assert.equal(calls.filter(([method]) => method === "review_link_open").length, b
 start = () => new Promise(resolve => { release = resolve; }); button("使用 ChatGPT 继续").props.onClick(); render();
 complete("early-login"); account = { account: { type: "chatgpt", email: "early@example.invalid", planType: "free" }, requiresOpenaiAuth: true };
 release({ type: "chatgpt", loginId: "early-login", authUrl: "https://auth.example/login" }); await tick();
-assert.ok(text(tree).includes("early@example.invalid"));
+assert.equal(nodes(tree).find(node => node.type === AccountDetails).props.accountEmail, "early@example.invalid");
 button("退出登录").props.onClick(); await tick();
 start = async () => ({ type: "chatgpt", loginId: "browser-failed", authUrl: "https://auth.example/login" });
 open = async () => { throw Error("browser unavailable"); }; button("使用 ChatGPT 继续").props.onClick(); await tick();
@@ -216,7 +223,7 @@ assert.equal(starts().length, startsBeforeRecovery + 1); assert.ok(hasButton("�
 const changedBeforeRecovery = notifyCount;
 account = { account: { type: "chatgpt", email: "recovered@example.invalid", planType: "free" }, requiresOpenaiAuth: true };
 complete("subscription-recovered"); await tick(); assert.equal(notifyCount, changedBeforeRecovery + 1);
-assert.ok(text(tree).includes("recovered@example.invalid"));
+assert.equal(nodes(tree).find(node => node.type === AccountDetails).props.accountEmail, "recovered@example.invalid");
 effects.forEach(effect => effect?.cleanup?.()); await settle();
 assert.equal([...listeners.values()].reduce((sum, set) => sum + set.size, 0), 0);
 console.log("PASS AC08-B07: failed/half-successful subscriptions are released, explicit retry alone recreates listeners, recovered login completes once without duplicate handlers");

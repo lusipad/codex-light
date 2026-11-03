@@ -285,10 +285,22 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const activeSectionRef = useRef(activeSection);
   activeSectionRef.current = activeSection;
   const personalizationNavigationGuardRef = useRef<((action: () => void) => boolean) | null>(null);
-  const registerPersonalizationNavigationGuard = useCallback((guard: ((action: () => void) => boolean) | null) => {
-    personalizationNavigationGuardRef.current = guard;
-    onNavigationGuardChange?.(guard);
+  const settingsGuardsRef = useRef<Record<"personalization" | "account" | "profile", ((action: () => void) => boolean) | null>>({ personalization: null, account: null, profile: null });
+  const publishSettingsGuard = useCallback(() => {
+    const guards = Object.values(settingsGuardsRef.current).filter((guard): guard is (action: () => void) => boolean => guard !== null);
+    const combined = guards.length === 1 ? guards[0] : guards.length ? (action: () => void) => guards.every(guard => guard(action)) : null;
+    personalizationNavigationGuardRef.current = combined;
+    onNavigationGuardChange?.(combined);
   }, [onNavigationGuardChange]);
+  const registerPersonalizationNavigationGuard = useCallback((guard: ((action: () => void) => boolean) | null) => {
+    settingsGuardsRef.current.personalization = guard; publishSettingsGuard();
+  }, [publishSettingsGuard]);
+  const registerAccountNavigationGuard = useCallback((guard: ((action: () => void) => boolean) | null) => {
+    settingsGuardsRef.current.account = guard; publishSettingsGuard();
+  }, [publishSettingsGuard]);
+  const registerProfileNavigationGuard = useCallback((guard: ((action: () => void) => boolean) | null) => {
+    settingsGuardsRef.current.profile = guard; publishSettingsGuard();
+  }, [publishSettingsGuard]);
   const setActiveSection = useCallback((section: SettingsSectionSlug) => {
     if (section === activeSectionRef.current) return;
     const apply = () => { activeSectionRef.current = section; commitActiveSection(section); };
@@ -1439,10 +1451,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           onNavigationGuardChange={registerPersonalizationNavigationGuard} />
 
         {activeSection === "account" && <AccountSettings active accountIdentity={accountIdentity}
-          connectionIdentity={connectionIdentity} onAccountChanged={onAccountChanged} />}
+          connectionIdentity={connectionIdentity} onAccountChanged={onAccountChanged} onNavigationGuardChange={registerAccountNavigationGuard} />}
         {activeSection === "usage" && <UsageSettings accountIdentity={accountIdentity} connectionIdentity={connectionIdentity} />}
         {/* Profile writes require the authenticated account service. */}
-        {activeSection === "profile" && <ProfileSettings />}
+        {activeSection === "profile" && <ProfileSettings accountIdentity={accountIdentity} connectionIdentity={connectionIdentity} onNavigationGuardChange={registerProfileNavigationGuard} />}
 
         {/* ── SECTION: CODE REVIEW (代码审查) ── */}
         {activeSection === "code-review" && <CodeReviewSettings state={codeReviewPreferencesState} />}
