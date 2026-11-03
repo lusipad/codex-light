@@ -30,6 +30,7 @@ function mount({ select = async () => snapshot, persist = async () => ({ errors:
     attachedFiles: [{ id: "draft", persisted: false }], activeRoute: "thread", activeThreadId: "old",
   };
   const context = {
+    personalizationNavigationGuardRef: { current: null },
     setPermissionModes: update => { state.permissionModes = update(state.permissionModes ?? {}); },
     navigationRequestRef: { current: 0 }, activeThreadIdRef: { current: "old" },
     attachmentScopeRef: { current: "thread:old" },

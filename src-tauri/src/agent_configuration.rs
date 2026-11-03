@@ -36,7 +36,7 @@ fn file_path(name: &Value) -> Option<String> {
     }
 }
 
-fn reject_links(path: &Path) -> Result<(), String> {
+pub(crate) fn reject_links(path: &Path) -> Result<(), String> {
     if !path.is_absolute()
         || path
             .components()
@@ -459,8 +459,8 @@ fn patch_project(source: &str, key: &str, value: &Value) -> Result<String, Strin
     Ok(result)
 }
 
-#[derive(PartialEq, Debug)]
-struct DirectoryIdentity {
+#[derive(PartialEq, Debug, Hash)]
+pub(crate) struct DirectoryIdentity {
     canonical: PathBuf,
     created: Option<std::time::SystemTime>,
     #[cfg(windows)]
@@ -471,7 +471,7 @@ struct DirectoryIdentity {
     inode: u64,
 }
 
-fn directory_identity(path: &Path) -> Result<DirectoryIdentity, String> {
+pub(crate) fn directory_identity(path: &Path) -> Result<DirectoryIdentity, String> {
     reject_links(path)?;
     let metadata = fs::metadata(path).map_err(|error| format!("无法检查项目配置目录：{error}"))?;
     if !metadata.is_dir() {

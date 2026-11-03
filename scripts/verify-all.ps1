@@ -130,6 +130,8 @@ try {
   Invoke-Step "Agent defaults across actual App submission paths" { node scripts/verify-agent-execution-b.mjs }
   Invoke-Step "Rust scoped config and comment-preserving writes" { cargo test --locked --manifest-path src-tauri/Cargo.toml --lib agent_configuration }
   Invoke-Step "Personal Codex instructions editor and draft lifecycle regression" { node scripts/verify-personalization.mjs }
+  Invoke-Step "Personal instruction global navigation regression" { node scripts/verify-personalization-navigation-b.mjs }
+  Invoke-Step "Personal instruction notification and reset continuation regression" { node scripts/verify-personalization-action-guards-b.mjs }
   Invoke-Step "Personal Codex instructions isolated file regression" { cargo test --manifest-path src-tauri/Cargo.toml personal_instructions }
   Invoke-Step "Account identity, partial failure and lifecycle regression" { node scripts/verify-account-snapshot.mjs }
   Invoke-Step "Profile real identity and unavailable write regression" { node scripts/verify-profile-settings.mjs }

@@ -43,6 +43,7 @@ function visit(node) {
 visit(ast); assert.ok(action,"production native notification listener action exists");
 const events=[];
 const context={
+  personalizationNavigationGuardRef:{current:null},
   notificationAccountRef:{current:"epoch"},activeThreadIdRef:{current:"thread"},pendingRequestsRef:{current:[approval]},respondingRequestsRef:{current:new Set()},
   pendingRequestKey:r=>`${r.generation}:${typeof r.id}:${r.id}`,requestThreadId:r=>r.params.threadId,
   notificationApprovalResponse:helpers.notificationApprovalResponse,

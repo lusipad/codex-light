@@ -168,6 +168,7 @@ for (const branch of ["first-resume", "history-fallback", "identity-change"]) {
   const view = mountProjectContext({ threadId: "selection" });
   const context = view.context;
   Object.assign(context, {
+    personalizationNavigationGuardRef: { current: null },
     beginThreadModelHydration: () => 0,
     reviewResultsRef: { current: { getRuns: () => [], hydrate() {} } },
     turnLifecycleRef: { current: 0 }, threadHistoryBufferRef: { current: { begin() {}, release: () => [] } },

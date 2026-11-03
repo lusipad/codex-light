@@ -1,0 +1,22 @@
+.personalization-instructions-entry { position: relative; border-bottom: 1px solid var(--border-subtle); }
+.personalization-entry-row { display: flex; align-items: center; justify-content: space-between; gap: 24px; width: 100%; min-height: 90px; padding: 16px 0 32px; border: 0; border-radius: 8px; background: transparent; color: var(--text-primary); text-align: left; font: inherit; cursor: pointer; }
+.personalization-entry-row:hover { background: var(--bg-hover); }
+.personalization-entry-row > span { display: flex; flex-direction: column; gap: 6px; }
+.personalization-entry-title { font-size: var(--text-sm); font-weight: 500; }
+.personalization-entry-description { font-size: var(--text-sm); line-height: 1.5; color: var(--text-secondary); }
+.personalization-instructions-entry > a { position: absolute; bottom: 12px; left: 0; font-size: var(--text-sm); }
+.personalization-settings a { color: var(--accent-blue); text-decoration: none; }
+.personalization-settings a:hover { text-decoration: underline; }
+.personalization-settings button:focus-visible, .personalization-settings a:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 2px; }
+.personalization-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 20px; }
+.personalization-toolbar-spacer { flex: 1; }
+.personalization-editor > h3 { margin: 0 0 8px; }
+.personalization-editor .code-editor-textarea { box-sizing: border-box; min-height: 260px; width: 100%; margin-top: 16px; }
+.personalization-notice { color: var(--text-secondary); font-size: var(--text-sm); line-height: 1.5; margin: 12px 0; }
+.personalization-notice > button, .personalization-editor .error-banner > button { margin-left: 12px; }
+.personalization-discard-dialog { width: min(420px, calc(100vw - 32px)); height: auto; padding: 24px; margin: auto; }
+.personalization-discard-dialog:not([open]) { display: none; }
+.personalization-discard-dialog[open] { display: block; }
+.personalization-discard-dialog h3 { margin-top: 0; }
+.personalization-discard-dialog p { margin: 16px 0 24px; }
+.personalization-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }

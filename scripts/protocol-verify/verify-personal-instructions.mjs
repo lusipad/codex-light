@@ -17,7 +17,7 @@ const options = {
 const version = spawnSync(binary, ["--version"], { ...options, encoding: "utf8" });
 assert.equal(version.status, 0, version.stderr);
 let child, buffer = "", nextId = 0, stderr = "", passed = false, failure = null;
-const pending = new Map(), transcript = [], notifications = [], checks = [];
+const pending = new Map(), transcript = [], notifications = [], checks = [], observations = [];
 function rpc(method, params) {
   assert.notEqual(method, "turn/start", "this probe cannot generate model turns");
   const id = ++nextId;
@@ -59,15 +59,21 @@ try {
       else if (message.method) notifications.push(message);
     }
   });
-  await request("initialize", {
+  const initialized = await request("initialize", {
     clientInfo: { name: "codex-native-personal-instructions-probe", version: "0.1.0" },
     capabilities: { experimentalApi: true },
   });
   child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "initialized", params: {} }) + "\n");
+  const configuration = await request("config/read", { includeLayers: true, cwd: workspace });
+  const userLayer = configuration.layers.find(layer => layer.name?.type === "user");
+  assert.ok(userLayer?.name?.file, "current execution home must have an authoritative user layer");
+  const comparable = value => process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value);
+  assert.equal(comparable(path.dirname(userLayer.name.file)), comparable(home), "user layer derives the actual isolated instruction home");
+  assert.equal(comparable(initialized.codexHome), comparable(home), "initialize and config layer identify the same execution home");
+  check("authoritative user config layer and initialized execution home agree; no UI-supplied path");
   const global = "PI_NATIVE_GLOBAL_SENTINEL_20261101";
   const override = "PI_NATIVE_OVERRIDE_SENTINEL_20261101";
   const project = "PI_NATIVE_PROJECT_SENTINEL_20261101";
-  const observations = [];
   async function put(fileName, text) {
     await request("fs/writeFile", { path: path.join(home, fileName), dataBase64: Buffer.from(text).toString("base64") });
   }
@@ -104,7 +110,7 @@ try {
   fs.mkdirSync(path.dirname(output), { recursive: true });
   fs.writeFileSync(output, JSON.stringify({
     capturedAt: new Date().toISOString(), binary, version: version.stdout.trim(), isolatedHome: home,
-    passed, failure, checks, transcript, notifications, stderr,
+    passed, failure, checks, transcript, notifications, observations, stderr,
     scope: "real isolated CLI personalization observation; not Tauri record persistence, official UI, or pixel parity",
   }, null, 2));
   console.log(`Evidence: ${output}`);

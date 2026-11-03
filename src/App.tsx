@@ -318,7 +318,20 @@ export const App: React.FC = () => {
   const [threadEventsReady, setThreadEventsReady] = useState(false);
   const promptStorageKey = isQuickChatWindow ? "codex_quick_chat_prompt_drafts_v1" : threadWindowId ? `codex_thread_window_drafts_v1:${threadWindowId}` : "codex_composer_prompt_drafts_v1";
   // Primary Route & Shell Layout State
-  const [activeRoute, setActiveRoute] = useState<MainViewRoute>("home");
+  const [activeRoute, commitActiveRoute] = useState<MainViewRoute>("home");
+  const activeRouteRef = useRef(activeRoute);
+  activeRouteRef.current = activeRoute;
+  const personalizationNavigationGuardRef = useRef<((action: () => void) => boolean) | null>(null);
+  const setPersonalizationNavigationGuard = useCallback((guard: ((action: () => void) => boolean) | null) => {
+    personalizationNavigationGuardRef.current = guard;
+  }, []);
+  const setActiveRoute = useCallback((next: React.SetStateAction<MainViewRoute>) => {
+    const route = typeof next === "function" ? next(activeRouteRef.current) : next;
+    if (route === activeRouteRef.current) return;
+    const apply = () => { activeRouteRef.current = route; commitActiveRoute(route); };
+    if (personalizationNavigationGuardRef.current?.(apply) === false) return;
+    apply();
+  }, []);
   const deepLinkRouteRef = useRef({ route: activeRoute, revision: 0 });
   if (deepLinkRouteRef.current.route !== activeRoute) {
     deepLinkRouteRef.current = { route: activeRoute, revision: deepLinkRouteRef.current.revision + 1 };
@@ -348,10 +361,11 @@ export const App: React.FC = () => {
       canGoForward: history.index < history.entries.length - 1,
     };
   }, [routeHistoryVersion]);
-  const navigateRouteHistory = useCallback((direction: -1 | 1) => {
+  const navigateRouteHistory = useCallback((direction: -1 | 1): void => {
     const history = routeHistoryRef.current;
     const nextIndex = history.index + direction;
     if (nextIndex < 0 || nextIndex >= history.entries.length) return;
+    if (personalizationNavigationGuardRef.current?.(() => navigateRouteHistory(direction)) === false) return;
     navigatingRouteHistoryRef.current = true;
     history.index = nextIndex;
     setRouteHistoryVersion((version) => version + 1);
@@ -2208,7 +2222,8 @@ export const App: React.FC = () => {
 
   // Thread Navigation & Lifecycle
   const startNewThread = useCallback(
-    async (workspacePath?: string, project?: SidebarLocalProject, projectless = false) => {
+    async (workspacePath?: string, project?: SidebarLocalProject, projectless = false): Promise<void> => {
+      if (personalizationNavigationGuardRef.current?.(() => { void startNewThread(workspacePath, project, projectless); }) === false) return;
       if (project && (!project.serverProjectId || project.rootPaths.length === 0)) {
         showAppToast("暂时无法在此项目中新建聊天，请重试。", "error");
         return;
@@ -2264,7 +2279,8 @@ export const App: React.FC = () => {
     [handleSelectWorkspace, showAppToast]
   );
 
-  const selectThread = useCallback(async (threadId: string) => {
+  const selectThread = useCallback(async (threadId: string): Promise<void> => {
+    if (personalizationNavigationGuardRef.current?.(() => { void selectThread(threadId); }) === false) return;
     const executionIdentity = executionIdentityRef.current;
     const modelHydration = beginThreadModelHydration(threadId);
     const reviewHistorySnapshot = reviewResultsRef.current!.getRuns().filter(run => run.threadId === threadId);
@@ -3280,6 +3296,7 @@ export const App: React.FC = () => {
     const payload = event?.payload;
     const accountKey = notificationAccountRef.current;
     if (!accountKey || payload?.accountKey !== accountKey || payload?.hostId !== "local" || typeof payload?.threadId !== "string") return;
+    if (personalizationNavigationGuardRef.current?.(() => { void notificationNativeActionRef.current(event); }) === false) return;
     const threadId = payload.threadId;
     // Only a live host-registered payload reaches this listener. Never execute a route from its text.
     const current = () => notificationAccountRef.current === accountKey;
@@ -4152,10 +4169,13 @@ export const App: React.FC = () => {
         showAppToast("暂无最近会话可恢复", "info");
       }
     } else if (action === "reset_to_home") {
-      setPromptInput("");
-      setAttachedFiles([]);
-      setActiveRoute("home");
-      showAppToast("已返回主页空白草稿", "info");
+      const reset = () => {
+        setPromptInput("");
+        setAttachedFiles([]);
+        setActiveRoute("home");
+        showAppToast("已返回主页空白草稿", "info");
+      };
+      if (personalizationNavigationGuardRef.current?.(reset) !== false) reset();
     } else if (action === "toggle_ide_context") {
       composerTextareaRef.current?.focus();
     }
@@ -5288,6 +5308,7 @@ export const App: React.FC = () => {
           <div className="settings-full-route-view">
             <SettingsView
               accountIdentity={modelAccountIdentity}
+              onNavigationGuardChange={setPersonalizationNavigationGuard}
               archiveViewProps={{
                 refreshToken: `${archiveRefreshTick}:${appServerStatus.connected}`,
                 onSelectThread: selectThread,

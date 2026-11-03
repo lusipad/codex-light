@@ -1758,3 +1758,13 @@ PS5中文脚本首败已兼容修复；正文open误当审批与同连接复用�
 custom由有效config和服务真实会话权限驱动，显式preset独立，send/goal/review/queue/steer共用解析。审查P1旧resume覆盖新只读权限已先复现后修复，按thread revision/账号保护，补selectThread两处/fallback/Plan/review/queue竞态回归。首次Cargo类型错误和项目注释回归首败留证，原断言保留后专项六项通过。浏览器验证生产组件/真实hook，宿主与数据受控注入，不改真实配置/不发模型turn；宽窄仅容器，不声称原生断点或官方像素。最终标准与构建结果见[16.06B待验表](antigravity/acceptance/16-06B.md)，尚在执行时不提前记通过。项目持久写非断电事务，Work/gates、完整旧preset、原生/IME/多窗/官方像素与用户验收仍未完成。
 
 16.06B最终完整标准（非Fast）、全Rust299项（4线程）和EXE/MSI/NSIS均退出0，250项产品输入及原生helper指纹稳定；五项许可sidecar哈希匹配。首轮六项旧夹具失败保留并适配真实状态/异步和摘要配置，最终完整重跑通过；不删除原行为断言。官方/原生交互/像素与用户验收未完。下一[16.07B](antigravity/specs/16-07-next-closure.md)仅完成固定新包只读取证，分别处理本机AGENTS.md、账号同步指令与Memory，不混写或强开gate。
+
+## 2026-11-03：16.07B 本机指令与全局导航
+
+按固定新Store本地文件、账号指令、Memory三链合同开发本机指令，真实config/read user层派生执行home、物理host身份与观察context、原文CAS/Windows独占/路径检查/sync读回及跨窗事件。复用16.06目录保护和现有依赖，未伪造远端host或账号同步。完整row/中文/override、dirty全局导航/失败保稿、背景变更不覆盖输入、原生固定指南链接接通。vi:33689反证修正旧研究遗漏，保留局部CtrlEnter和全局CtrlS。
+
+生产导航旧HEAD基线失败后新回归通过；审查复现通知导航被拒仍审批P1和reset先清稿P2，整动作guard后回归通过，并重查账号/request/nonce。浏览器发现显式重载焦点落document，单点修复后AX复验回editor，后台不抢焦点/身份晚到另有回归。初次完整标准通过后因焦点修复再做最终冻结重跑，不把旧输入冒充最终源码。宿主六项通过、双CLI零模型turn证明实际home与新聊天指令/override消费；最终标准/全Rust/构建和指纹结果见[16.07B待验表](antigravity/acceptance/16-07B.md)。原生/官方像素/用户验收仍未完；项目独占写非断电事务，账号/统一Markdown/远端WSL/Memory独立后续。
+
+16.07B最终冻结源码完整标准（非Fast，含增强隔离指令协议）退出0，日志verify-all-final.log；全Rust303项退出0。焦点修复前后两轮完整日志独立保留，输入快照未混用；最终原生构建进行中，尚未以构建替代原生UI/官方像素。下一16.07C固定来源与双CLI记忆catalog/status/schema合同已准备，未提前执行删除/写入或账号服务操作。
+
+16.07B最终EXE/MSI/NSIS构建退出0，251产品输入及原生helper指纹一致、五项许可sidecar逐项匹配；完整标准与全Rust303均通过，已具备阶段提交条件。原生/IME/多窗/官方像素与用户验收仍未完。见[待验表](antigravity/acceptance/16-07B.md)和[16.07C下一合同](antigravity/specs/16-07C-next-closure.md)，不把本机指令阶段自验当整页或整App完成。

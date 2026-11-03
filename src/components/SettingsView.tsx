@@ -28,7 +28,7 @@ import type { KeyboardPreferencesState } from "../keyboardPreferences";
 import type { AppearanceState } from "../appearancePreferences";
 import { GeneralOpenPreferences } from "./GeneralOpenPreferences";
 import type { ComposerEnterBehavior } from "../composerPreferences";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
   FileCode,
@@ -246,6 +246,7 @@ interface SettingsViewProps {
   models: ModelInfo[];
   activeWorkspaceRoot?: string;
   accountIdentity?: string;
+  onNavigationGuardChange?: (guard: ((action: () => void) => boolean) | null) => void;
   initialSection?: SettingsSectionSlug;
   petVisible?: boolean;
   onTogglePetVisible: (visible: boolean) => void;
@@ -270,6 +271,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   models,
   activeWorkspaceRoot = "",
   accountIdentity,
+  onNavigationGuardChange,
   initialSection = "general-settings",
   petVisible = false,
   onTogglePetVisible,
@@ -277,8 +279,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onConfigUpdated,
   onNavigateRoute,
 }) => {
-  const [activeSection, setActiveSection] =
+  const [activeSection, commitActiveSection] =
     useState<SettingsSectionSlug>(initialSection === "providers-models" ? "agent" : initialSection === "experimental" ? "general-settings" : initialSection);
+  const activeSectionRef = useRef(activeSection);
+  activeSectionRef.current = activeSection;
+  const personalizationNavigationGuardRef = useRef<((action: () => void) => boolean) | null>(null);
+  const registerPersonalizationNavigationGuard = useCallback((guard: ((action: () => void) => boolean) | null) => {
+    personalizationNavigationGuardRef.current = guard;
+    onNavigationGuardChange?.(guard);
+  }, [onNavigationGuardChange]);
+  const setActiveSection = useCallback((section: SettingsSectionSlug) => {
+    if (section === activeSectionRef.current) return;
+    const apply = () => { activeSectionRef.current = section; commitActiveSection(section); };
+    if (personalizationNavigationGuardRef.current?.(apply) === false) return;
+    apply();
+  }, []);
   const [navSearch, setNavSearch] = useState("");
   const [config, setConfig] = useState<CodexConfigOverview | null>(null);
   const [customCliPath, setCustomCliPath] = useState<string>("");
@@ -1547,7 +1562,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         {activeSection === "import" && <ImportSettings state={externalImportsState} cwd={activeWorkspaceRoot} />}
 
         {/* Keep instruction drafts across settings section navigation. */}
-        <PersonalizationSettings active={activeSection === "personalization"} />
+        <PersonalizationSettings active={activeSection === "personalization"} accountIdentity={accountIdentity}
+          connectionIdentity={`${appServerStatus.connected}:${appServerStatus.binaryPath}:${appServerStatus.appServerVersion ?? ""}:${appServerStatus.userAgent ?? ""}`}
+          onNavigationGuardChange={registerPersonalizationNavigationGuard} />
 
         {/* ── SECTION 22: ACCOUNT & QUOTA (账号与额度) ── */}
         {activeSection === "account" && (

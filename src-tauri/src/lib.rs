@@ -796,6 +796,7 @@ fn help_link_command(target: &str) -> Result<std::process::Command, String> {
         "guide" => "https://learn.chatgpt.com/docs/quickstart",
         "changelog" => "https://developers.openai.com/codex/changelog",
         "configuration" => "https://developers.openai.com/codex/config-basic",
+        "global-guidance" => "https://developers.openai.com/codex/guides/agents-md/#create-global-guidance",
         _ => return Err("未知帮助链接".to_string()),
     };
     #[cfg(target_os = "windows")]

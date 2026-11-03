@@ -12,7 +12,7 @@
 
 先完成本机指令闭环，复用既有PersonalizationSettings、personal_instructions.rs和Markdown组件，不新增依赖、不强开统一gate或假远端host。按真实执行host/home能力读取本地路径，入口row/标题/描述/返回取消保存、初次失败重试、后台刷新保稿、override告警、安全原样写读、身份/host/跨窗与外部修改冲突保护分别落实。
 
-精确官方来源：early-bootstrap-339-096ec1020e8592e0.js中W:700401派生host/WSL codexHome+AGENTS.md并缺文件创建，z:700757读内容和非空override，Q:701053写文件；personalization-queries:178/215/442按hostId读写隔离。personalization主chunk Ti:35696/Ei:36630、36930、37874、vi:31575定义加载、dirty全局导航与CmdOrCtrl+S；未找到默认Ctrl+Enter合同，需纠正旧预期，不继续凭旧测试保留推断。agents-md模式的源/预览需先证资格，且官方是Markdown编辑模式切换，不可把只读渲染称编辑器等价。
+精确官方来源：early-bootstrap-339-096ec1020e8592e0.js中W:700401派生host/WSL codexHome+AGENTS.md并缺文件创建，z:700757读内容和非空override，Q:701053写文件；personalization-queries:178/215/442按hostId读写隔离。personalization主chunk Ti:35696/Ei:36630、36930、37874、vi:31575定义加载、dirty全局导航与CmdOrCtrl+S；vi共享容器:33689明确有局部Ctrl/Cmd+Enter；Ei另注册全局CmdOrCtrl+S。此前只读报告遗漏前者，本轮独立读原片段后已纠正，保留局部Enter与IME保护。agents-md模式的源/预览需先证资格，且官方是Markdown编辑模式切换，不可把只读渲染称编辑器等价。
 
 现有本地单一textarea、标题/成功提示/文件描述与新包不一致，无host参数/跨窗通知；现有expectedContents可复用，但比较后fs::write仍有外部竞态且无reparse/路径身份防护。安全适配须明确其与官方静态写法的差别，不借此宣称已验原生等价。
 
@@ -26,3 +26,20 @@
 6. PI-B06：最终标准、相关及全量Rust、同源码原生构建/输入指纹、官方同条件视觉/原生与用户验收分别报告；大阶段通过自验后Lore提交，远程无分叉可推送。未测不冒充通过。
 
 官方GUI、gate实际账号状态、DPI/App缩放及配对图仍未知，开发范围按已证实本地能力推进；必要运行时信息缺失不作为伪开启远程服务的理由。
+
+## 16.07B 开工决策与语义映射
+
+高置信：当前宿主只提供本地app-server，无已实现远程/WSL执行host管理，采用真实config/read user层file的parent作为执行home；缺层/不支持路径拒绝，不用UI任意hostId映射目录。反证是新增真实host控制器或服务返回可安全操作的执行home合同。
+
+高置信：App路由、历史导航、selectThread和startNewThread先经过草稿guard，再改变路由/会话/项目；Settings各分区同样guard，确认放弃后才执行待导航，保存中拒绝离开。保留原生beforeunload；原生关闭是否触发仍需独立实测，不能因浏览器通过记原生完成。
+
+| 已观察官方语义 | 处理 | 验证 |
+| --- | --- | --- |
+| 本机指令整row、文件说明与override | 保留 | 实际TSX和固定中文锚点 |
+| dirty全局导航提示、保存单飞 | 保留 | App/Settings生产回调先拦后执行，晚响应/失败保稿 |
+| host分区读取、当前home文件写读 | 适配 | 本机真实层推导hostId；未知远程不伪造 |
+| 文件原文写入 | 适配 | 增加已有CAS/独占/路径身份防覆盖；不是断电事务 |
+| 全局CmdOrCtrl+S与局部CtrlEnter | 保留 | vi:33689反证修正研究遗漏，IME/229不过滤错误触发 |
+| 账号同步指令、统一编辑器和Memory | 保留准入边界 | 本阶段不强开，另立真实服务/资格合同，不声称已完 |
+
+用户已授权持续自主开发与大阶段提交，以上是可逆实现决策，不重复等待确认。出现未知远程资格时保留受限状态并记录；不迁移/修改真实账号/用户配置，不新增依赖。具体实施偏离/首次失败/命令结果记录在[实施注记](16-07B-implementation-notes.md)。
