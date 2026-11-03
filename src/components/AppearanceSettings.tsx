@@ -4,6 +4,8 @@ import { parseAppearanceFontSize, type AppearanceState } from "../appearancePref
 import { copyTextToClipboard } from "../clipboard";
 import { loadThemePreset, parseTheme, resetAdvancedTheme, serializeTheme, themePresets,
   type ChromeTheme, type ThemeVariant } from "../appearanceTheme";
+import { GeneralPreferenceSelect } from "./GeneralPreferenceSelect";
+import "./AppearanceSettings.css";
 
 function FontSizeField({ setting, state, label }: {
   setting: "sansFontSize" | "codeFontSize"; state: AppearanceState; label: string;
@@ -22,16 +24,16 @@ function FontSizeField({ setting, state, label }: {
     setDraft(String(result === "failed" ? saved : value));
     committing.current = false;
   };
-  return <div className="form-field">
-    <label htmlFor={setting}>{label}</label>
-    {setting === "codeFontSize" && <p className="card-subtitle-desc">调整聊天和差异视图中代码使用的基础字号</p>}
-    <input id={setting} type="number" step={1} min={setting === "sansFontSize" ? 11 : 8}
+  return <div className="appearance-setting-row appearance-font-size">
+    <div><label htmlFor={setting}>{label}</label>
+      <p className="card-subtitle-desc">{setting === "codeFontSize" ? "调整聊天和差异视图中代码使用的基础字号" : "调整 ChatGPT 的基础字号"}</p></div>
+    <div className="appearance-size-control"><input id={setting} type="number" step={1} min={setting === "sansFontSize" ? 11 : 8}
       max={setting === "sansFontSize" ? 16 : 24} value={draft} disabled={state.busy}
       onChange={event => setDraft(event.target.value)} onBlur={() => void commit()}
       onKeyDown={event => {
         if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
         if (event.key === "Enter") { event.preventDefault(); void commit(); }
-      }} />
+      }} /><span>px</span></div>
   </div>;
 }
 
@@ -49,7 +51,7 @@ function ThemeTextField({ label, value, disabled, color = false, onSave }: {
     setInvalid(false);
     if (next !== value) onSave(next);
   };
-  return <div className="appearance-value-control">
+  return <div className={`appearance-value-control${color ? " appearance-color-control" : ""}`}>
     {color && <input type="color" aria-label={`${label}选择器`} value={/^#[\da-f]{6}$/i.test(draft) ? draft : value} disabled={disabled}
       onChange={event => { setDraft(event.target.value); setInvalid(false); }} onBlur={persist} />}
     <input type="text" aria-label={label} aria-invalid={invalid || undefined} value={draft}
@@ -154,23 +156,26 @@ function ThemeCard({ state, variant, advanced = false, showTitle, editRevision }
   const fontStyle = (key: "ui" | "content" | "code", label: string) => {
     const face = theme.fonts[`${key}Face`];
     return <div className="appearance-setting-row" key={`${key}Style`}><span>{label}</span>
-      <select aria-label={`${name} ${label}`} value={face ? "selected" : "regular"} disabled={state.busy || !face}
-        onChange={() => { const fonts = { ...theme.fonts }; delete fonts[`${key}Face`]; patch({ fonts }); }}>
-        {face && <option value="selected">{face.fullName}</option>}<option value="regular">常规</option>
-      </select></div>;
+      <GeneralPreferenceSelect id={`appearance-${variant}-${key}-style`} label={`${name} ${label}`} value={face ? "selected" : "regular"} disabled={state.busy || !face}
+        options={[...(face ? [{ value: "selected", label: face.fullName }] : []), { value: "regular", label: "常规" }]}
+        onChange={() => { const fonts = { ...theme.fonts }; delete fonts[`${key}Face`]; patch({ fonts }); }} /></div>;
   };
   return <section className="appearance-theme-card" aria-label={`${name}${advanced ? "高级" : ""}主题`}>
     {(showTitle || !advanced) && <div className="appearance-theme-heading"><h4>{showTitle ? `${name}主题` : "主题"}</h4>
       {!advanced && <div className="appearance-theme-actions">
-        <button type="button" aria-label={`导入${name}主题`} disabled={state.busy} onClick={() => setImporting(true)}>导入</button>
-        <button type="button" aria-label={`复制${name}主题`} disabled={state.busy} onClick={async () => {
+        <button type="button" className="appearance-icon-button" aria-label={`导入${name}主题`} title={`导入${name}主题`} disabled={state.busy} onClick={() => setImporting(true)}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M5 15v5h14v-5" /></svg></button>
+        <button type="button" className="appearance-icon-button" aria-label={`复制${name}主题`} title={`复制${name}主题`} disabled={state.busy} onClick={async () => {
           const copied = await copyTextToClipboard(serializeTheme({ variant, theme, codeThemeId }));
           if (!alive.current) return;
           setNotice(copied ? `已复制${name}主题` : ""); setFailure(copied ? "" : "复制主题失败");
-        }}>复制</button>
-        <select aria-label={`${name} 代码主题`} value={codeThemeId} disabled={state.busy} aria-busy={loadingPreset}
-          onChange={async event => {
-            const id = event.target.value, revision = ++editRevision.current, request = ++presetRequest.current;
+        }}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V4H4v12h4" /></svg></button>
+        <div className="appearance-preset-control" aria-busy={loadingPreset}>
+          <span className="appearance-preset-swatches" aria-hidden="true">{[theme.surface, theme.ink, theme.accent].map((color, index) => <i key={index} style={{ background: color }} />)}</span>
+          <GeneralPreferenceSelect id={`appearance-${variant}-preset`} label={`${name} 代码主题`} value={codeThemeId} disabled={state.busy}
+          options={[...(!presets.some(preset => preset.id === codeThemeId) ? [{ value: codeThemeId, label: codeThemeId }] : []), ...presets.map(preset => ({ value: preset.id, label: preset.label }))]}
+          onChange={async id => {
+            const revision = ++editRevision.current, request = ++presetRequest.current;
             setLoadingPreset(true); setFailure(""); setNotice("");
             try {
               const next = await loadThemePreset(id, variant);
@@ -180,17 +185,11 @@ function ThemeCard({ state, variant, advanced = false, showTitle, editRevision }
               }, id);
             } catch { if (alive.current && revision === editRevision.current) setFailure("无法应用主题"); }
             finally { if (alive.current && request === presetRequest.current) setLoadingPreset(false); }
-          }}>
-          {!presets.some(preset => preset.id === codeThemeId) && <option value={codeThemeId}>{codeThemeId}</option>}
-          {presets.map(preset => <option key={preset.id} value={preset.id}>{preset.label}</option>)}
-        </select>
+          }} /></div>
       </div>}
     </div>}
     {!advanced && <>
       {!presets.some(preset => preset.id === codeThemeId) && <p role="status">当前代码主题暂不可用，已保留原选择。请选择其他主题以应用配色。</p>}
-      <div className="appearance-theme-preview" aria-hidden="true" style={{ background: theme.surface, color: theme.ink, borderColor: theme.accent }}>
-        <span style={{ fontFamily: theme.fonts.ui ?? undefined }}>Aa</span><i style={{ background: theme.accent }} />
-      </div>
       {([["accent", "强调色"], ["surface", "背景"], ["ink", "前景"]] as const).map(([key, label]) =>
         <div className="appearance-setting-row" key={key}><span>{label}</span><ThemeTextField label={`${name} ${label}`}
           color value={theme[key]} disabled={state.busy} onSave={value => patch({ [key]: value, ...(key === "accent" ? { accentSource: "custom" as const } : {}) })} /></div>)}
@@ -223,6 +222,12 @@ export const AppearanceSettings: React.FC<{ state: AppearanceState }> = ({ state
   const resetPending = useRef(false);
   const themeRevisions = useRef({ light: { current: 0 }, dark: { current: 0 } });
   const variants: ThemeVariant[] = separateModes ? ["light", "dark"] : [state.variant];
+  const hasAdvancedChanges = separateModes || state.preferences.sansFontSize !== 14 || state.preferences.codeFontSize !== 12 ||
+    state.preferences["reduced-motion-preference"] !== "system" || (["light", "dark"] as const).some(variant => {
+      const theme = variant === "light" ? state.preferences.appearanceLightChromeTheme : state.preferences.appearanceDarkChromeTheme;
+      return theme.contrast !== (variant === "light" ? 45 : 60) || theme.fonts.code != null || theme.fonts.content != null ||
+        theme.fonts.uiFace != null || theme.fonts.contentFace != null || theme.fonts.codeFace != null;
+    });
   const reset = async () => {
     if (resetPending.current || state.busy) return;
     resetPending.current = true; setResetting(true); setResetError(false); setSeparateModes(false);
@@ -239,37 +244,38 @@ export const AppearanceSettings: React.FC<{ state: AppearanceState }> = ({ state
     setResetError(failed); setResetting(false); resetPending.current = false;
   };
   const controlsState = resetting ? { ...state, busy: true } : state;
-  return <>
+  return <div className="appearance-settings">
     <div className="card-section">
       <h3>视觉风格</h3>
-      <fieldset disabled={state.busy || resetting} className="appearance-mode-options">
-        <legend>模式</legend>
+      <div className="appearance-mode-row"><span>模式</span><fieldset disabled={state.busy || resetting} className="appearance-mode-options" aria-label="模式">
+        <legend className="appearance-sr-only">模式</legend>
         {([["system", "系统"], ["light", "浅色"], ["dark", "深色"]] as const).map(([value, label]) =>
-          <label key={value}><input type="radio" name="appearance-mode" value={value}
-            checked={state.preferences.appearanceTheme === value} onChange={() => void state.save("appearanceTheme", value)} />{label}</label>)}
-      </fieldset>
+          <label key={value} title={label}><input type="radio" name="appearance-mode" value={value} aria-label={label}
+            checked={state.preferences.appearanceTheme === value} onChange={() => void state.save("appearanceTheme", value)} />
+            <span className="appearance-mode-preview" data-mode={value} aria-hidden="true"><span className="appearance-mode-window"><i /><span /><span /><span /><b /><b /><em /></span></span></label>)}
+      </fieldset></div>
       {variants.map(variant => <ThemeCard key={variant} state={controlsState} variant={variant} showTitle={separateModes} editRevision={themeRevisions.current[variant]} />)}
     </div>
     <div className="card-section">
       <div className="appearance-theme-heading"><h3><button type="button" className="appearance-advanced-toggle" aria-expanded={advanced}
         aria-controls="appearance-advanced" onClick={() => setAdvanced(value => !value)}>高级 <span aria-hidden="true">{advanced ? "⌃" : "⌄"}</span></button></h3>
-        <button type="button" disabled={state.busy || resetting} onClick={() => void reset()}>重置为默认设置</button></div>
+        {hasAdvancedChanges && <button type="button" className="appearance-reset" disabled={state.busy || resetting} onClick={() => void reset()}>重置为默认设置</button>}</div>
       {advanced && <div id="appearance-advanced">
-        <div className="appearance-setting-row"><label htmlFor="appearance-separate">分别设置浅色和深色模式</label>
-          <input type="checkbox" id="appearance-separate" checked={separateModes} disabled={resetting}
-            onChange={event => setSeparateModes(event.target.checked)} /></div>
-        <p className="card-subtitle-desc">分别选择各自的主题、颜色和字体</p>
-        {variants.map(variant => <ThemeCard key={variant} state={controlsState} variant={variant} advanced showTitle={separateModes} editRevision={themeRevisions.current[variant]} />)}
-        <div className="form-grid-row"><FontSizeField setting="sansFontSize" state={controlsState} label="界面字号" />
+        <div className="appearance-advanced-group"><FontSizeField setting="sansFontSize" state={controlsState} label="界面字号" />
           <FontSizeField setting="codeFontSize" state={controlsState} label="代码字体大小" /></div>
-        <div className="form-field"><label htmlFor="reduced-motion">减少动态效果</label>
-          <select id="reduced-motion" disabled={state.busy || resetting} value={state.preferences["reduced-motion-preference"]}
-            onChange={event => void state.save("reduced-motion-preference", event.target.value as "system" | "on" | "off")}>
-            <option value="system">系统</option><option value="on">开启</option><option value="off">关闭</option>
-          </select></div>
+        <div className="appearance-advanced-group"><div className="appearance-setting-row"><div><span>减少动态效果</span>
+          <p className="card-subtitle-desc">减少动画效果或匹配系统设置</p></div>
+          <GeneralPreferenceSelect id="reduced-motion" label="减少动态效果" disabled={state.busy || resetting} value={state.preferences["reduced-motion-preference"]}
+            options={[{ value: "system", label: "系统" }, { value: "on", label: "开启" }, { value: "off", label: "关闭" }]}
+            onChange={value => void state.save("reduced-motion-preference", value as "system" | "on" | "off")} /></div>
+        <div className="appearance-setting-row"><label htmlFor="appearance-separate">分别设置浅色和深色模式</label>
+          <input type="checkbox" role="switch" id="appearance-separate" checked={separateModes} disabled={state.busy || resetting}
+            onChange={event => setSeparateModes(event.target.checked)} /></div>
+        <p className="card-subtitle-desc appearance-separate-description">分别选择各自的主题、颜色和字体</p></div>
+        {variants.map(variant => <ThemeCard key={variant} state={controlsState} variant={variant} advanced showTitle={separateModes} editRevision={themeRevisions.current[variant]} />)}
       </div>}
     </div>
     {resetError && <div role="alert">部分外观设置无法重置。请重试。</div>}
     {state.error && <div role="alert">{state.error}<button type="button" disabled={state.busy || resetting} onClick={state.reload}>重新读取</button></div>}
-  </>;
+  </div>;
 };

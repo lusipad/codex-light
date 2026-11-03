@@ -35,6 +35,7 @@ function Invoke-Step {
 try {
   Invoke-Step "All-page workflow UI correction" { node scripts/verify-workflow-ui-d.mjs }
   Invoke-Step "Workspace file tree and actual file selection" { node scripts/verify-workspace-file-tree.mjs }
+  Invoke-Step "General preference menu positioning and keyboard" { node scripts/verify-general-preference-select.mjs }
   Invoke-Step "Settings wrapper and immediate-save UI correction" { node scripts/verify-settings-ui-correction.mjs }
   Invoke-Step "Project, worktree and archive UI correction" { node scripts/verify-organization-ui.mjs }
   Invoke-Step "Plugin and skill directory UI correction" { node scripts/verify-extensions-ui-d.mjs }

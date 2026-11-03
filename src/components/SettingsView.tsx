@@ -28,10 +28,13 @@ import { KeyboardShortcutsSettings } from "./KeyboardShortcutsSettings";
 import type { KeyboardPreferencesState } from "../keyboardPreferences";
 import type { AppearanceState } from "../appearancePreferences";
 import { GeneralOpenPreferences } from "./GeneralOpenPreferences";
+import { GeneralPreferenceSelect } from "./GeneralPreferenceSelect";
 import "./SettingsView.css";
 import type { ComposerEnterBehavior } from "../composerPreferences";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Search } from "lucide-react";
+import { Search, X, Settings, Bell, Download, User, Palette, Archive, Mic, HardDrive, SlidersHorizontal,
+  Sparkles, Cat, Keyboard, ChartNoAxesCombined, Plug, Monitor, Camera, Globe, Webhook, Cable,
+  Cloud, ScanSearch, GitBranch, Terminal, FolderGit2 } from "lucide-react";
 import { isTauriRuntime, tauriInvoke } from "../bridge";
 import { AccountSettings } from "./AccountSettings";
 import { UsageSettings } from "./UsageSettings";
@@ -87,6 +90,16 @@ const SETTINGS_NAV_GROUPS: Array<{
     ],
   },
 ];
+
+// Existing icon set supplies the navigation structure; official asset contours remain unverified.
+const SETTINGS_NAV_ICONS = {
+  "general-settings": Settings, notifications: Bell, import: Download, profile: User, appearance: Palette,
+  account: User, "archived-chats": Archive, voice: Mic, storage: HardDrive, agent: SlidersHorizontal,
+  personalization: Sparkles, pets: Cat, "keyboard-shortcuts": Keyboard, usage: ChartNoAxesCombined,
+  "plugins-settings": Plug, "computer-use": Monitor, appshots: Camera, "browser-use": Globe,
+  "hooks-settings": Webhook, connections: Cable, "cloud-settings": Cloud, "code-review": ScanSearch,
+  "git-settings": GitBranch, "local-environments": Terminal, worktrees: FolderGit2,
+};
 
 interface SettingsViewProps {
   petPreferencesState: PetPreferencesState;
@@ -151,6 +164,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 }) => {
   const [activeSection, commitActiveSection] =
     useState<SettingsSectionSlug>(initialSection === "providers-models" ? "agent" : initialSection === "experimental" ? "general-settings" : initialSection);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const activeSectionRef = useRef(activeSection);
   activeSectionRef.current = activeSection;
   const personalizationNavigationGuardRef = useRef<((action: () => void) => boolean) | null>(null);
@@ -208,18 +222,34 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   }, [navSearch]);
 
   return (
-    <div className="settings-center-shell">
+    <div className="settings-center-shell" onKeyDown={event => {
+      if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        event.stopPropagation();
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      }
+    }}>
       {/* Settings navigation uses the current official grouping for existing routes. */}
-      <aside className="settings-left-nav">
+      <aside className="settings-left-nav" aria-label="设置">
+        <h2 className="settings-nav-title">设置</h2>
         <div className="settings-search-box">
           <Search size={13} />
           <input
             type="text"
+            role="searchbox"
+            ref={searchInputRef}
+            autoFocus
             aria-label="搜索设置"
-            placeholder="搜索设置项..."
+            placeholder="搜索"
             value={navSearch}
             onChange={(e) => setNavSearch(e.target.value)}
           />
+          {navSearch && <button type="button" aria-label="清除设置搜索" onClick={() => {
+            setNavSearch("");
+            searchInputRef.current?.focus();
+          }}><X size={13} aria-hidden="true" /></button>}
         </div>
 
         <div className="settings-nav-groups" onKeyDown={event => {
@@ -236,7 +266,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           {filteredNavGroups.map((group) => (
             <div key={group.groupTitle} className="settings-nav-group">
               <div className="settings-nav-group-title">{group.groupTitle}</div>
-              {group.items.map((item) => (
+              {group.items.map((item) => {
+                const Icon = SETTINGS_NAV_ICONS[item.slug as keyof typeof SETTINGS_NAV_ICONS];
+                return (
                 <button
                   key={item.slug}
                   data-settings-panel-slug={item.slug}
@@ -247,11 +279,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   aria-current={activeSection === item.slug ? "page" : undefined}
                   onClick={() => setActiveSection(item.slug)}
                 >
-                  {item.label}
+                  {Icon && <Icon size={16} aria-hidden="true" />}<span>{item.label}</span>
                 </button>
-              ))}
+              ); })}
             </div>
           ))}
+          {filteredNavGroups.length === 0 && <p className="settings-search-empty" role="status">未找到结果</p>}
         </div>
       </aside>
 
@@ -289,13 +322,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <div className="form-field">
                 <label htmlFor="composer-enter-behavior">发送快捷键</label>
                 <p className="card-subtitle-desc">选择按 Enter 时是发送提示还是插入新行</p>
-                <select id="composer-enter-behavior" value={composerEnterBehavior}
+                <GeneralPreferenceSelect id="composer-enter-behavior" label="发送快捷键" value={composerEnterBehavior}
                   disabled={composerEnterSaving}
-                  onChange={(e) => onSetComposerEnterBehavior(e.target.value as ComposerEnterBehavior)}>
-                  <option value="enter">按 Enter 键</option>
-                  <option value="cmdIfMultiline">Ctrl + Enter 用于多行提示</option>
-                  <option value="cmdAlways">总是使用 Ctrl + Enter</option>
-                </select>
+                  options={[
+                    { value: "enter", label: "按 Enter 键" },
+                    { value: "cmdIfMultiline", label: "Ctrl + Enter 用于多行提示" },
+                    { value: "cmdAlways", label: "总是使用 Ctrl + Enter" },
+                  ]}
+                  onChange={value => onSetComposerEnterBehavior(value as ComposerEnterBehavior)} />
                 {composerEnterError && <p role="alert">{composerEnterError}</p>}
               </div>
             </section>

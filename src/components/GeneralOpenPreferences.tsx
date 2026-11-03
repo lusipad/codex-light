@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { tauriInvoke } from "../bridge";
+import { GeneralPreferenceSelect } from "./GeneralPreferenceSelect";
 
 export interface DesktopOpenPreferences {
   platform: string;
@@ -55,20 +56,18 @@ export const GeneralOpenPreferences: React.FC = () => {
     <div className="form-field">
       <label htmlFor="default-open-target">默认文件打开位置</label>
       <p className="card-subtitle-desc">默认打开文件和文件夹的位置</p>
-      <select id="default-open-target" disabled={busy || !preferences?.targets.length}
+      <GeneralPreferenceSelect id="default-open-target" label="默认文件打开位置" disabled={busy || !preferences?.targets.length}
         value={preferences?.preferredTarget ?? ""}
-        onChange={event => void savePreference("target", event.target.value)}>
-        {!preferences?.targets.length && <option value="">未找到目标</option>}
-        {preferences?.targets.map(target => <option key={target.id} value={target.id}>{target.label}</option>)}
-      </select>
+        options={preferences?.targets.map(target => ({ value: target.id, label: target.label })) ?? []}
+        onChange={value => void savePreference("target", value)} />
     </div>
     {preferences?.platform === "windows" && <div className="form-field">
       <label htmlFor="integrated-terminal-shell">集成终端 Shell</label>
       <p className="card-subtitle-desc">选择要在集成终端中打开的 Shell。</p>
-      <select id="integrated-terminal-shell" disabled={busy} value={preferences.preferredShell}
-        onChange={event => void savePreference("shell", event.target.value)}>
-        {preferences.shells.map(shell => <option key={shell.id} value={shell.id}>{shell.label}</option>)}
-      </select>
+      <GeneralPreferenceSelect id="integrated-terminal-shell" label="集成终端 Shell" disabled={busy}
+        placeholder="没有可用的 Shell" value={preferences.preferredShell}
+        options={preferences.shells.map(shell => ({ value: shell.id, label: shell.label }))}
+        onChange={value => void savePreference("shell", value)} />
     </div>}
     {error && <div role="alert">{error}<button type="button" disabled={busy} onClick={() => setRefresh(value => value + 1)}>重新读取</button></div>}
   </>;

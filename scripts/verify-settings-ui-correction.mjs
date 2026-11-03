@@ -59,8 +59,26 @@ test('General keeps real external-open and Enter consumers without debug/reset c
   const page = mount('general-settings'); assert.ok(page.child('GeneralOpenPreferences'));
   assert.doesNotMatch(content(page.render()), /App-Server|恢复出厂|自定义 Codex CLI/);
   const enter = page.by(n => n.props.id === 'composer-enter-behavior');
-  enter.props.onChange({ target: { value: 'cmdAlways' } }); assert.deepEqual(page.calls, [['enter', 'cmdAlways']]);
+  assert.equal(enter.type.name, 'GeneralPreferenceSelect');
+  enter.props.onChange('cmdAlways'); assert.deepEqual(page.calls, [['enter', 'cmdAlways']]);
+  page.props.composerEnterSaving = true; page.render();
+  assert.equal(page.by(n => n.props.id === 'composer-enter-behavior').props.disabled, true);
   page.props.composerEnterError = '写入失败'; page.render(); assert.ok(page.by(n => n.props.role === 'alert' && content(n) === '写入失败'));
+});
+test('Search has official semantics, scoped find, clear and empty-result feedback', () => {
+  const page = mount('general-settings');
+  const search = page.by(n => n.props.role === 'searchbox');
+  assert.ok(search); assert.equal(search.props.placeholder, '搜索'); assert.equal(search.props.autoFocus, true);
+  let focused = 0, selected = 0, prevented = 0;
+  search.props.ref.current = { focus() { focused++; }, select() { selected++; } };
+  const shell = page.by(n => n.props.className === 'settings-center-shell');
+  const event = { key: 'f', ctrlKey: true, nativeEvent: {}, preventDefault() { prevented++; }, stopPropagation() {} };
+  shell.props.onKeyDown(event); assert.deepEqual([focused, selected, prevented], [1, 1, 1]);
+  shell.props.onKeyDown({ ...event, nativeEvent: { isComposing: true } }); assert.equal(prevented, 1);
+  search.props.onChange({ target: { value: '不存在的分区' } }); page.render();
+  assert.ok(page.by(n => n.props.role === 'status' && content(n) === '未找到结果'));
+  page.by(n => n.props['aria-label'] === '清除设置搜索').props.onClick(); page.render();
+  assert.equal(page.by(n => n.props.role === 'searchbox').props.value, ''); assert.equal(focused, 2);
 });
 test('Navigation uses current official Chinese and preserves all routes plus aliases', () => {
   const page = mount('appearance');

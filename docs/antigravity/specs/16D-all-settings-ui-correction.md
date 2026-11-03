@@ -9,7 +9,7 @@ Store `26.1027.3384.0`，asar SHA-256 `6fbedf054a8d8cafaf5c745b40aa59176512e106e
 - `settings-page-19ad78df2b6f.js` @41710后 `Ei`：个人/集成/编码三组；agent属个人，插件和设备能力属集成，Hooks/连接/云偏好/Git/环境/Worktrees属编码。其Ti与Ei还含更多服务/条件项，当前保留已有25项入口，不据静态目录强开其他gate。
 - `zh-CN-88ebb426d686.js` @1908514起官方导航翻译：个人/集成/编码、常规、通知、导入、外观、个性化、虚拟宠物、语音、Git、环境、连接、云端偏好设置；`settings.nav.worktrees.v2`真实值为英文Worktrees，不能自译为工作树策略。标题存储空间与导航存储有独立文案。
 - `appearance-settings-a3f999ee8fe4.js`：只包settings内容布局与general导出外观组件。general @118523起 `Nc` 是视觉风格、模式/主题与高级折叠；没有第二套四变量旧主题格及整页保存。
-- `general-settings-5e6e6ad31bf0.js` @109000起 `Ec/Dc/Oc`：常规按General/Composer分组，默认打开目标与Windows Shell在General，发送快捷键属于Composer；@153811 `al`逐项保存composerEnterBehavior，@164261 `pl`在Windows直接return null。完整一般设置仍有条件行未恢复，不能以目前两类控件声称整页完成。
+- `general-settings-5e6e6ad31bf0.js` @109000起 `Ec/Dc/Oc`：常规按General/Composer分组，默认打开目标与Windows Shell在General，发送快捷键属于Composer；`fl`逐项保存composerEnterBehavior（16E复核更正：@153811 `al`实际为跟进消息queue/steer），@164261 `pl`在Windows直接return null。完整一般设置仍有条件行未恢复，不能以目前两类控件声称整页完成。
 - `settings-content-layout-268f5398cbba.js`：默认内容`max-w-3xl`（48rem），section gap spacing(10)，标题与section分别组织。只采用静态宽度上限和结构，不称物理像素已测。`settings-group-b4dc2379b608.js`证实section flex-col无card边框，Content gap-1.5。常规行左右布局与窄屏680px折行是当前适配值，非官方物理测量；完整row样式仍待配对。
 - 当前专用组件各自保存/刷新、作用域和失败处理已有回归；旧wrapper通用保存调用config/batchWrite写模型/权限/指令等无关数据，旧外观还写colorTheme；worktrees/code-review旧local-only说明与已有真实执行消费者冲突。删除这些wrapper路径，保留专用组件，不清空任何用户存储。
 

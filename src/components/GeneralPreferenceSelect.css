@@ -1,0 +1,82 @@
+.general-preference-select {
+  position: relative;
+  width: max-content;
+  max-width: 100%;
+}
+
+.general-preference-select .general-preference-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 32px;
+  max-width: 100%;
+  padding: 5px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  text-align: start;
+}
+
+.general-preference-trigger > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.general-preference-trigger > svg { flex-shrink: 0; color: var(--text-tertiary); }
+.general-preference-trigger:disabled { opacity: .5; cursor: default; }
+.general-preference-trigger:not(:disabled):hover { background: var(--bg-hover); }
+
+.general-preference-menu {
+  position: fixed;
+  z-index: 50;
+  width: 220px;
+  max-width: min(320px, calc(100vw - 32px));
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--bg-primary);
+  box-shadow: 0 8px 24px #0003;
+}
+
+.general-preference-menu > button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  text-align: start;
+}
+
+.general-preference-menu > button:hover,
+.general-preference-menu > button:focus-visible { background: var(--bg-hover); outline: none; }
+.general-preference-menu > button > svg { flex-shrink: 0; }
+
+.settings-general-group > .form-field > .general-preference-select {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  justify-self: end;
+}
+
+@media (max-width: 680px) {
+  .settings-general-group > .form-field > .general-preference-select {
+    grid-column: 1;
+    grid-row: auto;
+    justify-self: start;
+  }
+}
