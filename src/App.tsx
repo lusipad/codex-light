@@ -21,6 +21,7 @@ import { normalizeComposerEnterBehavior, type ComposerEnterBehavior } from "./co
 import { CommandExecutionCard } from "./components/CommandExecutionCard";
 import { mergeTimelineItem, ThreadHistoryBuffer, isCurrentThreadRequest } from "./threadTimeline";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { Bookmark } from "lucide-react";
 import {
   OpenAIIcon,
@@ -67,7 +68,7 @@ import {
 import { callAppServer, tauriInvoke, tauriListen, isTauriRuntime } from "./bridge";
 import { baseNameFsPath } from "./fsClient";
 import type { AccountReadResult } from "./config";
-import { createShortcutMatcher, shortcutEventAllowed } from "./shortcuts";
+import { createShortcutMatcher, shortcutEventAllowed, SHORTCUTS, effectiveBindings } from "./shortcuts";
 import { useKeyboardPreferences } from "./keyboardPreferences";
 import { installNativeMenuHandler, installTrayHandler } from "./nativeShell";
 import { playNotificationChime } from "./sound";
@@ -418,6 +419,8 @@ export const App: React.FC = () => {
   const keyboardState = useKeyboardPreferences();
   const keyboardBindingsRef = useRef(keyboardState.bindings);
   keyboardBindingsRef.current = keyboardState.bindings;
+  const keyboardNumberTargetRef = useRef(keyboardState.primaryNumberShortcutTarget);
+  keyboardNumberTargetRef.current = keyboardState.primaryNumberShortcutTarget;
   const [composerEnterBehavior, setComposerEnterBehavior] = useState<ComposerEnterBehavior>("enter");
   const [composerEnterSaving, setComposerEnterSaving] = useState(true);
   const [composerEnterError, setComposerEnterError] = useState<string | null>(null);
@@ -624,6 +627,8 @@ export const App: React.FC = () => {
   const [showSourcesPopover, setShowSourcesPopover] = useState<boolean>(false);
   const [showTokenMeterPopover, setShowTokenMeterPopover] = useState<boolean>(false);
   const [initialWorkbenchTab, setInitialWorkbenchTab] = useState<"newTab" | "changes" | "files" | "summary" | "browser" | "sideChat">("changes");
+  const [workbenchShortcutRequest, setWorkbenchShortcutRequest] = useState<{ id: string; requestId: number; cwd: string; wasOpen: boolean } | null>(null);
+  const workbenchShortcutSequence = useRef(0);
   const [sideChatPrompt, setSideChatPrompt] = useState<string>("");
   const [showPopoutModal, setShowPopoutModal] = useState<boolean>(() => window.location.pathname.startsWith("/hotkey-window") || window.location.hash.includes("hotkey-window"));
   const [pinnedSummaryVisible, setPinnedSummaryVisible] = useState<boolean>(false);
@@ -1924,7 +1929,7 @@ export const App: React.FC = () => {
 
   // Global keyboard shortcuts（注册表见 src/shortcuts.ts，与原生菜单 accelerator 对齐）
   // 实际动作绑定在下方 shortcutHandlersRef，避免闭包/声明顺序问题。
-  const shortcutHandlersRef = useRef<Record<string, (arg?: any) => void>>({});
+  const shortcutHandlersRef = useRef<Partial<Record<string, (arg?: any) => unknown>>>({});
   const shortcutTimestampsRef = useRef<Record<string, number>>({});
   const threadsRef = useRef<ThreadSummary[]>([]);
   threadsRef.current = threads;
@@ -1932,6 +1937,8 @@ export const App: React.FC = () => {
   workspacesRef.current = workspaces;
   const workspaceHintsRef = useRef<Record<string, string>>({});
   workspaceHintsRef.current = workspaceHints;
+  const keyboardContextRef = useRef({ activeThreadId, activeRoute, hasWorkspace: !!activeWorkspace?.path });
+  keyboardContextRef.current = { activeThreadId, activeRoute, hasWorkspace: !!activeWorkspace?.path };
 
   /**
    * 统一分发快捷键动作，并去重：原生菜单 accelerator 与 webview keydown
@@ -1939,29 +1946,44 @@ export const App: React.FC = () => {
    */
   const runShortcutAction = useCallback((id: string, arg?: any) => {
     const now = Date.now();
-    const last = shortcutTimestampsRef.current[id] || 0;
-    if (now - last < 250) return;
+    const last = shortcutTimestampsRef.current[id];
+    if (last !== undefined && now - last < 250) return true;
+    const handler = shortcutHandlersRef.current[id];
+    if (!handler || handler(arg) === false) return false;
     shortcutTimestampsRef.current[id] = now;
-    shortcutHandlersRef.current[id]?.(arg);
+    return true;
   }, []);
 
   useEffect(() => {
-    const matcher = createShortcutMatcher(() => keyboardBindingsRef.current, id =>
-      !isQuickChatWindow || ["new-chat", "open-model-picker", "zoom-in", "zoom-out", "zoom-reset"].includes(id));
+    let focusedElement: HTMLElement | null = null;
+    let localCommandsOnly = false;
+    const matcher = createShortcutMatcher(() => keyboardBindingsRef.current, id => {
+      if (isQuickChatWindow && !id.startsWith("composer-") && !["new-chat", "open-model-picker", "zoom-in", "zoom-out", "zoom-reset"].includes(id)) return false;
+      if (id.startsWith("composer-")) return !!focusedElement?.closest(".codex-two-tier-composer");
+      if (id.startsWith("approval-")) return !!focusedElement?.closest("[data-keyboard-approval]");
+      if (localCommandsOnly) return false;
+      if (id === "next-tab" || id === "previous-tab" || id.startsWith("focus-tab-")) return !!document.querySelector(".diff-drawer");
+      if (["rename-thread", "pin-thread", "archive-thread", "fork-thread", "copy-last-code-block", "find-in-chat", "open-thread-new-window", "mark-thread-unread", "delete-chat", "copy-conversation-markdown"].includes(id)
+        && (!keyboardContextRef.current.activeThreadId || keyboardContextRef.current.activeRoute !== "thread")) return false;
+      if ((id.startsWith("git-") || id === "toggle-file-tree" || id === "copy-working-dir") && !keyboardContextRef.current.hasWorkspace) return false;
+      return typeof shortcutHandlersRef.current[id] === "function";
+    }, () => keyboardNumberTargetRef.current);
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
       if (keyboardState.capturing.current) { matcher.reset(); return; }
-      if (!shortcutEventAllowed(e, keyboardBindingsRef.current)) { matcher.reset(); return; }
+      focusedElement = e.target as HTMLElement | null;
+      if (document.querySelector('dialog[open], [aria-modal="true"]')) { matcher.reset(); return; }
+      localCommandsOnly = !shortcutEventAllowed(e, keyboardBindingsRef.current);
+      if (localCommandsOnly && !focusedElement?.closest(".codex-two-tier-composer, [data-keyboard-approval]")) { matcher.reset(); return; }
       const result = matcher(e);
       if (result.pending) { e.preventDefault(); return; }
       const shortcutId = result.id;
       if (!shortcutId) return;
-      if (shortcutId === "toggle-sidebar" && e.repeat) {
+      if (e.repeat && !["zoom-in", "zoom-out", "next-thread", "previous-thread", "next-tab", "previous-tab"].includes(shortcutId)) {
         e.preventDefault();
         return;
       }
-      e.preventDefault();
-      runShortcutAction(shortcutId);
+      if (runShortcutAction(shortcutId)) e.preventDefault();
     };
     window.addEventListener("keydown", onKeyDown);
     const reset = () => matcher.reset();
@@ -3434,7 +3456,66 @@ export const App: React.FC = () => {
   }, [isQuickChatWindow]);
 
   // 快捷键动作绑定（每次渲染刷新，键盘监听器稳定注册一次）
+  const dispatchComponentShortcut = (id: string) => !window.dispatchEvent(new CustomEvent("codex:keyboard-command", { detail: { id }, cancelable: true }));
+  const requestWorkbenchShortcut = (id: string) => {
+    const tabNavigation = id === "next-tab" || id === "previous-tab" || id.startsWith("focus-tab-");
+    if (!tabNavigation && !activeWorkspace?.path) return false;
+    if (tabNavigation && !showRightDrawer) return false;
+    setShowRightDrawer(true);
+    if (id === "toggle-file-tree") setInitialWorkbenchTab("files");
+    else if (id.startsWith("git-")) setInitialWorkbenchTab("changes");
+    setWorkbenchShortcutRequest({ id, requestId: ++workbenchShortcutSequence.current, cwd: activeWorkspace?.path || "", wasOpen: showRightDrawer });
+    return true;
+  };
+  const sidebarShortcutThreadIds = () => {
+    // The official command temporarily mounts collapsed sidebar content. Keep
+    // collapsed sections intact, and restore the shell before the browser paints.
+    if (sidebarCollapsed) flushSync(() => setSidebarCollapsed(false));
+    try {
+      const rows = Array.from(document.querySelectorAll<HTMLElement>(".codex-sidebar .sidebar-thread-row[data-thread-id]"));
+      const visible = rows.filter(row => row.isConnected && row.getClientRects().length > 0
+        && !row.closest('[inert], [hidden], [aria-hidden="true"]') && getComputedStyle(row).visibility !== "hidden")
+        .map(row => row.dataset.threadId!).filter(id => threadsRef.current.some(thread => thread.id === id));
+      return [...new Set(visible)];
+    } finally {
+      if (sidebarCollapsed) flushSync(() => setSidebarCollapsed(true));
+    }
+  };
+  const selectAdjacentThread = (offset: number) => {
+    const ids = sidebarShortcutThreadIds();
+    if (!ids.length) return false;
+    const index = ids.indexOf(activeThreadId || "");
+    const target = ids[index < 0 ? (offset > 0 ? 0 : ids.length - 1) : index + offset];
+    if (!target) return false;
+    void selectThread(target);
+    return true;
+  };
   shortcutHandlersRef.current = {
+    ...Object.fromEntries(SHORTCUTS.filter(shortcut => shortcut.id.startsWith("composer-") || shortcut.id.startsWith("approval-"))
+      .map(shortcut => [shortcut.id, () => dispatchComponentShortcut(shortcut.id)])),
+    ...Object.fromEntries(["toggle-file-tree", "git-commit", "git-create-pull-request", "git-create-draft-pull-request", "next-tab", "previous-tab",
+      ...Array.from({ length: 9 }, (_, index) => `focus-tab-${index + 1}`)]
+      .map(id => [id, () => requestWorkbenchShortcut(id)])),
+    ...Object.fromEntries(Array.from({ length: 9 }, (_, index) => [`sidebar-thread-${index + 1}`, () => {
+      const target = sidebarShortcutThreadIds()[index];
+      if (!target) return false;
+      void selectThread(target);
+      return true;
+    }])),
+    "next-thread": () => selectAdjacentThread(1),
+    "previous-thread": () => selectAdjacentThread(-1),
+    "open-thread-new-window": () => { if (!activeThreadId) return false; void handleThreadMenuAction("open_new_window"); },
+    "mark-thread-unread": () => {
+      if (!activeThreadId || !isThreadReadState(activeThreadObj?.readState) || activeThreadObj.readState.firstUnread != null) return false;
+      void handleSetThreadReadState(activeThreadId, activeThreadObj.readState.revision, true);
+    },
+    "delete-chat": () => { if (!activeThreadObj) return false; void handleDeleteThread(activeThreadObj, { stopPropagation() {} } as React.MouseEvent); },
+    "copy-conversation-markdown": () => { if (!activeThreadId) return false; void handleThreadMenuAction("copy_markdown"); },
+    "git-create-branch": () => {
+      if (!activeWorkspace?.path || gitContextCwd !== activeWorkspace.path || !gitStatus?.branch) return false;
+      const name = window.prompt("请输入新分支名称:");
+      if (name?.trim()) void handleCreateBranch(name.trim());
+    },
     ...Object.fromEntries(Array.from({ length: 6 }, (_, index) => [`recent-thread-${index + 1}`, () => {
       const target = threadsRef.current[index];
       if (target) void selectThread(target.id);
@@ -3490,13 +3571,8 @@ export const App: React.FC = () => {
       setInitialWorkbenchTab("sideChat");
       setShowRightDrawer(true);
     },
-    "copy-working-dir": () => {
-      if (activeWorkspace?.path) {
-        navigator.clipboard.writeText(activeWorkspace.path);
-        showAppToast(`✓ 已复制工作区路径: ${activeWorkspace.path}`, "info");
-      }
-    },
-    "copy-last-code-block": () => {
+    "copy-working-dir": () => { if (!activeWorkspace?.path) return false; void handleThreadMenuAction("copy_cwd"); },
+    "copy-last-code-block": async () => {
       const blocks: string[] = [];
       for (const turn of turns) {
         for (const item of turn.items) {
@@ -3508,8 +3584,8 @@ export const App: React.FC = () => {
       }
       const last = blocks[blocks.length - 1];
       if (last) {
-        navigator.clipboard.writeText(last);
-        showAppToast("✓ 已复制最后一段代码块", "success");
+        const copied = await copyTextToClipboard(last);
+        showAppToast(copied ? "✓ 已复制最后一段代码块" : "复制最后一段代码块失败", copied ? "success" : "error");
       } else {
         showAppToast("当前会话没有代码块可复制", "info");
       }
@@ -3570,7 +3646,7 @@ export const App: React.FC = () => {
     )) return;
     if (shortcutAction) {
       if (keyboardShortcutsOpenRef.current && command !== "show-keyboard-shortcuts") return;
-      shortcutAction(payload);
+      runShortcutAction(command, payload);
       return;
     }
     if (command === "open-workspace") {
@@ -3649,7 +3725,7 @@ export const App: React.FC = () => {
       return;
     }
     showAppToast(`暂未实现命令：${command}`, "info");
-  }, [applyZoom, cycleTheme, handlePickNewFolder, showAppToast, projectMoveConfirmation]);
+  }, [applyZoom, cycleTheme, handlePickNewFolder, showAppToast, projectMoveConfirmation, runShortcutAction]);
   const appCommandRef = useRef(handleAppCommand);
   appCommandRef.current = handleAppCommand;
 
@@ -4023,7 +4099,7 @@ export const App: React.FC = () => {
         id: "rename_thread",
         label: "重命名",
         icon: <PencilIcon size={14} />,
-        hint: "Ctrl+Alt+R",
+        hint: effectiveBindings("rename-thread", keyboardState.bindings, keyboardState.primaryNumberShortcutTarget).join(" / "),
       },
       {
         id: "move_thread_project",
@@ -4037,7 +4113,7 @@ export const App: React.FC = () => {
         id: "find_in_chat",
         label: "在会话中查找",
         icon: <SearchIcon size={14} />,
-        hint: "Ctrl+F",
+        hint: effectiveBindings("find-in-chat", keyboardState.bindings, keyboardState.primaryNumberShortcutTarget).join(" / "),
       },
       ...(isThreadReadState(readState) ? [{
         id: "mark_unread",
@@ -4048,13 +4124,13 @@ export const App: React.FC = () => {
         id: "toggle_thread_pin",
         label: pinned ? "取消置顶" : "置顶",
         icon: <PinIcon size={14} />,
-        hint: "Ctrl+Alt+P",
+        hint: effectiveBindings("pin-thread", keyboardState.bindings, keyboardState.primaryNumberShortcutTarget).join(" / "),
       },
       {
         id: "new_side_chat",
         label: "新建侧边聊天",
         icon: <MessagePlusIcon size={14} />,
-        hint: "Ctrl+Alt+S",
+        hint: effectiveBindings("open-side-chat", keyboardState.bindings, keyboardState.primaryNumberShortcutTarget).join(" / "),
         separatorBefore: true,
       },
       {
@@ -4084,8 +4160,8 @@ export const App: React.FC = () => {
         label: "复制",
         icon: <CopyIcon size={14} />,
         children: [
-          { id: "copy_markdown", label: "复制 Markdown", hint: "Ctrl+Shift+C" },
-          { id: "copy_last_code", label: "复制最后一段代码", hint: "Ctrl+Shift+;" },
+          { id: "copy_markdown", label: "复制 Markdown", hint: effectiveBindings("copy-conversation-markdown", keyboardState.bindings, keyboardState.primaryNumberShortcutTarget).join(" / ") },
+          { id: "copy_last_code", label: "复制最后一段代码", hint: effectiveBindings("copy-last-code-block", keyboardState.bindings, keyboardState.primaryNumberShortcutTarget).join(" / ") },
           { id: "copy_cwd", label: "复制工作目录" },
           { id: "copy_deeplink", label: "复制深层链接" },
         ],
@@ -4107,7 +4183,7 @@ export const App: React.FC = () => {
         id: "archive_thread",
         label: "归档",
         icon: <ArchiveIcon size={14} />,
-        hint: "Ctrl+Shift+A",
+        hint: effectiveBindings("archive-thread", keyboardState.bindings, keyboardState.primaryNumberShortcutTarget).join(" / "),
         separatorBefore: true,
       },
     ];
@@ -4119,6 +4195,8 @@ export const App: React.FC = () => {
     sidebarProjectMembership.localProjects,
     projectMoveBusy,
     workspaceOpenTargets.items,
+    keyboardState.bindings,
+    keyboardState.primaryNumberShortcutTarget,
   ]);
 
   const handleThreadMenuAction = useCallback(
@@ -4257,6 +4335,8 @@ export const App: React.FC = () => {
     <ComposerBox
       dictationSessionKey={promptDraftKey}
       composerEnterBehavior={composerEnterBehavior}
+      keyBindings={keyboardState.bindings}
+      submissionDisabled={queueBusy || sendStartPendingRef.current.has(threadRequestRef.current)}
       variant="thread"
       promptInput={promptInput}
       onPromptInputChange={setPromptInput}
@@ -5131,6 +5211,8 @@ export const App: React.FC = () => {
               <ComposerBox
                   dictationSessionKey={promptDraftKey}
                 composerEnterBehavior={composerEnterBehavior}
+                keyBindings={keyboardState.bindings}
+                submissionDisabled={queueBusy || sendStartPendingRef.current.has(threadRequestRef.current)}
               variant="home"
               promptInput={promptInput}
               onPromptInputChange={setPromptInput}
@@ -5837,6 +5919,8 @@ export const App: React.FC = () => {
       {/* ── 4. Right-Hand Diff & File Review Workbench ── */}
       <DiffDrawer
         open={showRightDrawer}
+        shortcutRequest={workbenchShortcutRequest ?? undefined}
+        onShortcutHandled={requestId => setWorkbenchShortcutRequest(current => current?.requestId === requestId ? null : current)}
         gitPreferences={gitPreferencesState.preferences}
         gitPreferencesReady={gitPreferencesState.ready}
         recordedTurnDiff={turnDiffFiles.map(file => file.diff).join("\n\n")}
@@ -5884,6 +5968,8 @@ export const App: React.FC = () => {
       {showKeyboardShortcuts && (
         <KeyboardShortcutsDialog
           bindings={keyboardState.bindings}
+          primaryNumberShortcutTarget={keyboardState.primaryNumberShortcutTarget}
+          hasWorkbench={showRightDrawer}
           onClose={() => setShowKeyboardShortcuts(false)}
           hasActiveThread={activeThreadObj !== null}
           hasWorkspace={activeWorkspace?.path != null}

@@ -33,10 +33,14 @@ import { isTauriRuntime } from "../bridge";
 import { baseNameFsPath } from "../fsClient";
 
 import type { ComposerEnterBehavior } from "../composerPreferences";
+import { acceleratorFromEvent, commandId, normalizeAccelerator, type KeyBinding } from "../shortcuts";
+import { findModel, getDefaultModel, getSupportedEfforts, modelSupportsFast } from "../modelCapabilities";
 
 export interface ComposerBoxProps {
   dictationSessionKey: string;
   composerEnterBehavior: ComposerEnterBehavior;
+  keyBindings?: KeyBinding[];
+  submissionDisabled?: boolean;
   variant: "home" | "thread";
   promptInput: string;
   onPromptInputChange: (val: string) => void;
@@ -114,6 +118,8 @@ const PERMISSION_OPTIONS: Array<{
 export const ComposerBox: React.FC<ComposerBoxProps> = ({
   dictationSessionKey,
   composerEnterBehavior,
+  keyBindings = [],
+  submissionDisabled = false,
   variant,
   promptInput,
   onPromptInputChange,
@@ -159,6 +165,12 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
 }) => {
   const internalTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const actualTextareaRef = textareaRef || internalTextareaRef;
+  const composingRef = useRef(false);
+  const commandPendingRef = useRef({ key: dictationSessionKey, pending: false });
+  if (commandPendingRef.current.key !== dictationSessionKey) {
+    commandPendingRef.current = { key: dictationSessionKey, pending: false };
+    composingRef.current = false;
+  }
 
   useLayoutEffect(() => {
     const input = actualTextareaRef.current;
@@ -463,6 +475,65 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
     ? getAutocompleteItems(autocompleteMode, autocompleteQuery, workspaceFiles, workspaceFileHits, skills)
     : [], [autocompleteMode, autocompleteQuery, workspaceFiles, workspaceFileHits, skills]);
 
+  useEffect(() => {
+    const handleCommand = (event: Event) => {
+      if (event.defaultPrevented || !document.hasFocus() || composingRef.current ||
+          !boxRef.current?.contains(document.activeElement) ||
+          document.activeElement?.closest("[role='dialog'], [role='menu']")) return;
+      const id = (event as CustomEvent<{ id: string }>).detail?.id;
+      const activeModel = findModel(models, selectedModelId) || getDefaultModel(models);
+      const efforts = getSupportedEfforts(activeModel);
+      const submit = (queue: boolean) => {
+        const pending = commandPendingRef.current;
+        if (submissionDisabled || pending.pending ||
+            (!promptInput.trim() && attachedFiles.length === 0) ||
+            (autocompleteMode && autocompleteItems.length > 0)) return false;
+        pending.pending = true;
+        try {
+          const result = queue ? onQueueMessage() : onSendMessage();
+          void Promise.resolve(result).then(
+            () => { pending.pending = false; },
+            () => { pending.pending = false; },
+          );
+        } catch (error) {
+          pending.pending = false;
+          throw error;
+        }
+        return true;
+      };
+      let handled = true;
+      switch (id) {
+        case "composer-submit": handled = submit(false); break;
+        case "composer-steer": handled = isStreaming && submit(false); break;
+        case "composer-queue": handled = isStreaming && submit(true); break;
+        case "composer-clear": onPromptInputChange(""); break;
+        case "composer-add-files": onAttachFiles(); break;
+        case "composer-toggle-fast-mode":
+          if (!modelSupportsFast(activeModel)) handled = false;
+          else onToggleFastMode();
+          break;
+        case "composer-toggle-plan-mode": onTogglePlanMode(); break;
+        case "composer-increase-reasoning-effort":
+        case "composer-decrease-reasoning-effort":
+        case "composer-cycle-reasoning-effort": {
+          if (efforts.length < 2) { handled = false; break; }
+          const index = Math.max(0, efforts.findIndex(effort => effort.reasoningEffort === reasoningEffort));
+          const next = id === "composer-cycle-reasoning-effort" ? (index + 1) % efforts.length
+            : Math.max(0, Math.min(efforts.length - 1, index + (id === "composer-increase-reasoning-effort" ? 1 : -1)));
+          if (next === index) handled = false;
+          else onSelectReasoningEffort(efforts[next].reasoningEffort);
+          break;
+        }
+        default: handled = false;
+      }
+      if (handled) event.preventDefault();
+    };
+    window.addEventListener("codex:keyboard-command", handleCommand);
+    return () => window.removeEventListener("codex:keyboard-command", handleCommand);
+  }, [models, selectedModelId, reasoningEffort, submissionDisabled, promptInput, attachedFiles,
+    autocompleteMode, autocompleteItems, isStreaming, onSendMessage, onQueueMessage, onPromptInputChange,
+    onAttachFiles, onToggleFastMode, onTogglePlanMode, onSelectReasoningEffort]);
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
     if (autocompleteMode && autocompleteItems.length > 0) {
@@ -489,13 +560,17 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
     }
     if (e.key !== "Enter" || e.altKey) return;
     const modifier = e.metaKey || e.ctrlKey;
-    if (e.repeat && modifier) {
+    if (e.repeat || submissionDisabled) {
       e.preventDefault();
       return;
     }
+    const accelerator = acceleratorFromEvent(e as unknown as KeyboardEvent);
+    if (accelerator && keyBindings.some(binding => binding.key &&
+        normalizeAccelerator(binding.key.split(/\s+/, 1)[0]) === normalizeAccelerator(accelerator))) return;
     const shouldQueue = isStreaming && modifier &&
       (composerEnterBehavior === "enter" ? !e.shiftKey : e.shiftKey);
     if (shouldQueue) {
+      if (keyBindings.some(binding => binding.command === commandId("composer-queue"))) return;
       e.preventDefault();
       onQueueMessage();
       return;
@@ -505,6 +580,8 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
         (composerEnterBehavior === "cmdIfMultiline" && !promptInput.includes("\n")));
 
     if (shouldSend) {
+      if (keyBindings.some(binding => binding.command === commandId("composer-submit") ||
+          (isStreaming && binding.command === commandId("composer-steer")))) return;
       e.preventDefault();
       onSendMessage();
     }
@@ -820,6 +897,8 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
           value={promptInput}
           onChange={handleInputChange}
           onKeyDown={handleKeyDown}
+          onCompositionStart={() => { composingRef.current = true; }}
+          onCompositionEnd={() => { composingRef.current = false; }}
           onPointerDown={() => setOpenMenu(null)}
         />
 

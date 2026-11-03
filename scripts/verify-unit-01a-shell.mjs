@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import vm from "node:vm";
+import ts from "typescript";
 
 console.log("=== Unit 01A Public Shell Structure & Behavioral Rules Check (L1 Static + Logic) ===");
 console.log("NOTE: This script validates source declarations & event logic. It DOES NOT prove rendered DOM dimensions, pixel alignment, or native drag behavior without a live native run.\n");
@@ -79,17 +81,30 @@ assert.ok(
 console.log("PASS DIFF-01A-05: Drag/no-drag isolation rules declared in CSS");
 
 // 6. DIFF-01A-06: Sidebar toggle shortcut mapping & key repeat filtering
-assert.ok(
-  shortcutsTs.includes('"toggle-sidebar"') &&
-  shortcutsTs.includes("Ctrl+Shift+S / Ctrl+B") &&
-  shortcutsTs.includes('key(e) === "b"') &&
-  shortcutsTs.includes('key(e) === "s"'),
-  "DIFF-01A-06: shortcuts.ts must map toggle-sidebar to both Ctrl+B and Ctrl+Shift+S"
-);
-assert.ok(
-  appTsx.includes('shortcutId === "toggle-sidebar" && e.repeat'),
-  "DIFF-01A-06: App.tsx must ignore e.repeat for toggle-sidebar (aligned with official electron:9026914)"
-);
+const { outputText } = ts.transpileModule(shortcutsTs, { compilerOptions: { module: ts.ModuleKind.ESNext } });
+const { matchShortcut } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
+const keyboardEvent = patch => ({ key: "b", code: "KeyB", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false,
+  isComposing: false, defaultPrevented: false, repeat: false, preventDefault() { this.defaultPrevented = true; }, ...patch });
+assert.equal(matchShortcut(keyboardEvent({})), "toggle-sidebar", "DIFF-01A-06: Ctrl+B toggles sidebar");
+assert.equal(matchShortcut(keyboardEvent({ key: "S", code: "KeyS", shiftKey: true })), "toggle-sidebar", "DIFF-01A-06: Ctrl+Shift+S toggles sidebar");
+const ast = ts.createSourceFile("App.tsx", appTsx, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+let keyHandler;
+function visit(node) {
+  if (ts.isVariableDeclaration(node) && node.name.getText(ast) === "onKeyDown" && node.initializer?.getText(ast).includes("runShortcutAction(shortcutId)")) keyHandler = node.initializer.getText(ast);
+  ts.forEachChild(node, visit);
+}
+visit(ast);
+assert.ok(keyHandler, "DIFF-01A-06: production shortcut key handler must exist");
+let toggles = 0;
+const context = { keyboardState: { capturing: { current: false } }, keyboardBindingsRef: { current: [] },
+  focusedElement: null, localCommandsOnly: false, document: { querySelector: () => null }, shortcutEventAllowed: () => true,
+  matcher: () => ({ id: "toggle-sidebar", pending: false }), runShortcutAction: () => { toggles++; return true; } };
+const handler = vm.runInNewContext(ts.transpileModule(`(${keyHandler})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
+const repeated = keyboardEvent({ repeat: true }); handler(repeated);
+assert.equal(toggles, 0, "DIFF-01A-06: repeated sidebar key must not execute the action");
+assert.equal(repeated.defaultPrevented, true, "DIFF-01A-06: repeated sidebar key is consumed");
+handler(keyboardEvent({}));
+assert.equal(toggles, 1, "DIFF-01A-06: ordinary sidebar key executes once");
 console.log("PASS DIFF-01A-06: Dual shortcuts (Ctrl+B / Ctrl+Shift+S) and key repeat filtering confirmed");
 
 // 7. DIFF-01A-07: 960px responsive auto-collapse

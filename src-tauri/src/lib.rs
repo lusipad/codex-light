@@ -59,10 +59,12 @@ fn invalidate_chatgpt_service(app: &AppHandle) {
 #[tauri::command]
 fn shortcut_menu_sync(
     app: AppHandle,
+    window: tauri::WebviewWindow,
     state: State<'_, menu::ShortcutMenuState>,
     accelerators: std::collections::BTreeMap<String, Option<String>>,
+    capturing: Option<bool>,
 ) -> Result<(), String> {
-    menu::sync_shortcut_menu(&app, &state, accelerators)
+    menu::sync_shortcut_menu(&app, &state, accelerators, window.label(), capturing.unwrap_or(false))
 }
 
 #[tauri::command]
@@ -1572,6 +1574,9 @@ pub fn run() {
         .manage(notification_broker::NotificationBroker::default())
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
+                if let Err(error) = menu::remove_shortcut_window(window.app_handle(), window.label()) {
+                    eprintln!("Cannot restore native shortcuts after window close: {error}");
+                }
                 window.app_handle().state::<notification_broker::NotificationBroker>()
                     .remove_window(window.label());
             }
@@ -1601,6 +1606,8 @@ pub fn run() {
             shortcut_menu_sync,
             keybindings::keyboard_bindings_read,
             keybindings::keyboard_bindings_write,
+            keybindings::keyboard_number_target_read,
+            keybindings::keyboard_number_target_write,
             personal_instructions::personal_instructions_read,
             personal_instructions::personal_instructions_write,
             app_server_status,

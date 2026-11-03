@@ -7,8 +7,10 @@ export const KeyboardShortcutsDialog: React.FC<{
   onClose: () => void;
   hasActiveThread: boolean;
   hasWorkspace: boolean;
+  hasWorkbench?: boolean;
+  primaryNumberShortcutTarget?: 'tabs' | 'sidebar';
   bindings?: KeyBinding[];
-}> = ({ onClose, hasActiveThread, hasWorkspace, bindings = [] }) => {
+}> = ({ onClose, hasActiveThread, hasWorkspace, hasWorkbench = false, primaryNumberShortcutTarget = 'tabs', bindings = [] }) => {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
@@ -19,8 +21,8 @@ export const KeyboardShortcutsDialog: React.FC<{
     { key: "panels", label: "面板" },
     { key: "composer", label: "通用" },
   ] as const;
-  const matches = availableShortcuts({ hasActiveThread, hasWorkspace }, bindings).filter(item =>
-    !search || `${item.id} ${item.label} ${item.keys}`.toLocaleLowerCase().includes(search)
+  const matches = availableShortcuts({ hasActiveThread, hasWorkspace, hasWorkbench }, bindings, primaryNumberShortcutTarget).filter(item =>
+    !search || `${item.id} ${item.label} ${item.description ?? ''} ${item.keys}`.toLocaleLowerCase().includes(search)
   );
 
   useEffect(() => {

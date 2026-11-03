@@ -15,6 +15,9 @@ visit(ast); assert.ok(handler);
 let sent = 0, queued = 0, prevented = 0;
 const context = vm.createContext({
   isStreaming: true, autocompleteMode: null, composerEnterBehavior: "enter", promptInput: "hello",
+  submissionDisabled: false, keyBindings: [], commandId: id => `composer.${id.slice(9)}`,
+  acceleratorFromEvent: e => `${e.ctrlKey || e.metaKey ? "Ctrl+" : ""}${e.shiftKey ? "Shift+" : ""}${e.key}`,
+  normalizeAccelerator: value => value.toLowerCase(),
   onSendMessage: () => sent++, onQueueMessage: () => queued++,
 });
 const keyDown = vm.runInContext(ts.transpileModule(`(${handler})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
@@ -52,6 +55,23 @@ context.isStreaming = false; context.composerEnterBehavior = "cmdAlways";
 assert.deepEqual(press({ ctrlKey: true, shiftKey: true }), [0, 0, 0], "idle composer cannot enqueue via follow-up inversion");
 assert.deepEqual(press({ ctrlKey: true }), [1, 0, 1]);
 console.log("PASS idle composer retains send behavior without queuing");
+
+context.keyBindings = [{ command: "composer.submit", key: null }];
+assert.deepEqual(press({ ctrlKey: true }), [0, 0, 0], "cleared submit releases legacy Ctrl+Enter");
+context.keyBindings = [{ command: "composer.submit", key: "Ctrl+L" }];
+assert.deepEqual(press({ ctrlKey: true }), [0, 0, 0], "custom submit releases old key");
+context.keyBindings = [{ command: "composer.queue", key: null }];
+context.isStreaming = true;
+assert.deepEqual(press({ ctrlKey: true, shiftKey: true }), [0, 0, 0], "cleared queue releases inversion");
+context.composerEnterBehavior = "enter";
+context.keyBindings = [{ command: "composer.submit", key: "Ctrl+Enter" }];
+assert.deepEqual(press({ ctrlKey: true }), [0, 0, 0], "custom submit must reach dispatcher instead of old queue inversion");
+context.keyBindings = [];
+context.submissionDisabled = true;
+assert.deepEqual(press({ ctrlKey: true }), [0, 0, 1], "pending submission cannot repeat");
+context.submissionDisabled = false;
+assert.deepEqual(press({ repeat: true }), [0, 0, 1], "held Enter cannot resend");
+console.log("PASS changed/cleared submit and queue release legacy keys; pending/repeat blocked");
 
 const app = fs.readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const appAst = ts.createSourceFile("App.tsx", app, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);

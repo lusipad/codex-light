@@ -13,7 +13,15 @@ function visit(node) {
 visit(ast);
 const compile = text => ts.transpileModule(text, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 let sent = 0, queued = 0, selected = 0, prevented = 0;
+const shortcuts = { exports: {} };
+vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/shortcuts.ts", "utf8"), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+}).outputText, { exports: shortcuts.exports });
 const context = {
+  submissionDisabled: false, keyBindings: [],
+  commandId: shortcuts.exports.commandId,
+  acceleratorFromEvent: shortcuts.exports.acceleratorFromEvent,
+  normalizeAccelerator: shortcuts.exports.normalizeAccelerator,
   composerEnterBehavior: "cmdAlways", promptInput: "hello", isStreaming: false, autocompleteMode: null,
   autocompleteItems: [], autocompleteIndex: 0, onSendMessage: () => sent++, onQueueMessage: () => queued++,
   handleAutocompleteSelect: () => selected++, setAutocompleteMode: () => {}, setAutocompleteIndex: () => {},

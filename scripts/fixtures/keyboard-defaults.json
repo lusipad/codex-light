@@ -1,32 +1,417 @@
 {
-  "source": ".vite/build/bootstrap-DvSEn4qy.js",
-  "sha256": "5a901ee1d59062eed03495e017158f6c44b9414cf27e876d4124e0361e91ddd6",
-  "note": "Windows Electron defaults extracted from fixed app.asar; evidence: 16.03 defaults-trace.json. This fixture is independent of the product registry.",
+  "source": ".vite/build/src-Dl21kCYQ.js",
+  "sha256": "a42052ee3309565865f2d20fc45dee297935cbb50d1fc1a404b90c18d824b93c",
+  "note": "Independent Store 26.1021.3705 AST catalog. Windows primary-number target defaults to tabs; unsupported commands retained as evidence, not configurable empty handlers.",
   "defaults": {
-    "newTask": ["CmdOrCtrl+N", "CmdOrCtrl+Shift+O"],
-    "newProjectlessTask": ["CmdOrCtrl+Alt+O"],
-    "toggleSidebar": ["CmdOrCtrl+Shift+S", "CmdOrCtrl+B"],
-    "toggleTerminal": ["Control+`"],
-    "toggleBottomPanel": ["CmdOrCtrl+J"],
-    "toggleSidePanel": ["CmdOrCtrl+Alt+B"],
-    "settings": ["CmdOrCtrl+,"],
-    "showKeyboardShortcuts": ["CmdOrCtrl+/"],
-    "openCommandMenu": ["CmdOrCtrl+K", "CmdOrCtrl+Shift+P"],
-    "searchFiles": ["CmdOrCtrl+P"],
-    "renameThread": ["CmdOrCtrl+Alt+R"],
-    "toggleThreadPin": ["CmdOrCtrl+Alt+P"],
-    "archiveThread": ["CmdOrCtrl+Shift+A"],
-    "copyLastCodeBlock": ["CmdOrCtrl+Shift+;"],
+    "spotlightSearch": [],
+    "toggleNotch": [],
+    "notchVoice": [],
+    "screenshotToCurrentChat": [],
+    "screenshotToNewChat": [],
+    "hotkeyWindow": [],
+    "globalDictationHold": [],
+    "globalDictationSingleTap": [],
+    "realtimeVoice": [],
+    "copyConversationPath": [
+      "CmdOrCtrl+Alt+Shift+C"
+    ],
+    "copyDeeplink": [
+      "CmdOrCtrl+Alt+L"
+    ],
+    "copyWorkingDirectory": [
+      "CmdOrCtrl+Shift+C"
+    ],
+    "closeTab": [
+      "Ctrl+W",
+      "Ctrl+F4"
+    ],
+    "closeWindow": [
+      "Ctrl+W",
+      "Ctrl+F4"
+    ],
+    "reloadBrowserPage": [
+      "CmdOrCtrl+R"
+    ],
+    "hardReloadBrowserPage": [
+      "CmdOrCtrl+Shift+R"
+    ],
+    "newWindow": [],
+    "openCommandMenu": [
+      "CmdOrCtrl+K",
+      "CmdOrCtrl+Shift+P"
+    ],
+    "searchFiles": [
+      "CmdOrCtrl+P"
+    ],
+    "renameThread": [
+      "CmdOrCtrl+Alt+R"
+    ],
+    "toggleTraceRecording": [],
+    "newTask": [
+      "CmdOrCtrl+N",
+      "CmdOrCtrl+Shift+O"
+    ],
+    "newProjectlessTask": [
+      "CmdOrCtrl+Alt+O"
+    ],
+    "temporaryChat": [
+      "CmdOrCtrl+Shift+N"
+    ],
+    "openThreadInNewWindow": [],
+    "archiveThread": [
+      "CmdOrCtrl+Shift+A"
+    ],
+    "deleteOrbit": [],
+    "deleteChat": [],
+    "markThreadUnread": [
+      "CmdOrCtrl+Shift+U"
+    ],
+    "toggleThreadPin": [
+      "CmdOrCtrl+Alt+P"
+    ],
+    "copyConversationMarkdown": [],
+    "copyLastCodeBlock": [
+      "CmdOrCtrl+Shift+;"
+    ],
+    "openSideChat": [
+      "CmdOrCtrl+Alt+S"
+    ],
+    "openControlWindow": [],
+    "toggleDebugModal": [
+      "Ctrl+D"
+    ],
+    "undoAppAction": [
+      "CmdOrCtrl+Z"
+    ],
+    "redoAppAction": [
+      "Ctrl+Y",
+      "Ctrl+Shift+Z"
+    ],
+    "reopenClosedTab": [
+      "CmdOrCtrl+Shift+T"
+    ],
+    "composer.openModelPicker": [
+      "Ctrl+Shift+M"
+    ],
+    "composer.openRecentModels": [
+      "Alt+M"
+    ],
+    "composer.openProjectPicker": [
+      "CmdOrCtrl+Alt+Shift+O"
+    ],
+    "composer.startVoiceMode": [],
+    "realtimeVoice.toggleMicrophoneMute": [],
+    "realtimeVoice.toggleOutputMute": [],
+    "realtimeVoice.endCall": [],
+    "meetings.takeNotes": [],
+    "browser.toggleAnnotationMode": [
+      "CmdOrCtrl+Shift+."
+    ],
+    "presentation.duplicateSelection": [
+      "CmdOrCtrl+D"
+    ],
+    "artifact.sendAnnotations": [
+      "CmdOrCtrl+Enter"
+    ],
+    "composer.submitInBackground": [
+      "CmdOrCtrl+Enter"
+    ],
+    "composer.submit": [],
+    "composer.steer": [],
+    "composer.queue": [],
+    "composer.clear": [],
+    "composer.addPhotos": [],
+    "composer.captureAppshot": [],
+    "composer.addFiles": [],
+    "composer.toggleFastMode": [],
+    "composer.increaseReasoningEffort": [],
+    "composer.decreaseReasoningEffort": [],
+    "composer.cycleReasoningEffort": [],
+    "composer.togglePlanMode": [],
+    "composer.toggleWorktreeMode": [],
+    "composer.cycleHost": [],
+    "composer.toggleWorkRunLocation": [],
+    "approval.approve": [
+      "Enter"
+    ],
+    "approval.decline": [
+      "Escape"
+    ],
+    "git.commit": [],
+    "git.createPullRequest": [],
+    "git.createDraftPullRequest": [],
+    "git.createBranch": [],
+    "git.mergePullRequest": [],
+    "git.openPullRequest": [],
+    "git.toggleBlame": [],
     "forkThread": [],
-    "openReviewTab": ["Ctrl+Shift+G"],
-    "openSideChat": ["CmdOrCtrl+Alt+S"],
-    "copyWorkingDirectory": ["CmdOrCtrl+Shift+C"],
-    "composer.openModelPicker": ["Ctrl+Shift+M"],
-    "recentThread1": ["CmdOrCtrl+Alt+1"],
-    "recentThread2": ["CmdOrCtrl+Alt+2"],
-    "recentThread3": ["CmdOrCtrl+Alt+3"],
-    "recentThread4": ["CmdOrCtrl+Alt+4", "CmdOrCtrl+Shift+9"],
-    "recentThread5": ["CmdOrCtrl+Alt+5", "CmdOrCtrl+Shift+8"],
-    "recentThread6": ["CmdOrCtrl+Alt+6"]
+    "openAvatarOverlay": [
+      "Super+Alt+P"
+    ],
+    "searchChats": [],
+    "togglePriorityFilter": [
+      "CmdOrCtrl+Alt+U"
+    ],
+    "focusMainChat": [
+      "Alt+L"
+    ],
+    "focusSideChat": [],
+    "artifacts.selectTool": [
+      "V"
+    ],
+    "artifacts.handTool": [
+      "H"
+    ],
+    "canvas.prompt": [
+      "/",
+      "Shift+?"
+    ],
+    "artifacts.rectangleTool": [
+      "R"
+    ],
+    "artifacts.circleTool": [
+      "O"
+    ],
+    "artifacts.arrowTool": [
+      "A"
+    ],
+    "artifacts.lineTool": [
+      "L"
+    ],
+    "artifacts.textTool": [
+      "T"
+    ],
+    "artifacts.noteTool": [
+      "N"
+    ],
+    "copyPageLink": [
+      "CmdOrCtrl+L"
+    ],
+    "focusPageBlockControls": [
+      "Shift+F10"
+    ],
+    "page.formatNumberedList": [
+      "CmdOrCtrl+Alt+4",
+      "CmdOrCtrl+Shift+9"
+    ],
+    "page.formatBulletedList": [
+      "CmdOrCtrl+Alt+5",
+      "CmdOrCtrl+Shift+8"
+    ],
+    "page.formatChecklist": [
+      "CmdOrCtrl+Alt+6"
+    ],
+    "openOrbit": [
+      "CmdOrCtrl+."
+    ],
+    "nextThreadNeedingAttention": [
+      "CmdOrCtrl+Alt+A"
+    ],
+    "previousTab": [
+      "Ctrl+Shift+[",
+      "Ctrl+PageUp",
+      "Ctrl+Shift+Tab"
+    ],
+    "previousThread": [
+      "Ctrl+Alt+[",
+      "Ctrl+Alt+Left"
+    ],
+    "previousRecentThread": [],
+    "nextTab": [
+      "Ctrl+Shift+]",
+      "Ctrl+PageDown",
+      "Ctrl+Tab"
+    ],
+    "nextThread": [
+      "Ctrl+Alt+]",
+      "Ctrl+Alt+Right"
+    ],
+    "nextRecentThread": [],
+    "recentThread1": [
+      "CmdOrCtrl+Alt+1"
+    ],
+    "recentThread2": [
+      "CmdOrCtrl+Alt+2"
+    ],
+    "recentThread3": [
+      "CmdOrCtrl+Alt+3"
+    ],
+    "recentThread4": [
+      "CmdOrCtrl+Alt+4",
+      "CmdOrCtrl+Shift+9"
+    ],
+    "recentThread5": [
+      "CmdOrCtrl+Alt+5",
+      "CmdOrCtrl+Shift+8"
+    ],
+    "recentThread6": [
+      "CmdOrCtrl+Alt+6"
+    ],
+    "switchToMode1": [
+      "Alt+1"
+    ],
+    "switchToMode2": [
+      "Alt+2"
+    ],
+    "switchToMode3": [
+      "Alt+3"
+    ],
+    "settings": [
+      "CmdOrCtrl+,"
+    ],
+    "codexMicroSettings": [],
+    "mcpSettings": [],
+    "personalitySettings": [],
+    "importExternalAgent": [],
+    "keyboardShortcuts": [],
+    "showKeyboardShortcuts": [
+      "CmdOrCtrl+/"
+    ],
+    "clearAllUnreads": [
+      "Shift+Escape"
+    ],
+    "manageTasks": [],
+    "forceReloadSkills": [],
+    "openSkills": [],
+    "newProject": [],
+    "openFolder": [
+      "CmdOrCtrl+O"
+    ],
+    "toggleSidebar": [
+      "CmdOrCtrl+Shift+S",
+      "CmdOrCtrl+B"
+    ],
+    "toggleFileTreePanel": [
+      "CmdOrCtrl+Shift+E"
+    ],
+    "toggleBottomPanel": [
+      "CmdOrCtrl+J"
+    ],
+    "togglePinnedSummary": [],
+    "toggleTerminal": [
+      "Control+`"
+    ],
+    "newTab": [
+      "CmdOrCtrl+T"
+    ],
+    "closeOtherTabs": [
+      "CmdOrCtrl+Alt+W"
+    ],
+    "showWorkspaceTabView": [
+      "CmdOrCtrl+Shift+F"
+    ],
+    "stepWorkspaceLayout": [
+      "CmdOrCtrl+Shift+B"
+    ],
+    "openReviewTab": [
+      "Ctrl+Shift+G"
+    ],
+    "toggleReviewTab": [],
+    "toggleSidePanel": [
+      "CmdOrCtrl+Alt+B"
+    ],
+    "file.goToDefinition": [
+      "CmdOrCtrl+]",
+      "F12"
+    ],
+    "file.findReferences": [
+      "Shift+F12"
+    ],
+    "file.navigateBack": [
+      "Control+Alt+-"
+    ],
+    "file.navigateForward": [
+      "Control+Shift+-"
+    ],
+    "findInThread": [
+      "Ctrl+F"
+    ],
+    "goToLine": [
+      "CmdOrCtrl+L"
+    ],
+    "focusBrowserAddressBar": [
+      "CmdOrCtrl+L"
+    ],
+    "navigateBrowserBack": [
+      "Alt+Left"
+    ],
+    "navigateBrowserForward": [
+      "Alt+Right"
+    ],
+    "navigateBack": [
+      "CmdOrCtrl+[",
+      "MouseBack"
+    ],
+    "navigateForward": [
+      "CmdOrCtrl+]",
+      "MouseForward"
+    ],
+    "logOut": [],
+    "feedback": [],
+    "environmentAction1": [
+      "Command+Shift+D"
+    ],
+    "environmentAction2": [],
+    "environmentAction3": [],
+    "environmentAction4": [],
+    "environmentAction5": [],
+    "environmentAction6": [],
+    "environmentAction7": [],
+    "environmentAction8": [],
+    "environmentAction9": [],
+    "thread1": [
+      "Alt+1"
+    ],
+    "thread2": [
+      "Alt+2"
+    ],
+    "thread3": [
+      "Alt+3"
+    ],
+    "thread4": [
+      "Alt+4"
+    ],
+    "thread5": [
+      "Alt+5"
+    ],
+    "thread6": [
+      "Alt+6"
+    ],
+    "thread7": [
+      "Alt+7"
+    ],
+    "thread8": [
+      "Alt+8"
+    ],
+    "thread9": [
+      "Alt+9"
+    ],
+    "focusTab1": [
+      "CmdOrCtrl+1"
+    ],
+    "focusTab2": [
+      "CmdOrCtrl+2"
+    ],
+    "focusTab3": [
+      "CmdOrCtrl+3"
+    ],
+    "focusTab4": [
+      "CmdOrCtrl+4"
+    ],
+    "focusTab5": [
+      "CmdOrCtrl+5"
+    ],
+    "focusTab6": [
+      "CmdOrCtrl+6"
+    ],
+    "focusTab7": [
+      "CmdOrCtrl+7"
+    ],
+    "focusTab8": [
+      "CmdOrCtrl+8"
+    ],
+    "focusTab9": [
+      "CmdOrCtrl+9"
+    ]
   }
 }

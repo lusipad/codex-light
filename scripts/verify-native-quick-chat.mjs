@@ -98,8 +98,12 @@ let keydown; const actions = []; let prevented = 0;
 vm.runInNewContext(compile(`(${keyboardEffect})`), {
   isQuickChatWindow: true, createShortcutMatcher: shortcuts.exports.createShortcutMatcher,
   keyboardBindingsRef: { current: [{ command: "openSettings", key: "Ctrl+K Ctrl+S" }] },
+  keyboardNumberTargetRef: { current: "tabs" },
+  keyboardContextRef: { current: { activeThreadId: null, activeRoute: "home", hasWorkspace: false } },
+  shortcutHandlersRef: { current: { "new-chat": () => true } },
+  document: { querySelector: () => null },
   keyboardState: { capturing: { current: false } }, shortcutEventAllowed: () => true,
-  runShortcutAction: id => actions.push(id), window: { addEventListener: (event, callback) => { if (event === "keydown") keydown = callback; }, removeEventListener() {} },
+  runShortcutAction: id => { actions.push(id); return true; }, window: { addEventListener: (event, callback) => { if (event === "keydown") keydown = callback; }, removeEventListener() {} },
 })();
 const stroke = key => ({ key, ctrlKey: true, metaKey: false, altKey: false, shiftKey: false, preventDefault() { prevented++; } });
 keydown(stroke(",")); keydown(stroke("k")); assert.equal(prevented, 0); assert.deepEqual(actions, []);

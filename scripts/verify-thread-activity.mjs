@@ -96,7 +96,13 @@ await action("mark_unread");
 assert.equal(writes.length, 1, "unsupported receipt does not write");
 
 const menuCode = declarations.get("threadMenuItems").arguments[0].getText(ast);
+const shortcuts = { exports: {} };
+vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/shortcuts.ts", "utf8"), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+}).outputText, { exports: shortcuts.exports });
 const menuContext = {
+  effectiveBindings: shortcuts.exports.effectiveBindings,
+  keyboardState: { bindings: [], primaryNumberShortcutTarget: "tabs" },
   ...context, pinnedThreadIds: [], sidebarProjectMembership: { localProjects: [] }, projectMoveBusy: false,
   shareAvailable: false,
   workspaceOpenTargets: { items: null },

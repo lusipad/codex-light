@@ -82,6 +82,11 @@ try {
   Invoke-Step "Profile identity and keyboard component regression" { node scripts/verify-profile-menu.mjs }
   Invoke-Step "Help submenu and keyboard dialog regression" { node scripts/verify-help-menu.mjs }
   Invoke-Step "Keyboard bindings persistence, capture and dispatch regression" { node scripts/verify-keyboard-preferences.mjs }
+  Invoke-Step "App contextual command routing regression" { node scripts/verify-keyboard-app-routing.mjs }
+  Invoke-Step "Composer and approval command regression" { node scripts/verify-keyboard-composer.mjs }
+  Invoke-Step "Workbench command and context regression" { node scripts/verify-keyboard-workbench.mjs }
+  Invoke-Step "Rust keybinding revision and target contracts" { cargo test --manifest-path src-tauri/Cargo.toml keybindings }
+  Invoke-Step "Rust native shortcut capture ownership" { cargo test --manifest-path src-tauri/Cargo.toml shortcut_tests }
   Invoke-Step "Sidebar manual order regression" { node scripts/verify-sidebar-order.mjs }
   Invoke-Step "Shared hierarchical menu regression" { node scripts/verify-thread-actions-menu.mjs }
   Invoke-Step "Sidebar rename dialog and RPC regression" { node scripts/verify-sidebar-rename.mjs }
@@ -241,6 +246,7 @@ Invoke-Step "TypeScript typecheck (tsc --noEmit)" { npx tsc --noEmit }
       "scripts/protocol-verify/verify-model-catalog.mjs"
       "scripts/protocol-verify/verify-agent-settings.mjs"
       "scripts/protocol-verify/verify-appearance-preferences.mjs"
+      "scripts/protocol-verify/verify-keyboard-number-target.mjs"
       "scripts/protocol-verify/verify-personal-instructions.mjs"
       "scripts/protocol-verify/verify-account-snapshot.mjs"
       "scripts/protocol-verify/verify-service-auth-support.mjs"

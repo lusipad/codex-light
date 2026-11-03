@@ -64,7 +64,9 @@ const helpers = new Map();
 function visit(node) { if (ts.isVariableDeclaration(node) && ["renderThreadComposer", "renderApprovals"].includes(node.name.getText(ast))) helpers.set(node.name.getText(ast), node.initializer.getText(ast)); ts.forEachChild(node, visit); }
 visit(ast);
 let sends = 0, interrupts = 0, responses = 0;
-const context = { React, ComposerBox: "ComposerBox", ApprovalCenter: "ApprovalCenter", handleSendMessage: () => sends++, handleInterruptTurn: () => interrupts++, handleRespondServerRequest: () => responses++ };
+const context = { React, ComposerBox: "ComposerBox", ApprovalCenter: "ApprovalCenter", handleSendMessage: () => sends++, handleInterruptTurn: () => interrupts++, handleRespondServerRequest: () => responses++,
+  keyboardState: { bindings: [{ command: "composer.submit", key: "Ctrl+Enter" }] }, queueBusy: false,
+  sendStartPendingRef: { current: new Set() }, threadRequestRef: { current: "t1" } };
 for (const helper of helpers.values()) for (const match of helper.matchAll(/=\{([a-zA-Z][a-zA-Z0-9]*)\}/g)) context[match[1]] ??= `shared:${match[1]}`;
 const sharedComposer = vm.runInNewContext(compile(`(${helpers.get("renderThreadComposer")})`), context)();
 const sharedApprovals = vm.runInNewContext(compile(`(${helpers.get("renderApprovals")})`), context)();
@@ -73,6 +75,12 @@ assert.equal(sends, 1); assert.equal(interrupts, 1); assert.equal(responses, 1);
 for (const key of ["promptInput", "models", "permissionMode", "attachedFiles", "reasoningEffort"]) assert.equal(sharedComposer.props[key], `shared:${key}`);
 assert.equal(sharedApprovals.props.requests, "shared:activePendingRequests");
 assert.equal(sharedApprovals.props.responseStates, "shared:requestResponses");
+assert.equal(sharedComposer.props.keyBindings, context.keyboardState.bindings, "quick chat shares the production keyboard bindings");
+assert.equal(sharedComposer.props.submissionDisabled, false);
+context.queueBusy = true;
+assert.equal(vm.runInNewContext(compile(`(${helpers.get("renderThreadComposer")})`), context)().props.submissionDisabled, true, "queue work disables the shared composer");
+context.queueBusy = false; context.sendStartPendingRef.current.add("t1");
+assert.equal(vm.runInNewContext(compile(`(${helpers.get("renderThreadComposer")})`), context)().props.submissionDisabled, true, "a pending send disables the shared composer");
 assert.match(app, /composer=\{renderThreadComposer\(\)\}/);
 assert.match(app, /approvals=\{renderApprovals\(\)\}/);
 assert.match(app, /!showPopoutModal && renderThreadComposer\(\)/);

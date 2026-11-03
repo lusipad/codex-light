@@ -39,16 +39,20 @@ console.log("PASS H06: Clicking textarea dismisses open menus while retaining in
 
 // 4. H07: Ctrl+Shift+M Model Menu Shortcut
 const shortcutsTs = fs.readFileSync("src/shortcuts.ts", "utf8");
+const shortcutModule = { exports: {} };
+vm.runInNewContext(ts.transpileModule(shortcutsTs, {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+}).outputText, { exports: shortcutModule.exports });
 assert.ok(shortcutsTs.includes('"open-model-picker"') || shortcutsTs.includes("open-model-picker"),
   "H07: shortcuts must contain open-model-picker");
-assert.ok(/keys:\s*"(?:Ctrl\+Shift\+M|Command\+Shift\+M)"/.test(shortcutsTs),
+assert.equal(shortcutModule.exports.matchShortcut({ key: "m", ctrlKey: true, shiftKey: true }), "open-model-picker",
   "H07: Model shortcut must be Ctrl+Shift+M / Command+Shift+M");
 console.log("PASS H07: Ctrl+Shift+M shortcut correctly wired for model selector");
 
 // 5. H08: Sidebar Toggle & Collapse
 const sidebarCss = fs.readFileSync("src/styles.css", "utf8");
 assert.ok(sidebarCss.includes(".codex-sidebar.collapsed"), "H08: Styles must define .codex-sidebar.collapsed");
-assert.ok(shortcutsTs.includes('"toggle-sidebar"') && shortcutsTs.includes("Ctrl+B"),
+assert.equal(shortcutModule.exports.matchShortcut({ key: "b", ctrlKey: true }), "toggle-sidebar",
   "H08: Sidebar toggle must be mapped to Ctrl+B");
 console.log("PASS H08: Sidebar toggle Ctrl+B and collapsed state styling confirmed");
 

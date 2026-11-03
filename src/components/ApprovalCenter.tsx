@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   CommandExecutionApprovalDecision,
   CommandExecutionRequestApprovalParams,
@@ -44,14 +44,42 @@ export const ApprovalCenter: React.FC<ApprovalCenterProps> = ({
   responseStates = {},
   onRefresh,
 }) => {
+  const centerRef = useRef<HTMLDivElement>(null);
+  const submittedRef = useRef(new Map<string, RequestResponseState | undefined>());
+  useEffect(() => {
+    const handleCommand = (event: Event) => {
+      if (event.defaultPrevented || !document.hasFocus()) return;
+      const id = (event as CustomEvent<{ id: string }>).detail?.id;
+      if (id !== "approval-approve" && id !== "approval-decline") return;
+      const active = document.activeElement;
+      if (!active || !centerRef.current?.contains(active) ||
+          active.closest("input, textarea, [contenteditable]:not([contenteditable='false']), [role='dialog'], [role='menu']")) return;
+      const card = active.closest<HTMLElement>("[data-keyboard-approval]");
+      const key = card?.dataset.keyboardApproval;
+      const request = requests.find(req => pendingRequestKey(req) === key);
+      if (!request || !key || request.responseDeliveryUnknown || responseStates[key]?.sending) return;
+      const kind = classifyServerRequest(request.method, request.params);
+      if (kind !== "command" && kind !== "fileChange" && kind !== "permissions") return;
+      if (submittedRef.current.has(key) &&
+          (!responseStates[key]?.error || submittedRef.current.get(key) === responseStates[key])) return;
+      const button = card?.querySelector<HTMLButtonElement>(id === "approval-approve" ? ".btn-approve" : ".btn-decline");
+      if (!button || button.disabled || button.closest("fieldset:disabled")) return;
+      submittedRef.current.set(key, responseStates[key]);
+      event.preventDefault();
+      // Reuse the visible action: checkbox, permission scope, legacy wire shape and generation stay identical.
+      button.click();
+    };
+    window.addEventListener("codex:keyboard-command", handleCommand);
+    return () => window.removeEventListener("codex:keyboard-command", handleCommand);
+  }, [requests, responseStates]);
   if (!requests.length) return null;
   return (
-    <div className="approval-center">
+    <div className="approval-center" ref={centerRef}>
       {requests.map((req) => {
         const key = pendingRequestKey(req);
         const state = responseStates[key];
         return (
-          <div key={key} id={`approval-${key}`}>
+          <div key={key} id={`approval-${key}`} data-keyboard-approval={key} tabIndex={-1}>
             {state?.sending && <div role="status">正在发送响应…</div>}
             {req.responseDeliveryUnknown ? (
               <div role="alert">

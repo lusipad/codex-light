@@ -130,13 +130,16 @@ const dialog = mount("src/components/KeyboardShortcutsDialog.tsx", {
 const input = () => dialog.find(n => n.type === "input");
 assert.equal(dialog.active, dialog.element(input()), "dialog must focus search");
 assert.ok(text(dialog.render()).includes("Ctrl+N"), "show active local bindings");
-assert.ok(!text(dialog.render()).includes("重命名当前会话"), "hide thread-only shortcuts on Home");
-assert.ok(!text(dialog.render()).includes("复制当前工作目录"), "hide workspace-only shortcuts without a workspace");
-input().props.onChange({ target: { value: "模型" } });
-assert.ok(text(dialog.render()).includes("模型"));
+assert.ok(!text(dialog.render()).includes("重命名聊天"), "hide thread-only shortcuts on Home");
+assert.ok(!text(dialog.render()).includes("复制工作目录"), "hide workspace-only shortcuts without a workspace");
+// Store 26.1021.3705 names composer.openModelPicker “选择推理强度”.
+input().props.onChange({ target: { value: "推理" } });
+assert.ok(text(dialog.render()).includes("选择推理强度"));
 assert.ok(!text(dialog.render()).includes("Ctrl+N"), "query must filter unrelated bindings");
 input().props.onChange({ target: { value: "CTRL+N" } });
 assert.ok(text(dialog.render()).includes("Ctrl+N"), "search must be case-insensitive");
+input().props.onChange({ target: { value: "循环切换可用速度" } });
+assert.ok(text(dialog.render()).includes("循环切换速度"), "search must include the official command description");
 input().props.onChange({ target: { value: "NO-PARITY-MATCH" } });
 assert.ok(text(dialog.render()).includes("没有匹配的快捷键"));
 const dialogNode = () => dialog.find(n => n.type === "dialog");
@@ -152,27 +155,43 @@ assert.equal(event.stopped, true, "dialog must stop global business shortcuts wh
 const threadDialog = mount("src/components/KeyboardShortcutsDialog.tsx", {
   onClose() {}, hasActiveThread: true, hasWorkspace: false,
 }, { "../shortcuts": shortcut });
-assert.ok(text(threadDialog.render()).includes("重命名当前会话"), "show thread-only shortcuts for an active thread");
-assert.ok(text(threadDialog.render()).includes("归档当前会话"));
-assert.ok(!text(threadDialog.render()).includes("复制当前工作目录"), "workspace shortcut still requires workspace context");
+assert.ok(text(threadDialog.render()).includes("重命名聊天"), "show thread-only shortcuts for an active thread");
+assert.ok(text(threadDialog.render()).includes("归档聊天"));
+assert.ok(!text(threadDialog.render()).includes("复制工作目录"), "workspace shortcut still requires workspace context");
 assert.deepEqual(
   shortcut.availableShortcuts({ hasActiveThread: false, hasWorkspace: false }).map(item => item.id),
-  shortcut.SHORTCUTS.filter(item => !["find-in-chat", "rename-thread", "pin-thread", "archive-thread", "fork-thread", "copy-last-code-block", "copy-working-dir"].includes(item.id)).map(item => item.id),
+  shortcut.SHORTCUTS.filter(item => !["find-in-chat", "rename-thread", "pin-thread", "archive-thread", "fork-thread", "copy-last-code-block", "copy-working-dir", "open-thread-new-window", "mark-thread-unread", "delete-chat", "copy-conversation-markdown", "approval-approve", "approval-decline", "toggle-file-tree", "next-tab", "previous-tab"].includes(item.id) && !item.id.startsWith('git-') && !item.id.startsWith('focus-tab-')).map(item => item.id),
   "Home without workspace omits only context-dependent entries",
 );
+const numberedDialog = mount("src/components/KeyboardShortcutsDialog.tsx", {
+  onClose() {}, hasActiveThread: true, hasWorkspace: true, hasWorkbench: true, primaryNumberShortcutTarget: 'tabs',
+}, { "../shortcuts": shortcut });
+const numberedRow = label => all(numberedDialog.render()).find(node => node.props.className === 'keyboard-shortcuts-row' && text(node.children[0]) === label);
+assert.equal(text(numberedRow('转到聊天 9').children[1]), 'Alt+9');
+assert.equal(text(numberedRow('聚焦第 9 个标签页').children[1]), 'Ctrl+9');
+numberedDialog.props.primaryNumberShortcutTarget = 'sidebar';
+assert.equal(text(numberedRow('转到聊天 9').children[1]), 'Ctrl+9', 'help follows a live sidebar numbering preference');
+assert.equal(text(numberedRow('聚焦第 9 个标签页').children[1]), 'Alt+9', 'workbench number keys swap with sidebar keys');
+numberedDialog.props.hasWorkbench = false;
+assert.equal(numberedRow('聚焦第 9 个标签页'), undefined, 'no workbench means no tab consumer in help');
+numberedDialog.props.hasWorkspace = false;
+assert.equal(numberedRow('提交或推送'), undefined, 'Git requires a real workspace');
 console.log("PASS actual searchable keyboard dialog and registered Ctrl+/ (L2)");
 
 const app = ts.createSourceFile("App.tsx", fs.readFileSync("src/App.tsx", "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-let commandHandler, keyboardHandler;
+let commandHandler, keyboardHandler, shortcutRunner;
 function visit(node) {
   if (ts.isVariableDeclaration(node) && node.name.getText(app) === "handleAppCommand") commandHandler = node.initializer.arguments[0].getText(app);
+  if (ts.isVariableDeclaration(node) && node.name.getText(app) === "runShortcutAction") shortcutRunner = node.initializer.arguments[0].getText(app);
   if (ts.isPropertyAssignment(node) && node.name.getText(app) === '"show-keyboard-shortcuts"') keyboardHandler = node.initializer.getText(app);
   ts.forEachChild(node, visit);
 }
 visit(app);
 const invokes = [], toasts = [], dialogs = [];
 let rejectOpen = false;
+let now = 0;
 const context = vm.createContext({
+  Date: { now: () => now += 1000 }, shortcutTimestampsRef: { current: {} },
   keyboardState: { capturing: { current: false } },
   shortcutHandlersRef: { current: {} }, setShowKeyboardShortcuts: fn => dialogs.push(fn),
   keyboardShortcutsOpenRef: { current: false },
@@ -180,7 +199,7 @@ const context = vm.createContext({
   tauriInvoke: async (command, args) => { invokes.push([command, args]); if (rejectOpen) throw Error("isolated browser failure"); },
   showAppToast: (...args) => toasts.push(args),
 });
-vm.runInContext(transpile(`var handler = ${commandHandler}; shortcutHandlersRef.current["show-keyboard-shortcuts"] = ${keyboardHandler};`), context);
+vm.runInContext(transpile(`var runShortcutAction = ${shortcutRunner}; var handler = ${commandHandler}; shortcutHandlersRef.current["show-keyboard-shortcuts"] = ${keyboardHandler};`), context);
 await context.handler("user-guide"); await context.handler("changelog");
 assert.equal(invokes[0][0], "open_help_link");
 assert.equal(invokes[0][1].target, "guide");

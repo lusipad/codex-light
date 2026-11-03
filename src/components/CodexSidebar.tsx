@@ -1151,6 +1151,7 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
         tabIndex={0}
         role="button"
         aria-label={t.name || t.preview || "新聊天"}
+        aria-current={isActive ? "page" : undefined}
         aria-describedby={hoverCard?.threadId === t.id ? "sidebar-thread-hover-card" : undefined}
         draggable={false}
         data-reorderable={canReorder || undefined}

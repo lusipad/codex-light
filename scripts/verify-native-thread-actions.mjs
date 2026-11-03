@@ -4,6 +4,10 @@ import ts from "typescript";
 import vm from "node:vm";
 
 const source = fs.readFileSync("src/App.tsx", "utf8");
+const shortcuts = { exports: {} };
+vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/shortcuts.ts", "utf8"), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+}).outputText, { exports: shortcuts.exports });
 const ast = ts.createSourceFile("App.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const functions = {};
 function visit(node) {
@@ -59,6 +63,8 @@ assert.equal(writes.length, 0, "opening the dialog cannot claim a share link");
 assert.equal(invokes.length, 0, "App delegates preparation and publishing to the session");
 const icons = [...functions.threadMenuItems.matchAll(/<(\w+Icon)/g)].map(match => match[1]);
 const menuContext = {
+  effectiveBindings: shortcuts.exports.effectiveBindings,
+  keyboardState: { bindings: [], primaryNumberShortcutTarget: "tabs" },
   activeThreadId: context.activeThreadId, pinnedThreadIds: [], activityThreadIds: [],
   activeThreadObj: null, isThreadReadState: () => false,
   sidebarProjectMembership: { localProjects: [] }, projectMoveBusy: false,

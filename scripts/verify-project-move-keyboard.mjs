@@ -5,11 +5,12 @@ import ts from "typescript";
 
 const ast = ts.createSourceFile("App.tsx", fs.readFileSync("src/App.tsx", "utf8"),
   ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-let overlay, focusEffect, appCommand, shortcutMap, menuHandlers, trayHandlers;
+let overlay, focusEffect, appCommand, shortcutMap, menuHandlers, trayHandlers, shortcutRunner;
 function visit(node) {
   if (ts.isVariableDeclaration(node) && node.name.getText(ast) === "handleAppCommand") {
     appCommand = node.initializer.arguments[0];
   }
+  if (ts.isVariableDeclaration(node) && node.name.getText(ast) === "runShortcutAction") shortcutRunner = node.initializer.arguments[0];
   if (ts.isBinaryExpression(node) && node.left.getText(ast) === "shortcutHandlersRef.current") {
     shortcutMap = node.right;
   }
@@ -127,7 +128,9 @@ const zoomCommands = ["zoom-in", "zoom-out", "zoom-reset"];
 for (const confirmation of [null, { threadId: "source" }]) {
   for (const busy of [false, true]) {
     const calls = [];
+    let now = 0;
     const context = {
+      Date: { now: () => now += 1000 }, shortcutTimestampsRef: { current: {} },
       keyboardState: { capturing: { current: false } },
       projectMoveConfirmation: confirmation, projectMoveBusy: busy,
       shortcutHandlersRef: { current: Object.fromEntries(shortcutNames.map(name =>
@@ -139,6 +142,7 @@ for (const confirmation of [null, { threadId: "source" }]) {
       cycleTheme: async () => calls.push(["toggle-theme"]),
       showAppToast: message => calls.push(["toast", message]),
     };
+    context.runShortcutAction = vm.runInNewContext(compile(shortcutRunner), context);
     const dispatch = vm.runInNewContext(compile(appCommand), context);
     const menu = vm.runInNewContext(compile(menuHandlers), { appCommandRef: { current: dispatch } });
     const tray = vm.runInNewContext(compile(trayHandlers), { appCommandRef: { current: dispatch } });

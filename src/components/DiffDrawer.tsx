@@ -90,6 +90,8 @@ export interface DiffDrawerProps {
   onOpenSideChat?: () => void;
   onFocusMainChat?: () => void;
   onInsertToMainChat?: (content: string) => void;
+  shortcutRequest?: { id: string; requestId: number; cwd: string; wasOpen?: boolean };
+  onShortcutHandled?: (requestId: number) => void;
 }
 
 interface ParsedDiffLine {
@@ -441,6 +443,8 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   onOpenSideChat,
   onFocusMainChat,
   onInsertToMainChat,
+  shortcutRequest,
+  onShortcutHandled,
 }) => {
   const [isFullWidth, setIsFullWidth] = useState(false);
   const [openTabs, setOpenTabs] = useState<WorkbenchTabItem[]>([
@@ -663,6 +667,11 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   const gitWriteBusy = committing || pushing || indexWriting;
   const [forceWithLease, setForceWithLease] = useState(gitPreferences["git-always-force-push"]);
   const [showPrModal, setShowPrModal] = useState(false);
+  const [shortcutGitCwd, setShortcutGitCwd] = useState<string | null>(null);
+  const commitInputRef = useRef<HTMLInputElement | null>(null);
+  const prTitleInputRef = useRef<HTMLInputElement | null>(null);
+  const handledShortcutRef = useRef<number | null>(null);
+  const [shortcutFocus, setShortcutFocus] = useState<{ target: "commit" | "pr"; cwd: string } | null>(null);
   const [prTitle, setPrTitle] = useState("");
   const [prBody, setPrBody] = useState("");
   const [prDraft, setPrDraft] = useState(gitPreferences["git-create-pull-request-as-draft"]);
@@ -1313,6 +1322,56 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     closePromiseRef.current = pending;
     return pending;
   };
+
+  useEffect(() => {
+    if (!shortcutRequest || handledShortcutRef.current === shortcutRequest.requestId) return;
+    handledShortcutRef.current = shortcutRequest.requestId;
+    const { id, requestId } = shortcutRequest;
+    if (open && shortcutRequest.cwd === cwd) {
+      if (id === "toggle-file-tree") {
+        if (!cwd) { onShortcutHandled?.(requestId); return; }
+        if (activeKind === "files" && shortcutRequest.wasOpen !== false) onClose();
+        else setActiveTab("files");
+      }
+      else if (id === "next-tab" || id === "previous-tab") {
+        const index = openTabs.findIndex(tab => tab.id === activeTabId);
+        const next = openTabs[(Math.max(0, index) + (id === "next-tab" ? 1 : -1) + openTabs.length) % openTabs.length];
+        if (next) setActiveTabId(next.id);
+      } else if (/^focus-tab-[1-9]$/.test(id)) {
+        const tab = openTabs[Number(id.slice(-1)) - 1];
+        if (tab) setActiveTabId(tab.id);
+      } else if (id === "file-save") {
+        if (activeKind === "files" && filePreview && !filePreview.isBinary && !filePreview.isImage && isDirty) void saveEditedFile();
+      } else if (["git-commit", "git-create-pull-request", "git-create-draft-pull-request"].includes(id)) {
+        if (cwd && !gitWriteBusy && !creatingPr) {
+          setActiveTab("changes");
+          setDiffMode("working");
+          setShortcutGitCwd(cwd);
+          if (id === "git-commit") setShortcutFocus({ target: "commit", cwd });
+          else {
+            setPrDraft(id === "git-create-draft-pull-request" || gitPreferences["git-create-pull-request-as-draft"]);
+            setShowPrModal(true);
+            setShortcutFocus({ target: "pr", cwd });
+          }
+        }
+      }
+    }
+    onShortcutHandled?.(requestId);
+  }, [shortcutRequest, open, cwd, activeTabId, openTabs, activeKind, filePreview, isDirty, lastTurnOnly, gitWriteBusy, creatingPr, gitPreferences, onShortcutHandled]);
+
+  useEffect(() => {
+    if (!open || (shortcutGitCwd && shortcutGitCwd !== cwd)) setShortcutGitCwd(null);
+  }, [open, cwd, shortcutGitCwd]);
+
+  // Focus only after the requested form has mounted; never queue a delayed
+  // action which could run in a different workspace or after closing the drawer.
+  useEffect(() => {
+    if (!shortcutFocus) return;
+    if (open && shortcutFocus.cwd === cwd) {
+      (shortcutFocus.target === "commit" ? commitInputRef : prTitleInputRef).current?.focus();
+    }
+    setShortcutFocus(null);
+  }, [shortcutFocus, open, cwd]);
 
   // External file selection (timeline cards / @mentions / quick search): keep
   // the Changes tab behavior untouched, but warm up the Files tab preview.
@@ -2102,7 +2161,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
           </div>
 
           {/* Docked Commit & Push Section at the Bottom */}
-          {!lastTurnOnly && diffMode !== "commits" && (
+          {((!lastTurnOnly && diffMode !== "commits") || shortcutGitCwd === cwd) && (
             <div className="diff-commit-dock">
               {showPrModal && (
                 <div className="diff-pr-panel">
@@ -2118,6 +2177,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                   </div>
                   <input
                     className="commit-input"
+                    ref={prTitleInputRef}
                     placeholder="PR 标题..."
                     value={prTitle}
                     onChange={(e) => setPrTitle(e.target.value)}
@@ -2154,6 +2214,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
               <div className="diff-commit-box">
                 <input
                   className="commit-input"
+                  ref={commitInputRef}
                   placeholder="输入 Git 提交说明 (留空自动生成)..."
                   value={commitMessage}
                   onChange={(e) => setCommitMessage(e.target.value)}

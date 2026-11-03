@@ -24,7 +24,7 @@
 //! ```
 
 use serde_json::json;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Mutex;
 use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem, MenuItemKind, PredefinedMenuItem, Submenu};
@@ -51,18 +51,54 @@ const SHORTCUT_MENU_ITEMS: [(&str, &str, &str); 10] = [
     ("zoom-reset", "zoom-reset", "CmdOrCtrl+0"),
 ];
 
-pub struct ShortcutMenuState(Mutex<BTreeMap<String, Option<String>>>);
+type ShortcutMap = BTreeMap<String, Option<String>>;
+
+pub struct ShortcutMenuState(Mutex<ShortcutMenuSnapshot>);
+
+#[derive(Clone)]
+struct ShortcutMenuSnapshot {
+    applied: ShortcutMap,
+    latest: ShortcutMap,
+    windows: BTreeMap<String, (u64, ShortcutMap)>,
+    capturing: BTreeSet<String>,
+    sequence: u64,
+}
+
+impl Default for ShortcutMenuSnapshot {
+    fn default() -> Self {
+        let defaults: ShortcutMap = SHORTCUT_MENU_ITEMS.iter()
+            .map(|(command, _, accelerator)| ((*command).to_string(), Some((*accelerator).to_string())))
+            .collect();
+        Self { applied: defaults.clone(), latest: defaults, windows: BTreeMap::new(), capturing: BTreeSet::new(), sequence: 0 }
+    }
+}
+
+impl ShortcutMenuSnapshot {
+    fn sync_window(&mut self, window: &str, accelerators: ShortcutMap, capturing: bool) {
+        self.sequence += 1;
+        self.latest = accelerators.clone();
+        self.windows.insert(window.to_string(), (self.sequence, accelerators));
+        if capturing { self.capturing.insert(window.to_string()); }
+        else { self.capturing.remove(window); }
+    }
+
+    fn remove_window(&mut self, window: &str) {
+        self.capturing.remove(window);
+        self.windows.remove(window);
+        if let Some((_, accelerators)) = self.windows.values().max_by_key(|(sequence, _)| *sequence) {
+            self.latest = accelerators.clone();
+        }
+    }
+
+    fn effective(&self) -> ShortcutMap {
+        if self.capturing.is_empty() { self.latest.clone() }
+        else { SHORTCUT_MENU_ITEMS.iter().map(|(command, _, _)| ((*command).to_string(), None)).collect() }
+    }
+}
 
 impl Default for ShortcutMenuState {
     fn default() -> Self {
-        Self(Mutex::new(
-            SHORTCUT_MENU_ITEMS
-                .iter()
-                .map(|(command, _, accelerator)| {
-                    ((*command).to_string(), Some((*accelerator).to_string()))
-                })
-                .collect(),
-        ))
+        Self(Mutex::new(ShortcutMenuSnapshot::default()))
     }
 }
 
@@ -157,10 +193,38 @@ pub fn sync_shortcut_menu<R: Runtime>(
     app: &AppHandle<R>,
     state: &ShortcutMenuState,
     accelerators: BTreeMap<String, Option<String>>,
+    window: &str,
+    capturing: bool,
 ) -> Result<(), String> {
     validate_shortcut_map(&accelerators)?;
+    let mut state = state.0.lock().map_err(|error| error.to_string())?;
+    let mut next = state.clone();
+    next.sync_window(window, accelerators, capturing);
+    let effective = next.effective();
+    apply_shortcut_map(app, &state.applied, &effective)?;
+    next.applied = effective;
+    *state = next;
+    Ok(())
+}
+
+pub fn remove_shortcut_window<R: Runtime>(app: &AppHandle<R>, window: &str) -> Result<(), String> {
+    let state = app.state::<ShortcutMenuState>();
+    let mut state = state.0.lock().map_err(|error| error.to_string())?;
+    state.remove_window(window);
+    let effective = state.effective();
+    // Ownership is released even if a disappearing application menu cannot be updated.
+    apply_shortcut_map(app, &state.applied, &effective)?;
+    state.applied = effective;
+    Ok(())
+}
+
+fn apply_shortcut_map<R: Runtime>(
+    app: &AppHandle<R>,
+    previous: &ShortcutMap,
+    accelerators: &ShortcutMap,
+) -> Result<(), String> {
+    if previous == accelerators { return Ok(()); }
     let menu = app.menu().ok_or("application menu is unavailable")?;
-    let mut previous = state.0.lock().map_err(|error| error.to_string())?;
     let mut prepared = Vec::new();
     for (command, menu_id, _) in SHORTCUT_MENU_ITEMS {
         let item = find_menu_item(menu.items().map_err(|error| error.to_string())?, menu_id)
@@ -188,7 +252,6 @@ pub fn sync_shortcut_menu<R: Runtime>(
             ));
         }
     }
-    *previous = accelerators;
     Ok(())
 }
 
@@ -462,7 +525,42 @@ mod shortcut_tests {
     use super::*;
 
     fn defaults() -> BTreeMap<String, Option<String>> {
-        ShortcutMenuState::default().0.into_inner().unwrap()
+        ShortcutMenuState::default().0.into_inner().unwrap().applied
+    }
+
+    #[test]
+    fn another_window_sync_or_release_cannot_restore_during_capture() {
+        let mut state = ShortcutMenuSnapshot::default();
+        state.sync_window("a", defaults(), true);
+        assert!(state.effective().values().all(Option::is_none));
+        let mut latest = defaults();
+        latest.insert("new-chat".into(), Some("Ctrl+Alt+N".into()));
+        state.sync_window("b", latest.clone(), false);
+        assert!(state.effective().values().all(Option::is_none));
+        state.sync_window("b", latest.clone(), false);
+        assert!(state.effective().values().all(Option::is_none));
+        state.remove_window("b");
+        assert!(state.effective().values().all(Option::is_none));
+        state.sync_window("a", latest.clone(), false);
+        assert_eq!(state.effective(), latest);
+    }
+
+    #[test]
+    fn capture_owners_release_independently_and_destroyed_windows_do_not_leak() {
+        let mut state = ShortcutMenuSnapshot::default();
+        state.sync_window("a", defaults(), true);
+        let mut latest = defaults();
+        latest.insert("new-chat".into(), Some("Ctrl+Alt+N".into()));
+        state.sync_window("b", latest.clone(), true);
+        state.sync_window("a", defaults(), false);
+        assert!(state.effective().values().all(Option::is_none));
+        state.sync_window("b", latest.clone(), true);
+        state.remove_window("a");
+        assert!(state.effective().values().all(Option::is_none));
+        state.remove_window("b");
+        assert_eq!(state.effective(), latest);
+        assert!(state.capturing.is_empty());
+        assert!(state.windows.is_empty());
     }
 
     #[test]

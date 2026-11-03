@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import ts from "typescript";
 
 // 1. 检查 App.tsx
 const appSource = fs.readFileSync(
@@ -34,9 +35,9 @@ const has4Targets =
   viewSource.includes('"custom"');
 
 // CR03: 检查快捷键映射
-const hasShortcutAction =
-  shortcutsSource.includes('"code-review"') ||
-  shortcutsSource.includes('"open-review"');
+const { outputText } = ts.transpileModule(shortcutsSource, { compilerOptions: { module: ts.ModuleKind.ESNext } });
+const { SHORTCUTS } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
+const hasShortcutAction = SHORTCUTS.some(shortcut => shortcut.id === "open-review");
 
 assert.ok(
   hasReviewStartCall &&
