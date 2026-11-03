@@ -14,7 +14,7 @@ const ORIGIN: &str = "https://github.com/openai/skills.git";
 const CACHE_AGE_MS: u64 = 10 * 60 * 1000;
 
 #[cfg(windows)]
-mod git_job {
+pub(crate) mod git_job {
     use std::ffi::c_void;
     use std::mem::{size_of, zeroed};
     use std::os::windows::io::AsRawHandle;
@@ -89,7 +89,7 @@ mod git_job {
         fn CloseHandle(handle: Handle) -> i32;
     }
 
-    pub(super) struct Job(Handle);
+    pub(crate) struct Job(Handle);
     struct ProcessHandles(Vec<Handle>);
     impl Drop for ProcessHandles {
         fn drop(&mut self) {
@@ -108,7 +108,7 @@ mod git_job {
         }
     }
     impl Job {
-        pub(super) fn attach_and_resume(child: &Child) -> Result<Self, String> {
+        pub(crate) fn attach_and_resume(child: &Child) -> Result<Self, String> {
             unsafe {
                 let handle = CreateJobObjectW(std::ptr::null(), std::ptr::null());
                 if handle.is_null() {
@@ -155,7 +155,7 @@ mod git_job {
             }
         }
 
-        pub(super) fn stop(&self) -> Result<(), String> {
+        pub(crate) fn stop(&self) -> Result<(), String> {
             unsafe {
                 // Retain handles before termination: ActiveProcesses may reach zero
                 // slightly before the final process handles become signalled.

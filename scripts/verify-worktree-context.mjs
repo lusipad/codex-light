@@ -36,11 +36,15 @@ function mount(root) {
     useRef(initial) { const index = cursor++; return slots[index] ??= { current: initial }; },
     useEffect(callback) { cursor++; if (!mountedOnce) effects.push(callback); },
   };
-  const context = { exports: {}, setTimeout, clearTimeout, confirm: () => true,
+  const invoke = (method, args) => { const pending = deferred(); requests.push({ method, args, ...pending }); return pending.promise; };
+  const client = {};
+  execute(fs.readFileSync("src/worktreeCreation.ts", "utf8"), { exports: client, require: () => ({ tauriInvoke: invoke }), crypto: { randomUUID: () => "context-worktree-operation" } });
+  const context = { exports: {}, setTimeout, clearTimeout, confirm: () => true, AbortController,
     require(name) {
       if (name === "react") return { ...react, default: react };
       if (name === "lucide-react") return {};
-      if (name === "../bridge") return { tauriInvoke(method, args) { const pending = deferred(); requests.push({ method, args, ...pending }); return pending.promise; } };
+      if (name === "../bridge") return { tauriInvoke: invoke };
+      if (name === "../worktreeCreation") return client;
       if (name === "../worktreeRemoval") return {
         loadWorktreeConversations: async () => [],
         cwdInWorktree: () => false,
@@ -140,7 +144,11 @@ function mount(root) {
   const newA = mount("A");
   assert.equal(newA.state[0].length, 0, "WC04: A to B to A does not reuse old mount");
   const writing = newA.create(); newA.unmount();
+  assert.equal(newA.requests[1].args.operationId, "context-worktree-operation", "creation uses a dedicated operation identity");
+  assert.equal(newA.requests[2].method, "git_worktree_create_cancel");
+  assert.equal(newA.requests[2].args.operationId, newA.requests[1].args.operationId, "unmount cancels precisely the operation that was started");
+  newA.requests[2].resolve();
   newA.requests[1].resolve(row("created")); await writing;
-  assert.equal(newA.requests.length, 2, "WC05: completed old write cannot refresh after unmount");
+  assert.equal(newA.requests.length, 3, "WC05: canceled completed old write cannot refresh after unmount");
 }
 console.log("WC01–WC05 worktree context regressions passed");

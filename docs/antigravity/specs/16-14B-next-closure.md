@@ -73,4 +73,8 @@ Windows Store `OpenAI.Codex_26.1027.3384.0_x64__2p2nqsd0c76g0`，本轮重新执
 
 cleanup在worktree删除/自动清理前执行是独立后续，不能因本阶段能编辑cleanup就声称删除生命周期已接通。远程SSH/host、gate分流、personal-vault/云环境、自动化localEnvironmentConfigPath消费者只保适用性与待证清单；不在本切片强开或模拟。用户文件不自动迁移/重写；已有旧raw文件读取能力保留。
 
-本次仅只读取证和文档，未执行外部写、脚本、模型或Cargo。阶段完成由主代理补交付/实施记录及阶段提交；构建、功能、原生、像素、用户验收分别报告。
+初始合同阶段仅只读取证和文档；下列runner实施授权独立记录。阶段完成由主代理补交付/实施记录及阶段提交；构建、功能、原生、像素、用户验收分别报告。
+
+## 8. Runner 最小实施合同（编码前）
+
+独立小模块 `local_environment_setup.rs` 复用现有 `git::create_codex_worktree` 和配置模块公开read_config，不改Git创建算法。SetupState按窗口owner/operationId单飞、提前取消留标记、owner关闭取消；取消不得影响其他owner。创建完成后重新验证选中配置与路径映射，worktree级选择key、平台PS/cmd/bash脚本、真实进程退出及有限输出日志。成功捕获环境差量写到该工作树Git-dir私有JSON，供终端消费，支持unset；失败保留真实工作树路径，不删、不自动重试、不进入模型。Windows只声明实际支持PS/cmd，WSL/Git Bash未对齐时明确拒绝。仅隔离临时Git仓库和无害脚本测试；Cargo时段由父调度，未获时段不执行。

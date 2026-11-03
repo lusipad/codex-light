@@ -30,6 +30,7 @@ function mount({ select = async () => snapshot, persist = async () => ({ errors:
     attachedFiles: [{ id: "draft", persisted: false }], activeRoute: "thread", activeThreadId: "old",
   };
   const context = {
+    worktreeCreationControllersRef: { current: new Map() },
     personalizationNavigationGuardRef: { current: null },
     setPermissionModes: update => { state.permissionModes = update(state.permissionModes ?? {}); },
     navigationRequestRef: { current: 0 }, activeThreadIdRef: { current: "old" },
@@ -132,4 +133,16 @@ for (const invalid of [{ ...project, serverProjectId: null }, { ...project, root
   assert.equal(view.state.activeRoute, "home");
 }
 console.log("PASS actual project new-chat callback: persistence ordering, IO failure retention, attachment failure, stale navigation, repeated selection, multi-root context and legacy fallback (L2)");
+for (const scenario of ["same-root-new-draft", "navigation-refused", "invalid-project"]) {
+  const view = mount(), controller = new AbortController();
+  view.context.worktreeCreationControllersRef.current.set(controller, "home");
+  view.context.activeThreadIdRef.current = null;
+  view.state.activeThreadId = null; view.state.activeRoute = "home";
+  if (scenario === "navigation-refused") view.context.personalizationNavigationGuardRef.current = () => false;
+  const selected = scenario === "invalid-project" ? { ...project, serverProjectId: null } : project;
+  const navigating = view.start("D:/one", selected);
+  assert.equal(controller.signal.aborted, scenario === "same-root-new-draft", "real new-draft callback cancels setup immediately after navigation/policy checks even when cwd/route/thread identity remain unchanged");
+  await navigating;
+}
+console.log("PASS actual same-root new-draft setup cancellation: accepted draft cancels immediately, rejected navigation or invalid project never cancels an unrelated operation");
 export { mount as mountProjectNavigation };

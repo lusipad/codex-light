@@ -224,6 +224,12 @@ impl TerminalManager {
         }
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
+        if crate::git::find_git_root(cwd).is_some() {
+            for (key, value) in crate::local_environment_setup::shell_environment(cwd)? {
+                if let Some(value) = value { cmd.env(key, value); }
+                else { cmd.env_remove(key); }
+            }
+        }
         let mut reader = pair
             .master
             .try_clone_reader()
@@ -569,6 +575,32 @@ mod tests {
             "TO01 real PTY events: {}",
             serde_json::to_string(&observed).unwrap()
         );
+    }
+
+    #[test]
+    fn real_pty_consumes_worktree_setup_environment_and_unset_values() {
+        let root = std::env::temp_dir().join(format!("codex-terminal-setup-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut git = std::process::Command::new("git");
+        git.arg("-C").arg(&root).args(["init", "--quiet"]);
+        #[cfg(windows)]
+        { use std::os::windows::process::CommandExt; git.creation_flags(0x08000000); }
+        assert!(git.status().unwrap().success());
+        std::fs::write(root.join(".git/codex-setup-environment.json"), r#"{"CODEX_PARITY_SETUP":"saved value 中文","COLORTERM":null}"#).unwrap();
+        let manager = TerminalManager::new();
+        let id = format!("terminal-setup-{}", uuid::Uuid::new_v4());
+        let (sink, receiver) = events();
+        #[cfg(windows)]
+        let script = "[Console]::WriteLine('ENV=' + $env:CODEX_PARITY_SETUP); if ($null -eq $env:COLORTERM) { [Console]::WriteLine('UNSET') }";
+        #[cfg(not(windows))]
+        let script = "printf 'ENV=%s\\n' \"$CODEX_PARITY_SETUP\"; test -z \"${COLORTERM+x}\" && printf 'UNSET\\n'";
+        let info = manager.create_or_attach_with(&id, &root.to_string_lossy(), 200, 40, None, Some(test_command(script)), sink).unwrap();
+        let output = joined(&until_exit(&receiver, &info.generation), &info.generation);
+        assert!(output.contains("ENV=saved value 中文"), "{output:?}");
+        assert!(output.contains("UNSET"), "{output:?}");
+        manager.close(&id).unwrap();
+        assert!(root.starts_with(std::env::temp_dir()));
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

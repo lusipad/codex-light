@@ -1,4 +1,5 @@
 pub mod local_environment;
+mod local_environment_setup;
 pub mod app_server;
 pub mod automations;
 pub mod config_skills;
@@ -1216,15 +1217,43 @@ fn git_worktrees_list(state: State<'_, AppState>, cwd: Option<String>) -> Result
 }
 
 #[tauri::command]
-fn git_worktree_create(
+async fn git_worktree_create(
     state: State<'_, AppState>,
+    setup: State<'_, local_environment_setup::SetupState>,
+    window: tauri::WebviewWindow,
     source_cwd: String,
     starting_mode: String,
     branch_name: Option<String>,
     owner_thread_id: Option<String>,
+    operation_id: Option<String>,
 ) -> Result<GitWorktreeInfo, String> {
     let roots = git::managed_worktree_roots(&state.desktop_state.get_value(git::WORKTREE_ROOT_KEY))?;
-    git::create_codex_worktree(&source_cwd, &starting_mode, branch_name, owner_thread_id, &roots[0])
+    let desktop = state.desktop_state.clone();
+    let owner = window.label().to_owned();
+    let operation_id = operation_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    setup.reopen_owner(&owner);
+    let operation = setup.prepare_operation(&owner, &operation_id)?;
+    if let Err(error) = window.is_visible() {
+        setup.cancel(&owner, &operation_id);
+        return Err(format!("工作树创建窗口已关闭：{error}"));
+    }
+    let shell = Some(desktop_open::preferences(&desktop).preferred_shell);
+    tokio::task::spawn_blocking(move || {
+        let selection = serde_json::to_value(local_environment::selection_get(&desktop, &source_cwd)?).map_err(|error| error.to_string())?;
+        let explicit = selection.get("explicit").and_then(Value::as_bool).ok_or("环境选择状态无效。")?;
+        let config_path = if explicit {
+            match &selection["configPath"] { Value::Null => None, Value::String(path) => Some(path.clone()), _ => return Err("环境选择路径无效。".into()) }
+        } else {
+            let list = serde_json::to_value(local_environment::list(&source_cwd)?).map_err(|error| error.to_string())?;
+            list["defaultPath"].as_str().map(str::to_owned)
+        };
+        local_environment_setup::create_worktree_prepared(operation, &source_cwd, &starting_mode, branch_name, owner_thread_id, &roots[0], config_path, shell)
+    }).await.map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+fn git_worktree_create_cancel(window: tauri::WebviewWindow, setup: State<'_, local_environment_setup::SetupState>, operation_id: String) {
+    setup.cancel(window.label(), &operation_id);
 }
 
 #[tauri::command]
@@ -1331,6 +1360,36 @@ fn local_environment_save(cwd: String, file_name: String, content: String, expec
 #[tauri::command]
 fn local_environment_action(cwd: String, file_name: String, expected_content: String, index: usize) -> Result<String, String> {
     local_environment::action(&cwd, &file_name, &expected_content, index)
+}
+
+#[tauri::command]
+fn local_environments_list(cwd: String) -> Result<Value, String> {
+    serde_json::to_value(local_environment::list(&cwd)?).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn local_environment_read_config(cwd: String, config_path: String) -> Result<Value, String> {
+    serde_json::to_value(local_environment::read_config(&cwd, &config_path)?).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn local_environment_save_config(cwd: String, config_path: Option<String>, environment: local_environment::Environment, expected_content: Option<String>) -> Result<Value, String> {
+    serde_json::to_value(local_environment::save_config(&cwd, config_path.as_deref(), environment, expected_content.as_deref())?).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn local_environment_selection_get(state: State<'_, AppState>, cwd: String) -> Result<Value, String> {
+    serde_json::to_value(local_environment::selection_get(&state.desktop_state, &cwd)?).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn local_environment_select(state: State<'_, AppState>, cwd: String, config_path: Option<String>) -> Result<Value, String> {
+    serde_json::to_value(local_environment::select(&state.desktop_state, &cwd, config_path.as_deref())?).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn local_environment_action_config(cwd: String, config_path: String, expected_content: String, index: usize) -> Result<String, String> {
+    local_environment::action_config(&cwd, &config_path, &expected_content, index)
 }
 
 #[tauri::command]
@@ -1736,9 +1795,11 @@ pub fn run() {
         .manage(memory_preferences::MemoryPreferencesState::default())
         .manage(plugin_operations::PluginOperationState::default())
         .manage(git_message_generation::GenerationState::default())
+        .manage(local_environment_setup::SetupState::default())
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 window.app_handle().state::<git_message_generation::GenerationState>().cancel_owner(window.label());
+                window.app_handle().state::<local_environment_setup::SetupState>().cancel_owner(window.label());
                 if let Err(error) = menu::remove_shortcut_window(window.app_handle(), window.label()) {
                     eprintln!("Cannot restore native shortcuts after window close: {error}");
                 }
@@ -1859,6 +1920,7 @@ pub fn run() {
             git_branch_checkout,
             git_worktrees_list,
             git_worktree_create,
+            git_worktree_create_cancel,
             git_worktree_delete,
             git_worktree_delete_prepare,
             git_worktree_restore_snapshot,
@@ -1876,6 +1938,12 @@ pub fn run() {
             local_environment_read,
             local_environment_save,
             local_environment_action,
+            local_environments_list,
+            local_environment_read_config,
+            local_environment_save_config,
+            local_environment_selection_get,
+            local_environment_select,
+            local_environment_action_config,
             terminal_create_or_attach,
             terminal_write,
             terminal_resize,

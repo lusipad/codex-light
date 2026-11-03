@@ -33,6 +33,10 @@ function Invoke-Step {
 }
 
 try {
+  Invoke-Step "Local environment structured settings and selection contracts" { node scripts/verify-local-environments-ui-b.mjs }
+  Invoke-Step "Worktree creation cancellation and result contracts" { node scripts/verify-worktree-creation-b.mjs }
+  Invoke-Step "Rust environment discovery, persistence and real setup" { cargo test --locked --manifest-path src-tauri/Cargo.toml local_environment }
+  Invoke-Step "Rust terminal consumes worktree setup environment" { cargo test --locked --manifest-path src-tauri/Cargo.toml real_pty_consumes_worktree_setup_environment }
   Invoke-Step "Git message production contexts and cancellation" { node scripts/verify-git-generation-b.mjs }
   Invoke-Step "Git message generation before actual write actions" { node scripts/verify-git-generation-ui-b.mjs }
   Invoke-Step "Git instruction autosave and readback" { node scripts/verify-git-instructions-b.mjs }

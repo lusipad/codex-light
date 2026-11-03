@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { tauriInvoke } from "../bridge";
 import { GitWorktreeInfo } from "../types";
+import { createEnvironmentWorktree } from "../worktreeCreation";
 import { cwdInWorktree, loadWorktreeConversations, removeWorktreeWithConversations, type WorktreeConversation } from "../worktreeRemoval";
 
 interface WorktreesViewProps {
@@ -37,6 +38,7 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
   const mountedRef = useRef(true);
   const requestRef = useRef(0);
   const actionPendingRef = useRef(false);
+  const creationControllerRef = useRef<AbortController | null>(null);
   const contextRef = useRef({ root: activeWorkspaceRoot, revision: 0 });
   if (contextRef.current.root !== activeWorkspaceRoot) {
     contextRef.current = { root: activeWorkspaceRoot, revision: contextRef.current.revision + 1 };
@@ -85,33 +87,44 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
 
   useEffect(() => {
     mountedRef.current = true;
+    setCreating(false);
     refresh();
     return () => {
       mountedRef.current = false;
+      creationControllerRef.current?.abort();
+      creationControllerRef.current = null;
       ++requestRef.current;
     };
   }, [activeWorkspaceRoot]);
 
   const handleCreateWorktree = async () => {
+    if (creationControllerRef.current || actionPendingRef.current) return;
+    const controller = new AbortController(), context = contextRef.current;
+    creationControllerRef.current = controller;
     setCreating(true);
     setError(null);
     try {
-      await tauriInvoke<GitWorktreeInfo>("git_worktree_create", {
+      await createEnvironmentWorktree({
         sourceCwd: activeWorkspaceRoot,
         startingMode,
         branchName: startingMode === "branch" ? selectedBranch : null,
         ownerThreadId: null,
-      });
+      }, controller.signal);
+      if (controller.signal.aborted || context !== contextRef.current) return;
       await refresh();
     } catch (err: any) {
-      setError(err?.message || String(err));
+      if (mountedRef.current && context === contextRef.current) {
+        await refresh();
+        if (mountedRef.current && context === contextRef.current) setError(err?.message || String(err));
+      }
     } finally {
-      setCreating(false);
+      if (creationControllerRef.current === controller) creationControllerRef.current = null;
+      if (mountedRef.current && context === contextRef.current) setCreating(false);
     }
   };
 
   const handleDeleteWorktree = async (wt: GitWorktreeInfo) => {
-    if (actionPendingRef.current || actionBusyPath || conversations === null) return;
+    if (creationControllerRef.current || actionPendingRef.current || actionBusyPath || conversations === null) return;
     if (conversations.some(thread => thread.isPinned && cwdInWorktree(thread.cwd, wt.path))) return;
     if (!confirm(`确定要移除 Worktree "${wt.path}" 吗？`)) return;
     actionPendingRef.current = true;
@@ -218,11 +231,12 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
               type="button"
               className="primary-btn"
               onClick={handleCreateWorktree}
-              disabled={creating}
+              disabled={creating || !!actionBusyPath}
             >
               <Plus size={15} />
               <span>{creating ? "正在创建 Worktree..." : "创建隔离 Worktree"}</span>
             </button>
+            {creating && <button type="button" className="secondary-btn" onClick={() => creationControllerRef.current?.abort()}>取消创建 / 设置</button>}
           </div>
         </div>
         {error && <div className="error-banner">{error}</div>}

@@ -1,5 +1,6 @@
 import { usePetPreferences } from "./petPreferences";
 import { mergeHookRoots } from "./hooksSettingsModel";
+import { createEnvironmentWorktree, type WorktreeCreationOptions } from "./worktreeCreation";
 import { threadHasActivity, threadNeedsAttention } from "./threadActivity";
 import { useExternalImports } from "./externalImport";
 import { useCodeReviewPreferences } from "./reviewPreferences";
@@ -397,6 +398,7 @@ export const App: React.FC = () => {
   const [activityOnly, setActivityOnly] = useState(false);
   const [showRightDrawer, setShowRightDrawer] = useState<boolean>(false);
   const [showTerminal, setShowTerminal] = useState<boolean>(false);
+  const [terminalTargetCwd, setTerminalTargetCwd] = useState<string | null>(null);
   const terminalWasOpened = useRef(false);
   if (showTerminal) terminalWasOpened.current = true;
   const [pendingTermCommand, setPendingTermCommand] = useState<{
@@ -786,6 +788,22 @@ export const App: React.FC = () => {
     return workspaces.find((w) => w.active) || workspaces[0] || null;
   }, [workspaces]);
   const modelAccountIdentity = JSON.stringify(accountInfo);
+  const worktreeCreationControllersRef = useRef(new Map<AbortController, MainViewRoute>());
+  const worktreeProjectScope = JSON.stringify([sidebarProjectMembership.selectedProjectId, sidebarProjectMembership.localProjects?.find(project => project.id === sidebarProjectMembership.selectedProjectId)?.rootPaths]);
+  const createWorktree = useCallback(async (options: WorktreeCreationOptions) => {
+    const controller = new AbortController();
+    worktreeCreationControllersRef.current.set(controller, activeRouteRef.current);
+    try { return await createEnvironmentWorktree(options, controller.signal); }
+    finally { worktreeCreationControllersRef.current.delete(controller); }
+  }, []);
+  useEffect(() => () => {
+    for (const controller of worktreeCreationControllersRef.current.keys()) controller.abort();
+    worktreeCreationControllersRef.current.clear();
+  }, [activeWorkspace?.path, activeThreadId, worktreeProjectScope, modelAccountIdentity, appServerStatus.connected, appServerStatus.binaryPath, appServerStatus.appServerVersion, appServerStatus.userAgent]);
+  useEffect(() => {
+    for (const [controller, route] of worktreeCreationControllersRef.current) if (route !== activeRoute) controller.abort();
+  }, [activeRoute]);
+  useEffect(() => { setTerminalTargetCwd(null); }, [activeWorkspace?.path]);
   const executionIdentityRef = useRef(modelAccountIdentity);
   if (executionIdentityRef.current !== modelAccountIdentity) {
     executionIdentityRef.current = modelAccountIdentity;
@@ -2233,6 +2251,7 @@ export const App: React.FC = () => {
         showAppToast("暂时无法在此项目中新建聊天，请重试。", "error");
         return;
       }
+      for (const controller of worktreeCreationControllersRef.current.keys()) controller.abort();
       const navigation = ++navigationRequestRef.current;
       if (navigation !== navigationRequestRef.current) return;
       if (project) {
@@ -2286,6 +2305,7 @@ export const App: React.FC = () => {
 
   const selectThread = useCallback(async (threadId: string): Promise<void> => {
     if (personalizationNavigationGuardRef.current?.(() => { void selectThread(threadId); }) === false) return;
+    for (const controller of worktreeCreationControllersRef.current.keys()) controller.abort();
     const executionIdentity = executionIdentityRef.current;
     const modelHydration = beginThreadModelHydration(threadId);
     const reviewHistorySnapshot = reviewResultsRef.current!.getRuns().filter(run => run.threadId === threadId);
@@ -2892,7 +2912,7 @@ export const App: React.FC = () => {
       let currentThreadId = activeThreadIdRef.current;
       let targetCwd = currentThreadId || projectless ? "" : pendingProject?.rootPaths[0] || activeWorkspace?.path || "";
       if (!currentThreadId && useWorktree && targetCwd) {
-        const wt = await tauriInvoke<{ path: string }>("git_worktree_create", {
+        const wt = await createWorktree({
           sourceCwd: targetCwd,
           startingMode: "HEAD",
           branchName: null,
@@ -3088,7 +3108,7 @@ export const App: React.FC = () => {
           const configuration = getModelConfiguration();
           if (pendingProject && (!pendingProject.serverProjectId || pendingProject.rootPaths.length === 0)) throw new Error("暂时无法在此项目中新建聊天，请重试。");
           if (useWorktree && targetCwd) {
-            const worktree = await tauriInvoke<{ path: string }>("git_worktree_create", { sourceCwd: targetCwd, startingMode: "HEAD", branchName: null, ownerThreadId: null });
+            const worktree = await createWorktree({ sourceCwd: targetCwd, startingMode: "HEAD", branchName: null, ownerThreadId: null });
             if (!isCurrent()) return;
             if (!worktree?.path) throw new Error("Worktree 创建未返回目录，目标已保留");
             targetCwd = worktree.path;
@@ -5316,6 +5336,8 @@ export const App: React.FC = () => {
         ) : activeRoute === "settings" ? (
           <div className="settings-full-route-view">
             <SettingsView
+              environmentProjects={mergeHookRoots(workspaces.map(workspace => workspace.path), sidebarProjectMembership.localProjects?.flatMap(project => project.rootPaths) ?? []).map(path => ({ path, name: sidebarProjectMembership.localProjects?.find(project => project.rootPaths.includes(path))?.name || workspaces.find(workspace => workspace.path === path)?.label || baseNameFsPath(path) || path }))}
+              onAddEnvironmentProject={() => void handlePickNewFolder()}
               workspaceRoots={mergeHookRoots(workspaces.map(workspace => workspace.path), sidebarProjectMembership.localProjects?.find(project => project.id === sidebarProjectMembership.selectedProjectId)?.rootPaths ?? [])}
               accountIdentity={modelAccountIdentity}
               onAccountChanged={() => void refreshAccount()}
@@ -5333,8 +5355,8 @@ export const App: React.FC = () => {
               codeReviewPreferencesState={codeReviewPreferencesState}
               externalImportsState={externalImportsState}
               onRunEnvironmentCommand={(cwd, command) => {
-                if (cwd !== activeWorkspace?.path) throw Error("工作区已变化，请重新读取环境。");
                 if (pendingTermCommand) throw Error("终端已有待处理命令，请先查看终端。");
+                setTerminalTargetCwd(cwd);
                 setShowTerminal(true);
                 setPendingTermCommand({ id: Date.now(), command, cwd });
               }}
@@ -6139,7 +6161,7 @@ export const App: React.FC = () => {
         {terminalWasOpened.current && (
           <TerminalDock
             open={showTerminal}
-            cwd={activeWorkspace?.path || ""}
+            cwd={terminalTargetCwd ?? activeWorkspace?.path ?? ""}
             onClose={() => setShowTerminal(false)}
             pendingCommand={pendingTermCommand}
             onCommandHandled={handleTerminalCommandHandled}

@@ -120,7 +120,7 @@ function deletionHandler() {
   const notices = [], errors = [];
   let removes = 0, refreshes = 0;
   const context = {
-    exports: {}, actionPendingRef: { current: false }, actionBusyPath: null,
+    exports: {}, actionPendingRef: { current: false }, actionBusyPath: null, creationControllerRef: { current: null },
     conversations: [], confirm: () => true, contextRef: { current: { revision: 1 } },
     mountedRef: { current: true }, setActionBusyPath() {},
     removeWorktreeWithConversations: () => { removes++; return pending; },
@@ -144,6 +144,12 @@ for (const fail of [false, true]) {
   await first;
   assert.equal(f.refreshes, 0);
   assert.equal(f.notices.length + f.errors.length, 0, "Late results do not pollute another context");
+}
+{
+  const f = deletionHandler();
+  f.context.creationControllerRef.current = new AbortController();
+  await f.run();
+  assert.equal(f.removes, 0, "A worktree setup in progress blocks a simultaneous removal");
 }
 {
   const f = deletionHandler();

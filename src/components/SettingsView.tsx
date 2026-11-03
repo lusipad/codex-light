@@ -184,6 +184,8 @@ interface SettingsViewProps {
   models: ModelInfo[];
   activeWorkspaceRoot?: string;
   workspaceRoots?: string[];
+  environmentProjects?: { path: string; name: string }[];
+  onAddEnvironmentProject?: () => void;
   accountIdentity?: string;
   onAccountChanged?: () => void;
   onNavigationGuardChange?: (guard: ((action: () => void) => boolean) | null) => void;
@@ -211,6 +213,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   models,
   activeWorkspaceRoot = "",
   workspaceRoots,
+  environmentProjects,
+  onAddEnvironmentProject,
   accountIdentity,
   onAccountChanged,
   onNavigationGuardChange,
@@ -226,7 +230,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const activeSectionRef = useRef(activeSection);
   activeSectionRef.current = activeSection;
   const personalizationNavigationGuardRef = useRef<((action: () => void) => boolean) | null>(null);
-  const settingsGuardsRef = useRef<Record<"personalization" | "account" | "profile" | "mcp" | "plugins", ((action: () => void) => boolean) | null>>({ personalization: null, account: null, profile: null, mcp: null, plugins: null });
+  const settingsGuardsRef = useRef<Record<"personalization" | "account" | "profile" | "mcp" | "plugins" | "environments", ((action: () => void) => boolean) | null>>({ personalization: null, account: null, profile: null, mcp: null, plugins: null, environments: null });
   const publishSettingsGuard = useCallback(() => {
     const guards = Object.values(settingsGuardsRef.current).filter((guard): guard is (action: () => void) => boolean => guard !== null);
     const combined = guards.length === 1 ? guards[0] : guards.length ? (action: () => void) => guards.every(guard => guard(action)) : null;
@@ -247,6 +251,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   }, [publishSettingsGuard]);
   const registerPluginNavigationGuard = useCallback((guard: ((action: () => void) => boolean) | null) => {
     settingsGuardsRef.current.plugins = guard; publishSettingsGuard();
+  }, [publishSettingsGuard]);
+  const registerEnvironmentNavigationGuard = useCallback((guard: ((action: () => void) => boolean) | null) => {
+    settingsGuardsRef.current.environments = guard; publishSettingsGuard();
   }, [publishSettingsGuard]);
   const setActiveSection = useCallback((section: SettingsSectionSlug) => {
     if (section === activeSectionRef.current) return;
@@ -935,7 +942,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
         {/* SECTION: LOCAL ENVIRONMENTS */}
         {activeSection === "local-environments" && (
-          <LocalEnvironmentSettings key={activeWorkspaceRoot} cwd={activeWorkspaceRoot} onRunCommand={onRunEnvironmentCommand} />
+          <LocalEnvironmentSettings cwd={activeWorkspaceRoot} projects={environmentProjects} connectionIdentity={JSON.stringify([connectionIdentity, accountIdentity])} onNavigationGuardChange={registerEnvironmentNavigationGuard} onAddProject={onAddEnvironmentProject} onRunCommand={onRunEnvironmentCommand} />
         )}
 
         {/* SECTION: NOTIFICATIONS */}

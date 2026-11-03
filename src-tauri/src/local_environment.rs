@@ -6,29 +6,29 @@ const TEMPLATE: &str = "version = 1\nname = \"Default Environment\"\n\n[setup]\n
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Lifecycle {
-    script: String,
-    darwin: Option<Script>,
-    linux: Option<Script>,
-    win32: Option<Script>,
+    pub script: String,
+    pub darwin: Option<Script>,
+    pub linux: Option<Script>,
+    pub win32: Option<Script>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct Script { script: String }
+pub struct Script { pub script: String }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Action {
-    name: String,
-    command: String,
-    icon: Option<String>,
-    platform: Option<String>,
+    pub name: String,
+    pub command: String,
+    pub icon: Option<String>,
+    pub platform: Option<String>,
 }
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Environment {
     #[serde(default = "default_version")]
-    version: u64,
-    name: String,
-    setup: Lifecycle,
-    cleanup: Option<Lifecycle>,
+    pub version: u64,
+    pub name: String,
+    pub setup: Lifecycle,
+    pub cleanup: Option<Lifecycle>,
     #[serde(default)]
-    actions: Vec<Action>,
+    pub actions: Vec<Action>,
 }
 fn default_version() -> u64 { 1 }
 
@@ -113,22 +113,7 @@ pub fn save(cwd: &str, file_name: &str, raw: &str, expected: Option<&str>) -> Re
     parse(raw)?;
     let _guard = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
     let path = config_path(cwd, file_name)?;
-    let before = contents(&path)?;
-    if before.as_deref() != Some(raw) {
-        if before.as_deref() != expected { return Err("环境文件已被其他程序修改，请重新读取；草稿已保留。".into()); }
-        fs::create_dir_all(path.parent().ok_or("环境路径无效")?).map_err(|e| e.to_string())?;
-        let temporary = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
-        let result = (|| {
-            let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&temporary).map_err(|e| e.to_string())?;
-            file.write_all(raw.as_bytes()).and_then(|_| file.sync_all()).map_err(|e| e.to_string())?;
-            drop(file);
-            if contents(&path)? != before { return Err("环境文件在保存期间发生变化，请重新读取。".into()); }
-            fs::rename(&temporary, &path).map_err(|e| e.to_string())
-        })();
-        if result.is_err() { let _ = fs::remove_file(&temporary); }
-        result?;
-    }
-    if contents(&path)?.as_deref() != Some(raw) { return Err("环境已写入，但读回不一致，请重新读取。".into()); }
+    write_contents(&path, raw, expected)?;
     read(cwd, Some(file_name))
 }
 
@@ -145,9 +130,410 @@ pub fn action(cwd: &str, file_name: &str, expected: &str, index: usize) -> Resul
     Ok(action.command.clone())
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentSnapshot {
+    pub path: String,
+    pub file_name: String,
+    pub files: Vec<String>,
+    pub exists: bool,
+    pub content: String,
+    pub expected_content: Option<String>,
+    pub environment: Option<Environment>,
+    pub schema_error: Option<String>,
+    pub cwd: String,
+    pub workspace_root: String,
+    pub inherited: bool,
+}
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentList {
+    pub environments: Vec<EnvironmentSnapshot>,
+    pub next_file_name: String,
+    pub default_path: Option<String>,
+}
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentSelection { pub config_path: Option<String>, pub explicit: bool }
+pub const SELECTIONS_KEY: &str = "local-env-selections-by-workspace";
+
+fn same_path(left: &str, right: &str) -> bool {
+    if cfg!(windows) { left.eq_ignore_ascii_case(right) } else { left == right }
+}
+fn normalized(path: &Path) -> String {
+    let value = crate::state::normalize_fs_path(&path.to_string_lossy());
+    if cfg!(windows) { value.replace('/', "\\") } else { value }
+}
+fn workspace(cwd: &str) -> Result<PathBuf, String> {
+    if cwd.trim().is_empty() { return Err("请先选择工作区。".into()); }
+    let path = fs::canonicalize(cwd).map_err(|error| error.to_string())?;
+    if !path.is_dir() { return Err("工作区不是目录。".into()); }
+    Ok(path)
+}
+fn git_boundary(root: &Path) -> bool {
+    let Ok(metadata) = fs::symlink_metadata(root.join(".git")) else { return false; };
+    if metadata.file_type().is_symlink() { return true; }
+    if !metadata.is_file() && !metadata.is_dir() { return false; }
+    let mut command = std::process::Command::new("git");
+    command.arg("-C").arg(root).args(["rev-parse", "--resolve-git-dir", ".git"]);
+    #[cfg(windows)] { use std::os::windows::process::CommandExt; command.creation_flags(0x08000000); }
+    command.output().map(|result| result.status.success()).unwrap_or(true)
+}
+fn discovery_roots(cwd: &str) -> Result<Vec<PathBuf>, String> {
+    let mut current = workspace(cwd)?;
+    let mut roots = Vec::new();
+    for _ in 0..50 {
+        roots.push(current.clone());
+        if git_boundary(&current) { break; }
+        let Some(parent) = current.parent() else { break; };
+        current = parent.to_path_buf();
+    }
+    Ok(roots)
+}
+fn names(root: &Path) -> Result<Vec<String>, String> {
+    let dir = directory(&normalized(root))?;
+    let entries = match fs::read_dir(dir) { Ok(entries) => entries, Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()), Err(error) => return Err(error.to_string()) };
+    let mut result = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.ends_with(".toml") { result.push(name); }
+    }
+    result.sort_by_key(|name| (name != "environment.toml", name.clone()));
+    Ok(result)
+}
+fn parse_discovered(raw: &str) -> Result<Environment, String> {
+    let mut value: toml::Value = toml::from_str(raw).map_err(|error| format!("环境结构无效：{error}"))?;
+    if let Some(actions) = value.get_mut("actions").and_then(toml::Value::as_array_mut) {
+        actions.retain(|action| ["name", "command"].iter().all(|key| action.get(key).and_then(toml::Value::as_str).is_some_and(|text| !text.trim().is_empty())));
+        for action in actions {
+            if action.get("icon").is_some_and(|icon| !icon.as_str().is_some_and(|value| ["tool", "run", "debug", "test"].contains(&value))) {
+                if let Some(table) = action.as_table_mut() { table.remove("icon"); }
+            }
+        }
+    }
+    let mut environment = parse(&toml::to_string(&value).map_err(|error| error.to_string())?)?;
+    environment.name = environment.name.trim().into();
+    fn trim_lifecycle(lifecycle: &mut Lifecycle) {
+        lifecycle.script = lifecycle.script.trim().into();
+        for script in [&mut lifecycle.darwin, &mut lifecycle.linux, &mut lifecycle.win32].into_iter().flatten() { script.script = script.script.trim().into(); }
+    }
+    trim_lifecycle(&mut environment.setup);
+    if let Some(cleanup) = &mut environment.cleanup { trim_lifecycle(cleanup); }
+    for action in &mut environment.actions { action.name = action.name.trim().into(); }
+    Ok(environment)
+}
+fn snapshot(root: &Path, definition: &Path, file: &str, files: Vec<String>) -> EnvironmentSnapshot {
+    let path = definition.join(".codex/environments").join(file);
+    let read = config_path(&normalized(definition), file).and_then(|path| contents(&path));
+    let (raw, error) = match read { Ok(raw) => (raw, None), Err(error) => (None, Some(error)) };
+    let content = if error.is_some() { String::new() } else { raw.clone().unwrap_or_else(|| TEMPLATE.into()) };
+    let parsed = if let Some(error) = error { Err(error) } else { parse_discovered(&content) };
+    EnvironmentSnapshot { path: normalized(&path), file_name: file.into(), files, exists: raw.is_some() || fs::symlink_metadata(&path).is_ok(), content,
+        expected_content: raw, environment: parsed.as_ref().ok().cloned(), schema_error: parsed.err(), cwd: normalized(definition), workspace_root: normalized(root), inherited: root != definition }
+}
+fn next_name(root: &Path) -> Result<String, String> {
+    let directory = directory(&normalized(root))?;
+    for index in 1u64.. {
+        let name = if index == 1 { "environment.toml".into() } else { format!("environment-{index}.toml") };
+        match fs::symlink_metadata(directory.join(&name)) { Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(name), Err(error) => return Err(error.to_string()), Ok(_) => {} }
+    }
+    unreachable!()
+}
+pub fn list(cwd: &str) -> Result<EnvironmentList, String> {
+    let roots = discovery_roots(cwd)?;
+    let mut discovered = Vec::new();
+    for (distance, definition) in roots.iter().enumerate() {
+        let files = names(definition)?;
+        for file in &files { discovered.push((distance, snapshot(&roots[0], definition, file, files.clone()))); }
+    }
+    discovered.sort_by(|left, right| (left.1.file_name != "environment.toml", left.0, &left.1.path).cmp(&(right.1.file_name != "environment.toml", right.0, &right.1.path)));
+    let environments: Vec<_> = discovered.into_iter().map(|(_, value)| value).collect();
+    let default = environments.iter().find(|environment| environment.file_name == "environment.toml" && environment.schema_error.is_none())
+        .or_else(|| environments.iter().find(|environment| environment.schema_error.is_none())).or_else(|| environments.first()).map(|environment| environment.path.clone());
+    Ok(EnvironmentList { environments, next_file_name: next_name(&roots[0])?, default_path: default })
+}
+fn locate(cwd: &str, requested: &str) -> Result<(PathBuf, PathBuf, String), String> {
+    if !Path::new(requested).is_absolute() { return Err("环境配置必须使用完整路径。".into()); }
+    let file = Path::new(requested).file_name().and_then(|file| file.to_str()).ok_or("环境文件名无效。")?.to_owned();
+    let roots = discovery_roots(cwd)?;
+    let requested = normalized(Path::new(requested));
+    for definition in &roots {
+        if let Ok(candidate) = config_path(&normalized(definition), &file) {
+            if same_path(&normalized(&candidate), &requested) { return Ok((roots[0].clone(), definition.clone(), file)); }
+        }
+    }
+    Err("环境文件必须位于工作区或仓库边界内祖先的环境目录，且不能是符号链接。".into())
+}
+pub fn read_config(cwd: &str, path: &str) -> Result<EnvironmentSnapshot, String> {
+    let (root, definition, file) = locate(cwd, path)?;
+    Ok(snapshot(&root, &definition, &file, names(&definition)?))
+}
+fn serialize_environment(mut environment: Environment) -> Result<String, String> {
+    if environment.version == 0 || environment.name.trim().is_empty() { return Err("环境版本必须大于零，名称不能为空。".into()); }
+    environment.name = environment.name.trim().into();
+    let mut actions = Vec::new();
+    for mut action in environment.actions {
+        action.name = action.name.trim().into();
+        if action.name.is_empty() && action.command.trim().is_empty() { continue; }
+        if action.name.is_empty() || action.command.trim().is_empty() { return Err("动作名称和命令必须完整填写。".into()); }
+        if action.icon.as_ref().is_some_and(|icon| !["tool", "run", "debug", "test"].contains(&icon.as_str())) || action.platform.as_ref().is_some_and(|platform| !["win32", "linux", "darwin"].contains(&platform.as_str())) { return Err("动作平台或图标无效。".into()); }
+        actions.push(action);
+    }
+    let quote = |text: &str| serde_json::to_string(text).expect("string serialization");
+    let mut lines = vec!["# THIS IS AUTOGENERATED. DO NOT EDIT MANUALLY".into(), format!("version = {}", environment.version), format!("name = {}", quote(&environment.name))];
+    for (name, lifecycle) in [("setup", Some(environment.setup)), ("cleanup", environment.cleanup)] {
+        if let Some(lifecycle) = lifecycle {
+            let platforms = [("darwin", lifecycle.darwin), ("linux", lifecycle.linux), ("win32", lifecycle.win32)];
+            if name == "setup" || !lifecycle.script.is_empty() || platforms.iter().any(|(_, script)| script.as_ref().is_some_and(|script| !script.script.is_empty())) {
+                lines.extend([String::new(), format!("[{name}]"), format!("script = {}", quote(&lifecycle.script))]);
+                for (platform, script) in platforms { if let Some(script) = script.filter(|script| !script.script.is_empty()) { lines.extend([String::new(), format!("[{name}.{platform}]"), format!("script = {}", quote(&script.script))]); } }
+            }
+        }
+    }
+    for action in actions {
+        lines.extend([String::new(), "[[actions]]".into(), format!("name = {}", quote(&action.name))]);
+        if let Some(icon) = action.icon { lines.push(format!("icon = {}", quote(&icon))); }
+        lines.push(format!("command = {}", quote(&action.command)));
+        if let Some(platform) = action.platform { lines.push(format!("platform = {}", quote(&platform))); }
+    }
+    let raw = format!("{}\n", lines.join("\n"));
+    parse(&raw)?;
+    Ok(raw)
+}
+pub fn save_config(cwd: &str, path: Option<&str>, environment: Environment, expected: Option<&str>) -> Result<EnvironmentSnapshot, String> {
+    let raw = serialize_environment(environment)?;
+    let root = workspace(cwd)?;
+    let _guard = WRITE_LOCK.lock().map_err(|error| error.to_string())?;
+    let (definition, file) = if let Some(path) = path { let (_, definition, file) = locate(cwd, path)?; (definition, file) } else { let file = next_name(&root)?; (root, file) };
+    // Selection is a separate persisted operation: file success must not disguise selection failure.
+    let target = config_path(&normalized(&definition), &file)?;
+    write_contents(&target, &raw, expected)?;
+    read_config(cwd, &normalized(&target))
+}
+fn write_contents(path: &Path, raw: &str, expected: Option<&str>) -> Result<(), String> {
+    let before = contents(path)?;
+    if before.as_deref() == Some(raw) { return Ok(()); }
+    if before.as_deref() != expected { return Err("环境文件已被其他程序修改，请重新读取；草稿已保留。".into()); }
+    fs::create_dir_all(path.parent().ok_or("环境路径无效")?).map_err(|error| error.to_string())?;
+    let temporary = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
+    let result = (|| {
+        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&temporary).map_err(|error| error.to_string())?;
+        file.write_all(raw.as_bytes()).and_then(|_| file.sync_all()).map_err(|error| error.to_string())?; drop(file);
+        if contents(path)? != before { return Err("环境文件在保存期间发生变化，请重新读取。".into()); }
+        fs::rename(&temporary, path).map_err(|error| error.to_string())?;
+        if contents(path)?.as_deref() != Some(raw) { return Err("环境已写入，但读回不一致，请重新读取。".into()); }
+        Ok(())
+    })();
+    if result.is_err() { let _ = fs::remove_file(temporary); }
+    result
+}
+fn workspace_key(cwd: &str) -> Result<String, String> {
+    let mut root = normalized(&workspace(cwd)?);
+    if cfg!(windows) { root.make_ascii_lowercase(); }
+    Ok(format!("local:{root}"))
+}
+fn selected_value(cwd: &str, values: &serde_json::Value) -> Result<EnvironmentSelection, String> {
+    if values.is_null() { return Ok(EnvironmentSelection { config_path: None, explicit: false }); }
+    let map = values.as_object().ok_or("环境选择记录损坏，请先检查保存数据。")?;
+    let key = workspace_key(cwd)?;
+    let mut found = map.get(&key);
+    if found.is_none() {
+        for (candidate, value) in map {
+            if candidate.starts_with("local:") && same_path(&crate::state::normalize_fs_path(&candidate[6..]), &key[6..]) {
+                if found.is_some_and(|previous| previous != value) { return Err("同一工作区的环境选择记录冲突，请明确重新选择。".into()); }
+                found = Some(value);
+            }
+        }
+    }
+    let Some(value) = found else { return Ok(EnvironmentSelection { config_path: None, explicit: false }); };
+    if value.is_null() { return Ok(EnvironmentSelection { config_path: None, explicit: true }); }
+    let path = value.as_str().ok_or("环境选择记录不是有效路径。")?;
+    let snapshot = read_config(cwd, path)?;
+    if !snapshot.exists || snapshot.schema_error.is_some() { return Err("选中的环境配置已失效，请修复文件或明确重新选择。".into()); }
+    Ok(EnvironmentSelection { config_path: Some(snapshot.path), explicit: true })
+}
+pub fn selection_get(state: &crate::state::DesktopStateManager, cwd: &str) -> Result<EnvironmentSelection, String> {
+    workspace(cwd)?;
+    selected_value(cwd, &state.get_value(SELECTIONS_KEY))
+}
+fn selection_update(key: &str, path: Option<&str>, previous: serde_json::Value) -> Result<serde_json::Value, String> {
+    let mut map = if previous.is_null() { serde_json::Map::new() } else { previous.as_object().cloned().ok_or("环境选择记录损坏，未覆盖原记录。")? };
+    map.retain(|candidate, _| !candidate.starts_with("local:") || !same_path(&crate::state::normalize_fs_path(&candidate[6..]), &key[6..]));
+    map.insert(key.into(), path.map(|path| serde_json::Value::String(path.into())).unwrap_or(serde_json::Value::Null));
+    Ok(serde_json::Value::Object(map))
+}
+pub fn select(state: &crate::state::DesktopStateManager, cwd: &str, path: Option<&str>) -> Result<EnvironmentSelection, String> {
+    let key = workspace_key(cwd)?;
+    let path = if let Some(path) = path {
+        let snapshot = read_config(cwd, path)?;
+        if !snapshot.exists || snapshot.schema_error.is_some() { return Err("只能选择已保存且结构有效的环境。".into()); }
+        Some(snapshot.path)
+    } else { None };
+    state.update_value_persisted(SELECTIONS_KEY, |previous| selection_update(&key, path.as_deref(), previous))?;
+    let result = selection_get(state, cwd)?;
+    if !result.explicit || result.config_path != path { return Err("环境选择已写入，但读回不一致。".into()); }
+    Ok(result)
+}
+pub fn action_config(cwd: &str, path: &str, expected: &str, index: usize) -> Result<String, String> {
+    let snapshot = read_config(cwd, path)?;
+    if !snapshot.exists || snapshot.expected_content.as_deref() != Some(expected) { return Err("环境文件已变化，请重新读取后再运行。".into()); }
+    let environment = snapshot.environment.ok_or("环境结构无效，不能运行。")?;
+    let action = environment.actions.get(index).ok_or("环境动作不存在。")?;
+    let platform = if cfg!(windows) { "win32" } else if cfg!(target_os = "macos") { "darwin" } else { "linux" };
+    if action.platform.as_deref().is_some_and(|candidate| candidate != platform) { return Err("此动作不适用于当前平台。".into()); }
+    Ok(action.command.clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    struct Fixture(PathBuf);
+    impl Fixture {
+        fn new() -> Self { let path = std::env::temp_dir().join(format!("codex-local-env-{}", uuid::Uuid::new_v4())); fs::create_dir_all(&path).unwrap(); Self(path) }
+        fn repository(&self, name: &str) -> PathBuf {
+            let root = self.0.join(name); fs::create_dir_all(&root).unwrap();
+            let mut command = std::process::Command::new("git"); command.args(["init", "--quiet"]).arg(&root);
+            #[cfg(windows)] { use std::os::windows::process::CommandExt; command.creation_flags(0x08000000); }
+            assert!(command.status().unwrap().success()); root
+        }
+        fn config(&self, root: &Path, file: &str, raw: &str) -> PathBuf {
+            let path = root.join(".codex/environments").join(file); fs::create_dir_all(path.parent().unwrap()).unwrap(); fs::write(&path, raw).unwrap(); path
+        }
+    }
+    impl Drop for Fixture { fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); } }
+
+    #[test]
+    fn local_environment_discovery_has_git_boundary_order_errors_and_precise_inheritance() {
+        let fixture = Fixture::new(); fixture.config(&fixture.0, "outside.toml", TEMPLATE);
+        let root = fixture.repository("repo"); let child = root.join("project"); fs::create_dir_all(&child).unwrap();
+        let parent = fixture.config(&root, "environment.toml", TEMPLATE);
+        let local = fixture.config(&child, "local.toml", TEMPLATE);
+        fixture.config(&root, "broken.toml", "invalid = [");
+        let result = list(child.to_str().unwrap()).unwrap();
+        assert_eq!(result.environments.len(), 3); assert_eq!(result.default_path.as_deref(), Some(normalized(&parent).as_str()));
+        assert_eq!(result.environments[0].path, normalized(&parent)); assert!(result.environments[0].inherited);
+        assert_eq!(result.environments[0].cwd, normalized(&root)); assert_eq!(result.environments[0].workspace_root, normalized(&child));
+        assert_eq!(result.environments[1].path, normalized(&local)); assert!(!result.environments[1].inherited);
+        assert!(result.environments[2].schema_error.is_some()); assert!(result.environments[2].environment.is_none());
+        assert!(read_config(child.to_str().unwrap(), fixture.0.join(".codex/environments/outside.toml").to_str().unwrap()).is_err());
+        assert!(read_config(child.to_str().unwrap(), "local.toml").is_err());
+        assert_eq!(read_config(child.to_str().unwrap(), parent.to_str().unwrap()).unwrap().cwd, normalized(&root));
+    }
+
+    #[test]
+    fn local_environment_missing_read_does_not_write_and_discovery_stops_at_fifty() {
+        let fixture = Fixture::new(); let root = fixture.repository("repo");
+        let result = list(root.to_str().unwrap()).unwrap(); assert!(result.environments.is_empty()); assert!(result.default_path.is_none()); assert_eq!(result.next_file_name, "environment.toml");
+        let missing = read_config(root.to_str().unwrap(), root.join(".codex/environments/environment.toml").to_str().unwrap()).unwrap();
+        assert!(!missing.exists); assert!(missing.expected_content.is_none()); assert!(!root.join(".codex").exists());
+        let mut deep = root.clone(); for _ in 0..51 { deep = deep.join("d"); } fs::create_dir_all(&deep).unwrap();
+        assert_eq!(discovery_roots(deep.to_str().unwrap()).unwrap().len(), 50);
+    }
+
+    #[test]
+    fn local_environment_structured_save_preserves_scripts_new_names_and_original_conflicts() {
+        let fixture = Fixture::new(); let root = fixture.repository("repo"); fixture.config(&root, "default.toml", "do not overwrite");
+        let mut environment = parse(TEMPLATE).unwrap(); environment.name = "  中文环境  ".into();
+        environment.setup.script = " echo \"中文\"\r\nnext\nlast ".into(); environment.setup.win32 = Some(Script { script: String::new() });
+        environment.setup.linux = Some(Script { script: "  echo linux \n ".into() }); environment.cleanup = Some(Lifecycle { script: String::new(), darwin: None, linux: None, win32: None });
+        environment.actions = vec![Action { name: " ".into(), command: " \n".into(), icon: None, platform: None }, Action { name: "  Run  ".into(), command: " echo 'raw'\n next ".into(), icon: Some("run".into()), platform: None }];
+        let saved = save_config(root.to_str().unwrap(), None, environment.clone(), None).unwrap();
+        assert_eq!(saved.file_name, "environment.toml"); assert!(saved.content.starts_with("# THIS IS AUTOGENERATED."));
+        let exact: Environment = toml::from_str(&saved.content).unwrap(); assert_eq!(exact.setup.script, environment.setup.script); assert_eq!(exact.actions[0].command, environment.actions[1].command);
+        assert_eq!(exact.name, "中文环境"); assert!(exact.cleanup.is_none()); assert!(exact.setup.win32.is_none()); assert_eq!(exact.actions.len(), 1);
+        assert_eq!(saved.environment.as_ref().unwrap().setup.script, environment.setup.script.trim());
+        let second = save_config(root.to_str().unwrap(), None, environment.clone(), None).unwrap(); assert_eq!(second.file_name, "environment-2.toml");
+        assert_eq!(list(root.to_str().unwrap()).unwrap().next_file_name, "environment-3.toml");
+        assert!(save_config(root.to_str().unwrap(), Some(&saved.path), environment.clone(), Some("stale")).is_ok(), "identical target content does not require an overwrite");
+        fs::write(&saved.path, "external modification").unwrap();
+        assert!(save_config(root.to_str().unwrap(), Some(&saved.path), environment, Some(&saved.content)).is_err());
+        assert_eq!(fs::read_to_string(&saved.path).unwrap(), "external modification"); assert_eq!(fs::read_to_string(root.join(".codex/environments/default.toml")).unwrap(), "do not overwrite");
+        let mut invalid = parse(TEMPLATE).unwrap(); invalid.actions.push(Action { name: "Only a name".into(), command: String::new(), icon: None, platform: None });
+        assert!(save_config(root.to_str().unwrap(), None, invalid, None).is_err()); assert!(!root.join(".codex/environments/environment-3.toml").exists());
+    }
+
+    #[test]
+    fn local_environment_selection_model_preserves_none_missing_invalid_and_sibling_scopes() {
+        use serde_json::{json, Value};
+        let fixture = Fixture::new(); let root = fixture.repository("repo"); let cwd = root.to_str().unwrap();
+        let saved = save_config(cwd, None, parse(TEMPLATE).unwrap(), None).unwrap(); let key = workspace_key(cwd).unwrap();
+        assert!(!selected_value(cwd, &Value::Null).unwrap().explicit); assert!(!selected_value(cwd, &json!({})).unwrap().explicit);
+        let other = json!({"remote-host:other":"retain", "local:another-workspace":null});
+        let selected = selection_update(&key, Some(&saved.path), other).unwrap();
+        assert_eq!(selected["remote-host:other"], "retain"); assert!(selected.get("local:another-workspace").is_some());
+        let readback = selected_value(cwd, &selected).unwrap(); assert!(readback.explicit); assert_eq!(readback.config_path.as_deref(), Some(saved.path.as_str()));
+        let none = selection_update(&key, None, selected.clone()).unwrap(); let readback = selected_value(cwd, &none).unwrap(); assert!(readback.explicit); assert!(readback.config_path.is_none());
+        let mut invalid = selected.clone(); invalid[&key] = json!(42); assert!(selected_value(cwd, &invalid).is_err()); assert!(selection_update(&key, None, json!("corrupt")).is_err());
+        fs::remove_file(&saved.path).unwrap(); assert!(selected_value(cwd, &selected).is_err()); assert!(selected_value(cwd, &none).unwrap().explicit);
+    }
+
+    #[test]
+    fn local_environment_selection_persists_in_private_processes() {
+        use serde_json::json;
+        const MARKER: &str = "CODEX_ENV_SELECTION_PRIVATE_FIXTURE";
+        const PHASE: &str = "CODEX_ENV_SELECTION_PRIVATE_PHASE";
+        if let Some(fixture) = std::env::var_os(MARKER) {
+            let fixture = PathBuf::from(fixture);
+            assert_eq!(crate::state::codex_home_dir(), fixture.join("home"));
+            let root = fixture.join("repo"); let cwd = root.to_str().unwrap();
+            let path = normalized(&root.join(".codex/environments/environment.toml"));
+            let state = crate::state::DesktopStateManager::new();
+            match std::env::var(PHASE).unwrap().as_str() {
+                "select" => {
+                    assert!(!selection_get(&state, cwd).unwrap().explicit);
+                    state.set_value_persisted("unrelated-setting", json!({"retain": true})).unwrap();
+                    state.set_value_persisted(SELECTIONS_KEY, json!({"remote-host:other": "retain", "local:another-workspace": null})).unwrap();
+                    let result = select(&state, cwd, Some(&path)).unwrap();
+                    assert!(result.explicit); assert_eq!(result.config_path.as_deref(), Some(path.as_str()));
+                },
+                "read-selected" => {
+                    let result = selection_get(&state, cwd).unwrap();
+                    assert!(result.explicit); assert_eq!(result.config_path.as_deref(), Some(path.as_str()));
+                },
+                "select-none" => {
+                    let result = select(&state, cwd, None).unwrap();
+                    assert!(result.explicit); assert!(result.config_path.is_none());
+                },
+                "read-none" => {
+                    let result = selection_get(&state, cwd).unwrap();
+                    assert!(result.explicit); assert!(result.config_path.is_none());
+                },
+                phase => panic!("unexpected private fixture phase {phase}"),
+            }
+            let reloaded = crate::state::DesktopStateManager::new();
+            let current = selection_get(&state, cwd).unwrap();
+            let persisted = selection_get(&reloaded, cwd).unwrap();
+            assert_eq!(persisted.config_path, current.config_path); assert_eq!(persisted.explicit, current.explicit);
+            assert_eq!(reloaded.get_value("unrelated-setting"), json!({"retain": true}));
+            let selections = reloaded.get_value(SELECTIONS_KEY);
+            assert_eq!(selections["remote-host:other"], "retain"); assert!(selections.get("local:another-workspace").unwrap().is_null());
+            assert!(fixture.join("home/.codex-global-state.json").is_file());
+            return;
+        }
+        let fixture = Fixture::new(); let root = fixture.repository("repo");
+        fixture.config(&root, "environment.toml", TEMPLATE);
+        let home = fixture.0.join("home"); fs::create_dir(&home).unwrap();
+        for phase in ["select", "read-selected", "select-none", "read-none"] {
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command.args(["--exact", "local_environment::tests::local_environment_selection_persists_in_private_processes", "--nocapture"])
+                .env("CODEX_HOME", &home).env(MARKER, &fixture.0).env(PHASE, phase);
+            #[cfg(windows)] { use std::os::windows::process::CommandExt; command.creation_flags(0x08000000); }
+            let result = command.output().unwrap();
+            assert!(result.status.success(), "{phase}: {}\n{}", String::from_utf8_lossy(&result.stdout), String::from_utf8_lossy(&result.stderr));
+        }
+    }
+
+    #[test]
+    fn local_environment_error_entries_are_preserved_and_action_rechecks_exact_definition() {
+        let fixture = Fixture::new(); let root = fixture.repository("repo"); let cwd = root.to_str().unwrap();
+        let raw = format!("{TEMPLATE}\n[[actions]]\nname = 'Missing command'\n\n[[actions]]\nname = ' Real action '\ncommand = 'echo actual'\nicon = 'future-icon'\n");
+        let path = fixture.config(&root, "environment.toml", &raw);
+        let result = read_config(cwd, path.to_str().unwrap()).unwrap(); assert_eq!(result.environment.as_ref().unwrap().actions.len(), 1); assert!(result.environment.as_ref().unwrap().actions[0].icon.is_none());
+        assert_eq!(action_config(cwd, path.to_str().unwrap(), &raw, 0).unwrap(), "echo actual"); assert!(action_config(cwd, path.to_str().unwrap(), "stale", 0).is_err());
+        fs::write(&path, "broken = [").unwrap(); let result = list(cwd).unwrap(); assert!(result.environments[0].schema_error.is_some()); assert_eq!(result.default_path.as_deref(), Some(normalized(&path).as_str()));
+        assert!(action_config(cwd, path.to_str().unwrap(), "broken = [", 0).is_err()); assert_eq!(fs::read_to_string(path).unwrap(), "broken = [");
+    }
     #[test]
     fn environment_roundtrip_conflict_schema_and_action() {
         let root = std::env::temp_dir().join(format!("codex-environment-{}", uuid::Uuid::new_v4()));
