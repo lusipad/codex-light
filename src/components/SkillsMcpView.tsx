@@ -30,6 +30,8 @@ import { readMcpSettings } from "../mcpSettings";
 import { McpSettings } from "./McpSettings";
 import { managementTabs, managementFallback, useMarketplaceRemoval } from "../pluginManagementState";
 import { readConfiguredMarketplaces, setPluginEnabled, verifyPluginEnabled, type ConfiguredMarketplace } from "../pluginManagement";
+import { loadRemotePlugins, manageRemotePlugin, verifyRemotePlugin, mergePluginInventories, type RemotePluginSnapshot } from "../remotePlugins";
+import type { ServiceIdentity } from "../chatgptService";
 import {
   SkillInfoItem,
 } from "../types";
@@ -90,6 +92,18 @@ interface SkillsMcpViewProps {
 }
 
 type SubTab = "plugins" | "skills" | "mcp" | "apps" | "marketplaces";
+type RemoteOperation = "enable" | "disable" | "uninstall";
+interface RemoteIntent {
+  plugin: PluginSummary; operation: RemoteOperation; identity: ServiceIdentity;
+  pending: boolean; busy: boolean; error: string | null; refreshError: string | null;
+}
+const remoteIntents = new Map<string, RemoteIntent>();
+const remoteIntentListeners = new Set<(intent: RemoteIntent) => void>();
+const saveRemoteIntent = (key: string, intent: RemoteIntent) => { remoteIntents.set(key, intent); remoteIntentListeners.forEach(listener => listener(intent)); };
+const remoteId = (plugin: PluginSummary) => plugin.remotePluginId ?? (plugin.shareContext && typeof plugin.shareContext === "object" && "remotePluginId" in plugin.shareContext && typeof plugin.shareContext.remotePluginId === "string" ? plugin.shareContext.remotePluginId : null);
+const remoteIntentKey = (identity: ServiceIdentity, plugin: PluginSummary) => JSON.stringify([identity.accountId, identity.userId, remoteId(plugin)]);
+const isServicePlugin = (plugin: PluginSummary) => plugin.source?.type === "remote" || !!plugin.remoteServicePlugin;
+const pluginActionKey = (plugin: PluginSummary) => isServicePlugin(plugin) ? `remote:${remoteId(plugin) ?? plugin.id}` : plugin.id;
 
 interface ViewError {
   kind: PluginErrorKind;
@@ -192,7 +206,7 @@ function pluginKey(
   plugin: PluginSummary,
   marketplace: PluginMarketplaceEntry
 ): string {
-  return `${marketplace.name}::${plugin.id}`;
+  return `${marketplace.name}::${pluginActionKey(plugin)}`;
 }
 
 export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
@@ -256,6 +270,12 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     useState<PluginInstalledResponse | null>(null);
   const [installedLoading, setInstalledLoading] = useState(false);
   const [installedError, setInstalledError] = useState<ViewError | null>(null);
+  const [servicePlugins, setServicePlugins] = useState<RemotePluginSnapshot | null>(null);
+  const [serviceLoading, setServiceLoading] = useState(false), [serviceError, setServiceError] = useState<string | null>(null);
+  const [remoteOperations, setRemoteOperations] = useState<Record<string, RemoteIntent>>({});
+  const [runtimeWarning, setRuntimeWarning] = useState<string | null>(null);
+  const serviceRequest = useRef(0), serviceRead = useRef<AbortController | null>(null);
+  const remoteWrites = useRef(new Set<AbortController>());
   const [pluginMode, setPluginMode] = useState<"installed" | "browse">(
     manageOnly ? "installed" : initialPluginMode
   );
@@ -348,6 +368,9 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     setInstalledData(null);
     setInstalledError(null);
     setInstalledLoading(false);
+    setToast(null); if (toastTimer.current !== null) window.clearTimeout(toastTimer.current);
+    serviceRead.current?.abort(); remoteWrites.current.forEach(controller => controller.abort());
+    serviceRequest.current++; setServicePlugins(null); setServiceLoading(false); setServiceError(null); setRemoteOperations({}); setRuntimeWarning(null);
     setConfiguredMarkets([]); setManagementError(null); setManagementLoading(true); setPluginUpdates({});
     appsLoadedRef.current = false; appsLoadingRef.current = false;
     setAppsData(null); setAppsInstalled(null); setAppsLoaded(false); setAppsLoading(false); setAppsError(null);
@@ -379,6 +402,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     setSkillContentError(null);
     setSkillContentLoading(false);
     return () => {
+      serviceRead.current?.abort(); remoteWrites.current.forEach(controller => controller.abort());
       pluginMountedRef.current = false;
       ++pluginContextRef.current;
     };
@@ -416,6 +440,33 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   };
 
   // The server controls catalog availability; render a bounded set of cards.
+  const loadServicePlugins = async () => {
+    const context = pluginContextRef.current, request = ++serviceRequest.current;
+    serviceRead.current?.abort();
+    const controller = new AbortController(); serviceRead.current = controller;
+    setServiceLoading(true); setServiceError(null);
+    try {
+      const next = await loadRemotePlugins(controller.signal);
+      if (!isPluginContextCurrent(context) || request !== serviceRequest.current) return;
+      setServiceError(next.error);
+      if (!next.error || next.unsupported || next.identity && (servicePlugins?.identity?.accountId !== next.identity.accountId || servicePlugins?.identity?.userId !== next.identity.userId)) setServicePlugins(next);
+      if (next.identity) setRemoteOperations(Object.fromEntries([...remoteIntents].filter(([, value]) => value.identity.accountId === next.identity!.accountId && value.identity.userId === next.identity!.userId)));
+    } catch (error) {
+      if (isPluginContextCurrent(context) && request === serviceRequest.current) setServiceError(String(error));
+    } finally {
+      if (isPluginContextCurrent(context) && request === serviceRequest.current) setServiceLoading(false);
+    }
+  };
+  useEffect(() => {
+    const sync = (intent: RemoteIntent) => {
+      const identity = servicePlugins?.identity;
+      if (!identity || identity.accountId !== intent.identity.accountId || identity.userId !== intent.identity.userId) return;
+      setRemoteOperations(Object.fromEntries([...remoteIntents].filter(([, value]) => value.identity.accountId === identity.accountId && value.identity.userId === identity.userId)));
+      if (!intent.busy && !intent.pending) void loadServicePlugins();
+    };
+    remoteIntentListeners.add(sync);
+    return () => { remoteIntentListeners.delete(sync); };
+  }, [servicePlugins?.identity?.accountId, servicePlugins?.identity?.userId, connectionIdentity, activeWorkspaceRoot]);
   const loadBrowsePlugins = async (force = false) => {
     if (!pluginMountedRef.current) return;
     if (browseLoadedRef.current && !force) return;
@@ -519,6 +570,8 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
 
   const refreshAll = async () => {
     const context = pluginContextRef.current;
+    const serviceLoad = loadServicePlugins();
+    const installedLoad = loadInstalledPlugins({ confirmInstallResult: true });
     const request = ++localSkillsRequestRef.current;
     try {
       const localSkills = await tauriInvoke<SkillInfoItem[]>(
@@ -535,7 +588,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       }
     }
     if (!isPluginContextCurrent(context)) return;
-    await Promise.allSettled([loadInstalledPlugins({ confirmInstallResult: true }), loadRemoteSkills(), loadManagement()]);
+    await Promise.allSettled([installedLoad, serviceLoad, loadRemoteSkills(), loadManagement()]);
     if (manageOnly || subTab === "apps") {
       await loadApps(true);
     }
@@ -549,7 +602,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     let disposed = false, unlisten: (() => void) | undefined;
     const refresh = () => {
       if (disposed) return;
-      void Promise.allSettled([loadInstalledPlugins({ silent: true }), loadManagement(), loadRemoteSkills(true), loadApps(true)]);
+      void Promise.allSettled([loadInstalledPlugins({ silent: true }), loadServicePlugins(), loadManagement(), loadRemoteSkills(true), loadApps(true)]);
     };
     window.addEventListener("focus", refresh);
     void tauriListen("plugin-management-changed", refresh).then(stop => { if (disposed) stop(); else unlisten = stop; }).catch(() => {});
@@ -663,6 +716,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   const handleUninstallPlugin = async (
     plugin: PluginSummary
   ) => {
+    if (isServicePlugin(plugin)) { await handleRemotePlugin(plugin, "uninstall"); return; }
     if (pluginActionRef.current.has(plugin.id) || pluginUpdates[plugin.id]?.pending || plugin.source?.type === "remote") return;
     const name = pluginDisplayName(plugin);
     const warning = `确定要卸载插件「${name}」吗？`;
@@ -695,6 +749,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   };
 
   const handleTogglePlugin = async (plugin: PluginSummary) => {
+    if (isServicePlugin(plugin)) { await handleRemotePlugin(plugin, plugin.enabled ? "disable" : "enable"); return; }
     if (pluginActionRef.current.has(plugin.id) || pluginUpdates[plugin.id]?.pending || plugin.availability === "DISABLED_BY_ADMIN") return;
     const context = pluginContextRef.current, enabled = !plugin.enabled;
     pluginActionRef.current.add(plugin.id); setBusyPluginIds(new Set(pluginActionRef.current));
@@ -729,6 +784,55 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     } finally {
       pluginActionRef.current.delete(plugin.id);
       if (isPluginContextCurrent(context)) setBusyPluginIds(new Set(pluginActionRef.current));
+    }
+  };
+
+  const remoteStatus = (plugin: PluginSummary) => servicePlugins?.identity ? remoteOperations[remoteIntentKey(servicePlugins.identity, plugin)] : undefined;
+  const remoteAvailable = (plugin: PluginSummary) => Boolean(!serviceError && !serviceLoading && servicePlugins?.identity && !servicePlugins.unsupported && remoteId(plugin) && servicePlugins.marketplace?.plugins.some(row => remoteId(row) === remoteId(plugin) && row.installed && row.remotePolicyKnown === true));
+  const refreshRemoteRuntime = async () => {
+    const context = pluginContextRef.current;
+    const results = await Promise.allSettled([listSkills(workspaceCwds(), true), listApps({ forceRefetch: true }), readMcpSettings(activeWorkspaceRoot || undefined), listInstalledPlugins(workspaceCwds())]);
+    if (!isPluginContextCurrent(context)) return;
+    const [skillsResult, appsResult, mcpResult, installedResult] = results;
+    if (skillsResult.status === "fulfilled") setRemoteSkills(flattenSkills(skillsResult.value).skills);
+    if (appsResult.status === "fulfilled") setAppsData(appsResult.value.data);
+    if (mcpResult.status === "fulfilled") setMcpCount(mcpResult.value.entries.length);
+    if (installedResult.status === "fulfilled") setInstalledData(installedResult.value);
+    const errors = results.filter(result => result.status === "rejected").map(result => String((result as PromiseRejectedResult).reason));
+    if (skillsResult.status === "fulfilled" && skillsResult.value.data.some(entry => entry.errors.length)) errors.push("技能目录包含加载错误");
+    setRuntimeWarning(errors.length ? `插件变更已确认，但运行时刷新失败：${errors.join("；")}` : null);
+  };
+  const handleRemotePlugin = async (plugin: PluginSummary, operation: RemoteOperation, verifyOnly = false) => {
+    const identity = servicePlugins?.identity;
+    if (!identity || !remoteId(plugin)) return;
+    const key = remoteIntentKey(identity, plugin), actionKey = pluginActionKey(plugin), saved = remoteIntents.get(key);
+    if (saved?.busy || pluginActionRef.current.has(actionKey)) return;
+    if (!verifyOnly && (!remoteAvailable(plugin) || saved?.pending || plugin.availability === "DISABLED_BY_ADMIN" && operation !== "uninstall" || operation === "uninstall" && plugin.installed && plugin.installPolicy === "INSTALLED_BY_DEFAULT")) return;
+    if (!verifyOnly && operation === "uninstall" && !confirm(`确定要卸载插件「${pluginDisplayName(plugin)}」吗？`)) return;
+    const context = pluginContextRef.current, controller = new AbortController();
+    const intent: RemoteIntent = { plugin: verifyOnly && saved ? saved.plugin : plugin, operation: saved?.pending ? saved.operation : operation, identity, pending: true, busy: true, error: null, refreshError: null };
+    saveRemoteIntent(key, intent); setRemoteOperations(current => ({ ...current, [key]: intent }));
+    pluginActionRef.current.add(actionKey); setBusyPluginIds(new Set(pluginActionRef.current)); remoteWrites.current.add(controller);
+    try {
+      const result = await (verifyOnly ? verifyRemotePlugin : manageRemotePlugin)(intent.plugin, intent.operation, identity, controller.signal);
+      const next = { ...intent, pending: result.verification === "pending" || result.verification === "unknown", busy: false, error: result.error };
+      saveRemoteIntent(key, next);
+      if (!isPluginContextCurrent(context) || controller.signal.aborted) return;
+      setRemoteOperations(current => ({ ...current, [key]: next }));
+      if (result.snapshot && result.snapshot.identity?.accountId === identity.accountId && result.snapshot.identity.userId === identity.userId && result.snapshot.identity.generation === identity.generation) {
+        serviceRequest.current++; serviceRead.current?.abort(); setServiceLoading(false); setServicePlugins(result.snapshot); setServiceError(result.snapshot.error);
+      }
+      if (result.verification === "confirmed") {
+        notify(intent.operation === "uninstall" ? `已卸载 ${pluginDisplayName(plugin)}` : `${pluginDisplayName(plugin)} 插件已${intent.operation === "enable" ? "启用" : "禁用"}`);
+        try { await refreshRemoteRuntime(); }
+        catch (error) { if (isPluginContextCurrent(context)) setRuntimeWarning(`插件变更已确认，但运行时刷新失败：${String(error)}`); }
+      }
+    } catch (error) {
+      const next = { ...intent, busy: false, pending: true, error: `结果尚未确认：${String(error)}` }; saveRemoteIntent(key, next);
+      if (isPluginContextCurrent(context) && !controller.signal.aborted) setRemoteOperations(current => ({ ...current, [key]: next }));
+    } finally {
+      remoteWrites.current.delete(controller); pluginActionRef.current.delete(actionKey);
+      if (pluginMountedRef.current) setBusyPluginIds(new Set(pluginActionRef.current));
     }
   };
 
@@ -1038,13 +1142,15 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     );
 
   const installedMarketplaces = installedData?.marketplaces ?? [];
+  const mergedInstalledData = mergePluginInventories(installedData, servicePlugins);
+  const mergedMarketplaces = mergedInstalledData.marketplaces;
   const manageableMarkets = configuredMarkets.map(item => item.marketplace);
   const marketplaceLoadErrors = installedData?.marketplaceLoadErrors ?? [];
-  const installedCount = installedMarketplaces.reduce(
+  const installedCount = mergedMarketplaces.reduce(
     (sum, marketplace) => sum + (marketplace.plugins?.length ?? 0),
     0
   );
-  const installedGroups = installedMarketplaces
+  const installedGroups = mergedMarketplaces
     .map((marketplace) => ({
       marketplace,
       plugins: (marketplace.plugins ?? []).filter(pluginMatchesSearch),
@@ -1087,10 +1193,10 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   };
   useEffect(() => {
     if (!manageOnly) return;
-    const loading = managementLoading || !!managementError || (subTab === "plugins" ? installedLoading || !installedData || !!installedError : subTab === "apps" ? appsLoading || !appsLoaded || !!appsError : subTab === "skills" ? remoteSkillsLoading || remoteSkills === null || !!remoteSkillsError : false);
+    const loading = managementLoading || !!managementError || (subTab === "plugins" ? installedLoading || serviceLoading || !installedData && !servicePlugins || !!installedError || !!serviceError : subTab === "apps" ? appsLoading || !appsLoaded || !!appsError : subTab === "skills" ? remoteSkillsLoading || remoteSkills === null || !!remoteSkillsError : false);
     const next = managementFallback(subTab, tabCounts, loading, showNonMcpTabs);
     if (next !== subTab) selectTab(next);
-  }, [manageOnly, subTab, installedCount, tabCounts.apps, tabCounts.skills, tabCounts.marketplaces, mcpCount, showNonMcpTabs, managementLoading, managementError, installedLoading, installedError, appsLoading, appsLoaded, appsError, remoteSkillsLoading, remoteSkillsError]);
+  }, [manageOnly, subTab, installedCount, tabCounts.apps, tabCounts.skills, tabCounts.marketplaces, mcpCount, showNonMcpTabs, managementLoading, managementError, installedLoading, installedError, serviceLoading, serviceError, appsLoading, appsLoaded, appsError, remoteSkillsLoading, remoteSkillsError]);
 
   // ───────────────────────────────────────────────────────────────────────────
   // Reusable renderers
@@ -1312,7 +1418,8 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   ) => {
     const key = pluginKey(plugin, marketplace);
     const isOpen = detailKey === key;
-    const busy = busyPluginIds.has(plugin.id);
+    const busy = busyPluginIds.has(pluginActionKey(plugin));
+    const serviceOperation = remoteStatus(plugin);
     const version = pluginVersion(plugin);
     const category = pluginCategory(plugin);
     const developer = pluginDeveloper(plugin);
@@ -1348,6 +1455,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
             )}
           </div>
           <p className="item-card-desc">{pluginDescription(plugin)}</p>
+          {!options.browse && isServicePlugin(plugin) && plugin.remotePolicyKnown === false && <p role="alert">无法识别此插件的服务策略，暂不能变更。</p>}
           <div className="item-card-meta">
             {developer && <span>{developer}</span>}
             <span className="pm-mono" title={pluginSourceDetail(plugin)}>
@@ -1370,6 +1478,11 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
             {!options.browse && <span className="pm-mono">{plugin.id}</span>}
           </div>
           {isOpen && <div className="pm-detail-panel">{renderPluginDetail()}</div>}
+          {!options.browse && isServicePlugin(plugin) && serviceOperation && <div role="status">
+            {serviceOperation.pending && <p>远程操作结果待核验</p>}
+            {serviceOperation.error && <p role="alert">{serviceOperation.error}</p>}
+            {serviceOperation.pending && <button type="button" className="secondary-btn-sm" disabled={busy || serviceOperation.busy || serviceLoading} onClick={() => handleRemotePlugin(plugin, serviceOperation.operation, true)}>核验远程操作结果</button>}
+          </div>}
           {!options.browse && pluginUpdates[plugin.id] && <div role="status">
             {pluginUpdates[plugin.id].pending && <p>启禁结果待核验；核验只读取状态，不重复提交。</p>}
             {pluginUpdates[plugin.id].error && <p role="alert">{pluginUpdates[plugin.id].error}</p>}
@@ -1407,14 +1520,14 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
             </button>
           ) : (<>
             <button type="button" className="secondary-btn-sm" role="switch" aria-checked={plugin.enabled}
-              aria-label={`${pluginDisplayName(plugin)} 启用`} disabled={busy || !!pluginUpdates[plugin.id]?.pending || plugin.availability === "DISABLED_BY_ADMIN" || plugin.source.type === "remote"}
-              title={plugin.source.type === "remote" ? "远程服务启禁尚未接通" : plugin.availability === "DISABLED_BY_ADMIN" ? "管理员已禁用" : undefined}
+              aria-label={`${pluginDisplayName(plugin)} 启用`} disabled={busy || !!pluginUpdates[plugin.id]?.pending || plugin.availability === "DISABLED_BY_ADMIN" || isServicePlugin(plugin) && (!remoteAvailable(plugin) || !!serviceOperation?.pending || !!serviceOperation?.busy)}
+              title={isServicePlugin(plugin) && !remoteAvailable(plugin) ? "尚未取得当前账号的完整插件状态" : plugin.availability === "DISABLED_BY_ADMIN" ? "管理员已禁用" : undefined}
               onClick={() => handleTogglePlugin(plugin)}>{busy ? "更新中…" : plugin.enabled ? "禁用" : "启用"}</button>
             <button
               type="button"
               className="secondary-btn-sm"
-              disabled={busy || !!pluginUpdates[plugin.id]?.pending || plugin.source.type === "remote"}
-              title={plugin.source.type === "remote" ? "远程插件卸载服务尚未接通" : "卸载插件"}
+              disabled={busy || !!pluginUpdates[plugin.id]?.pending || isServicePlugin(plugin) && (!remoteAvailable(plugin) || !!serviceOperation?.pending || !!serviceOperation?.busy || plugin.installed && plugin.installPolicy === "INSTALLED_BY_DEFAULT")}
+              title={isServicePlugin(plugin) && plugin.installed && plugin.installPolicy === "INSTALLED_BY_DEFAULT" ? plugin.installPolicySource || "由管理员安装" : "卸载插件"}
               onClick={() => handleUninstallPlugin(plugin)}
             >
               {busy ? (
@@ -1422,7 +1535,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
               ) : (
                 <Trash2 size={13} />
               )}{" "}
-              {plugin.source.type === "remote" ? "远程服务未接通" : "卸载"}
+              {isServicePlugin(plugin) && plugin.installed && plugin.installPolicy === "INSTALLED_BY_DEFAULT" ? "由管理员安装" : "卸载"}
             </button>
           </>)}
         </div>
@@ -1581,6 +1694,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
           {toast.text}
         </div>
       )}
+      {runtimeWarning && <div role="alert" className="pm-result-panel pm-result-warn">{runtimeWarning} <button type="button" className="secondary-btn-sm" onClick={refreshRemoteRuntime}>重新刷新运行时</button></div>}
       {subTab === "plugins" && Object.entries(pluginPreparations).map(([id, preparation]) =>
         !busyPluginIds.has(id) && <PluginPreparationPanel
           key={`${activeWorkspaceRoot}:${id}:${preparation.attempt}`}
@@ -1637,7 +1751,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
                   type="button"
                   className="secondary-btn-sm"
                   onClick={() => pluginMode === "installed"
-                    ? loadInstalledPlugins({ confirmInstallResult: true })
+                    ? Promise.all([loadInstalledPlugins({ confirmInstallResult: true }), loadServicePlugins()])
                     : Promise.all([
                       loadBrowsePlugins(true),
                       unconfirmedInstalls.size ? loadInstalledPlugins({ silent: true, confirmInstallResult: true }) : Promise.resolve(),
@@ -1674,17 +1788,20 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
 
           {pluginMode === "installed" && (
             <>
-              {isInstalledBusy && renderLoadingRow("正在读取已安装插件（plugin/installed）…")}
+              {serviceLoading && renderLoadingRow("正在读取账号插件…")}
+              {serviceError && <div role="alert">账号插件读取失败：{serviceError} <button type="button" className="secondary-btn-sm" onClick={loadServicePlugins}>重试账号插件</button></div>}
+              {servicePlugins?.unsupported && <p>当前账号环境未提供远程插件服务。</p>}
+              {isInstalledBusy && renderLoadingRow("正在读取本机插件…")}
               {!installedLoading && !installedError && !installedData &&
                 renderLoadingRow("准备读取已安装插件…")}
               {!isInstalledBusy && installedError &&
-                renderLoadError(installedError, "已安装插件", () => loadInstalledPlugins({ confirmInstallResult: true }))}
-              {!isInstalledBusy && !installedError && installedData && (
-                installedCount === 0 ? (
+                renderLoadError(installedError, "本机插件", () => loadInstalledPlugins({ confirmInstallResult: true }))}
+              {(installedData || servicePlugins?.marketplace) && (
+                installedCount === 0 ? (!installedError && !serviceError && !installedLoading && !serviceLoading && (
                   <div className="empty-hint">
                     未发现已安装插件。切换到「浏览市场」查看本地市场中的可安装插件。
                   </div>
-                ) : installedGroups.length === 0 ? (
+                )) : installedGroups.length === 0 ? (
                   <div className="empty-hint">
                     没有匹配「{searchQuery}」的已安装插件。
                   </div>

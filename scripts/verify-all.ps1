@@ -33,6 +33,8 @@ function Invoke-Step {
 }
 
 try {
+  Invoke-Step "Remote plugin mapping and service recovery contracts" { node scripts/verify-remote-plugins-c.mjs }
+  Invoke-Step "Remote plugin component state and source isolation" { node scripts/verify-remote-plugin-ui-c.mjs }
   Invoke-Step "Recommended skills native client and discovery contracts" { node scripts/verify-recommended-skills.mjs }
   Invoke-Step "Recommended skills component scope and lifecycle contracts" { node scripts/verify-recommended-skills-ui.mjs }
   Invoke-Step "Rust recommended skill repository and complete installation" { cargo test --locked --manifest-path src-tauri/Cargo.toml --lib recommended_skills_tests }

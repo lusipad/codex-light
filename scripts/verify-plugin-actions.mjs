@@ -28,6 +28,7 @@ function mount() {
     installedLoadingRef: { current: false }, browseLoadingRef: { current: false }, browseLoadedRef: { current: false },
     detailRequestRef: { current: 0 }, detailContextRef: { current: null }, detailKey: null,
     workspaceCwds: () => ["A"],
+    isServicePlugin: item => item.source?.type === "remote", handleRemotePlugin: async () => {},
     pluginKey: (item, market) => `${market.name}::${item.id}`,
     pluginRefFor: (item, market) => ({ pluginName: item.name, marketplacePath: market.path }),
     pluginDisplayName: item => item.name, errorSummary: error => error.message,

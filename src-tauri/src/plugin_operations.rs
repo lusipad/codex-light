@@ -8,7 +8,7 @@ pub struct PluginOperationState {
     active: Arc<Mutex<BTreeSet<String>>>,
 }
 
-struct OperationGuard {
+pub(crate) struct OperationGuard {
     active: Arc<Mutex<BTreeSet<String>>>,
     ids: BTreeSet<String>,
 }
@@ -22,6 +22,10 @@ impl Drop for OperationGuard {
 }
 
 impl PluginOperationState {
+    pub(crate) fn acquire_remote(&self, raw_id: &str) -> Result<OperationGuard, String> {
+        self.acquire(BTreeSet::from([format!("remote:{raw_id}")]))
+    }
+
     fn acquire(&self, ids: BTreeSet<String>) -> Result<OperationGuard, String> {
         let mut active = self.active.lock().map_err(|_| "插件操作锁不可用")?;
         if ids.iter().any(|id| active.contains(id)) {
@@ -96,6 +100,18 @@ mod tests {
         drop(first);
         assert!(state.acquire(ids(&["alpha@market"])).is_ok());
         drop(other);
+        assert!(state.active.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn remote_raw_identity_serializes_enable_disable_and_uninstall_across_windows() {
+        let state = PluginOperationState::default();
+        let first = state.acquire_remote("raw-one").unwrap();
+        assert!(state.acquire_remote("raw-one").is_err());
+        let independent = state.acquire_remote("raw-two").unwrap();
+        drop(first);
+        assert!(state.acquire_remote("raw-one").is_ok());
+        drop(independent);
         assert!(state.active.lock().unwrap().is_empty());
     }
 

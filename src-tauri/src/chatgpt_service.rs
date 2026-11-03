@@ -157,6 +157,51 @@ pub struct ProfileMutationResponse {
     pub verification: &'static str,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RemotePluginInventoryRequest {
+    pub request_id: String,
+    pub expected_identity: ServiceIdentity,
+    pub profile: ServiceProfile,
+    pub include_extensions: Option<bool>,
+}
+
+#[derive(Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RemotePluginMutationOperation { Enable, Disable, Uninstall }
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RemotePluginMutationRequest {
+    pub request_id: String,
+    pub expected_identity: ServiceIdentity,
+    pub profile: ServiceProfile,
+    pub plugin_id: String,
+    pub operation: RemotePluginMutationOperation,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemotePluginInventoryResponse {
+    pub request_id: String,
+    pub identity: ServiceIdentity,
+    pub plugins: Vec<Value>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemotePluginMutationResponse {
+    pub request_id: String,
+    pub identity: ServiceIdentity,
+    pub plugin_id: String,
+    pub operation: RemotePluginMutationOperation,
+    pub body: Value,
+    pub plugins: Option<Vec<Value>>,
+    pub verification: &'static str,
+    pub delivery: &'static str,
+    pub warning_code: Option<&'static str>,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountInstructionsResponse {
@@ -384,6 +429,147 @@ impl Drop for Registration<'_> {
 }
 
 impl ChatgptService {
+    pub async fn remote_plugin_inventory<F, Fut>(&self, request: RemotePluginInventoryRequest, call: F) -> ServiceResult<RemotePluginInventoryResponse>
+    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>> {
+        self.remote_plugin_inventory_with(request, call, &CurlTransport).await
+    }
+
+    async fn remote_plugin_inventory_with<F, Fut, T>(&self, request: RemotePluginInventoryRequest, call: F, transport: &T) -> ServiceResult<RemotePluginInventoryResponse>
+    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>>, T: Transport {
+        let registration = self.register(&request.request_id)?;
+        let plugins = self.remote_plugin_pages(&request.expected_identity, &request.profile, request.include_extensions.unwrap_or(true), &registration, &call, transport).await?;
+        self.check_share_current(&request.expected_identity, &registration)?;
+        Ok(RemotePluginInventoryResponse { request_id: request.request_id, identity: request.expected_identity, plugins })
+    }
+
+    pub async fn remote_plugin_mutation<F, Fut>(&self, request: RemotePluginMutationRequest, call: F) -> ServiceResult<RemotePluginMutationResponse>
+    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>> {
+        self.remote_plugin_mutation_with(request, call, &CurlTransport).await
+    }
+
+    async fn remote_plugin_mutation_with<F, Fut, T>(&self, request: RemotePluginMutationRequest, call: F, transport: &T) -> ServiceResult<RemotePluginMutationResponse>
+    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>>, T: Transport {
+        let encoded_id = encode_segment(&request.plugin_id)?;
+        let registration = self.register(&request.request_id)?;
+        let identity = &request.expected_identity;
+        let before = self.remote_plugin_pages(identity, &request.profile, true, &registration, &call, transport).await?;
+        let target = before.iter().find(|row| row["id"].as_str() == Some(request.plugin_id.as_str()))
+            .ok_or_else(|| failure("not_found", "Remote plugin is not in the installed inventory"))?;
+        validate_remote_plugin_mutation(target, request.operation)?;
+        self.check_share_current(identity, &registration)?;
+        let action = match request.operation { RemotePluginMutationOperation::Enable => "enable", RemotePluginMutationOperation::Disable => "disable", RemotePluginMutationOperation::Uninstall => "uninstall" };
+        let route = format!("/backend-api/ps/plugins/{encoded_id}/{action}");
+        let written = self.remote_plugin_http(&route, HttpMethod::Post, identity, &request.profile, &registration, &call, transport).await;
+        self.check_share_current(identity, &registration)?;
+        let (body, delivery, mut warning_code) = match written {
+            Ok(body) => (body, "accepted", None),
+            Err(error) if error.code == "plugin_write_unknown" => (Value::Null, "unknown", Some(error.code)),
+            Err(error) => return Err(error),
+        };
+        let read = self.remote_plugin_pages(identity, &request.profile, true, &registration, &call, transport).await;
+        self.check_share_current(identity, &registration)?;
+        let plugins = match read {
+            Ok(plugins) => Some(plugins),
+            Err(error) if matches!(error.code, "account_changed" | "cancelled") => return Err(error),
+            Err(_) => { warning_code = Some("plugin_readback_unavailable"); None },
+        };
+        let confirmed = plugins.as_ref().is_some_and(|rows| {
+            let saved = rows.iter().find(|row| row["id"].as_str() == Some(request.plugin_id.as_str()));
+            match request.operation {
+                RemotePluginMutationOperation::Enable => saved.is_some_and(|row| row["enabled"] == true),
+                RemotePluginMutationOperation::Disable => saved.is_some_and(|row| row["enabled"] == false),
+                RemotePluginMutationOperation::Uninstall => saved.is_none(),
+            }
+        });
+        Ok(RemotePluginMutationResponse { request_id: request.request_id, identity: identity.clone(), plugin_id: request.plugin_id, operation: request.operation, body, plugins,
+            verification: if confirmed { "confirmed" } else { "pending" }, delivery, warning_code })
+    }
+
+    async fn remote_plugin_pages<F, Fut, T>(&self, identity: &ServiceIdentity, profile: &ServiceProfile, include_extensions: bool,
+        registration: &Registration<'_>, call: &F, transport: &T) -> ServiceResult<Vec<Value>>
+    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>>, T: Transport {
+        let mut plugins = Vec::new();
+        let mut cursors = std::collections::HashSet::new();
+        let mut ids = std::collections::HashSet::new();
+        let mut cursor: Option<String> = None;
+        let mut total = 0usize;
+        loop {
+            self.check_share_current(identity, registration)?;
+            let mut url = tauri::Url::parse("https://chatgpt.com/backend-api/ps/plugins/installed").unwrap();
+            url.query_pairs_mut().append_pair("limit", "1000").append_pair("includeExtensions", if include_extensions { "true" } else { "false" });
+            if let Some(token) = &cursor { url.query_pairs_mut().append_pair("pageToken", token); }
+            let route = format!("{}?{}", url.path(), url.query().unwrap());
+            let body = self.remote_plugin_http(&route, HttpMethod::Get, identity, profile, registration, call, transport).await?;
+            total = total.saturating_add(serde_json::to_vec(&body).map_err(|_| failure("invalid_response", "Invalid plugin inventory"))?.len());
+            if total as u64 > MAX_RESPONSE { return Err(failure("response_too_large", "Remote plugin inventory exceeded transport limit")); }
+            let rows = body.get("plugins").and_then(Value::as_array).ok_or_else(|| failure("invalid_response", "Remote plugin inventory is incomplete"))?;
+            for row in rows {
+                validate_remote_plugin_row(row)?;
+                if !ids.insert(row["id"].as_str().unwrap().to_owned()) { return Err(failure("invalid_response", "Remote plugin inventory contains duplicate identifiers")); }
+                plugins.push(row.clone());
+            }
+            let page = body.get("pagination").and_then(Value::as_object).ok_or_else(|| failure("invalid_response", "Remote plugin pagination is missing"))?;
+            let next = page.get("next_page_token").ok_or_else(|| failure("invalid_response", "Remote plugin pagination is incomplete"))?;
+            match next {
+                Value::Null => break,
+                Value::String(token) if token.is_empty() => break,
+                Value::String(token) => {
+                    if token.len() > 16 * 1024 || token.chars().any(char::is_control) || !cursors.insert(token.clone()) {
+                        return Err(failure("invalid_response", "Remote plugin pagination cursor is invalid or repeated"));
+                    }
+                    cursor = Some(token.clone());
+                },
+                _ => return Err(failure("invalid_response", "Remote plugin pagination is invalid")),
+            }
+        }
+        self.check_share_current(identity, registration)?;
+        Ok(plugins)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn remote_plugin_http<F, Fut, T>(&self, route: &str, method: HttpMethod, identity: &ServiceIdentity, profile: &ServiceProfile,
+        registration: &Registration<'_>, call: &F, transport: &T) -> ServiceResult<Value>
+    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>>, T: Transport {
+        self.check_share_current(identity, registration)?;
+        let result = tokio::select! {
+            _ = cancelled(&registration.cancelled) => Err(failure("cancelled", "Remote plugin request cancelled; a sent mutation may already have applied")),
+            result = async {
+                let mut session = self.session.lock().await;
+                self.check_share_current(identity, registration)?;
+                self.prepare(&mut session, identity.generation, call, false).await?;
+                for attempt in 0..2 {
+                    self.check_share_current(identity, registration)?;
+                    let credentials = session.credentials.as_ref().unwrap();
+                    if &credentials.identity != identity { return Err(failure("account_changed", "Authenticated identity changed")); }
+                    let integrity = session.integrity.clone();
+                    let mut outgoing = build_http_request(route, credentials, integrity.as_deref(), profile)?;
+                    outgoing.method = method;
+                    outgoing.headers.insert("OAI-Product-Sku".into(), if method == HttpMethod::Post { "CONNECTOR_SETTING" } else { "CODEX" }.into());
+                    outgoing.headers.insert("X-Codex-Surface".into(), "other".into());
+                    share_network_allowed(call, &outgoing.url).await?;
+                    self.check_share_current(identity, registration)?;
+                    let response = send_bounded(transport, outgoing, registration.cancelled.clone(), Duration::from_secs(50)).await
+                        .map_err(|error| if method == HttpMethod::Post { failure("plugin_write_unknown", "Remote plugin mutation outcome is unknown; read before retrying") } else { error })?;
+                    self.check_share_current(identity, registration)?;
+                    apply_integrity(&mut session.integrity, integrity.as_deref(), response.headers.get("x-oai-is-update"));
+                    if account_instructions_ip_denied(&response) { return Err(ServiceError { code: "ip_not_authorized", message: "Current IP address is not authorized for this workspace", status: Some(401) }); }
+                    if response.status == 401 && attempt == 0 { self.prepare(&mut session, identity.generation, call, true).await?; continue; }
+                    if method == HttpMethod::Post {
+                        if response.status >= 500 || response.status == 408 { return Err(failure("plugin_write_unknown", "Remote plugin mutation outcome is unknown; read before retrying")); }
+                        if (200..300).contains(&response.status) {
+                            if response.status == 204 || response.body.is_empty() { return Ok(Value::Null); }
+                            return serde_json::from_slice(&response.body).map_err(|_| failure("plugin_write_unknown", "Remote plugin mutation returned invalid JSON; read before retrying"));
+                        }
+                    }
+                    return Ok(decode_response(response, registration.id.clone(), identity.clone())?.body);
+                }
+                unreachable!()
+            } => result,
+        };
+        self.check_share_current(identity, registration)?;
+        result
+    }
+
     pub async fn profile_mutation<F, Fut>(&self, request: ProfileMutationRequest, call: F) -> ServiceResult<ProfileMutationResponse>
     where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>> {
         self.profile_mutation_with(request, call, &CurlTransport).await
@@ -2321,6 +2507,53 @@ fn profile_moderation_error(response: &HttpResponse) -> Option<ServiceError> {
     Some(ServiceError { code, message, status:Some(response.status) })
 }
 
+fn validate_remote_plugin_row(row: &Value) -> ServiceResult<()> {
+    let object = row.as_object().ok_or_else(|| failure("invalid_response", "Invalid remote plugin row"))?;
+    for key in ["id", "name"] {
+        if !object.get(key).and_then(Value::as_str).is_some_and(|value| !value.is_empty()) {
+            return Err(failure("invalid_response", "Remote plugin row is missing its identity"));
+        }
+    }
+    if object.get("enabled").is_some_and(|value| !value.is_boolean()) {
+        return Err(failure("invalid_response", "Remote plugin enabled flag is invalid"));
+    }
+    for key in ["status", "installation_policy", "authentication_policy"] {
+        if object.get(key).is_some_and(|value| !value.is_null() && !value.is_string()) {
+            return Err(failure("invalid_response", "Remote plugin policy field is invalid"));
+        }
+    }
+    if object.get("release").is_some_and(|value| !value.is_null() && !value.is_object()) ||
+        object.get("eligible_plan_types").is_some_and(|value| !value.is_null() && !value.is_array()) {
+        return Err(failure("invalid_response", "Remote plugin metadata structure is invalid"));
+    }
+    Ok(())
+}
+
+fn validate_remote_plugin_mutation(row: &Value, operation: RemotePluginMutationOperation) -> ServiceResult<()> {
+    validate_remote_plugin_row(row)?;
+    if !row.get("enabled").is_some_and(Value::is_boolean) {
+        return Err(failure("forbidden", "Remote plugin is not installed"));
+    }
+    if let Some(policy) = row.get("installation_policy").filter(|value| !value.is_null()) {
+        if !matches!(policy.as_str(), Some("AVAILABLE" | "NOT_AVAILABLE" | "INSTALLED_BY_DEFAULT")) {
+            return Err(failure("forbidden", "Remote plugin installation policy is unsupported"));
+        }
+    }
+    if let Some(policy) = row.get("authentication_policy").filter(|value| !value.is_null()) {
+        if !matches!(policy.as_str(), Some("ON_INSTALL" | "ON_USE")) {
+            return Err(failure("forbidden", "Remote plugin authentication policy is unsupported"));
+        }
+    }
+    if matches!(operation, RemotePluginMutationOperation::Uninstall) {
+        if row["installation_policy"] == "INSTALLED_BY_DEFAULT" {
+            return Err(failure("forbidden", "Default-installed remote plugins cannot be uninstalled"));
+        }
+    } else if row["status"] == "DISABLED_BY_ADMIN" {
+        return Err(failure("forbidden", "Remote plugin is disabled by the administrator"));
+    }
+    Ok(())
+}
+
 fn profile_mutation_params(operation: ProfileMutationOperation, params: &Value) -> ServiceResult<Value> {
     let object = params.as_object().ok_or_else(|| failure("invalid_request", "Profile parameters must be an object"))?;
     if serde_json::to_vec(params).map_err(|_| failure("invalid_request", "Invalid profile request"))?.len() > 256 * 1024 {
@@ -3697,6 +3930,207 @@ mod tests {
 
     fn profile_request(operation: ProfileMutationOperation, params: Value) -> ProfileMutationRequest {
         ProfileMutationRequest { request_id:"profile-fixture".into(), expected_identity:identity(), profile:request("unused").profile, operation, params }
+    }
+
+    fn remote_plugin_request(operation: RemotePluginMutationOperation) -> RemotePluginMutationRequest {
+        RemotePluginMutationRequest { request_id: "remote-plugin-fixture".into(), expected_identity: identity(), profile: request("unused").profile,
+            plugin_id: "raw/id?中".into(), operation }
+    }
+
+    fn remote_inventory_request() -> RemotePluginInventoryRequest {
+        RemotePluginInventoryRequest { request_id: "remote-inventory-fixture".into(), expected_identity: identity(), profile: request("unused").profile, include_extensions: None }
+    }
+
+    fn remote_plugin(enabled: bool) -> Value {
+        json!({"id":"raw/id?中","name":"fixture-name","enabled":enabled,"status":"ENABLED","installation_policy":"AVAILABLE","authentication_policy":"ON_USE","unknown":{"preserve":true}})
+    }
+
+    fn remote_page(plugins: Vec<Value>, token: Option<&str>) -> Value {
+        json!({"plugins":plugins,"pagination":{"next_page_token":token}})
+    }
+
+    #[tokio::test]
+    async fn remote_plugin_inventory_is_complete_encoded_and_has_fixed_read_headers() {
+        let service = ChatgptService::default();
+        let first = remote_plugin(true);
+        let second = json!({"id":"second-id","name":"same display name","enabled":false});
+        let transport = instructions_transport(&[200,200], &[remote_page(vec![first.clone()],Some("opaque&?#/中")), remote_page(vec![second.clone()],None)]);
+        let result = service.remote_plugin_inventory_with(remote_inventory_request(), share_rpc, &transport).await.unwrap();
+        assert_eq!(result.plugins,vec![first,second]);
+        let calls = transport.requests.lock().unwrap(); assert_eq!(calls.len(),2);
+        assert_eq!(calls[0].url,"https://chatgpt.com/backend-api/ps/plugins/installed?limit=1000&includeExtensions=true");
+        assert_eq!(calls[1].url,"https://chatgpt.com/backend-api/ps/plugins/installed?limit=1000&includeExtensions=true&pageToken=opaque%26%3F%23%2F%E4%B8%AD");
+        for call in calls.iter() {
+            assert_eq!(call.method,HttpMethod::Get); assert!(call.body.is_empty());
+            assert_eq!(call.headers["OAI-Product-Sku"],"CODEX"); assert_eq!(call.headers["X-Codex-Surface"],"other");
+            assert_eq!(call.headers["ChatGPT-Account-Id"],"account-fixture");
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_plugin_inventory_rejects_bad_shapes_repeated_pages_and_partial_results() {
+        for body in [json!({}),json!({"plugins":[]}),json!({"plugins":[],"pagination":{"next_page_token":12}}),
+            remote_page(vec![json!({"id":"id","name":"name","enabled":null})],None),
+            remote_page(vec![json!({"id":"id","enabled":true})],None),
+            remote_page(vec![remote_plugin(true),remote_plugin(false)],None)] {
+            let service=ChatgptService::default(); let transport=instructions_transport(&[200],&[body]);
+            assert_eq!(service.remote_plugin_inventory_with(remote_inventory_request(),share_rpc,&transport).await.err().unwrap().code,"invalid_response");
+        }
+        let service=ChatgptService::default();
+        let transport=instructions_transport(&[200,200],&[remote_page(vec![],Some("repeat")),remote_page(vec![],Some("repeat"))]);
+        assert_eq!(service.remote_plugin_inventory_with(remote_inventory_request(),share_rpc,&transport).await.err().unwrap().code,"invalid_response");
+        assert_eq!(transport.requests.lock().unwrap().len(),2);
+        let service=ChatgptService::default();
+        let transport=instructions_transport(&[200,503],&[remote_page(vec![remote_plugin(true)],Some("second")),json!({})]);
+        assert!(service.remote_plugin_inventory_with(remote_inventory_request(),share_rpc,&transport).await.is_err());
+        let service=ChatgptService::default(); let transport=FakeTransport::new(&[200]);
+        transport.responses.lock().unwrap()[0].body.clear();
+        assert_eq!(service.remote_plugin_inventory_with(remote_inventory_request(),share_rpc,&transport).await.err().unwrap().code,"invalid_response","GET never inherits mutation empty-body tolerance");
+    }
+
+    #[tokio::test]
+    async fn remote_plugin_mutations_use_raw_identity_no_body_and_distinct_sku_with_empty_success() {
+        for (operation, suffix, after) in [
+            (RemotePluginMutationOperation::Enable,"enable",vec![remote_plugin(true)]),
+            (RemotePluginMutationOperation::Disable,"disable",vec![remote_plugin(false)]),
+            (RemotePluginMutationOperation::Uninstall,"uninstall",vec![]),
+        ] {
+            for status in [200,204] {
+                let service=ChatgptService::default();
+                let transport=instructions_transport(&[200,status,200],&[remote_page(vec![remote_plugin(false)],None),Value::Null,remote_page(after.clone(),None)]);
+                transport.responses.lock().unwrap()[1].body.clear();
+                let result=service.remote_plugin_mutation_with(remote_plugin_request(operation),share_rpc,&transport).await.unwrap();
+                assert_eq!(result.verification,"confirmed"); assert_eq!(result.delivery,"accepted"); assert!(result.body.is_null());
+                let calls=transport.requests.lock().unwrap(); assert_eq!(calls.len(),3);
+                assert_eq!(calls[1].url,format!("https://chatgpt.com/backend-api/ps/plugins/raw%2Fid%3F%E4%B8%AD/{suffix}"));
+                assert_eq!(calls[1].method,HttpMethod::Post); assert!(calls[1].body.is_empty()); assert!(!calls[1].headers.contains_key("Content-Type"));
+                assert_eq!(calls[1].headers["OAI-Product-Sku"],"CONNECTOR_SETTING"); assert_eq!(calls[1].headers["X-Codex-Surface"],"other");
+                assert_eq!(calls[2].headers["OAI-Product-Sku"],"CODEX");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_plugin_mutation_policy_uses_real_inventory_and_does_not_infer_ownership() {
+        for (operation, patch, allowed) in [
+            (RemotePluginMutationOperation::Enable,json!({"status":"DISABLED_BY_ADMIN"}),false),
+            (RemotePluginMutationOperation::Uninstall,json!({"installation_policy":"INSTALLED_BY_DEFAULT"}),false),
+            (RemotePluginMutationOperation::Enable,json!({"installation_policy":"INSTALLED_BY_DEFAULT"}),true),
+            (RemotePluginMutationOperation::Disable,json!({"creator_account_user_id":"different-user","scope":"workspace"}),true),
+            (RemotePluginMutationOperation::Enable,json!({"installation_policy":"FUTURE_POLICY"}),false),
+            (RemotePluginMutationOperation::Enable,json!({"authentication_policy":"FUTURE_AUTH"}),false),
+        ] {
+            let service=ChatgptService::default(); let mut row=remote_plugin(false);
+            row.as_object_mut().unwrap().extend(patch.as_object().unwrap().clone());
+            let after=match operation {RemotePluginMutationOperation::Disable=>remote_plugin(false),_=>remote_plugin(true)};
+            let transport=instructions_transport(&[200,200,200],&[remote_page(vec![row],None),json!({"any":"json"}),remote_page(vec![after],None)]);
+            let result=service.remote_plugin_mutation_with(remote_plugin_request(operation),share_rpc,&transport).await;
+            if allowed {assert_eq!(result.unwrap().verification,"confirmed");} else {assert_eq!(result.err().unwrap().code,"forbidden");}
+            assert_eq!(transport.requests.lock().unwrap().len(),if allowed {3}else{1});
+        }
+        let service=ChatgptService::default(); let transport=instructions_transport(&[200],&[remote_page(vec![],None)]);
+        assert_eq!(service.remote_plugin_mutation_with(remote_plugin_request(RemotePluginMutationOperation::Enable),share_rpc,&transport).await.err().unwrap().code,"not_found");
+    }
+
+    #[tokio::test]
+    async fn remote_plugin_unknown_write_and_readback_failures_never_replay_post() {
+        for (status, malformed) in [(200,true),(503,false)] {
+            let service=ChatgptService::default();
+            let transport=instructions_transport(&[200,status,200],&[remote_page(vec![remote_plugin(false)],None),json!({}),remote_page(vec![remote_plugin(true)],None)]);
+            if malformed {transport.responses.lock().unwrap()[1].body=b"not JSON".to_vec();}
+            let result=service.remote_plugin_mutation_with(remote_plugin_request(RemotePluginMutationOperation::Enable),share_rpc,&transport).await.unwrap();
+            assert_eq!(result.delivery,"unknown"); assert_eq!(result.verification,"confirmed","authoritative full readback confirms state independently of unknown delivery");
+            assert_eq!(transport.requests.lock().unwrap().iter().filter(|call|call.method==HttpMethod::Post).count(),1);
+        }
+        for (status, after) in [(200,remote_page(vec![remote_plugin(false)],None)),(503,json!({})),(200,json!({"plugins":[]}))] {
+            let service=ChatgptService::default();
+            let transport=instructions_transport(&[200,200,status],&[remote_page(vec![remote_plugin(false)],None),Value::Null,after]);
+            let result=service.remote_plugin_mutation_with(remote_plugin_request(RemotePluginMutationOperation::Enable),share_rpc,&transport).await.unwrap();
+            assert_eq!(result.verification,"pending"); assert_eq!(result.delivery,"accepted");
+            assert_eq!(transport.requests.lock().unwrap().iter().filter(|call|call.method==HttpMethod::Post).count(),1);
+        }
+        let service=ChatgptService::default();
+        let transport=instructions_transport(&[200,200,200,503],&[remote_page(vec![remote_plugin(false)],None),Value::Null,remote_page(vec![],Some("not-complete")),json!({})]);
+        assert_eq!(service.remote_plugin_mutation_with(remote_plugin_request(RemotePluginMutationOperation::Uninstall),share_rpc,&transport).await.unwrap().verification,"pending","missing later inventory page cannot prove uninstall");
+    }
+
+    #[tokio::test]
+    async fn remote_plugin_401_refresh_is_once_and_ip_or_definite_refusals_do_not_retry() {
+        for (status, ip) in [(401,false),(401,true),(403,false),(429,false)] {
+            let service=ChatgptService::default(); let refreshes=std::sync::atomic::AtomicUsize::new(0);
+            let rpc=|method,params:Value| {
+                if method=="getAuthStatus" && params.get("refreshToken")==Some(&Value::Bool(true)) {refreshes.fetch_add(1,Ordering::SeqCst);}
+                share_rpc(method,params)
+            };
+            let transport=instructions_transport(&[200,status,200,200],&[remote_page(vec![remote_plugin(false)],None),if ip {json!({"error":{"type":"ip_not_authorized"}})}else{json!({})},Value::Null,remote_page(vec![remote_plugin(true)],None)]);
+            let result=service.remote_plugin_mutation_with(remote_plugin_request(RemotePluginMutationOperation::Enable),rpc,&transport).await;
+            if status==401 && !ip {
+                assert_eq!(result.unwrap().verification,"confirmed"); assert_eq!(refreshes.load(Ordering::SeqCst),1);
+                assert_eq!(transport.requests.lock().unwrap().iter().filter(|call|call.method==HttpMethod::Post).count(),2);
+            } else {
+                assert!(result.is_err()); assert_eq!(refreshes.load(Ordering::SeqCst),0); assert_eq!(transport.requests.lock().unwrap().len(),2);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_plugin_network_delivery_is_unknown_and_recovery_only_reads() {
+        struct FailedPluginPost(FakeTransport);
+        impl Transport for FailedPluginPost {
+            fn send(&self, request: HttpRequest, cancel: Arc<AtomicBool>) -> TransportFuture<'_> {
+                if request.method == HttpMethod::Post {
+                    self.0.requests.lock().unwrap().push(request);
+                    Box::pin(async { Err(failure("network", "Controlled network interruption")) })
+                } else { self.0.send(request, cancel) }
+            }
+        }
+        for (after, verification) in [(true,"confirmed"),(false,"pending")] {
+            let service=ChatgptService::default();
+            let transport=FailedPluginPost(instructions_transport(&[200,200],&[remote_page(vec![remote_plugin(false)],None),remote_page(vec![remote_plugin(after)],None)]));
+            let result=service.remote_plugin_mutation_with(remote_plugin_request(RemotePluginMutationOperation::Enable),share_rpc,&transport).await.unwrap();
+            assert_eq!(result.delivery,"unknown"); assert_eq!(result.verification,verification);
+            let calls=transport.0.requests.lock().unwrap(); assert_eq!(calls.len(),3);
+            assert_eq!(calls.iter().filter(|call|call.method==HttpMethod::Post).count(),1);
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_plugin_second_401_or_changed_refreshed_identity_cannot_replay_again() {
+        let service=ChatgptService::default();
+        let transport=instructions_transport(&[200,401,401],&[remote_page(vec![remote_plugin(false)],None),Value::Null,Value::Null]);
+        assert_eq!(service.remote_plugin_mutation_with(remote_plugin_request(RemotePluginMutationOperation::Enable),share_rpc,&transport).await.err().unwrap().code,"unauthorized");
+        assert_eq!(transport.requests.lock().unwrap().len(),3);
+        let service=ChatgptService::default();
+        let transport=instructions_transport(&[200,401],&[remote_page(vec![remote_plugin(false)],None),Value::Null]);
+        let refreshed=AtomicBool::new(false);
+        let rpc=|method,params:Value| {
+            if params["refreshToken"]==true {refreshed.store(true,Ordering::SeqCst);}
+            if refreshed.load(Ordering::SeqCst) {
+                if method=="getAuthStatus" {return std::future::ready(Ok(auth(&token("another-account","user-fixture",u64::MAX/2))));}
+                if method=="account/read" {return std::future::ready(Ok(json!({"account":{"type":"chatgpt"},"workspaceRouting":{
+                    "backendOrigin":"https://chatgpt.com","chatgptAccountId":"another-account","accountRoutingOverride":"NO_CONSTRAINT"}})));}
+            }
+            share_rpc(method,params)
+        };
+        assert_eq!(service.remote_plugin_mutation_with(remote_plugin_request(RemotePluginMutationOperation::Enable),rpc,&transport).await.err().unwrap().code,"account_changed");
+        assert_eq!(transport.requests.lock().unwrap().len(),2,"new-account token must never replay the old-account POST");
+    }
+
+    #[tokio::test]
+    async fn remote_plugin_generation_and_cancel_after_send_prevent_followup_and_late_success() {
+        for invalidate in [false,true] {
+            let service=ChatgptService::default();
+            let mut transport=instructions_transport(&[200,200],&[remote_page(vec![remote_plugin(false)],None),Value::Null]);
+            transport.delay_ms=30; transport.reserve_response_on_send=true;
+            let mutation=service.remote_plugin_mutation_with(remote_plugin_request(RemotePluginMutationOperation::Enable),share_rpc,&transport);
+            let change=async {
+                while transport.requests.lock().unwrap().len()<2 {tokio::task::yield_now().await;}
+                if invalidate {service.invalidate();} else {service.cancel("remote-plugin-fixture");}
+            };
+            let result=tokio::join!(mutation,change).0;
+            assert_eq!(result.err().unwrap().code,if invalidate {"account_changed"}else{"cancelled"});
+            assert_eq!(transport.requests.lock().unwrap().len(),2); assert!(service.active.lock().unwrap().is_empty());
+        }
     }
 
     fn profile_identity_body() -> Value {

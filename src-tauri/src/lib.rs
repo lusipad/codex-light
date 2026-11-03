@@ -250,6 +250,36 @@ async fn chatgpt_service_read(
 }
 
 #[tauri::command]
+async fn remote_plugin_inventory(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: chatgpt_service::RemotePluginInventoryRequest,
+) -> Result<chatgpt_service::RemotePluginInventoryResponse, chatgpt_service::ServiceError> {
+    state.chatgpt_service.remote_plugin_inventory(request, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
+async fn remote_plugin_mutation(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: chatgpt_service::RemotePluginMutationRequest,
+) -> Result<chatgpt_service::RemotePluginMutationResponse, chatgpt_service::ServiceError> {
+    let _guard = app.state::<plugin_operations::PluginOperationState>().acquire_remote(&request.plugin_id)
+        .map_err(|_| chatgpt_service::ServiceError { code: "plugin_busy", status: None, message: "该插件正在执行另一项操作，请等待完成后重新读取状态" })?;
+    let result = state.chatgpt_service.remote_plugin_mutation(request, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await;
+    let _ = app.emit("plugin-management-changed", ());
+    result
+}
+
+#[tauri::command]
 async fn profile_mutation(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -1732,6 +1762,8 @@ pub fn run() {
             image_save::generated_image_save,
             chatgpt_service_identity,
             chatgpt_service_read,
+            remote_plugin_inventory,
+            remote_plugin_mutation,
             profile_mutation,
             account_instructions_read,
             account_instructions_write,

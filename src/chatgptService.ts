@@ -96,6 +96,39 @@ export interface ProfileMutationResult {
   readback: unknown;
 }
 
+export type RemotePluginOperation = "enable" | "disable" | "uninstall";
+export interface RemotePluginMutationResult {
+  pluginId: string; operation: RemotePluginOperation; body: unknown;
+  plugins: unknown[] | null; verification: "confirmed" | "pending";
+  delivery: "accepted" | "unknown"; warningCode: string | null;
+}
+
+export async function readRemotePluginInventory(identity: ServiceIdentity, signal: AbortSignal): Promise<unknown[]> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; plugins: unknown[] }>(
+    "remote_plugin_inventory", requestId,
+    { request: { requestId, expectedIdentity: identity, profile: browserProfile(), includeExtensions: true } }, signal,
+  );
+  responseBody({ ...result, body: null }, requestId, identity);
+  if (!Array.isArray(result.plugins)) throw Error("无法确认远程插件完整库存，请重新读取。");
+  return result.plugins;
+}
+
+export async function mutateRemotePlugin(
+  pluginId: string, operation: RemotePluginOperation, identity: ServiceIdentity, signal: AbortSignal,
+): Promise<RemotePluginMutationResult> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<RemotePluginMutationResult & { requestId: string; identity: ServiceIdentity }>(
+    "remote_plugin_mutation", requestId,
+    { request: { requestId, expectedIdentity: identity, profile: browserProfile(), pluginId, operation } }, signal,
+  );
+  responseBody(result, requestId, identity);
+  if (result.pluginId !== pluginId || result.operation !== operation ||
+    !["confirmed", "pending"].includes(result.verification) || !["accepted", "unknown"].includes(result.delivery) ||
+    (result.plugins !== null && !Array.isArray(result.plugins))) throw Error("无法确认远程插件变更结果，请先重新读取。");
+  return result;
+}
+
 export async function mutateAccountProfile(
   operation: "account_name" | "username_check" | "username" | "profile", params: Record<string, unknown>,
   identity: ServiceIdentity, signal: AbortSignal,
@@ -197,6 +230,9 @@ export function serviceErrorMessage(error: unknown): string {
     share_busy: "分享正在发布，请稍候。",
     network_policy_unavailable: "无法读取组织网络策略，请重试。",
     network_restricted: "组织网络策略不允许访问此目标。",
+    plugin_busy: "该插件正在执行另一项操作，请稍后重新读取。",
+    plugin_write_unknown: "无法确认插件变更是否已送达，请先只读核验，避免重复提交。",
+    plugin_readback_unavailable: "插件变更已提交，但完整库存读取失败，请只读核验。",
   };
   return (value?.code && messages[value.code]) || value?.message || "暂时无法读取服务，请重试。";
 }

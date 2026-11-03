@@ -101,3 +101,17 @@ initial dqr:4809139、mqr:4812482：POST固定路径 `/ps/plugins/{plugin_id}/en
 覆盖完整分页/重复cursor/坏JSON/空库存；raw id与复合id、同id CLI重复与同名不同id；双SKU、无POST body；200空/204空/合法JSON/非空坏JSON；禁启禁与默认卸载限制；401/IP拒绝/403/429/5xx/取消/旧身份；写成功但GET失败/滞后；uninstall缺页不假确认；local runtime刷新失败保留服务事实；账号切换清缓存但不删除CLI本地事实。
 
 受控transport只证明本项目合同；真实账号授权、服务最终响应样本、原生交互和配对像素需另验。无真实账号条件不自动POST、安装或卸载；阶段可交受控自验，但不能写远程服务已实测通过。
+
+## 9. 开发时快速补证：固定来源与缺失语义
+
+**remoteMarketplaceName精确为 `openai-curated-remote`。** EA的lo由initial导入shared.dSt，shared `iet:1693301` 初始化该字面量；不是根据raw.name、account或当前市场推测。UI复合id=`raw.name@openai-curated-remote`，remotePluginId=raw.id，service投影shareContext固定null。primary **vgn:1488127**去重优先级为 `remotePluginId ?? shareContext?.remotePluginId`，只在两者均nullish时改用本地marketplace+plugin.id；不得以空字符串当合法远程身份，也不得按显示名合并。
+
+EA缺失边界的原始表达式是 `n="enabled" in raw; installed=n; enabled=n&&raw.enabled`。因此enabled属性缺失会映射installed=false/false；属性为null会映射installed=true、enabled=null；非bool原mapper没有显式验证，不能据JavaScript truthy推断有效服务授权。本项目应将null/字符串/数字/坏结构视为unknown或invalid_response，禁止这类row的状态变更，不能静默变成true。
+
+`authentication_policy ?? "ON_USE"`、`installation_policy ?? "AVAILABLE"` **只对nullish缺失回退**；未知非空字符串原样透传。官方mapper不证明未知policy可编辑/卸载。本项目应保留未知原值并明确受限/解析错，不改写成已知开放策略。缺字段采用已证fallback时也不表示服务权限已全部确认；明确DISABLED_BY_ADMIN仍高优先级拒变更。未知raw.status被EA映射AVAILABLE是消费容错，不证明所有未来status都可放权。
+
+### remote_plugin 与当前CLI如何表达资格
+
+initial **UJn:3714569**原链：pg目录数据未取得→undefined；找到name===remote_plugin→返回该条enabled；缺条目时，仅 `!get(Eg,"4218407052")` 才返回真实Statsig Tg同gate，否则undefined。`Eg`条件不能无证解释成账号类型；这里未恢复其完整适用性，不擅自强开。现CLI可据完整 `experimentalFeature/list` 中真实remote_plugin.enabled得到已知值；没有条目且无可信Statsig evaluator，状态为unknown，不能由ChatGPT/API账号类型补true或false。
+
+这与sA总plugins开关不同：总plugins缺条目默认true；remote_plugin没有同样默认。HJn在OA本地库存select里用于过滤旧`openai-curated`来源；serviceHost分支d固定true。因此它也**不是已证远程HTTP endpoint通用授权开关**。不能把缺remote_plugin条目自动说成服务403或把所有已知remote库存标未登录。目录资格、宿主认证、真实row availability、HTTP拒绝分别处理，读取与变更资格不得混成一个accountType布尔。

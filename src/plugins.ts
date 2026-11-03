@@ -74,6 +74,8 @@ export interface PluginSummary {
   version?: string | null;
   localVersion?: string | null;
   remotePluginId?: string | null;
+  remoteServicePlugin?: Record<string, unknown>;
+  remotePolicyKnown?: boolean;
   source: PluginSource;
   installed: boolean;
   enabled: boolean;

@@ -6,7 +6,7 @@ import ts from "typescript";
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
 const plugin = { id: "tool@market", name: "Tool", installed: true, enabled: true, source: { type: "local", path: "C:/isolated/tool" }, installPolicy: "AVAILABLE", authPolicy: "ON_USE" };
 const market = { name: "market", path: "C:/isolated/market.json", plugins: [plugin] };
-function harness() {
+export function harness(options = {}) {
   let cursor = 0, slots = [], effects = [], scheduled = [], changed = false, tree, removal, updates = 0;
   let installed = { marketplaces: [market] }, markets = [{ marketplace: market, canUpgrade: true, readOnlyReason: null, sourceType: "git" }];
   let features = [{ name: "plugins", enabled: true }], featureRead = async () => features;
@@ -42,24 +42,27 @@ function harness() {
     pluginSourceLabel: () => "本地", pluginVersion: () => "", marketplaceDisplayName: item => item.name, marketplaceSourceLabel: () => "Git",
     countMarketplacePlugins: item => ({ total: item.plugins.length, installed: item.plugins.length, enabled: item.plugins.filter(plugin => plugin.enabled).length }),
     listInstalledPlugins: async () => { calls.push(["installed"]); return installed; },
-    listSkills: async () => ({ skills: [{ name: "Skill", path: "C:/isolated/skill", scope: "user", enabled: true, description: "skill" }] }), flattenSkills: result => result,
+    listSkills: async () => ({ data: [{ skills: [{ name: "Skill", path: "C:/isolated/skill", scope: "user", enabled: true, description: "skill" }], errors: [] }] }), flattenSkills: result => ({ skills: result.data.flatMap(item => item.skills) }),
     listApps: async () => ({ data: [{ id: "accessible", name: "Connected", isAccessible: true }, { id: "catalog", name: "Catalog", isAccessible: false }] }),
     upgradeMarketplace: async name => { calls.push(["upgrade", name]); return { selectedMarketplaces: [name], upgradedRoots: [], errors: [] }; },
   };
+  Object.assign(plugins, options.plugins);
   const bridge = { tauriInvoke: async method => method === "skills_list_local" ? [] : {}, callAppServer: async () => ({}), tauriListen: async (event, callback) => { events.set(event, callback); return () => events.delete(event); } };
   const window = { addEventListener: (name, callback) => windows.set(name, callback), removeEventListener: name => windows.delete(name), setTimeout: () => 1, clearTimeout() {} };
   const load = (file, imports) => {
     const exports = {};
     vm.runInNewContext(ts.transpileModule(fs.readFileSync(file, "utf8"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React, esModuleInterop: true } }).outputText,
-      { exports, require: name => name === "react" ? react : name.endsWith(".css") ? {} : imports[name], window, confirm: () => true, requestAnimationFrame: callback => frames.push(callback), console });
+      { exports, require: name => name === "react" ? react : name.endsWith(".css") ? {} : imports[name], window, AbortController, confirm: options.confirm ?? (() => true), requestAnimationFrame: callback => frames.push(callback), console });
     return exports;
   };
   const core = load("src/pluginManagementState.ts", { "./pluginManagement": client });
+  const remote = { loadRemotePlugins: async () => ({ identity: null, marketplace: null, error: null, unsupported: true }),
+    mergePluginInventories: cli => cli ?? { marketplaces: [] }, ...options.remote };
   const McpSettings = () => null;
   const { SkillsMcpView } = load("src/components/SkillsMcpView.tsx", { "lucide-react": new Proxy({}, { get: (_, name) => String(name) }), "../bridge": bridge, "../fsClient": {},
     "../config": { experimentalFeatureListAll: () => featureRead() }, "../mcpSettings": { readMcpSettings: async () => ({ entries: [{ name: "MCP" }] }) },
     "../pluginManagement": client, "../pluginManagementState": { ...core, useMarketplaceRemoval: (...args) => (removal = core.useMarketplaceRemoval(...args)) },
-    "../plugins": plugins, "./McpSettings": { McpSettings }, "./PluginPreparationPanel": {}, "./RecommendedSkillsPanel": {} });
+    "../plugins": plugins, "../remotePlugins": remote, "./McpSettings": { McpSettings }, "./PluginPreparationPanel": {}, "./RecommendedSkillsPanel": {} });
   const nodes = node => node && typeof node === "object" ? [node, ...(node.children || []).flatMap(nodes)] : [];
   const text = node => typeof node === "string" || typeof node === "number" ? String(node) : (node?.children || []).map(text).join("");
   const modal = { open: false, showModal() { this.open = true; }, close() { this.open = false; } };

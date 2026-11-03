@@ -29,7 +29,7 @@ function mount() {
     appsLoadedRef: { current: false }, skillScopeLabel: value => value,
     notify: (...args) => notices.push(args), confirm: () => true,
     workspaceCwds: () => ["A"], toViewError: error => ({ message: error.message }), errorSummary: error => error.message,
-    flattenSkills: result => ({ skills: result.data }), loadInstalledPlugins: async () => {}, loadManagement: async () => {}, loadApps: async () => {},
+    flattenSkills: result => ({ skills: result.data }), loadInstalledPlugins: async () => {}, loadServicePlugins: async () => {}, loadManagement: async () => {}, loadApps: async () => {},
   };
   for (const method of ["tauriInvoke", "callAppServer", "readFileText", "writeSkillEnabled", "listSkills"]) {
     context[method] = (...args) => { const pending = deferred(); requests.push({ method, args, ...pending }); return pending.promise; };
