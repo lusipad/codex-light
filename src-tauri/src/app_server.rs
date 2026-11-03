@@ -33,6 +33,8 @@ pub struct PendingServerRequest {
     pub params: Value,
     pub generation: u64,
     pub response_delivery_unknown: bool,
+    #[serde(default)]
+    pub notification_nonce: String,
 }
 
 struct InnerState {
@@ -451,20 +453,32 @@ impl AppServerManager {
         generation: u64,
         result: Option<Value>,
         error: Option<Value>,
+        notification_nonce: Option<String>,
     ) -> Result<(), String> {
         let mut guard = self.inner.lock().await;
         if guard.generation != generation {
             return Err("Approval belongs to a previous app-server connection".to_string());
         }
         let InnerState { stdin, pending_server_requests, .. } = &mut *guard;
+        validate_notification_nonce(pending_server_requests, &id, notification_nonce.as_deref())?;
+        let instance = pending_server_requests.get(&server_request_key(&id)).map(|request| request.notification_nonce.clone());
         write_server_response(pending_server_requests, stdin.as_mut(), &id, generation, result, error).await?;
-        let _ = app.emit("app-server:server-request-resolved", json!({ "id": id, "generation": generation }));
+        let _ = app.emit("app-server:server-request-resolved", json!({ "id": id, "generation": generation, "notificationNonce":instance }));
         Ok(())
     }
 }
 
 fn server_request_key(id: &Value) -> String {
     id.to_string()
+}
+
+fn validate_notification_nonce(pending: &HashMap<String, PendingServerRequest>, id: &Value, nonce: Option<&str>) -> Result<(), String> {
+    if let Some(nonce) = nonce {
+        if nonce.is_empty() || !pending.get(&server_request_key(id)).is_some_and(|request| request.notification_nonce == nonce) {
+            return Err("Notification approval belongs to an expired request instance".into());
+        }
+    }
+    Ok(())
 }
 
 async fn write_server_response<W: tokio::io::AsyncWrite + Unpin>(
@@ -551,6 +565,7 @@ async fn handle_incoming_message(
             params,
             generation,
             response_delivery_unknown: false,
+            notification_nonce: uuid::Uuid::new_v4().to_string(),
         };
         let req = guard
             .pending_server_requests
@@ -720,7 +735,19 @@ mod tests {
             id, method: "item/commandExecution/requestApproval".to_string(),
             params: json!({"threadId": "thread-a"}), generation: 2,
             response_delivery_unknown: false,
+            notification_nonce: "original-instance".into(),
         }
+    }
+
+    #[test]
+    fn notification_response_nonce_rejects_reused_id_before_writing() {
+        let mut pending = approvals();
+        assert!(validate_notification_nonce(&pending, &json!(7), Some("original-instance")).is_ok());
+        pending.get_mut(&server_request_key(&json!(7))).unwrap().notification_nonce = "new-instance".into();
+        assert!(validate_notification_nonce(&pending, &json!(7), Some("original-instance")).is_err());
+        assert!(validate_notification_nonce(&pending, &json!(7), Some("new-instance")).is_ok());
+        assert!(validate_notification_nonce(&pending, &json!("missing"), Some("original-instance")).is_err());
+        assert_eq!(pending.len(), 2);
     }
 
     fn approvals() -> HashMap<String, PendingServerRequest> {

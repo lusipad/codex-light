@@ -108,6 +108,11 @@ try {
   Invoke-Step "Appearance theme settings component regression" { node scripts/verify-appearance-theme-ui.mjs }
   Invoke-Step "Rust appearance configuration boundaries" { cargo test --manifest-path src-tauri/Cargo.toml appearance_preferences }
   Invoke-Step "Notification classification, persistence and dispatch regression" { node scripts/verify-notification-preferences.mjs }
+  Invoke-Step "Native notification routing and approval intents" { node scripts/verify-notification-delivery.mjs }
+  Invoke-Step "Windows notification adapter contracts" {
+    if ($IsWindows) { powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-desktop-notifications.ps1 -OutDir .ref/parity/16.04/actual/16-04B/native-standard -Test }
+  }
+  Invoke-Step "Rust notification preferences, audio and native identity contracts" { cargo test --manifest-path src-tauri/Cargo.toml notification --lib }
   Invoke-Step "Rust cross-window notification arbitration regression" {
     cargo test --manifest-path src-tauri/Cargo.toml notification_broker
   }
@@ -168,6 +173,7 @@ try {
   Invoke-Step "Search & command palette parity" { node scripts/verify-search-palette.mjs }
   Invoke-Step "Search command routing regression" { node scripts/verify-search-routing.mjs }
   Invoke-Step "Search cache and mode lifecycle regression" { node scripts/verify-search-lifecycle.mjs }
+  Invoke-Step "Search protocol completion ordering regression" { node scripts/verify-search-probe-completion.mjs }
   Invoke-Step "Fuzzy file session transport regression" { node scripts/verify-fuzzy-file-search.mjs }
   Invoke-Step "Activity & Inbox parity" { node scripts/verify-activity-inbox.mjs }
   Invoke-Step "Service-backed thread activity and menu regression" { node scripts/verify-thread-activity.mjs }
@@ -247,6 +253,7 @@ Invoke-Step "TypeScript typecheck (tsc --noEmit)" { npx tsc --noEmit }
       "scripts/protocol-verify/verify-agent-settings.mjs"
       "scripts/protocol-verify/verify-appearance-preferences.mjs"
       "scripts/protocol-verify/verify-keyboard-number-target.mjs"
+      "scripts/protocol-verify/verify-notification-preferences.mjs"
       "scripts/protocol-verify/verify-personal-instructions.mjs"
       "scripts/protocol-verify/verify-account-snapshot.mjs"
       "scripts/protocol-verify/verify-service-auth-support.mjs"

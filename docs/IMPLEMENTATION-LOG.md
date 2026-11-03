@@ -1735,3 +1735,9 @@ SettingsView不再读本地旧archivedThreads列表，直接复用ArchiveView和
 全Rust库279通过。首轮完整检查四项失败日志保留：三旧夹具补状态/改执行实际注册表与按键处理器后独立通过，搜索协议两次独立复跑通过但首败根因未定。最终完整标准含隔离协议和EXE/MSI/NSIS构建均退出0，238产品输入稳定；原始/焦点修复后快照独立保留。浏览器仅生产组件受控夹具，实际改Ctrl+Alt+J、焦点返回与sidebar编号展示不证明原生或像素。审查Files切换P2先红后绿修复并复核，复用真实activeKind；旧跨窗“误执行新聊天”推断撤回，不声称原生复现。见[16.03B](antigravity/acceptance/16-03B.md)。OS-global、完整服务目录、官方全侧栏/标签生命周期、真实双窗/IME/像素未完成，不记整分区验收。
 
 新Store自动更新为26.1027.3384只作为下一单元独立参考候选，旧16.03B固定静态来源仍保留。[16.04B](antigravity/specs/16-04-next-closure.md)已完成只读原包签名/BlockMap/消费者/音频与平台缺口调研，下一推进Windows通知点击/撤回与真实导入播放整链；未改产品或冒称原生服务已实现。
+
+## 2026-11-03：16.04B Windows通知、配置与音频功能增量
+
+先按新Store独立合同补证五项desktop物理配置、Windows生命周期/权限及固定48000Hz离线解码，再复用broker的全窗焦点/去重仲裁，接WinRT Tag/Group/事件/精确撤回与App账号/请求复核；正文点击仅导航，明确审批动作才回复。MSVC/Windows SDK通过限定JSON C ABI，无新依赖。声音导入真实PCM/RIFF、内容SHA命名、持久副本与读回，选择确认后单次试听、离页失效；未复制分发官方音资源，默认音依赖本机固定包且许可未解决。真实config版本写入/读回、跨窗、取消/失败保护与官方中文控件专项接通。
+
+PS5中文脚本首败已兼容修复；正文open误当审批与同连接复用请求ID均先红后绿，增加宿主nonce并在写入前重查。初次权限unknown修为真实只读Setting，禁用则suppressed不播声。最终全Rust290（4线程）、完整标准与EXE/MSI/NSIS退出0，244产品输入和原生构建helper指纹稳定；默认并发首次握手超时、三旧夹具、搜索探针完成先于最终结果的失败及修正均保留，见[16.04B](antigravity/acceptance/16-04B.md)。浏览器WAV真实重采样通过，其他宿主桥注入，不冒充原生声音/OS操作。OS中心实测、审批先导航差异、COM冷启动、only-QuickChat/身份清理、reply、Dot/远程服务和像素仍未完成。下一[16.05B](antigravity/specs/16-05-next-closure.md)修改前合同已准备，不把阶段提交当整页验收。

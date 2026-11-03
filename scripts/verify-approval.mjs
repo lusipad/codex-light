@@ -31,20 +31,28 @@ console.log("PASS thread scope, legacy conversation and typed generation identit
 const compile=(names,expression)=>new Function(...names,ts.transpileModule(`return (${expression});`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText);
 const declaration=(tree,name)=>{let expression;const find=node=>{if(ts.isVariableDeclaration(node)&&node.name.getText(tree)===name)expression=node.initializer;ts.forEachChild(node,find)};find(tree);assert.ok(expression,name);return expression};
 const response=declaration(ast,"submitServerResponse").arguments[0].getText(ast);
-const pending=[{...requests[0],responseDeliveryUnknown:false}];
+const pending=[{...requests[0],notificationNonce:"approval-first",responseDeliveryUnknown:false}];
 let rows=pending, states={}, writes=0, release, revision={current:0}, refreshes=0, refreshAvailable=true;
 const updating = update=>{rows=update(rows)};
 const flags=update=>{states=update(states)};
 const inFlight={current:new Set()};
 let invoke=()=>{writes++;return new Promise(resolve=>{release=resolve})};
-const handler=compile(["pendingRequestsRef","activeThreadIdRef","pendingRequestKey","requestThreadId","respondingRequestsRef","setRequestResponses","tauriInvoke","pendingRequestRevisionRef","setPendingRequests","refreshPendingRequests"],response)(
- {get current(){return rows}},{current:"a"},pendingRequestKey,requestThreadId,inFlight,flags,(...args)=>invoke(...args),revision,updating,async()=>{refreshes++;if(refreshAvailable)rows=rows.map(r=>({...r,responseDeliveryUnknown:false}))},
+const responseCalls=[],notificationHides=[];
+const invokeCommand=(command,args)=>{
+ if(command==="desktop_notification_hide") { notificationHides.push(args.id);return Promise.resolve(); }
+ assert.equal(command,"app_server_respond","only actual protocol response writes count toward duplicate protection");
+ responseCalls.push(args);return invoke(command,args);
+};
+const handler=compile(["pendingRequestsRef","activeThreadIdRef","pendingRequestKey","requestThreadId","respondingRequestsRef","setRequestResponses","tauriInvoke","pendingRequestRevisionRef","setPendingRequests","refreshPendingRequests","notificationRequestCategory","showAppToast"],response)(
+ {get current(){return rows}},{current:"a"},pendingRequestKey,requestThreadId,inFlight,flags,invokeCommand,revision,updating,async()=>{refreshes++;if(refreshAvailable)rows=rows.map(r=>({...r,responseDeliveryUnknown:false}))},
+ ()=>"permission",message=>{throw Error(message)},
 );
 const first=handler(1,1,{decision:"accept"},null);
 assert.equal(rows.length,1,"pending card must remain until write completes");
 assert.equal(states[pendingRequestKey(rows[0])].sending,true);
 await handler(1,1,{decision:"decline"},null);assert.equal(writes,1,"pending duplicate blocked");
 release();await first;assert.equal(rows.length,0);assert.equal(inFlight.current.size,0);
+assert.deepEqual(notificationHides,["permission-1:number:1-approval-first"],"successful response retracts its exact nonce notification");
 rows=pending;invoke=async()=>{writes++;throw Error("no stdin")};
 await handler(1,1,{decision:"accept"},null);
 assert.equal(rows.length,1);assert.match(states[pendingRequestKey(rows[0])].error,/no stdin/);assert.equal(refreshes,1);
@@ -53,6 +61,12 @@ refreshAvailable=false;await handler(1,1,{},null);assert.equal(rows[0].responseD
 const before=writes;rows=[{...pending[0],responseDeliveryUnknown:true}];await handler(1,1,{},null);assert.equal(writes,before);
 rows=[{...pending[0],params:{threadId:"b"}}];await handler(1,1,{},null);assert.equal(writes,before);
 rows=pending;await handler(1,0,{},null);assert.equal(writes,before);
+await handler(1,1,{},null,"approval-old");assert.equal(writes,before,"stale nonce cannot respond to a reused id/generation");
+invoke=async()=>{writes++};
+await handler(1,1,{decision:"accept"},null,"approval-first");
+assert.equal(writes,before+1,"matching nonce retains the real response path");
+assert.equal(responseCalls.at(-1).notificationNonce,"approval-first","native action nonce reaches the backend guard");
+assert.equal(rows.length,0);
 console.log("PASS actual App response waits, blocks duplicates, preserves failure and rejects stale/unknown/background actions");
 
 const refresh=declaration(ast,"refreshPendingRequests").arguments[0].getText(ast);

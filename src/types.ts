@@ -18,6 +18,7 @@ export interface PendingServerRequest {
   params: any;
   generation: number;
   responseDeliveryUnknown: boolean;
+  notificationNonce?: string;
 }
 
 export interface WorkspaceRootItem {

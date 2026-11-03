@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { tauriInvoke } from "./bridge";
-import type { NotificationSoundTheme } from "./types";
+import { tauriInvoke, tauriListen } from "./bridge";
 
 export const NOTIFICATION_DEFAULTS = {
   "notifications-turn-mode": "unfocused" as "off" | "unfocused" | "always",
@@ -26,10 +25,6 @@ export function normalizeNotificationValue<K extends NotificationKey>(key: K, va
   return (typeof value === "boolean" ? value : true) as NotificationPreferences[K];
 }
 
-export function notificationSoundTheme(sound: NotificationSound): NotificationSoundTheme | null {
-  return typeof sound === "string" ? sound.toLowerCase() as NotificationSoundTheme : null;
-}
-
 export function notificationRequestCategory(request: { method: string; params?: any }): "permission" | "question" {
   return /requestUserInput|ask_user/.test(request.method) || Array.isArray(request.params?.questions)
     ? "question" : "permission";
@@ -42,7 +37,7 @@ export function shouldNotifyTurn(params: any): boolean {
 }
 
 export type NotificationCategory = "turn" | "permission" | "question" | "dot";
-type NotificationEvent = { id: string; category: NotificationCategory; title: string; body: string; threadId?: string; valid?: () => boolean };
+export type NotificationEvent = { id: string; category: NotificationCategory; title: string; body: string; threadId?: string; requestId?: string; requestNonce?: string; createdAt?: number; accountKey?: string; actions?: Array<{id: string; title: string}>; valid?: () => boolean };
 export function shouldNotify(preferences: NotificationPreferences, category: NotificationCategory, focused: boolean, visible: boolean): boolean {
   if (category === "turn") return preferences["notifications-turn-mode"] !== "off" &&
     (preferences["notifications-turn-mode"] === "always" || !focused);
@@ -55,15 +50,16 @@ export function createNotificationDispatcher(dependencies: {
   preferences: () => NotificationPreferences;
   focused: () => boolean;
   visible: (threadId?: string) => boolean;
-  send: (title: string, body: string) => Promise<unknown>;
-  play: (sound: NotificationSound, kind: "done" | "nudge") => void;
+  send: (title: string, body: string, event: NotificationEvent) => Promise<unknown>;
+  play: (sound: NotificationSound, kind: "done" | "nudge") => void | Promise<void>;
   onError: (error: unknown) => void;
   nativeClaim?: (event: NotificationEvent) => Promise<{ sound: NotificationSound } | null>;
 }) {
   const delivered = new Set<string>();
   return async (event: NotificationEvent) => {
-    if (delivered.has(event.id)) return;
-    delivered.add(event.id);
+    const identity = JSON.stringify([event.accountKey ?? null, event.id]);
+    if (delivered.has(identity)) return;
+    delivered.add(identity);
     if (delivered.size > 1000) delivered.delete(delivered.values().next().value!);
     // 请求可能在同一事件批次内解决；发送前重新检查当前状态和焦点。
     await Promise.resolve();
@@ -80,9 +76,13 @@ export function createNotificationDispatcher(dependencies: {
       if (!shouldNotify(preferences, event.category, dependencies.focused(), dependencies.visible(event.threadId))) return;
       sound = preferences["notifications-sound"];
     }
-    try { dependencies.play(sound, event.category === "turn" ? "done" : "nudge"); }
-    catch (error) { dependencies.onError(error); }
-    try { await dependencies.send(event.title, event.body); }
+    try {
+      const result = await dependencies.send(event.title, event.body, event);
+      if (result && typeof result === "object" && "status" in result && result.status === "suppressed") return;
+    }
+    catch (error) { dependencies.onError(error); return; }
+    if (event.valid?.() === false) return;
+    try { await dependencies.play(sound, event.category === "turn" ? "done" : "nudge"); }
     catch (error) { dependencies.onError(error); }
   };
 }
@@ -96,10 +96,13 @@ export function useNotificationPreferences() {
   const current = useRef(preferences);
   const pending = useRef(true);
   const alive = useRef(true);
+  const refreshAfterSave = useRef(false);
   current.current = preferences;
   const read = async () => {
-    const entries = await Promise.all((Object.keys(NOTIFICATION_DEFAULTS) as NotificationKey[]).map(async key =>
-      [key, normalizeNotificationValue(key, await tauriInvoke("desktop_state_get", { key }))] as const));
+    const result = await tauriInvoke<Record<string, unknown>>("notification_preferences_read", {});
+    if (!result || typeof result !== "object" || Array.isArray(result)) throw Error("通知设置响应无效");
+    const entries = (Object.keys(NOTIFICATION_DEFAULTS) as NotificationKey[]).map(key =>
+      [key, normalizeNotificationValue(key, result[key])] as const);
     return Object.fromEntries(entries) as NotificationPreferences;
   };
   useEffect(() => {
@@ -107,28 +110,46 @@ export function useNotificationPreferences() {
     alive.current = true; pending.current = true; setBusy(true); setReady(false); setError(null);
     read().then(value => { if (!cancelled) { current.current = value; setPreferences(value); setReady(true); } })
       .catch(reason => { if (!cancelled) setError(`读取通知设置失败：${String(reason)}`); })
-      .finally(() => { if (!cancelled) { pending.current = false; setBusy(false); } });
+      .finally(() => { if (!cancelled) {
+        pending.current = false; setBusy(false);
+        if (refreshAfterSave.current) { refreshAfterSave.current = false; setRefresh(value => value + 1); }
+      } });
     return () => { cancelled = true; alive.current = false; };
   }, [refresh]);
+  useEffect(() => {
+    let disposed = false;
+    const off = tauriListen("notification-preferences-changed", () => {
+      if (disposed) return;
+      if (pending.current) refreshAfterSave.current = true;
+      else setRefresh(value => value + 1);
+    });
+    off.catch(reason => { if (!disposed) setError(`订阅通知设置失败：${String(reason)}`); });
+    return () => { disposed = true; off.then(stop => stop()).catch(() => {}); };
+  }, []);
   const save = useCallback(async <K extends NotificationKey>(key: K, value: NotificationPreferences[K]): Promise<boolean> => {
     if (pending.current || JSON.stringify(normalizeNotificationValue(key, value)) !== JSON.stringify(value)) return false;
     pending.current = true; setBusy(true); setError(null);
-    const previous = current.current;
-    const next = { ...previous, [key]: value };
-    current.current = next; setPreferences(next);
     let written = false;
     try {
-      await tauriInvoke("desktop_state_set", { key, value }); written = true;
-      const result = await tauriInvoke("desktop_state_get", { key });
-      if (JSON.stringify(result) !== JSON.stringify(value)) throw Error("通知设置读回不一致");
+      await tauriInvoke("notification_preference_write", { key, value }); written = true;
+      const result = await read();
+      if (JSON.stringify(result[key]) !== JSON.stringify(value)) throw Error("通知设置读回不一致");
+      if (!alive.current) return false;
+      current.current = result; setPreferences(result); setReady(true);
       return true;
     } catch (reason) {
       if (alive.current) {
-        if (!written) { current.current = previous; setPreferences(previous); }
+        if (written) setReady(false);
         setError(`${written ? "已保存，但读取确认失败" : "保存通知设置失败"}：${String(reason)}`);
       }
-      return written;
-    } finally { pending.current = false; if (alive.current) setBusy(false); }
+      return false;
+    } finally {
+      pending.current = false;
+      if (alive.current) {
+        setBusy(false);
+        if (refreshAfterSave.current) { refreshAfterSave.current = false; setRefresh(value => value + 1); }
+      }
+    }
   }, []);
   return { preferences, current, busy, ready, error, save, reload: () => { if (!pending.current) setRefresh(value => value + 1); } };
 }

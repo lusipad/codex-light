@@ -61,16 +61,33 @@ const offA = mountWatch("thread-a"), offB = mountWatch("thread-b");
 assert.notEqual(watches[0][1], watches[1][1]); offA(); offB();
 assert.equal(watches[0][1], watches[2][1]); assert.equal(watches[1][1], watches[3][1]);
 
+const notificationProtocol = {}, notificationActions = {};
+const moduleCode = file => ts.transpileModule(fs.readFileSync(file, "utf8"), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+}).outputText;
+vm.runInNewContext(moduleCode("src/protocol.ts"), { exports: notificationProtocol });
+vm.runInNewContext(moduleCode("src/notificationActions.ts"), { exports: notificationActions, require: () => notificationProtocol });
 for (const child of [false, true]) {
   let pending = [], inbox = 0, notifications = 0;
+  let notification;
+  const pendingRequestsRef = { current: [] };
   const handler = vm.runInNewContext(compile(listeners.get("app-server:server-request")), {
-    isThreadWindow: child, isQuickChatWindow: false, pendingRequestRevisionRef: { current: 0 }, pendingRequestsRef: { current: [] },
+    isThreadWindow: child, isQuickChatWindow: false, pendingRequestRevisionRef: { current: 0 }, pendingRequestsRef,
     setPendingRequests: value => { pending = value; }, pendingRequestKey: request => `${request.generation}:${request.id}`,
-    setInboxItems: () => inbox++, notify: () => notifications++, notificationRequestCategory: () => "permission",
+    setInboxItems: () => inbox++, notify: event => { notifications++; notification = event; }, notificationRequestCategory: () => "permission",
     requestThreadId: request => request.params.threadId,
+    notificationApprovalActions: notificationActions.notificationApprovalActions,
+    notificationContextRef: { current: { ready: true } },
   });
-  handler({ id: 7, generation: 2, params: { threadId: "thread-123" } });
+  const request = { id: 7, generation: 2, notificationNonce: "request-first", method: "item/commandExecution/requestApproval", params: { threadId: "thread-123" } };
+  handler(request);
   assert.equal(pending.length, 1); assert.equal(inbox, child ? 0 : 1); assert.equal(notifications, 1);
+  assert.equal(notification.requestNonce, request.notificationNonce);
+  assert.equal(notification.id, "permission-2:7-request-first");
+  assert.deepEqual(Array.from(notification.actions, action => action.id), ["approve", "approve-for-session", "decline"]);
+  assert.equal(notification.valid(), true);
+  pendingRequestsRef.current = [{ ...request, notificationNonce: "request-reused" }];
+  assert.equal(notification.valid(), false, "replacement with same id/generation must invalidate the old notification");
 }
 const key = declarations.get("promptStorageKey").getText(ast);
 const draftKey = id => vm.runInNewContext(compile(key), { isQuickChatWindow: false, threadWindowId: id });

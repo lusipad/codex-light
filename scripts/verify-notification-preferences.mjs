@@ -8,6 +8,7 @@ const compile = source => ts.transpileModule(source, {
 }).outputText;
 const hooks = [], effects = [];
 let cursor = 0, invoke = async () => null;
+const preferenceListeners = new Set();
 const react = {
   createElement: (tag, props, ...children) => ({ tag, props: props ?? {}, children: children.flat(Infinity) }),
   useState(initial) {
@@ -27,7 +28,7 @@ const react = {
 };
 const mod = { exports: {} };
 vm.runInNewContext(compile(fs.readFileSync("src/notificationPreferences.ts", "utf8")), {
-  exports: mod.exports, require: name => name === "react" ? react : { tauriInvoke: (...args) => invoke(...args) },
+  exports: mod.exports, require: name => name === "react" ? react : { tauriInvoke: (...args) => invoke(...args), tauriListen: async (name, callback) => { assert.equal(name, "notification-preferences-changed"); preferenceListeners.add(callback); return () => preferenceListeners.delete(callback); } },
 });
 const {
   NOTIFICATION_DEFAULTS: defaults, normalizeNotificationValue: normalize, shouldNotify,
@@ -128,67 +129,100 @@ const render = () => {
   return state;
 };
 const flush = () => new Promise(setImmediate);
+const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
+const unmount = async () => { for (const hook of hooks) hook?.cleanup?.(); await flush(); };
+const reset = async () => { await unmount(); hooks.length = 0; effects.length = 0; assert.equal(preferenceListeners.size, 0, "old subscriptions released"); };
+const changed = () => { for (const listener of preferenceListeners) listener(); };
 const store = { ...defaults }, calls = [];
 invoke = () => new Promise(() => {});
 let state = render();
 assert.equal(await state.save("notifications-turn-mode", "always"), false, "initial read blocks writes");
-// Restart a clean harness so all five in-flight reads can complete deterministically.
-for (const hook of hooks) hook?.cleanup?.();
-hooks.length = 0;
-invoke = async (method, args) => {
+await reset();
+const normalInvoke = async (method, args) => {
   calls.push([method, args]);
-  if (method === "desktop_state_set") store[args.key] = args.value;
-  return store[args.key];
+  if (method === "notification_preference_write") { store[args.key] = args.value; return; }
+  assert.equal(method, "notification_preferences_read");
+  return { ...store };
 };
+invoke = normalInvoke;
 state = render(); await flush(); state = render();
 assert.equal(state.ready, true);
-await state.save("notifications-turn-mode", "off"); state = render();
+assert.equal(await state.save("notifications-turn-mode", "off"), true); state = render();
 assert.equal(state.preferences["notifications-turn-mode"], "off");
-assert.ok(calls.some(([method, args]) => method === "desktop_state_set" && args.key === "notifications-turn-mode"));
+assert.ok(calls.some(([method, args]) => method === "notification_preference_write" && args.key === "notifications-turn-mode"));
 invoke = async () => { throw Error("disk denied"); };
 assert.equal(await state.save("notifications-turn-mode", "always"), false);
 state = render(); assert.equal(state.preferences["notifications-turn-mode"], "off"); assert.match(state.error, /保存通知设置失败/);
 invoke = async (method, args) => {
-  if (method === "desktop_state_set") { store[args.key] = args.value; return; }
+  if (method === "notification_preference_write") { store[args.key] = args.value; return; }
   throw Error("readback unavailable");
 };
-assert.equal(await state.save("notifications-sound", "none"), true);
-state = render(); assert.equal(state.preferences["notifications-sound"], "none"); assert.match(state.error, /已保存，但读取确认失败/);
-invoke = async (_, args) => store[args.key];
+assert.equal(await state.save("notifications-sound", "none"), false, "unconfirmed write cannot report success");
+state = render(); assert.equal(state.preferences["notifications-sound"], "default", "unconfirmed value is not activated");
+assert.equal(state.ready, false); assert.match(state.error, /已保存，但读取确认失败/);
+invoke = normalInvoke;
 state.reload(); state = render(); await flush(); state = render();
-assert.equal(state.error, null); assert.equal(state.preferences["notifications-turn-mode"], "off");
+assert.equal(state.error, null); assert.equal(state.ready, true);
+assert.equal(state.preferences["notifications-sound"], "none", "retry reads actual persisted value");
+assert.equal(state.preferences["notifications-turn-mode"], "off");
 let rejectWrite;
 invoke = () => new Promise((_, reject) => { rejectWrite = reject; });
 const writing = state.save("notifications-questions-enabled", false);
 assert.equal(await state.save("notifications-turn-mode", "always"), false, "concurrent save blocked");
 rejectWrite(Error("denied")); await writing;
 state = render(); assert.equal(state.preferences["notifications-questions-enabled"], true);
-console.log("PASS NT05: production hook read/write/readback, rollback, partial success, retry and concurrent save guard");
 
-const componentMod = { exports: {} };
-const previews = [], saves = [];
-vm.runInNewContext(compile(fs.readFileSync("src/components/NotificationSettings.tsx", "utf8")), {
-  exports: componentMod.exports, require: name => name === "react" ? react : name.includes("notificationPreferences")
-    ? mod.exports : name.includes("sound") ? { playNotificationChime: (...args) => previews.push(args) }
-      : { tauriInvoke: (...args) => invoke(...args) },
-});
-cursor = 0;
-const tree = componentMod.exports.NotificationSettings({ state: {
-  ...state, preferences: defaults, busy: false, save: (...args) => { saves.push(args); },
-} });
-const nodes = [];
-function walk(node) { if (!node || typeof node !== "object") return; nodes.push(node); node.children?.forEach(walk); }
-walk(tree);
-nodes.find(node => node.props.id === "notification-turn-mode").props.onChange({ target: { value: "always" } });
-nodes.find(node => node.props.id === "notifications-questions-enabled").props.onChange({ target: { checked: false } });
-nodes.find(node => node.props.id === "notifications-sound").props.onChange({ target: { value: "none" } });
-assert.deepEqual(saves, [["notifications-turn-mode", "always"], ["notifications-questions-enabled", false], ["notifications-sound", "none"]]);
-nodes.find(node => node.children.includes("试听声音")).props.onClick(); assert.equal(previews.length, 1);
-let tested = false; invoke = async method => { tested = method === "show_desktop_notification"; };
-await nodes.find(node => node.children.includes("发送测试通知")).props.onClick(); assert.equal(tested, true);
-console.log("PASS NT06: production settings JSX change, preview and native test-notification callbacks");
+// A change arriving during the first read must be consumed when that read settles.
+await reset();
+const firstRead = deferred(); let reads = 0;
+invoke = async method => { assert.equal(method, "notification_preferences_read"); return ++reads === 1 ? firstRead.promise : { ...store, "notifications-dot-enabled": false }; };
+state = render(); changed(); firstRead.resolve({ ...defaults }); await flush();
+state = render(); await flush(); state = render();
+assert.equal(reads, 2, "initial-read change schedules a second real read");
+assert.equal(state.preferences["notifications-dot-enabled"], false);
+
+// A foreign change while writing is read after write confirmation, not dropped.
+const writeGate = deferred(); reads = 0;
+invoke = async (method, args) => {
+  if (method === "notification_preference_write") { await writeGate.promise; store[args.key] = args.value; return; }
+  assert.equal(method, "notification_preferences_read"); reads++; return { ...store, "notifications-dot-enabled": false };
+};
+const saving = state.save("notifications-questions-enabled", false); changed();
+writeGate.resolve(); assert.equal(await saving, true);
+state = render(); await flush(); state = render();
+assert.equal(reads, 2, "write confirmation plus queued cross-window refresh");
+assert.equal(state.preferences["notifications-questions-enabled"], false);
+assert.equal(state.preferences["notifications-dot-enabled"], false);
+
+// Readback mismatch is a failed confirmation, even when the host accepted writing.
+invoke = async method => method === "notification_preference_write" ? undefined : { ...store, "notifications-turn-mode": "off" };
+assert.equal(await state.save("notifications-turn-mode", "always"), false);
+state = render(); assert.equal(state.ready, false);
+assert.equal(state.preferences["notifications-turn-mode"], "off"); assert.match(state.error, /读回不一致/);
+
+// Both initial reads and writes must ignore late completions after leaving the page.
+await reset(); const lateRead = deferred(); invoke = () => lateRead.promise;
+state = render(); await unmount(); lateRead.resolve({ ...defaults, "notifications-turn-mode": "always" }); await flush();
+state = render(); assert.equal(state.ready, false); assert.equal(state.preferences["notifications-turn-mode"], "unfocused");
+await reset(); invoke = normalInvoke; state = render(); await flush(); state = render();
+const beforeLate = state.preferences, lateWrite = deferred();
+invoke = async method => method === "notification_preference_write" ? lateWrite.promise : { ...store, "notifications-turn-mode": "always" };
+const left = state.save("notifications-turn-mode", "always"); await unmount(); lateWrite.resolve();
+assert.equal(await left, false); state = render(); assert.equal(state.preferences, beforeLate);
+assert.equal(preferenceListeners.size, 0);
+console.log("PASS NT05: production config read/write/readback, confirmation failure, retry, concurrent guard, cross-window read/write races and late-unmount protection");
+
+// NT06 now executes the dedicated production JSX replay rather than duplicating it.
+await import("./verify-notification-settings-ui.mjs");
+console.log("PASS NT06: retained production controls/save/preview coverage plus permission, import, focus and failure replay; unsupported test-notification button is explicitly absent");
 
 const appSource = fs.readFileSync("src/App.tsx", "utf8");
+const protocolModule = { exports: {} }, actionModule = { exports: {} };
+vm.runInNewContext(compile(fs.readFileSync("src/protocol.ts", "utf8")), { exports: protocolModule.exports });
+vm.runInNewContext(compile(fs.readFileSync("src/notificationActions.ts", "utf8")), {
+  exports: actionModule.exports, require: () => protocolModule.exports,
+});
+const { notificationApprovalActions } = actionModule.exports;
 const appAst = ts.createSourceFile("App.tsx", appSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 let requestListener;
 function findListener(node) {
@@ -203,16 +237,19 @@ const listener = vm.runInNewContext(compile(`(${requestListener.getText(appAst)}
   pendingRequestRevisionRef: { current: 0 }, pendingRequestsRef: pendingRef,
   setPendingRequests: value => { pendingRef.current = value; }, setInboxItems: () => {},
   pendingRequestKey, requestThreadId: req => req.params?.threadId,
-  notificationRequestCategory, notificationContextRef: { current: { ready: true } }, notify: event => notified.push(event),
+  notificationRequestCategory, notificationApprovalActions, notificationContextRef: { current: { ready: true } }, notify: event => notified.push(event),
   isThreadWindow: false, isQuickChatWindow: false,
 });
 listener({ id: 1, generation: 1, method: "item/tool/requestUserInput", params: { threadId: "background" } });
 assert.equal(notified[0].category, "question"); assert.equal(notified[0].threadId, "background");
+assert.equal(notified[0].actions, undefined, "questions cannot invent command approval buttons");
 assert.doesNotMatch(notified[0].body, /requestUserInput|ask_user/);
 assert.equal(notified[0].valid(), true);
 pendingRef.current = []; assert.equal(notified[0].valid(), false, "resolved request invalidates the real App event");
-listener({ id: 1, generation: 2, method: "item/commandExecution/requestApproval", params: { threadId: "background" } });
+listener({ id: 1, generation: 2, notificationNonce: "request-instance", method: "item/commandExecution/requestApproval", params: { threadId: "background" } });
 assert.equal(notified[1].category, "permission"); assert.notEqual(notified[0].id, notified[1].id);
+assert.deepEqual(Array.from(notified[1].actions, action => action.id), ["approve", "approve-for-session", "decline"]);
+assert.equal(notified[1].requestId, pendingRequestKey({ id: 1, generation: 2 }));
 assert.doesNotMatch(notified[1].body, /requestApproval/);
 assert.doesNotMatch(appSource, /notifyPrefsRef|notifyChime|sendDesktopNotification/);
 console.log("PASS NT07: production server-request handler classifies, scopes, rechecks validity and preserves generation identity");
@@ -233,14 +270,21 @@ for (const windowKind of ["main", "thread", "quick"]) {
   let inboxWrites = 0, toasts = 0;
   const options = vm.runInNewContext(compile(`(${nativeOptionsNode.getText(appAst)})`), {
     tauriInvoke: async (method, args) => { nativeCalls.push([method, args]); return { sound: "none" }; },
-    showAppToast: () => {}, notificationSoundTheme: () => null,
+    showAppToast: () => {}, playNotificationChime: () => {},
   });
-  await options.nativeClaim({ ...event("app-host-claim"), threadId: "t" });
+  await options.nativeClaim({ ...event("app-host-claim"), threadId: "t", accountKey: "epoch" });
   assert.equal(nativeCalls[0][0], "notification_claim");
-  assert.equal(nativeCalls[0][1].eventId, "app-host-claim");
+  assert.deepEqual(JSON.parse(nativeCalls[0][1].eventId), ["epoch", "app-host-claim"]);
   assert.equal(nativeCalls[0][1].threadId, "t");
-  await options.send("title", "body");
-  assert.equal(nativeCalls[1][0], "show_desktop_notification");
+  await options.send("title", "body", { ...event("app-delivery"), threadId: "t", category: "permission", requestId: "g/r", accountKey: "account", createdAt: 42 });
+  assert.equal(nativeCalls[1][0], "desktop_notification_show");
+  assert.equal(nativeCalls[1][1].payload.threadId, "t");
+  assert.equal(nativeCalls[1][1].payload.requestId, "g/r");
+  assert.equal(nativeCalls[1][1].payload.accountKey, "account");
+  assert.equal(nativeCalls[1][1].payload.persistent, true);
+  const beforeSuppressed = nativeCalls.length;
+  assert.equal((await options.send("title", "body", event("no-thread"))).status, "suppressed");
+  assert.equal(nativeCalls.length, beforeSuppressed, "untargeted event cannot invent a notification route");
   const callback = vm.runInNewContext(compile(`(${automationFinished.getText(appAst)})`), {
     disposed: false, isThreadWindow: windowKind === "thread", isQuickChatWindow: windowKind === "quick",
     showAppToast: () => toasts++, setInboxItems: () => inboxWrites++, refreshThreads: () => {},
@@ -254,28 +298,12 @@ for (const windowKind of ["main", "thread", "quick"]) {
 }
 console.log("PASS CN06: actual App host claim/send callbacks and all-window automation delivery retain single main inbox/toast");
 
-const audioMod = { exports: {} }, contexts = [], timers = new Map();
-let timerId = 0;
-const audioWindow = { AudioContext: class {
-  constructor() { this.currentTime = 0; this.closed = false; contexts.push(this); }
-  createOscillator() {
-    const parameter = { setValueAtTime() {}, exponentialRampToValueAtTime() {} };
-    return { frequency: parameter, connect() {}, start() {}, stop() {} };
-  }
-  createGain() { return { gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {} }; }
-  async close() { this.closed = true; }
-} };
+// NT08 follows actual file audio/import/cancellation; oscillator overlap was removed from production.
+await import("./verify-notification-audio.mjs");
+const unavailableAudio = { exports: {} };
 vm.runInNewContext(compile(fs.readFileSync("src/sound.ts", "utf8")), {
-  exports: audioMod.exports, window: audioWindow,
-  setTimeout: fn => { timers.set(++timerId, fn); return timerId; }, clearTimeout: id => timers.delete(id),
+  exports: unavailableAudio.exports, require: () => ({ tauriInvoke: async () => { throw Error("audio unavailable"); } }),
 });
-const play = audioMod.exports.playNotificationChime;
-play("done", "default"); play("done", "classic");
-assert.equal(contexts[0].closed, true, "next sound interrupts previous sound");
-assert.equal(timers.size, 1);
-for (const fn of timers.values()) fn();
-assert.equal(contexts[1].closed, true, "finished audio context released");
-play("done", "none"); assert.equal(contexts.length, 2);
-audioWindow.AudioContext = undefined;
-assert.throws(() => play("done", "default"), /不支持音频/);
-console.log("PASS NT08: production audio does not overlap, releases contexts, honors none and exposes unavailable audio");
+await assert.rejects(unavailableAudio.exports.playNotificationChime("done", "default"), /audio unavailable/,
+  "real audio host failure remains observable rather than reporting successful playback");
+console.log("PASS NT08: retained none/unavailable/cancellation/resource release coverage through real audio bridge and PCM replay");

@@ -210,7 +210,7 @@ pub fn notification_view_update(
 }
 
 #[tauri::command]
-pub fn notification_claim(
+pub async fn notification_claim(
     app: tauri::AppHandle,
     state: State<'_, NotificationBroker>,
     event_id: String,
@@ -218,7 +218,8 @@ pub fn notification_claim(
     thread_id: Option<String>,
 ) -> Result<Option<Value>, String> {
     let host = app.state::<crate::AppState>();
-    let preferences = Preferences::read(|key| host.desktop_state.get_value(key));
+    let effective = crate::notification_preferences::read_effective(&app, &host).await?;
+    let preferences = Preferences::read(|key| effective.get(key).cloned().unwrap_or(Value::Null));
     let windows = app
         .webview_windows()
         .into_iter()

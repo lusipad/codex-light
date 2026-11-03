@@ -13,6 +13,9 @@ pub mod pets;
 pub mod quick_chat;
 pub mod thread_window;
 pub mod notification_broker;
+pub mod desktop_notifications;
+pub mod notification_audio;
+pub mod notification_preferences;
 mod image_save;
 mod chatgpt_service;
 mod share_assets;
@@ -52,6 +55,9 @@ pub struct AppState {
 fn invalidate_chatgpt_service(app: &AppHandle) {
     if let Some(state) = app.try_state::<AppState>() {
         let generation = state.chatgpt_service.invalidate();
+        if let Err(error) = desktop_notifications::invalidate_context(app, &generation.to_string()) {
+            eprintln!("Cannot withdraw notifications after identity change: {error}");
+        }
         let _ = app.emit("chatgpt-service:invalidated", generation);
     }
 }
@@ -395,10 +401,11 @@ async fn app_server_respond(
     generation: u64,
     result: Option<Value>,
     error: Option<Value>,
+    notification_nonce: Option<String>,
 ) -> Result<(), String> {
     state
         .app_server
-        .respond_to_server_request(&app, id, generation, result, error)
+        .respond_to_server_request(&app, id, generation, result, error, notification_nonce)
         .await
 }
 
@@ -1572,6 +1579,7 @@ pub fn run() {
         .manage(quick_chat::QuickChatState::default())
         .manage(thread_window::ThreadWindowState::default())
         .manage(notification_broker::NotificationBroker::default())
+        .manage(notification_preferences::NotificationPreferencesState::default())
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 if let Err(error) = menu::remove_shortcut_window(window.app_handle(), window.label()) {
@@ -1586,6 +1594,19 @@ pub fn run() {
             deep_links::deep_link_acknowledge,
             notification_broker::notification_view_update,
             notification_broker::notification_claim,
+            notification_preferences::notification_preferences_read,
+            notification_preferences::notification_preference_write,
+            desktop_notifications::desktop_notification_show,
+            desktop_notifications::desktop_notification_hide,
+            desktop_notifications::desktop_notification_hide_conversation,
+            desktop_notifications::desktop_notification_hide_all,
+            desktop_notifications::notification_account_context,
+            desktop_notifications::notification_permission_read,
+            desktop_notifications::notification_settings_open,
+            notification_audio::notification_audio_pick,
+            notification_audio::notification_audio_store,
+            notification_audio::notification_audio_play,
+            notification_audio::notification_audio_stop,
             thread_window::open_thread_window,
             quick_chat::quick_chat_toggle,
             quick_chat::quick_chat_hide,

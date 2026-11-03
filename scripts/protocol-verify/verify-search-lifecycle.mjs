@@ -80,17 +80,29 @@ vm.runInNewContext(ts.transpileModule(fileSource, {
     },
   }),
 });
-async function searchFiles(query) {
+function createSearchCompletion(matches, complete, fail) {
   let response = [];
+  let completed = false, received = false, settled = false;
+  const finish = () => {
+    if (!settled && completed && received && matches(response)) { settled = true; complete(response); }
+  };
+  return {
+    onResults(value) { response = value; received = true; finish(); },
+    onLoading(loading) { if (!loading) { completed = true; finish(); } },
+    onError(error) { if (!settled) { settled = true; fail(error); } },
+  };
+}
+async function searchFiles(query, matches) {
   let complete, fail;
   const done = new Promise((resolve, reject) => { complete = resolve; fail = reject; });
+  const completion = createSearchCompletion(matches, complete, fail);
   const timer = setTimeout(() => fail(Error("real session notification timed out")), 15000);
   const controller = fileModule.exports.createFuzzyFileSearch([workspace], {
-    onResults: value => { response = search.normalize(value.files, workspace); },
-    onLoading: loading => { if (!loading) complete(); },
-    onError: fail,
+    onResults: value => completion.onResults(search.normalize(value.files, workspace)),
+    onLoading: completion.onLoading,
+    onError: completion.onError,
   });
-  try { await controller.update(query); await done; return response; }
+  try { await controller.update(query); return await done; }
   finally { clearTimeout(timer); await controller.dispose(); }
 }
 try {
@@ -101,12 +113,16 @@ try {
   child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "initialized", params: {} }) + "\n");
   const name = "target-中文-🙂.txt", file = path.join(workspace, name);
   fs.writeFileSync(file, "isolated search fixture");
-  const files = await searchFiles("target");
+  const files = await searchFiles("target", results => results.some(item =>
+    path.resolve(item.absPath).toLowerCase() === file.toLowerCase() && item.fileName === name));
   assert.ok(files.some(item => path.resolve(item.absPath).toLowerCase() === file.toLowerCase()));
   assert.ok(files.some(item => item.fileName === name), "production normalization preserves Unicode filename");
   fs.unlinkSync(file);
-  const afterDelete = await searchFiles("target");
+  const afterDelete = await searchFiles("target", results => results.length === 0);
   assert.equal(afterDelete.length, 0, "same real query observes removed file");
+  const deleted = await rpc("fuzzyFileSearch", { roots: [workspace], query: "target" });
+  assert.ok(Array.isArray(deleted.files), "independent deletion check must return a real files array");
+  assert.equal(search.normalize(deleted.files, workspace).length, 0, "independent real search confirms removal, not a session's initial empty snapshot");
   assert.equal((await search.threads("unmatched-isolated-query")).length, 0);
   assert.ok(transcript.every(entry => !entry.response.error), "helpers must not hide a rejected protocol call");
   passed = true;
@@ -122,6 +138,7 @@ try {
   fs.mkdirSync(evidence, { recursive: true });
   fs.writeFileSync(path.join(evidence, `protocol-${version.stdout.trim().replace(/[^a-zA-Z0-9.-]/g, "-")}.json`), JSON.stringify({
     binary, version: version.stdout.trim(), passed, isolatedHome: home, workspace,
+    probeSourceSha256: createHash("sha256").update(fs.readFileSync(new URL(import.meta.url))).digest("hex"),
     sourceSha256: createHash("sha256").update(source).digest("hex"),
     sessionSourceSha256: createHash("sha256").update(fileSource).digest("hex"), transcript, notifications,
     scope: "real isolated file search and empty thread result; no model turn, native UI or official comparison",

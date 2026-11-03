@@ -7,8 +7,9 @@ import { createReviewResults, type ReviewRun } from "./reviewResults";
 import { useGitPreferences } from "./gitPreferences";
 import { useWorkspaceOpenTargets } from "./workspaceOpenTargets";
 import { loadModelCatalog } from "./modelCatalog";
-import { createNotificationDispatcher, notificationRequestCategory, notificationSoundTheme, shouldNotifyTurn, useNotificationPreferences } from "./notificationPreferences";
+import { createNotificationDispatcher, notificationRequestCategory, shouldNotifyTurn, useNotificationPreferences, type NotificationEvent } from "./notificationPreferences";
 import { useAppearancePreferences } from "./appearancePreferences";
+import { notificationApprovalActions, notificationApprovalResponse } from "./notificationActions";
 import { GeneratedImageCard } from "./components/GeneratedImageCard";
 import { McpCallCard } from "./components/McpCallCard";
 import { extractTextFromItem } from "./threadText";
@@ -1113,27 +1114,69 @@ export const App: React.FC = () => {
     await Promise.all([refreshConfigOverview(), refreshModels(), refreshThreads()]);
   });
   const notificationContextRef = useRef({ route: activeRoute, ready: false });
+  const notificationAccountRef = useRef<string | null>(null);
+  const notificationNativeActionRef = useRef<(event: any) => Promise<void>>(async () => {});
   notificationContextRef.current = { route: activeRoute, ready: notificationState.ready };
   useEffect(() => () => { notificationContextRef.current.ready = false; }, []);
+  useEffect(() => {
+    let disposed = false;
+    notificationAccountRef.current = null;
+    if (accountInfo !== null && appServerStatus.connected) {
+      void tauriInvoke<{accountKey: string}>("notification_account_context").then(context => {
+        if (!disposed) notificationAccountRef.current = context.accountKey;
+      }).catch(error => { if (!disposed) showAppToast(`通知身份读取失败：${String(error)}`, "error"); });
+    }
+    const off = tauriListen("chatgpt-service:invalidated", () => { notificationAccountRef.current = null; });
+    off.catch(error => { if (!disposed) showAppToast(`通知身份订阅失败：${String(error)}`, "error"); });
+    return () => { disposed = true; off.then(stop => stop()).catch(() => {}); };
+  }, [accountInfo, appServerStatus.connected]);
   useEffect(() => {
     void tauriInvoke("notification_view_update", {
       threadId: activeRoute === "thread" || isQuickChatWindow ? activeThreadId : null,
     }).catch(error => showAppToast(`通知窗口状态更新失败：${String(error)}`, "error"));
   }, [activeRoute, activeThreadId, isQuickChatWindow]);
-  const notify = useMemo(() => createNotificationDispatcher({
+  useEffect(() => {
+    let disposed = false;
+    const off = tauriListen<any>("desktop-notification-event", event => {
+      if (disposed) return;
+      if (event.kind === "failed") { showAppToast(`系统通知显示失败：${String(event.error || "未知错误")}`, "error"); return; }
+      if (event.kind === "activated") void notificationNativeActionRef.current(event)
+        .catch(error => showAppToast(`打开通知失败：${String(error)}`, "error"));
+    });
+    off.catch(error => { if (!disposed) showAppToast(`通知订阅失败：${String(error)}`, "error"); });
+    return () => { disposed = true; off.then(stop => stop()).catch(() => {}); };
+  }, []);
+  useEffect(() => {
+    const hideVisible = () => {
+      if (activeRoute !== "thread" || !activeThreadId || !document.hasFocus()) return;
+      void tauriInvoke("desktop_notification_hide_conversation", { hostId: "local", threadId: activeThreadId,
+        messageCreatedAtOrBefore: Date.now() }).catch(error => showAppToast(`撤回已读通知失败：${String(error)}`, "error"));
+    };
+    hideVisible();
+    window.addEventListener("focus", hideVisible);
+    return () => window.removeEventListener("focus", hideVisible);
+  }, [activeRoute, activeThreadId]);
+  const dispatchNotification = useMemo(() => createNotificationDispatcher({
     preferences: () => notificationState.current.current,
     focused: () => document.hasFocus() && !document.hidden,
     visible: threadId => notificationContextRef.current.route === "thread" && threadId === activeThreadIdRef.current,
     nativeClaim: event => tauriInvoke("notification_claim", {
-      eventId: event.id, category: event.category, threadId: event.threadId ?? null,
+      eventId: JSON.stringify([event.accountKey, event.id]), category: event.category, threadId: event.threadId ?? null,
     }),
-    send: (title, body) => tauriInvoke("show_desktop_notification", { title, body }),
-    play: sound => {
-      const theme = notificationSoundTheme(sound);
-      if (theme) playNotificationChime("done", theme);
-    },
+    send: (title, body, event) => event.threadId ? tauriInvoke("desktop_notification_show", { payload: {
+      id: event.id, hostId: "local", threadId: event.threadId, title, body,
+      requestId: event.requestId, requestNonce: event.requestNonce, createdAt: event.createdAt, accountKey: event.accountKey,
+      actions: event.actions, persistent: event.category === "permission" || event.category === "question",
+    } }) : Promise.resolve({ status: "suppressed" }),
+    play: (sound, kind) => playNotificationChime(kind, sound),
     onError: error => showAppToast(`通知发送失败：${String(error)}`, "error"),
   }), []);
+  const notify = useCallback((event: NotificationEvent) => {
+    const accountKey = notificationAccountRef.current;
+    if (!accountKey) return Promise.resolve();
+    return dispatchNotification({ ...event, accountKey, createdAt: event.createdAt ?? Date.now(),
+      valid: () => notificationAccountRef.current === accountKey && event.valid?.() !== false });
+  }, [dispatchNotification]);
   const applyNotifyPrefs = useCallback((prefs: any) => {
     if (typeof prefs?.reasoningSummary === "string" && prefs.reasoningSummary) {
       setReasoningSummary(prefs.reasoningSummary);
@@ -1633,6 +1676,10 @@ export const App: React.FC = () => {
             const keys = new Set(pendingRequestsRef.current
               .filter(r => r.id === resolvedId && requestThreadId(r) === params?.threadId)
               .map(pendingRequestKey));
+            for (const request of pendingRequestsRef.current.filter(r => keys.has(pendingRequestKey(r)))) {
+              void tauriInvoke("desktop_notification_hide", { id: `${notificationRequestCategory(request)}-${pendingRequestKey(request)}-${request.notificationNonce || ""}` })
+                .catch(error => showAppToast(`撤回已解决通知失败：${String(error)}`, "error"));
+            }
             pendingRequestsRef.current = pendingRequestsRef.current.filter(r => !keys.has(pendingRequestKey(r)));
             setRequestResponses(prev => Object.fromEntries(Object.entries(prev).filter(([key]) => !keys.has(key))));
             setPendingRequests((prev) =>
@@ -1734,20 +1781,24 @@ export const App: React.FC = () => {
           ...prev,
         ]);
         void notify({
-          id: `${category}-${pendingRequestKey(req)}`, category, threadId: requestThreadId(req),
+          id: `${category}-${pendingRequestKey(req)}-${req.notificationNonce || ""}`, category, threadId: requestThreadId(req),
+          requestId: pendingRequestKey(req), requestNonce: req.notificationNonce, actions: notificationApprovalActions(req),
           title: category === "question" ? "Codex 需要你的输入" : "Codex 需要你的批准",
           body: notificationBody,
-          valid: () => notificationContextRef.current.ready && pendingRequestsRef.current.some(r => pendingRequestKey(r) === pendingRequestKey(req)),
+          valid: () => notificationContextRef.current.ready && pendingRequestsRef.current.some(r => pendingRequestKey(r) === pendingRequestKey(req) && r.notificationNonce === req.notificationNonce),
         });
       }
     );
 
-    const unlistenResolved = tauriListen<Pick<PendingServerRequest, "id" | "generation">>(
+    const unlistenResolved = tauriListen<Pick<PendingServerRequest, "id" | "generation" | "notificationNonce">>(
       "app-server:server-request-resolved",
       (resolved) => {
         pendingRequestRevisionRef.current += 1;
         const key = pendingRequestKey(resolved);
-        pendingRequestsRef.current = pendingRequestsRef.current.filter(request => pendingRequestKey(request) !== key);
+        for (const category of ["permission", "question"]) void tauriInvoke("desktop_notification_hide", { id: `${category}-${key}-${resolved.notificationNonce || ""}` })
+          .catch(error => showAppToast(`撤回已解决通知失败：${String(error)}`, "error"));
+        pendingRequestsRef.current = pendingRequestsRef.current.filter(request => pendingRequestKey(request) !== key ||
+          Boolean(resolved.notificationNonce && request.notificationNonce !== resolved.notificationNonce));
         setPendingRequests(pendingRequestsRef.current);
         setRequestResponses(previous => Object.fromEntries(Object.entries(previous).filter(([entry]) => entry !== key)));
       },
@@ -3094,9 +3145,10 @@ export const App: React.FC = () => {
   );
 
   const submitServerResponse = useCallback(
-    async (requestId: any, generation: number, result: any, error: any) => {
+    async (requestId: any, generation: number, result: any, error: any, notificationNonce?: string) => {
       const request = pendingRequestsRef.current.find(r => r.id === requestId && r.generation === generation);
       if (!request || requestThreadId(request) !== activeThreadIdRef.current) return;
+      if (notificationNonce && request.notificationNonce !== notificationNonce) return;
       const key = pendingRequestKey(request);
       if (request.responseDeliveryUnknown || respondingRequestsRef.current.has(key)) return;
       respondingRequestsRef.current.add(key);
@@ -3107,7 +3159,10 @@ export const App: React.FC = () => {
           generation,
           result,
           error,
+          ...(notificationNonce ? { notificationNonce } : {}),
         });
+        void tauriInvoke("desktop_notification_hide", { id: `${notificationRequestCategory(request)}-${key}-${request.notificationNonce || ""}` })
+          .catch(reason => showAppToast(`撤回已解决通知失败：${String(reason)}`, "error"));
         pendingRequestRevisionRef.current += 1;
         setPendingRequests(prev => prev.filter(r => pendingRequestKey(r) !== key));
         setRequestResponses(prev => { const next = { ...prev }; delete next[key]; return next; });
@@ -3132,6 +3187,29 @@ export const App: React.FC = () => {
     (requestId: any, message: string, generation: number) => submitServerResponse(requestId, generation, null, { code: -32000, message }),
     [submitServerResponse]
   );
+
+  notificationNativeActionRef.current = async event => {
+    const payload = event?.payload;
+    const accountKey = notificationAccountRef.current;
+    if (!accountKey || payload?.accountKey !== accountKey || payload?.hostId !== "local" || typeof payload?.threadId !== "string") return;
+    const threadId = payload.threadId;
+    // Only a live host-registered payload reaches this listener. Never execute a route from its text.
+    const current = () => notificationAccountRef.current === accountKey;
+    if (!current()) return;
+    await selectThread(threadId);
+    if (!current() || activeThreadIdRef.current !== threadId) return;
+    if (event.action && event.action !== "open") {
+      const request = pendingRequestsRef.current.find(request => pendingRequestKey(request) === payload.requestId && requestThreadId(request) === threadId);
+      if (!request || !payload.requestNonce || request.notificationNonce !== payload.requestNonce || respondingRequestsRef.current.has(pendingRequestKey(request))) return;
+      const result = notificationApprovalResponse(request, event.action);
+      if (!result) throw Error("该通知操作已过期或不支持当前请求");
+      await submitServerResponse(request.id, request.generation, result, null, payload.requestNonce);
+    } else if (payload.requestId) {
+      const card = document.getElementById(`approval-${payload.requestId}`);
+      card?.focus();
+      card?.scrollIntoView({ block: "center" });
+    }
+  };
 
   // 服务端消息队列（thread/queue/*）同步
   const refreshThreadQueue = useCallback(async (threadId?: string | null) => {

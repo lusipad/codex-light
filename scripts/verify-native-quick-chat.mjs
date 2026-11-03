@@ -72,17 +72,26 @@ function contracts(node) {
   ts.forEachChild(node, contracts);
 }
 contracts(ast);
-const requests = [{ id: 7, generation: 1 }, { id: "7", generation: 1 }, { id: 7, generation: 2 }];
+const requests = [{ id: 7, generation: 1, notificationNonce: "number-first" }, { id: "7", generation: 1 }, { id: 7, generation: 2 }];
 const requestKey = request => `${request.generation}:${typeof request.id}:${request.id}`;
 let responses = Object.fromEntries(requests.map(request => [requestKey(request), { sending: true }]));
 const pendingRequestsRef = { current: requests }, revision = { current: 4 }; let renderedRequests;
+const notificationHides = [];
 const resolveRequest = vm.runInNewContext(compile(`(${resolvedHandler})`), {
   pendingRequestRevisionRef: revision, pendingRequestsRef, pendingRequestKey: requestKey,
   setPendingRequests: value => { renderedRequests = value; }, setRequestResponses: update => { responses = update(responses); },
+  tauriInvoke: async (command, args) => { assert.equal(command, "desktop_notification_hide"); notificationHides.push(args.id); },
+  showAppToast: message => { throw Error(message); },
 });
-resolveRequest({ id: 7, generation: 1 });
+resolveRequest({ id: 7, generation: 1, notificationNonce: "number-first" });
 assert.deepEqual(pendingRequestsRef.current, requests.slice(1)); assert.equal(renderedRequests, pendingRequestsRef.current);
 assert.equal(responses["1:number:7"], undefined); assert.ok(responses["1:string:7"] && responses["2:number:7"]); assert.equal(revision.current, 5);
+assert.deepEqual(notificationHides, ["permission-1:number:7-number-first", "question-1:number:7-number-first"]);
+const reused = { id: 7, generation: 1, notificationNonce: "number-reused" };
+pendingRequestsRef.current = [reused];
+resolveRequest({ id: 7, generation: 1, notificationNonce: "number-first" });
+assert.deepEqual(pendingRequestsRef.current, [reused], "old resolution nonce cannot remove a reused request identity");
+assert.equal(notificationHides.at(-1), "question-1:number:7-number-first", "late resolution retracts only the old notification nonce");
 assert.match(source, /unlistenResolved\.then\(\(f\) => f\(\)\)/);
 const watchCalls = [];
 const mountWatch = utility => vm.runInNewContext(compile(`(${watchEffect})`), {
