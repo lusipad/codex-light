@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   FolderGit2,
   GitBranch,
@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { tauriInvoke } from "../bridge";
 import { GitWorktreeInfo } from "../types";
+import { cwdInWorktree, loadWorktreeConversations, removeWorktreeWithConversations, type WorktreeConversation } from "../worktreeRemoval";
 
 interface WorktreesViewProps {
   activeWorkspaceRoot: string;
@@ -33,6 +34,15 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
   const [actionBusyPath, setActionBusyPath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+  const requestRef = useRef(0);
+  const actionPendingRef = useRef(false);
+  const contextRef = useRef({ root: activeWorkspaceRoot, revision: 0 });
+  if (contextRef.current.root !== activeWorkspaceRoot) {
+    contextRef.current = { root: activeWorkspaceRoot, revision: contextRef.current.revision + 1 };
+  }
+  const [conversations, setConversations] = useState<WorktreeConversation[] | null>(null);
+  const [conversationError, setConversationError] = useState<string | null>(null);
 
   const notify = (msg: string) => {
     setToast(msg);
@@ -40,25 +50,46 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
   };
 
   const refresh = async () => {
+    if (!mountedRef.current) return;
+    const request = ++requestRef.current;
+    const isCurrent = () => mountedRef.current && request === requestRef.current;
+    setConversations(null);
+    setConversationError(null);
     try {
       const list = await tauriInvoke<GitWorktreeInfo[]>("git_worktrees_list", {
         cwd: activeWorkspaceRoot,
       });
+      if (!isCurrent()) return;
       setWorktrees(list);
+      try {
+        const related = await loadWorktreeConversations();
+        if (!isCurrent()) return;
+        setConversations(related);
+      } catch (err) {
+        if (!isCurrent()) return;
+        setConversationError(`会话检查失败，暂不能移除工作树：${String(err)}`);
+      }
       const br = await tauriInvoke<string[]>("git_branches", {
         cwd: activeWorkspaceRoot,
       }).catch(() => []);
+      if (!isCurrent()) return;
       setBranches(br);
-      if (br.length > 0 && selectedBranch === "HEAD") {
-        setSelectedBranch(br[0]);
-      }
+      setSelectedBranch((current) =>
+        br.length > 0 && current === "HEAD" ? br[0] : current
+      );
+      setError(null);
     } catch (err: any) {
-      setError(err?.message || String(err));
+      if (isCurrent()) setError(err?.message || String(err));
     }
   };
 
   useEffect(() => {
+    mountedRef.current = true;
     refresh();
+    return () => {
+      mountedRef.current = false;
+      ++requestRef.current;
+    };
   }, [activeWorkspaceRoot]);
 
   const handleCreateWorktree = async () => {
@@ -80,20 +111,27 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
   };
 
   const handleDeleteWorktree = async (wt: GitWorktreeInfo) => {
-    if (actionBusyPath) return;
+    if (actionPendingRef.current || actionBusyPath || conversations === null) return;
+    if (conversations.some(thread => thread.isPinned && cwdInWorktree(thread.cwd, wt.path))) return;
     if (!confirm(`确定要移除 Worktree "${wt.path}" 吗？`)) return;
+    actionPendingRef.current = true;
+    const revision = contextRef.current.revision;
+    const isCurrent = () => mountedRef.current && contextRef.current.revision === revision;
     setActionBusyPath(wt.path);
     try {
-      await tauriInvoke("git_worktree_delete", {
-        worktreePath: wt.path,
-        gitDir: wt.gitDir,
-      });
+      const result = await removeWorktreeWithConversations(wt);
+      if (!isCurrent()) return;
       await refresh();
-      notify(`✓ 已移除工作树: ${wt.path}`);
+      if (isCurrent()) notify(`已移除工作树: ${wt.path}${result.warnings.length ? `；${result.warnings.join("；")}` : ""}`);
     } catch (err: any) {
-      notify(`删除失败: ${err?.message || String(err)}`);
+      if (isCurrent()) {
+        // Archives may have partially succeeded; refresh does not roll them back.
+        await refresh();
+        if (isCurrent()) setError(`删除失败或结果未确认：${err?.message || String(err)}`);
+      }
     } finally {
-      setActionBusyPath(null);
+      actionPendingRef.current = false;
+      if (mountedRef.current) setActionBusyPath(null);
     }
   };
 
@@ -103,7 +141,7 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
         <div>
           <h2>Git Worktrees 隔离工作区管理</h2>
           <p className="subtitle">
-            在独立目录 (`~/.codex/worktrees`) 中并行运行多个 Agent 任务，互不污染主工作区。
+            在设置的工作树目录中并行运行多个 Agent 任务，互不污染主工作区。
           </p>
         </div>
         <div style={{ display: "flex", gap: "8px" }}>
@@ -193,13 +231,14 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
       {/* Worktrees Table */}
       <div className="card-section">
         <h3>已存在的 Worktrees ({worktrees.length})</h3>
+        {conversationError && <div className="error-banner">{conversationError}</div>}
         {worktrees.length === 0 ? (
           <div className="empty-hint">暂无 Worktree</div>
         ) : (
           <div className="item-cards-list">
             {worktrees.map((wt) => {
-              const isMainRepo =
-                wt.path.toLowerCase() === activeWorkspaceRoot.toLowerCase();
+              const isMainRepo = wt.isPrimary !== false;
+              const hasPinnedChat = conversations?.some(thread => thread.isPinned && cwdInWorktree(thread.cwd, wt.path));
               return (
                 <div key={wt.path} className="item-card">
                   <div className="item-card-main">
@@ -271,19 +310,24 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
               title="将此隔离 Worktree 中的改动应用合并回当前主工作区"
               disabled={actionBusyPath === wt.path}
               onClick={async () => {
-                if (actionBusyPath) return;
+                if (actionPendingRef.current || actionBusyPath) return;
+                actionPendingRef.current = true;
+                const revision = contextRef.current.revision;
+                const isCurrent = () => mountedRef.current && contextRef.current.revision === revision;
                 setActionBusyPath(wt.path);
                 try {
                   const res = await tauriInvoke<string>("git_worktree_bring_changes_back", {
                     worktreePath: wt.path,
                     targetCwd: activeWorkspaceRoot,
                   });
+                  if (!isCurrent()) return;
                   notify(res);
                   await refresh();
                 } catch (err: any) {
-                  notify(`带回失败: ${err?.message || String(err)}`);
+                  if (isCurrent()) notify(`带回失败: ${err?.message || String(err)}`);
                 } finally {
-                  setActionBusyPath(null);
+                  actionPendingRef.current = false;
+                  if (mountedRef.current) setActionBusyPath(null);
                 }
               }}
             >
@@ -301,6 +345,8 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
             <button
               type="button"
               className="danger-btn-sm"
+              disabled={!!actionBusyPath || conversations === null || !!hasPinnedChat}
+              title={hasPinnedChat ? "请先取消置顶此工作树中的会话" : conversations === null ? "正在确认关联会话" : "移除工作树"}
               onClick={() => handleDeleteWorktree(wt)}
             >
               <Trash2 size={13} /> 移除

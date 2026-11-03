@@ -12,11 +12,11 @@ const hasArchivedQuery =
   viewSource.includes('"thread/list"') &&
   viewSource.includes("archived: true");
 
-// AR02: 检查 300ms 搜索防抖与 searchTerm
+// AR02: 先读取全部分页，再搜索本地列表。
 const hasSearchDebounce =
-  viewSource.includes("searchTerm") &&
-  viewSource.includes("setTimeout") &&
-  viewSource.includes("300");
+  viewSource.includes("useDeferredValue") &&
+  viewSource.includes("nextCursor") &&
+  viewSource.includes(".includes(query)");
 
 // AR03: 检查恢复与彻底删除
 const hasRestoreAndDelete =
@@ -31,7 +31,7 @@ assert.ok(
 );
 assert.ok(
   hasSearchDebounce,
-  "ArchiveView.tsx: Must debounce search input by 300ms passing searchTerm"
+  "ArchiveView.tsx: Must search complete paginated data locally"
 );
 assert.ok(
   hasRestoreAndDelete,

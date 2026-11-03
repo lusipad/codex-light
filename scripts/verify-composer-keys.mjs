@@ -12,11 +12,10 @@ function visit(node) {
   ts.forEachChild(node, visit);
 }
 visit(ast); assert.ok(handler);
-let sent = 0, queued = 0, preference = "enter", prevented = 0;
+let sent = 0, queued = 0, prevented = 0;
 const context = vm.createContext({
-  isStreaming: true, autocompleteMode: null,
+  isStreaming: true, autocompleteMode: null, composerEnterBehavior: "enter", promptInput: "hello",
   onSendMessage: () => sent++, onQueueMessage: () => queued++,
-  localStorage: { getItem: () => JSON.stringify({ sendShortcut: preference }) },
 });
 const keyDown = vm.runInContext(ts.transpileModule(`(${handler})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
 const press = (options = {}) => {
@@ -32,7 +31,7 @@ assert.deepEqual(press({ shiftKey: true }), [0, 0, 0]);
 assert.deepEqual(press({ ctrlKey: true, shiftKey: true }), [0, 0, 0]);
 console.log("PASS Enter preference: send, invert-to-queue and modifier exclusions");
 
-preference = "cmd-enter";
+context.composerEnterBehavior = "cmdAlways";
 assert.deepEqual(press(), [0, 0, 0]);
 assert.deepEqual(press({ ctrlKey: true }), [1, 0, 1]);
 assert.deepEqual(press({ ctrlKey: true, shiftKey: true }), [0, 1, 1]);
@@ -41,15 +40,15 @@ assert.deepEqual(press({ ctrlKey: true, altKey: true }), [0, 0, 0]);
 assert.deepEqual(press({ shiftKey: true }), [0, 0, 0]);
 console.log("PASS Ctrl+Enter preference: send, Ctrl+Shift+Enter queue and newline");
 
-for (const mode of ["enter", "cmd-enter"]) {
-  preference = mode;
+for (const mode of ["enter", "cmdIfMultiline", "cmdAlways"]) {
+  context.composerEnterBehavior = mode;
   const modifiers = mode === "enter" ? { ctrlKey: true } : { ctrlKey: true, shiftKey: true };
   assert.deepEqual(press({ ...modifiers, nativeEvent: { isComposing: true } }), [0, 0, 0]);
   assert.deepEqual(press({ ...modifiers, nativeEvent: { keyCode: 229 } }), [0, 0, 0]);
   assert.deepEqual(press({ ...modifiers, repeat: true }), [0, 0, 1]);
 }
 console.log("PASS composition and held modifier shortcuts never submit");
-context.isStreaming = false; preference = "cmd-enter";
+context.isStreaming = false; context.composerEnterBehavior = "cmdAlways";
 assert.deepEqual(press({ ctrlKey: true, shiftKey: true }), [0, 0, 0], "idle composer cannot enqueue via follow-up inversion");
 assert.deepEqual(press({ ctrlKey: true }), [1, 0, 1]);
 console.log("PASS idle composer retains send behavior without queuing");

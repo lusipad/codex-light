@@ -1,320 +1,81 @@
-import React, { useEffect, useRef, useState } from "react";
-import {
-  CloseIcon,
-  ExternalWindowIcon,
-  FolderIcon,
-  MessagePlusIcon,
-  SendIcon,
-  SparklesIcon,
-} from "./Icons";
+import React, { useEffect, useRef } from "react";
+import { CloseIcon, ExternalWindowIcon, MessagePlusIcon, SparklesIcon } from "./Icons";
 import { MarkdownView } from "./MarkdownView";
-import { callAppServer, tauriInvoke } from "../bridge";
+import { extractTextFromItem } from "../threadText";
+import type { TurnData } from "../types";
 import "./HotkeyWindow.css";
 
-interface PopoutMessage {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-}
-
 export interface HotkeyWindowProps {
-  initialThreadId?: string | null;
-  onClose?: () => void;
-  onOpenMainApp?: (threadId?: string) => void;
+  threadId: string | null;
+  turns: TurnData[];
+  isStreaming: boolean;
+  loading: boolean;
+  error: string | null;
+  native?: boolean;
+  notice?: string;
+  composer: React.ReactNode;
+  approvals: React.ReactNode;
+  onNewChat: () => void;
+  onClose: () => void;
+  onOpenMainApp: () => void;
 }
 
 export const HotkeyWindow: React.FC<HotkeyWindowProps> = ({
-  initialThreadId = null,
-  onClose,
-  onOpenMainApp,
+  threadId, turns, isStreaming, loading, error, native = false, notice, composer, approvals, onNewChat, onClose, onOpenMainApp,
 }) => {
-  const [threadId, setThreadId] = useState<string | null>(initialThreadId);
-  const [messages, setMessages] = useState<PopoutMessage[]>([]);
-  const [input, setInput] = useState<string>("");
-  const [isStreaming, setIsStreaming] = useState<boolean>(false);
-  const [currentCwd, setCurrentCwd] = useState<string>("");
-  const [isPinned, setIsPinned] = useState<boolean>(true);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  // Load current workspace and thread on mount
   useEffect(() => {
-    tauriInvoke<Array<{ path: string; isActive: boolean }>>("workspaces_list")
-      .then((list) => {
-        const active = list.find((w) => w.isActive) || list[0];
-        if (active) setCurrentCwd(active.path);
-      })
-      .catch(() => {});
-
-    inputRef.current?.focus();
+    const previous = document.activeElement;
+    dialogRef.current?.querySelector<HTMLTextAreaElement>("textarea")?.focus();
+    return () => { if (previous instanceof HTMLElement && previous.isConnected) previous.focus(); };
   }, []);
-
-  // Auto-scroll
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isStreaming]);
-
-  // Handle ESC to close
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onClose?.();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
-
-  const handleSend = async () => {
-    const text = input.trim();
-    if (!text || isStreaming) return;
-
-    // Handle slash commands in Popout
-    if (text === "/hotkey-new" || text === "/new") {
-      setThreadId(null);
-      setMessages([]);
-      setInput("");
-      return;
-    }
-
-    if (text === "/resume") {
-      setInput("");
-      try {
-        const listRes = await callAppServer<{ threads?: Array<{ id: string; name?: string }> }>("thread/list", {
-          limit: 1,
-        });
-        const latest = listRes?.threads?.[0];
-        if (latest) {
-          setThreadId(latest.id);
-          const readRes = await callAppServer<{ thread?: { turns?: any[] } }>("thread/read", {
-            threadId: latest.id,
-          });
-          const turns = readRes?.thread?.turns || [];
-          const reconstructed: PopoutMessage[] = [];
-          for (const t of turns) {
-            for (const it of t.items || []) {
-              if (it.type === "userMessage" && it.text) {
-                reconstructed.push({ id: it.id, role: "user", content: it.text });
-              } else if (it.type === "agentMessage" && it.text) {
-                reconstructed.push({ id: it.id, role: "assistant", content: it.text });
-              }
-            }
-          }
-          setMessages(reconstructed);
-        }
-      } catch (err) {
-        console.warn("Popout /resume failed:", err);
-      }
-      return;
-    }
-
-    const userMsg: PopoutMessage = {
-      id: `u-${Date.now()}`,
-      role: "user",
-      content: text,
-    };
-    setMessages((prev) => [...prev, userMsg]);
-    setInput("");
-    setIsStreaming(true);
-
-    const assistantMsgId = `a-${Date.now()}`;
-    setMessages((prev) => [
-      ...prev,
-      { id: assistantMsgId, role: "assistant", content: "思考中…" },
-    ]);
-
-    try {
-      let activeTid = threadId;
-      if (!activeTid) {
-        const startRes = await callAppServer<{ thread?: { id: string } }>("thread/start", {
-          cwd: currentCwd || undefined,
-          approvalPolicy: "never",
-          sandbox: "workspace-write",
-        });
-        activeTid = startRes?.thread?.id || null;
-        setThreadId(activeTid);
-      }
-
-      if (activeTid) {
-        await callAppServer("turn/start", {
-          threadId: activeTid,
-          input: [{ type: "text", text }],
-          summary: "auto",
-        });
-
-        // Poll for result briefly
-        setTimeout(async () => {
-          const readRes = await callAppServer<{ thread?: { turns?: any[] } }>("thread/read", {
-            threadId: activeTid,
-          }).catch(() => null);
-          const turns = readRes?.thread?.turns || [];
-          const lastTurn = turns[turns.length - 1];
-          const agentText = (lastTurn?.items || [])
-            .filter((it: any) => it.type === "agentMessage")
-            .map((it: any) => it.text || "")
-            .join("\n\n")
-            .trim();
-
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === assistantMsgId
-                ? {
-                    ...m,
-                    content:
-                      agentText ||
-                      "回复已生成。可在主窗口完整查看执行计划、终端变更与差异。",
-                  }
-                : m
-            )
-          );
-          setIsStreaming(false);
-        }, 1500);
-      } else {
-        setTimeout(() => {
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === assistantMsgId
-                ? { ...m, content: `已收到：${text}` }
-                : m
-            )
-          );
-          setIsStreaming(false);
-        }, 600);
-      }
-    } catch (err: any) {
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantMsgId
-            ? { ...m, content: `执行出错: ${err?.message || String(err)}` }
-            : m
-        )
-      );
-      setIsStreaming(false);
-    }
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
-  };
+  useEffect(() => { messagesEndRef.current?.scrollIntoView({ block: "nearest" }); }, [turns, isStreaming]);
 
   return (
-    <div className="hotkey-window-container" role="dialog" aria-label="Codex 快捷提问窗口">
-      <div className="hotkey-window-header">
-        <div className="hotkey-header-left">
-          <span className="hotkey-brand-badge">
-            <SparklesIcon size={13} />
-            <strong>Codex Popout</strong>
-          </span>
-          {currentCwd && (
-            <span className="hotkey-cwd-pill" title={currentCwd}>
-              <FolderIcon size={12} />
-              <span>{currentCwd.split(/[/\\]/).pop()}</span>
-            </span>
-          )}
-        </div>
+    <div ref={dialogRef} className={`hotkey-window-container${native ? " native" : ""}`} role="dialog" aria-modal="true" aria-label="Codex 快捷提问窗口"
+      data-thread-id={threadId ?? undefined} onKeyDown={event => {
+        if (event.defaultPrevented || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+        if (event.key === "Escape" && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
+          event.preventDefault(); event.stopPropagation(); onClose();
+        }
+        if (event.key === "Tab") {
+          const controls = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(
+            'button:not(:disabled), textarea:not(:disabled), input:not(:disabled), select:not(:disabled), a[href], [tabindex="0"]',
+          ) ?? []).filter(control => control.getClientRects().length > 0);
+          const first = controls[0], last = controls[controls.length - 1];
+          if (first && last && (event.shiftKey ? document.activeElement === first : document.activeElement === last)) {
+            event.preventDefault(); (event.shiftKey ? last : first).focus();
+          }
+        }
+      }}>
+      <div className="hotkey-window-header" data-tauri-drag-region={native ? true : undefined}>
+        <span className="hotkey-brand-badge"><SparklesIcon size={13} /><strong>Codex</strong></span>
         <div className="hotkey-header-right">
-          <button
-            type="button"
-            className="hotkey-btn-icon"
-            onClick={() => {
-              setThreadId(null);
-              setMessages([]);
-              setInput("");
-            }}
-            title="新建任务 (Ctrl+N / /hotkey-new)"
-          >
-            <MessagePlusIcon size={13} />
-          </button>
-          {onOpenMainApp && (
-            <button
-              type="button"
-              className="hotkey-btn-icon"
-              onClick={() => onOpenMainApp(threadId || undefined)}
-              title="在主应用中展开完整工作台"
-            >
-              <ExternalWindowIcon size={13} />
-            </button>
-          )}
-          {onClose && (
-            <button
-              type="button"
-              className="hotkey-btn-icon"
-              onClick={onClose}
-              title="关闭 (Esc)"
-            >
-              <CloseIcon size={13} />
-            </button>
-          )}
+          <button type="button" className="hotkey-btn-icon" onClick={onNewChat} title="新建聊天" aria-label="新建聊天"><MessagePlusIcon size={13} /></button>
+          <button type="button" className="hotkey-btn-icon" onClick={onOpenMainApp} title="在主窗口继续" aria-label="在主窗口继续"><ExternalWindowIcon size={13} /></button>
+          <button type="button" className="hotkey-btn-icon" onClick={onClose} title="关闭 (Esc)" aria-label="关闭"><CloseIcon size={13} /></button>
         </div>
       </div>
-
       <div className="hotkey-messages-scroll">
-        {messages.length === 0 ? (
-          <div className="hotkey-empty-state">
-            <p>随时随地唤起 Codex 快速推进任务</p>
-            <div className="hotkey-quick-starters">
-              <button
-                type="button"
-                className="starter-chip"
-                onClick={() => setInput("检查当前工程中的未提交改动并总结要点")}
-              >
-                检查当前工程改动
-              </button>
-              <button
-                type="button"
-                className="starter-chip"
-                onClick={() => setInput("解释最近一次的错误或日志")}
-              >
-                解释错误日志
-              </button>
-              <button
-                type="button"
-                className="starter-chip"
-                onClick={() => setInput("/resume")}
-              >
-                恢复最近对话 (/resume)
-              </button>
+        <p className="hotkey-tip">{native ? "独立聊天；隐藏后继续运行，未发送草稿和附件保留在此窗口。" : "应用内快捷面板，使用主会话的草稿、模型和权限。"}</p>
+        {notice && <div role="alert">{notice}</div>}
+        {loading && <div role="status">正在加载会话…</div>}
+        {error && <div role="alert">{error} <button type="button" onClick={onOpenMainApp}>在主窗口重试</button></div>}
+        {!loading && turns.length === 0 && <div className="hotkey-empty-state">开始新的聊天</div>}
+        {turns.map(turn => <div key={turn.id} data-turn-id={turn.id}>
+          {turn.items.filter(item => ["user", "userMessage", "agentMessage", "assistant"].includes(item.type)).map((item, index) => (
+            <div key={item.id ?? index} className={`hotkey-msg-row ${item.type === "user" || item.type === "userMessage" ? "user" : "assistant"}`}>
+              <div className="hotkey-msg-bubble"><MarkdownView content={extractTextFromItem(item)} /></div>
             </div>
-          </div>
-        ) : (
-          messages.map((m) => (
-            <div key={m.id} className={`hotkey-msg-row ${m.role}`}>
-              <div className="hotkey-msg-bubble">
-                <MarkdownView content={m.content} />
-              </div>
-            </div>
-          ))
-        )}
+          ))}
+          {turn.status === "failed" && <div role="alert">执行失败：{turn.error?.message ?? "请在主窗口查看详情"}</div>}
+        </div>)}
+        {isStreaming && <div role="status">正在运行…</div>}
+        {approvals}
         <div ref={messagesEndRef} />
       </div>
-
-      <div className="hotkey-composer-bar">
-        <textarea
-          ref={inputRef}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="问任何问题、输入指令或 /resume 恢复… (Enter 发送)"
-          rows={2}
-          disabled={isStreaming}
-        />
-        <div className="hotkey-composer-actions">
-          <span className="hotkey-tip">Esc 退出 · /resume 恢复会话</span>
-          <button
-            type="button"
-            className="hotkey-send-button"
-            onClick={handleSend}
-            disabled={!input.trim() || isStreaming}
-            title="发送 (Enter)"
-          >
-            <SendIcon size={13} />
-          </button>
-        </div>
-      </div>
+      <div className="hotkey-composer-bar">{composer}</div>
     </div>
   );
 };

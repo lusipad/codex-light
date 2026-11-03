@@ -14,8 +14,8 @@
   background: var(--bg-tertiary);
   box-shadow: var(--shadow-lg);
   color: var(--text-primary);
-  font-size: 13px;
-  line-height: 20px;
+  font-size: var(--text-sm);
+  line-height: calc(20px * var(--font-ui-scale, 1));
   pointer-events: auto;
 }
 
@@ -46,9 +46,9 @@
   color: var(--text-primary);
   background: transparent;
   font: inherit;
-  font-size: 14px;
+  font-size: var(--text-base);
   font-weight: 500;
-  line-height: 20px;
+  line-height: calc(20px * var(--font-ui-scale, 1));
   text-align: left;
   text-overflow: ellipsis;
 }
@@ -81,7 +81,7 @@
   margin-top: 1px;
   flex-shrink: 0;
   color: var(--text-tertiary);
-  font-size: 12px;
+  font-size: var(--text-xs);
   white-space: nowrap;
 }
 

@@ -18,13 +18,13 @@
 
 .library-view-header h2 {
   margin: 0 0 6px 0;
-  font-size: 20px;
+  font-size: var(--text-heading-md);
   font-weight: 600;
 }
 
 .library-view-header .subtitle {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--text-sm);
   color: var(--text-muted, #8e8e93);
 }
 
@@ -54,7 +54,7 @@
   padding: 6px 12px;
   border-radius: 6px;
   color: var(--text-muted, #8e8e93);
-  font-size: 13px;
+  font-size: var(--text-sm);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -69,7 +69,7 @@
 }
 
 .space-badge {
-  font-size: 10px;
+  font-size: calc(10px * var(--font-ui-scale, 1));
   background: #10a37f;
   color: #fff;
   padding: 1px 4px;
@@ -92,7 +92,7 @@
   background: transparent;
   border: none;
   color: #fff;
-  font-size: 13px;
+  font-size: var(--text-sm);
   width: 100%;
   outline: none;
 }
@@ -113,7 +113,7 @@
 }
 
 .folder-label {
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--text-muted, #8e8e93);
   white-space: nowrap;
 }
@@ -124,7 +124,7 @@
   color: var(--text-muted, #8e8e93);
   padding: 4px 10px;
   border-radius: 14px;
-  font-size: 12px;
+  font-size: var(--text-xs);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -166,7 +166,7 @@
 }
 
 .file-type-badge {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-ui-scale, 1));
   text-transform: uppercase;
   background: rgba(255, 255, 255, 0.08);
   padding: 2px 6px;
@@ -177,7 +177,7 @@
 .star-btn {
   background: transparent;
   border: none;
-  font-size: 14px;
+  font-size: var(--text-base);
   color: var(--text-muted, #71717a);
   cursor: pointer;
 }
@@ -208,7 +208,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 38px;
+  font-size: calc(38px * var(--font-ui-scale, 1));
 }
 
 .library-card-body {
@@ -217,7 +217,7 @@
 
 .item-name {
   display: block;
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 500;
   margin-bottom: 4px;
   overflow: hidden;
@@ -228,7 +228,7 @@
 .item-meta {
   display: flex;
   justify-content: space-between;
-  font-size: 11px;
+  font-size: calc(11px * var(--font-ui-scale, 1));
   color: var(--text-muted, #71717a);
 }
 
@@ -250,7 +250,7 @@
 .library-list-table table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .library-list-table th,
@@ -309,11 +309,11 @@
 
 .preview-modal-header h3 {
   margin: 0 0 4px 0;
-  font-size: 16px;
+  font-size: var(--text-lg);
 }
 
 .meta-hint {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-ui-scale, 1));
   color: var(--text-muted, #8e8e93);
 }
 
@@ -321,7 +321,7 @@
   background: none;
   border: none;
   color: var(--text-muted, #8e8e93);
-  font-size: 16px;
+  font-size: var(--text-lg);
   cursor: pointer;
 }
 
@@ -365,5 +365,5 @@
   padding: 10px 12px;
   color: #fff;
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }

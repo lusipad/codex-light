@@ -61,6 +61,7 @@ export interface HookOutputEntry {
 export interface HookInfo {
   /** Stable protocol key (sourcePath:event:group:index). */
   id: string;
+  currentHash?: string;
   /** Best-effort display name (statusMessage / command / server.tool). */
   name: string;
   /** Camel-cased lifecycle event, e.g. "preToolUse". */
@@ -230,6 +231,7 @@ function normalizeHook(raw: unknown, cwd: string): HookInfo | null {
 
   return {
     id,
+    currentHash: typeof item.currentHash === "string" ? item.currentHash : undefined,
     name: deriveHookName({
       eventName,
       handlerType,
@@ -397,6 +399,7 @@ export async function listHooks(cwds: string[]): Promise<HooksListResult> {
     const response = await callAppServer<{ data?: unknown }>("hooks/list", {
       cwds: normalizedCwds,
     });
+    if (!Array.isArray(response?.data)) throw Error("hooks/list 返回格式无效。");
     return normalizeHooksList(response?.data);
   } catch (err) {
     if (err instanceof HooksProtocolError) throw err;

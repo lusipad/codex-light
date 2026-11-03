@@ -1,0 +1,16 @@
+.keyboard-settings { display: flex; flex-direction: column; gap: 16px; }
+.keyboard-settings-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.keyboard-settings-toolbar input { flex: 1; min-width: 160px; }
+.keyboard-settings-row { display: flex; justify-content: space-between; align-items: center; gap: 16px; min-height: 64px; border-bottom: 1px solid var(--border-subtle); padding: 12px 0; }
+.keyboard-settings-bindings { display: flex; flex-direction: column; gap: 6px; max-width: 100%; }
+.keyboard-settings-binding { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.keyboard-settings-binding kbd { font-family: var(--font-sans); font-size: var(--text-sm); border: 1px solid var(--border-default); border-radius: 6px; padding: 4px 8px; color: var(--text-secondary); }
+.keyboard-settings-capture { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.keyboard-settings-capture [role="alert"] { flex-basis: 100%; color: var(--accent-red); font-size: var(--text-xs); }
+.keyboard-settings dialog { margin: auto; max-width: min(440px, calc(100vw - 32px)); padding: 24px; color: var(--text-primary); background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 12px; }
+.keyboard-settings dialog p { margin: 12px 0 20px; }
+.keyboard-settings dialog::backdrop { background: rgba(0, 0, 0, .5); }
+@media (max-width: 640px) {
+  .keyboard-settings-row { flex-direction: column; align-items: stretch; gap: 8px; }
+  .keyboard-settings-binding { justify-content: flex-start; }
+}

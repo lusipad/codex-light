@@ -60,7 +60,7 @@ export function findThreadMatches(turns: TurnData[], query: string): MatchItem[]
         if (text.toLowerCase().includes(q)) {
           result.push({
             turnId: turn.id,
-            elementId: `turn-${turn.id}`,
+            elementId: item.type === "commandExecution" && item.id ? `command-${item.id}` : `turn-${turn.id}`,
             kind: "assistant",
             preview: text.slice(0, 60),
           });
@@ -123,6 +123,8 @@ export const ThreadFindBar: React.FC<ThreadFindBarProps> = ({
 
     const targetEl = document.getElementById(targetMatch.elementId);
     if (targetEl) {
+      targetEl.querySelector<HTMLButtonElement>("[data-user-message-expand][aria-expanded='false']")?.click();
+      targetEl.querySelector<HTMLButtonElement>("[data-command-expand][aria-expanded='false']")?.click();
       targetEl.scrollIntoView({ behavior: "smooth", block: "center" });
       targetEl.classList.add("find-highlight-pulse");
       lastHighlightedElementRef.current = targetEl;

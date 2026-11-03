@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   FolderIcon,
   LaptopIcon,
@@ -25,12 +25,18 @@ import {
   WorkspaceFileHit,
   WorkspaceRootItem,
 } from "../types";
-import { ComposerAutocomplete, AutocompleteItem } from "./ComposerAutocomplete";
+import { ComposerAutocomplete, AutocompleteItem, getAutocompleteItems } from "./ComposerAutocomplete";
 import { ComposerAttachmentChip } from "./ComposerAttachmentChip";
 import { createAttachedFileItem } from "../threadAttachments";
 import { ModelSelector } from "./ModelSelector";
+import { isTauriRuntime } from "../bridge";
+import { baseNameFsPath } from "../fsClient";
+
+import type { ComposerEnterBehavior } from "../composerPreferences";
 
 export interface ComposerBoxProps {
+  dictationSessionKey: string;
+  composerEnterBehavior: ComposerEnterBehavior;
   variant: "home" | "thread";
   promptInput: string;
   onPromptInputChange: (val: string) => void;
@@ -54,6 +60,9 @@ export interface ComposerBoxProps {
   onSelectPermissionMode: (mode: "ask" | "auto" | "full") => void;
   // Model, effort, speed, plan mode
   models: ModelInfo[];
+  modelsLoading?: boolean;
+  modelsError?: string | null;
+  onRefreshModels?: () => void;
   selectedModelId: string;
   defaultModelSelected: boolean;
   onSelectModel: (id: string, useDefault: boolean) => void;
@@ -103,6 +112,8 @@ const PERMISSION_OPTIONS: Array<{
 ];
 
 export const ComposerBox: React.FC<ComposerBoxProps> = ({
+  dictationSessionKey,
+  composerEnterBehavior,
   variant,
   promptInput,
   onPromptInputChange,
@@ -123,6 +134,9 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
   permissionMode,
   onSelectPermissionMode,
   models,
+  modelsLoading,
+  modelsError,
+  onRefreshModels,
   selectedModelId,
   defaultModelSelected,
   onSelectModel,
@@ -146,85 +160,172 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
   const internalTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const actualTextareaRef = textareaRef || internalTextareaRef;
 
+  useLayoutEffect(() => {
+    const input = actualTextareaRef.current;
+    if (!input) return;
+    const resize = () => {
+      input.style.height = "auto";
+      input.style.height = `${input.scrollHeight}px`;
+    };
+    resize();
+    let width = input.getBoundingClientRect().width;
+    const observer = new ResizeObserver(() => {
+      const nextWidth = input.getBoundingClientRect().width;
+      if (width === nextWidth) return;
+      width = nextWidth;
+      resize();
+    });
+    observer.observe(input);
+    return () => observer.disconnect();
+  }, [promptInput, variant, actualTextareaRef]);
+
   const [openMenu, setOpenMenu] = useState<
     "project" | "env" | "branch" | "plus" | "permission" | "model" | null
   >(null);
   const [newBranchInput, setNewBranchInput] = useState("");
+  const [projectQuery, setProjectQuery] = useState("");
   const [isDictating, setIsDictating] = useState(false);
+  const [dictationError, setDictationError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [dropError, setDropError] = useState<string | null>(null);
+  const onAddAttachedFilesRef = useRef(onAddAttachedFiles);
+  onAddAttachedFilesRef.current = onAddAttachedFiles;
   const recognitionRef = useRef<any>(null);
-  const permissionTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const dictationContext = useRef({ key: dictationSessionKey, prompt: promptInput });
+  dictationContext.current = { key: dictationSessionKey, prompt: promptInput };
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const menuTriggersRef = useRef<Record<string, HTMLButtonElement | null>>({});
+  const focusLastMenuItemRef = useRef(false);
 
-  // Toggle real Speech Recognition
+  const closeComposerMenu = () => {
+    setOpenMenu(null);
+    if (openMenu) menuTriggersRef.current[openMenu]?.focus({ preventScroll: true });
+  };
+
+  const handleComposerTriggerKeys = (event: React.KeyboardEvent<HTMLButtonElement>, menu: NonNullable<typeof openMenu>) => {
+    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    event.stopPropagation();
+    focusLastMenuItemRef.current = event.key === "ArrowUp";
+    setOpenMenu(menu);
+    if (openMenu === menu) {
+      const controls = menuRef.current?.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled)");
+      controls?.[focusLastMenuItemRef.current ? controls.length - 1 : 0]?.focus({ preventScroll: true });
+    }
+  };
+
+  const handleComposerMenuKeys = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    event.stopPropagation();
+    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeComposerMenu();
+      return;
+    }
+    if (event.key === "Tab") {
+      closeComposerMenu();
+      return;
+    }
+    if ((event.target as HTMLElement).matches("input") && !["ArrowDown", "ArrowUp"].includes(event.key)) return;
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled)"));
+    if (!controls.length) return;
+    event.preventDefault();
+    const current = controls.indexOf(document.activeElement as HTMLElement);
+    const next = event.key === "Home" ? 0 : event.key === "End" ? controls.length - 1
+      : event.key === "ArrowDown" ? (current + 1) % controls.length
+      : current < 0 ? controls.length - 1 : (current - 1 + controls.length) % controls.length;
+    controls[next].focus({ preventScroll: true });
+    controls[next].scrollIntoView({ block: "nearest" });
+  };
+
+  useEffect(() => {
+    if (openMenu !== "project") setProjectQuery("");
+    if (!openMenu || openMenu === "model") return;
+    const updateBounds = () => {
+      const menu = menuRef.current;
+      const trigger = menuTriggersRef.current[openMenu];
+      if (!menu || !trigger) return;
+      menu.style.maxHeight = `${Math.max(0, trigger.getBoundingClientRect().top - 16)}px`;
+      menu.style.left = "";
+      const rect = menu.getBoundingClientRect();
+      const shift = Math.max(8 - rect.left, Math.min(0, window.innerWidth - 8 - rect.right));
+      if (shift) menu.style.left = `${shift}px`;
+    };
+    updateBounds();
+    window.addEventListener("resize", updateBounds);
+    const frame = requestAnimationFrame(() => {
+      const controls = menuRef.current?.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled)");
+      controls?.[focusLastMenuItemRef.current ? controls.length - 1 : 0]?.focus({ preventScroll: true });
+      focusLastMenuItemRef.current = false;
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("resize", updateBounds);
+    };
+  }, [openMenu]);
+
+  const stopDictation = (updateState = true) => {
+    const rec = recognitionRef.current;
+    recognitionRef.current = null;
+    if (rec) {
+      rec.onresult = null; rec.onerror = null; rec.onend = null;
+      try { rec.abort(); } catch { /* The browser may already have stopped. */ }
+    }
+    if (updateState) setIsDictating(false);
+  };
+
+  useEffect(() => {
+    setIsDictating(false); setDictationError(null);
+    return () => stopDictation(false);
+  }, [dictationSessionKey]);
+
+  // Browser fallback; official authenticated voice services are not connected.
   const toggleDictation = () => {
+    if (recognitionRef.current) { stopDictation(); return; }
     const SpeechRec =
       (window as any).SpeechRecognition ||
       (window as any).webkitSpeechRecognition;
 
     if (!SpeechRec) {
-      alert("当前环境不支持 Web Speech 语音听写，请在支持麦克风权限的浏览器/WebView中使用。");
+      setDictationError("当前环境不支持浏览器 Web Speech 听写。");
       return;
     }
-
-    if (isDictating) {
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.stop();
-        } catch {}
-        recognitionRef.current = null;
-      }
-      setIsDictating(false);
-      return;
-    }
-
+    setDictationError(null);
     try {
-      let savedVoiceLang = "zh-CN";
-      try {
-        const raw = localStorage.getItem("codex_desktop_preferences");
-        if (raw) {
-          const p = JSON.parse(raw);
-          if (p.voiceLanguage) savedVoiceLang = p.voiceLanguage;
-        }
-      } catch {}
-
       const rec = new SpeechRec();
+      recognitionRef.current = rec;
       rec.continuous = true;
       rec.interimResults = true;
-      rec.lang = savedVoiceLang;
-
-      let accumulated = promptInput ? promptInput + " " : "";
-
+      rec.lang = navigator.language;
+      const key = dictationContext.current.key;
+      const prefix = dictationContext.current.prompt;
+      let expected = prefix;
       rec.onresult = (event: any) => {
-        let interim = "";
-        let finalTrans = "";
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            finalTrans += event.results[i][0].transcript;
-          } else {
-            interim += event.results[i][0].transcript;
-          }
+        if (recognitionRef.current !== rec || dictationContext.current.key !== key) return;
+        if (dictationContext.current.prompt !== expected) { stopDictation(); return; }
+        let transcript = "";
+        for (let i = 0; i < event.results.length; i++) {
+          transcript += event.results[i][0].transcript;
         }
-        const spoken = (accumulated + finalTrans + interim).trim();
-        if (spoken) {
-          onPromptInputChange(spoken);
-        }
+        expected = `${prefix}${prefix && transcript ? " " : ""}${transcript}`;
+        dictationContext.current.prompt = expected;
+        onPromptInputChange(expected);
       };
-
       rec.onerror = (e: any) => {
-        console.warn("Speech recognition error:", e);
-        setIsDictating(false);
+        if (recognitionRef.current !== rec || dictationContext.current.key !== key) return;
+        setDictationError(`浏览器听写失败：${e.error || "未知错误"}`);
+        stopDictation();
       };
-
       rec.onend = () => {
-        setIsDictating(false);
+        if (recognitionRef.current === rec && dictationContext.current.key === key) stopDictation();
       };
-
       rec.start();
-      recognitionRef.current = rec;
-      setIsDictating(true);
+      if (recognitionRef.current === rec) setIsDictating(true);
     } catch (err) {
-      console.warn("Failed to start speech recognition:", err);
-      setIsDictating(false);
+      stopDictation();
+      setDictationError(`无法启动浏览器听写：${String(err)}`);
     }
   };
 
@@ -244,17 +345,21 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
+    if (isTauriRuntime()) return;
 
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       const droppedItems: AttachedFileItem[] = [];
+      let missingPath = false;
       for (let i = 0; i < e.dataTransfer.files.length; i++) {
         const file = e.dataTransfer.files[i];
-        const filePath = (file as any).path || file.name;
-        const isImage = /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(file.name);
-        droppedItems.push(
-          createAttachedFileItem(filePath, file.name, isImage ? "image" : "file")
-        );
+        const filePath = (file as any).path;
+        if (typeof filePath !== "string" || !/^(?:[a-z]:[\\/]|[\\/])/i.test(filePath)) {
+          missingPath = true;
+          continue;
+        }
+        droppedItems.push(createAttachedFileItem(filePath, file.name));
       }
+      setDropError(missingPath ? "无法读取拖入文件的路径，请使用附件按钮添加。" : null);
       if (droppedItems.length > 0) {
         if (onAddAttachedFiles) {
           onAddAttachedFiles(droppedItems);
@@ -269,6 +374,37 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
   const [autocompleteIndex, setAutocompleteIndex] = useState(0);
 
   const boxRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void import("@tauri-apps/api/webview").then(async ({ getCurrentWebview }) => {
+      const off = await getCurrentWebview().onDragDropEvent(({ payload }) => {
+        if (disposed) return;
+        if (payload.type === "leave") {
+          setIsDragging(false);
+          return;
+        }
+        const rect = boxRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const x = payload.position.x / window.devicePixelRatio;
+        const y = payload.position.y / window.devicePixelRatio;
+        const inside = x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom;
+        setIsDragging(payload.type !== "drop" && inside);
+        if (payload.type === "drop" && inside && payload.paths.length > 0) {
+          setDropError(null);
+          onAddAttachedFilesRef.current?.(payload.paths.map(path => createAttachedFileItem(path)));
+        }
+      });
+      if (disposed) off();
+      else unlisten = off;
+    }).catch(error => console.warn("Composer native drag/drop listener failed:", error));
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   useEffect(() => {
     function handleOutsideClick(e: MouseEvent) {
@@ -323,9 +459,18 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
     actualTextareaRef.current?.focus();
   };
 
+  const autocompleteItems = React.useMemo(() => autocompleteMode
+    ? getAutocompleteItems(autocompleteMode, autocompleteQuery, workspaceFiles, workspaceFileHits, skills)
+    : [], [autocompleteMode, autocompleteQuery, workspaceFiles, workspaceFileHits, skills]);
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
-    if (autocompleteMode) {
+    if (autocompleteMode && autocompleteItems.length > 0) {
+      if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        handleAutocompleteSelect(autocompleteItems[Math.min(Math.max(0, autocompleteIndex), autocompleteItems.length - 1)]);
+        return;
+      }
       if (e.key === "ArrowDown") {
         e.preventDefault();
         setAutocompleteIndex((i) => i + 1);
@@ -342,15 +487,6 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
         return;
       }
     }
-    let sendShortcutPref = "enter";
-    try {
-      const raw = localStorage.getItem("codex_desktop_preferences");
-      if (raw) {
-        const p = JSON.parse(raw);
-        if (p.sendShortcut) sendShortcutPref = p.sendShortcut;
-      }
-    } catch {}
-
     if (e.key !== "Enter" || e.altKey) return;
     const modifier = e.metaKey || e.ctrlKey;
     if (e.repeat && modifier) {
@@ -358,16 +494,15 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
       return;
     }
     const shouldQueue = isStreaming && modifier &&
-      (sendShortcutPref === "cmd-enter" ? e.shiftKey : !e.shiftKey);
+      (composerEnterBehavior === "enter" ? !e.shiftKey : e.shiftKey);
     if (shouldQueue) {
       e.preventDefault();
       onQueueMessage();
       return;
     }
     const shouldSend =
-      sendShortcutPref === "cmd-enter"
-        ? modifier && !e.shiftKey
-        : !e.shiftKey;
+      !e.shiftKey && (modifier || composerEnterBehavior === "enter" ||
+        (composerEnterBehavior === "cmdIfMultiline" && !promptInput.includes("\n")));
 
     if (shouldSend) {
       e.preventDefault();
@@ -376,11 +511,12 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
   };
 
   const projectName =
-    activeWorkspace?.label ||
-    activeWorkspace?.path?.split(/[/\\]/).pop() ||
-    "codex-app-offline";
+    activeWorkspace?.label?.trim() ||
+    (activeWorkspace?.path ? baseNameFsPath(activeWorkspace.path) || activeWorkspace.path : "选择项目");
 
   const currentBranch = gitStatus?.branch || "main";
+  const filteredWorkspaces = workspaces.filter(ws =>
+    `${ws.label} ${ws.path}`.toLocaleLowerCase().includes(projectQuery.trim().toLocaleLowerCase()));
 
   return (
     <div
@@ -402,42 +538,60 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
           {/* 1. Project Pill */}
           <div className="composer-dropdown-anchor">
             <button
+              ref={(node) => { menuTriggersRef.current.project = node; }}
               type="button"
               className="composer-top-chip"
+              aria-haspopup="menu"
+              aria-expanded={openMenu === "project"}
+              aria-controls={openMenu === "project" ? "composer-project-menu" : undefined}
+              onKeyDown={(event) => handleComposerTriggerKeys(event, "project")}
               onClick={() => setOpenMenu((m) => (m === "project" ? null : "project"))}
-              title={`当前项目: ${activeWorkspace?.path || projectName}`}
+              title={activeWorkspace?.path ? `当前项目: ${activeWorkspace.path}` : "选择一个项目来运行聊天"}
             >
               <FolderIcon size={13} />
               <span>{projectName}</span>
             </button>
 
             {openMenu === "project" && (
-              <div className="composer-popover-menu top-left">
+              <div id="composer-project-menu" ref={menuRef} role="menu" aria-label="选择项目" className="composer-popover-menu top-left" onKeyDown={handleComposerMenuKeys}>
                 <div className="popover-section-label">切换项目工作区</div>
-                {workspaces.map((ws) => {
+                <input
+                  className="popover-search-input"
+                  aria-label="搜索项目"
+                  placeholder="搜索项目"
+                  value={projectQuery}
+                  onChange={(event) => setProjectQuery(event.target.value)}
+                />
+                {filteredWorkspaces.map((ws) => {
                   const isCurrent = ws.path === activeWorkspace?.path;
                   return (
-                    <div
+                    <button
                       key={ws.path}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={isCurrent}
                       className={`popover-menu-item ${isCurrent ? "selected" : ""}`}
                       onClick={() => {
                         onSelectWorkspace(ws.path);
-                        setOpenMenu(null);
+                        closeComposerMenu();
                       }}
                     >
                       <div className="popover-item-body">
-                        <span className="popover-item-title">{ws.label}</span>
+                        <span className="popover-item-title">{ws.label?.trim() || baseNameFsPath(ws.path) || ws.path}</span>
                         <span className="popover-item-desc">{ws.path}</span>
                       </div>
                       {isCurrent && <CheckIcon size={13} />}
-                    </div>
+                    </button>
                   );
                 })}
+                {filteredWorkspaces.length === 0 && <div role="status" className="popover-section-label">未找到项目</div>}
                 <div className="popover-divider" />
-                <div
+                <button
+                  type="button"
+                  role="menuitem"
                   className="popover-menu-item"
                   onClick={() => {
-                    setOpenMenu(null);
+                    closeComposerMenu();
                     onPickNewFolder();
                   }}
                 >
@@ -445,7 +599,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
                     <PlusIcon size={13} />
                     <span className="popover-item-title">添加本地项目文件夹...</span>
                   </div>
-                </div>
+                </button>
               </div>
             )}
           </div>
@@ -453,8 +607,13 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
           {/* 2. Local / Worktree Environment Pill */}
           <div className="composer-dropdown-anchor">
             <button
+              ref={(node) => { menuTriggersRef.current.env = node; }}
               type="button"
               className={`composer-top-chip ${useWorktree ? "worktree-active" : ""}`}
+              aria-haspopup="menu"
+              aria-expanded={openMenu === "env"}
+              aria-controls={openMenu === "env" ? "composer-env-menu" : undefined}
+              onKeyDown={(event) => handleComposerTriggerKeys(event, "env")}
               onClick={() => setOpenMenu((m) => (m === "env" ? null : "env"))}
               title="选择聊天运行位置"
             >
@@ -464,13 +623,16 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
             </button>
 
             {openMenu === "env" && (
-              <div className="composer-popover-menu top-left">
+              <div id="composer-env-menu" ref={menuRef} role="menu" aria-label="选择聊天运行位置" className="composer-popover-menu top-left" onKeyDown={handleComposerMenuKeys}>
                 <div className="popover-section-label">启动位置 (Start in)</div>
-                <div
+                <button
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={!useWorktree}
                   className={`popover-menu-item ${!useWorktree ? "selected" : ""}`}
                   onClick={() => {
                     onSetUseWorktree(false);
-                    setOpenMenu(null);
+                    closeComposerMenu();
                   }}
                 >
                   <div className="popover-item-body">
@@ -481,12 +643,15 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
                     <span className="popover-item-desc">直接在当前项目目录中读取与修改代码</span>
                   </div>
                   {!useWorktree && <CheckIcon size={13} />}
-                </div>
-                <div
+                </button>
+                <button
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={useWorktree}
                   className={`popover-menu-item ${useWorktree ? "selected" : ""}`}
                   onClick={() => {
                     onSetUseWorktree(true);
-                    setOpenMenu(null);
+                    closeComposerMenu();
                   }}
                 >
                   <div className="popover-item-body">
@@ -497,7 +662,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
                     <span className="popover-item-desc">创建隔离的 Git Worktree 副本，互不干扰</span>
                   </div>
                   {useWorktree && <CheckIcon size={13} />}
-                </div>
+                </button>
               </div>
             )}
           </div>
@@ -505,8 +670,13 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
           {variant === "thread" && (
           <div className="composer-dropdown-anchor">
             <button
+              ref={(node) => { menuTriggersRef.current.branch = node; }}
               type="button"
               className="composer-top-chip"
+              aria-haspopup="menu"
+              aria-expanded={openMenu === "branch"}
+              aria-controls={openMenu === "branch" ? "composer-branch-menu" : undefined}
+              onKeyDown={(event) => handleComposerTriggerKeys(event, "branch")}
               onClick={() => setOpenMenu((m) => (m === "branch" ? null : "branch"))}
               title="切换或新建 Git 分支"
             >
@@ -516,18 +686,21 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
             </button>
 
             {openMenu === "branch" && (
-              <div className="composer-popover-menu top-left" style={{ minWidth: 250 }}>
+              <div id="composer-branch-menu" ref={menuRef} role="menu" aria-label="切换或新建 Git 分支" className="composer-popover-menu top-left" style={{ minWidth: 250 }} onKeyDown={handleComposerMenuKeys}>
                 <div className="popover-section-label">切换分支 (Switch branch)</div>
                 <div style={{ maxHeight: 180, overflowY: "auto" }}>
                   {(gitBranches.length > 0 ? gitBranches : [currentBranch]).map((b) => {
                     const isCurrent = b === currentBranch;
                     return (
-                      <div
+                      <button
                         key={b}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={isCurrent}
                         className={`popover-menu-item ${isCurrent ? "selected" : ""}`}
                         onClick={() => {
                           onSwitchBranch(b);
-                          setOpenMenu(null);
+                          closeComposerMenu();
                         }}
                       >
                         <div className="popover-item-header">
@@ -535,7 +708,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
                           <span className="popover-item-title">{b}</span>
                         </div>
                         {isCurrent && <CheckIcon size={13} />}
-                      </div>
+                      </button>
                     );
                   })}
                 </div>
@@ -549,22 +722,26 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
                     value={newBranchInput}
                     onChange={(e) => setNewBranchInput(e.target.value)}
                     onKeyDown={(e) => {
+                      if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229 || e.repeat) return;
                       if (e.key === "Enter" && newBranchInput.trim()) {
+                        e.preventDefault();
+                        e.stopPropagation();
                         onCreateBranch(newBranchInput.trim());
                         setNewBranchInput("");
-                        setOpenMenu(null);
+                        closeComposerMenu();
                       }
                     }}
                   />
                   <button
                     type="button"
                     className="btn-approve"
-                    style={{ padding: "4px 10px", fontSize: 11.5 }}
+                    disabled={!newBranchInput.trim()}
+                    style={{ padding: "4px 10px", fontSize: "calc(11.5px * var(--font-ui-scale, 1))" }}
                     onClick={() => {
                       if (newBranchInput.trim()) {
                         onCreateBranch(newBranchInput.trim());
                         setNewBranchInput("");
-                        setOpenMenu(null);
+                        closeComposerMenu();
                       }
                     }}
                   >
@@ -606,11 +783,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
       <div className="composer-inner-surface" style={{ position: "relative" }}>
         {autocompleteMode && (
           <ComposerAutocomplete
-            mode={autocompleteMode}
-            query={autocompleteQuery}
-            files={workspaceFiles}
-            fileHits={workspaceFileHits}
-            skills={skills}
+            items={autocompleteItems}
             selectedIndex={autocompleteIndex}
             onSelect={handleAutocompleteSelect}
             onClose={() => setAutocompleteMode(null)}
@@ -618,6 +791,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
         )}
 
         {/* Attached File Chips */}
+        {dropError && <div role="alert">{dropError}</div>}
         {attachedFiles.length > 0 && (
           <div className="composer-attachments-row">
             {attachedFiles.map((file) => (
@@ -655,8 +829,13 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
           <div className="composer-bottom-left">
             <div className="composer-dropdown-anchor">
               <button
+                ref={(node) => { menuTriggersRef.current.plus = node; }}
                 type="button"
                 className="composer-icon-circle-btn"
+                aria-haspopup="menu"
+                aria-expanded={openMenu === "plus"}
+                aria-controls={openMenu === "plus" ? "composer-plus-menu" : undefined}
+                onKeyDown={(event) => handleComposerTriggerKeys(event, "plus")}
                 onClick={() => setOpenMenu((m) => (m === "plus" ? null : "plus"))}
                 title="添加文件、照片或切换模式"
               >
@@ -664,11 +843,13 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
               </button>
 
               {openMenu === "plus" && (
-                <div className="composer-popover-menu bottom-left" style={{ minWidth: 230 }}>
-                  <div
+                <div id="composer-plus-menu" ref={menuRef} role="menu" aria-label="添加文件、照片或切换模式" className="composer-popover-menu bottom-left" style={{ minWidth: 230 }} onKeyDown={handleComposerMenuKeys}>
+                  <button
+                    type="button"
+                    role="menuitem"
                     className="popover-menu-item"
                     onClick={() => {
-                      setOpenMenu(null);
+                      closeComposerMenu();
                       onAttachFiles();
                     }}
                   >
@@ -676,25 +857,29 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
                       <PaperclipIcon size={14} />
                       <span className="popover-item-title">添加文件或图像...</span>
                     </div>
-                  </div>
+                  </button>
                   {onAppshot && (
-                    <div
+                    <button
+                      type="button"
+                      role="menuitem"
                       className="popover-menu-item"
                       onClick={() => {
-                        setOpenMenu(null);
+                        closeComposerMenu();
                         onAppshot();
                       }}
                     >
                       <div className="popover-item-header">
                         <CameraIcon size={14} />
-                        <span className="popover-item-title">当前屏幕快照 (Appshot)</span>
+                        <span className="popover-item-title">截屏（主屏幕）</span>
                       </div>
-                    </div>
+                    </button>
                   )}
-                  <div
+                  <button
+                    type="button"
+                    role="menuitem"
                     className="popover-menu-item"
                     onClick={() => {
-                      setOpenMenu(null);
+                      closeComposerMenu();
                       onPromptInputChange(promptInput + (promptInput ? " " : "") + "@电脑 ");
                       actualTextareaRef.current?.focus();
                     }}
@@ -703,13 +888,16 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
                       <LaptopIcon size={14} />
                       <span className="popover-item-title">操控桌面应用 (@电脑)</span>
                     </div>
-                  </div>
+                  </button>
                   <div className="popover-divider" />
-                  <div
+                  <button
+                    type="button"
+                    role="menuitemcheckbox"
+                    aria-checked={planMode}
                     className={`popover-menu-item ${planMode ? "selected" : ""}`}
                     onClick={() => {
                       onTogglePlanMode();
-                      setOpenMenu(null);
+                      closeComposerMenu();
                     }}
                   >
                     <div className="popover-item-header">
@@ -717,14 +905,16 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
                       <span className="popover-item-title">计划模式 (Plan Mode)</span>
                     </div>
                     {planMode && <CheckIcon size={13} />}
-                  </div>
+                  </button>
                 </div>
               )}
             </div>
 
             <div className="composer-dropdown-anchor">
               <button
-                ref={permissionTriggerRef}
+                ref={(node) => {
+                  menuTriggersRef.current.permission = node;
+                }}
                 type="button"
                 className={`composer-inline-pill ${
                   permissionMode === "full" ? "danger-accent" : ""
@@ -732,6 +922,8 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
                 aria-label="更改权限"
                 aria-haspopup="menu"
                 aria-expanded={openMenu === "permission"}
+                aria-controls={openMenu === "permission" ? "composer-permission-menu" : undefined}
+                onKeyDown={(event) => handleComposerTriggerKeys(event, "permission")}
                 onClick={() =>
                   setOpenMenu((m) => (m === "permission" ? null : "permission"))
                 }
@@ -748,16 +940,12 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
 
               {openMenu === "permission" && (
                 <div
+                  id="composer-permission-menu"
+                  ref={menuRef}
                   className="composer-popover-menu bottom-left permission-popover"
                   role="menu"
                   aria-label="更改权限"
-                  onKeyDown={(event) => {
-                    if (event.key === "Escape") {
-                      event.preventDefault();
-                      setOpenMenu(null);
-                      permissionTriggerRef.current?.focus({ preventScroll: true });
-                    }
-                  }}
+                  onKeyDown={handleComposerMenuKeys}
                 >
                   <div className="permission-popover-heading">应如何批准 ChatGPT 操作？</div>
                   {PERMISSION_OPTIONS.map((opt) => {
@@ -771,8 +959,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
                         className={`popover-menu-item permission-option ${isSelected ? "selected" : ""} ${opt.id === "full" ? "danger" : ""}`}
                         onClick={() => {
                           onSelectPermissionMode(opt.id);
-                          setOpenMenu(null);
-                          requestAnimationFrame(() => permissionTriggerRef.current?.focus({ preventScroll: true }));
+                          closeComposerMenu();
                         }}
                       >
                         <div className="popover-item-body">
@@ -792,6 +979,9 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
           <div className="composer-bottom-right">
             <ModelSelector
               models={models}
+              modelsLoading={modelsLoading}
+              modelsError={modelsError}
+              onRefreshModels={onRefreshModels}
               selectedModelId={selectedModelId}
               defaultModelSelected={defaultModelSelected}
               reasoningEffort={reasoningEffort}
@@ -808,10 +998,12 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
               type="button"
               className={`composer-icon-circle-btn ${isDictating ? "dictating" : ""}`}
               onClick={toggleDictation}
-              title={isDictating ? "正在听写... 点击停止并插入文字" : "语音输入 (实时语音识别听写)"}
+              aria-pressed={isDictating}
+              title={isDictating ? "停止浏览器听写" : "浏览器 Web Speech 听写（回退）"}
             >
               <MicIcon size={15} />
             </button>
+            {dictationError && <span role="alert">{dictationError}</span>}
 
             {/* Send / Stop Button */}
             {isStreaming ? (
@@ -829,7 +1021,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
                 className="send-action-btn"
                 disabled={!promptInput.trim() && attachedFiles.length === 0}
                 onClick={() => onSendMessage()}
-                title="发送 (Enter)"
+                title={composerEnterBehavior === "cmdAlways" || (composerEnterBehavior === "cmdIfMultiline" && promptInput.includes("\n")) ? "发送 (Ctrl+Enter)" : "发送 (Enter)"}
               >
                 <SendIcon size={15} />
               </button>

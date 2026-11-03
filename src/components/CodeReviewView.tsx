@@ -1,3 +1,4 @@
+import { openReviewLink, runPullRequestReview } from "../reviewPreferences";
 import React, { useEffect, useMemo, useState } from "react";
 import { tauriInvoke } from "../bridge";
 import "./CodeReviewView.css";
@@ -14,6 +15,7 @@ export type ReviewKind = "uncommitted" | "branch" | "commit" | "custom";
 
 export interface ReviewRequest {
   kind: ReviewKind;
+  delivery?: "inline" | "detached";
   branch?: string;
   sha?: string;
   instructions?: string;
@@ -25,6 +27,7 @@ export interface CodeReviewViewProps {
   defaultBranch?: string | null;
   commits?: ReviewCommitOption[];
   busy?: boolean;
+  repositoryReady?: boolean;
   onStartReview: (req: ReviewRequest) => Promise<void> | void;
   onBack?: () => void;
   lastResult?: string | null;
@@ -88,6 +91,7 @@ export const CodeReviewView: React.FC<CodeReviewViewProps> = ({
   defaultBranch,
   commits = [],
   busy = false,
+  repositoryReady = true,
   onStartReview,
   onBack,
   lastResult,
@@ -95,10 +99,17 @@ export const CodeReviewView: React.FC<CodeReviewViewProps> = ({
   const [subTab, setSubTab] = useState<"local" | "pr">("local");
   const [kind, setKind] = useState<ReviewKind>("uncommitted");
   const [branch, setBranch] = useState<string>(
-    defaultBranch || branches[0] || "main"
+    defaultBranch || branches[0] || ""
   );
   const [sha, setSha] = useState<string>(commits[0]?.hash || "");
   const [instructions, setInstructions] = useState<string>("");
+
+  useEffect(() => {
+    setBranch((current) => branches.includes(current) ? current : defaultBranch || branches[0] || "");
+  }, [branches, defaultBranch]);
+  useEffect(() => {
+    if (commits.length) setSha((current) => commits.some((commit) => commit.hash === current) ? current : commits[0].hash);
+  }, [commits]);
 
   // PR tab state
   const [ghStatus, setGhStatus] = useState<GhStatus | null>(null);
@@ -110,6 +121,22 @@ export const CodeReviewView: React.FC<CodeReviewViewProps> = ({
   const [selectedPr, setSelectedPr] = useState<GitPullRequestItem | null>(null);
   const [checkoutLoading, setCheckoutLoading] = useState<boolean>(false);
   const [checkoutMsg, setCheckoutMsg] = useState<string | null>(null);
+  const prActionPending = React.useRef(false);
+  const prActionGeneration = React.useRef(0);
+  const [prActionBusy, setPrActionBusy] = useState(false);
+  useEffect(() => {
+    prActionPending.current = false; setPrActionBusy(false);
+    return () => { prActionGeneration.current += 1; };
+  }, [workspacePath, subTab]);
+  const runPrAction = async (action: (isCurrent: () => boolean) => Promise<void>) => {
+    if (prActionPending.current) return;
+    prActionPending.current = true;
+    const version = prActionGeneration.current;
+    setPrActionBusy(true); setPrError(null);
+    try { await action(() => version === prActionGeneration.current); }
+    catch (error) { if (version === prActionGeneration.current) setPrError(String(error)); }
+    finally { if (version === prActionGeneration.current) { prActionPending.current = false; setPrActionBusy(false); } }
+  };
 
   const handleCheckoutBranch = async (branchName: string) => {
     if (!workspacePath) return;
@@ -161,18 +188,17 @@ export const CodeReviewView: React.FC<CodeReviewViewProps> = ({
   const branchOptions = useMemo(() => {
     const list = new Set<string>(branches.filter(Boolean));
     if (defaultBranch) list.add(defaultBranch);
-    if (!list.size) list.add("main");
     return Array.from(list);
   }, [branches, defaultBranch]);
 
   const canStart = useMemo(() => {
     if (busy) return false;
     if (!workspacePath) return false;
-    if (kind === "branch") return Boolean(branch.trim());
+    if (kind === "branch") return repositoryReady && branchOptions.includes(branch);
     if (kind === "commit") return Boolean(sha.trim());
     if (kind === "custom") return Boolean(instructions.trim());
     return true;
-  }, [busy, workspacePath, kind, branch, sha, instructions]);
+  }, [busy, repositoryReady, branchOptions, workspacePath, kind, branch, sha, instructions]);
 
   const start = async () => {
     if (!canStart) return;
@@ -351,7 +377,7 @@ export const CodeReviewView: React.FC<CodeReviewViewProps> = ({
                 {busy ? "正在启动审查…" : "开始审查"}
               </button>
               <span className="review-actions-hint">
-                审查会在一个新会话中以内联 turn 运行，可随时中断。
+                优先在当前项目的聊天中审查；没有当前聊天时新建，可随时中断。
               </span>
             </div>
           </div>
@@ -374,7 +400,7 @@ export const CodeReviewView: React.FC<CodeReviewViewProps> = ({
               }}
             >
               <h3 style={{ marginBottom: 8 }}>需要安装 GitHub CLI (`gh`)</h3>
-              <p style={{ color: "var(--text-secondary)", fontSize: 13.5, lineHeight: 1.6, marginBottom: 16 }}>
+              <p style={{ color: "var(--text-secondary)", fontSize: "calc(13.5px * var(--font-ui-scale, 1))", lineHeight: 1.6, marginBottom: 16 }}>
                 Codex 桌面端通过官方 GitHub CLI 浏览、拉取与审查 Pull Requests。检测到当前机器尚未安装 `gh` 命令行工具。
               </p>
               <div
@@ -419,7 +445,7 @@ export const CodeReviewView: React.FC<CodeReviewViewProps> = ({
               }}
             >
               <h3 style={{ marginBottom: 8 }}>需要登录 GitHub 账号</h3>
-              <p style={{ color: "var(--text-secondary)", fontSize: 13.5, lineHeight: 1.6, marginBottom: 16 }}>
+              <p style={{ color: "var(--text-secondary)", fontSize: "calc(13.5px * var(--font-ui-scale, 1))", lineHeight: 1.6, marginBottom: 16 }}>
                 已检测到 GitHub CLI ({ghStatus.version || "已安装"})，但在当前系统环境中尚未登录。请在终端执行：
               </p>
               <div
@@ -478,12 +504,12 @@ export const CodeReviewView: React.FC<CodeReviewViewProps> = ({
                       <span style={{ fontWeight: 600, color: "var(--accent-blue)" }}>
                         #{pr.number}
                       </span>
-                      <strong style={{ fontSize: 14 }}>{pr.title}</strong>
+                      <strong style={{ fontSize: "var(--text-base)" }}>{pr.title}</strong>
                       {pr.is_draft && (
                         <span className="tag-badge">Draft</span>
                       )}
                     </div>
-                    <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
+                    <div style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)" }}>
                       <span>由 {pr.author || "未知"} 创建</span>
                       {pr.head_ref_name && <span> · 分支: {pr.head_ref_name}</span>}
                       {pr.additions !== undefined && pr.deletions !== undefined && (
@@ -503,21 +529,17 @@ export const CodeReviewView: React.FC<CodeReviewViewProps> = ({
                       <button
                         type="button"
                         className="secondary-btn-sm"
-                        onClick={() => window.open(pr.url, "_blank")}
+                        disabled={prActionBusy}
+                        onClick={() => void runPrAction(isCurrent => openReviewLink(pr.url!, () => setSelectedPr(pr), isCurrent))}
                       >
-                        网页打开
+                        打开链接
                       </button>
                     )}
                     <button
                       type="button"
                       className="primary-btn-sm"
-                      onClick={() =>
-                        onStartReview({
-                          kind: "branch",
-                          branch: pr.head_ref_name || "main",
-                          instructions: `请全面审查 Pull Request #${pr.number}: ${pr.title}`,
-                        })
-                      }
+                      disabled={prActionBusy || busy}
+                      onClick={() => void runPrAction(isCurrent => runPullRequestReview(pr, onStartReview, isCurrent))}
                     >
                       使用 Codex 审查
                     </button>
@@ -559,14 +581,14 @@ export const CodeReviewView: React.FC<CodeReviewViewProps> = ({
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
               <div>
-                <span style={{ fontSize: 13, color: "var(--accent-blue)", fontWeight: 600 }}>
+                <span style={{ fontSize: "var(--text-sm)", color: "var(--accent-blue)", fontWeight: 600 }}>
                   Pull Request #{selectedPr.number}
                 </span>
-                <h3 style={{ margin: "4px 0 0 0", fontSize: 16 }}>{selectedPr.title}</h3>
+                <h3 style={{ margin: "4px 0 0 0", fontSize: "var(--text-lg)" }}>{selectedPr.title}</h3>
               </div>
               <button
                 type="button"
-                style={{ background: "none", border: "none", color: "#8e8e93", cursor: "pointer", fontSize: 16 }}
+                style={{ background: "none", border: "none", color: "#8e8e93", cursor: "pointer", fontSize: "var(--text-lg)" }}
                 onClick={() => setSelectedPr(null)}
               >
                 ✕
@@ -574,12 +596,12 @@ export const CodeReviewView: React.FC<CodeReviewViewProps> = ({
             </div>
 
             {checkoutMsg && (
-              <div style={{ padding: "8px 12px", borderRadius: 6, background: "rgba(16, 163, 127, 0.15)", color: "#10a37f", fontSize: 12 }}>
+              <div style={{ padding: "8px 12px", borderRadius: 6, background: "rgba(16, 163, 127, 0.15)", color: "#10a37f", fontSize: "var(--text-xs)" }}>
                 {checkoutMsg}
               </div>
             )}
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, background: "rgba(0,0,0,0.25)", padding: 14, borderRadius: 8, fontSize: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, background: "rgba(0,0,0,0.25)", padding: 14, borderRadius: 8, fontSize: "var(--text-xs)" }}>
               <div>
                 <span style={{ color: "#8e8e93" }}>源分支: </span>
                 <code style={{ color: "#e2e2e5" }}>{selectedPr.head_ref_name || "未知"}</code>

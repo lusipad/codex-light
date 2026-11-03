@@ -106,7 +106,7 @@
   color: var(--text-primary);
   background: transparent;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--text-sm);
   text-align: left;
   cursor: pointer;
 }
@@ -124,7 +124,7 @@
 .app-titlebar-menu-item kbd {
   color: var(--text-tertiary);
   font: inherit;
-  font-size: 11px;
+  font-size: calc(11px * var(--font-ui-scale, 1));
   white-space: nowrap;
 }
 

@@ -14,7 +14,7 @@
   padding: 8px 12px;
   background: var(--bg-surface-elevated, #252528);
   border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .side-chat-header-title {
@@ -24,7 +24,7 @@
 }
 
 .side-chat-badge {
-  font-size: 10px;
+  font-size: calc(10px * var(--font-ui-scale, 1));
   padding: 1px 6px;
   background: rgba(84, 153, 235, 0.15);
   color: #5499eb;
@@ -78,7 +78,7 @@
   border-radius: 12px 12px 2px 12px;
   padding: 8px 12px;
   color: var(--text-primary, #e2e2e5);
-  font-size: 13px;
+  font-size: var(--text-sm);
   line-height: 1.5;
 }
 
@@ -89,7 +89,7 @@
   border-radius: 12px 12px 12px 2px;
   padding: 8px 12px;
   color: var(--text-primary, #e2e2e5);
-  font-size: 13px;
+  font-size: var(--text-sm);
   line-height: 1.5;
 }
 
@@ -110,7 +110,7 @@
   background: transparent;
   border: none;
   color: var(--text-muted, #8a8a92);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-ui-scale, 1));
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -141,7 +141,7 @@
   border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.1));
   border-radius: 8px;
   color: var(--text-primary, #e2e2e5);
-  font-size: 13px;
+  font-size: var(--text-sm);
   line-height: 1.4;
   padding: 8px 10px;
   resize: none;
@@ -161,7 +161,7 @@
 }
 
 .side-chat-hint {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-ui-scale, 1));
   color: var(--text-muted, #777780);
 }
 

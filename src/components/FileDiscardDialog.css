@@ -1,0 +1,3 @@
+.file-discard-dialog button.file-discard-confirm {
+  color: var(--text-danger, #ef4444);
+}

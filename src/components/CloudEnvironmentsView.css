@@ -18,13 +18,13 @@
 
 .cloud-envs-header h2 {
   margin: 0 0 6px 0;
-  font-size: 20px;
+  font-size: var(--text-heading-md);
   font-weight: 600;
 }
 
 .cloud-envs-header .subtitle {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--text-sm);
   color: var(--text-muted, #8e8e93);
 }
 
@@ -49,7 +49,7 @@
   padding: 6px 14px;
   border-radius: 6px;
   color: var(--text-muted, #8e8e93);
-  font-size: 13px;
+  font-size: var(--text-sm);
   cursor: pointer;
   transition: all 0.15s;
 }
@@ -76,7 +76,7 @@
   background: transparent;
   border: none;
   color: #fff;
-  font-size: 13px;
+  font-size: var(--text-sm);
   width: 100%;
   outline: none;
 }
@@ -115,7 +115,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--text-xs);
   padding: 2px 8px;
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.05);
@@ -136,7 +136,7 @@
 }
 
 .network-tag {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-ui-scale, 1));
   color: var(--text-muted, #8e8e93);
   background: rgba(255, 255, 255, 0.06);
   padding: 2px 6px;
@@ -145,7 +145,7 @@
 
 .env-title {
   margin: 0 0 14px 0;
-  font-size: 16px;
+  font-size: var(--text-lg);
   font-weight: 600;
 }
 
@@ -158,7 +158,7 @@
 
 .meta-item {
   display: flex;
-  font-size: 12px;
+  font-size: var(--text-xs);
   gap: 8px;
 }
 
@@ -177,7 +177,7 @@
 
 .meta-v.code {
   font-family: monospace;
-  font-size: 11px;
+  font-size: calc(11px * var(--font-ui-scale, 1));
 }
 
 .env-card-footer {
@@ -190,7 +190,7 @@
 }
 
 .time-hint {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-ui-scale, 1));
   color: var(--text-muted, #71717a);
 }
 
@@ -205,7 +205,7 @@
   border: none;
   padding: 4px 10px;
   border-radius: 5px;
-  font-size: 12px;
+  font-size: var(--text-xs);
   cursor: pointer;
 }
 
@@ -247,7 +247,7 @@
 }
 
 .drawer-subtitle {
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--text-muted, #8e8e93);
   margin-top: 4px;
   display: block;
@@ -264,7 +264,7 @@
 
 .drawer-section h4 {
   margin: 0 0 10px 0;
-  font-size: 14px;
+  font-size: var(--text-base);
   font-weight: 600;
 }
 
@@ -284,7 +284,7 @@
 }
 
 .info-label {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-ui-scale, 1));
   color: var(--text-muted, #8e8e93);
 }
 
@@ -292,7 +292,7 @@
 .gray { color: #8e8e93; }
 
 .section-hint {
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--text-muted, #8e8e93);
   margin-bottom: 10px;
 }
@@ -308,7 +308,7 @@
   padding: 8px 12px;
   border-radius: 6px;
   font-family: monospace;
-  font-size: 12px;
+  font-size: var(--text-xs);
   border: 1px solid var(--border-subtle, #333338);
 }
 
@@ -324,7 +324,7 @@
 }
 
 .drawer-section.danger p {
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--text-muted, #8e8e93);
   margin-bottom: 12px;
 }
@@ -346,4 +346,25 @@
   border: 1px solid var(--border-subtle, #333338);
   border-radius: 12px;
   padding: 24px;
+}
+
+.cloud-envs-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+.cloud-envs-table th,
+.cloud-envs-table td {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: top;
+}
+.cloud-envs-table th:last-child,
+.cloud-envs-table td:last-child {
+  width: 128px;
+}
+.cloud-envs-table th,
+.cloud-envs-repository {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
 }

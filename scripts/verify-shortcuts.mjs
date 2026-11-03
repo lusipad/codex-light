@@ -21,7 +21,7 @@ const cases = [
   [event("O", shift), "new-chat"],
   [event("b", ctrl), "toggle-sidebar"],
   [event("S", shift), "toggle-sidebar"],
-  [event("j", ctrl), "toggle-terminal"],
+  [event("j", ctrl), "toggle-bottom-panel"],
   [event("`", { ...ctrl, code: "Backquote" }), "toggle-terminal"],
   [event("M", shift), "open-model-picker"],
   [event("m", ctrl), null],

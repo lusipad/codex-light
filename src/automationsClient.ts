@@ -23,6 +23,7 @@ export interface SchedulerEntry {
   /** automation status from automation.toml: ACTIVE / PAUSED / COMPLETED. */
   status: string;
   lastRunAt: number | null;
+  lastFinishedAt: number | null;
   nextRunAt: number | null;
   /** outcome of the most recent scheduler execution. */
   lastStatus: SchedulerRunStatus | null;
@@ -47,7 +48,8 @@ export interface AutomationRunFinishedEvent {
   kind: "finished";
   id: string;
   name: string;
-  status: "completed" | "failed";
+  status: "completed" | "failed" | "interrupted" | "unknown";
+  startedAt: number | null;
   threadId: string | null;
   error: string | null;
   finishedAt: number;
@@ -140,6 +142,7 @@ function normalizeEntry(raw: unknown): SchedulerEntry | null {
     name: typeof source.name === "string" && source.name ? source.name : id,
     status: typeof source.status === "string" ? source.status : "",
     lastRunAt: toFiniteNumber(source.lastRunAt ?? source.last_run_at),
+    lastFinishedAt: toFiniteNumber(source.lastFinishedAt ?? source.last_finished_at),
     nextRunAt: toFiniteNumber(source.nextRunAt ?? source.next_run_at),
     lastStatus: typeof rawLastStatus === "string" ? rawLastStatus : null,
     lastError: typeof rawLastError === "string" ? rawLastError : null,
@@ -162,11 +165,14 @@ function normalizeSchedulerStatus(raw: unknown): SchedulerStatus {
   };
 }
 
-function normalizeRunNowResult(raw: unknown): { threadId: string } {
+function normalizeRunNowResult(raw: unknown): { threadId: string; startedAt?: number } {
   if (!raw || typeof raw !== "object") return { threadId: "" };
   const source = raw as Record<string, unknown>;
   const threadId = source.threadId ?? source.thread_id;
-  return { threadId: typeof threadId === "string" ? threadId : "" };
+  return {
+    threadId: typeof threadId === "string" ? threadId : "",
+    startedAt: toFiniteNumber(source.startedAt) ?? undefined,
+  };
 }
 
 async function invokeScheduler<T>(
@@ -208,7 +214,7 @@ export async function refreshSchedule(): Promise<SchedulerStatus> {
 }
 
 /** Trigger one automation immediately; resolves with the created thread id. */
-export async function runAutomationNow(id: string): Promise<{ threadId: string }> {
+export async function runAutomationNow(id: string): Promise<{ threadId: string; startedAt?: number }> {
   return invokeScheduler("automations_run_now", { id }, normalizeRunNowResult);
 }
 
@@ -231,13 +237,15 @@ function normalizeFinishedEvent(payload: unknown): AutomationRunFinishedEvent | 
   const id = typeof source.id === "string" ? source.id : "";
   if (!id) return null;
   const rawStatus = typeof source.status === "string" ? source.status.toLowerCase() : "";
+  if (!["completed", "failed", "interrupted", "unknown"].includes(rawStatus)) return null;
   const threadId = source.threadId ?? source.thread_id;
   const error = source.error;
   return {
     kind: "finished",
     id,
     name: typeof source.name === "string" && source.name ? source.name : id,
-    status: rawStatus === "failed" ? "failed" : "completed",
+    status: rawStatus as AutomationRunFinishedEvent["status"],
+    startedAt: toFiniteNumber(source.startedAt),
     threadId: typeof threadId === "string" && threadId ? threadId : null,
     error: typeof error === "string" && error ? error : null,
     finishedAt: toFiniteNumber(source.finishedAt ?? source.finished_at) ?? Date.now(),

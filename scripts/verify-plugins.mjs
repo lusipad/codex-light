@@ -13,8 +13,9 @@ const viewSource = fs.readFileSync(
   "utf8"
 );
 
-// P01: 检查 plugins.ts 是否严格使用 marketplaceKinds: ["local"]
-const usesLocalMarketplaceKinds = pluginsSource.includes('marketplaceKinds: ["local"]');
+// P01: 浏览目录不强制裁掉远程能力；协议形状另由生产封装回归覆盖。
+const supportsServerCatalog = pluginsSource.includes('export async function listMarketplacePlugins') &&
+  !pluginsSource.includes('marketplaceKinds: ["local"]');
 
 // P02: 检查核心协议封装
 const hasPluginMethods =
@@ -33,8 +34,8 @@ const hasRevealPluginPath =
   viewSource.includes("pluginSourceDetail");
 
 assert.ok(
-  usesLocalMarketplaceKinds,
-  "plugins.ts: Must restrict listMarketplacePlugins to marketplaceKinds: ['local']"
+  supportsServerCatalog,
+  "plugins.ts: Browse must preserve server-enabled remote catalog capabilities"
 );
 assert.ok(
   hasPluginMethods,

@@ -1,189 +1,135 @@
-import React, { useState } from "react";
-import { ExternalWindowIcon, PlusIcon, SearchIcon, SparklesIcon } from "./Icons";
+import React, { useEffect, useRef, useState } from "react";
+import { tauriListen } from "../bridge";
+import { readChatgptService, serviceErrorMessage, serviceIdentity, type ServiceIdentity } from "../chatgptService";
 import "./GptsView.css";
 
-interface GptItem {
-  id: string;
-  name: string;
-  description: string;
-  author: string;
-  category: string;
-  avatar: string;
-  promptStarter: string;
+interface Gpt { id: string; name: string; description: string; author?: string }
+interface Section { id: string; title: string; items: Gpt[]; cursor: string | null }
+function gptResource(value: any): Gpt | null {
+  const gpt = value?.resource?.gizmo;
+  if (!gpt || typeof gpt.id !== "string" || !gpt.id) throw Error("GPT 服务返回了无法识别的资源。");
+  if (gpt.gizmo_type === "snorlax") return null;
+  return { id: gpt.id, name: gpt.display?.name || gpt.id, description: gpt.display?.description || "", author: gpt.author?.name };
+}
+export function parseGptSection(value: any): Section {
+  if (typeof value?.info?.id !== "string" || !Array.isArray(value?.list?.items) ||
+    (value.list.cursor != null && typeof value.list.cursor !== "string")) throw Error("GPT 目录响应格式无法识别。");
+  const items = value.list.items.map(gptResource).filter((item: Gpt | null): item is Gpt => item !== null);
+  return { id: value.info.id, title: value.info.title || value.info.id, items, cursor: value.list.cursor || null };
+}
+export function parseGptDiscovery(value: any): Section[] {
+  if (!Array.isArray(value?.cuts)) throw Error("GPT 目录响应格式无法识别。");
+  return value.cuts.map(parseGptSection).filter((section: Section) => section.items.length || section.cursor);
+}
+export function appendGptPage(section: Section, page: Section): Section {
+  if (section.id !== page.id) throw Error("GPT 分类在读取期间发生变化，请刷新。");
+  const items = new Map(section.items.map(item => [item.id, item]));
+  for (const item of page.items) items.set(item.id, item);
+  return { ...section, items: [...items.values()], cursor: page.cursor };
 }
 
-const SAMPLE_GPTS: GptItem[] = [
-  {
-    id: "code-architect",
-    name: "Code Architect",
-    description: "专注大型项目架构设计、设计模式推演与技术选型对比。",
-    author: "OpenAI",
-    category: "编程开发",
-    avatar: "🏗️",
-    promptStarter: "请帮我评审当前系统的微服务拆分方案",
-  },
-  {
-    id: "rust-mentor",
-    name: "Rust Mentor",
-    description: "深入剖析所有权模型、生命周期推导与异步并发编程最佳实践。",
-    author: "Rustaceans",
-    category: "编程开发",
-    avatar: "🦀",
-    promptStarter: "解释这段代码中为什么借用检查器会报错",
-  },
-  {
-    id: "tech-doc-writer",
-    name: "Tech Doc Writer",
-    description: "编写清晰专业的 API 规范、技术白皮书与 Markdown 文档。",
-    author: "DocCraft",
-    category: "写作辅助",
-    avatar: "✍️",
-    promptStarter: "帮我为当前的 REST API 生成 OpenAPI 格式文档草案",
-  },
-  {
-    id: "data-analyst",
-    name: "Data Analyst Pro",
-    description: "上传 CSV 或 SQL 日志，快速生成数据洞察与可视化图表建议。",
-    author: "InsightLab",
-    category: "研究分析",
-    avatar: "📊",
-    promptStarter: "分析这段查询日志中的慢查询性能瓶颈",
-  },
-];
+export const GptsView: React.FC = () => {
+  const [revision, setRevision] = useState(0);
+  const [sections, setSections] = useState<Section[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [pageError, setPageError] = useState<Record<string, string>>({});
+  const [paging, setPaging] = useState<string[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<Gpt | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const identity = useRef<ServiceIdentity | null>(null);
+  const source = useRef<AbortController | null>(null);
+  const detailRequest = useRef<AbortController | null>(null);
+  const pageRequests = useRef(new Set<string>());
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const detailTrigger = useRef<HTMLButtonElement | null>(null);
 
-const CATEGORIES = ["全部", "编程开发", "研究分析", "写作辅助", "生产力"];
+  useEffect(() => {
+    let disposed = false;
+    const subscription = tauriListen("chatgpt-service:invalidated", () => {
+      if (disposed) return;
+      source.current?.abort(); detailRequest.current?.abort(); identity.current = null;
+      setSections([]); setSelectedId(null); setRevision(value => value + 1);
+    });
+    return () => { disposed = true; void subscription.then(unlisten => unlisten()); };
+  }, []);
 
-export interface GptsViewProps {
-  onStartGptChat?: (gpt: GptItem) => void;
-  onNavigatePlugins?: () => void;
-}
+  useEffect(() => {
+    const controller = new AbortController(); source.current = controller;
+    identity.current = null; pageRequests.current.clear(); setPaging([]); setPageError({});
+    setSections([]); setLoading(true); setError(null); setSelectedId(null);
+    void (async () => {
+      try {
+        const current = await serviceIdentity(controller.signal);
+        const result = await readChatgptService("gpts_discovery", {}, current, controller.signal);
+        if (controller.signal.aborted) return;
+        const parsed = parseGptDiscovery(result);
+        identity.current = current; setSections(parsed);
+      } catch (cause) { if (!controller.signal.aborted) setError(serviceErrorMessage(cause)); }
+      finally { if (!controller.signal.aborted) setLoading(false); }
+    })();
+    return () => { controller.abort(); detailRequest.current?.abort(); };
+  }, [revision]);
 
-export const GptsView: React.FC<GptsViewProps> = ({
-  onStartGptChat,
-  onNavigatePlugins,
-}) => {
-  const [activeTab, setActiveTab] = useState<"explore" | "mine">("explore");
-  const [selectedCategory, setSelectedCategory] = useState<string>("全部");
-  const [searchQuery, setSearchQuery] = useState<string>("");
+  useEffect(() => {
+    if (!selectedId) return;
+    const dialog = dialogRef.current;
+    dialog?.showModal();
+    return () => { dialog?.close(); detailTrigger.current?.focus(); };
+  }, [selectedId]);
 
-  const filteredGpts = SAMPLE_GPTS.filter((gpt) => {
-    const matchesCat = selectedCategory === "全部" || gpt.category === selectedCategory;
-    const matchesSearch =
-      !searchQuery.trim() ||
-      gpt.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      gpt.description.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesCat && matchesSearch;
-  });
-
+  const loadMore = async (section: Section) => {
+    const current = identity.current, controller = source.current;
+    if (!current || !controller || controller.signal.aborted || !section.cursor || pageRequests.current.has(section.id)) return;
+    pageRequests.current.add(section.id); setPaging(value => [...value, section.id]);
+    setPageError(value => ({ ...value, [section.id]: "" }));
+    try {
+      let page = parseGptSection(await readChatgptService("gpts_category", { id: section.id, cursor: section.cursor, limit: 20 }, current, controller.signal));
+      if (!page.items.length && page.cursor) page = parseGptSection(await readChatgptService("gpts_category", { id: section.id, cursor: page.cursor, limit: 20 }, current, controller.signal));
+      if (page.id !== section.id) throw Error("GPT 分类在读取期间发生变化，请刷新。");
+      if (!controller.signal.aborted && identity.current === current) setSections(value => value.map(item => item.id === section.id ? appendGptPage(item, page) : item));
+    } catch (cause) {
+      if (!controller.signal.aborted) setPageError(value => ({ ...value, [section.id]: serviceErrorMessage(cause) }));
+    } finally {
+      if (!controller.signal.aborted) { pageRequests.current.delete(section.id); setPaging(value => value.filter(id => id !== section.id)); }
+    }
+  };
+  const openDetail = async (id: string) => {
+    const current = identity.current;
+    if (!current) return;
+    detailRequest.current?.abort();
+    const controller = new AbortController(); detailRequest.current = controller;
+    setSelectedId(id); setDetail(null); setDetailError(null);
+    try {
+      const result = await readChatgptService("gpts_detail", { id }, current, controller.signal);
+      if (controller.signal.aborted) return;
+      const parsed = gptResource(result);
+      if (!parsed) throw Error("此资源不是可显示的 GPT。");
+      setDetail(parsed);
+    } catch (cause) { if (!controller.signal.aborted) setDetailError(serviceErrorMessage(cause)); }
+  };
+  const closeDetail = () => { detailRequest.current?.abort(); setSelectedId(null); };
   return (
     <div className="gpts-view-container">
-      {/* 官方 12 月 11 日迁移停用实测横幅 */}
-      <div className="gpts-deprecation-banner" role="alert">
-        <span className="deprecation-icon">⚠️</span>
-        <div className="deprecation-text">
-          <strong>官方迁移提示：GPT 将于 12 月 11 日停用</strong>
-          <p>
-            由创建者迁移的 GPT 之后将以**插件 (Plugins & Skills)** 形式继续运行与分发。你可以将自定义指令无缝迁移为独立技能。
-          </p>
-        </div>
-        {onNavigatePlugins && (
-          <button type="button" className="migration-btn" onClick={onNavigatePlugins}>
-            浏览插件中心 →
-          </button>
-        )}
-      </div>
-
-      <div className="gpts-header-row">
-        <div>
-          <h2>GPTs 探索与迁移中心</h2>
-          <p className="subtitle">
-            发现定制化智能体、迁移旧版 GPT 配置至现代插件与技能生态。
-          </p>
-        </div>
-        <div className="gpts-tabs">
-          <button
-            type="button"
-            className={`gpts-tab-btn ${activeTab === "explore" ? "active" : ""}`}
-            onClick={() => setActiveTab("explore")}
-          >
-            探索发现
-          </button>
-          <button
-            type="button"
-            className={`gpts-tab-btn ${activeTab === "mine" ? "active" : ""}`}
-            onClick={() => setActiveTab("mine")}
-          >
-            我的 GPTs
-          </button>
-        </div>
-      </div>
-
-      {activeTab === "explore" ? (
-        <>
-          <div className="gpts-filter-bar">
-            <div className="gpts-search-wrap">
-              <SearchIcon size={14} />
-              <input
-                type="text"
-                placeholder="搜索精选智能体与工具…"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-            </div>
-            <div className="gpts-category-pills">
-              {CATEGORIES.map((cat) => (
-                <button
-                  key={cat}
-                  type="button"
-                  className={`gpts-cat-pill ${selectedCategory === cat ? "active" : ""}`}
-                  onClick={() => setSelectedCategory(cat)}
-                >
-                  {cat}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="gpts-grid">
-            {filteredGpts.map((gpt) => (
-              <div
-                key={gpt.id}
-                className="gpt-card"
-                onClick={() => onStartGptChat?.(gpt)}
-                title={`与 ${gpt.name} 开始对话`}
-              >
-                <div className="gpt-card-avatar">{gpt.avatar}</div>
-                <div className="gpt-card-body">
-                  <div className="gpt-card-title-row">
-                    <strong>{gpt.name}</strong>
-                    <span className="gpt-badge">{gpt.category}</span>
-                  </div>
-                  <p className="gpt-desc">{gpt.description}</p>
-                  <div className="gpt-card-footer">
-                    <span className="gpt-author">由 {gpt.author} 提供</span>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </>
-      ) : (
-        <div className="my-gpts-section">
-          <div className="my-gpts-header">
-            <h3>我创建的 GPTs</h3>
-            <button
-              type="button"
-              className="primary-btn"
-              onClick={() => onNavigatePlugins?.()}
-            >
-              <PlusIcon size={14} /> 创建新插件技能
-            </button>
-          </div>
-          <div className="empty-hint" style={{ padding: "36px 0" }}>
-            <p>你尚未创建自定义 GPT。官方建议直接通过 <strong>技能与插件生态 ($skill-creator)</strong> 创建可长效维护的本地智能体。</p>
-          </div>
-        </div>
-      )}
+      <div className="gpts-header-row"><div><h2>GPTs</h2></div></div>
+      {loading && <p role="status">正在读取 GPTs…</p>}
+      {error && <section aria-label="GPTs 服务状态"><p role="alert">{error}</p><button type="button" onClick={() => setRevision(value => value + 1)}>重试</button></section>}
+      {!loading && !error && !sections.length && <p role="status">暂无可显示的 GPTs。</p>}
+      {sections.map(section => <section key={section.id} aria-label={section.title}>
+        <h3>{section.title}</h3>
+        <div className="gpts-grid">{section.items.map(gpt => <button type="button" className="gpt-card" key={gpt.id}
+          onClick={event => { detailTrigger.current = event.currentTarget; void openDetail(gpt.id); }}>
+          <span className="gpt-card-body"><strong>{gpt.name}</strong><span className="gpt-desc">{gpt.description}</span>{gpt.author && <span className="gpt-author">{gpt.author}</span>}</span>
+        </button>)}</div>
+        {pageError[section.id] && <p role="alert">{pageError[section.id]}</p>}
+        {section.cursor && <button type="button" disabled={paging.includes(section.id)} onClick={() => void loadMore(section)}>{paging.includes(section.id) ? "正在加载…" : pageError[section.id] ? "重试加载" : "加载更多"}</button>}
+      </section>)}
+      {selectedId && <dialog ref={dialogRef} aria-label="GPT 详情" onCancel={event => { event.preventDefault(); closeDetail(); }}>
+        <button type="button" onClick={closeDetail}>关闭</button>
+        {detailError ? <><p role="alert">{detailError}</p><button type="button" onClick={() => void openDetail(selectedId)}>重试</button></>
+          : detail ? <><h3>{detail.name}</h3><p>{detail.description}</p>{detail.author && <p>{detail.author}</p>}<p role="status">GPT 对话服务尚未接通。</p></> : <p role="status">正在读取详情…</p>}
+      </dialog>}
     </div>
   );
 };

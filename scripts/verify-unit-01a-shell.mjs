@@ -81,7 +81,7 @@ console.log("PASS DIFF-01A-05: Drag/no-drag isolation rules declared in CSS");
 // 6. DIFF-01A-06: Sidebar toggle shortcut mapping & key repeat filtering
 assert.ok(
   shortcutsTs.includes('"toggle-sidebar"') &&
-  shortcutsTs.includes("Ctrl+B / Ctrl+Shift+S") &&
+  shortcutsTs.includes("Ctrl+Shift+S / Ctrl+B") &&
   shortcutsTs.includes('key(e) === "b"') &&
   shortcutsTs.includes('key(e) === "s"'),
   "DIFF-01A-06: shortcuts.ts must map toggle-sidebar to both Ctrl+B and Ctrl+Shift+S"

@@ -90,6 +90,7 @@ export interface GitStatusInfo {
 
 export interface GitWorktreeInfo {
   path: string;
+  isPrimary: boolean;
   gitDir: string;
   head: string | null;
   branch: string | null;
@@ -133,7 +134,7 @@ export interface ThreadSummary {
   updatedAt?: number;
   recencyAt?: number | null;
   model?: string | null;
-  status?: { type: string } | string;
+  status?: { type: string; activeFlags?: string[] } | string;
   /** 会话所属自定义分区（`thread/list` 的 `section` 对象），null 表示未分组。 */
   section?: string | { id: string; name?: string; appearance?: unknown } | null;
   /** 会话所属项目实体 id（`thread/list` 的 `projectId` 字段），null 表示未关联项目。 */
@@ -332,7 +333,7 @@ export type MainViewRoute =
   | "library"
   | "cloud-environments";
 
-export type TurnCompletionPolicy = "always" | "unfocused" | "never";
+export type TurnCompletionPolicy = "always" | "unfocused" | "off";
 
 export type NotificationSoundTheme =
   | "default"
@@ -434,8 +435,8 @@ export const PET_SPECIES_LIST: Array<{
   emoji: string;
   desc: string;
 }> = [
-  { id: "codex", name: "Codex", emoji: "✨", desc: "官方星环智能体伴侣，随推理状态呼吸闪烁" },
-  { id: "rocky", name: "Rocky", emoji: "🪨", desc: "官方像素 Sprite 桌面伴侣 (切帧动画驱动)" },
+  { id: "codex", name: "Codex", emoji: "✨", desc: "本地表情回退" },
+  { id: "rocky", name: "Rocky", emoji: "🪨", desc: "本地表情回退" },
 ];
 
 

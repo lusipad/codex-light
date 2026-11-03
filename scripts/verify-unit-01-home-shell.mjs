@@ -9,8 +9,8 @@ console.log("=== Unit 01 Home Shell + Composer Parity Verification ===");
 // 1. H01: Surface Color & Title Typography
 const stylesCss = fs.readFileSync("src/styles.css", "utf8");
 assert.ok(stylesCss.includes("--bg-main: #181818;"), "H01: --bg-main must be #181818 aligned with official app-shared CSS");
-assert.ok(/font-size:\s*28px;\s*font-weight:\s*400;\s*line-height:\s*34px;\s*letter-spacing:\s*0\.38px;/.test(stylesCss),
-  "H01: .home-greeting-title typography must exactly match official home-49f9c30a8c63.css");
+assert.ok(/font-size:\s*var\(--text-xl\);\s*font-weight:\s*400;\s*line-height:\s*calc\(34px \* var\(--font-ui-scale, 1\)\);\s*letter-spacing:\s*0\.38px;/.test(stylesCss),
+  "H01: .home-greeting-title must retain 28px/34px at default UI scale while consuming the font preference");
 console.log("PASS H01: Dark surface #181818 and Home Greeting Title typography (28px/34px/0.38px)");
 
 // 2. H02 & H03 & H04 & H05: ModelSelector Keyboard & Focus Management

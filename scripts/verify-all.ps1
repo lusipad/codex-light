@@ -33,6 +33,47 @@ function Invoke-Step {
 }
 
 try {
+  Invoke-Step "Recommended skills native client and discovery contracts" { node scripts/verify-recommended-skills.mjs }
+  Invoke-Step "Recommended skills component scope and lifecycle contracts" { node scripts/verify-recommended-skills-ui.mjs }
+  Invoke-Step "Rust recommended skill repository and complete installation" { cargo test --locked --manifest-path src-tauri/Cargo.toml --lib recommended_skills_tests }
+  Invoke-Step "Plugin preparation protocol and pagination contracts" { node scripts/verify-plugin-preparation-protocol.mjs }
+  Invoke-Step "Plugin preparation component lifecycle contracts" { node scripts/verify-plugin-preparation-ui.mjs }
+  Invoke-Step "Worktree removal conversation and result contracts" { node scripts/verify-worktree-removal.mjs }
+  Invoke-Step "Library authenticated service boundary regression" { node scripts/verify-library-service.mjs }
+  Invoke-Step "Images authenticated service and real result regression" { node scripts/verify-images-service.mjs }
+  Invoke-Step "GPTs service and identity boundary regression" { node scripts/verify-gpts-service.mjs }
+  Invoke-Step "Sites authenticated catalog and readonly settings regression" { node scripts/verify-sites-service.mjs }
+  Invoke-Step "Codex Cloud authenticated configuration regression" { node scripts/verify-cloud-environments.mjs }
+  Invoke-Step "Authenticated service renderer contracts" { node scripts/verify-chatgpt-service.mjs }
+  Invoke-Step "Rust authenticated read service contracts" { cargo test --manifest-path src-tauri/Cargo.toml chatgpt_service }
+  Invoke-Step "Generated image real byte save regression" { node scripts/verify-image-save.mjs }
+  Invoke-Step "Rust generated image save contracts" { cargo test --manifest-path src-tauri/Cargo.toml image_save }
+  Invoke-Step "Native Quick Chat routing regression" { node scripts/verify-native-quick-chat.mjs }
+  Invoke-Step "Native thread action truthfulness regression" { node scripts/verify-native-thread-actions.mjs }
+  Invoke-Step "Native deep link receiver lifecycle regression" { node scripts/verify-deep-links.mjs }
+  Invoke-Step "Rust deep link parser and queue contracts" { cargo test --manifest-path src-tauri/Cargo.toml deep_links }
+  Invoke-Step "Windows instance transport and real child process regression" { cargo test --manifest-path src-tauri/Cargo.toml instance_transport }
+  Invoke-Step "Share complete-history reader regression" { node scripts/verify-share-history.mjs }
+  Invoke-Step "Share snapshot whitelist conversion regression" { node scripts/verify-share-snapshot.mjs }
+  Invoke-Step "Share snapshot redaction regression" { node scripts/verify-share-redaction.mjs }
+  Invoke-Step "Share preparation pipeline regression" { node scripts/verify-share-preparation.mjs }
+  Invoke-Step "Share service IPC and cancellation regression" { node scripts/verify-share-service.mjs }
+  Invoke-Step "Share access gates and real recipient regression" { node scripts/verify-share-access.mjs }
+  Invoke-Step "Share asset reader boundary regression" { node scripts/verify-share-assets.mjs }
+  Invoke-Step "Share dialog interaction regression" { node scripts/verify-share-dialog.mjs }
+  Invoke-Step "Share session lifecycle regression" { node scripts/verify-share-session.mjs }
+  Invoke-Step "Rust share local asset boundaries" { cargo test --manifest-path src-tauri/Cargo.toml share_assets }
+  Invoke-Step "Same-thread independent window regression" { node scripts/verify-thread-window.mjs }
+  Invoke-Step "Native menu targeted listener regression" { node scripts/verify-native-menu-routing.mjs }
+  Invoke-Step "Rust same-thread window contracts" { cargo test --manifest-path src-tauri/Cargo.toml thread_window }
+  Invoke-Step "Rust Quick Chat lifecycle regression" { cargo test --manifest-path src-tauri/Cargo.toml quick_chat }
+  Invoke-Step "Quick Chat shared conversation regression" { node scripts/verify-quick-chat.mjs }
+  Invoke-Step "Pet preferences and real consumers regression" { node scripts/verify-pet-settings.mjs }
+  Invoke-Step "Cloud preference capability regression" { node scripts/verify-cloud-preferences.mjs }
+  Invoke-Step "Rust pet preference and resource regression" { cargo test --manifest-path src-tauri/Cargo.toml pet }
+  Invoke-Step "Control capability settings regression" { node scripts/verify-control-settings.mjs }
+  Invoke-Step "Voice settings and browser fallback regression" { node scripts/verify-voice-settings.mjs }
+  Invoke-Step "Experimental feature persistence regression" { node scripts/verify-experimental-features.mjs }
   Invoke-Step "Titlebar native window state component regression" { node scripts/verify-titlebar-window-state.mjs }
   Invoke-Step "Sidebar project disclosure component regression" { node scripts/verify-sidebar-projects.mjs }
   Invoke-Step "Sidebar thread context menu regression" { node scripts/verify-sidebar-thread-menu.mjs }
@@ -40,6 +81,7 @@ try {
   Invoke-Step "Sidebar section creation from session menu regression" { node scripts/verify-sidebar-section-create.mjs }
   Invoke-Step "Profile identity and keyboard component regression" { node scripts/verify-profile-menu.mjs }
   Invoke-Step "Help submenu and keyboard dialog regression" { node scripts/verify-help-menu.mjs }
+  Invoke-Step "Keyboard bindings persistence, capture and dispatch regression" { node scripts/verify-keyboard-preferences.mjs }
   Invoke-Step "Sidebar manual order regression" { node scripts/verify-sidebar-order.mjs }
   Invoke-Step "Shared hierarchical menu regression" { node scripts/verify-thread-actions-menu.mjs }
   Invoke-Step "Sidebar rename dialog and RPC regression" { node scripts/verify-sidebar-rename.mjs }
@@ -51,15 +93,40 @@ try {
   Invoke-Step "Sidebar local project entities regression" { node scripts/verify-sidebar-local-projects.mjs }
   Invoke-Step "Sidebar project selection regression" { node scripts/verify-sidebar-project-selection.mjs }
   Invoke-Step "Restored new-thread project context regression" { node scripts/verify-new-thread-project-context.mjs }
+  Invoke-Step "Home send transition and failure regression" { node scripts/verify-home-send-transition.mjs }
   Invoke-Step "Composer draft identity and persistence regression" { node scripts/verify-composer-drafts.mjs }
   Invoke-Step "Composer attachment draft scope regression" { node scripts/verify-composer-attachment-drafts.mjs }
+  Invoke-Step "Composer native file drop regression" { node scripts/verify-composer-drop.mjs }
+  Invoke-Step "Appearance preferences and consumers regression" { node scripts/verify-appearance.mjs }
+  Invoke-Step "Notification classification, persistence and dispatch regression" { node scripts/verify-notification-preferences.mjs }
+  Invoke-Step "Rust cross-window notification arbitration regression" {
+    cargo test --manifest-path src-tauri/Cargo.toml notification_broker
+  }
+  Invoke-Step "Model discovery, selection and settings route regression" { node scripts/verify-model-catalog.mjs }
+  Invoke-Step "Archived settings shared lifecycle regression" { node scripts/verify-archived-settings.mjs }
+  Invoke-Step "Storage cloud capability and destructive entry regression" { node scripts/verify-storage-settings.mjs }
+  Invoke-Step "Agent user config version, readback and lifecycle regression" { node scripts/verify-agent-settings.mjs }
+  Invoke-Step "Personal Codex instructions editor and draft lifecycle regression" { node scripts/verify-personalization.mjs }
+  Invoke-Step "Personal Codex instructions isolated file regression" { cargo test --manifest-path src-tauri/Cargo.toml personal_instructions }
+  Invoke-Step "Account identity, partial failure and lifecycle regression" { node scripts/verify-account-snapshot.mjs }
+  Invoke-Step "Profile real identity and unavailable write regression" { node scripts/verify-profile-settings.mjs }
+  Invoke-Step "MCP runtime status discovery regression" { node scripts/verify-mcp-status.mjs }
+  Invoke-Step "General open target and shell regression" { node scripts/verify-general-open.mjs }
+  Invoke-Step "Native open target and isolated PTY regression" { cargo test --manifest-path src-tauri/Cargo.toml desktop_open }
+  Invoke-Step "General Enter preference and composer regression" { node scripts/verify-general-enter.mjs }
+  Invoke-Step "Composer multiline input regression" { node scripts/verify-composer-multiline.mjs }
+  Invoke-Step "Composer menu keyboard regression" { node scripts/verify-composer-menus.mjs }
   Invoke-Step "Unit 01A Public Shell parity" { node scripts/verify-unit-01a-shell.mjs }
+  Invoke-Step "Home Hero state and project entry regression" { node scripts/verify-home-hero.mjs }
   Invoke-Step "Unit 01 Home Shell & Composer parity" { node scripts/verify-unit-01-home-shell.mjs }
   Invoke-Step "Unit 02 Thread Basics parity" { node scripts/verify-unit-02-thread-basics.mjs }
+  Invoke-Step "User message presentation regression" { node scripts/verify-user-message-presentation.mjs }
+  Invoke-Step "Thread header rename regression" { node scripts/verify-thread-header.mjs }
   Invoke-Step "Duplicate user message regression" { node scripts/verify-duplicate-message-fix.mjs }
   Invoke-Step "Reasoning flow & rendering parity" { node scripts/verify-reasoning-rendering.mjs }
   Invoke-Step "Keyboard shortcut regression" { node scripts/verify-shortcuts.mjs }
   Invoke-Step "Composer follow-up keyboard regression" { node scripts/verify-composer-keys.mjs }
+  Invoke-Step "Project move confirmation keyboard regression" { node scripts/verify-project-move-keyboard.mjs }
   Invoke-Step "Thread content regression" { node scripts/verify-thread-content.mjs }
   Invoke-Step "Clipboard failure regression" { node scripts/verify-clipboard.mjs }
   Invoke-Step "Approval lifecycle regression" { node scripts/verify-approval.mjs }
@@ -67,6 +134,20 @@ try {
   Invoke-Step "Thread queue regression" { node scripts/verify-queue.mjs }
   Invoke-Step "Thread identity replay" { node scripts/verify-thread-timeline.mjs }
   Invoke-Step "Execution item stream regression" { node scripts/verify-execution-items.mjs }
+  Invoke-Step "Command execution card disclosure regression" { node scripts/verify-command-cards.mjs }
+    Invoke-Step "Interleaved timeline order regression" { node scripts/verify-timeline-order.mjs }
+    Invoke-Step "MCP raw output and result regression" { node scripts/verify-mcp-output.mjs }
+    Invoke-Step "Project index identity and async regression" { node scripts/verify-project-index.mjs }
+    Invoke-Step "File editor lifecycle regression" { node scripts/verify-file-editor-lifecycle.mjs }
+    Invoke-Step "File editor disk conflict guard" { node scripts/verify-file-editor-save.mjs }
+    Invoke-Step "Worktree root settings lifecycle" { node scripts/verify-worktree-settings.mjs }
+    Invoke-Step "Local environment draft and command regression" { node scripts/verify-local-environment.mjs }
+    Invoke-Step "Git preferences and real consumer regression" { node scripts/verify-git-preferences.mjs }
+    Invoke-Step "Git diff and commit lifecycle regression" { node scripts/verify-git-lifecycle.mjs }
+    Invoke-Step "Terminal view lifecycle regression" { node scripts/verify-terminal-lifecycle.mjs }
+    Invoke-Step "Terminal output ordering and replay regression" { node scripts/verify-terminal-output.mjs }
+    Invoke-Step "Rust terminal UTF-8 and real PTY regression" { cargo test --locked --manifest-path src-tauri/Cargo.toml --lib terminal::tests }
+    Invoke-Step "Terminal command dispatch regression" { node scripts/verify-terminal-command.mjs }
   Invoke-Step "Tool cards & execution item parity" { node scripts/verify-tool-cards.mjs }
   Invoke-Step "Plan & Goal lifecycle parity" { node scripts/verify-plan-goal.mjs }
   Invoke-Step "Misc tool cards (Image/Sleep/Search) parity" { node scripts/verify-misc-tools.mjs }
@@ -75,28 +156,58 @@ try {
   Invoke-Step "Changes & Git worksurface parity" { node scripts/verify-git-worksurface.mjs }
   Invoke-Step "Terminal & layout resizer parity" { node scripts/verify-terminal-layout.mjs }
   Invoke-Step "Search & command palette parity" { node scripts/verify-search-palette.mjs }
+  Invoke-Step "Search command routing regression" { node scripts/verify-search-routing.mjs }
+  Invoke-Step "Search cache and mode lifecycle regression" { node scripts/verify-search-lifecycle.mjs }
+  Invoke-Step "Fuzzy file session transport regression" { node scripts/verify-fuzzy-file-search.mjs }
   Invoke-Step "Activity & Inbox parity" { node scripts/verify-activity-inbox.mjs }
+  Invoke-Step "Service-backed thread activity and menu regression" { node scripts/verify-thread-activity.mjs }
+  Invoke-Step "Automation terminal status and event identity regression" { node scripts/verify-automation-completion.mjs }
+  Invoke-Step "Inbox history and persistence regression" { node scripts/verify-inbox-lifecycle.mjs }
   Invoke-Step "Scheduled & Automations parity" { node scripts/verify-scheduled-automations.mjs }
+  Invoke-Step "Automation mutation and run regression" { node scripts/verify-automation-actions.mjs }
   Invoke-Step "Worktrees worksurface parity" { node scripts/verify-worktrees.mjs }
+  Invoke-Step "Worktree context and chat entry regression" { node scripts/verify-worktree-context.mjs }
   Invoke-Step "Plugins marketplace & management parity" { node scripts/verify-plugins.mjs }
+  Invoke-Step "Plugin policy, lifecycle and readback regression" { node scripts/verify-plugin-actions.mjs }
+  Invoke-Step "Plugin catalog capability and bounded rendering regression" { node scripts/verify-plugin-catalog.mjs }
   Invoke-Step "Skills management & editor parity" { node scripts/verify-skills.mjs }
+  Invoke-Step "Skill content, identity and mutation regression" { node scripts/verify-skill-actions.mjs }
   Invoke-Step "Code review targets parity" { node scripts/verify-code-review.mjs }
+  Invoke-Step "Review start, delivery and navigation regression" { node scripts/verify-review-actions.mjs }
   Invoke-Step "Archive lifecycle parity" { node scripts/verify-archive.mjs }
+  Invoke-Step "Archive pagination and real mutation regression" { node scripts/verify-archive-actions.mjs }
   Invoke-Step "Settings center 26 partitions parity" { node scripts/verify-settings-partitions.mjs }
   Invoke-Step "Extended worksurfaces & cross-page parity (17-23)" { node scripts/verify-extended-worksurfaces.mjs }
-  Invoke-Step "TypeScript typecheck (tsc --noEmit)" { npx tsc --noEmit }
+  Invoke-Step "Hook state and settings regression" { node scripts/verify-hook-state.mjs }
+  Invoke-Step "Plugin settings management" { node scripts/verify-plugin-settings.mjs }
+
+Invoke-Step "TypeScript typecheck (tsc --noEmit)" { npx tsc --noEmit }
   Invoke-Step "Frontend production build (vite)" { npm run build }
+  Invoke-Step "External import selection, completion and readback" { node scripts/verify-external-import.mjs }
+  Invoke-Step "Review preferences persistence and UI consumers" { node scripts/verify-review-preferences.mjs }
+  Invoke-Step "Rust review preferences contracts" { cargo test --manifest-path src-tauri/Cargo.toml review_preferences }
+  Invoke-Step "Rust worktree root contracts" { cargo test --manifest-path src-tauri/Cargo.toml worktree_root }
+  Invoke-Step "Rust local environment file contracts" { cargo test --manifest-path src-tauri/Cargo.toml local_environment::tests }
   Invoke-Step "Rust check (cargo check)" {
     cargo check --manifest-path src-tauri/Cargo.toml 2>&1 | Select-Object -Last 6 | ForEach-Object { Write-Host $_ }
   }
   Invoke-Step "Rust unit tests (cargo test automations)" {
     cargo test --manifest-path src-tauri/Cargo.toml automations 2>&1 | Select-Object -Last 8 | ForEach-Object { Write-Host $_ }
   }
+  Invoke-Step "Rust review merge-base and working diff regression" {
+    cargo test --manifest-path src-tauri/Cargo.toml git::merge_base_tests
+  }
+  Invoke-Step "Rust Git index action roundtrips" {
+    cargo test --locked --manifest-path src-tauri/Cargo.toml --lib index_action_tests
+  }
   Invoke-Step "Rust workspace transition and identity regression" {
     cargo test --manifest-path src-tauri/Cargo.toml --lib workspace 2>&1 | Select-Object -Last 8 | ForEach-Object { Write-Host $_ }
   }
   Invoke-Step "Rust project move contracts and worktree regression" {
     cargo test --manifest-path src-tauri/Cargo.toml --lib project_ 2>&1 | Select-Object -Last 8 | ForEach-Object { Write-Host $_ }
+  }
+  Invoke-Step "Rust isolated skill write validation regression" {
+    cargo test --manifest-path src-tauri/Cargo.toml config_skills::tests::skill_writes_reject_invalid_ids_and_invalid_sources_without_changing_existing_files -- --exact
   }
 
   if (-not $Fast) {
@@ -108,7 +219,21 @@ try {
       "scripts/protocol-verify/verify-attachments.mjs"
       "scripts/protocol-verify/verify-idle-turn-controls.mjs"
       "scripts/protocol-verify/verify-thread-workspace-resume.mjs"
+      "scripts/protocol-verify/verify-share-history.mjs"
+      "scripts/protocol-verify/verify-search-lifecycle.mjs"
       "scripts/protocol-verify/verify-project-move-roots.mjs"
+      "scripts/protocol-verify/verify-archive-actions.mjs"
+      "scripts/protocol-verify/verify-plugin-preparation.mjs"
+      "scripts/protocol-verify/verify-recommended-skills.mjs"
+      "scripts/protocol-verify/verify-model-catalog.mjs"
+      "scripts/protocol-verify/verify-agent-settings.mjs"
+      "scripts/protocol-verify/verify-personal-instructions.mjs"
+      "scripts/protocol-verify/verify-account-snapshot.mjs"
+      "scripts/protocol-verify/verify-service-auth-support.mjs"
+      "scripts/protocol-verify/verify-mcp-status.mjs"
+      "scripts/protocol-verify/verify-hook-state.mjs"
+      "scripts/protocol-verify/verify-external-import.mjs"
+      "scripts/protocol-verify/verify-experimental-features.mjs"
     )
     foreach ($probe in $probes) {
       Invoke-Step "Protocol probe: $probe" { node $probe }

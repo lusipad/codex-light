@@ -19,11 +19,12 @@ const evaluate = (name, context, callback = false) => {
   return vm.runInNewContext(compile((callback ? value.arguments[0] : value).getText(ast)), context);
 };
 const plain = value => JSON.parse(JSON.stringify(value));
-function mount(serialized = null) {
-  const disk = new Map(serialized === null ? [] : [["codex_composer_prompt_drafts_v1", serialized]]);
+function mount(serialized = null, utility = false) {
+  const storageKey = evaluate("promptStorageKey", { isQuickChatWindow: utility, threadWindowId: null });
+  const disk = new Map(serialized === null ? [] : [[storageKey, serialized]]);
   const context = {
     localStorage: { getItem: key => disk.get(key) ?? null, setItem: (key, value) => disk.set(key, value) },
-    console: { warn() {} }, activeThreadId: null,
+    console: { warn() {} }, activeThreadId: null, promptStorageKey: storageKey,
   };
   const state = declarations.get("[promptDrafts, setPromptDrafts]");
   assert.ok(state, "prompt drafts must have separate persisted identities instead of one global input");
@@ -91,7 +92,7 @@ for (const content of ["not-json", "null", "[]", '{"home":17,"thread:a":"saved",
 let persistenceEffect;
 function findEffect(node) {
   if (ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect" &&
-      node.arguments[0]?.getText(ast).includes('localStorage.setItem("codex_composer_prompt_drafts_v1"')) {
+      node.arguments[0]?.getText(ast).includes('localStorage.setItem(promptStorageKey,')) {
     persistenceEffect = node.arguments[0].getText(ast);
   }
   ts.forEachChild(node, findEffect);
@@ -106,6 +107,14 @@ assert.ok(persistenceEffect);
   restarted.select("a"); assert.equal(restarted.prompt, "持久化A");
 }
 assert.deepEqual(plain(mount().context.promptDrafts), {});
+{
+  const main = mount('{"home":"main draft"}');
+  const utility = mount('{"home":"utility draft"}', true);
+  assert.notEqual(main.context.promptStorageKey, utility.context.promptStorageKey);
+  vm.runInNewContext(compile(persistenceEffect), { ...utility.context, localStorage: main.context.localStorage, showAppToast() {} })();
+  assert.equal(JSON.parse(main.disk.get(main.context.promptStorageKey)).home, "main draft");
+  assert.equal(JSON.parse(main.disk.get(utility.context.promptStorageKey)).home, "utility draft");
+}
 console.log("PASS production draft state/setters/effect: home and thread isolation, functional edits, corrupt storage, restart, late callbacks and created-thread handoff (L2)");
 
 for (const scenario of ["success", "failure", "edited", "left"]) {
@@ -186,7 +195,7 @@ console.log("PASS real send/attachment callbacks with draft store: handoff, fail
   await view.start("D:/one", { id: "multi", serverProjectId: "server-multi", rootPaths: ["D:/one", "D:/two"] });
   assert.equal(draft.prompt, "旧会话", "failed project navigation must not switch draft scope");
 }
-for (const name of ["onStartSkillCreatorSession", "onStartChatWithImage", "onStartGptChat", "onStartChatForSite", "onStartChatInEnv"]) {
+for (const name of ["onStartSkillCreatorSession"]) {
   let handler;
   function find(node) {
     if (ts.isJsxAttribute(node) && node.name.getText(ast) === name) handler = node.initializer.expression.getText(ast);
@@ -197,7 +206,7 @@ for (const name of ["onStartSkillCreatorSession", "onStartChatWithImage", "onSta
   const action = vm.runInNewContext(compile(handler), {
     setThreadPrompt: draft.context.setThreadPrompt, startNewThread() {}, showAppToast() {},
   });
-  action(...(name === "onStartChatWithImage" ? ["unused", "预填"] : name === "onStartGptChat" ? [{ promptStarter: "预填", name: "GPT" }] : ["预填"]));
+  action("预填");
   assert.match(draft.read(null), /预填/);
   assert.equal(draft.read("old"), "旧会话");
 }

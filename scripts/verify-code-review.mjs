@@ -20,8 +20,8 @@ const shortcutsSource = fs.readFileSync(
 );
 
 // CR01: 检查 App.tsx 协议参数形状
-const hasUncommittedTarget = appSource.includes('type: "uncommittedChanges"');
-const hasBaseBranchTarget = appSource.includes('type: "baseBranch"');
+const hasUncommittedTarget = appSource.includes('req.kind === "uncommitted"') && appSource.includes("untracked files");
+const hasBaseBranchTarget = appSource.includes('"git_merge_base"') && appSource.includes('req.kind === "branch"');
 const hasCommitTarget = appSource.includes('type: "commit"');
 const hasCustomTarget = appSource.includes('type: "custom"');
 const hasReviewStartCall = appSource.includes('"review/start"');
@@ -44,7 +44,7 @@ assert.ok(
     hasBaseBranchTarget &&
     hasCommitTarget &&
     hasCustomTarget,
-  "App.tsx: handleStartCodeReview must support all 4 review/start target shapes"
+  "App.tsx: quick reviews use real merge base/ordinary turns; commit/custom retain review/start"
 );
 assert.ok(
   has4Targets,

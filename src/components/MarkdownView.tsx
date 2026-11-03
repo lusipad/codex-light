@@ -4,6 +4,7 @@ import { copyTextToClipboard } from "../clipboard";
 
 interface MarkdownViewProps {
   content: string;
+  variant?: "default" | "user-message";
   onRunCommand?: (cmd: string) => void;
   onOpenFile?: (filePath: string) => void;
 }
@@ -114,7 +115,8 @@ function hasUnsafeImageProtocol(value: string): boolean {
 
 function renderInlineSegments(
   text: string,
-  onOpenFile?: (filePath: string) => void
+  onOpenFile?: (filePath: string) => void,
+  userMessage = false
 ): React.ReactNode[] {
   const inlineRegex =
     /(`[^`]+`|!\[[^\]]*\]\([^)]+\)|\[[^\]]+\]\([^)]+\)|\*\*\*[^*]+\*\*\*|\*\*[^*]+\*\*|~~[^~]+~~|(?<!\*)\*[^*\s][^*]*\*(?!\*)|(?<!\w)_[^_\s][^_]*_(?!\w))/g;
@@ -151,6 +153,9 @@ function renderInlineSegments(
 
     const imgMatch = part.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
     if (imgMatch) {
+      if (userMessage) {
+        return <React.Fragment key={idx}>!{renderInlineSegments(part.slice(1), onOpenFile, true)}</React.Fragment>;
+      }
       const [, alt, src] = imgMatch;
       if (hasUnsafeImageProtocol(src)) {
         return <span key={idx} className="md-unsupported-media">不支持的图片地址</span>;
@@ -222,21 +227,21 @@ function renderInlineSegments(
     if (part.startsWith("***") && part.endsWith("***") && part.length > 6) {
       return (
         <strong key={idx}>
-          <em>{renderInlineSegments(part.slice(3, -3), onOpenFile)}</em>
+          <em>{renderInlineSegments(part.slice(3, -3), onOpenFile, userMessage)}</em>
         </strong>
       );
     }
     if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
       return (
         <strong key={idx}>
-          {renderInlineSegments(part.slice(2, -2), onOpenFile)}
+          {renderInlineSegments(part.slice(2, -2), onOpenFile, userMessage)}
         </strong>
       );
     }
     if (part.startsWith("~~") && part.endsWith("~~") && part.length > 4) {
       return (
         <del key={idx}>
-          {renderInlineSegments(part.slice(2, -2), onOpenFile)}
+          {renderInlineSegments(part.slice(2, -2), onOpenFile, userMessage)}
         </del>
       );
     }
@@ -246,7 +251,7 @@ function renderInlineSegments(
       part.length > 2
     ) {
       return (
-        <em key={idx}>{renderInlineSegments(part.slice(1, -1), onOpenFile)}</em>
+        <em key={idx}>{renderInlineSegments(part.slice(1, -1), onOpenFile, userMessage)}</em>
       );
     }
 
@@ -270,7 +275,8 @@ function isTableSeparator(line: string): boolean {
 
 function renderTextParagraphs(
   text: string,
-  onOpenFile?: (filePath: string) => void
+  onOpenFile?: (filePath: string) => void,
+  userMessage = false
 ) {
   const lines = text.split(/\r?\n/);
   const elements: React.ReactNode[] = [];
@@ -298,7 +304,7 @@ function renderTextParagraphs(
                   className="md-task-checkbox"
                 />
               )}
-              <span>{renderInlineSegments(item.text, onOpenFile)}</span>
+              <span>{renderInlineSegments(item.text, onOpenFile, userMessage)}</span>
             </li>
           ))}
         </ul>
@@ -310,7 +316,7 @@ function renderTextParagraphs(
       elements.push(
         <ol key={`${keyPrefix}-ol`} start={startNum} className="md-list md-ol-list">
           {olItems.map((item, idx) => (
-            <li key={idx}>{renderInlineSegments(item.text, onOpenFile)}</li>
+            <li key={idx}>{renderInlineSegments(item.text, onOpenFile, userMessage)}</li>
           ))}
         </ol>
       );
@@ -335,7 +341,7 @@ function renderTextParagraphs(
           )}
           {bodyLines.map((ql, qIdx) => (
             <p key={qIdx} className="md-blockquote-p">
-              {renderInlineSegments(ql, onOpenFile)}
+              {renderInlineSegments(ql, onOpenFile, userMessage)}
             </p>
           ))}
         </blockquote>
@@ -385,7 +391,7 @@ function renderTextParagraphs(
                     key={hIdx}
                     style={{ textAlign: alignments[hIdx] || "left" }}
                   >
-                    {renderInlineSegments(h, onOpenFile)}
+                    {renderInlineSegments(h, onOpenFile, userMessage)}
                   </th>
                 ))}
               </tr>
@@ -398,7 +404,7 @@ function renderTextParagraphs(
                       key={cIdx}
                       style={{ textAlign: alignments[cIdx] || "left" }}
                     >
-                      {renderInlineSegments(row[cIdx] ?? "", onOpenFile)}
+                      {renderInlineSegments(row[cIdx] ?? "", onOpenFile, userMessage)}
                     </td>
                   ))}
                 </tr>
@@ -433,8 +439,10 @@ function renderTextParagraphs(
     if (headingMatch) {
       flushListsAndQuotes(`l-${i}`);
       const level = headingMatch[1].length;
-      const contentNode = renderInlineSegments(headingMatch[2], onOpenFile);
-      if (level === 1) {
+      const contentNode = renderInlineSegments(headingMatch[2], onOpenFile, userMessage);
+      if (userMessage) {
+        elements.push(React.createElement(`h${level}`, { key: i, className: `md-h${level}` }, contentNode));
+      } else if (level === 1) {
         elements.push(
           <h2 key={i} className="md-h1">
             {contentNode}
@@ -490,9 +498,18 @@ function renderTextParagraphs(
     }
 
     flushListsAndQuotes(`l-${i}`);
+    const paragraph = [line];
+    if (userMessage) {
+      while (i + 1 < lines.length) {
+        const next = lines[i + 1].trim();
+        if (!next || /^(?:#{1,6}\s|>|[-*+]\s|\d+\.\s|[-*_]{3,}$)/.test(next) ||
+          (next.includes("|") && i + 2 < lines.length && isTableSeparator(lines[i + 2]))) break;
+        paragraph.push(lines[++i]);
+      }
+    }
     elements.push(
       <p key={i} className="md-p">
-        {renderInlineSegments(line, onOpenFile)}
+        {renderInlineSegments(paragraph.join("\n"), onOpenFile, userMessage)}
       </p>
     );
   }
@@ -502,7 +519,7 @@ function renderTextParagraphs(
 }
 
 export const MarkdownView: React.FC<MarkdownViewProps> = React.memo(
-  ({ content, onRunCommand, onOpenFile }) => {
+  ({ content, variant = "default", onRunCommand, onOpenFile }) => {
     const [copiedBlocks, setCopiedBlocks] = useState<Record<number, boolean>>({});
     const [copyingBlocks, setCopyingBlocks] = useState<Record<number, boolean>>({});
     const copyingRef = useRef(new Set<number>());
@@ -519,7 +536,10 @@ export const MarkdownView: React.FC<MarkdownViewProps> = React.memo(
     const [wrappedBlocks, setWrappedBlocks] = useState<Record<number, boolean>>(
       {}
     );
-    const blocks = splitMarkdownBlocks(content || "");
+    const userMessage = variant === "user-message";
+    const blocks = splitMarkdownBlocks(userMessage
+      ? (content || "").replaceAll("](codex-text-link://", "](")
+      : content || "");
 
     const handleCopy = async (code: string, idx: number) => {
       if (copyingRef.current.has(idx)) return;
@@ -548,13 +568,13 @@ export const MarkdownView: React.FC<MarkdownViewProps> = React.memo(
       );
 
     return (
-      <div className="markdown-body">
+      <div className={`markdown-body${userMessage ? " markdown-body-user-message" : ""}`}>
         {blocks.map((block, idx) => {
           if (block.kind === "code") {
             const codeLines = block.code.split(/\r?\n/);
             const isWrapped = Boolean(wrappedBlocks[idx]);
             return (
-              <div key={idx} className="code-block-wrapper">
+              <div key={idx} className="code-block-wrapper" data-markdown-copy="code-block">
                 <div className="code-block-header">
                   <div className="code-block-meta">
                     <span className="code-lang">{block.lang || "code"}</span>
@@ -572,7 +592,7 @@ export const MarkdownView: React.FC<MarkdownViewProps> = React.memo(
                       <WrapText size={12} />
                       <span>换行</span>
                     </button>
-                    {onRunCommand && isShellLang(block.lang) && (
+                    {!userMessage && onRunCommand && isShellLang(block.lang) && (
                       <button
                         type="button"
                         className="code-action-btn"
@@ -622,7 +642,7 @@ export const MarkdownView: React.FC<MarkdownViewProps> = React.memo(
           }
           return (
             <div key={idx} className="md-text-chunk">
-              {renderTextParagraphs(block.code, onOpenFile)}
+              {renderTextParagraphs(block.code, onOpenFile, userMessage)}
             </div>
           );
         })}

@@ -27,7 +27,8 @@ const MENU_SECTIONS: Array<{ id: string; label: string; entries: MenuEntry[] }> 
     label: "文件",
     entries: [
       { type: "item", id: "new-chat", label: "新聊天", shortcut: "Ctrl+N" },
-      { type: "item", id: "new-standalone-chat", label: "新独立聊天 (Popout)", shortcut: "Ctrl+Alt+O" },
+      { type: "item", id: "new-standalone-chat", label: "新建无项目聊天", shortcut: "Ctrl+Alt+O" },
+      { type: "item", id: "open-hotkey-window", label: "快捷聊天窗口（开发入口）" },
       { type: "item", id: "open-workspace", label: "打开文件夹…", shortcut: "Ctrl+O" },
       { type: "separator" },
       { type: "item", id: "settings", label: "设置…", shortcut: "Ctrl+," },

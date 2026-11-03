@@ -173,8 +173,10 @@ visit(app);
 const invokes = [], toasts = [], dialogs = [];
 let rejectOpen = false;
 const context = vm.createContext({
+  keyboardState: { capturing: { current: false } },
   shortcutHandlersRef: { current: {} }, setShowKeyboardShortcuts: fn => dialogs.push(fn),
   keyboardShortcutsOpenRef: { current: false },
+  projectMoveConfirmation: null,
   tauriInvoke: async (command, args) => { invokes.push([command, args]); if (rejectOpen) throw Error("isolated browser failure"); },
   showAppToast: (...args) => toasts.push(args),
 });

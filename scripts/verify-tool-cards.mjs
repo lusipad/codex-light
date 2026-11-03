@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
+import { mountMcp } from "./verify-mcp-output.mjs";
 
 const compile = source => ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, jsx: ts.JsxEmit.React } }).outputText;
 const load = async file => import(`data:text/javascript;base64,${Buffer.from(compile(fs.readFileSync(new URL(file, import.meta.url), "utf8"))).toString("base64")}`);
@@ -11,7 +12,8 @@ const source = fs.readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8
 const ast = ts.createSourceFile("App.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 
 const React = {
-  createElement: (type, props, ...children) => ({ type, props, children: children.flat() })
+  createElement: (type, props, ...children) => typeof type === "function"
+    ? type(props) : ({ type, props, children: children.flat() })
 };
 
 let fileChangeBranch, mcpProgressBranch, lifecycleBranch;
@@ -30,14 +32,10 @@ function visit(node) {
       lifecycleBranch = node.thenStatement.getText(ast);
     }
   }
-  if (ts.isCallExpression(node)) {
-    const expr = node.expression.getText(ast);
-    if (expr === "fileChanges.map" && node.arguments.length > 0) {
-      fileChangeMapBody = node.arguments[0].getText(ast);
-    }
-    if (expr === "mcpCalls.map" && node.arguments.length > 0) {
-      mcpCallMapBody = node.arguments[0].getText(ast);
-    }
+  if (ts.isVariableDeclaration(node)) {
+    const name = node.name.getText(ast);
+    if (name === "renderFileChange") fileChangeMapBody = node.initializer.getText(ast);
+    if (name === "renderMcpCall") mcpCallMapBody = node.initializer.getText(ast);
   }
   ts.forEachChild(node, visit);
 }
@@ -47,7 +45,7 @@ visit(ast);
 assert.ok(mcpProgressBranch, "App.tsx must handle NOTIFICATION.ITEM_MCP_PROGRESS");
 
 // 2. 验证 fileChanges 渲染：kind 必须支持官方 schema 对象形式，且状态指示完整
-assert.ok(fileChangeMapBody, "App.tsx must contain fileChanges.map");
+assert.ok(fileChangeMapBody, "App.tsx must contain the production file-change renderer");
 {
   const fakeReactContext = vm.createContext({
     React,
@@ -85,11 +83,12 @@ assert.ok(fileChangeMapBody, "App.tsx must contain fileChanges.map");
 }
 
 // 3. 验证 mcpCalls 渲染：error 支持官方 schema 对象形式，result 提取文本，progress 进度展示
-assert.ok(mcpCallMapBody, "App.tsx must contain mcpCalls.map");
+assert.ok(mcpCallMapBody, "App.tsx must contain the production MCP renderer");
 {
   const fakeReactContext = vm.createContext({
     React,
     SparklesIcon: () => null,
+    McpCallCard: ({ item }) => mountMcp(item).render(),
   });
   const renderMcp = vm.runInContext(compile(`(${mcpCallMapBody})`), fakeReactContext);
 

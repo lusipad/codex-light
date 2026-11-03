@@ -24,8 +24,10 @@
 //! ```
 
 use serde_json::json;
+use std::collections::BTreeMap;
+use std::sync::Mutex;
 use tauri::image::Image;
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+use tauri::menu::{Menu, MenuItem, MenuItemKind, PredefinedMenuItem, Submenu};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
@@ -36,6 +38,160 @@ pub const NATIVE_TRAY_EVENT: &str = "native-tray";
 /// Stable id of the system tray icon (useful for `app.tray_by_id`).
 pub const TRAY_ICON_ID: &str = "codex-tray";
 
+const SHORTCUT_MENU_ITEMS: [(&str, &str, &str); 10] = [
+    ("new-chat", "new-chat", "CmdOrCtrl+N"),
+    ("open-settings", "settings", "CmdOrCtrl+,"),
+    ("toggle-sidebar", "toggle-sidebar", "CmdOrCtrl+Shift+S"),
+    ("toggle-terminal", "toggle-terminal", "Control+`"),
+    ("toggle-changes", "toggle-changes", "CmdOrCtrl+Alt+B"),
+    ("command-palette", "command-palette", "CmdOrCtrl+K"),
+    ("file-search", "file-search", "CmdOrCtrl+P"),
+    ("zoom-in", "zoom-in", "CmdOrCtrl+="),
+    ("zoom-out", "zoom-out", "CmdOrCtrl+-"),
+    ("zoom-reset", "zoom-reset", "CmdOrCtrl+0"),
+];
+
+pub struct ShortcutMenuState(Mutex<BTreeMap<String, Option<String>>>);
+
+impl Default for ShortcutMenuState {
+    fn default() -> Self {
+        Self(Mutex::new(
+            SHORTCUT_MENU_ITEMS
+                .iter()
+                .map(|(command, _, accelerator)| {
+                    ((*command).to_string(), Some((*accelerator).to_string()))
+                })
+                .collect(),
+        ))
+    }
+}
+
+// Tauri 2.12 silently converts parse errors to None and does not export muda's
+// parser. Validate the physical-key vocabulary we accept before calling it.
+fn validate_accelerator(value: &str) -> Result<(), String> {
+    let tokens: Vec<_> = value.split('+').collect();
+    let (key, modifiers) = tokens
+        .split_last()
+        .ok_or_else(|| "empty accelerator".to_string())?;
+    for modifier in modifiers {
+        if !matches!(
+            modifier.to_ascii_uppercase().as_str(),
+            "CTRL" | "CONTROL" | "SHIFT" | "ALT" | "OPTION" | "CMD" | "COMMAND"
+                | "SUPER" | "CMDORCTRL" | "COMMANDORCONTROL"
+                | "COMMANDORCTRL" | "CMDORCONTROL"
+        ) {
+            return Err(format!("unsupported accelerator modifier: {modifier}"));
+        }
+    }
+    let key = key.to_ascii_uppercase();
+    let single = key.len() == 1
+        && (key.as_bytes()[0].is_ascii_alphanumeric()
+            || "`\\[],=-.;/'".contains(key.as_str()));
+    let numbered = |prefix: &str, min, max| {
+        key.strip_prefix(prefix)
+            .and_then(|number| number.parse::<u8>().ok())
+            .is_some_and(|number| {
+                (min..=max).contains(&number) && key == format!("{prefix}{number}")
+            })
+    };
+    let valid = single
+        || (key.len() == 4 && key.starts_with("KEY") && key.as_bytes()[3].is_ascii_uppercase())
+        || numbered("DIGIT", 0, 9)
+        || numbered("NUMPAD", 0, 9)
+        || numbered("F", 1, 24)
+        || matches!(
+            key.as_str(),
+            "BACKQUOTE" | "BACKSLASH" | "BRACKETLEFT" | "BRACKETRIGHT" | "COMMA"
+                | "EQUAL" | "MINUS" | "PERIOD" | "QUOTE" | "SEMICOLON" | "SLASH"
+                | "BACKSPACE" | "CAPSLOCK" | "ENTER" | "SPACE" | "TAB" | "DELETE"
+                | "END" | "HOME" | "INSERT" | "PAGEDOWN" | "PAGEUP" | "PRINTSCREEN"
+                | "SCROLLLOCK" | "ARROWDOWN" | "ARROWLEFT" | "ARROWRIGHT" | "ARROWUP"
+                | "DOWN" | "LEFT" | "RIGHT" | "UP" | "NUMLOCK" | "NUMPADADD"
+                | "NUMPADDECIMAL" | "NUMPADDIVIDE" | "NUMPADENTER" | "NUMPADEQUAL"
+                | "NUMPADMULTIPLY" | "NUMPADSUBTRACT" | "ESCAPE" | "ESC"
+                | "AUDIOVOLUMEDOWN" | "AUDIOVOLUMEUP" | "AUDIOVOLUMEMUTE"
+        );
+    if valid {
+        Ok(())
+    } else {
+        Err(format!("unsupported accelerator key: {key}"))
+    }
+}
+
+fn validate_shortcut_map(accelerators: &BTreeMap<String, Option<String>>) -> Result<(), String> {
+    for (command, accelerator) in accelerators {
+        if !SHORTCUT_MENU_ITEMS.iter().any(|(id, _, _)| command == id) {
+            return Err(format!("unknown native shortcut command: {command}"));
+        }
+        if let Some(value) = accelerator {
+            validate_accelerator(value).map_err(|error| format!("{command}: {error}"))?;
+        }
+    }
+    for (command, _, _) in SHORTCUT_MENU_ITEMS {
+        if !accelerators.contains_key(command) {
+            return Err(format!("missing native shortcut command: {command}"));
+        }
+    }
+    Ok(())
+}
+
+fn find_menu_item<R: Runtime>(
+    items: Vec<MenuItemKind<R>>,
+    id: &str,
+) -> tauri::Result<Option<MenuItem<R>>> {
+    for item in items {
+        match item {
+            MenuItemKind::MenuItem(item) if item.id().as_ref() == id => return Ok(Some(item)),
+            MenuItemKind::Submenu(submenu) => {
+                if let Some(item) = find_menu_item(submenu.items()?, id)? {
+                    return Ok(Some(item));
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(None)
+}
+
+pub fn sync_shortcut_menu<R: Runtime>(
+    app: &AppHandle<R>,
+    state: &ShortcutMenuState,
+    accelerators: BTreeMap<String, Option<String>>,
+) -> Result<(), String> {
+    validate_shortcut_map(&accelerators)?;
+    let menu = app.menu().ok_or("application menu is unavailable")?;
+    let mut previous = state.0.lock().map_err(|error| error.to_string())?;
+    let mut prepared = Vec::new();
+    for (command, menu_id, _) in SHORTCUT_MENU_ITEMS {
+        let item = find_menu_item(menu.items().map_err(|error| error.to_string())?, menu_id)
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| format!("native menu item is missing: {menu_id}"))?;
+        prepared.push((command, item));
+    }
+    for (index, (command, item)) in prepared.iter().enumerate() {
+        if let Err(error) = item.set_accelerator(accelerators[*command].as_deref()) {
+            let mut rollback_errors = Vec::new();
+            for (rollback_command, rollback_item) in prepared[..=index].iter().rev() {
+                if let Err(rollback_error) =
+                    rollback_item.set_accelerator(previous[*rollback_command].as_deref())
+                {
+                    rollback_errors.push(format!("{rollback_command}: {rollback_error}"));
+                }
+            }
+            return Err(format!(
+                "native shortcut update failed for {command}: {error}; rollback: {}",
+                if rollback_errors.is_empty() {
+                    "complete".to_string()
+                } else {
+                    rollback_errors.join("; ")
+                }
+            ));
+        }
+    }
+    *previous = accelerators;
+    Ok(())
+}
+
 /// Small helper so the menu tables below stay readable.
 fn item<R: Runtime>(
     app: &AppHandle<R>,
@@ -43,6 +199,11 @@ fn item<R: Runtime>(
     text: &str,
     accelerator: Option<&str>,
 ) -> tauri::Result<MenuItem<R>> {
+    let accelerator = SHORTCUT_MENU_ITEMS
+        .iter()
+        .find(|(_, menu_id, _)| *menu_id == id)
+        .map(|(_, _, value)| *value)
+        .or(accelerator);
     MenuItem::with_id(app, id, text, true, accelerator)
 }
 
@@ -223,8 +384,8 @@ pub fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
             // The frontend calls `invoke("open_path_external", { path })` with
             // the resolved config path (also works before any App wiring).
             let path = crate::state::codex_home_dir().join("config.toml");
-            let _ = app.emit(
-                NATIVE_MENU_EVENT,
+            emit_focused_menu(
+                app,
                 json!({
                     "id": "open-config-toml",
                     "payload": { "path": path.to_string_lossy() },
@@ -237,7 +398,7 @@ pub fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
             // the event is still forwarded to the webview).
             #[cfg(debug_assertions)]
             {
-                if let Some(window) = app.get_webview_window("main") {
+                if let Some(window) = focused_menu_window(app) {
                     if window.is_devtools_open() {
                         window.close_devtools();
                     } else {
@@ -245,7 +406,7 @@ pub fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
                     }
                 }
             }
-            let _ = app.emit(NATIVE_MENU_EVENT, json!({ "id": "toggle-devtools" }));
+            emit_focused_menu(app, json!({ "id": "toggle-devtools" }));
         }
         // Known application menu ids -> forward to the webview.
         "new-chat"
@@ -264,10 +425,26 @@ pub fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
         | "zoom-reset"
         | "toggle-fullscreen"
         | "about" => {
-            let _ = app.emit(NATIVE_MENU_EVENT, json!({ "id": id }));
+            emit_focused_menu(app, json!({ "id": id }));
         }
         // Predefined items (undo/copy/separators/…) have no frontend action.
         _ => {}
+    }
+}
+
+fn focused_menu_window<R: Runtime>(app: &AppHandle<R>) -> Option<tauri::WebviewWindow<R>> {
+    app.webview_windows()
+        .into_values()
+        .find(|window| {
+            (window.label() == "main" || window.label().starts_with("thread-"))
+                && window.is_focused().unwrap_or(false)
+        })
+        .or_else(|| app.get_webview_window("main"))
+}
+
+fn emit_focused_menu<R: Runtime>(app: &AppHandle<R>, payload: serde_json::Value) {
+    if let Some(window) = focused_menu_window(app) {
+        let _ = app.emit_to(window.label(), NATIVE_MENU_EVENT, payload);
     }
 }
 
@@ -277,5 +454,38 @@ pub fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
+    }
+}
+
+#[cfg(test)]
+mod shortcut_tests {
+    use super::*;
+
+    fn defaults() -> BTreeMap<String, Option<String>> {
+        ShortcutMenuState::default().0.into_inner().unwrap()
+    }
+
+    #[test]
+    fn complete_mapping_and_explicit_removal_are_validated() {
+        let mut bindings = defaults();
+        validate_shortcut_map(&bindings).unwrap();
+        bindings.insert("new-chat".into(), None);
+        validate_shortcut_map(&bindings).unwrap();
+        bindings.remove("open-settings");
+        assert!(validate_shortcut_map(&bindings).unwrap_err().contains("open-settings"));
+        bindings = defaults();
+        bindings.insert("settings".into(), None);
+        assert!(validate_shortcut_map(&bindings).unwrap_err().contains("unknown"));
+        assert_eq!(SHORTCUT_MENU_ITEMS[1].1, "settings");
+    }
+
+    #[test]
+    fn invalid_values_are_rejected_before_native_updates() {
+        for invalid in ["", "Ctrl+", "Ctrl++", "Ctrl+K Ctrl+Q", "Bogus+A", "Ctrl+F25", "Ctrl+F01", "Ctrl+Digit01", "Meta+A"] {
+            assert!(validate_accelerator(invalid).is_err(), "{invalid}");
+        }
+        for valid in ["Ctrl+Shift+KeyA", "CmdOrCtrl+,", "Ctrl+Equal", "Alt+F24", "Ctrl+Space", "Ctrl+BracketLeft"] {
+            validate_accelerator(valid).unwrap();
+        }
     }
 }

@@ -1,6 +1,6 @@
 import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, SparklesIcon } from "./Icons";
-import { getDefaultModel, getSupportedEfforts, modelSupportsFast } from "../modelCapabilities";
+import { findModel, getDefaultModel, getPickerModels, getSupportedEfforts, modelSupportsFast } from "../modelCapabilities";
 import { ModelInfo } from "../types";
 import "./ModelSelector.css";
 
@@ -19,11 +19,14 @@ const EFFORT_LABELS: Record<string, string> = {
 
 function formatModelName(model?: ModelInfo): string {
   const name = model?.displayName || model?.id || "默认";
-  return name.replace(/-([A-Za-z]+)$/, " $1");
+  return name;
 }
 
 export interface ModelSelectorProps {
   models: ModelInfo[];
+  modelsLoading?: boolean;
+  modelsError?: string | null;
+  onRefreshModels?: () => void;
   selectedModelId: string;
   defaultModelSelected: boolean;
   reasoningEffort: string;
@@ -37,6 +40,9 @@ export interface ModelSelectorProps {
 
 export const ModelSelector: React.FC<ModelSelectorProps> = ({
   models,
+  modelsLoading = false,
+  modelsError,
+  onRefreshModels,
   selectedModelId,
   defaultModelSelected,
   reasoningEffort,
@@ -54,8 +60,8 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const defaultModel = getDefaultModel(models);
-  const visibleModels = useMemo(() => models.filter((model) => !model.hidden), [models]);
-  const activeModel = models.find((model) => model.id === selectedModelId)
+  const visibleModels = useMemo(() => getPickerModels(models), [models]);
+  const activeModel = findModel(models, selectedModelId)
     || defaultModel
     || (selectedModelId ? { id: selectedModelId, displayName: selectedModelId } : undefined);
   const supportedEfforts = useMemo(() => getSupportedEfforts(activeModel), [activeModel]);
@@ -97,6 +103,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   };
 
   const handleMenuKeys = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
     if (!open) {
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         event.preventDefault();
@@ -152,6 +159,12 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
           role="menu"
           aria-label={view === "models" ? "选择模型" : "模型与推理强度"}
         >
+          {modelsLoading && <div role="status">正在加载模型…</div>}
+          {modelsError && <div role="alert">
+            {modelsError}
+            <button type="button" disabled={modelsLoading} onClick={onRefreshModels}>重新读取</button>
+          </div>}
+          {!modelsLoading && !modelsError && visibleModels.length === 0 && <div role="status">暂无可用模型</div>}
           {view === "compact" ? (
             <>
               <button
@@ -223,7 +236,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
               )}
               <div className="model-choice-list">
                 {visibleModels.map((model) => {
-                  const selected = !defaultModelSelected && model.id === selectedModelId;
+                  const selected = !defaultModelSelected && (model.id === selectedModelId || model.model === selectedModelId);
                   return (
                     <button
                       key={model.id}

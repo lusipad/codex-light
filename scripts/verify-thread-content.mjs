@@ -21,6 +21,39 @@ const { MarkdownView } = require(fileURLToPath(new URL("../src/components/Markdo
 const { findThreadMatches } = require(fileURLToPath(new URL("../src/components/ThreadFindBar.tsx", import.meta.url)));
 const render = (content, props = {}) => renderToStaticMarkup(createElement(MarkdownView, { content, ...props }));
 const cases = [
+  ["RC01 user Markdown keeps structure and heading levels", () => {
+    const html = render("# 标题\n\n**加粗** 和 `代码`\n\n- 条目\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n\n```ts\nconst x = 1;\n```", { variant: "user-message" });
+    for (const tag of ["h1", "strong", "code", "ul", "table", "pre"]) assert.match(html, new RegExp(`<${tag}\\b`));
+    assert.match(html, /markdown-body-user-message/);
+  }],
+  ["RC02 user soft lines share a paragraph, blank lines separate paragraphs", () => {
+    const html = render("第一行\n第二行\n\n另一段", { variant: "user-message" });
+    assert.match(html, /<p class="md-p">第一行\n第二行<\/p><p class="md-p">另一段<\/p>/);
+    assert.equal((html.match(/<p\b/g) || []).length, 2);
+  }],
+  ["RC03 user Markdown images become links while assistant images remain images", () => {
+    const content = "![示例](https://example.com/image.png)";
+    const html = render(content, { variant: "user-message" });
+    assert.doesNotMatch(html, /<img\b/);
+    assert.match(html, /!<a[^>]*href="https:\/\/example.com\/image.png"/);
+    assert.match(render(content), /<img\b/);
+    assert.doesNotMatch(render("![bad](javascript:alert)", { variant: "user-message" }), /href=/);
+  }],
+  ["RC04 composer links use existing file preview callback", () => {
+    const html = render("[源文件](codex-text-link://src/App.tsx)", { variant: "user-message", onOpenFile() {} });
+    assert.match(html, /<button[^>]*class="inline-file-link"/);
+    assert.doesNotMatch(html, /codex-text-link/);
+  }],
+  ["RC07 plain long prompts retain every line in Markdown DOM", () => {
+    const text = Array.from({ length: 40 }, (_, i) => `line-${i}`).join("\n");
+    assert.match(render(text, { variant: "user-message" }), new RegExp(text));
+  }],
+  ["RC08 user code never offers terminal execution", () => {
+    const props = { onRunCommand() {} };
+    const content = "```sh\necho hello\n```";
+    assert.doesNotMatch(render(content, { ...props, variant: "user-message" }), /在内置终端中运行/);
+    assert.match(render(content, props), /在内置终端中运行/);
+  }],
   ["streaming unclosed fence stays code", () => assert.match(render("```ts\nconst x = 1;"), /<pre[^>]*>/)],
   ["four backticks protect inner fence", () => {
     const html = render("````text\n```ts\nhello\n```\n````\nend");

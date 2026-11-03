@@ -1,7 +1,10 @@
+import { GIT_DEFAULTS, type GitPreferences } from "../gitPreferences";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { copyTextToClipboard } from "../clipboard";
 import { tauriListen } from "../bridge";
+import { saveFileEditorSnapshot } from "../fileEditorSave";
+import { FileDiscardDialog } from "./FileDiscardDialog";
 import {
   DirectoryEntryItem,
   FilePreviewResult,
@@ -63,10 +66,13 @@ export interface WorkbenchTabItem {
 
 export interface DiffDrawerProps {
   open?: boolean;
+  gitPreferences?: GitPreferences;
+  gitPreferencesReady?: boolean;
   cwd: string;
   gitStatus: GitStatusInfo | null;
   branches?: string[];
   turns?: TurnData[];
+  recordedTurnDiff?: string;
   onRefreshGit: () => void;
   onClose: () => void;
   selectedPreviewFile?: string | null;
@@ -74,6 +80,7 @@ export interface DiffDrawerProps {
   onSendReviewComment?: (commentPrompt: string) => void;
   initialTab?: "newTab" | "changes" | "files" | "summary" | "browser" | "sideChat";
   initialSidePrompt?: string;
+  reviewTarget?: { cwd: string; baseBranch: string | null; mergeBase: string | null } | null;
   onOpenTerminal?: () => void;
   onOpenSideChat?: () => void;
   onFocusMainChat?: () => void;
@@ -336,16 +343,20 @@ async function entryExistsInDir(
 
 export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   open = true,
+  gitPreferences = GIT_DEFAULTS,
+  gitPreferencesReady = true,
   cwd,
   gitStatus,
   branches = [],
   turns = [],
+  recordedTurnDiff = "",
   onRefreshGit,
   onClose,
   selectedPreviewFile,
   onSelectPreviewFile,
   onSendReviewComment,
   initialTab = "changes",
+  reviewTarget,
   initialSidePrompt,
   onOpenTerminal,
   onOpenSideChat,
@@ -513,11 +524,30 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     .map((tab) => ({ id: tab.id, title: tab.title, url: tab.url as string }));
 
   // Changes state
-  const [diffMode, setDiffMode] = useState<"lastTurn" | "working" | "staged" | "branch" | "commits">(
+  const [requestedDiffMode, setDiffMode] = useState<"lastTurn" | "working" | "staged" | "branch" | "commits">(
     "working"
   );
+  const lastTurnOnly = !gitPreferencesReady || gitPreferences["git-review-mode"] === "last-turn-only";
+  const diffMode = lastTurnOnly ? "lastTurn" : requestedDiffMode;
   const [diffLayout, setDiffLayout] = useState<"unified" | "split">("unified");
   const [baseBranch, setBaseBranch] = useState<string>("");
+  const appliedReviewCwdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!reviewTarget || reviewTarget.cwd !== cwd) {
+      if (appliedReviewCwdRef.current && appliedReviewCwdRef.current !== cwd) {
+        appliedReviewCwdRef.current = null;
+        setDiffMode("working");
+        setBaseBranch("");
+        setSelectedFile(null);
+      }
+      return;
+    }
+    appliedReviewCwdRef.current = cwd;
+    setDiffMode(reviewTarget.baseBranch ? "branch" : "working");
+    setBaseBranch(reviewTarget.baseBranch || "");
+    setDiffLayout("split");
+    setSelectedFile(null);
+  }, [reviewTarget, cwd]);
   const [selectedFile, setSelectedFile] = useState<string | null>(
     selectedPreviewFile ?? null
   );
@@ -546,12 +576,19 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   // Commit / Push / PR state
   const [commitMessage, setCommitMessage] = useState("");
   const [committing, setCommitting] = useState(false);
+  const [indexWriting, setIndexWriting] = useState(false);
+  const gitWritePendingRef = useRef(false);
+  const gitContextRef = useRef({ cwd });
+  if (gitContextRef.current.cwd !== cwd) gitContextRef.current = { cwd };
   const [pushing, setPushing] = useState(false);
-  const [forceWithLease, setForceWithLease] = useState(false);
+  const gitWriteBusy = committing || pushing || indexWriting;
+  const [forceWithLease, setForceWithLease] = useState(gitPreferences["git-always-force-push"]);
   const [showPrModal, setShowPrModal] = useState(false);
   const [prTitle, setPrTitle] = useState("");
   const [prBody, setPrBody] = useState("");
-  const [prDraft, setPrDraft] = useState(false);
+  const [prDraft, setPrDraft] = useState(gitPreferences["git-create-pull-request-as-draft"]);
+  useEffect(() => { setForceWithLease(gitPreferences["git-always-force-push"]); }, [gitPreferences["git-always-force-push"]]);
+  useEffect(() => { setPrDraft(gitPreferences["git-create-pull-request-as-draft"]); }, [gitPreferences["git-create-pull-request-as-draft"]]);
   const [creatingPr, setCreatingPr] = useState(false);
   const [gitToast, setGitToast] = useState<string | null>(null);
 
@@ -565,6 +602,23 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   const [inFileSearch, setInFileSearch] = useState("");
   const [isDirty, setIsDirty] = useState(false);
   const [savingFile, setSavingFile] = useState(false);
+  const previewRequestRef = useRef(0);
+  const editRevisionRef = useRef(0);
+  const savePromiseRef = useRef<Promise<boolean> | null>(null);
+  const closePromiseRef = useRef<Promise<void> | null>(null);
+  const editedContentRef = useRef(editedContent);
+  const editorOpenRef = useRef(open);
+  editorOpenRef.current = open;
+  const [discardConfirmation, setDiscardConfirmation] = useState(false);
+  const discardResolverRef = useRef<((discard: boolean) => void) | null>(null);
+  useEffect(() => {
+    setDiscardConfirmation(false);
+    return () => {
+      ++previewRequestRef.current;
+      discardResolverRef.current?.(false);
+      discardResolverRef.current = null;
+    };
+  }, [cwd, open]);
   const [dirLoading, setDirLoading] = useState(false);
   const [dirError, setDirError] = useState<string | null>(null);
   const isDirtyRef = useRef(isDirty);
@@ -575,12 +629,17 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   useEffect(() => {
     filePreviewRef.current = filePreview;
   }, [filePreview]);
+  useEffect(() => () => {
+    ++previewRequestRef.current;
+    gitContextRef.current = { cwd: "" };
+  }, []);
   const [watchActive, setWatchActive] = useState(false);
   const [explorerDraft, setExplorerDraft] = useState<ExplorerDraft | null>(null);
   const [explorerBusy, setExplorerBusy] = useState(false);
   const dirLoadSeqRef = useRef(0);
 
   const displayedEntries = useMemo(() => {
+    if (diffMode === "lastTurn") return [];
     const list = gitStatus?.entries || [];
     if (diffMode === "staged") {
       return list.filter((e) => e.staged);
@@ -607,7 +666,10 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
 
   useEffect(() => {
     if (!open || activeTab !== "changes" || !cwd) return;
+    if (!gitPreferencesReady) { setDiffContent("Git 设置尚未读取，请在设置中重新读取。"); setLoadingDiff(false); return; }
+    let disposed = false;
     if (diffMode === "lastTurn") {
+      if (recordedTurnDiff) { setDiffContent(recordedTurnDiff); setLoadingDiff(false); return; }
       setLoadingDiff(true);
       const turnsList = Array.isArray(turns) ? turns : [];
       const lastTurnWithChanges = [...turnsList].reverse().find((t) =>
@@ -638,6 +700,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
       setLoadingDiff(true);
       invoke<GitCommitInfo[]>("git_log_commits", { cwd, limit: 40 })
         .then((list) => {
+          if (disposed) return "";
           setCommits(list);
           const hash = selectedCommitHash || list[0]?.hash || null;
           setSelectedCommitHash(hash);
@@ -646,10 +709,10 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
           }
           return "";
         })
-        .then((txt) => setDiffContent(txt || ""))
-        .catch((err) => setDiffContent(`Error loading commit history: ${String(err)}`))
-        .finally(() => setLoadingDiff(false));
-      return;
+        .then((txt) => { if (!disposed) setDiffContent(txt || ""); })
+        .catch((err) => { if (!disposed) setDiffContent(`Error loading commit history: ${String(err)}`); })
+        .finally(() => { if (!disposed) setLoadingDiff(false); });
+      return () => { disposed = true; };
     }
 
     setLoadingDiff(true);
@@ -658,11 +721,13 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
       filePath: selectedFile,
       staged: diffMode === "staged",
       baseBranch: diffMode === "branch" ? baseBranch : null,
+      reviewBaseCommit: diffMode === "branch" && reviewTarget?.cwd === cwd && reviewTarget.baseBranch === baseBranch ? reviewTarget.mergeBase : null,
     })
-      .then((res) => setDiffContent(res))
-      .catch((err) => setDiffContent(`Error loading diff: ${String(err)}`))
-      .finally(() => setLoadingDiff(false));
-  }, [open, activeTab, cwd, selectedFile, diffMode, baseBranch, selectedCommitHash, gitStatus, turns]);
+      .then((res) => { if (!disposed) setDiffContent(res); })
+      .catch((err) => { if (!disposed) setDiffContent(`Error loading diff: ${String(err)}`); })
+      .finally(() => { if (!disposed) setLoadingDiff(false); });
+    return () => { disposed = true; };
+  }, [open, activeTab, cwd, selectedFile, diffMode, baseBranch, selectedCommitHash, gitStatus, turns, reviewTarget, gitPreferencesReady, recordedTurnDiff]);
 
   /**
    * List one directory: app-server `fs/readDirectory` first, then the legacy
@@ -821,20 +886,34 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   };
 
   const handleStage = async (filePath?: string) => {
+    if (gitWritePendingRef.current) return;
+    const context = gitContextRef.current;
+    gitWritePendingRef.current = true;
+    setIndexWriting(true);
     try {
-      await invoke("git_stage", { cwd, filePath: filePath ?? null });
-      onRefreshGit();
+      await invoke("git_stage", { cwd: context.cwd, filePath: filePath ?? null });
+      if (context === gitContextRef.current) onRefreshGit();
     } catch (e) {
-      showToast(`暂存失败: ${String(e)}`);
+      if (context === gitContextRef.current) showToast(`暂存失败: ${String(e)}`);
+    } finally {
+      gitWritePendingRef.current = false;
+      setIndexWriting(false);
     }
   };
 
   const handleUnstage = async (filePath?: string) => {
+    if (gitWritePendingRef.current) return;
+    const context = gitContextRef.current;
+    gitWritePendingRef.current = true;
+    setIndexWriting(true);
     try {
-      await invoke("git_unstage", { cwd, filePath: filePath ?? null });
-      onRefreshGit();
+      await invoke("git_unstage", { cwd: context.cwd, filePath: filePath ?? null });
+      if (context === gitContextRef.current) onRefreshGit();
     } catch (e) {
-      showToast(`取消暂存失败: ${String(e)}`);
+      if (context === gitContextRef.current) showToast(`取消暂存失败: ${String(e)}`);
+    } finally {
+      gitWritePendingRef.current = false;
+      setIndexWriting(false);
     }
   };
 
@@ -913,6 +992,9 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   }, [displayedEntries]);
 
   const handleCommit = async () => {
+    if (gitWritePendingRef.current) return;
+    const context = gitContextRef.current;
+    const draftMessage = commitMessage;
     let messageToUse = commitMessage.trim();
     if (!messageToUse) {
       const files = displayedEntries.map((e) => e.path);
@@ -923,24 +1005,31 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
       const firstBase = files[0].split(/[/\\]/).pop()?.replace(/\.[^.]+$/, "") || "core";
       messageToUse = files.length === 1 ? `update ${files[0]}` : `update ${files.length} files (${firstBase})`;
     }
+    gitWritePendingRef.current = true;
     setCommitting(true);
     try {
       const hasStaged = gitStatus?.entries.some((e) => e.staged);
       if (!hasStaged && (gitStatus?.entries.length || 0) > 0) {
         await invoke("git_stage", { cwd, filePath: null });
       }
+      if (context !== gitContextRef.current) return;
       await invoke("git_commit_changes", { cwd, message: messageToUse });
-      setCommitMessage("");
+      if (context !== gitContextRef.current) return;
+      setCommitMessage((current) => current === draftMessage ? "" : current);
       onRefreshGit();
       showToast("✓ 已成功创建 Git 提交");
     } catch (e) {
-      showToast(`提交失败: ${String(e)}`);
+      if (context === gitContextRef.current) showToast(`提交失败: ${String(e)}`);
     } finally {
+      gitWritePendingRef.current = false;
       setCommitting(false);
     }
   };
 
   const handleCommitAndPush = async () => {
+    if (gitWritePendingRef.current) return;
+    const context = gitContextRef.current;
+    const draftMessage = commitMessage;
     let messageToUse = commitMessage.trim();
     if (!messageToUse) {
       const files = displayedEntries.map((e) => e.path);
@@ -951,35 +1040,45 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
       const firstBase = files[0].split(/[/\\]/).pop()?.replace(/\.[^.]+$/, "") || "core";
       messageToUse = files.length === 1 ? `update ${files[0]}` : `update ${files.length} files (${firstBase})`;
     }
+    gitWritePendingRef.current = true;
     setCommitting(true);
     try {
       const hasStaged = gitStatus?.entries.some((e) => e.staged);
       if (!hasStaged && (gitStatus?.entries.length || 0) > 0) {
         await invoke("git_stage", { cwd, filePath: null });
       }
+      if (context !== gitContextRef.current) return;
       await invoke("git_commit_changes", { cwd, message: messageToUse });
-      setCommitMessage("");
+      if (context !== gitContextRef.current) return;
+      setCommitMessage((current) => current === draftMessage ? "" : current);
       onRefreshGit();
       showToast("✓ 提交成功，正在推送到远程...");
-      await invoke("git_push_changes", { cwd, forceWithLease });
+      await invoke("git_push_changes", { cwd, forceWithLease: gitPreferences["git-always-force-push"] || forceWithLease });
+      if (context !== gitContextRef.current) return;
       onRefreshGit();
       showToast("✓ 提交并推送成功");
     } catch (e) {
-      showToast(`操作失败: ${String(e)}`);
+      if (context === gitContextRef.current) showToast(`操作失败: ${String(e)}`);
     } finally {
+      gitWritePendingRef.current = false;
       setCommitting(false);
     }
   };
 
   const handlePush = async () => {
+    if (gitWritePendingRef.current) return;
+    const context = gitContextRef.current;
+    gitWritePendingRef.current = true;
     setPushing(true);
     try {
-      await invoke("git_push_changes", { cwd, forceWithLease });
+      await invoke("git_push_changes", { cwd, forceWithLease: gitPreferences["git-always-force-push"] || forceWithLease });
+      if (context !== gitContextRef.current) return;
       onRefreshGit();
       showToast("✓ 已推送到远程仓库");
     } catch (e) {
-      showToast(`推送失败: ${String(e)}`);
+      if (context === gitContextRef.current) showToast(`推送失败: ${String(e)}`);
     } finally {
+      gitWritePendingRef.current = false;
       setPushing(false);
     }
   };
@@ -1014,11 +1113,24 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     path: string,
     options?: { silent?: boolean }
   ) => {
-    try {
-      const preview = await readTextPreviewViaProtocol(path);
+    if (isDirtyRef.current) {
+      if (!options?.silent) showToast("请先保存当前文件的修改，再打开其他文件。");
+      return;
+    }
+    const request = ++previewRequestRef.current;
+    const revision = editRevisionRef.current;
+    const applyPreview = (preview: FilePreviewResult) => {
+      if (request !== previewRequestRef.current || revision !== editRevisionRef.current) return;
+      filePreviewRef.current = preview;
+      isDirtyRef.current = false;
       setFilePreview(preview);
+      editedContentRef.current = preview.content ?? "";
       setEditedContent(preview.content ?? "");
       setIsDirty(false);
+    };
+    try {
+      const preview = await readTextPreviewViaProtocol(path);
+      applyPreview(preview);
       return;
     } catch (protocolError) {
       if (!isPreviewFallbackError(protocolError)) {
@@ -1028,43 +1140,97 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
         );
       }
     }
+    if (request !== previewRequestRef.current || revision !== editRevisionRef.current) return;
     try {
       const res = await invoke<FilePreviewResult>("fs_read_preview", {
         path,
         maxBytes: MAX_TEXT_PREVIEW_BYTES,
       });
-      setFilePreview(res);
-      setEditedContent(res.content ?? "");
-      setIsDirty(false);
+      applyPreview(res);
     } catch (e) {
-      if (!options?.silent) showToast(`读取文件失败: ${String(e)}`);
+      if (request === previewRequestRef.current && revision === editRevisionRef.current && !options?.silent) showToast(`读取文件失败: ${String(e)}`);
     }
   };
 
-  const saveEditedFile = async () => {
-    if (!filePreview) return;
+  const saveEditedFile = (): Promise<boolean> => {
+    if (savePromiseRef.current) return savePromiseRef.current;
+    const preview = filePreviewRef.current;
+    if (!preview) return Promise.resolve(false);
     setSavingFile(true);
-    const targetPath = filePreview.path;
-    const content = editedContent;
-    try {
+    const targetPath = preview.path;
+    const content = editedContentRef.current;
+    const revision = editRevisionRef.current;
+    const request = previewRequestRef.current;
+    const context = gitContextRef.current;
+    const isCurrent = () => request === previewRequestRef.current
+      && filePreviewRef.current?.path === targetPath
+      && gitContextRef.current === context;
+    const pending = (async () => {
       try {
-        await fsWriteFileText(targetPath, content);
-      } catch (protocolError) {
-        console.warn(
-          "fs/writeFile unavailable, falling back to fs_write_file:",
-          protocolError
+        const result = await saveFileEditorSnapshot(
+          targetPath, preview.content ?? "", content, isCurrent,
         );
-        await invoke("fs_write_file", { path: targetPath, content });
+        if (result === "obsolete") return false;
+        if (result === "conflict") {
+          showToast("磁盘文件已变化，未确认保存；当前草稿已保留。");
+          return false;
+        }
+        if (!isCurrent() || !filePreviewRef.current) return false;
+        const savedPreview = { ...filePreviewRef.current, content };
+        filePreviewRef.current = savedPreview;
+        setFilePreview(savedPreview);
+        if (revision === editRevisionRef.current) {
+          isDirtyRef.current = false;
+          setIsDirty(false);
+        }
+        onRefreshGit();
+        void refreshDirectory(currentDir);
+        showToast("✓ 文件已保存");
+        return true;
+      } catch (e) {
+        if (isCurrent()) showToast(`保存文件失败: ${String(e)}`);
+        return false;
+      } finally {
+        savePromiseRef.current = null;
+        setSavingFile(false);
       }
+    })();
+    savePromiseRef.current = pending;
+    return pending;
+  };
+
+  const closeFilePreview = (): Promise<void> => {
+    if (closePromiseRef.current) return closePromiseRef.current;
+    const targetPath = filePreviewRef.current?.path;
+    const request = previewRequestRef.current;
+    const context = gitContextRef.current;
+    const isCurrent = () => editorOpenRef.current
+      && request === previewRequestRef.current
+      && filePreviewRef.current?.path === targetPath
+      && gitContextRef.current === context;
+    const pending = (async () => {
+      while (isCurrent() && isDirtyRef.current) {
+        const saved = await saveEditedFile();
+        if (!isCurrent()) return;
+        if (saved) continue;
+        const discard = await new Promise<boolean>(resolve => {
+          discardResolverRef.current = resolve;
+          setDiscardConfirmation(true);
+        });
+        if (!discard || !isCurrent()) return;
+        break;
+      }
+      if (!isCurrent()) return;
+      ++previewRequestRef.current;
+      filePreviewRef.current = null;
+      isDirtyRef.current = false;
+      editedContentRef.current = "";
+      setFilePreview(null);
+      setEditedContent("");
       setIsDirty(false);
-      onRefreshGit();
-      void refreshDirectory(currentDir);
-      showToast("✓ 文件已保存");
-    } catch (e) {
-      showToast(`保存文件失败: ${String(e)}`);
-    } finally {
-      setSavingFile(false);
-    }
+    })().finally(() => { closePromiseRef.current = null; });
+    closePromiseRef.current = pending;
+    return pending;
   };
 
   // External file selection (timeline cards / @mentions / quick search): keep
@@ -1200,6 +1366,9 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
         force: true,
       });
       if (filePreview && isPathWithin(filePreview.path, item.path)) {
+        ++previewRequestRef.current;
+        filePreviewRef.current = null;
+        isDirtyRef.current = false;
         setFilePreview(null);
         setEditedContent("");
         setIsDirty(false);
@@ -1425,6 +1594,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
             >
               本轮改动
             </button>
+            {!lastTurnOnly && <>
             <button
               type="button"
               className={`seg-btn ${diffMode === "working" ? "active" : ""}`}
@@ -1453,6 +1623,8 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
             >
               提交历史
             </button>
+
+            </>}
 
             <div className="diff-layout-switch">
               <button
@@ -1495,6 +1667,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
               >
                 复制 Patch
               </button>
+              {!lastTurnOnly && (
               <button
                 type="button"
                 className="seg-btn"
@@ -1506,6 +1679,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
               >
                 <RefreshIcon size={11} />
               </button>
+              )}
             </div>
           </div>
 
@@ -1535,7 +1709,9 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
 
           {/* Scrollable Main Area */}
           <div className="diff-content-scroll-area">
-            {diffMode === "commits" ? (
+            {diffMode === "lastTurn" ? (
+              <pre className="diff-code-content" style={{ whiteSpace: wordWrap ? "pre-wrap" : "pre", padding: 16 }}>{loadingDiff ? "读取中…" : diffContent}</pre>
+            ) : diffMode === "commits" ? (
               <div className="diff-file-list" style={{ maxHeight: "none", borderBottom: "none" }}>
                 <div className="diff-file-list-header">
                   <span>最近提交 ({commits.length})</span>
@@ -1556,7 +1732,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                         <span className="diff-file-path" title={c.subject}>
                           {c.subject}
                         </span>
-                        <span className="muted-text" style={{ fontSize: 11 }}>
+                        <span className="muted-text" style={{ fontSize: "calc(11px * var(--font-ui-scale, 1))" }}>
                           {c.relativeTime}
                         </span>
                       </div>
@@ -1610,6 +1786,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                         type="button"
                         className="mini-link-btn"
                         onClick={() => handleStage()}
+                        disabled={gitWriteBusy || !gitStatus?.entries.some(entry => entry.unstaged || entry.untracked)}
                       >
                         全暂存
                       </button>
@@ -1617,6 +1794,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                         type="button"
                         className="mini-link-btn"
                         onClick={() => handleUnstage()}
+                        disabled={gitWriteBusy || !gitStatus?.entries.some(entry => entry.staged)}
                       >
                         全取消
                       </button>
@@ -1669,20 +1847,23 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                             >
                               ✓
                             </button>
-                            {!entry.staged ? (
+                            {(entry.unstaged || entry.untracked) && (
                               <button
                                 type="button"
                                 className="mini-action-btn"
                                 onClick={() => handleStage(entry.path)}
+                                disabled={gitWriteBusy}
                                 title="暂存文件"
                               >
                                 <PlusIcon size={12} />
                               </button>
-                            ) : (
+                            )}
+                            {entry.staged && (
                               <button
                                 type="button"
                                 className="mini-action-btn"
                                 onClick={() => handleUnstage(entry.path)}
+                                disabled={gitWriteBusy}
                                 title="取消暂存"
                               >
                                 -
@@ -1791,7 +1972,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
           </div>
 
           {/* Docked Commit & Push Section at the Bottom */}
-          {diffMode !== "commits" && (
+          {!lastTurnOnly && diffMode !== "commits" && (
             <div className="diff-commit-dock">
               {showPrModal && (
                 <div className="diff-pr-panel">
@@ -1847,7 +2028,9 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                   value={commitMessage}
                   onChange={(e) => setCommitMessage(e.target.value)}
                   onKeyDown={(e) => {
+                    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
                     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                      e.preventDefault();
                       handleCommit();
                     }
                   }}
@@ -1864,7 +2047,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                 <button
                   type="button"
                   className="primary-btn compact"
-                  disabled={committing || (!commitMessage.trim() && displayedEntries.length === 0)}
+                  disabled={gitWriteBusy || (!commitMessage.trim() && displayedEntries.length === 0)}
                   onClick={handleCommit}
                   title="git commit 提交更改"
                 >
@@ -1874,7 +2057,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                 <button
                   type="button"
                   className="secondary-btn compact"
-                  disabled={committing || (!commitMessage.trim() && displayedEntries.length === 0)}
+                  disabled={gitWriteBusy || (!commitMessage.trim() && displayedEntries.length === 0)}
                   onClick={handleCommitAndPush}
                   title="提交并推送到远程分支 (Commit and push)"
                 >
@@ -1883,7 +2066,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                 <button
                   type="button"
                   className="secondary-btn compact"
-                  disabled={pushing}
+                  disabled={gitWriteBusy}
                   onClick={handlePush}
                   title="git push 推送到远端分支"
                 >
@@ -1903,12 +2086,13 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                 <label className="checkbox-inline">
                   <input
                     type="checkbox"
-                    checked={forceWithLease}
+                    checked={gitPreferences["git-always-force-push"] || forceWithLease}
+                    disabled={gitPreferences["git-always-force-push"]}
                     onChange={(e) => setForceWithLease(e.target.checked)}
                   />
                   <span>--force-with-lease</span>
                 </label>
-                <span className="muted-text" style={{ marginLeft: "auto", fontSize: 11 }}>
+                <span className="muted-text" style={{ marginLeft: "auto", fontSize: "calc(11px * var(--font-ui-scale, 1))" }}>
                   点击任意 Diff 行可向 Codex 发送行级评审
                 </span>
               </div>
@@ -2157,7 +2341,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                     onChange={(e) => setInFileSearch(e.target.value)}
                   />
                   {inFileSearch.trim() && (
-                    <span style={{ fontSize: 11, color: "var(--text-tertiary)", whiteSpace: "nowrap" }}>
+                    <span style={{ fontSize: "calc(11px * var(--font-ui-scale, 1))", color: "var(--text-tertiary)", whiteSpace: "nowrap" }}>
                       {
                         editedContent
                           .toLowerCase()
@@ -2181,10 +2365,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                   className="diff-tab-close"
                   title="关闭预览"
                   style={{ marginLeft: 4 }}
-                  onClick={() => {
-                    setFilePreview(null);
-                    setIsDirty(false);
-                  }}
+                  onClick={() => { void closeFilePreview(); }}
                 >
                   <CloseIcon size={12} />
                 </button>
@@ -2200,6 +2381,9 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                   className="file-editor-textarea"
                   value={editedContent}
                   onChange={(e) => {
+                    ++editRevisionRef.current;
+                    isDirtyRef.current = true;
+                    editedContentRef.current = e.target.value;
                     setEditedContent(e.target.value);
                     setIsDirty(true);
                   }}
@@ -2216,6 +2400,9 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                       const end = target.selectionEnd;
                       const val = target.value;
                       const next = val.substring(0, start) + "  " + val.substring(end);
+                      ++editRevisionRef.current;
+                      isDirtyRef.current = true;
+                      editedContentRef.current = next;
                       setEditedContent(next);
                       setIsDirty(true);
                       window.requestAnimationFrame(() => {
@@ -2301,6 +2488,12 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
           </div>
         </div>
       ) : null}
+      {discardConfirmation && <FileDiscardDialog onDecision={discard => {
+        const resolve = discardResolverRef.current;
+        discardResolverRef.current = null;
+        setDiscardConfirmation(false);
+        resolve?.(discard);
+      }} />}
     </aside>
   );
 };

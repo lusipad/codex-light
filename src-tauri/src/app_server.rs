@@ -184,6 +184,7 @@ impl AppServerManager {
     }
 
     async fn restart_locked(&self, app: &AppHandle) -> Result<AppServerStatus, String> {
+        crate::invalidate_chatgpt_service(app);
         let (binary_path, generation) = {
             let mut guard = self.inner.lock().await;
             guard.generation += 1;
@@ -266,6 +267,7 @@ impl AppServerManager {
             // EOF reached -> process exited
             let mut guard = inner_stdout.lock().await;
             if guard.close_generation(generation) {
+                crate::invalidate_chatgpt_service(&app_stdout);
                 let _ = app_stdout.emit("app-server:status", guard.status.clone());
             }
         });
@@ -412,6 +414,17 @@ impl AppServerManager {
         }
     }
 
+    // Destruction cleanup must never restart a disconnected app-server.
+    pub async fn release_file_watch(&self, watch_id: &str) -> Result<(), String> {
+        self.send_raw_request(
+            "fs/unwatch",
+            json!({ "watchId": watch_id }),
+            Duration::from_secs(10),
+        )
+        .await
+        .map(|_| ())
+    }
+
     pub async fn call(
         &self,
         app: &AppHandle,
@@ -548,6 +561,9 @@ async fn handle_incoming_message(
 
     // 3. Server notification (streaming deltas, turn/started, turn/completed, etc.)
     if let Some(method) = msg.get("method").and_then(|m| m.as_str()) {
+        if method == "account/updated" {
+            crate::invalidate_chatgpt_service(app);
+        }
         let params = msg
             .get("params")
             .or_else(|| msg.get("result"))
@@ -682,6 +698,17 @@ fn enrich_turn_timing(turn: &mut Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn thread_window_watch_cleanup_does_not_connect_or_leave_pending_request() {
+        let manager = AppServerManager::new();
+        let generation = manager.inner.lock().await.generation;
+        assert!(manager.release_file_watch("window-watch").await.unwrap_err().contains("not connected"));
+        let state = manager.inner.lock().await;
+        assert_eq!(state.generation, generation);
+        assert!(state.child.is_none());
+        assert!(state.pending_requests.is_empty());
+    }
 
     #[test]
     fn server_request_ids_preserve_json_type() {

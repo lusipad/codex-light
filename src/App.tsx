@@ -1,8 +1,24 @@
+import { usePetPreferences } from "./petPreferences";
+import { threadHasActivity, threadNeedsAttention } from "./threadActivity";
+import { useExternalImports } from "./externalImport";
+import { useCodeReviewPreferences } from "./reviewPreferences";
+import { useGitPreferences } from "./gitPreferences";
+import { loadModelCatalog } from "./modelCatalog";
+import { createNotificationDispatcher, notificationRequestCategory, notificationSoundTheme, shouldNotifyTurn, useNotificationPreferences } from "./notificationPreferences";
+import { useAppearancePreferences } from "./appearancePreferences";
+import { GeneratedImageCard } from "./components/GeneratedImageCard";
+import { McpCallCard } from "./components/McpCallCard";
 import { extractTextFromItem } from "./threadText";
 import { pendingRequestKey, requestThreadId, requestsForThread, type RequestResponseState } from "./approvalRequests";
 import { copyTextToClipboard } from "./clipboard";
+import { ShareThreadDialog } from "./components/ShareThreadDialog";
+import { readShareAccess } from "./shareAccess";
+import { installDeepLinkReceiver } from "./deepLinks";
+import { normalizeComposerEnterBehavior, type ComposerEnterBehavior } from "./composerPreferences";
+import { CommandExecutionCard } from "./components/CommandExecutionCard";
 import { mergeTimelineItem, ThreadHistoryBuffer, isCurrentThreadRequest } from "./threadTimeline";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Bookmark } from "lucide-react";
 import {
   OpenAIIcon,
   CodexHomeIcon,
@@ -45,12 +61,14 @@ import {
   persistThreadAttachments,
   removeThreadAttachment,
 } from "./threadAttachments";
-import { callAppServer, tauriInvoke, tauriListen } from "./bridge";
+import { callAppServer, tauriInvoke, tauriListen, isTauriRuntime } from "./bridge";
+import { baseNameFsPath } from "./fsClient";
 import type { AccountReadResult } from "./config";
-import { matchShortcut, matchRecentThreadIndex } from "./shortcuts";
+import { createShortcutMatcher, shortcutEventAllowed } from "./shortcuts";
+import { useKeyboardPreferences } from "./keyboardPreferences";
 import { installNativeMenuHandler, installTrayHandler } from "./nativeShell";
 import { playNotificationChime } from "./sound";
-import { getDefaultModel, getSupportedEfforts, modelSupportsFast } from "./modelCapabilities";
+import { findModel, getDefaultModel, getPickerModels, getSupportedEfforts, modelRequestName, modelSupportsFast } from "./modelCapabilities";
 import {
   AppServerStatus,
   AttachedFileItem,
@@ -61,16 +79,12 @@ import {
   MainViewRoute,
   ModelInfo,
   PendingServerRequest,
-  PetSpeciesId,
-  InstalledPetItem,
   QueuedFollowupPrompt,
   SettingsSectionSlug,
   SkillInfoItem,
   ThreadSummary,
   TurnData,
   TurnItem,
-  TurnCompletionPolicy,
-  NotificationSoundTheme,
   WorkspaceFileHit,
   WorkspaceRootItem,
   SidebarProjectMembership,
@@ -80,6 +94,7 @@ import {
   GitCommitInfo,
 } from "./types";
 import { MarkdownView } from "./components/MarkdownView";
+import { UserMessageBubble } from "./components/UserMessageBubble";
 import { DiffDrawer } from "./components/DiffDrawer";
 import { TerminalDock } from "./components/TerminalDock";
 import { WorktreesView } from "./components/WorktreesView";
@@ -96,6 +111,7 @@ import { ProjectsIndexView } from "./components/ProjectsIndexView";
 import { InboxView } from "./components/InboxView";
 import { MiniPetWidget } from "./components/MiniPetWidget";
 import { QuickSearchModal } from "./components/QuickSearchModal";
+import { restoreInboxHistory } from "./inboxState";
 import { CodeReviewView, ReviewRequest } from "./components/CodeReviewView";
 import { ArchiveView } from "./components/ArchiveView";
 import { ThreadGoalBanner } from "./components/ThreadGoalBanner";
@@ -285,8 +301,19 @@ function normalizeTurnsFromList(page: any, reverse = true): TurnData[] {
 }
 
 export const App: React.FC = () => {
+  const isQuickChatWindow = new URLSearchParams(window.location.search).get("utility") === "quick-chat";
+  const threadWindowId = new URLSearchParams(window.location.search).get("threadWindow");
+  const isThreadWindow = Boolean(threadWindowId);
+  const initialWindowThreadRef = useRef(isThreadWindow ? new URLSearchParams(window.location.search).get("threadId") : null);
+  const [threadEventsReady, setThreadEventsReady] = useState(false);
+  const promptStorageKey = isQuickChatWindow ? "codex_quick_chat_prompt_drafts_v1" : threadWindowId ? `codex_thread_window_drafts_v1:${threadWindowId}` : "codex_composer_prompt_drafts_v1";
   // Primary Route & Shell Layout State
   const [activeRoute, setActiveRoute] = useState<MainViewRoute>("home");
+  const deepLinkRouteRef = useRef({ route: activeRoute, revision: 0 });
+  if (deepLinkRouteRef.current.route !== activeRoute) {
+    deepLinkRouteRef.current = { route: activeRoute, revision: deepLinkRouteRef.current.revision + 1 };
+  }
+  const [pluginDirectoryMode, setPluginDirectoryMode] = useState<"installed" | "browse">("installed");
   const [routeHistoryVersion, setRouteHistoryVersion] = useState(0);
   const routeHistoryRef = useRef<{ entries: MainViewRoute[]; index: number }>({
     entries: ["home"],
@@ -345,10 +372,16 @@ export const App: React.FC = () => {
   const [activityOnly, setActivityOnly] = useState(false);
   const [showRightDrawer, setShowRightDrawer] = useState<boolean>(false);
   const [showTerminal, setShowTerminal] = useState<boolean>(false);
+  const terminalWasOpened = useRef(false);
+  if (showTerminal) terminalWasOpened.current = true;
   const [pendingTermCommand, setPendingTermCommand] = useState<{
     id: number;
     command: string;
+    cwd?: string;
   } | null>(null);
+  const handleTerminalCommandHandled = useCallback((id: number) => {
+    setPendingTermCommand((current) => current?.id === id ? null : current);
+  }, []);
   const [selectedPreviewFile, setSelectedPreviewFile] = useState<string | null>(null);
 
   // App-Server & Config State
@@ -361,6 +394,10 @@ export const App: React.FC = () => {
     lastError: null,
   });
   const [models, setModels] = useState<ModelInfo[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelsError, setModelsError] = useState<string | null>(null);
+  const modelCatalogRevisionRef = useRef(0);
+  useEffect(() => () => { modelCatalogRevisionRef.current += 1; }, []);
   const [, setConfigOverview] = useState<CodexConfigOverview | null>(null);
 
   // Workspaces & Git State
@@ -368,10 +405,22 @@ export const App: React.FC = () => {
   const [gitStatus, setGitStatus] = useState<GitStatusInfo | null>(null);
   const [gitBranches, setGitBranches] = useState<string[]>([]);
   const [gitCommits, setGitCommits] = useState<GitCommitInfo[]>([]);
+  const [gitContextCwd, setGitContextCwd] = useState<string | null>(null);
 
-  // Code Review (review/start)
+  // Code Review
   const [reviewBusy, setReviewBusy] = useState(false);
+  const appearanceState = useAppearancePreferences();
+  const keyboardState = useKeyboardPreferences();
+  const keyboardBindingsRef = useRef(keyboardState.bindings);
+  keyboardBindingsRef.current = keyboardState.bindings;
+  const [composerEnterBehavior, setComposerEnterBehavior] = useState<ComposerEnterBehavior>("enter");
+  const [composerEnterSaving, setComposerEnterSaving] = useState(true);
+  const [composerEnterError, setComposerEnterError] = useState<string | null>(null);
+  const composerEnterRevisionRef = useRef(0);
+  const composerEnterPendingRef = useRef(true);
   const [reviewLastResult, setReviewLastResult] = useState<string | null>(null);
+  const reviewStartPendingRef = useRef(false);
+  const [reviewDiffTarget, setReviewDiffTarget] = useState<{ cwd: string; baseBranch: string | null; mergeBase: string | null } | null>(null);
   const [archiveRefreshTick, setArchiveRefreshTick] = useState<number>(0);
 
   // Windows sandbox readiness（windowsSandbox/*）
@@ -382,6 +431,7 @@ export const App: React.FC = () => {
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [sidebarCreatedThread, setSidebarCreatedThread] = useState<Pick<ThreadSummary, "id" | "cwd" | "projectId"> | null>(null);
   const pendingNewThreadProjectRef = useRef<SidebarLocalProject | null>(null);
+  const pendingProjectlessRef = useRef(false);
   const [pinnedThreadIds, setPinnedThreadIds] = useState<string[]>([]);
   const [workspaceHints, setWorkspaceHints] = useState<Record<string, string>>({});
   const [sidebarProjectMembership, setSidebarProjectMembership] = useState<SidebarProjectMembership>({
@@ -413,6 +463,7 @@ export const App: React.FC = () => {
   const pendingRequestRevisionRef = useRef(0);
   const respondingRequestsRef = useRef(new Set<string>());
   const steerSendPendingRef = useRef(new Set<string>());
+  const sendStartPendingRef = useRef(new Set<number>());
   const [requestResponses, setRequestResponses] = useState<Record<string, RequestResponseState>>({});
   const activePendingRequests = useMemo(() => requestsForThread(pendingRequests, activeThreadId), [pendingRequests, activeThreadId]);
   const [tokenUsage, setTokenUsage] = useState<TokenUsageSnapshot | null>(null);
@@ -422,6 +473,23 @@ export const App: React.FC = () => {
     Array<{ path: string; kind: string; diff: string; additions: number; deletions: number }>
   >([]);
   const [accountInfo, setAccountInfo] = useState<AccountReadResult | null>(null);
+  const [shareThreadId, setShareThreadId] = useState<string | null>(null);
+  const [shareAvailable, setShareAvailable] = useState(false);
+  const [shareAccessRevision, setShareAccessRevision] = useState(0);
+  useEffect(() => {
+    const pending = new AbortController();
+    setShareAvailable(false);
+    if (appServerStatus.connected) {
+      void readShareAccess(pending.signal).then(access => {
+        if (!pending.signal.aborted) setShareAvailable(access.gate && access.account !== null);
+      }).catch(() => {});
+    }
+    const listener = tauriListen("chatgpt-service:invalidated", () => {
+      pending.abort(); setShareAvailable(false); setShareThreadId(null);
+      setShareAccessRevision(value => value + 1);
+    });
+    return () => { pending.abort(); void listener.then(unlisten => unlisten()).catch(() => {}); };
+  }, [appServerStatus.connected, accountInfo, shareAccessRevision]);
   const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(false);
   const keyboardShortcutsOpenRef = useRef(showKeyboardShortcuts);
   keyboardShortcutsOpenRef.current = showKeyboardShortcuts;
@@ -440,7 +508,7 @@ export const App: React.FC = () => {
   // Composer State
   const [promptDrafts, setPromptDrafts] = useState<Record<string, string>>(() => {
     try {
-      const stored = JSON.parse(localStorage.getItem("codex_composer_prompt_drafts_v1") || "{}");
+      const stored = JSON.parse(localStorage.getItem(promptStorageKey) || "{}");
       if (!stored || typeof stored !== "object" || Array.isArray(stored)) return {};
       return Object.fromEntries(Object.entries(stored).filter(([key, value]) =>
         (key === "home" || key.startsWith("thread:")) && typeof value === "string"
@@ -474,6 +542,7 @@ export const App: React.FC = () => {
     });
   }, []);
   const [selectedModelId, setSelectedModelId] = useState<string>("");
+  const selectedModelName = modelRequestName(models, selectedModelId);
   const [defaultModelSelected, setDefaultModelSelected] = useState<boolean>(true);
   const [reasoningEffort, setReasoningEffort] = useState<string>("");
   const [permissionMode, setPermissionMode] = useState<"ask" | "auto" | "full">("ask");
@@ -547,7 +616,7 @@ export const App: React.FC = () => {
   const [showTokenMeterPopover, setShowTokenMeterPopover] = useState<boolean>(false);
   const [initialWorkbenchTab, setInitialWorkbenchTab] = useState<"newTab" | "changes" | "files" | "summary" | "browser" | "sideChat">("changes");
   const [sideChatPrompt, setSideChatPrompt] = useState<string>("");
-  const [showPopoutModal, setShowPopoutModal] = useState<boolean>(false);
+  const [showPopoutModal, setShowPopoutModal] = useState<boolean>(() => window.location.pathname.startsWith("/hotkey-window") || window.location.hash.includes("hotkey-window"));
   const [pinnedSummaryVisible, setPinnedSummaryVisible] = useState<boolean>(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsSectionSlug>("general-settings");
 
@@ -572,10 +641,9 @@ export const App: React.FC = () => {
   const [reasoningSummary, setReasoningSummary] = useState<string>("auto");
 
   const [petVisible, setPetVisible] = useState<boolean>(false);
-  const [selectedPetSpecies, setSelectedPetSpecies] = useState<PetSpeciesId>("codex");
-  const [petScale, setPetScale] = useState<number>(1.0);
-  const [installedPets, setInstalledPets] = useState<InstalledPetItem[]>([]);
+  const petPreferencesState = usePetPreferences();
   const [showQuickSearch, setShowQuickSearch] = useState<boolean>(false);
+  const [quickSearchMode, setQuickSearchMode] = useState<"root" | "files">("root");
   const [showFindBar, setShowFindBar] = useState<boolean>(false);
   const [findBarScope, setFindBarScope] = useState<"chat" | "diff">("chat");
   const [bookmarkedTurnIds, setBookmarkedTurnIds] = useState<Record<string, string[]>>(() => {
@@ -616,11 +684,11 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     try {
-      localStorage.setItem("codex_composer_prompt_drafts_v1", JSON.stringify(promptDrafts));
+      localStorage.setItem(promptStorageKey, JSON.stringify(promptDrafts));
     } catch (error) {
       showAppToast(`草稿保存失败，当前输入仍保留：${String(error)}`, "error");
     }
-  }, [promptDrafts, showAppToast]);
+  }, [promptDrafts, promptStorageKey, showAppToast]);
 
   const toggleBookmark = useCallback(
     (turnId: string) => {
@@ -688,6 +756,10 @@ export const App: React.FC = () => {
   const activeWorkspace = useMemo(() => {
     return workspaces.find((w) => w.active) || workspaces[0] || null;
   }, [workspaces]);
+  const reviewContextRef = useRef({ cwd: activeWorkspace?.path, route: activeRoute, generation: 0 });
+  if (reviewContextRef.current.cwd !== activeWorkspace?.path || reviewContextRef.current.route !== activeRoute) {
+    reviewContextRef.current = { cwd: activeWorkspace?.path, route: activeRoute, generation: reviewContextRef.current.generation + 1 };
+  }
 
   // 1. Load Workspaces & Thread Metadata from Rust DesktopStateManager
   const refreshWorkspaceGenerationRef = useRef(0);
@@ -727,26 +799,42 @@ export const App: React.FC = () => {
   }, []);
 
   // 2. Refresh Git Status & Branches for activeWorkspace
+  const gitRefreshRequestRef = useRef(0);
   const refreshGitStatus = useCallback(async () => {
-    if (!activeWorkspace?.path) return;
+    const request = ++gitRefreshRequestRef.current;
+    const cwd = activeWorkspace?.path;
+    setGitContextCwd((current) => current === cwd ? current : null);
+    if (!cwd) {
+      setGitStatus(null);
+      setGitBranches([]);
+      return;
+    }
+    const isCurrent = () => request === gitRefreshRequestRef.current && reviewContextRef.current.cwd === cwd;
     try {
       const status = await tauriInvoke<GitStatusInfo>("git_status", {
-        cwd: activeWorkspace.path,
+        cwd,
       });
+      if (!isCurrent()) return;
       setGitStatus(status);
     } catch {
+      if (!isCurrent()) return;
       setGitStatus(null);
     }
 
     try {
       const branches = await tauriInvoke<string[]>("git_branches", {
-        cwd: activeWorkspace.path,
+        cwd,
       });
+      if (!isCurrent()) return;
       if (Array.isArray(branches)) {
         setGitBranches(branches);
+        setGitContextCwd(cwd);
       }
     } catch {
-      setGitBranches([]);
+      if (isCurrent()) {
+        setGitBranches([]);
+        setGitContextCwd(null);
+      }
     }
   }, [activeWorkspace?.path]);
 
@@ -865,20 +953,20 @@ export const App: React.FC = () => {
   }, [refreshThreads, showAppToast]);
 
   const refreshModels = useCallback(async () => {
+    const revision = ++modelCatalogRevisionRef.current;
+    setModelsLoading(true);
+    setModelsError(null);
     try {
-      const res = await callAppServer<{
-        data?: ModelInfo[];
-        models?: ModelInfo[];
-      }>("model/list", {});
-      const list = res?.data || res?.models || (Array.isArray(res) ? res : []);
-      if (list.length > 0) {
-        setModels(list);
-        const defaultModel = getDefaultModel(list);
-        setSelectedModelId((current) => current || defaultModel?.id || "");
-        setReasoningEffort((current) => current || defaultModel?.defaultReasoningEffort || "");
-      }
-    } catch (e) {
-      console.warn("model/list failed:", e);
+      const list = await loadModelCatalog();
+      if (revision !== modelCatalogRevisionRef.current) return;
+      setModels(list);
+      const visible = getPickerModels(list);
+      const defaultModel = getDefaultModel(list);
+      setSelectedModelId(current => findModel(visible, current)?.id || defaultModel?.id || "");
+    } catch (error) {
+      if (revision === modelCatalogRevisionRef.current) setModelsError(`读取模型失败：${String(error)}`);
+    } finally {
+      if (revision === modelCatalogRevisionRef.current) setModelsLoading(false);
     }
   }, []);
 
@@ -948,8 +1036,12 @@ export const App: React.FC = () => {
   }, [models]);
 
   useEffect(() => {
-    const activeModel = models.find((model) => model.id === selectedModelId);
-    if (!activeModel) return;
+    const activeModel = findModel(models, selectedModelId);
+    if (!activeModel) {
+      setReasoningEffort("");
+      setFastMode(false);
+      return;
+    }
     const supported = getSupportedEfforts(activeModel).map((effort) => effort.reasoningEffort);
     if (supported.length === 0 && reasoningEffort) {
       setReasoningEffort("");
@@ -982,107 +1074,105 @@ export const App: React.FC = () => {
     }
   }, []);
 
-  const refreshInstalledPets = useCallback(async () => {
-    try {
-      const list = await tauriInvoke<InstalledPetItem[]>("pets_list_installed");
-      if (Array.isArray(list) && list.length > 0) {
-        setInstalledPets(list);
-        setSelectedPetSpecies((prev) => {
-          if (!prev || prev === "codex") return list[0].id;
-          return prev;
-        });
-      }
-    } catch (e) {
-      console.warn("pets_list_installed failed:", e);
-    }
-  }, []);
-
-  // 通知偏好（桌面系统通知 / 提示音 / 审批提醒 / 轮次完成策略 / 音效主题）
-  const [notifyPrefs, setNotifyPrefs] = useState<{
-    desktop: boolean;
-    sound: boolean;
-    approval: boolean;
-    turnCompletionPolicy: TurnCompletionPolicy;
-    notificationSoundTheme: NotificationSoundTheme;
-  }>({
-    desktop: true,
-    sound: true,
-    approval: true,
-    turnCompletionPolicy: "unfocused",
-    notificationSoundTheme: "default",
+  const notificationState = useNotificationPreferences();
+  const gitPreferencesState = useGitPreferences();
+  const codeReviewPreferencesState = useCodeReviewPreferences();
+  const externalImportsState = useExternalImports(async () => {
+    await Promise.all([refreshConfigOverview(), refreshModels(), refreshThreads()]);
   });
-  const notifyPrefsRef = useRef(notifyPrefs);
-  notifyPrefsRef.current = notifyPrefs;
+  const notificationContextRef = useRef({ route: activeRoute, ready: false });
+  notificationContextRef.current = { route: activeRoute, ready: notificationState.ready };
+  useEffect(() => () => { notificationContextRef.current.ready = false; }, []);
+  useEffect(() => {
+    void tauriInvoke("notification_view_update", {
+      threadId: activeRoute === "thread" || isQuickChatWindow ? activeThreadId : null,
+    }).catch(error => showAppToast(`通知窗口状态更新失败：${String(error)}`, "error"));
+  }, [activeRoute, activeThreadId, isQuickChatWindow]);
+  const notify = useMemo(() => createNotificationDispatcher({
+    preferences: () => notificationState.current.current,
+    focused: () => document.hasFocus() && !document.hidden,
+    visible: threadId => notificationContextRef.current.route === "thread" && threadId === activeThreadIdRef.current,
+    nativeClaim: event => tauriInvoke("notification_claim", {
+      eventId: event.id, category: event.category, threadId: event.threadId ?? null,
+    }),
+    send: (title, body) => tauriInvoke("show_desktop_notification", { title, body }),
+    play: sound => {
+      const theme = notificationSoundTheme(sound);
+      if (theme) playNotificationChime("done", theme);
+    },
+    onError: error => showAppToast(`通知发送失败：${String(error)}`, "error"),
+  }), []);
   const applyNotifyPrefs = useCallback((prefs: any) => {
-    if (!prefs || typeof prefs !== "object") return;
-    const next = {
-      desktop: prefs.desktopNotifications !== false,
-      sound: prefs.notificationSound !== false,
-      approval: prefs.notifyOnApproval !== false,
-      turnCompletionPolicy: (prefs.turnCompletionPolicy as TurnCompletionPolicy) || "unfocused",
-      notificationSoundTheme: (prefs.notificationSoundTheme as NotificationSoundTheme) || "default",
-    };
-    setNotifyPrefs(next);
-    notifyPrefsRef.current = next;
-    if (typeof prefs.reasoningSummary === "string" && prefs.reasoningSummary) {
+    if (typeof prefs?.reasoningSummary === "string" && prefs.reasoningSummary) {
       setReasoningSummary(prefs.reasoningSummary);
     }
   }, []);
-  const sendDesktopNotification = useCallback((title: string, body: string) => {
-    if (!notifyPrefsRef.current.desktop) return;
-    if (notifyPrefsRef.current.turnCompletionPolicy === "never") return;
-    const isWindowActive = typeof document !== "undefined" && document.hasFocus && document.hasFocus() && !document.hidden;
-    if (notifyPrefsRef.current.turnCompletionPolicy === "unfocused" && isWindowActive) return;
-    tauriInvoke("show_desktop_notification", { title, body }).catch(() => {});
+
+  useEffect(() => {
+    let cancelled = false;
+    const revision = composerEnterRevisionRef.current;
+    const tauriLoad = tauriInvoke("desktop_state_get", { key: "composerEnterBehavior" }).then((value) => {
+      if (!cancelled && revision === composerEnterRevisionRef.current) {
+        setComposerEnterBehavior(normalizeComposerEnterBehavior(value));
+      }
+    }).catch((error) => {
+      if (!cancelled && revision === composerEnterRevisionRef.current) setComposerEnterError(`读取发送快捷键失败：${String(error)}`);
+    });
+    tauriLoad.finally(() => {
+      if (!cancelled && revision === composerEnterRevisionRef.current) {
+        composerEnterPendingRef.current = false;
+        setComposerEnterSaving(false);
+      }
+    });
+    return () => { cancelled = true; };
   }, []);
-  const notifyChime = useCallback((kind: "nudge" | "done" = "done") => {
-    if (!notifyPrefsRef.current.sound) return;
-    if (notifyPrefsRef.current.turnCompletionPolicy === "never" && kind === "done") return;
-    if (notifyPrefsRef.current.turnCompletionPolicy === "unfocused" && kind === "done") {
-      const isWindowActive = typeof document !== "undefined" && document.hasFocus && document.hasFocus() && !document.hidden;
-      if (isWindowActive) return;
+
+  const handleSetComposerEnterBehavior = useCallback(async (value: ComposerEnterBehavior) => {
+    if (composerEnterPendingRef.current) return;
+    const next = normalizeComposerEnterBehavior(value);
+    const previous = composerEnterBehavior;
+    ++composerEnterRevisionRef.current;
+    composerEnterPendingRef.current = true;
+    setComposerEnterSaving(true);
+    setComposerEnterError(null);
+    setComposerEnterBehavior(next);
+    let written = false;
+    try {
+      await tauriInvoke("desktop_state_set", { key: "composerEnterBehavior", value: next });
+      written = true;
+      const saved = await tauriInvoke("desktop_state_get", { key: "composerEnterBehavior" });
+      if (saved !== next) throw new Error("发送快捷键读回结果与保存值不一致");
+      setComposerEnterBehavior(normalizeComposerEnterBehavior(saved));
+    } catch (error) {
+      if (!written) setComposerEnterBehavior(previous);
+      setComposerEnterError(`${written ? "已保存，但确认失败" : "保存失败，已还原"}：${String(error)}`);
+    } finally {
+      composerEnterPendingRef.current = false;
+      setComposerEnterSaving(false);
     }
-    playNotificationChime(kind, notifyPrefsRef.current.notificationSoundTheme);
-  }, []);
+  }, [composerEnterBehavior]);
 
   // Connect & Subscribe to App-Server Events on Mount
   useEffect(() => {
     refreshWorkspacesAndMeta();
     refreshConfigOverview();
-    refreshInstalledPets();
 
     tauriInvoke<any>("desktop_state_get", { key: "desktopPreferences" })
       .then((prefs) => {
         if (prefs && typeof prefs === "object") {
           if (prefs.customPersonaPrompt) setCustomInstructions(prefs.customPersonaPrompt);
           if (prefs.toneStyle) setToneStyle(prefs.toneStyle);
-          if (prefs.petVisible !== undefined) setPetVisible(prefs.petVisible);
-          if (prefs.selectedPetSpecies) setSelectedPetSpecies(prefs.selectedPetSpecies);
-          if (prefs.petScale) setPetScale(prefs.petScale);
           applyNotifyPrefs(prefs);
         }
       })
       .catch(() => {});
 
-    // 设置页保存通知偏好后即时生效（同源 window 事件）
-    const onPrefsChanged = (ev: Event) => {
-      const detail = (ev as CustomEvent).detail;
-      if (detail && typeof detail === "object") {
-        if (detail.petVisible !== undefined) setPetVisible(detail.petVisible);
-        if (detail.selectedPetSpecies) setSelectedPetSpecies(detail.selectedPetSpecies);
-        if (detail.petScale) setPetScale(detail.petScale);
-        applyNotifyPrefs(detail);
-      }
-    };
-    window.addEventListener("codex-prefs-changed", onPrefsChanged);
-    // 挂载后立即读取一次应用内通知设置（防止首轮 prefs 读取竞态）
-    return () => {
-      window.removeEventListener("codex-prefs-changed", onPrefsChanged);
-    };
   }, [applyNotifyPrefs]);
 
   // 旧的挂载副作用（确保只执行一次）
   useEffect(() => {
+    let disposed = false;
+    setThreadEventsReady(false);
     // Ensure app-server is connected
     tauriInvoke<AppServerStatus>("app_server_connect")
       .then((st) => {
@@ -1175,11 +1265,12 @@ export const App: React.FC = () => {
             turnLifecycleRef.current += 1;
             if (!activeTurnIdRef.current || activeTurnIdRef.current === eventTurnId) setIsStreaming(false);
           }
-          notifyChime("done");
-          sendDesktopNotification(
-            "Codex 回复已完成",
-            threadsRef.current.find((thread) => thread.id === eventThreadId)?.name || "本轮任务已完成"
-          );
+          if (eventThreadId && eventTurnId && shouldNotifyTurn(params)) void notify({
+            id: `turn-${JSON.stringify([eventThreadId, eventTurnId])}`, category: "turn", threadId: eventThreadId,
+            title: "Codex 回复已完成",
+            body: threadsRef.current.find(thread => thread.id === eventThreadId)?.name || "本轮任务已完成",
+            valid: () => notificationContextRef.current.ready,
+          });
           const turnId = params?.turn?.id || params?.turnId;
           if (isVisibleThread && (!turnId || turnId === activeTurnIdRef.current)) {
             setActiveTurnId(null);
@@ -1235,7 +1326,7 @@ export const App: React.FC = () => {
           });
           refreshGitStatus();
           refreshThreads();
-          if (turnId) {
+          if (turnId && !isThreadWindow) {
             setInboxItems((prev) => {
               const entryId = `turn-done-${turnId}`;
               if (prev.some((item) => item.id === entryId)) return prev;
@@ -1262,7 +1353,6 @@ export const App: React.FC = () => {
                 if (tid === activeThreadIdRef.current) {
                   setServerGoal(g);
                   if (g?.status === "complete") {
-                    notifyChime("done");
                     showAppToast("🎯 目标已达成 (Goal achieved)", "success");
                   }
                 }
@@ -1411,7 +1501,6 @@ export const App: React.FC = () => {
             if (!goal.threadId || goal.threadId === activeThreadIdRef.current) {
               setServerGoal(goal);
               if (goal.status === "complete") {
-                notifyChime("done");
                 showAppToast("🎯 目标已达成 (Goal achieved)", "success");
               }
             }
@@ -1476,6 +1565,7 @@ export const App: React.FC = () => {
             const keys = new Set(pendingRequestsRef.current
               .filter(r => r.id === resolvedId && requestThreadId(r) === params?.threadId)
               .map(pendingRequestKey));
+            pendingRequestsRef.current = pendingRequestsRef.current.filter(r => !keys.has(pendingRequestKey(r)));
             setRequestResponses(prev => Object.fromEntries(Object.entries(prev).filter(([key]) => !keys.has(key))));
             setPendingRequests((prev) =>
               prev.filter((r) => !(r.id === resolvedId && requestThreadId(r) === params?.threadId))
@@ -1557,14 +1647,17 @@ export const App: React.FC = () => {
       "app-server:server-request",
       (req) => {
         pendingRequestRevisionRef.current += 1;
-        setPendingRequests((prev) => [...prev.filter(r => pendingRequestKey(r) !== pendingRequestKey(req)), req]);
-        setInboxItems((prev) => [
+        pendingRequestsRef.current = [...pendingRequestsRef.current.filter(r => pendingRequestKey(r) !== pendingRequestKey(req)), req];
+        setPendingRequests(pendingRequestsRef.current);
+        const category = notificationRequestCategory(req);
+        const notificationBody = category === "question"
+          ? (req.params?.questions?.length ? `请回答 ${req.params.questions.length} 个问题以继续。` : "请提供输入以继续。")
+          : (req.params?.command ? `$ ${req.params.command}` : req.params?.reason || "需要批准才能继续。");
+        if (!isThreadWindow && !isQuickChatWindow) setInboxItems((prev) => [
           {
             id: `req-${req.id}-${Date.now()}`,
-            title: "需要批准安全操作",
-            subtitle: req.params?.command
-              ? `$ ${req.params.command}`
-              : req.method,
+            title: category === "question" ? "需要你的输入" : "需要批准安全操作",
+            subtitle: notificationBody,
             kind: "approval",
             threadId: requestThreadId(req),
             createdAt: Date.now(),
@@ -1572,16 +1665,32 @@ export const App: React.FC = () => {
           },
           ...prev,
         ]);
-        if (notifyPrefsRef.current.approval) {
-          sendDesktopNotification(
-            "Codex 需要你的批准",
-            req.params?.command ? `$ ${req.params.command}` : req.method
-          );
-        }
+        void notify({
+          id: `${category}-${pendingRequestKey(req)}`, category, threadId: requestThreadId(req),
+          title: category === "question" ? "Codex 需要你的输入" : "Codex 需要你的批准",
+          body: notificationBody,
+          valid: () => notificationContextRef.current.ready && pendingRequestsRef.current.some(r => pendingRequestKey(r) === pendingRequestKey(req)),
+        });
       }
     );
 
+    const unlistenResolved = tauriListen<Pick<PendingServerRequest, "id" | "generation">>(
+      "app-server:server-request-resolved",
+      (resolved) => {
+        pendingRequestRevisionRef.current += 1;
+        const key = pendingRequestKey(resolved);
+        pendingRequestsRef.current = pendingRequestsRef.current.filter(request => pendingRequestKey(request) !== key);
+        setPendingRequests(pendingRequestsRef.current);
+        setRequestResponses(previous => Object.fromEntries(Object.entries(previous).filter(([entry]) => entry !== key)));
+      },
+    );
+
+    void Promise.all([unlistenNotification, unlistenServerReq, unlistenResolved]).then(() => {
+      if (!disposed) setThreadEventsReady(true);
+    }).catch(error => { if (!disposed) showAppToast(`会话事件订阅失败：${String(error)}`, "error"); });
     return () => {
+      disposed = true;
+      unlistenResolved.then((f) => f());
       unlistenStatus.then((f) => f());
       unlistenNotification.then((f) => f());
       unlistenWorkspaceWarning.then((f) => f());
@@ -1607,7 +1716,7 @@ export const App: React.FC = () => {
   useEffect(() => {
     const root = activeWorkspace?.path;
     if (!root || !appServerStatus.connected) return;
-    const watchId = `workspace:${root}`;
+    const watchId = `workspace:${threadWindowId || (isQuickChatWindow ? "quick-chat" : "main")}:${root}`;
     workspaceWatchIdRef.current = watchId;
     callAppServer("fs/watch", { path: root, watchId }).catch((e) =>
       console.warn("fs/watch failed:", e)
@@ -1618,7 +1727,7 @@ export const App: React.FC = () => {
         workspaceWatchIdRef.current = null;
       }
     };
-  }, [activeWorkspace?.path, appServerStatus.connected]);
+  }, [activeWorkspace?.path, appServerStatus.connected, isQuickChatWindow, threadWindowId]);
 
   // Windows 沙箱就绪检测（windowsSandbox/readiness）
   useEffect(() => {
@@ -1641,35 +1750,56 @@ export const App: React.FC = () => {
   }, [appServerStatus.connected]);
 
   // Inbox 持久化（desktop_state）+ 变更回写
-  const inboxHydratedRef = useRef(false);
+  const [inboxHydrated, setInboxHydrated] = useState(false);
+  const [inboxLoadError, setInboxLoadError] = useState<string | null>(null);
+  const [inboxReloadToken, setInboxReloadToken] = useState(0);
+  const inboxHydrationChangesRef = useRef({ cleared: false, allRead: false, removed: new Set<string>() });
+  const inboxSaveQueueRef = useRef<Promise<unknown>>(Promise.resolve());
   useEffect(() => {
+    if (isQuickChatWindow) return;
+    if (isThreadWindow) return;
+    let cancelled = false;
+    setInboxLoadError(null);
     tauriInvoke<any>("desktop_state_get", { key: "inboxItems" })
       .then((saved) => {
-        if (Array.isArray(saved) && saved.length > 0) {
-          setInboxItems(saved);
-        }
+        if (cancelled) return;
+        setInboxItems((current) => restoreInboxHistory(saved, current, inboxHydrationChangesRef.current));
+        setInboxHydrated(true);
       })
-      .catch(() => {})
-      .finally(() => {
-        inboxHydratedRef.current = true;
+      .catch((error) => {
+        if (!cancelled) setInboxLoadError(`读取通知失败，尚未覆盖历史记录：${String(error)}`);
       });
-  }, []);
+    return () => { cancelled = true; };
+  }, [inboxReloadToken]);
   useEffect(() => {
-    if (!inboxHydratedRef.current) return;
+    if (!inboxHydrated || isQuickChatWindow || isThreadWindow) return;
     const handle = setTimeout(() => {
-      tauriInvoke("desktop_state_set", {
-        key: "inboxItems",
-        value: inboxItems.slice(0, 100),
-      }).catch(() => {});
+      const save = () => tauriInvoke("desktop_state_set", {
+          key: "inboxItems",
+          value: inboxItems.slice(0, 100),
+        }).catch((error) => {
+          showAppToast(`通知保存失败：${String(error)}`, "error");
+        });
+      inboxSaveQueueRef.current = inboxSaveQueueRef.current.then(save, save);
     }, 500);
     return () => clearTimeout(handle);
-  }, [inboxItems]);
+  }, [inboxItems, inboxHydrated, showAppToast]);
+
+  const markAllInboxRead = () => {
+    if (!inboxHydrated) inboxHydrationChangesRef.current.allRead = true;
+    setInboxItems((items) => items.map((item) => ({ ...item, read: true })));
+  };
 
   // 自动化调度器事件 → Toast + Inbox + 刷新会话列表
   useEffect(() => {
     let disposed = false;
+    const offStorageError = tauriListen<any>("automation:storage-error", (payload) => {
+      if (!disposed && !isQuickChatWindow && !isThreadWindow) {
+        showAppToast(`自动化记录保存失败：${String(payload?.error || "未知错误")}`, "error");
+      }
+    });
     const offStarted = tauriListen<any>("automation:run-started", (payload) => {
-      if (disposed) return;
+      if (disposed || isQuickChatWindow || isThreadWindow) return;
       showAppToast(
         `▶ 正在运行自动化：${payload?.name || payload?.id || ""}`,
         "info"
@@ -1678,20 +1808,25 @@ export const App: React.FC = () => {
     const offFinished = tauriListen<any>("automation:run-finished", (payload) => {
       if (disposed) return;
       const ok = payload?.status === "completed";
+      const outcomeLabel = ok ? "自动化已完成" : payload?.status === "failed" ? "自动化失败" :
+        payload?.status === "interrupted" ? "自动化已中断" : "自动化结果未知";
       const name = payload?.name || payload?.id || "自动化任务";
-      showAppToast(
-        ok ? `✓ 自动化已完成：${name}` : `自动化失败：${name}`,
-        ok ? "success" : "error"
+      if (!isQuickChatWindow && !isThreadWindow) showAppToast(
+        `${outcomeLabel}：${name}`,
+        ok ? "success" : payload?.status === "failed" ? "error" : "info"
       );
-      sendDesktopNotification(
-        ok ? `自动化已完成：${name}` : `自动化失败：${name}`,
-        payload?.error ? String(payload.error) : "定时任务执行结束"
-      );
-      setInboxItems((prev) =>
+      if (payload?.id && payload?.finishedAt) void notify({
+        id: `automation-${JSON.stringify([payload.id, payload.finishedAt])}`,
+        category: "turn", threadId: payload.threadId,
+        title: `${outcomeLabel}：${name}`,
+        body: payload?.error ? String(payload.error) : "定时任务执行结束",
+        valid: () => !disposed && notificationContextRef.current.ready && shouldNotifyTurn(payload),
+      });
+      if (!isQuickChatWindow && !isThreadWindow) setInboxItems((prev) =>
         [
           {
             id: `automation-${payload?.id || "task"}-${Date.now()}`,
-            title: ok ? `自动化已完成：${name}` : `自动化失败：${name}`,
+            title: `${outcomeLabel}：${name}`,
             subtitle: payload?.error ? String(payload.error) : "",
             kind: "automation" as const,
             threadId: payload?.threadId || undefined,
@@ -1706,6 +1841,7 @@ export const App: React.FC = () => {
     return () => {
       disposed = true;
       offStarted.then((f) => f()).catch(() => {});
+      offStorageError.then((f) => f()).catch(() => {});
       offFinished.then((f) => f()).catch(() => {});
     };
   }, [showAppToast, refreshThreads]);
@@ -1715,9 +1851,12 @@ export const App: React.FC = () => {
     if (activeRoute !== "review") return;
     const cwd = activeWorkspace?.path;
     if (!cwd) return;
+    let cancelled = false;
+    setGitCommits([]);
     tauriInvoke<GitCommitInfo[]>("git_log_commits", { cwd, limit: 30 })
-      .then((commits) => setGitCommits(Array.isArray(commits) ? commits : []))
-      .catch(() => setGitCommits([]));
+      .then((commits) => { if (!cancelled) setGitCommits(Array.isArray(commits) ? commits : []); })
+      .catch(() => { if (!cancelled) setGitCommits([]); });
+    return () => { cancelled = true; };
   }, [activeRoute, activeWorkspace?.path]);
 
   // Global keyboard shortcuts（注册表见 src/shortcuts.ts，与原生菜单 accelerator 对齐）
@@ -1744,19 +1883,15 @@ export const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    const matcher = createShortcutMatcher(() => keyboardBindingsRef.current, id =>
+      !isQuickChatWindow || ["new-chat", "open-model-picker", "zoom-in", "zoom-out", "zoom-reset"].includes(id));
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
-      const recentIndex = matchRecentThreadIndex(e);
-      if (recentIndex !== null) {
-        const target = threadsRef.current[recentIndex];
-        if (target) {
-          e.preventDefault();
-          runShortcutAction("open-recent-thread", target.id);
-        }
-        return;
-      }
-
-      const shortcutId = matchShortcut(e);
+      if (keyboardState.capturing.current) { matcher.reset(); return; }
+      if (!shortcutEventAllowed(e, keyboardBindingsRef.current)) { matcher.reset(); return; }
+      const result = matcher(e);
+      if (result.pending) { e.preventDefault(); return; }
+      const shortcutId = result.id;
       if (!shortcutId) return;
       if (shortcutId === "toggle-sidebar" && e.repeat) {
         e.preventDefault();
@@ -1766,8 +1901,10 @@ export const App: React.FC = () => {
       runShortcutAction(shortcutId);
     };
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [runShortcutAction]);
+    const reset = () => matcher.reset();
+    window.addEventListener("blur", reset);
+    return () => { matcher.reset(); window.removeEventListener("keydown", onKeyDown); window.removeEventListener("blur", reset); };
+  }, [runShortcutAction, isQuickChatWindow]);
 
   // Auto-scroll timeline
   useEffect(() => {
@@ -1791,6 +1928,7 @@ export const App: React.FC = () => {
         active: w.path.replace(/\\/g, "/").toLowerCase() === path.replace(/\\/g, "/").toLowerCase(),
       }))
     );
+    if (isThreadWindow) return;
     try {
       const updated = await tauriInvoke<WorkspaceRootItem[]>(
         "workspace_set_active",
@@ -1802,7 +1940,7 @@ export const App: React.FC = () => {
     } catch (e) {
       console.warn("workspace_set_active failed:", e);
     }
-  }, []);
+  }, [isThreadWindow]);
 
   const handleRemoveWorkspace = useCallback(
     async (path: string, e?: React.MouseEvent) => {
@@ -1917,7 +2055,7 @@ export const App: React.FC = () => {
 
   // Thread Navigation & Lifecycle
   const startNewThread = useCallback(
-    async (workspacePath?: string, project?: SidebarLocalProject) => {
+    async (workspacePath?: string, project?: SidebarLocalProject, projectless = false) => {
       if (project && (!project.serverProjectId || project.rootPaths.length === 0)) {
         showAppToast("暂时无法在此项目中新建聊天，请重试。", "error");
         return;
@@ -1945,6 +2083,7 @@ export const App: React.FC = () => {
         handleSelectWorkspace(workspacePath);
       }
       pendingNewThreadProjectRef.current = project ?? null;
+      pendingProjectlessRef.current = projectless;
       threadRequestRef.current += 1;
       threadHistoryBufferRef.current.discard();
       finishedTurnIdsRef.current.clear();
@@ -1973,6 +2112,7 @@ export const App: React.FC = () => {
 
   const selectThread = useCallback(async (threadId: string) => {
     pendingNewThreadProjectRef.current = null;
+    pendingProjectlessRef.current = false;
     const navigation = ++navigationRequestRef.current;
     if (navigation !== navigationRequestRef.current) return;
     const request = ++threadRequestRef.current;
@@ -2094,6 +2234,34 @@ export const App: React.FC = () => {
     }
   }, [handleSelectWorkspace]);
 
+  useEffect(() => {
+    if (!appServerStatus.connected || !threadEventsReady || !initialWindowThreadRef.current) return;
+    const threadId = initialWindowThreadRef.current;
+    initialWindowThreadRef.current = null;
+    if (navigationRequestRef.current !== 0) return;
+    void selectThread(threadId);
+  }, [appServerStatus.connected, threadEventsReady, selectThread]);
+
+  useEffect(() => {
+    if (isQuickChatWindow || isThreadWindow || !appServerStatus.connected || !threadEventsReady) return;
+    const pending = new AbortController();
+    const installed = installDeepLinkReceiver({
+      signal: pending.signal,
+      navigationRevision: () => `${navigationRequestRef.current}:${deepLinkRouteRef.current.revision}`,
+      selectThread,
+      onError: message => showAppToast(message, "error"),
+    });
+    return () => {
+      pending.abort();
+      void installed.then(unlisten => unlisten()).catch(() => {});
+    };
+  }, [isQuickChatWindow, isThreadWindow, appServerStatus.connected, threadEventsReady, accountInfo, selectThread, showAppToast]);
+
+  useEffect(() => {
+    if (!isThreadWindow) return;
+    return () => { threadRequestRef.current += 1; navigationRequestRef.current += 1; };
+  }, [isThreadWindow]);
+
   /** 向上滚动加载更早的轮次（thread/turns/list 的 nextCursor） */
   const loadEarlierTurns = useCallback(async () => {
     const threadId = activeThreadIdRef.current;
@@ -2201,14 +2369,14 @@ export const App: React.FC = () => {
         collaborationMode: {
           mode: enabled ? "plan" : "default",
           settings: {
-            model: selectedModelId || undefined,
+            model: selectedModelName,
             reasoning_effort: reasoningEffort || null,
             developer_instructions: null,
           },
         },
       });
     },
-    [selectedModelId, reasoningEffort]
+    [selectedModelName, reasoningEffort]
   );
 
   const handleTogglePlanMode = useCallback(
@@ -2235,9 +2403,10 @@ export const App: React.FC = () => {
     [activeThreadId, applyCollaborationMode, showAppToast]
   );
 
-  // Code Review：`review/start` 内联审查（官方 Code Review 能力）
+  // Quick reviews use ordinary turns; commit/custom retain the existing review RPC.
   const handleStartCodeReview = useCallback(
     async (req: ReviewRequest) => {
+      if (reviewStartPendingRef.current) return;
       const cwd = activeWorkspace?.path;
       if (!cwd) {
         showAppToast("请先在左侧选择一个工作区目录", "error");
@@ -2247,46 +2416,110 @@ export const App: React.FC = () => {
         showAppToast("app-server 未连接，无法启动审查", "error");
         return;
       }
+      const quickReview = req.kind === "branch" || req.kind === "uncommitted";
+      const currentId = activeThreadIdRef.current;
+      const currentCwd = currentId ? threadsRef.current.find((thread) => thread.id === currentId)?.cwd || workspaceHintsRef.current[currentId] : null;
+      const inline = quickReview && req.delivery !== "detached" && currentId && currentCwd &&
+        attachmentIdentityKey(currentCwd) === attachmentIdentityKey(cwd);
+      if (inline && isStreaming) {
+        showAppToast("请先停止当前任务，再启动代码审查", "error");
+        return;
+      }
+      let context = reviewContextRef.current;
+      let navigation = navigationRequestRef.current;
+      const isCurrent = () => context === reviewContextRef.current && navigation === navigationRequestRef.current;
+      reviewStartPendingRef.current = true;
       setReviewBusy(true);
       try {
-        const threadRes = await callAppServer<any>("thread/start", {
-          cwd,
-          model: selectedModelId || undefined,
-          approvalPolicy: "on-request",
-          approvalsReviewer: "user",
-          sandbox: "workspace-write",
-        });
-        const threadId = threadRes?.threadId || threadRes?.thread?.id;
-        if (!threadId) throw new Error("无法为审查创建会话");
-        setSidebarCreatedThread({ id: threadId, cwd, projectId: threadRes?.thread?.projectId });
-
-        let target: any;
+        const approvalPolicy = permissionMode === "full" ? "never" : "on-request";
+        const approvalsReviewer = permissionMode === "auto" ? "auto_review" : "user";
+        const sandboxPolicy = permissionMode === "full"
+          ? { type: "dangerFullAccess" }
+          : { type: "workspaceWrite", networkAccess: sessionAllowNetwork };
+        let prompt = "";
+        let resolvedMergeBase: string | null = null;
         if (req.kind === "branch") {
-          target = { type: "baseBranch", branch: req.branch };
-        } else if (req.kind === "commit") {
-          const commit = gitCommits.find((c) => c.hash === req.sha);
-          target = {
-            type: "commit",
-            sha: req.sha,
-            title: commit?.subject ?? null,
-          };
-        } else if (req.kind === "custom") {
-          target = {
-            type: "custom",
-            instructions: req.instructions || "请审查当前工作区的改动",
-          };
-        } else {
-          target = { type: "uncommittedChanges" };
+          if (gitContextCwd !== cwd) throw new Error("当前项目的分支尚未加载，请稍后重试");
+          if (!req.branch?.trim()) throw new Error("请选择基准分支");
+          const mergeBase = await tauriInvoke<string>("git_merge_base", { cwd, baseBranch: req.branch.trim() });
+          if (!isCurrent()) return;
+          if (!mergeBase) throw new Error("无法解析共同祖先");
+          resolvedMergeBase = mergeBase;
+          prompt = `Review the code changes against the base branch '${req.branch.trim()}'. The merge base commit for this comparison is ${mergeBase}. Run \`git diff ${mergeBase}\` to inspect the changes relative to ${req.branch.trim()}. Provide concise, actionable feedback in a normal Markdown response.`;
+        } else if (req.kind === "uncommitted") {
+          prompt = "Review the current code changes (staged, unstaged, and untracked files) and provide concise, actionable feedback in a normal Markdown response.";
         }
-
-        const reviewRes = await callAppServer<any>("review/start", {
-          threadId,
-          delivery: "inline",
-          target,
-        });
-        const reviewThreadId = reviewRes?.reviewThreadId || threadId;
+        if (quickReview && req.instructions?.trim()) prompt += `\n\n${req.instructions.trim()}`;
+        let threadId = inline ? currentId : null;
+        if (!threadId) {
+          const threadRes = await callAppServer<any>("thread/start", {
+            cwd,
+            model: selectedModelName,
+            approvalPolicy,
+            approvalsReviewer,
+            sandbox: permissionMode === "full" ? "danger-full-access" : "workspace-write",
+            ...(quickReview ? { threadSource: "code_review" } : {}),
+          });
+          threadId = threadRes?.threadId || threadRes?.thread?.id;
+          if (!threadId) throw new Error("无法为审查创建会话");
+          if (!isCurrent()) return;
+          setSidebarCreatedThread({ id: threadId, cwd, projectId: threadRes?.thread?.projectId });
+        }
+        if (!isCurrent()) return;
+        // Select and finish history loading before sending, so fast turn events
+        // enter the existing visible-thread notification merger.
+        const selecting = selectThread(threadId);
+        navigation = navigationRequestRef.current;
+        await selecting;
+        if (navigation !== navigationRequestRef.current || activeThreadIdRef.current !== threadId ||
+          reviewContextRef.current.cwd !== cwd || reviewContextRef.current.route !== "thread") return;
+        context = reviewContextRef.current;
+        if (quickReview) {
+          await callAppServer<any>("turn/start", {
+            threadId, cwd, turnTrigger: "code_review",
+            input: [{ type: "text", text: prompt, text_elements: [] }],
+            approvalPolicy, approvalsReviewer, sandboxPolicy,
+            collaborationMode: null,
+            serviceTier: fastMode && modelSupportsFast(findModel(models, selectedModelId)) ? "priority" : null,
+          });
+        } else {
+          let target: any;
+          if (req.kind === "commit") {
+            const commit = gitCommits.find((c) => c.hash === req.sha);
+            target = {
+              type: "commit",
+              sha: req.sha,
+              title: commit?.subject ?? null,
+            };
+          } else if (req.kind === "custom") {
+            target = {
+              type: "custom",
+              instructions: req.instructions || "请审查当前工作区的改动",
+            };
+          }
+          const reviewRes = await callAppServer<any>("review/start", {
+            threadId,
+            delivery: "inline",
+            target,
+          });
+          const reviewThreadId = reviewRes?.reviewThreadId || threadId;
+          if (!isCurrent()) return;
+          if (reviewThreadId !== threadId) {
+            const selectingReview = selectThread(reviewThreadId);
+            navigation = navigationRequestRef.current;
+            await selectingReview;
+            if (navigation !== navigationRequestRef.current || activeThreadIdRef.current !== reviewThreadId) return;
+            context = reviewContextRef.current;
+          }
+        }
+        if (!isCurrent()) return;
+        if (quickReview) {
+          setReviewDiffTarget({ cwd, baseBranch: req.kind === "branch" ? req.branch!.trim() : null, mergeBase: resolvedMergeBase });
+          setInitialWorkbenchTab("changes");
+          setShowRightDrawer(true);
+        }
         await refreshThreads();
-        await selectThread(reviewThreadId);
+        if (!isCurrent()) return;
         const label =
           req.kind === "uncommitted"
             ? "未提交改动"
@@ -2298,8 +2531,9 @@ export const App: React.FC = () => {
         setReviewLastResult(`已启动审查：${label}`);
         showAppToast(`✓ 代码审查已启动（${label}）`, "success");
       } catch (e: any) {
-        showAppToast(`启动代码审查失败：${e?.message || e}`, "error");
+        if (isCurrent()) showAppToast(`启动代码审查失败：${e?.message || e}`, "error");
       } finally {
+        reviewStartPendingRef.current = false;
         setReviewBusy(false);
       }
     },
@@ -2307,7 +2541,14 @@ export const App: React.FC = () => {
       activeWorkspace?.path,
       appServerStatus.connected,
       selectedModelId,
+      selectedModelName,
       gitCommits,
+      gitContextCwd,
+      isStreaming,
+      permissionMode,
+      sessionAllowNetwork,
+      fastMode,
+      models,
       refreshThreads,
       selectThread,
       showAppToast,
@@ -2318,7 +2559,9 @@ export const App: React.FC = () => {
   const handleSendMessage = useCallback(async (overrideText?: string) => {
     const rawText = (typeof overrideText === "string" ? overrideText : promptInput).trim();
     if (!rawText && attachedFiles.length === 0) return;
-    const pendingProject = activeThreadIdRef.current ? null : resolveNewThreadProject(
+    if (sendStartPendingRef.current.has(threadRequestRef.current)) return;
+    const projectless = !activeThreadIdRef.current && pendingProjectlessRef.current;
+    const pendingProject = activeThreadIdRef.current || projectless ? null : resolveNewThreadProject(
       pendingNewThreadProjectRef.current, sidebarProjectMembership, activeWorkspace?.path,
     );
     if (pendingProject && (!pendingProject.serverProjectId || pendingProject.rootPaths.length === 0)) {
@@ -2386,7 +2629,7 @@ export const App: React.FC = () => {
           setPromptInput(current => current === promptInput ? "" : current);
           setAttachedFiles(current => current === attachedFiles ? [] : current);
         }
-        return;
+        return true;
       } catch (error) {
         if (isCurrent()) showAppToast(`引导结果未确认，未自动重发，输入已保留：${String(error)}`, "error");
         return;
@@ -2396,6 +2639,7 @@ export const App: React.FC = () => {
     }
 
     const sendRequest = threadRequestRef.current;
+    sendStartPendingRef.current.add(sendRequest);
     const tempTurnId = `pending-${Date.now()}`;
     pendingTurnIdRef.current = tempTurnId;
     const userTurn: TurnData = {
@@ -2410,21 +2654,18 @@ export const App: React.FC = () => {
 
     try {
       let currentThreadId = activeThreadIdRef.current;
-      let targetCwd = currentThreadId ? "" : pendingProject?.rootPaths[0] || activeWorkspace?.path || "";
+      let targetCwd = currentThreadId || projectless ? "" : pendingProject?.rootPaths[0] || activeWorkspace?.path || "";
       if (!currentThreadId && useWorktree && targetCwd) {
-        try {
-          const wt = await tauriInvoke<{ path: string }>("git_worktree_create", {
-            sourceCwd: targetCwd,
-            startingMode: "HEAD",
-            branchName: null,
-            ownerThreadId: activeThreadId,
-          });
-          if (wt?.path) targetCwd = wt.path;
-        } catch (wtErr) {
-          console.warn("Worktree creation skipped:", wtErr);
-        }
+        const wt = await tauriInvoke<{ path: string }>("git_worktree_create", {
+          sourceCwd: targetCwd,
+          startingMode: "HEAD",
+          branchName: null,
+          ownerThreadId: activeThreadId,
+        });
+        if (!wt?.path) throw new Error("Worktree 创建未返回目录，输入已保留");
+        targetCwd = wt.path;
       }
-      const projectStartParams = currentThreadId ? {} : threadStartProjectParams(pendingProject, targetCwd || undefined);
+      const projectStartParams = currentThreadId ? {} : projectless ? { projectId: null, runtimeWorkspaceRoots: undefined } : threadStartProjectParams(pendingProject, targetCwd || undefined);
       const turnWorkspaceRoots = projectStartParams.runtimeWorkspaceRoots;
 
       const sandboxMode =
@@ -2446,7 +2687,7 @@ export const App: React.FC = () => {
         const startRes = await callAppServer<any>("thread/start", {
           cwd: targetCwd || undefined,
           ...projectStartParams,
-          model: selectedModelId || undefined,
+          model: selectedModelName,
           approvalPolicy,
           approvalsReviewer,
           sandbox: sandboxMode,
@@ -2458,6 +2699,7 @@ export const App: React.FC = () => {
         if (typeof createdThreadId !== "string" || !createdThreadId) throw new Error("thread/start 未返回会话 ID");
         currentThreadId = createdThreadId;
         pendingNewThreadProjectRef.current = null;
+        pendingProjectlessRef.current = false;
         setSidebarCreatedThread({ id: createdThreadId, cwd: targetCwd || undefined, projectId: startRes?.thread?.projectId });
         if (sendRequest === threadRequestRef.current) {
           moveHomeAttachmentsToThread(currentThreadId);
@@ -2494,13 +2736,13 @@ export const App: React.FC = () => {
         cwd: targetCwd || undefined,
         runtimeWorkspaceRoots: turnWorkspaceRoots,
         input: nativeInputs,
-        model: selectedModelId || undefined,
+        model: selectedModelName,
         effort: reasoningEffort || undefined,
         summary: reasoningSummary || "auto",
         approvalPolicy,
         approvalsReviewer,
         sandboxPolicy,
-        serviceTier: fastMode && modelSupportsFast(models.find((model) => model.id === selectedModelId)) ? "priority" : null,
+        serviceTier: fastMode && modelSupportsFast(findModel(models, selectedModelId)) ? "priority" : null,
       });
       if (sendRequest !== threadRequestRef.current) return;
       const startedTurnId =
@@ -2531,12 +2773,15 @@ export const App: React.FC = () => {
       } else {
         pendingAttachmentSaveRef.current = null;
       }
+      return Boolean(startedTurnId);
     } catch (err: any) {
-      pendingAttachmentSaveRef.current = null;
       console.error("Turn start failed:", err);
       if (sendRequest !== threadRequestRef.current) return;
+      pendingAttachmentSaveRef.current = null;
       setIsStreaming(false);
       setTurns((prev) => prev.map((t) => t.id === tempTurnId ? { ...t, status: "failed", items: [...t.items, { id: `err-item-${Date.now()}`, type: "agentMessage", text: `⚠️ 执行出错: ${err?.message || err}` }] } : t));
+    } finally {
+      sendStartPendingRef.current.delete(sendRequest);
     }
   }, [
     promptInput,
@@ -2553,6 +2798,7 @@ export const App: React.FC = () => {
     useWorktree,
     permissionMode,
     selectedModelId,
+    selectedModelName,
     reasoningEffort,
     models,
     sessionTemperature,
@@ -2592,14 +2838,15 @@ export const App: React.FC = () => {
       try {
         let threadId = activeThreadIdRef.current;
         if (!threadId) {
-          const pendingProject = resolveNewThreadProject(
+          const projectless = pendingProjectlessRef.current;
+          const pendingProject = projectless ? null : resolveNewThreadProject(
             pendingNewThreadProjectRef.current, sidebarProjectMembership, activeWorkspace?.path,
           );
-          const targetCwd = pendingProject?.rootPaths[0] || activeWorkspace?.path || "";
+          const targetCwd = projectless ? "" : pendingProject?.rootPaths[0] || activeWorkspace?.path || "";
           const startRes = await callAppServer<any>("thread/start", {
             cwd: targetCwd || undefined,
-            ...threadStartProjectParams(pendingProject, targetCwd || undefined),
-            model: selectedModelId || undefined,
+            ...(projectless ? { projectId: null } : threadStartProjectParams(pendingProject, targetCwd || undefined)),
+            model: selectedModelName,
             approvalPolicy: permissionMode === "full" ? "never" : "on-request",
             approvalsReviewer: permissionMode === "auto" ? "auto_review" : "user",
             sandbox:
@@ -2608,6 +2855,7 @@ export const App: React.FC = () => {
           threadId = startRes?.threadId || startRes?.thread?.id || null;
           if (!threadId) throw new Error("无法为目标创建会话");
           pendingNewThreadProjectRef.current = null;
+          pendingProjectlessRef.current = false;
           moveHomePromptToThread(threadId);
           activeThreadIdRef.current = threadId;
           setSidebarCreatedThread({ id: threadId, cwd: targetCwd || undefined, projectId: startRes?.thread?.projectId });
@@ -2629,6 +2877,7 @@ export const App: React.FC = () => {
       activeWorkspace?.path,
       sidebarProjectMembership,
       selectedModelId,
+      selectedModelName,
       permissionMode,
       refreshThreads,
       handleSendMessage,
@@ -2978,20 +3227,6 @@ export const App: React.FC = () => {
     [refreshThreads]
   );
 
-  const handleOpenArchivedThread = useCallback(
-    async (threadId: string) => {
-      try {
-        await callAppServer("thread/unarchive", { threadId });
-      } catch (e) {
-        console.warn("thread/unarchive failed:", e);
-      }
-      await refreshThreads();
-      setArchiveRefreshTick((v) => v + 1);
-      await selectThread(threadId);
-    },
-    [refreshThreads, selectThread]
-  );
-
   const handleForkChat = useCallback(
     async (turnId?: string) => {
       const currentId = activeThreadIdRef.current;
@@ -3060,13 +3295,45 @@ export const App: React.FC = () => {
     [threads, activeThreadId]
   );
 
+  const handleOpenQuickChat = useCallback(async () => {
+    if (!isTauriRuntime()) {
+      setShowPopoutModal(value => !value);
+      return;
+    }
+    try { await tauriInvoke("quick_chat_toggle"); }
+    catch (error) { showAppToast(`无法唤起独立聊天：${String(error)}`, "error"); }
+  }, [showAppToast]);
+
+  const quickChatContinueRef = useRef<(threadId: string) => void>(() => {});
+  quickChatContinueRef.current = threadId => {
+    if (activeThreadIdRef.current !== threadId) void selectThread(threadId);
+    else setActiveRoute("thread");
+    setComposerFocusRequest(request => request + 1);
+  };
+  useEffect(() => {
+    if (isQuickChatWindow) return;
+    if (isThreadWindow) return;
+    let disposed = false;
+    const subscription = tauriListen<{ threadId?: string }>("quick-chat:continue", payload => {
+      if (!disposed && typeof payload?.threadId === "string" && payload.threadId.trim()) {
+        quickChatContinueRef.current(payload.threadId);
+      }
+    });
+    return () => { disposed = true; void subscription.then(unlisten => unlisten()); };
+  }, [isQuickChatWindow]);
+
   // 快捷键动作绑定（每次渲染刷新，键盘监听器稳定注册一次）
   shortcutHandlersRef.current = {
+    ...Object.fromEntries(Array.from({ length: 6 }, (_, index) => [`recent-thread-${index + 1}`, () => {
+      const target = threadsRef.current[index];
+      if (target) void selectThread(target.id);
+    }])),
     "open-recent-thread": (threadId?: any) => {
       if (threadId) void selectThread(String(threadId));
     },
     "new-chat": () => startNewThread(),
-    "new-standalone-chat": () => setShowPopoutModal((v) => !v),
+    "new-standalone-chat": () => { void startNewThread(undefined, undefined, true); },
+    "open-hotkey-window": () => { void handleOpenQuickChat(); },
     "open-model-picker": () => {
       const trigger = document.querySelector<HTMLButtonElement>(".model-effort-pill");
       if (trigger) {
@@ -3076,6 +3343,7 @@ export const App: React.FC = () => {
     },
     "toggle-sidebar": () => setSidebarCollapsed((v) => !v),
     "toggle-terminal": () => setShowTerminal((v) => !v),
+    "toggle-bottom-panel": () => setShowTerminal((v) => !v),
     "toggle-changes": () => setShowRightDrawer((v) => !v),
     "zoom-in": () => applyZoom(zoomRef.current + 0.1),
     "zoom-out": () => applyZoom(zoomRef.current - 0.1),
@@ -3083,9 +3351,9 @@ export const App: React.FC = () => {
     "open-settings": () =>
       setActiveRoute((r) => (r === "settings" ? "home" : "settings")),
     "show-keyboard-shortcuts": () => setShowKeyboardShortcuts((value) => !value),
-    "command-palette": () => setShowQuickSearch(true),
-    "command-palette-alt": () => setShowQuickSearch(true),
-    "file-search": () => setShowQuickSearch(true),
+    "command-palette": () => { setQuickSearchMode("root"); setShowQuickSearch(true); },
+    "command-palette-alt": () => { setQuickSearchMode("root"); setShowQuickSearch(true); },
+    "file-search": () => { setQuickSearchMode("files"); setShowQuickSearch(true); },
     "find-in-chat": () => setShowFindBar((v) => !v),
     "rename-thread": () => {
       if (activeThreadObj) {
@@ -3183,7 +3451,12 @@ export const App: React.FC = () => {
   }, [showAppToast]);
 
   const handleAppCommand = useCallback(async (command: string, payload?: any) => {
+    if (keyboardState.capturing.current) return;
     const shortcutAction = shortcutHandlersRef.current[command];
+    if (projectMoveConfirmation && (
+      (typeof shortcutAction === "function" && !["zoom-in", "zoom-out", "zoom-reset"].includes(command)) ||
+      ["open-workspace", "settings", "reload"].includes(command)
+    )) return;
     if (shortcutAction) {
       if (keyboardShortcutsOpenRef.current && command !== "show-keyboard-shortcuts") return;
       shortcutAction(payload);
@@ -3234,8 +3507,10 @@ export const App: React.FC = () => {
         const config = await tauriInvoke<any>("config_read");
         path = config?.configPath;
       }
-      if (path) await tauriInvoke("open_path_external", { path });
-      else showAppToast("未找到 config.toml", "error");
+      if (path) {
+        try { await tauriInvoke("open_path_external", { path }); }
+        catch (error) { showAppToast(`无法打开 config.toml：${String(error)}`, "error"); }
+      } else showAppToast("未找到 config.toml", "error");
       return;
     }
     if (command === "about") {
@@ -3263,11 +3538,12 @@ export const App: React.FC = () => {
       return;
     }
     showAppToast(`暂未实现命令：${command}`, "info");
-  }, [applyZoom, cycleTheme, handlePickNewFolder, showAppToast]);
+  }, [applyZoom, cycleTheme, handlePickNewFolder, showAppToast, projectMoveConfirmation]);
   const appCommandRef = useRef(handleAppCommand);
   appCommandRef.current = handleAppCommand;
 
   useEffect(() => {
+    if (isQuickChatWindow) return;
     let disposed = false;
     let offMenu: (() => void) | null = null;
     let offTray: (() => void) | null = null;
@@ -3291,7 +3567,7 @@ export const App: React.FC = () => {
         "open-config-toml": (payload) => appCommandRef.current("open-config-toml", payload),
         quit: (payload) => appCommandRef.current("quit", payload),
       });
-      offTray = await installTrayHandler({
+      if (!isThreadWindow) offTray = await installTrayHandler({
         click: () => appCommandRef.current("open"),
         open: () => appCommandRef.current("open"),
         "new-chat": () => appCommandRef.current("new-chat"),
@@ -3304,7 +3580,7 @@ export const App: React.FC = () => {
         offTray = null;
       }
     })();
-    return () => {
+  return () => {
       disposed = true;
       offMenu?.();
       offTray?.();
@@ -3375,7 +3651,7 @@ export const App: React.FC = () => {
     const data = {
       threadId: activeThreadId,
       title: threadTitle,
-      model: selectedModelId || undefined,
+      model: selectedModelName,
       reasoningEffort,
       workspace: activeWorkspace?.path,
       exportedAt: new Date().toISOString(),
@@ -3390,7 +3666,7 @@ export const App: React.FC = () => {
     URL.revokeObjectURL(url);
     setShowExportPopover(false);
     showAppToast("✓ 对话已成功导出为 JSON 文件", "success");
-  }, [turns, activeThreadObj, activeThreadId, selectedModelId, reasoningEffort, activeWorkspace, showAppToast]);
+  }, [turns, activeThreadObj, activeThreadId, selectedModelName, reasoningEffort, activeWorkspace, showAppToast]);
 
   const copyThreadText = useCallback(async (text: string, successMessage: string) => {
     const copied = await copyTextToClipboard(text);
@@ -3431,6 +3707,13 @@ export const App: React.FC = () => {
   }, [turns.length, startNewThread, showAppToast]);
 
   const handleSlashAction = useCallback((action: string) => {
+    if (isQuickChatWindow && ![
+      "open_goal_dialog", "toggle_plan", "toggle_fast", "toggle_worktree", "new_chat",
+      "steer_turn", "enqueue_followup", "approve_recent_denial",
+    ].includes(action)) {
+      showAppToast("此操作需要在主窗口中执行，请先回到主窗口。", "info");
+      return;
+    }
     if (action === "open_goal_dialog") {
       setShowGoalModal(true);
     } else if (action === "toggle_plan") {
@@ -3488,14 +3771,12 @@ export const App: React.FC = () => {
     } else if (action === "switch_mode_cloud" || action === "switch_mode_local") {
       showAppToast("远程/云端环境将在后续版本接入", "info");
     } else if (action === "new_standalone_chat") {
-      startNewThread();
-      setShowPopoutModal(true);
+      void startNewThread(undefined, undefined, true);
     } else if (action === "open_cloud_environments") {
       setActiveRoute("cloud-environments");
     } else if (action === "share_thread") {
-      const shareUrl = `codex://thread/${activeThreadId || "local"}`;
-      void navigator.clipboard.writeText(shareUrl);
-      showAppToast("✓ 已复制会话链接到剪贴板", "success");
+      if (shareAvailable && activeThreadId) setShareThreadId(activeThreadId);
+      else showAppToast("当前账号的分享权限尚未确认或不可用。", "info");
     } else if (action === "resume_recent_thread") {
       if (threadsRef.current.length > 0) {
         void selectThread(threadsRef.current[0].id);
@@ -3520,7 +3801,9 @@ export const App: React.FC = () => {
     handleSteerTurn,
     handleEnqueueFollowup,
     handleRespondServerRequest,
+    isQuickChatWindow,
     activePendingRequests,
+    shareAvailable,
     activeThreadObj,
     activeThreadId,
     promptInput,
@@ -3533,17 +3816,33 @@ export const App: React.FC = () => {
     () => inboxItems.filter((i) => !i.read).length,
     [inboxItems]
   );
-  const activityThreadIds = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          inboxItems
-            .filter((item) => !item.read && item.threadId)
-            .map((item) => item.threadId as string)
-        )
-      ),
-    [inboxItems]
+  const activityAttentionCount = useMemo(
+    () => threads.filter(threadNeedsAttention).length,
+    [threads]
   );
+  const activityThreadIds = useMemo(
+    () => threads.filter(threadHasActivity)
+      .map(thread => thread.id),
+    [threads]
+  );
+  const markAllThreadsRead = useCallback(async () => {
+    const unread = threads.filter(thread => isThreadReadState(thread.readState) && thread.readState.firstUnread != null);
+    await Promise.all(unread.map(async thread => {
+      if (readStateWritesRef.current.has(thread.id)) return;
+      readStateWritesRef.current.add(thread.id);
+      try {
+        const result = await callAppServer<any>("thread/readState/update", {
+          threadId: thread.id, expectedRevision: thread.readState!.revision, operation: { type: "read" },
+        });
+        if (!isThreadReadState(result?.readState)) throw new Error("服务未返回有效会话已读状态");
+      } catch (error) {
+        showAppToast(`更新会话已读状态失败：${String(error)}`, "error");
+      } finally {
+        readStateWritesRef.current.delete(thread.id);
+      }
+    }));
+    if (unread.length) await refreshThreads();
+  }, [threads, refreshThreads, showAppToast]);
 
   const moveThreadToProject = useCallback(async (threadId: string, targetProjectId: string | null) => {
     if (!threadId || projectMoveBusy) return;
@@ -3593,7 +3892,8 @@ export const App: React.FC = () => {
 
   const threadMenuItems: ThreadActionItem[] = useMemo(() => {
     const pinned = !!(activeThreadId && pinnedThreadIds.includes(activeThreadId));
-    const isUnread = !!(activeThreadId && activityThreadIds.includes(activeThreadId));
+    const readState = activeThreadObj?.readState;
+    const isUnread = isThreadReadState(readState) && readState.firstUnread != null;
     const moveTargets: ThreadActionItem[] = (sidebarProjectMembership.localProjects || [])
       .filter((project) => project.serverProjectId)
       .map((project) => ({
@@ -3622,11 +3922,11 @@ export const App: React.FC = () => {
         icon: <SearchIcon size={14} />,
         hint: "Ctrl+F",
       },
-      {
+      ...(isThreadReadState(readState) ? [{
         id: "mark_unread",
         label: isUnread ? "标记为已读" : "标记为未读",
         icon: <BellIcon size={14} />,
-      },
+      }] : []),
       {
         id: "toggle_thread_pin",
         label: pinned ? "取消置顶" : "置顶",
@@ -3658,6 +3958,7 @@ export const App: React.FC = () => {
       {
         id: "share_thread",
         label: "分享",
+        disabled: !shareAvailable || !activeThreadId,
         icon: <ShareIcon size={14} />,
         separatorBefore: true,
       },
@@ -3675,6 +3976,7 @@ export const App: React.FC = () => {
       {
         id: "open_new_window",
         label: "在新窗口中打开",
+        disabled: !activeThreadId,
         icon: <ExternalWindowIcon size={14} />,
         separatorBefore: true,
       },
@@ -3697,8 +3999,9 @@ export const App: React.FC = () => {
     ];
   }, [
     activeThreadId,
+    shareAvailable,
     pinnedThreadIds,
-    activityThreadIds,
+    activeThreadObj?.readState,
     sidebarProjectMembership.localProjects,
     projectMoveBusy,
   ]);
@@ -3728,30 +4031,9 @@ export const App: React.FC = () => {
         } else if (id === "find_in_chat") {
           setShowFindBar(true);
         } else if (id === "mark_unread") {
-          if (activeThreadId) {
-            const isUnread = activityThreadIds.includes(activeThreadId);
-            if (isUnread) {
-              setInboxItems((prev) =>
-                prev.map((item) =>
-                  item.threadId === activeThreadId ? { ...item, read: true } : item
-                )
-              );
-              showAppToast("✓ 已标记为已读", "info");
-            } else {
-              setInboxItems((prev) => [
-                {
-                  id: `unread-${activeThreadId}-${Date.now()}`,
-                  title: `待处理：${activeThreadObj?.name || activeThreadObj?.preview || "会话"}`,
-                  subtitle: "手动标记为待办未读",
-                  kind: "activity",
-                  createdAt: Date.now(),
-                  read: false,
-                  threadId: activeThreadId,
-                },
-                ...prev,
-              ]);
-              showAppToast("✓ 已标记为未读并加入活动视图", "info");
-            }
+          if (activeThreadId && isThreadReadState(activeThreadObj?.readState)) {
+            await handleSetThreadReadState(activeThreadId, activeThreadObj.readState.revision,
+              activeThreadObj.readState.firstUnread == null);
           }
         } else if (id === "toggle_thread_pin") {
           if (activeThreadId) {
@@ -3771,9 +4053,7 @@ export const App: React.FC = () => {
         } else if (id === "schedule_task") {
           setActiveRoute("scheduled");
         } else if (id === "share_thread") {
-          const shareUrl = `codex://thread/${activeThreadId || "local"}`;
-          await navigator.clipboard.writeText(shareUrl);
-          showAppToast("✓ 已复制会话链接到剪贴板", "success");
+          if (shareAvailable && activeThreadId) setShareThreadId(activeThreadId);
         } else if (id === "copy_markdown") {
           const md = turns
             .map((t) => {
@@ -3791,15 +4071,12 @@ export const App: React.FC = () => {
             showAppToast("✓ 已复制工作目录路径", "success");
           }
         } else if (id === "copy_deeplink") {
-          await navigator.clipboard.writeText(`codex://thread/${activeThreadId || "local"}`);
-          showAppToast("✓ 已复制会话深层链接 (deeplink)", "success");
+          if (!activeThreadId) return;
+          const copied = await copyTextToClipboard(`codex://threads/${activeThreadId}`);
+          showAppToast(copied ? "已复制会话深层链接" : "复制会话深层链接失败", copied ? "success" : "error");
         } else if (id === "open_new_window") {
-          try {
-            await tauriInvoke("open_detached_window", { threadId: activeThreadId });
-            showAppToast("已在新窗口中打开", "info");
-          } catch {
-            showAppToast("新窗口已打开", "info");
-          }
+          if (!activeThreadId) return;
+          await tauriInvoke("open_thread_window", { threadId: activeThreadId });
         } else if (id === "open_vscode") {
           try {
             await tauriInvoke("open_in_vscode", { path: activeWorkspace?.path });
@@ -3818,6 +4095,7 @@ export const App: React.FC = () => {
     },
     [
       activeThreadId,
+      shareAvailable,
       activeThreadObj,
       activeWorkspace,
       handleForkThread,
@@ -3826,16 +4104,15 @@ export const App: React.FC = () => {
       startNewThread,
       turns,
       showAppToast,
-      activityThreadIds,
+      handleSetThreadReadState,
       sidebarProjectMembership.localProjects,
       moveThreadToProject,
     ]
   );
 
   const projectName =
-    activeWorkspace?.label ||
-    activeWorkspace?.path?.split(/[/\\]/).pop() ||
-    "codex-app-offline";
+    activeWorkspace?.label?.trim() ||
+    (activeWorkspace?.path ? baseNameFsPath(activeWorkspace.path) || activeWorkspace.path : null);
   const threadStatusChip = describeThreadStatus(activeThreadStatus);
   const confirmProjectMove = async () => {
     if (!projectMoveConfirmation || projectMoveBusy) return;
@@ -3859,8 +4136,109 @@ export const App: React.FC = () => {
   };
 
   useEffect(() => {
-    if (projectMoveConfirmation) projectMoveCancelRef.current?.focus();
+    if (!projectMoveConfirmation) return;
+    const previous = document.activeElement as HTMLElement | null;
+    projectMoveCancelRef.current?.focus();
+    return () => {
+      if (previous?.isConnected) previous.focus({ preventScroll: true });
+    };
   }, [projectMoveConfirmation]);
+
+  const renderThreadComposer = () => (
+    <ComposerBox
+      dictationSessionKey={promptDraftKey}
+      composerEnterBehavior={composerEnterBehavior}
+      variant="thread"
+      promptInput={promptInput}
+      onPromptInputChange={setPromptInput}
+      onSendMessage={handleSendMessage}
+      onInterruptTurn={handleInterruptTurn}
+      onQueueMessage={handleEnqueueFollowup}
+      isStreaming={isStreaming}
+      workspaces={workspaces}
+      activeWorkspace={activeWorkspace}
+      onSelectWorkspace={handleSelectWorkspace}
+      onPickNewFolder={handlePickNewFolder}
+      gitStatus={gitStatus}
+      gitBranches={gitBranches}
+      onSwitchBranch={handleSwitchBranch}
+      onCreateBranch={handleCreateBranch}
+      useWorktree={useWorktree}
+      onSetUseWorktree={setUseWorktree}
+      permissionMode={permissionMode}
+      onSelectPermissionMode={setPermissionMode}
+      models={models}
+      modelsLoading={modelsLoading}
+      modelsError={modelsError}
+      onRefreshModels={refreshModels}
+      selectedModelId={selectedModelId}
+      defaultModelSelected={defaultModelSelected}
+      onSelectModel={handleSelectComposerModel}
+      reasoningEffort={reasoningEffort}
+      onSelectReasoningEffort={setReasoningEffort}
+      fastMode={fastMode}
+      onToggleFastMode={() => setFastMode((v) => !v)}
+      planMode={planMode}
+      onTogglePlanMode={handleTogglePlanMode}
+      attachedFiles={attachedFiles}
+      onAttachFiles={handleAttachFiles}
+      onAppshot={handleAppshot}
+      onAddAttachedFiles={(newFiles) =>
+        setAttachedFiles((prev) => mergeAttachmentItems(prev, newFiles))
+      }
+      onRemoveAttachedFile={handleRemoveAttachedFile}
+      workspaceFiles={workspaceFiles}
+      workspaceFileHits={workspaceFileHits}
+      skills={skills}
+      onSlashAction={handleSlashAction}
+      textareaRef={composerTextareaRef}
+    />
+  );
+  const renderApprovals = () => (
+    <ApprovalCenter
+      requests={activePendingRequests}
+      responseStates={requestResponses}
+      onRefresh={refreshPendingRequests}
+      onRespond={handleRespondServerRequest}
+      onRespondError={handleRespondServerRequestError}
+    />
+  );
+
+  if (isQuickChatWindow) {
+    return <>
+      <HotkeyWindow
+        native
+        threadId={activeThreadId}
+        turns={turns}
+        isStreaming={isStreaming}
+        loading={loadingThread || appServerStatus.connecting}
+        error={historyError || appServerStatus.lastError || null}
+        notice={appToast?.message}
+        composer={<>
+          {queueNotice && <div role="alert">{queueNotice}</div>}
+          {followupQueue.length > 0 && <div role="status">有 {followupQueue.length} 条消息排队，详情可在主窗口查看。</div>}
+          {serverGoal && serverGoal.status !== "complete" && <ThreadGoalBanner
+            goal={serverGoal}
+            onEdit={() => setShowGoalModal(true)}
+            onTogglePause={handleToggleGoalPause}
+            onClear={handleClearGoal}
+          />}
+          {renderThreadComposer()}
+        </>}
+        approvals={renderApprovals()}
+        onNewChat={() => { void startNewThread(); }}
+        onClose={() => { void tauriInvoke("quick_chat_hide").catch(error => showAppToast(`无法隐藏独立聊天：${String(error)}`, "error")); }}
+        onOpenMainApp={() => { void tauriInvoke("quick_chat_continue", { threadId: activeThreadId }).catch(error => showAppToast(`无法回到主窗口：${String(error)}`, "error")); }}
+      />
+      <ThreadGoalModal
+        isOpen={showGoalModal}
+        onClose={() => setShowGoalModal(false)}
+        initialObjective={serverGoal?.objective || promptInput.replace(/^\/goal\s*/, "")}
+        isExistingGoal={Boolean(serverGoal)}
+        onSaveGoal={handleSaveGoal}
+      />
+    </>;
+  }
 
   return (
     <>
@@ -3880,7 +4258,25 @@ export const App: React.FC = () => {
             if (event.target === event.currentTarget && !projectMoveBusy) setProjectMoveConfirmation(null);
           }}
           onKeyDown={(event) => {
-            if (event.key === "Escape" && !projectMoveBusy) setProjectMoveConfirmation(null);
+            event.stopPropagation();
+            if (event.key === "Escape") {
+              event.preventDefault();
+              if (!event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229 && !projectMoveBusy) {
+                setProjectMoveConfirmation(null);
+              }
+            } else if (event.key === "Tab") {
+              const buttons = event.currentTarget.querySelectorAll<HTMLButtonElement>("button:not(:disabled)");
+              const first = buttons[0], last = buttons[buttons.length - 1];
+              if (!first) {
+                event.preventDefault();
+              } else if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault();
+                last.focus();
+              } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first.focus();
+              }
+            }
           }}
         >
           <section
@@ -3891,13 +4287,13 @@ export const App: React.FC = () => {
             aria-describedby="project-move-description"
             style={{ width: 440, height: "auto", maxHeight: "80vh", flexDirection: "column", padding: 20 }}
           >
-            <h2 id="project-move-title" style={{ margin: "0 0 10px", fontSize: 16, fontWeight: 600 }}>
+            <h2 id="project-move-title" style={{ margin: "0 0 10px", fontSize: "var(--text-lg)", fontWeight: 600 }}>
               将文件夹添加到 {projectMoveConfirmation.projectName}？
             </h2>
-            <p id="project-move-description" style={{ margin: "0 0 10px", color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.5 }}>
+            <p id="project-move-description" style={{ margin: "0 0 10px", color: "var(--text-secondary)", fontSize: "var(--text-sm)", lineHeight: 1.5 }}>
               {projectMoveConfirmation.projectName} 中的所有聊天都将获得这些文件夹的访问权限：
             </p>
-            <ul style={{ margin: "0 0 20px", paddingLeft: 20, overflowY: "auto", color: "var(--text-primary)", fontSize: 13 }}>
+            <ul style={{ margin: "0 0 20px", paddingLeft: 20, overflowY: "auto", color: "var(--text-primary)", fontSize: "var(--text-sm)" }}>
               {(projectMoveConfirmation.plan.missingSources || []).map((path: string) => (
                 <li key={path} style={{ overflowWrap: "anywhere", marginBottom: 4 }}>{path}</li>
               ))}
@@ -3924,7 +4320,7 @@ export const App: React.FC = () => {
           </section>
         </div>
       )}
-      <div className="codex-app-layout">
+      <div className="codex-app-layout" data-active-thread-id={activeThreadId ?? undefined}>
       {/* ── 1. Far-Left Vertical Icon Navigation Rail ── */}
       <NavigationRail
         activeRoute={activeRoute}
@@ -3954,11 +4350,11 @@ export const App: React.FC = () => {
         workspaceHints={workspaceHints}
         projectMembership={sidebarProjectMembership}
         activeThreadId={activeThreadId}
-        unreadInboxCount={unreadInboxCount}
+        activityAttentionCount={activityAttentionCount}
         activityOnly={activityOnly}
         activityThreadIds={activityThreadIds}
         onToggleActivity={() => setActivityOnly((value) => !value)}
-        onMarkAllRead={() => setInboxItems((items) => items.map((item) => ({ ...item, read: true })))}
+        onMarkAllRead={markAllThreadsRead}
         hasAgentsMd={agentsMdInfo.found}
         onNavigate={(route) => setActiveRoute(route)}
         onStartNewChat={startNewThread}
@@ -3973,7 +4369,7 @@ export const App: React.FC = () => {
         onMoveThreadToProject={moveThreadToProject}
         onRevealPath={handleRevealPath}
         onOpenAgentsMd={() => setShowAgentsMdModal(true)}
-        onOpenQuickSearch={() => setShowQuickSearch(true)}
+        onOpenQuickSearch={() => { setQuickSearchMode("root"); setShowQuickSearch(true); }}
         onToggleCollapse={() => setSidebarCollapsed((v) => !v)}
         refreshToken={projectsRefreshToken}
         createdThread={sidebarCreatedThread}
@@ -4000,30 +4396,42 @@ export const App: React.FC = () => {
           }}
         >
           <div className="top-nav-left">
-            {activeRoute === "thread" && turns.length > 0 ? (
+            {activeRoute === "thread" && activeThreadId ? (
               <>
                 {editingThreadTitle ? (
                   <input
                     className="thread-header-rename-input"
+                    aria-label="聊天标题"
+                    size={Math.max(1, threadTitleInput.length)}
                     value={threadTitleInput}
                     onChange={(e) => setThreadTitleInput(e.target.value)}
+                    onFocus={(e) => e.currentTarget.select()}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter" && threadTitleInput.trim() && activeThreadId) {
-                        handleRenameThread(activeThreadId, threadTitleInput.trim());
+                      if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+                      if (e.key === " ") e.stopPropagation();
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        e.currentTarget.blur();
+                      }
+                      if (e.key === "Escape") {
+                        e.preventDefault();
+                        e.currentTarget.dataset.cancelRename = "true";
                         setEditingThreadTitle(false);
                       }
-                      if (e.key === "Escape") setEditingThreadTitle(false);
                     }}
-                    onBlur={() => {
-                      if (threadTitleInput.trim() && activeThreadId) {
-                        handleRenameThread(activeThreadId, threadTitleInput.trim());
+                    onBlur={(e) => {
+                      const name = e.currentTarget.value.trim();
+                      const original = activeThreadObj?.name || activeThreadObj?.preview || "本地聊天";
+                      if (e.currentTarget.dataset.cancelRename !== "true" && name && name !== original && activeThreadId) {
+                        handleRenameThread(activeThreadId, name);
                       }
                       setEditingThreadTitle(false);
                     }}
                     autoFocus
                   />
                 ) : (
-                  <span
+                  <button
+                    type="button"
                     className="thread-header-title clickable"
                     onClick={() => {
                       setThreadTitleInput(
@@ -4038,8 +4446,7 @@ export const App: React.FC = () => {
                     {activeThreadObj?.name ||
                       activeThreadObj?.preview ||
                       "本地聊天"}
-                    <span className="thread-title-edit-hint"> ✏️</span>
-                  </span>
+                  </button>
                 )}
                 {threadStatusChip.label && (
                   <span
@@ -4050,14 +4457,14 @@ export const App: React.FC = () => {
                     {threadStatusChip.label}
                   </span>
                 )}
-                <div
+                {gitStatus?.branch && <div
                   className="project-branch-pill clickable"
                   onClick={() => setShowGitMenu((v) => !v)}
                   title="点击展开 Git 快捷操作菜单"
                   style={{ position: "relative" }}
                 >
                   <BranchIcon size={13} />
-                  <span>{gitStatus?.branch || "main"} ⌄</span>
+                  <span>{gitStatus.branch} ⌄</span>
 
                   {showGitMenu && (
                     <div
@@ -4079,9 +4486,10 @@ export const App: React.FC = () => {
                         className="git-menu-item"
                         onClick={async () => {
                           try {
+                            if (!gitPreferencesState.ready) throw Error("Git 设置尚未读取，请先打开设置重新读取。");
                             await tauriInvoke("git_push_changes", {
                               cwd: activeWorkspace?.path,
-                              forceWithLease: false,
+                              forceWithLease: gitPreferencesState.preferences["git-always-force-push"],
                             });
                             refreshGitStatus();
                             showAppToast("✓ 已成功推送到远程分支", "success");
@@ -4108,7 +4516,7 @@ export const App: React.FC = () => {
                       </button>
                     </div>
                   )}
-                </div>
+                </div>}
 
                 {useWorktree && (
                   <div
@@ -4309,7 +4717,7 @@ export const App: React.FC = () => {
             <div className="full-route-container">
               <ArchiveView
                 refreshToken={`${archiveRefreshTick}:${appServerStatus.connected}`}
-                onSelectThread={handleOpenArchivedThread}
+                onSelectThread={selectThread}
                 onUnarchive={handleUnarchiveThread}
                 onDelete={handleDeleteArchivedThread}
                 onShowToast={showAppToast}
@@ -4320,9 +4728,11 @@ export const App: React.FC = () => {
           <div className="full-route-view">
             <div className="full-route-container">
               <CodeReviewView
+                key={activeWorkspace?.path || ""}
                 workspacePath={activeWorkspace?.path}
-                branches={gitBranches}
-                defaultBranch={gitStatus?.defaultBranch || "main"}
+                branches={gitContextCwd === activeWorkspace?.path ? gitBranches : []}
+                defaultBranch={gitContextCwd === activeWorkspace?.path ? gitStatus?.defaultBranch : null}
+                repositoryReady={gitContextCwd === activeWorkspace?.path}
                 commits={gitCommits}
                 busy={reviewBusy}
                 lastResult={reviewLastResult}
@@ -4338,7 +4748,17 @@ export const App: React.FC = () => {
             threads={threads}
             workspaceHints={workspaceHints}
             onSelectWorkspace={handleSelectWorkspace}
-            onStartNewChatInProject={(path) => startNewThread(path)}
+            onStartNewChatInProject={(path, project) => {
+              if (!project) return startNewThread(path);
+              const entity = sidebarProjectMembership.localProjects?.find(
+                (item) => item.serverProjectId === project.id
+              );
+              if (!entity) {
+                showAppToast("项目身份尚未同步，请刷新后重试。", "error");
+                return;
+              }
+              return startNewThread(path, entity);
+            }}
             onSelectThread={selectThread}
             onPickNewFolder={handlePickNewFolder}
             onRemoveWorkspace={handleRemoveWorkspace}
@@ -4353,17 +4773,19 @@ export const App: React.FC = () => {
         ) : activeRoute === "inbox" ? (
           <InboxView
             items={inboxItems}
+            loadError={inboxLoadError}
+            onRetryLoad={() => setInboxReloadToken((value) => value + 1)}
             onNavigateScheduled={() => setActiveRoute("scheduled")}
-            onMarkAllRead={() =>
-              setInboxItems((prev) => prev.map((i) => ({ ...i, read: true })))
-            }
+            onMarkAllRead={markAllInboxRead}
             onClearAll={() => {
               if (window.confirm("确定要清空收件箱中的全部通知吗？")) {
+                if (!inboxHydrated) inboxHydrationChangesRef.current.cleared = true;
                 setInboxItems([]);
               }
             }}
             onDeleteItem={(id, e) => {
               e.stopPropagation();
+              if (!inboxHydrated) inboxHydrationChangesRef.current.removed.add(id);
               setInboxItems((prev) => prev.filter((i) => i.id !== id));
             }}
             onToggleRead={(id, e) => {
@@ -4389,21 +4811,7 @@ export const App: React.FC = () => {
               <AutomationsView
                 activeWorkspaceRoot={activeWorkspace?.path || ""}
                 models={models}
-                onSelectThread={(tId) => {
-                  setActiveThreadId(tId);
-                  setActiveRoute("thread");
-                }}
-                onRunAutomationNow={(item) => {
-                  if (item.kind === "goal") {
-                    void handleSaveGoal(item.prompt);
-                  } else {
-                    const targetCwd = item.cwds[0] || activeWorkspace?.path;
-                    startNewThread(targetCwd);
-                    setTimeout(() => {
-                      handleSendMessage(`[执行计划任务: ${item.name}]\n${item.prompt}`);
-                    }, 120);
-                  }
-                }}
+                onSelectThread={selectThread}
               />
             </div>
           </div>
@@ -4413,6 +4821,7 @@ export const App: React.FC = () => {
               <SkillsMcpView
                 activeWorkspaceRoot={activeWorkspace?.path || ""}
                 initialTab={activeRoute === "skills" ? "skills" : "plugins"}
+                initialPluginMode={pluginDirectoryMode}
                 onStartSkillCreatorSession={(prompt) => {
                   startNewThread();
                   setThreadPrompt(null, prompt);
@@ -4424,82 +4833,57 @@ export const App: React.FC = () => {
         ) : activeRoute === "images" ? (
           <div className="full-route-view">
             <div className="full-route-container">
-              <ImagesView
-                onStartChatWithImage={(_url, text) => {
-                  startNewThread();
-                  setThreadPrompt(null, text);
-                  showAppToast("已将图像与分析提示填入会话", "info");
-                }}
-                onOpenLibrary={() => setActiveRoute("library")}
-              />
+              <ImagesView />
             </div>
           </div>
         ) : activeRoute === "gpts" ? (
           <div className="full-route-view">
             <div className="full-route-container">
-              <GptsView
-                onStartGptChat={(gpt) => {
-                  startNewThread();
-                  setThreadPrompt(null, gpt.promptStarter);
-                  showAppToast(`已载入 ${gpt.name} 提示词`, "info");
-                }}
-                onNavigatePlugins={() => setActiveRoute("plugins")}
-              />
+              <GptsView />
             </div>
           </div>
         ) : activeRoute === "sites" ? (
           <div className="full-route-view">
             <div className="full-route-container">
-              <SitesView
-                onStartChatForSite={(siteName) => {
-                  startNewThread();
-                  setThreadPrompt(null, `请帮我更新并优化站点「${siteName}」的前端代码与配置`);
-                  showAppToast(`已填入站点更新会话提示`, "info");
-                }}
-              />
+              <SitesView />
             </div>
           </div>
         ) : activeRoute === "library" ? (
           <div className="full-route-view">
             <div className="full-route-container">
-              <LibraryView
-                onInsertToChat={(item) => {
-                  setActiveRoute("home");
-                  setPromptInput((prev) =>
-                    prev
-                      ? `${prev}\n\n引用文档 [${item.name}]:\n${item.content || ""}`
-                      : `引用文档 [${item.name}]:\n${item.content || ""}`
-                  );
-                }}
-                onNavigateSites={() => setActiveRoute("sites")}
-              />
+              <LibraryView />
             </div>
           </div>
         ) : activeRoute === "cloud-environments" ? (
           <div className="full-route-view">
             <div className="full-route-container">
-              <CloudEnvironmentsView
-                onStartChatInEnv={(envName) => {
-                  startNewThread();
-                  setThreadPrompt(null, `在云开发环境 [${envName}] 中执行全套构建与测试流水线`);
-                  showAppToast(`已在云环境 [${envName}] 开启会话`, "info");
-                }}
-              />
+              <CloudEnvironmentsView />
             </div>
           </div>
         ) : activeRoute === "worktrees" ? (
           <div className="full-route-view">
             <div className="full-route-container">
               <WorktreesView
+                key={activeWorkspace?.path || ""}
                 activeWorkspaceRoot={activeWorkspace?.path || ""}
-                onSelectThread={(tId) => {
-                  setActiveThreadId(tId);
-                  setActiveRoute("thread");
-                }}
-                onStartChatInWorktree={(wtPath) => {
-                  setUseWorktree(true);
-                  startNewThread(wtPath);
-                  showAppToast(`✓ 已在 Worktree 目录启动隔离会话: ${wtPath}`, "info");
+                onSelectThread={selectThread}
+                onStartChatInWorktree={async (wtPath) => {
+                  const navigation = ++navigationRequestRef.current;
+                  try {
+                    const updated = await tauriInvoke<WorkspaceRootItem[]>("workspace_add", {
+                      path: wtPath,
+                      setActive: false,
+                    });
+                    if (navigation !== navigationRequestRef.current) return;
+                    setWorkspaces(updated);
+                    setUseWorktree(false);
+                    startNewThread(wtPath);
+                    showAppToast(`✓ 已在 Worktree 目录打开新会话草稿: ${wtPath}`, "info");
+                  } catch (error) {
+                    if (navigation === navigationRequestRef.current) {
+                      showAppToast(`打开 Worktree 会话失败：${String(error)}`, "error");
+                    }
+                  }
                 }}
                 onOpenTerminalInWorktree={(wtPath) => {
                   setShowTerminal(true);
@@ -4514,13 +4898,34 @@ export const App: React.FC = () => {
         ) : activeRoute === "settings" ? (
           <div className="settings-full-route-view">
             <SettingsView
+              archiveViewProps={{
+                refreshToken: `${archiveRefreshTick}:${appServerStatus.connected}`,
+                onSelectThread: selectThread,
+                onUnarchive: handleUnarchiveThread,
+                onDelete: handleDeleteArchivedThread,
+                onShowToast: showAppToast,
+              }}
+              notificationState={notificationState}
+              gitPreferencesState={gitPreferencesState}
+              codeReviewPreferencesState={codeReviewPreferencesState}
+              externalImportsState={externalImportsState}
+              onRunEnvironmentCommand={(cwd, command) => {
+                if (cwd !== activeWorkspace?.path) throw Error("工作区已变化，请重新读取环境。");
+                if (pendingTermCommand) throw Error("终端已有待处理命令，请先查看终端。");
+                setShowTerminal(true);
+                setPendingTermCommand({ id: Date.now(), command, cwd });
+              }}
+              appearanceState={appearanceState}
+              keyboardState={keyboardState}
+              composerEnterBehavior={composerEnterBehavior}
+              composerEnterSaving={composerEnterSaving}
+              composerEnterError={composerEnterError}
+              onSetComposerEnterBehavior={handleSetComposerEnterBehavior}
               appServerStatus={appServerStatus}
-              models={models}
+              models={getPickerModels(models)}
               initialSection={settingsInitialSection}
               activeWorkspaceRoot={activeWorkspace?.path || ""}
-              selectedPetSpecies={selectedPetSpecies}
-              installedPets={installedPets}
-              onSelectPetSpecies={setSelectedPetSpecies}
+              petPreferencesState={petPreferencesState}
               petVisible={petVisible}
               onTogglePetVisible={setPetVisible}
               onRestartAppServer={(cliPath) =>
@@ -4528,8 +4933,11 @@ export const App: React.FC = () => {
                   customCliPath: cliPath || null,
                 })
               }
-              onConfigUpdated={refreshConfigOverview}
-              onNavigateRoute={(r) => setActiveRoute(r)}
+              onConfigUpdated={async () => { await refreshConfigOverview(); await refreshModels(); }}
+              onNavigateRoute={(r) => {
+                if (r === "plugins" || r === "skills") setPluginDirectoryMode("browse");
+                setActiveRoute(r);
+              }}
             />
           </div>
         ) : activeRoute === "home" || (!activeThreadId && turns.length === 0) ? (
@@ -4540,22 +4948,39 @@ export const App: React.FC = () => {
                 <CodexHomeIcon />
               </div>
 
-              <div className="home-greeting-wrap">
+              <div
+                className="home-greeting-wrap"
+                onKeyDown={(event) => {
+                  if (!showHomeProjectPopover || event.key !== "Escape" ||
+                    event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setShowHomeProjectPopover(false);
+                  event.currentTarget.querySelector<HTMLButtonElement>(".home-project-inline-btn")?.focus();
+                }}
+              >
                 <h1 className="home-greeting-title">
-                  你想让我们在{" "}
-                  <button
-                    type="button"
-                    className="home-project-inline-btn"
-                    onClick={() => setShowHomeProjectPopover((v) => !v)}
-                    title="点击切换本地项目文件夹"
-                  >
-                    {projectName}
-                  </button>{" "}
-                  中构建什么？
+                  {!projectName ? "我们要构建什么？" : (
+                    <>
+                      {gitStatus?.isGitRepo ? "你想让我们在 " : "我们应该在"}
+                      <button
+                        type="button"
+                        className="home-project-inline-btn"
+                        onClick={() => setShowHomeProjectPopover((v) => !v)}
+                        aria-haspopup="dialog"
+                        aria-expanded={showHomeProjectPopover}
+                        aria-controls={showHomeProjectPopover ? "home-project-picker" : undefined}
+                        title="点击切换本地项目文件夹"
+                      >
+                        {projectName}
+                      </button>
+                      {gitStatus?.isGitRepo ? " 中构建什么？" : "中做些什么？"}
+                    </>
+                  )}
                 </h1>
 
-                {showHomeProjectPopover && (
-                  <div className="home-project-popover-anchor">
+                {projectName && showHomeProjectPopover && (
+                  <div id="home-project-picker" role="dialog" aria-label="选择项目" className="home-project-popover-anchor">
                     <WorkspacePopover
                       workspaces={workspaces}
                       activeWorkspacePath={activeWorkspace?.path || ""}
@@ -4581,7 +5006,10 @@ export const App: React.FC = () => {
                 />
               )}
 
+              {!showPopoutModal && (
               <ComposerBox
+                  dictationSessionKey={promptDraftKey}
+                composerEnterBehavior={composerEnterBehavior}
               variant="home"
               promptInput={promptInput}
               onPromptInputChange={setPromptInput}
@@ -4602,6 +5030,9 @@ export const App: React.FC = () => {
               permissionMode={permissionMode}
               onSelectPermissionMode={setPermissionMode}
               models={models}
+              modelsLoading={modelsLoading}
+              modelsError={modelsError}
+              onRefreshModels={refreshModels}
               selectedModelId={selectedModelId}
               defaultModelSelected={defaultModelSelected}
               onSelectModel={handleSelectComposerModel}
@@ -4624,6 +5055,7 @@ export const App: React.FC = () => {
               onSlashAction={handleSlashAction}
               textareaRef={composerTextareaRef}
             />
+              )}
             </div>
           </div>
         ) : (
@@ -4666,11 +5098,11 @@ export const App: React.FC = () => {
                 onCopy={(text) => copyThreadText(text, "✓ 选区内容已复制到剪贴板")}
               />
               {/* Right-Side User Message Navigation Rail */}
-              <div className="thread-user-message-navigation-rail">
+              {turns.filter(t => t.items.some(i => i.type === "userMessage" || i.type === "user")).length >= 4 && <div className="thread-user-message-navigation-rail">
                 {turns
-                  .filter((t) => t.items.some((i) => i.type === "userMessage"))
+                  .filter((t) => t.items.some((i) => i.type === "userMessage" || i.type === "user"))
                   .map((turn, uIdx) => {
-                    const txt = turn.items.map(extractTextFromItem).join(" ");
+                    const txt = turn.items.filter(i => i.type === "userMessage" || i.type === "user").map(extractTextFromItem).join(" ");
                     const bookmarks = (activeThreadId && bookmarkedTurnIds[activeThreadId]) || [];
                     const isBookmarked = bookmarks.includes(turn.id);
                     return (
@@ -4679,14 +5111,15 @@ export const App: React.FC = () => {
                         type="button"
                         className={`user-turn-jump-dot ${isBookmarked ? "bookmarked" : ""}`}
                         title={`${isBookmarked ? "★ [已收藏] " : ""}跳转到第 ${uIdx + 1} 条提问: ${txt.slice(0, 40)}`}
+                        aria-label={`跳转到第 ${uIdx + 1} 条提问: ${txt.slice(0, 40)}`}
                         onClick={() => {
-                          const el = document.getElementById(`turn-${turn.id}`);
+                          const el = document.getElementById(`turn-user-${turn.id}`);
                           el?.scrollIntoView({ behavior: "smooth", block: "start" });
                         }}
                       />
                     );
                   })}
-              </div>
+              </div>}
 
               <div className="timeline-content-wrapper">
                 {(hasMoreTurns || loadingEarlierTurns) && (
@@ -4708,51 +5141,16 @@ export const App: React.FC = () => {
                   const thoughts = turn.items.filter(
                     (i) => i.type === "reasoning" || i.type === "thought"
                   );
-                  const commands = turn.items.filter(
-                    (i) =>
-                      i.type === "commandExecution" ||
-                      i.type === "command" ||
-                      i.type === "execCommand" ||
-                      i.type === "toolCall"
+                  const commands = turn.items.filter((item) =>
+                    ["commandExecution", "command", "execCommand", "toolCall"].includes(item.type)
                   );
-                  const fileChanges = turn.items.filter(
-                    (i) =>
-                      i.type === "fileChange" ||
-                      i.type === "diff" ||
-                      i.type === "file_change"
+                  const fileChanges = turn.items.filter((item) =>
+                    ["fileChange", "diff", "file_change"].includes(item.type)
                   );
-                  const planItems = turn.items.filter((i) => i.type === "plan");
-                  const mcpCalls = turn.items.filter(
-                    (i) =>
-                      i.type === "mcpToolCall" ||
-                      i.type === "mcpCall" ||
-                      i.type === "mcp"
+                  const meaningfulThoughts = thoughts.filter(
+                    (item) => extractReasoningText(item).trim().length > 0
                   );
-                  const dynamicToolItems = turn.items.filter((i) =>
-                    [
-                      "dynamicToolCall",
-                      "functionCallOutput",
-                      "collabAgentToolCall",
-                      "subAgentActivity",
-                    ].includes(i.type)
-                  );
-                  const webSearches = turn.items.filter(
-                    (i) => i.type === "webSearch" || i.type === "search"
-                  );
-                  const imageViews = turn.items.filter(
-                    (i) =>
-                      i.type === "imageView" ||
-                      i.type === "imageGeneration" ||
-                      i.type === "image"
-                  );
-                  const systemEvents = turn.items.filter(
-                    (i) =>
-                      i.type === "contextCompaction" ||
-                      i.type === "enteredReviewMode" ||
-                      i.type === "exitedReviewMode" ||
-                      i.type === "hookPrompt" ||
-                      i.type === "sleep"
-                  );
+
                   const knownNonMessageTypes = new Set([
                     "userMessage",
                     "user",
@@ -4791,28 +5189,16 @@ export const App: React.FC = () => {
                       i.type === "assistant" ||
                       !knownNonMessageTypes.has(i.type)
                   );
-                  const meaningfulThoughts = thoughts.filter(
-                    (t) => extractReasoningText(t).trim().length > 0
-                  );
+
                   const isCurrentlyThinking =
                     isStreaming &&
                     turn.status === "running" &&
                     thoughts.length > 0 &&
                     messages.length === 0;
-                  const shouldShowThoughts =
-                    meaningfulThoughts.length > 0 || isCurrentlyThinking;
                   const isExpanded = expandedThoughts[turn.id] ?? false;
 
                   const hasAssistantContent =
-                    meaningfulThoughts.length > 0 ||
-                    commands.length > 0 ||
-                    fileChanges.length > 0 ||
-                    planItems.length > 0 ||
-                    mcpCalls.length > 0 ||
-                    dynamicToolItems.length > 0 ||
-                    webSearches.length > 0 ||
-                    imageViews.length > 0 ||
-                    messages.length > 0 ||
+                    turn.items.some(item => item.type !== "userMessage" && item.type !== "user") ||
                     (isStreaming && turn.status === "running");
 
                   const effectiveUserItems = userItems.length > 1
@@ -4820,195 +5206,10 @@ export const App: React.FC = () => {
                     : userItems;
                   const userText = effectiveUserItems.map(extractTextFromItem).join("\n\n");
                   const isBookmarked = (activeThreadId && bookmarkedTurnIds[activeThreadId]?.includes(turn.id)) || false;
-
-                  return (
-                    <React.Fragment key={turn.id}>
-                      {userItems.length > 0 && (
-                        <div
-                          id={`turn-user-${turn.id}`}
-                          className="user-turn-block"
-                        >
-                          <div className="user-bubble">{userText}</div>
-                          <div className="turn-action-buttons-row right">
-                            <button
-                              type="button"
-                              className={`turn-action-mini-btn ${isBookmarked ? "active" : ""}`}
-                              title={isBookmarked ? "取消收藏此提问" : "收藏/书签此提问 (Bookmark)"}
-                              onClick={() => toggleBookmark(turn.id)}
-                            >
-                              {isBookmarked ? "★ 已收藏" : "☆ 收藏"}
-                            </button>
-                            <button
-                              type="button"
-                              className="turn-action-mini-btn"
-                              title="复制提问内容"
-                              onClick={async () => {
-                                await copyThreadText(userText, "✓ 已复制提问内容");
-                              }}
-                            >
-                              📋 复制
-                            </button>
-                            <button
-                              type="button"
-                              className="turn-action-mini-btn"
-                              title="重新填入输入框编辑"
-                              onClick={() => {
-                                setPromptInput(userText);
-                                composerTextareaRef.current?.focus();
-                                showAppToast("已载入输入框以重新编辑", "info");
-                              }}
-                            >
-                              ✏️ 编辑
-                            </button>
-                            <button
-                              type="button"
-                              className="turn-action-mini-btn"
-                              title="从当前回合分叉出会话 (Fork)"
-                              onClick={() => handleForkChat(turn.id)}
-                            >
-                              🌿 从此分叉
-                            </button>
-                          </div>
-                        </div>
-                      )}
-
-                      {hasAssistantContent && (
-                        <div
-                          id={`turn-${turn.id}`}
-                          className="assistant-turn-block"
-                        >
-                          <div className="assistant-header">
-                            <OpenAIIcon size={17} />
-                            <span>Codex</span>
-                            {turn.status === "running" && isStreaming ? (
-                              <span
-                                style={{
-                                  fontSize: 11,
-                                  color: "var(--accent-blue, #3b82f6)",
-                                  fontWeight: 500,
-                                }}
-                              >
-                                · 进行中 (Working...)
-                              </span>
-                            ) : turn.status === "interrupted" ? (
-                              <span
-                                style={{
-                                  fontSize: 11,
-                                  color: "var(--text-tertiary)",
-                                  fontWeight: 500,
-                                }}
-                              >
-                                · 已暂停 (Paused)
-                              </span>
-                            ) : turn.status === "failed" ? (
-                              <span
-                                style={{
-                                  fontSize: 11,
-                                  color: "#ef4444",
-                                  fontWeight: 500,
-                                }}
-                              >
-                                · 异常 (Failed)
-                              </span>
-                            ) : turn.durationMs ? (
-                              <span
-                                style={{
-                                  fontSize: 11,
-                                  color: "var(--text-tertiary)",
-                                  fontWeight: 400,
-                                }}
-                              >
-                                · {(turn.durationMs / 1000).toFixed(1)}s
-                              </span>
-                            ) : null}
-                          </div>
-
-                      {shouldShowThoughts && (
-                        <div className="thought-activity-container">
-                          <button
-                            type="button"
-                            className={`thought-workflow-btn ${isExpanded ? "expanded" : ""}`}
-                            onClick={() =>
-                              setExpandedThoughts((prev) => ({
-                                ...prev,
-                                [turn.id]: !isExpanded,
-                              }))
-                            }
-                          >
-                            <span className={`thought-workflow-title ${isCurrentlyThinking ? "anim-shimmer-pulse" : ""}`}>
-                              {isCurrentlyThinking
-                                ? "思考中"
-                                : (() => {
-                                    const dur = turn.durationMs
-                                      ? turn.durationMs / 1000
-                                      : turn.completedAt && turn.startedAt
-                                      ? (turn.completedAt - turn.startedAt) / 1000
-                                      : null;
-                                    return dur !== null
-                                      ? `用时 ${formatHermesDuration(dur)}`
-                                      : "已思考一段时间";
-                                  })()}
-                            </span>
-                            <span className={`thought-workflow-arrow ${isExpanded ? "rotated" : ""}`}>
-                              <ChevronDownIcon size={14} />
-                            </span>
-                          </button>
-                          {isExpanded && (
-                            <div className="thought-workflow-body">
-                              <MarkdownView
-                                content={
-                                  meaningfulThoughts.length > 0
-                                    ? meaningfulThoughts.map(extractReasoningText).join("\n\n")
-                                    : "正在深入思考中…"
-                                }
-                                onOpenFile={(filePath) => {
-                                  setSelectedPreviewFile(filePath);
-                                  setShowRightDrawer(true);
-                                }}
-                              />
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {commands.map((cmd, cIdx) => {
-                        const outText = cmd.aggregatedOutput ?? cmd.output ?? "";
-                        return (
-                          <div key={cmd.id || cIdx} className="command-exec-card">
-                            <div className="command-exec-header">
-                              <div className="command-exec-title">
-                                <TerminalIcon size={13} />
-                                <span>
-                                  ${" "}
-                                  {Array.isArray(cmd.command)
-                                    ? cmd.command.join(" ")
-                                    : cmd.command || "command"}
-                                </span>
-                              </div>
-                              <span
-                                style={{
-                                  fontSize: 11,
-                                  color:
-                                    cmd.exitCode === 0 ? "#22c55e" : "#eab308",
-                                }}
-                              >
-                                {cmd.exitCode !== undefined &&
-                                cmd.exitCode !== null
-                                  ? `exit ${cmd.exitCode}`
-                                  : cmd.status === "failed" ? "失败"
-                                  : cmd.status === "declined" ? "已拒绝"
-                                  : cmd.status === "completed" ? "完成"
-                                  : "运行中..."}
-                              </span>
-                            </div>
-                            {outText && (
-                              <div className="command-exec-body">{outText}</div>
-                            )}
-                          </div>
-                        );
-                      })}
-
-                      {fileChanges.map((fc, fIdx) => {
+                  const renderCommand = (cmd: TurnItem, cIdx: number) => (
+                        <CommandExecutionCard key={cmd.id || cIdx} item={cmd} turnStatus={turn.status} />
+                      );
+                  const renderFileChange = (fc: TurnItem, fIdx: number) => {
                         const changes: any[] = Array.isArray(fc.changes)
                           ? fc.changes
                           : [];
@@ -5069,9 +5270,8 @@ export const App: React.FC = () => {
                             </div>
                           </div>
                         );
-                      })}
-
-                      {planItems.map((plan, pIdx) => (
+                      };
+                  const renderPlan = (plan: TurnItem, pIdx: number) => (
                         <div key={plan.id || pIdx} className="plan-inline-card">
                           <div className="plan-inline-header">
                             <BrainIcon size={13} />
@@ -5081,66 +5281,11 @@ export const App: React.FC = () => {
                             {extractTextFromItem(plan)}
                           </pre>
                         </div>
-                      ))}
-
-                      {mcpCalls.map((call, mcIdx) => {
-                        const status = String(call.status || "completed");
-                        const errText = call.error && typeof call.error === "object"
-                          ? (call.error.message || JSON.stringify(call.error, null, 2))
-                          : call.error ? String(call.error) : "";
-                        let resultText = "";
-                        if (typeof call.result === "string") {
-                          resultText = call.result;
-                        } else if (call.result && typeof call.result === "object") {
-                          if (Array.isArray(call.result.content)) {
-                            resultText = call.result.content
-                              .map((c: any) => (typeof c === "string" ? c : c?.text || (c?.type ? `[${c.type}]` : "")))
-                              .filter(Boolean)
-                              .join("\n");
-                          }
-                          if (!resultText && call.result.structuredContent) {
-                            resultText = typeof call.result.structuredContent === "string"
-                              ? call.result.structuredContent
-                              : JSON.stringify(call.result.structuredContent, null, 2);
-                          }
-                          if (!resultText) {
-                            resultText = JSON.stringify(call.result, null, 2);
-                          }
-                        }
-                        return (
-                          <div key={call.id || mcIdx} className="mcp-call-card">
-                            <div className="mcp-call-header">
-                              <SparklesIcon size={13} />
-                              <span className="mcp-call-tool">
-                                {call.server ? `${call.server} · ` : ""}
-                                {call.tool || "MCP 工具"}
-                              </span>
-                              <span className={`mcp-call-status status-${status}`}>
-                                {status === "inProgress"
-                                  ? "调用中…"
-                                  : status === "failed"
-                                  ? "失败"
-                                  : status === "completed"
-                                  ? "完成"
-                                  : status}
-                              </span>
-                            </div>
-                            {status === "inProgress" && call.progressMessage && (
-                              <div className="mcp-call-progress">{call.progressMessage}</div>
-                            )}
-                            {resultText && (
-                              <pre className="mcp-call-result">{resultText}</pre>
-                            )}
-                            {errText && (
-                              <div className="mcp-call-error">{errText}</div>
-                            )}
-                          </div>
-                        );
-                      })}
-
-                      <ToolCallCards items={dynamicToolItems} onOpenThread={selectThread} />
-
-                      {webSearches.map((search, wsIdx) => {
+                      );
+                  const renderMcpCall = (call: TurnItem, mcIdx: number) => (
+                    <McpCallCard key={call.id || mcIdx} item={call} />
+                  );
+                  const renderWebSearch = (search: TurnItem, wsIdx: number) => {
                         const results: any[] = Array.isArray(search.results)
                           ? search.results
                           : [];
@@ -5159,23 +5304,12 @@ export const App: React.FC = () => {
                             ))}
                           </div>
                         );
-                      })}
-
-                      {imageViews.map((img, imIdx) => {
+                      };
+                  const renderImage = (img: TurnItem, imIdx: number) => {
+                        if (img.type === "imageGeneration") return <GeneratedImageCard
+                          key={img.id || imIdx} item={img} turnStatus={turn.status}
+                          onOpenFile={path => { setSelectedPreviewFile(path); setShowRightDrawer(true); }} />;
                         const path = img.path || img.savedPath || "";
-                        const isGen = img.type === "imageGeneration";
-                        const isFailed = img.status === "failed" || Boolean(img.failure);
-                        const isInProgress = img.status === "inProgress";
-                        const failMsg = img.failure && typeof img.failure === "object"
-                          ? (img.failure.message || "生成失败")
-                          : typeof img.failure === "string" ? img.failure : "";
-                        const titleText = !isGen
-                          ? "查看图片"
-                          : isFailed
-                          ? `图片生成失败${failMsg ? `：${failMsg}` : ""}`
-                          : isInProgress
-                          ? "图片生成中…"
-                          : "生成图片";
                         return (
                           <div
                             key={img.id || imIdx}
@@ -5187,15 +5321,14 @@ export const App: React.FC = () => {
                               }
                             }}
                           >
-                            <span>🖼️ {titleText}</span>
+                            <span>🖼️ 查看图片</span>
                             <span className="mono ellipsis" title={path}>
                               {path.split(/[/\\]/).pop() || ""}
                             </span>
                           </div>
                         );
-                      })}
-
-                      {systemEvents.map((evt, sIdx) => {
+                      };
+                  const renderSystemEvent = (evt: TurnItem, sIdx: number) => {
                         let text = "⚡ 系统事件";
                         if (evt.type === "contextCompaction") text = "🗜️ 上下文已自动压缩整理 (Context compacted)";
                         else if (evt.type === "enteredReviewMode") text = "🔍 已进入代码审查模式 (Entered review mode)";
@@ -5207,9 +5340,8 @@ export const App: React.FC = () => {
                             {text}
                           </div>
                         );
-                      })}
-
-                      {messages.map((msg, mIdx) => (
+                      };
+                  const renderMessage = (msg: TurnItem, mIdx: number) => (
                         <MarkdownView
                           key={msg.id || mIdx}
                           content={extractTextFromItem(msg)}
@@ -5222,7 +5354,182 @@ export const App: React.FC = () => {
                             setShowRightDrawer(true);
                           }}
                         />
-                      ))}
+                      );
+                  const renderThought = (item: TurnItem) => {
+                    const meaningfulThoughts = extractReasoningText(item).trim() ? [item] : [];
+                    const shouldShowThoughts = meaningfulThoughts.length > 0 || isCurrentlyThinking;
+                    return (shouldShowThoughts && (
+                        <div className="thought-activity-container">
+                          <button
+                            type="button"
+                            className={`thought-workflow-btn ${isExpanded ? "expanded" : ""}`}
+                            onClick={() =>
+                              setExpandedThoughts((prev) => ({
+                                ...prev,
+                                [turn.id]: !isExpanded,
+                              }))
+                            }
+                          >
+                            <span className={`thought-workflow-title ${isCurrentlyThinking ? "anim-shimmer-pulse" : ""}`}>
+                              {isCurrentlyThinking
+                                ? "思考中"
+                                : (() => {
+                                    const dur = turn.durationMs
+                                      ? turn.durationMs / 1000
+                                      : turn.completedAt && turn.startedAt
+                                      ? (turn.completedAt - turn.startedAt) / 1000
+                                      : null;
+                                    return dur !== null
+                                      ? `用时 ${formatHermesDuration(dur)}`
+                                      : "已思考一段时间";
+                                  })()}
+                            </span>
+                            <span className={`thought-workflow-arrow ${isExpanded ? "rotated" : ""}`}>
+                              <ChevronDownIcon size={14} />
+                            </span>
+                          </button>
+                          {isExpanded && (
+                            <div className="thought-workflow-body">
+                              <MarkdownView
+                                content={
+                                  meaningfulThoughts.length > 0
+                                    ? meaningfulThoughts.map(extractReasoningText).join("\n\n")
+                                    : "正在深入思考中…"
+                                }
+                                onOpenFile={(filePath) => {
+                                  setSelectedPreviewFile(filePath);
+                                  setShowRightDrawer(true);
+                                }}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      ));
+                  };
+
+                  return (
+                    <React.Fragment key={turn.id}>
+                      {userItems.length > 0 && (
+                        <div
+                          id={`turn-user-${turn.id}`}
+                          className="user-turn-block"
+                        >
+                          <UserMessageBubble text={userText} onOpenFile={(filePath) => {
+                            setSelectedPreviewFile(filePath);
+                            setShowRightDrawer(true);
+                          }} />
+                          <div className="turn-action-buttons-row right">
+                            <button
+                              type="button"
+                              className={`turn-action-mini-btn ${isBookmarked ? "active" : ""}`}
+                              title={isBookmarked ? "取消收藏此提问" : "收藏/书签此提问 (Bookmark)"}
+                              onClick={() => toggleBookmark(turn.id)}
+                            >
+                              <Bookmark size={14} aria-hidden="true" />{isBookmarked ? "已收藏" : "收藏"}
+                            </button>
+                            <button
+                              type="button"
+                              className="turn-action-mini-btn"
+                              title="复制提问内容"
+                              aria-label="复制消息"
+                              onClick={async () => {
+                                await copyThreadText(userText, "✓ 已复制提问内容");
+                              }}
+                            >
+                              <CopyIcon size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              className="turn-action-mini-btn"
+                              title="重新填入输入框编辑"
+                              onClick={() => {
+                                setPromptInput(userText);
+                                composerTextareaRef.current?.focus();
+                                showAppToast("已载入输入框以重新编辑", "info");
+                              }}
+                            >
+                              <PencilIcon size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              className="turn-action-mini-btn"
+                              title="从当前回合分叉出会话 (Fork)"
+                              onClick={() => handleForkChat(turn.id)}
+                            >
+                              <ForkIcon size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {hasAssistantContent && (
+                        <div
+                          id={`turn-${turn.id}`}
+                          className="assistant-turn-block"
+                        >
+                          <div className="assistant-header">
+                            <OpenAIIcon size={17} />
+                            <span>Codex</span>
+                            {turn.status === "running" && isStreaming ? (
+                              <span
+                                style={{
+                                  fontSize: "calc(11px * var(--font-ui-scale, 1))",
+                                  color: "var(--accent-blue, #3b82f6)",
+                                  fontWeight: 500,
+                                }}
+                              >
+                                · 进行中 (Working...)
+                              </span>
+                            ) : turn.status === "interrupted" ? (
+                              <span
+                                style={{
+                                  fontSize: "calc(11px * var(--font-ui-scale, 1))",
+                                  color: "var(--text-tertiary)",
+                                  fontWeight: 500,
+                                }}
+                              >
+                                · 已暂停 (Paused)
+                              </span>
+                            ) : turn.status === "failed" ? (
+                              <span
+                                style={{
+                                  fontSize: "calc(11px * var(--font-ui-scale, 1))",
+                                  color: "#ef4444",
+                                  fontWeight: 500,
+                                }}
+                              >
+                                · 异常 (Failed)
+                              </span>
+                            ) : turn.durationMs ? (
+                              <span
+                                style={{
+                                  fontSize: "calc(11px * var(--font-ui-scale, 1))",
+                                  color: "var(--text-tertiary)",
+                                  fontWeight: 400,
+                                }}
+                              >
+                                · {(turn.durationMs / 1000).toFixed(1)}s
+                              </span>
+                            ) : null}
+                          </div>
+
+                      {turn.items.map((item, index) => {
+                        let content: React.ReactNode;
+                        switch (item.type) {
+                          case "userMessage": case "user": return null;
+                          case "reasoning": case "thought": content = renderThought(item); break;
+                          case "commandExecution": case "command": case "execCommand": case "toolCall": content = renderCommand(item, index); break;
+                          case "fileChange": case "diff": case "file_change": content = renderFileChange(item, index); break;
+                          case "plan": content = renderPlan(item, index); break;
+                          case "mcpToolCall": case "mcpCall": case "mcp": content = renderMcpCall(item, index); break;
+                          case "dynamicToolCall": case "functionCallOutput": case "collabAgentToolCall": case "subAgentActivity": content = <ToolCallCards items={[item]} onOpenThread={selectThread} />; break;
+                          case "webSearch": case "search": content = renderWebSearch(item, index); break;
+                          case "imageView": case "imageGeneration": case "image": content = renderImage(item, index); break;
+                          case "contextCompaction": case "enteredReviewMode": case "exitedReviewMode": case "hookPrompt": case "sleep": content = renderSystemEvent(item, index); break;
+                          default: content = renderMessage(item, index);
+                        }
+                        return <React.Fragment key={item.id || index}>{content}</React.Fragment>;
+                      })}
 
                       {messages.length > 0 && !(isStreaming && turn.id === activeTurnId) && (
                         <div className="turn-action-buttons-row left">
@@ -5274,7 +5581,7 @@ export const App: React.FC = () => {
 
                       {/* Live streaming status shimmer (Issue #2 Bug 5) */}
                       {isStreaming && turn.status === "running" && (
-                        <div className="live-running-indicator" style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", color: "var(--text-secondary)", fontSize: 13 }}>
+                        <div className="live-running-indicator" style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}>
                           <span className="status-spinner-dot" style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--accent-blue, #3b82f6)", display: "inline-block", animation: "pulse 1.2s infinite" }} />
                           <span>
                             {commands.some((c) => c.exitCode === undefined || c.exitCode === null)
@@ -5322,13 +5629,7 @@ export const App: React.FC = () => {
                 )}
 
                 {/* Pending Server Requests: approvals / permissions / user input / option picker */}
-                <ApprovalCenter
-                  requests={activePendingRequests}
-                  responseStates={requestResponses}
-                  onRefresh={refreshPendingRequests}
-                  onRespond={handleRespondServerRequest}
-                  onRespondError={handleRespondServerRequestError}
-                />
+                {!showPopoutModal && renderApprovals()}
               </div>
             </div>
 
@@ -5394,60 +5695,20 @@ export const App: React.FC = () => {
                 />
               )}
 
-                <ComposerBox
-                  variant="thread"
-                  promptInput={promptInput}
-                  onPromptInputChange={setPromptInput}
-                  onSendMessage={handleSendMessage}
-                  onInterruptTurn={handleInterruptTurn}
-                  onQueueMessage={handleEnqueueFollowup}
-                  isStreaming={isStreaming}
-                  workspaces={workspaces}
-                  activeWorkspace={activeWorkspace}
-                  onSelectWorkspace={handleSelectWorkspace}
-                  onPickNewFolder={handlePickNewFolder}
-                  gitStatus={gitStatus}
-                  gitBranches={gitBranches}
-                  onSwitchBranch={handleSwitchBranch}
-                  onCreateBranch={handleCreateBranch}
-                  useWorktree={useWorktree}
-                  onSetUseWorktree={setUseWorktree}
-                  permissionMode={permissionMode}
-                  onSelectPermissionMode={setPermissionMode}
-                  models={models}
-                  selectedModelId={selectedModelId}
-                  defaultModelSelected={defaultModelSelected}
-                  onSelectModel={handleSelectComposerModel}
-                  reasoningEffort={reasoningEffort}
-                  onSelectReasoningEffort={setReasoningEffort}
-                  fastMode={fastMode}
-                  onToggleFastMode={() => setFastMode((v) => !v)}
-                  planMode={planMode}
-                  onTogglePlanMode={handleTogglePlanMode}
-                  attachedFiles={attachedFiles}
-                  onAttachFiles={handleAttachFiles}
-                  onAppshot={handleAppshot}
-                  onAddAttachedFiles={(newFiles) =>
-                    setAttachedFiles((prev) => mergeAttachmentItems(prev, newFiles))
-                  }
-                  onRemoveAttachedFile={handleRemoveAttachedFile}
-                  workspaceFiles={workspaceFiles}
-                  workspaceFileHits={workspaceFileHits}
-                  skills={skills}
-                  onSlashAction={handleSlashAction}
-                  textareaRef={composerTextareaRef}
-                />
+                {!showPopoutModal && renderThreadComposer()}
               </div>
             </div>
           </>
         )}
 
         {/* Bottom Interactive PTY Terminal Dock */}
-        {showTerminal && (
+        {terminalWasOpened.current && (
           <TerminalDock
+            open={showTerminal}
             cwd={activeWorkspace?.path || ""}
             onClose={() => setShowTerminal(false)}
             pendingCommand={pendingTermCommand}
+            onCommandHandled={handleTerminalCommandHandled}
           />
         )}
       </main>
@@ -5455,15 +5716,19 @@ export const App: React.FC = () => {
       {/* ── 4. Right-Hand Diff & File Review Workbench ── */}
       <DiffDrawer
         open={showRightDrawer}
+        gitPreferences={gitPreferencesState.preferences}
+        gitPreferencesReady={gitPreferencesState.ready}
+        recordedTurnDiff={turnDiffFiles.map(file => file.diff).join("\n\n")}
         cwd={activeWorkspace?.path || ""}
-        gitStatus={gitStatus}
-        branches={gitBranches}
+        gitStatus={gitContextCwd === activeWorkspace?.path ? gitStatus : null}
+        branches={gitContextCwd === activeWorkspace?.path ? gitBranches : []}
         turns={turns}
         onRefreshGit={refreshGitStatus}
         onClose={() => setShowRightDrawer(false)}
         selectedPreviewFile={selectedPreviewFile}
         onSelectPreviewFile={setSelectedPreviewFile}
         onSendReviewComment={(comment) => handleSendMessage(comment)}
+        reviewTarget={reviewDiffTarget}
         initialTab={initialWorkbenchTab}
         initialSidePrompt={sideChatPrompt}
         onOpenTerminal={() => setShowTerminal((v) => !v)}
@@ -5495,20 +5760,29 @@ export const App: React.FC = () => {
       {/* ── 5b. Hotkey Window / Quick Chat Popout Modal (Ctrl+Alt+O) ── */}
       {showKeyboardShortcuts && (
         <KeyboardShortcutsDialog
+          bindings={keyboardState.bindings}
           onClose={() => setShowKeyboardShortcuts(false)}
           hasActiveThread={activeThreadObj !== null}
           hasWorkspace={activeWorkspace?.path != null}
         />
       )}
       {showPopoutModal && (
-        <div className="hotkey-modal-overlay" onClick={() => setShowPopoutModal(false)}>
+        <div className="hotkey-modal-overlay" onClick={() => { setShowPopoutModal(false); setComposerFocusRequest((request) => request + 1); }}>
           <div className="hotkey-modal-box" onClick={(e) => e.stopPropagation()}>
             <HotkeyWindow
-              initialThreadId={activeThreadId}
-              onClose={() => setShowPopoutModal(false)}
-              onOpenMainApp={(tid) => {
+              threadId={activeThreadId}
+              turns={turns}
+              isStreaming={isStreaming}
+              loading={loadingThread}
+              error={historyError}
+              composer={renderThreadComposer()}
+              approvals={renderApprovals()}
+              onNewChat={() => { void startNewThread(); }}
+              onClose={() => { setShowPopoutModal(false); setComposerFocusRequest((request) => request + 1); }}
+              onOpenMainApp={() => {
                 setShowPopoutModal(false);
-                if (tid) void selectThread(tid);
+                setActiveRoute(activeThreadId ? "thread" : "home");
+                setComposerFocusRequest((request) => request + 1);
               }}
             />
           </div>
@@ -5517,11 +5791,12 @@ export const App: React.FC = () => {
 
       {/* ── 6. Floating Mini Virtual Pet Companion Widget ── */}
       <MiniPetWidget
-        visible={petVisible}
-        species={selectedPetSpecies}
-        scale={petScale}
+        visible={petVisible && petPreferencesState.ready}
+        species={petPreferencesState.preferences.selectedAvatarId ?? "codex"}
+        size={petPreferencesState.preferences.petSize}
+        visibility={petPreferencesState.preferences.petVisibility}
         isStreaming={isStreaming}
-        installedPets={installedPets}
+        installedPets={petPreferencesState.pets}
         onQuickPrompt={(prompt) => handleSendMessage(prompt)}
         onOpenSettings={(slug) => {
           setSettingsInitialSection((slug as SettingsSectionSlug) || "pets");
@@ -5533,13 +5808,14 @@ export const App: React.FC = () => {
       {/* ── 7. Global Ctrl+K Quick Search & Command Palette Modal ── */}
       <QuickSearchModal
         open={showQuickSearch}
+        mode={quickSearchMode}
         threads={threads}
-        workspaceFileHits={workspaceFileHits}
         skills={skills}
         projectScripts={projectScripts}
         workspacePath={activeWorkspace?.path}
         onClose={() => setShowQuickSearch(false)}
         onSelectThread={selectThread}
+        onSearchFiles={() => setQuickSearchMode("files")}
         onSelectFile={(filePath) => {
           setSelectedPreviewFile(filePath);
           setShowRightDrawer(true);
@@ -5560,6 +5836,10 @@ export const App: React.FC = () => {
           setShowTerminal(true);
           setPendingTermCommand({ id: Date.now(), command: cmd });
         }}
+        onSelectSlashCommand={(command) => {
+          if (command.action) handleSlashAction(command.action);
+          if (command.insertText) setPromptInput(command.insertText);
+        }}
       />
 
       {/* ── 8. Thread Goal Editor Modal ── */}
@@ -5572,6 +5852,12 @@ export const App: React.FC = () => {
       />
 
       {/* ── 9. Global In-App Toast Banner ── */}
+      {shareThreadId && <ShareThreadDialog
+        key={shareThreadId}
+        threadId={shareThreadId}
+        title={threads.find(thread => thread.id === shareThreadId)?.name ?? undefined}
+        onClose={() => setShareThreadId(null)}
+      />}
       {appToast && (
         <div className={`app-global-toast ${appToast.type || "info"}`}>
           <span>{appToast.message}</span>

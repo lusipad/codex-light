@@ -20,7 +20,7 @@
   background: transparent;
   color: var(--text-secondary);
   font-family: inherit;
-  font-size: 15px;
+  font-size: calc(15px * var(--font-ui-scale, 1));
   line-height: 1;
   cursor: pointer;
   user-select: none;
@@ -96,7 +96,7 @@
   background: transparent;
   color: #e5e5e5;
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--text-sm);
   line-height: 1.35;
   text-align: left;
   cursor: pointer;
@@ -154,7 +154,7 @@
   flex: 0 0 auto;
   margin-left: auto;
   color: #737373;
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--font-ui-scale, 1));
   font-family: var(--font-mono);
   white-space: nowrap;
 }
@@ -200,7 +200,7 @@
 .thread-actions-label {
   padding: 5px 10px;
   color: var(--text-tertiary);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-ui-scale, 1));
 }
 
 .thread-actions-separator {
@@ -213,7 +213,7 @@
 .thread-actions-empty {
   padding: 8px 10px;
   color: var(--text-tertiary);
-  font-size: 12px;
+  font-size: var(--text-xs);
   text-align: center;
 }
 

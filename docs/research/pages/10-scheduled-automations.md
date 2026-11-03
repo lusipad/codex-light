@@ -2,6 +2,8 @@
 
 日期：2026-10-27。状态：调研完成，准备先红回归与代码实现。
 
+2026-11-01 复核：以下是历史调研和实现声明，不能作为当前官方全页通过依据。CRUD 异常、防重入、列表请求和延时代执行缺陷按 [10A 合同](../../antigravity/specs/10-automation-actions.md)修正；最新范围和证据见 [10A 记录](../../antigravity/runs/20261101-codex-automation-actions.md)。本地 scheduler/目标分类、真实文件/原生/像素仍待对照。
+
 ## 1. 范围与证据
 
 本单元覆盖计划任务与持续目标的核心管理与调度执行：
@@ -63,3 +65,7 @@
    - 原生 Release 编译完成（退出码 0）；
    - 产物归档于 `dist-artifacts/10-scheduled-automations-20261027/CodexNative.exe`；
    - SHA-256：`9481A98A39B5E0136A6141D7BCB4F76EF3B95F17265C6B1A436E4B8A60A9BE65`（记录于 `.ref/parity/10/build-scheduled-automations.json`）。
+
+## 2026-11-03 10B终态纠偏
+
+[官方执行合同](../../antigravity/specs/10-run-completion.md)与[限定验收记录](../../antigravity/acceptance/10B.md)为当前结论。原实现把turn/start响应当completed；本轮修为匹配thread/turn真实终态，失败/中断/未知不会成功。事件早于回包及按startedAt归并已有生产回归；持久声明失败不执行，终态保存失败仅重试磁盘，自动扫描不重跑unknown。完整隔离标准、全Rust229、原生包通过，195输入稳定；无真实模型任务端到端、原生或官方像素证据。完整automation_runs持久历史/身份/查阅策略仍未实现，不能由本轮推导整页一致。

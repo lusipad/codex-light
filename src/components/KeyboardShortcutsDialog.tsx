@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { availableShortcuts } from "../shortcuts";
+import { availableShortcuts, matchShortcut, type KeyBinding } from "../shortcuts";
 import { CloseIcon } from "./Icons";
 import "./KeyboardShortcutsDialog.css";
 
@@ -7,7 +7,8 @@ export const KeyboardShortcutsDialog: React.FC<{
   onClose: () => void;
   hasActiveThread: boolean;
   hasWorkspace: boolean;
-}> = ({ onClose, hasActiveThread, hasWorkspace }) => {
+  bindings?: KeyBinding[];
+}> = ({ onClose, hasActiveThread, hasWorkspace, bindings = [] }) => {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
@@ -18,7 +19,7 @@ export const KeyboardShortcutsDialog: React.FC<{
     { key: "panels", label: "面板" },
     { key: "composer", label: "通用" },
   ] as const;
-  const matches = availableShortcuts({ hasActiveThread, hasWorkspace }).filter(item =>
+  const matches = availableShortcuts({ hasActiveThread, hasWorkspace }, bindings).filter(item =>
     !search || `${item.id} ${item.label} ${item.keys}`.toLocaleLowerCase().includes(search)
   );
 
@@ -51,7 +52,7 @@ export const KeyboardShortcutsDialog: React.FC<{
           event.preventDefault();
           if (query) setQuery("");
           else onClose();
-        } else if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key === "/") {
+        } else if (matchShortcut(event.nativeEvent, bindings) === "show-keyboard-shortcuts") {
           event.preventDefault();
           onClose();
         }

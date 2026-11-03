@@ -6,10 +6,11 @@ import { PetSprite } from "./PetSprite";
 export interface MiniPetWidgetProps {
   visible: boolean;
   species: PetSpeciesId;
-  scale?: number;
+  size?: number;
+  visibility?: "always-visible" | "on-demand";
   isStreaming: boolean;
   installedPets?: InstalledPetItem[];
-  onQuickPrompt: (prompt: string) => void;
+  onQuickPrompt: (prompt: string) => Promise<boolean | undefined> | boolean | undefined;
   onOpenSettings?: (section: string) => void;
   onClose: () => void;
 }
@@ -17,7 +18,8 @@ export interface MiniPetWidgetProps {
 export const MiniPetWidget: React.FC<MiniPetWidgetProps> = ({
   visible,
   species,
-  scale = 1.0,
+  size = 112,
+  visibility = "always-visible",
   isStreaming,
   installedPets = [],
   onQuickPrompt,
@@ -26,38 +28,70 @@ export const MiniPetWidget: React.FC<MiniPetWidgetProps> = ({
 }) => {
   const [expanded, setExpanded] = useState(false);
   const [promptText, setPromptText] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const pending = useRef(false);
+  const generation = useRef(0);
+  const draftRef = useRef(promptText);
+  draftRef.current = promptText;
+
+  useEffect(() => () => { generation.current++; }, []);
+  useEffect(() => {
+    if (!visible) { setExpanded(false); return; }
+    if (visibility !== "on-demand") return;
+    const outside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) onClose();
+    };
+    document.addEventListener("click", outside);
+    return () => document.removeEventListener("click", outside);
+  }, [visible, visibility, onClose]);
 
   // Focus input whenever Quick Chat expands
   useEffect(() => {
     if (expanded) {
-      setTimeout(() => inputRef.current?.focus(), 50);
+      const timer = setTimeout(() => inputRef.current?.focus(), 50);
+      return () => clearTimeout(timer);
     }
   }, [expanded]);
 
   if (!visible) return null;
 
   const currentInstalled = installedPets.find((p) => p.id === species);
-  const fallbackMeta =
-    PET_SPECIES_LIST.find((p) => p.id === species) || PET_SPECIES_LIST[0];
+  const fallbackMeta = PET_SPECIES_LIST.find((p) => p.id === species);
 
-  const petName = currentInstalled?.displayName || fallbackMeta.name;
+  const petName = currentInstalled?.displayName || fallbackMeta?.name || "宠物不可用";
   const hasCustomSprite = Boolean(currentInstalled?.spritesheetDataUrl);
 
-  const baseWidth = Math.round(68 * Math.max(0.6, Math.min(scale, 1.8)));
+  const baseWidth = Math.round(Math.max(80, Math.min(size, 224)));
 
-  const handleSend = () => {
+  const handleSend = async () => {
     const trimmed = promptText.trim();
-    if (!trimmed) return;
-    onQuickPrompt(trimmed);
-    setPromptText("");
-    setExpanded(false);
+    if (!trimmed || pending.current) return;
+    pending.current = true;
+    const version = generation.current;
+    setSending(true); setSendError(null);
+    try {
+      const accepted = await onQuickPrompt(trimmed);
+      if (version !== generation.current) return;
+      if (accepted === true) {
+        if (draftRef.current === promptText) { setPromptText(""); setExpanded(false); }
+      } else {
+        setSendError("发送结果未确认，输入已保留。请在会话中核对后再重试。");
+      }
+    } catch (error) {
+      if (version === generation.current) setSendError(`发送失败，输入已保留：${String(error)}`);
+    } finally {
+      if (version === generation.current) { pending.current = false; setSending(false); }
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      handleSend();
+      if (!e.repeat) void handleSend();
     } else if (e.key === "Escape") {
       setExpanded(false);
     }
@@ -65,6 +99,7 @@ export const MiniPetWidget: React.FC<MiniPetWidgetProps> = ({
 
   return (
     <div
+      ref={containerRef}
       className="codex-mascot-container"
       data-testid="codex-mascot-container"
     >
@@ -94,7 +129,7 @@ export const MiniPetWidget: React.FC<MiniPetWidgetProps> = ({
               type="button"
               className={`quick-chat-send-btn ${promptText.trim() ? "ready" : "disabled"}`}
               onClick={handleSend}
-              disabled={!promptText.trim()}
+              disabled={!promptText.trim() || sending}
               title="Send message (Enter)"
             >
               <SendArrowIcon size={14} />
@@ -123,6 +158,7 @@ export const MiniPetWidget: React.FC<MiniPetWidgetProps> = ({
               <XIcon size={13} />
             </button>
           </div>
+          {sendError && <span role="alert">{sendError}</span>}
         </div>
       )}
 
@@ -153,6 +189,7 @@ export const MiniPetWidget: React.FC<MiniPetWidgetProps> = ({
           {hasCustomSprite ? (
             <PetSprite
               spritesheetUrl={currentInstalled!.spritesheetDataUrl}
+              spriteVersionNumber={currentInstalled!.spriteVersionNumber}
               size={baseWidth}
               state={isStreaming ? "running" : "idle"}
               respondToHover
@@ -160,7 +197,7 @@ export const MiniPetWidget: React.FC<MiniPetWidgetProps> = ({
             />
           ) : (
             <div className="codex-avatar-fallback">
-              <span className="avatar-fallback-emoji">{fallbackMeta.emoji}</span>
+              {fallbackMeta ? <span className="avatar-fallback-emoji">{fallbackMeta.emoji}</span> : <span role="alert">宠物不可用</span>}
             </div>
           )}
           <div className="codex-mascot-ground-shadow" />

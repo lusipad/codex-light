@@ -2,6 +2,10 @@
 
 日期：2026-10-27。状态：调研完成，代码实现与全量验证通过。
 
+2026-11-01 复核：旧源码字符串检查未证明真实详情/写入行为；发现 file_read 未注册、plugin/skill/read 响应字段错配、同名项目技能关联用户技能、失败后伪造YAML等缺陷。本轮 [13A合同](../../antigravity/specs/13-skill-actions.md)及[实现证据](../../antigravity/runs/20261101-codex-skill-actions.md)修正真实读取、路径匹配、写锁/草稿保护和严格ID/来源校验。以下旧“已解决/通过”属于历史；完整官方/原生/像素仍未验。
+
+2026-11-03：按[13B合同](../../antigravity/specs/13-next-closure.md)补官方托管推荐目录、缓存/错误来源、完整技能目录用户/项目安装及精确协议发现。见[13B验收记录](../../antigravity/acceptance/13B.md)及.ref/parity/13/actual/13B/build-manifest.json。两版CLI已真实验证项目.codex/skills和用户同名技能分别发现；不把目录夹具探针当原生安装集成，官方外网/原生/像素仍未验。
+
 ## 1. 范围与证据
 
 本单元覆盖技能列表、启停、创建、编辑与目录直达等核心功能：

@@ -25,12 +25,15 @@ import {
   WifiOff,
 } from "lucide-react";
 import { callAppServer, tauriInvoke } from "../bridge";
+import { readFileText } from "../fsClient";
 import {
   CodexConfigOverview,
   McpServerConfigItem,
   SkillInfoItem,
 } from "../types";
 import "./PluginsMarket.css";
+import { PluginPreparationPanel } from "./PluginPreparationPanel";
+import { RecommendedSkillsPanel } from "./RecommendedSkillsPanel";
 import {
   AppInfo,
   InstalledApp,
@@ -39,6 +42,8 @@ import {
   PluginErrorKind,
   PluginInstalledResponse,
   PluginListResponse,
+  PluginInstallResponse,
+  PluginProtocolError,
   PluginMarketplaceEntry,
   PluginSummary,
   SkillMetadata,
@@ -73,6 +78,9 @@ import {
 interface SkillsMcpViewProps {
   activeWorkspaceRoot: string;
   initialTab?: SubTab;
+  initialPluginMode?: "installed" | "browse";
+  manageOnly?: boolean;
+  onBrowseDirectory?: (tab: "plugins" | "skills") => void;
   onStartSkillCreatorSession?: (prompt: string) => void;
 }
 
@@ -115,14 +123,7 @@ function buildSkillRows(
       localByPath.set(normalizePathKey(local.path), local);
     }
     for (const remote of remoteSkills) {
-      let match = localByPath.get(normalizePathKey(remote.path)) ?? null;
-      if (!match && !remote.pluginId) {
-        match =
-          localSkills.find(
-            (local) =>
-              local.id === remote.name || local.name === remote.name
-          ) ?? null;
-      }
+      const match = remote.pluginId ? null : localByPath.get(normalizePathKey(remote.path)) ?? null;
       if (match) usedLocalPaths.add(match.path);
       rows.push({
         key: remote.path || remote.name,
@@ -189,33 +190,12 @@ function pluginKey(
   return `${marketplace.name}::${plugin.id}`;
 }
 
-function patchMarketplacePlugin(
-  data: PluginListResponse | null,
-  marketplaceName: string,
-  pluginId: string,
-  installed: boolean
-): PluginListResponse | null {
-  if (!data) return data;
-  return {
-    ...data,
-    marketplaces: data.marketplaces.map((marketplace) =>
-      marketplace.name !== marketplaceName
-        ? marketplace
-        : {
-            ...marketplace,
-            plugins: marketplace.plugins.map((plugin) =>
-              plugin.id === pluginId
-                ? { ...plugin, installed, enabled: installed ? plugin.enabled : false }
-                : plugin
-            ),
-          }
-    ),
-  };
-}
-
 export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   activeWorkspaceRoot,
   initialTab,
+  initialPluginMode = "installed",
+  manageOnly = false,
+  onBrowseDirectory,
   onStartSkillCreatorSession,
 }) => {
   const [subTab, setSubTab] = useState<SubTab>(initialTab || "plugins");
@@ -233,6 +213,16 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     useState<SkillMetadata | null>(null);
   const [newSkillId, setNewSkillId] = useState<string>("");
   const [skillContent, setSkillContent] = useState<string>("");
+  const [skillContentError, setSkillContentError] = useState<string | null>(null);
+  const [skillContentLoading, setSkillContentLoading] = useState(false);
+  const [localSkillsError, setLocalSkillsError] = useState<string | null>(null);
+  const skillSelectionRequestRef = useRef(0);
+  const skillSelectionRef = useRef<SkillRow | null>(null);
+  const skillEditorRevisionRef = useRef(0);
+  const remoteSkillsRequestRef = useRef(0);
+  const localSkillsRequestRef = useRef(0);
+  const skillWritePendingRef = useRef(false);
+  const [skillWriteBusy, setSkillWriteBusy] = useState(false);
 
   // MCP State (kept from the previous implementation)
   const [config, setConfig] = useState<CodexConfigOverview | null>(null);
@@ -257,16 +247,25 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   const [installedLoading, setInstalledLoading] = useState(false);
   const [installedError, setInstalledError] = useState<ViewError | null>(null);
   const [pluginMode, setPluginMode] = useState<"installed" | "browse">(
-    "installed"
+    manageOnly ? "installed" : initialPluginMode
   );
   const [browseData, setBrowseData] = useState<PluginListResponse | null>(null);
   const [browseLoading, setBrowseLoading] = useState(false);
   const [browseError, setBrowseError] = useState<ViewError | null>(null);
+  const [browseVisibleCount, setBrowseVisibleCount] = useState(50);
   const browseLoadedRef = useRef(false);
   const browseLoadingRef = useRef(false);
   const installedLoadingRef = useRef(false);
   const remoteSkillsLoadingRef = useRef(false);
-  const [busyPluginId, setBusyPluginId] = useState<string | null>(null);
+  const [busyPluginIds, setBusyPluginIds] = useState<Set<string>>(new Set());
+  const pluginActionRef = useRef(new Set<string>());
+  const pluginContextRef = useRef(0);
+  const pluginMountedRef = useRef(true);
+  const [pluginPreparations, setPluginPreparations] = useState<Record<string, { name: string; result: PluginInstallResponse; attempt: number }>>({});
+  const preparationAttemptRef = useRef(0);
+  const [unconfirmedInstalls, setUnconfirmedInstalls] = useState<Set<string>>(new Set());
+  const installedRequestRef = useRef(0);
+  const browseRequestRef = useRef(0);
   const [detailKey, setDetailKey] = useState<string | null>(null);
   const [detail, setDetail] = useState<PluginDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -323,64 +322,135 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
 
   const workspaceCwds = (): string[] | undefined =>
     activeWorkspaceRoot ? [activeWorkspaceRoot] : undefined;
+  const isPluginContextCurrent = (context: number) =>
+    pluginMountedRef.current && context === pluginContextRef.current;
+
+  useEffect(() => {
+    pluginMountedRef.current = true;
+    ++pluginContextRef.current;
+    ++installedRequestRef.current;
+    ++browseRequestRef.current;
+    ++detailRequestRef.current;
+    installedLoadingRef.current = false;
+    browseLoadingRef.current = false;
+    browseLoadedRef.current = false;
+    detailContextRef.current = null;
+    setInstalledData(null);
+    setInstalledError(null);
+    setInstalledLoading(false);
+    setBrowseData(null);
+    setBrowseError(null);
+    setBrowseLoading(false);
+    setDetailKey(null);
+    setDetail(null);
+    setDetailError(null);
+    setDetailLoading(false);
+    setPluginPreparations({});
+    setUnconfirmedInstalls(new Set());
+    ++skillSelectionRequestRef.current;
+    ++remoteSkillsRequestRef.current;
+    ++localSkillsRequestRef.current;
+    ++skillEditorRevisionRef.current;
+    skillSelectionRef.current = null;
+    remoteSkillsLoadingRef.current = false;
+    setSkills([]);
+    setRemoteSkills(null);
+    setRemoteSkillsError(null);
+    setRemoteSkillsLoading(false);
+    setLocalSkillsError(null);
+    setSelectedSkill(null);
+    setSelectedSkillKey(null);
+    setReadOnlyRemoteSkill(null);
+    setNewSkillId("");
+    setSkillContent("");
+    setSkillContentError(null);
+    setSkillContentLoading(false);
+    return () => {
+      pluginMountedRef.current = false;
+      ++pluginContextRef.current;
+    };
+  }, [activeWorkspaceRoot]);
 
   // ───────────────────────────────────────────────────────────────────────────
   // Data loaders
   // ───────────────────────────────────────────────────────────────────────────
 
-  const loadInstalledPlugins = async (options: { silent?: boolean } = {}) => {
+  const loadInstalledPlugins = async (options: { silent?: boolean; confirmInstallResult?: boolean } = {}) => {
+    if (!pluginMountedRef.current) return;
     if (!options.silent && installedLoadingRef.current) return;
+    const context = pluginContextRef.current;
+    const request = ++installedRequestRef.current;
+    const isCurrent = () => isPluginContextCurrent(context) && request === installedRequestRef.current;
     installedLoadingRef.current = true;
     if (!options.silent) setInstalledLoading(true);
     setInstalledError(null);
     try {
       const res = await listInstalledPlugins(workspaceCwds());
-      setInstalledData(res);
+      if (isCurrent()) {
+        setInstalledData(res);
+        if (options.confirmInstallResult && !res.marketplaceLoadErrors?.length) {
+          setUnconfirmedInstalls(new Set());
+        }
+      }
     } catch (err) {
-      setInstalledError(toViewError(err));
+      if (isCurrent()) setInstalledError(toViewError(err));
     } finally {
-      installedLoadingRef.current = false;
-      if (!options.silent) setInstalledLoading(false);
+      if (isCurrent()) {
+        installedLoadingRef.current = false;
+        setInstalledLoading(false);
+      }
     }
   };
 
-  /**
-   * Browse listing: `plugin/list` with `marketplaceKinds: ["local"]`.
-   * Fetched at most once per session (cached in state) to avoid repeating even
-   * the ~139 KB local payload; never omits marketplaceKinds (that would be ~17 MB).
-   */
+  // The server controls catalog availability; render a bounded set of cards.
   const loadBrowsePlugins = async (force = false) => {
+    if (!pluginMountedRef.current) return;
     if (browseLoadedRef.current && !force) return;
     if (browseLoadingRef.current && !force) return;
+    const context = pluginContextRef.current;
+    const request = ++browseRequestRef.current;
+    const isCurrent = () => isPluginContextCurrent(context) && request === browseRequestRef.current;
     browseLoadingRef.current = true;
     setBrowseLoading(true);
     setBrowseError(null);
     try {
-      const res = await listMarketplacePlugins(workspaceCwds());
+      const res = await listMarketplacePlugins(workspaceCwds(), force);
+      if (!isCurrent()) return;
       setBrowseData(res);
+      setBrowseVisibleCount(50);
       browseLoadedRef.current = true;
     } catch (err) {
-      setBrowseError(toViewError(err));
+      if (isCurrent()) setBrowseError(toViewError(err));
     } finally {
-      browseLoadingRef.current = false;
-      setBrowseLoading(false);
+      if (isCurrent()) {
+        browseLoadingRef.current = false;
+        setBrowseLoading(false);
+      }
     }
   };
 
   const loadRemoteSkills = async (forceReload = false) => {
+    if (!pluginMountedRef.current) return;
     if (remoteSkillsLoadingRef.current && !forceReload) return;
+    const context = pluginContextRef.current;
+    const request = ++remoteSkillsRequestRef.current;
+    const isCurrent = () => isPluginContextCurrent(context) && request === remoteSkillsRequestRef.current;
     remoteSkillsLoadingRef.current = true;
     setRemoteSkillsLoading(true);
     setRemoteSkillsError(null);
     try {
       const res = await listSkills(workspaceCwds(), forceReload);
-      setRemoteSkills(flattenSkills(res).skills);
+      if (isCurrent()) setRemoteSkills(flattenSkills(res).skills);
     } catch (err) {
-      setRemoteSkillsError(toViewError(err));
-      setRemoteSkills(null);
+      if (isCurrent()) {
+        setRemoteSkillsError(toViewError(err));
+        setRemoteSkills(null);
+      }
     } finally {
-      remoteSkillsLoadingRef.current = false;
-      setRemoteSkillsLoading(false);
+      if (isCurrent()) {
+        remoteSkillsLoadingRef.current = false;
+        setRemoteSkillsLoading(false);
+      }
     }
   };
 
@@ -414,19 +484,23 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   };
 
   const refreshAll = async () => {
+    const context = pluginContextRef.current;
+    const request = ++localSkillsRequestRef.current;
     try {
       const localSkills = await tauriInvoke<SkillInfoItem[]>(
         "skills_list_local",
         { workspaceRoot: activeWorkspaceRoot }
       );
-      setSkills(localSkills);
-      if (localSkills.length > 0 && !selectedSkill) {
-        setSelectedSkill(localSkills[0]);
-        setSelectedSkillKey(localSkills[0].path);
-        setNewSkillId(localSkills[0].id);
-        setSkillContent(localSkills[0].content);
+      if (isPluginContextCurrent(context) && request === localSkillsRequestRef.current) {
+        setSkills(localSkills);
+        setLocalSkillsError(null);
       }
-    } catch {}
+    } catch (error) {
+      if (isPluginContextCurrent(context) && request === localSkillsRequestRef.current) {
+        setLocalSkillsError(errorSummary(error));
+      }
+    }
+    if (!isPluginContextCurrent(context)) return;
 
     try {
       const cfg = await tauriInvoke<CodexConfigOverview>("config_read");
@@ -447,7 +521,8 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       setMcpLiveStatus([]);
     }
 
-    await Promise.allSettled([loadInstalledPlugins(), loadRemoteSkills()]);
+    if (!isPluginContextCurrent(context)) return;
+    await Promise.allSettled([loadInstalledPlugins({ confirmInstallResult: true }), loadRemoteSkills()]);
     if (subTab === "apps" && appsLoadedRef.current) {
       await loadApps(true);
     }
@@ -466,7 +541,11 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       loadBrowsePlugins();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subTab, pluginMode]);
+  }, [subTab, pluginMode, activeWorkspaceRoot]);
+
+  useEffect(() => {
+    setBrowseVisibleCount(50);
+  }, [searchQuery]);
 
   // ───────────────────────────────────────────────────────────────────────────
   // Plugin actions
@@ -479,11 +558,15 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   ) => {
     const key = pluginKey(plugin, marketplace);
     if (detailKey === key && !options.reload) {
+      ++detailRequestRef.current;
+      detailContextRef.current = null;
       setDetailKey(null);
       setDetail(null);
       setDetailError(null);
+      setDetailLoading(false);
       return;
     }
+    const context = pluginContextRef.current;
     const requestId = ++detailRequestRef.current;
     detailContextRef.current = { plugin, marketplace };
     setDetailKey(key);
@@ -492,13 +575,13 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     setDetailLoading(true);
     try {
       const res = await readPlugin(pluginRefFor(plugin, marketplace));
-      if (detailRequestRef.current !== requestId) return;
+      if (!isPluginContextCurrent(context) || detailRequestRef.current !== requestId) return;
       setDetail(res);
     } catch (err) {
-      if (detailRequestRef.current !== requestId) return;
+      if (!isPluginContextCurrent(context) || detailRequestRef.current !== requestId) return;
       setDetailError(toViewError(err));
     } finally {
-      if (detailRequestRef.current === requestId) setDetailLoading(false);
+      if (isPluginContextCurrent(context) && detailRequestRef.current === requestId) setDetailLoading(false);
     }
   };
 
@@ -506,11 +589,22 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     plugin: PluginSummary,
     marketplace: PluginMarketplaceEntry
   ) => {
-    setBusyPluginId(plugin.id);
+    if (pluginActionRef.current.has(plugin.id)) return;
+    if (unconfirmedInstalls.has(plugin.id) || plugin.installed ||
+        installedData?.marketplaces.some(market => market.plugins.some(item => item.id === plugin.id && item.installed))) return;
+    if (plugin.availability === "DISABLED_BY_ADMIN" || plugin.installPolicy === "NOT_AVAILABLE") return;
+    pluginActionRef.current.add(plugin.id);
+    setBusyPluginIds(new Set(pluginActionRef.current));
+    const context = pluginContextRef.current;
     try {
       const res = await installPlugin(pluginRefFor(plugin, marketplace));
+      if (!isPluginContextCurrent(context)) return;
       const name = pluginDisplayName(plugin);
       if (res.appsNeedingAuth.length > 0) {
+        const attempt = ++preparationAttemptRef.current;
+        setPluginPreparations(current => ({
+          ...current, [plugin.id]: { name, result: res, attempt },
+        }));
         notify(
           `✓ 已安装 ${name}；${res.appsNeedingAuth
             .map((app) => app.name)
@@ -519,43 +613,61 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       } else {
         notify(`✓ 已安装 ${name}`);
       }
-      setBrowseData((prev) =>
-        patchMarketplacePlugin(prev, marketplace.name, plugin.id, true)
-      );
-      await loadInstalledPlugins({ silent: true });
+      resetBrowseCache();
+      await Promise.all([
+        loadInstalledPlugins({ silent: true }),
+        pluginMode === "browse" ? loadBrowsePlugins(true) : Promise.resolve(),
+      ]);
+      if (!isPluginContextCurrent(context)) return;
       await loadRemoteSkills(true);
     } catch (err) {
-      notify(`安装失败：${errorSummary(err)}`, "error");
+      if (isPluginContextCurrent(context)) {
+        const uncertain = err instanceof PluginProtocolError;
+        if (uncertain) {
+          setUnconfirmedInstalls(current => new Set(current).add(plugin.id));
+          notify(`安装结果无法确认：${errorSummary(err)}；正在重新读取安装状态`, "error");
+          await loadInstalledPlugins({ silent: true, confirmInstallResult: true });
+        } else {
+          notify(`安装失败：${errorSummary(err)}`, "error");
+        }
+      }
     } finally {
-      setBusyPluginId(null);
+      pluginActionRef.current.delete(plugin.id);
+      if (pluginMountedRef.current) setBusyPluginIds(new Set(pluginActionRef.current));
     }
   };
 
   const handleUninstallPlugin = async (
-    plugin: PluginSummary,
-    marketplace?: PluginMarketplaceEntry
+    plugin: PluginSummary
   ) => {
+    if (pluginActionRef.current.has(plugin.id) || plugin.installPolicy === "INSTALLED_BY_DEFAULT") return;
     const name = pluginDisplayName(plugin);
-    const warning =
-      plugin.installPolicy === "INSTALLED_BY_DEFAULT"
-        ? `「${name}」是默认安装的内置插件，卸载可能影响内置功能。确定继续吗？`
-        : `确定要卸载插件「${name}」吗？`;
+    const warning = `确定要卸载插件「${name}」吗？`;
     if (!confirm(warning)) return;
-    setBusyPluginId(plugin.id);
+    pluginActionRef.current.add(plugin.id);
+    setBusyPluginIds(new Set(pluginActionRef.current));
+    const context = pluginContextRef.current;
     try {
       await uninstallPlugin(plugin.id);
+      if (!isPluginContextCurrent(context)) return;
+      setPluginPreparations(current => {
+        const next = { ...current };
+        delete next[plugin.id];
+        return next;
+      });
       notify(`已卸载 ${name}`);
-      if (marketplace) {
-        setBrowseData((prev) =>
-          patchMarketplacePlugin(prev, marketplace.name, plugin.id, false)
-        );
-      }
-      await loadInstalledPlugins({ silent: true });
+      resetBrowseCache();
+      await Promise.all([
+        loadInstalledPlugins({ silent: true }),
+        pluginMode === "browse" ? loadBrowsePlugins(true) : Promise.resolve(),
+      ]);
+      if (!isPluginContextCurrent(context)) return;
       await loadRemoteSkills(true);
     } catch (err) {
-      notify(`卸载失败：${errorSummary(err)}`, "error");
+      if (isPluginContextCurrent(context)) notify(`卸载失败：${errorSummary(err)}`, "error");
     } finally {
-      setBusyPluginId(null);
+      pluginActionRef.current.delete(plugin.id);
+      if (pluginMountedRef.current) setBusyPluginIds(new Set(pluginActionRef.current));
     }
   };
 
@@ -564,7 +676,10 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   // ───────────────────────────────────────────────────────────────────────────
 
   const resetBrowseCache = () => {
+    ++browseRequestRef.current;
     browseLoadedRef.current = false;
+    browseLoadingRef.current = false;
+    setBrowseLoading(false);
     setBrowseData(null);
   };
 
@@ -658,77 +773,132 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   // ───────────────────────────────────────────────────────────────────────────
 
   const handleSaveSkill = async () => {
+    if (skillWritePendingRef.current) return;
     if (!newSkillId.trim() || !skillContent.trim()) return;
     if (readOnlyRemoteSkill) {
       notify("该技能由插件提供，仅支持启用/禁用", "error");
       return;
     }
+    skillWritePendingRef.current = true;
+    setSkillWriteBusy(true);
+    const context = pluginContextRef.current;
+    const revision = skillEditorRevisionRef.current;
     try {
       const saved = await tauriInvoke<SkillInfoItem>("skill_save_or_install", {
         id: newSkillId.trim(),
         content: skillContent,
         sourceDir: null,
       });
+      if (!isPluginContextCurrent(context)) return;
       await loadRemoteSkills(true);
+      if (!isPluginContextCurrent(context)) return;
       await refreshAll();
-      setSelectedSkill(saved);
-      setSelectedSkillKey(saved.path);
-      setReadOnlyRemoteSkill(null);
+      if (!isPluginContextCurrent(context)) return;
+      if (revision === skillEditorRevisionRef.current) {
+        setSelectedSkill(saved);
+        setSelectedSkillKey(saved.path);
+        setReadOnlyRemoteSkill(null);
+      }
       notify(`✓ 已保存技能 ${saved.id}`);
     } catch (err: any) {
-      notify(`保存技能失败: ${err?.message || String(err)}`, "error");
+      if (isPluginContextCurrent(context)) notify(`保存技能失败: ${err?.message || String(err)}`, "error");
+    } finally {
+      skillWritePendingRef.current = false;
+      if (pluginMountedRef.current) setSkillWriteBusy(false);
     }
   };
 
   const handleInstallSeedSkill = async (skill: SkillInfoItem) => {
+    if (skillWritePendingRef.current) return;
+    skillWritePendingRef.current = true;
+    setSkillWriteBusy(true);
+    const context = pluginContextRef.current;
     try {
       await tauriInvoke<SkillInfoItem>("skill_save_or_install", {
         id: skill.id,
         content: skill.content,
         sourceDir: skill.dirPath,
       });
+      if (!isPluginContextCurrent(context)) return;
       await loadRemoteSkills(true);
+      if (!isPluginContextCurrent(context)) return;
       await refreshAll();
-      notify(`✓ 已安装技能 ${skill.name}`);
+      if (isPluginContextCurrent(context)) notify(`✓ 已安装技能 ${skill.name}`);
     } catch (err: any) {
-      notify(`安装技能失败: ${err?.message || String(err)}`, "error");
+      if (isPluginContextCurrent(context)) notify(`安装技能失败: ${err?.message || String(err)}`, "error");
+    } finally {
+      skillWritePendingRef.current = false;
+      if (pluginMountedRef.current) setSkillWriteBusy(false);
     }
   };
 
   const handleDeleteSkill = async (skill: SkillInfoItem) => {
+    if (skillWritePendingRef.current) return;
     if (!confirm(`确定要卸载技能 ${skill.name} 吗？`)) return;
+    skillWritePendingRef.current = true;
+    setSkillWriteBusy(true);
+    const context = pluginContextRef.current;
+    const revision = skillEditorRevisionRef.current;
     try {
       await tauriInvoke("skill_delete", { id: skill.id });
-      setSelectedSkill(null);
-      setSelectedSkillKey(null);
-      setReadOnlyRemoteSkill(null);
+      if (!isPluginContextCurrent(context)) return;
+      if (revision === skillEditorRevisionRef.current && selectedSkill?.path === skill.path) {
+        ++skillSelectionRequestRef.current;
+        skillSelectionRef.current = null;
+        setSelectedSkill(null);
+        setSelectedSkillKey(null);
+        setReadOnlyRemoteSkill(null);
+        setNewSkillId("");
+        setSkillContent("");
+        setSkillContentError(null);
+        setSkillContentLoading(false);
+      }
       await refreshAll();
-      notify(`已卸载技能 ${skill.name}`);
+      if (isPluginContextCurrent(context)) notify(`已卸载技能 ${skill.name}`);
     } catch (err: any) {
-      notify(`卸载技能失败: ${err?.message || String(err)}`, "error");
+      if (isPluginContextCurrent(context)) notify(`卸载技能失败: ${err?.message || String(err)}`, "error");
+    } finally {
+      skillWritePendingRef.current = false;
+      if (pluginMountedRef.current) setSkillWriteBusy(false);
     }
   };
 
   const handleToggleSkill = async (row: SkillRow) => {
+    if (skillWritePendingRef.current) return;
     if (row.enabled === undefined || !row.remote) return;
+    skillWritePendingRef.current = true;
+    setSkillWriteBusy(true);
     setSkillToggleBusy(row.key);
+    const context = pluginContextRef.current;
     try {
       await writeSkillEnabled({
         enabled: !row.enabled,
         path: row.remote.path || undefined,
         name: row.remote.path ? undefined : row.remote.name,
       });
+      if (!isPluginContextCurrent(context)) return;
       notify(`✓ 已${row.enabled ? "禁用" : "启用"}技能 ${row.name}`);
       await loadRemoteSkills(true);
     } catch (err) {
-      notify(`切换技能状态失败：${errorSummary(err)}`, "error");
+      if (isPluginContextCurrent(context)) notify(`切换技能状态失败：${errorSummary(err)}`, "error");
     } finally {
-      setSkillToggleBusy(null);
+      skillWritePendingRef.current = false;
+      if (pluginMountedRef.current) {
+        setSkillWriteBusy(false);
+        setSkillToggleBusy(null);
+      }
     }
   };
 
   const handleSelectSkillRow = async (row: SkillRow) => {
+    const request = ++skillSelectionRequestRef.current;
+    ++skillEditorRevisionRef.current;
+    const context = pluginContextRef.current;
+    const isCurrent = () => isPluginContextCurrent(context) && request === skillSelectionRequestRef.current;
+    skillSelectionRef.current = row;
     setSelectedSkillKey(row.key);
+    setSkillContentError(null);
+    setSkillContentLoading(false);
     if (row.local) {
       setSelectedSkill(row.local);
       setReadOnlyRemoteSkill(null);
@@ -742,17 +912,19 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
           ? row.remote.name.split(":").pop() || row.remote.name
           : row.remote?.name || row.name
       );
-      setSkillContent("正在加载技能内容...");
+      setSkillContent("");
+      setSkillContentLoading(true);
+      let readError: unknown = new Error("此技能没有可读取的内容路径");
       if (row.remote?.path) {
         try {
-          const res = await tauriInvoke<any>("file_read", { path: row.remote.path });
-          const content = res?.content ?? res?.text ?? "";
-          if (content) {
-            setSkillContent(content);
-            return;
-          }
-        } catch {}
+          const content = await readFileText(row.remote.path);
+          if (!isCurrent()) return;
+          setSkillContent(content);
+          setSkillContentLoading(false);
+          return;
+        } catch (error) { readError = error; }
       }
+      if (!isCurrent()) return;
       if (row.remote?.pluginId) {
         try {
           const parts = row.remote.pluginId.split("@");
@@ -761,17 +933,27 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
             remoteMarketplaceName: parts[1] || "",
             skillName: row.remote.name,
           });
-          if (skillRes?.content) {
-            setSkillContent(skillRes.content);
+          if (!isCurrent()) return;
+          if (typeof skillRes?.contents === "string") {
+            setSkillContent(skillRes.contents);
+            setSkillContentLoading(false);
             return;
           }
-        } catch {}
+          readError = new Error("服务未返回技能内容");
+        } catch (error) { readError = error; }
       }
-      setSkillContent(`---\nname: ${row.name}\ndescription: ${row.description}\nscope: ${row.scope}\n---\n\n${row.description || "暂无详细文档"}`);
+      if (!isCurrent()) return;
+      setSkillContentError(errorSummary(readError));
+      setSkillContentLoading(false);
     }
   };
 
   const handleStartNewSkill = () => {
+    ++skillSelectionRequestRef.current;
+    ++skillEditorRevisionRef.current;
+    skillSelectionRef.current = null;
+    setSkillContentError(null);
+    setSkillContentLoading(false);
     setSelectedSkill(null);
     setSelectedSkillKey(null);
     setReadOnlyRemoteSkill(null);
@@ -904,6 +1086,13 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       sum + (marketplace.plugins ?? []).filter((plugin) => !plugin.installed).length,
     0
   );
+  let remainingBrowseCards = browseVisibleCount;
+  const visibleBrowseGroups = browseGroups.map((group) => {
+    const plugins = group.plugins.slice(0, remainingBrowseCards);
+    remainingBrowseCards = Math.max(0, remainingBrowseCards - plugins.length);
+    return { ...group, plugins };
+  }).filter((group) => group.plugins.length > 0);
+  const matchingBrowseCount = browseGroups.reduce((sum, group) => sum + group.plugins.length, 0);
 
   const skillRows = buildSkillRows(skills, remoteSkills);
   const filteredSkillRows = skillRows.filter(
@@ -1060,6 +1249,19 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
                 </li>
               ))}
             </ul>
+            {summary.installed && <button type="button" className="secondary-btn-sm"
+              disabled={busyPluginIds.has(summary.id)}
+              onClick={() => {
+                const attempt = ++preparationAttemptRef.current;
+                setPluginPreparations(current => ({
+                  ...current, [summary.id]: {
+                    name: pluginDisplayName(summary), attempt,
+                    result: { authPolicy: summary.authPolicy, appsNeedingAuth: detail.apps },
+                  },
+                }));
+              }}>
+              查看应用连接
+            </button>}
           </div>
         )}
         {detail.hooks.length > 0 && (
@@ -1117,13 +1319,16 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   ) => {
     const key = pluginKey(plugin, marketplace);
     const isOpen = detailKey === key;
-    const busy = busyPluginId === plugin.id;
+    const busy = busyPluginIds.has(plugin.id);
     const version = pluginVersion(plugin);
     const category = pluginCategory(plugin);
     const developer = pluginDeveloper(plugin);
+    const installed = plugin.installed ||
+      installedData?.marketplaces.some(market => market.plugins.some(item => item.id === plugin.id && item.installed));
     const installBlocked =
       plugin.availability === "DISABLED_BY_ADMIN" ||
-      plugin.installPolicy === "NOT_AVAILABLE";
+      plugin.installPolicy === "NOT_AVAILABLE" ||
+      installed || unconfirmedInstalls.has(plugin.id);
     return (
       <div className="item-card pm-plugin-card" key={key}>
         <div className="item-card-main">
@@ -1159,7 +1364,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
               <button
                 type="button"
                 className="secondary-btn-sm"
-                style={{ padding: "1px 6px", fontSize: 11 }}
+                style={{ padding: "1px 6px", fontSize: "calc(11px * var(--font-ui-scale, 1))" }}
                 title={`在系统文件管理器中打开目录: ${pluginSourceDetail(plugin)}`}
                 onClick={(e) => {
                   e.stopPropagation();
@@ -1188,7 +1393,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
               className="primary-btn-sm"
               disabled={busy || installBlocked}
               title={
-                installBlocked
+                installed ? "插件已安装" : unconfirmedInstalls.has(plugin.id) ? "请先刷新确认安装状态" : installBlocked
                   ? "该插件当前不可安装（管理员禁用或市场未提供安装）"
                   : "安装插件（plugin/install）"
               }
@@ -1199,22 +1404,22 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
               ) : (
                 <Download size={13} />
               )}{" "}
-              {busy ? "安装中…" : "安装"}
+              {busy ? "安装中…" : installed ? "已安装" : unconfirmedInstalls.has(plugin.id) ? "待确认" : "安装"}
             </button>
           ) : (
             <button
               type="button"
               className="secondary-btn-sm"
-              disabled={busy}
-              title="卸载插件（plugin/uninstall）"
-              onClick={() => handleUninstallPlugin(plugin, marketplace)}
+              disabled={busy || plugin.installPolicy === "INSTALLED_BY_DEFAULT"}
+              title={plugin.installPolicy === "INSTALLED_BY_DEFAULT" ? "由管理员安装" : "卸载插件"}
+              onClick={() => handleUninstallPlugin(plugin)}
             >
               {busy ? (
                 <Loader2 size={13} className="pm-spin" />
               ) : (
                 <Trash2 size={13} />
               )}{" "}
-              卸载
+              {plugin.installPolicy === "INSTALLED_BY_DEFAULT" ? "由管理员安装" : "卸载"}
             </button>
           )}
         </div>
@@ -1313,10 +1518,9 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     <div className="panel-page">
       <div className="panel-page-header">
         <div>
-          <h2>插件、技能与 MCP 中心 (`/plugins`)</h2>
+          <h2>{manageOnly ? "插件" : "插件、技能与 MCP"}</h2>
           <p className="subtitle">
-            管理 Codex 插件与市场、`~/.codex/skills` 技能库、`config.toml` 自定义 MCP
-            服务器；插件 / 市场 / 应用数据来自 app-server 真实协议（plugin/*、marketplace/*、app/*、skills/*）。
+            管理插件、技能和 MCP。
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -1327,6 +1531,11 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
+          {manageOnly && onBrowseDirectory && (
+            <button type="button" className="secondary-btn" onClick={() => onBrowseDirectory(subTab === "skills" ? "skills" : "plugins")}>
+              浏览目录
+            </button>
+          )}
           <button
             type="button"
             className="primary-btn"
@@ -1349,6 +1558,24 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
           {toast.text}
         </div>
       )}
+      {subTab === "plugins" && Object.entries(pluginPreparations).map(([id, preparation]) =>
+        !busyPluginIds.has(id) && <PluginPreparationPanel
+          key={`${activeWorkspaceRoot}:${id}:${preparation.attempt}`}
+          name={preparation.name}
+          result={preparation.result}
+          onRefresh={async () => {
+            const context = pluginContextRef.current;
+            await loadInstalledPlugins({ silent: true, confirmInstallResult: true });
+            if (!isPluginContextCurrent(context)) return;
+            resetBrowseCache();
+            if (pluginMode === "browse") await loadBrowsePlugins(true);
+            if (isPluginContextCurrent(context)) await loadRemoteSkills(true);
+          }}
+        />
+      )}
+      {subTab === "plugins" && unconfirmedInstalls.size > 0 && <p role="alert">
+        部分插件的安装结果尚未确认，请刷新安装状态后再重试。
+      </p>}
 
       {/* 5-Tab Bar */}
       <div className="sub-tabs" style={{ marginBottom: 16 }}>
@@ -1378,6 +1605,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
           <Server size={15} />
           <span>MCP 服务器 ({config?.mcpServers?.length || 0})</span>
         </button>
+        {!manageOnly && <>
         <button
           type="button"
           className={`sub-tab ${subTab === "apps" ? "active" : ""}`}
@@ -1402,9 +1630,10 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
           <ShoppingBag size={15} />
           <span>市场 ({installedMarketplaces.length})</span>
         </button>
+        </>}
       </div>
 
-      {/* TAB 1: PLUGINS (plugin/installed + plugin/list[local] browse) */}
+      {/* TAB 1: PLUGINS */}
       {subTab === "plugins" && (
         <div className="pm-stack">
           <div className="pm-toolbar">
@@ -1416,6 +1645,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
               >
                 <Package size={13} /> 已安装 ({installedCount})
               </button>
+              {!manageOnly && (
               <button
                 type="button"
                 className={`pm-segment-btn ${pluginMode === "browse" ? "active" : ""}`}
@@ -1423,21 +1653,22 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
               >
                 <Store size={13} /> 浏览市场
               </button>
+              )}
             </div>
             <div className="pm-toolbar-right">
-              <span className="pm-hint">
-                {pluginMode === "installed"
-                  ? "数据来源：plugin/installed"
-                  : "数据来源：plugin/list · marketplaceKinds:[\"local\"]（仅本地市场，约 139KB；不会请求 17MB 远程目录）"}
-              </span>
-              {pluginMode === "installed" && (
+              {(
                 <button
                   type="button"
                   className="secondary-btn-sm"
-                  onClick={() => loadInstalledPlugins()}
-                  disabled={installedLoading}
+                  onClick={() => pluginMode === "installed"
+                    ? loadInstalledPlugins({ confirmInstallResult: true })
+                    : Promise.all([
+                      loadBrowsePlugins(true),
+                      unconfirmedInstalls.size ? loadInstalledPlugins({ silent: true, confirmInstallResult: true }) : Promise.resolve(),
+                    ])}
+                  disabled={pluginMode === "installed" ? installedLoading : browseLoading}
                 >
-                  {installedLoading ? (
+                  {(pluginMode === "installed" ? installedLoading : browseLoading) ? (
                     <Loader2 size={13} className="pm-spin" />
                   ) : (
                     <RefreshCw size={13} />
@@ -1471,7 +1702,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
               {!installedLoading && !installedError && !installedData &&
                 renderLoadingRow("准备读取已安装插件…")}
               {!isInstalledBusy && installedError &&
-                renderLoadError(installedError, "已安装插件", () => loadInstalledPlugins())}
+                renderLoadError(installedError, "已安装插件", () => loadInstalledPlugins({ confirmInstallResult: true }))}
               {!isInstalledBusy && !installedError && installedData && (
                 installedCount === 0 ? (
                   <div className="empty-hint">
@@ -1490,15 +1721,15 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
 
           {pluginMode === "browse" && (
             <>
-              {isBrowseBusy && renderLoadingRow("正在加载本地市场目录（plugin/list · 仅一次）…")}
+              {isBrowseBusy && renderLoadingRow("正在加载插件目录…")}
               {!browseLoading && !browseError && !browseData &&
-                renderLoadingRow("准备加载本地市场目录…")}
+                renderLoadingRow("准备加载插件目录…")}
               {!isBrowseBusy && browseError &&
                 renderLoadError(browseError, "市场目录", () => loadBrowsePlugins(true))}
               {!isBrowseBusy && !browseError && browseData && (
                 browseCount === 0 ? (
                   <div className="empty-hint">
-                    本地市场目录中没有可安装的插件。
+                    当前目录中没有可安装的插件。
                   </div>
                 ) : browseGroups.length === 0 ? (
                   <div className="empty-hint">
@@ -1507,10 +1738,14 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
                 ) : (
                   <>
                     <p className="pm-hint">
-                      <Info size={12} /> 仅列出未安装的本地市场插件（共 {browseCount}{" "}
-                      个）。安装将调用 plugin/install；成功后自动刷新已安装列表。
+                      共 {matchingBrowseCount} 个匹配插件，已显示 {Math.min(browseVisibleCount, matchingBrowseCount)} 个。
                     </p>
-                    {renderMarketplaceGroups(browseGroups, { browse: true })}
+                    {renderMarketplaceGroups(visibleBrowseGroups, { browse: true })}
+                    {browseVisibleCount < matchingBrowseCount && (
+                      <button type="button" className="secondary-btn" onClick={() => setBrowseVisibleCount((count) => count + 50)}>
+                        显示更多
+                      </button>
+                    )}
                   </>
                 )
               )}
@@ -1520,6 +1755,18 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       )}
 
       {/* TAB 2: SKILLS (skills/list + skills/config/write, local fallback) */}
+      {subTab === "skills" && <RecommendedSkillsPanel key={activeWorkspaceRoot}
+        workspaceRoot={activeWorkspaceRoot} onInstalled={refreshAll} writeBusy={skillWriteBusy}
+        beginInstall={() => {
+          if (skillWritePendingRef.current) return false;
+          skillWritePendingRef.current = true;
+          setSkillWriteBusy(true);
+          return true;
+        }}
+        finishInstall={() => {
+          skillWritePendingRef.current = false;
+          if (pluginMountedRef.current) setSkillWriteBusy(false);
+        }} />}
       {subTab === "skills" && (
         <div className="split-panel-layout">
           <div className="split-left-list">
@@ -1563,6 +1810,12 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
                 {errorSummary(remoteSkillsError.message)}
               </div>
             )}
+            {localSkillsError && (
+              <div className="error-banner" role="alert">
+                本地技能读取失败：{localSkillsError}
+                <button type="button" className="secondary-btn-sm" onClick={refreshAll}>重试</button>
+              </div>
+            )}
             <div className="scrollable-items">
               {filteredSkillRows.map((row) => (
                 <div
@@ -1589,7 +1842,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
                               : "点击启用（skills/config/write）"
                           }
                           aria-label={row.enabled ? "禁用技能" : "启用技能"}
-                          disabled={skillToggleBusy === row.key}
+                          disabled={skillWriteBusy || skillToggleBusy === row.key}
                           onClick={(e) => {
                             e.stopPropagation();
                             handleToggleSkill(row);
@@ -1614,9 +1867,12 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
                 <input
                   type="text"
                   value={newSkillId}
-                  onChange={(e) => setNewSkillId(e.target.value)}
+                  onChange={(e) => {
+                    ++skillEditorRevisionRef.current;
+                    setNewSkillId(e.target.value);
+                  }}
                   placeholder="skill-folder-name"
-                  readOnly={readOnlyRemoteSkill !== null}
+                  readOnly={readOnlyRemoteSkill !== null || selectedSkill?.installed === true}
                 />
               </div>
               <div className="editor-actions">
@@ -1637,6 +1893,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
                   <button
                     type="button"
                     className="primary-btn-sm"
+                    disabled={skillWriteBusy}
                     onClick={() => handleInstallSeedSkill(selectedSkill)}
                   >
                     <Download size={13} /> 一键安装到 ~/.codex/skills
@@ -1648,6 +1905,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
                   onClick={handleSaveSkill}
                   disabled={
                     readOnlyRemoteSkill !== null ||
+                    skillWriteBusy ||
                     !newSkillId.trim() ||
                     !skillContent.trim()
                   }
@@ -1658,6 +1916,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
                   <button
                     type="button"
                     className="danger-btn-sm"
+                    disabled={skillWriteBusy}
                     onClick={() => handleDeleteSkill(selectedSkill)}
                   >
                     <Trash2 size={13} />
@@ -1674,10 +1933,22 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
                 提供，仅支持启用/禁用；选择本地技能后可编辑内容。
               </div>
             )}
+            {skillContentLoading && <div role="status">正在读取技能内容…</div>}
+            {skillContentError && (
+              <div className="error-banner" role="alert">
+                技能内容读取失败：{skillContentError}
+                <button type="button" className="secondary-btn-sm" onClick={() => {
+                  if (skillSelectionRef.current) handleSelectSkillRow(skillSelectionRef.current);
+                }}>重试</button>
+              </div>
+            )}
             <textarea
               className="code-editor-textarea"
               value={skillContent}
-              onChange={(e) => setSkillContent(e.target.value)}
+              onChange={(e) => {
+                ++skillEditorRevisionRef.current;
+                setSkillContent(e.target.value);
+              }}
               readOnly={readOnlyRemoteSkill !== null}
               placeholder={
                 readOnlyRemoteSkill

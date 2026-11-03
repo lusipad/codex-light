@@ -1324,3 +1324,386 @@
 - SB01–SB04 覆盖成功清理、失败/新编辑保留和附件 pending 清理标记；鼠标/键盘、文字/附件草稿专项及完整 `verify-all.ps1` 均退出 0。
 - 旧 EXE 被现有窗口占用使首次原生构建失败；保留窗口，换独立编译目录后 Release、MSI、NSIS 打包成功。归档 `dist-artifacts/01B-send-button-20261101/CodexNative.exe`，SHA-256 `D30CEDF211D1EE655AF74D7C6CB8589872ACBCDC2F2C8AEA99FD702F77A9EB53`。
 - 新 EXE 的隔离原生鼠标发送验证通过 SB01：一次纯文字请求、成功回包后 Composer 清空，UIA/日志及自动证据核验均已保存。该原生结果使用本地 shim，没有真实模型执行；SB02–SB04 原生及 TS/AS 附件竞态仍未通过，不扩成整页验收。详见[鼠标发送增量](antigravity/runs/20261101-codex-01b-send-button.md)。未提交、未推送，01B 仍开发中。
+
+## 2026-11-01：01B A11 项目移动确认框键盘隔离
+
+- 沿用固定版本确认合同与取消零写入约束，先复现确认框关闭不恢复先前焦点，再补 Tab 首尾循环、WebView 按键冒泡隔离和 IME Escape 保护；提交中禁止 Escape/背景关闭。
+- 只修改 App 既有焦点 effect 与确认框 keydown；复用状态/ref/布局和后端事务，无新依赖、组件或样式。PMK01–PMK06 执行生产 JSX/effect 并接入标准入口。
+- 专项、Composer 键盘回归、TypeScript 及完整标准检查退出 0。原生/官方运行时、IME 物理输入与像素未由回调测试覆盖；特别保留 Tauri 原生 accelerator 和忙碌态焦点的待验项。详见[确认框键盘记录](antigravity/runs/20261101-codex-01b-project-move-keyboard.md)。01B 仍开发中，不放行 01C。
+- 独立目录 Release/MSI/NSIS 打包退出 0；归档 `dist-artifacts/01B-project-move-keyboard-20261101/CodexNative.exe`，SHA-256 `C5B80DAE9A8856AED8C32CE54449EF89F354850FD67F7C4E58CA03D1ECDD095F`。当前新 EXE 原生交互未运行，未提交/推送。
+
+## 2026-11-01：01B A11 原生命令分发隔离续修
+
+- 源码追踪确认菜单/托盘命令绕过 DOM 冒泡；PMK07 修改前复现确认框打开仍执行背景会话切换，修复后生产分发器与实际菜单/托盘回调通过。
+- 在既有 `handleAppCommand` 增加确认状态检查，屏蔽背景快捷动作（缩放除外）、打开工作区、设置和重载；关闭后恢复，保留缩放、主题及窗口控制路径。不新增依赖、样式、状态或后端事务。
+- 同步帮助菜单测试的 VM 状态夹具；初次完整检查的失败日志保留。专项证明 L2 合同，物理原生快捷键、busy 焦点、官方运行时和像素仍待验。01B 保持开发中，不放行 01C，未提交/推送。
+- 完整标准检查重跑退出 0，独立 Release/MSI/NSIS 构建退出 0；新产物 `dist-artifacts/01B-project-move-command-guard-20261101/CodexNative.exe`，SHA-256 `82F0D5D88D3ECFB5466714BFFCCD68CB2B85ABB5B68B194BA120685969BB2123`。构建清单、输入哈希与失败/重跑日志见[确认框键盘记录](antigravity/runs/20261101-codex-01b-project-move-keyboard.md)。
+
+## 2026-11-01：按用户持续推进授权进入 01C 首页欢迎区
+
+- 先核验固定 `PAt/G7` 源码和中文语言包，修正无项目虚构名称、Git/普通目录共用错误标题；补项目入口展开语义和 IME 安全 Escape，复用工作区回调与 `baseNameFsPath`，不新增依赖。
+- HC01 先红，HC01–HC07 修复后生产 JSX 回归与 TypeScript 检查通过；浏览器实际看到无项目标题。长名称按官方 class 增加宽度内换行约束，未以源码检查冒充几何验证。
+- 01B/01C 官方、原生、像素和用户验收欠项保留。用户最新授权允许继续开发，旧逐页门槛不再使单项长期阻塞；详见[01C 记录](antigravity/runs/20261101-codex-01c-home-hero.md)。未提交/推送。
+
+## 2026-11-01：01D Composer 拖入文件与多行输入
+
+- 先调研官方桥接路径和编辑器高度约束、本机 Tauri 2.12.4 拖放 API，再用 CD04 复现文件名伪装磁盘路径。接入原生 enter/over/drop/leave，按 Composer 边界处理，保持当前草稿回调与异步卸载释放；原生/DOM 双路径不重复附加，无路径时明确提示。
+- 多行输入在真实浏览器先复现固定约 56px 不增高，再补内容增高、清空缩回及宽度 observer；上限沿用官方 25dvh。960×640 长输入为 160px，1568×934 为约 233.57px，短输入缩回约 56px，两种视口无页面水平溢出。
+- 修正 Composer 无项目虚构标签，固定中文为“选择项目”，复用已有目录名工具与工作区状态。未引入依赖、权限或后端变更。
+- HC/CD/CM 三组生产回归、TypeScript 与完整标准检查最终版本退出 0。浏览器截图/尺寸证据与原生/官方待验边界见[01D 记录](antigravity/runs/20261101-codex-01d-composer-drop.md)。01C/01D 尚未用户验收；下一开发单元 01E，未提交/推送。
+- 本轮独立 Tauri Release/MSI/NSIS 打包成功；`dist-artifacts/01CD-home-composer-20261101/CodexNative.exe` SHA-256 为 `E918DDE6EFF30AD54730F14B8E03E5C679DD53BAC7C34EED35A6D7213C741BD2`。绑定输入哈希一致，未关闭用户原有窗口。
+
+## 2026-11-01：01E Composer 菜单成组键盘与定位
+
+- 先核验固定版本 `kAt/SY/bY` 项目搜索与上方展开合同，再补五组菜单的真实 button、方向键入口、Home/End、Escape/Tab 焦点、IME 与分支输入保护；项目支持名称/路径过滤和无结果。复用既有状态/动作，没有新组件、依赖或后端变更。
+- 浏览器发现原上下文菜单向下展开会裁掉末项；按官方 `side: top` 修正方向，结合实际触发器限制高度/横向边界。960×640 与 1568×934 菜单均留在视口内，实际焦点/外点/Tab 路径已存档。
+- CK01–CK08 先红后绿，模型 IME Escape 独立缺陷一并修复，保留滑块方向键；发送、首页、TypeScript 及完整标准检查退出 0。详见[01E 记录](antigravity/runs/20261101-codex-01e-composer-menus.md)与[待验表](antigravity/acceptance/01E.md)。
+- 新构建原生操作、物理 IME、官方项目实体/远程分支与等价像素仍待验；01E 未用户验收，下一开发队列 01F。未提交/推送。
+- 独立 Release/MSI/NSIS 构建退出 0，输入哈希核验未变；`dist-artifacts/01E-composer-menus-20261101/CodexNative.exe` SHA-256 为 `5EA5082F82019443185AFD1B334578387682D6469E95E88D474CD2AF0FE3A866`。未关闭用户原有窗口。
+
+## 2026-11-01：01F 首次发送与失败隔离
+
+- 先核验首页 A28/A30 与官方 `TUs` Worktree 前置失败语义，再复现首页重复触发产生两个 `thread/start`、旧失败清除新会话附件快照的问题。
+- 复用导航请求代次增加 start 在途集合与 finally 释放；Worktree 错误交给现有失败路径，禁止悄悄在原目录执行；旧 catch 在清附件前验证导航身份。
+- FT01–FT06 生产回调专项与文本/附件/项目上下文/发送按键回归、TypeScript 退出 0；没有新依赖、样式或权限变化，移除了吞掉 Worktree 错误的内部 catch。详见[01F 记录](antigravity/runs/20261101-codex-01f-send-transition.md)。
+- 官方连接恢复/首次加载时序、原生真实投递、官方 Worktree 队列、动画、像素与用户验收继续保留。下一开发队列为 02 会话页；未提交/推送。
+- 最终完整标准检查与 Release/MSI/NSIS 构建退出 0，4 项本轮绑定输入哈希一致；`dist-artifacts/01F-send-transition-20261101/CodexNative.exe` SHA-256 `EAC0564230A6F25E012D565E5CA7276FFE16B3C5270BCC45F7CDA1848E3AA27F`。新 EXE 未原生操作；前轮浏览器预览进程已核对归属后关闭，用户原有 Tauri 窗口保留。
+
+## 2026-11-01：02B 会话用户消息展示
+
+- 先重新核验固定官方包，再沿 sites-end-resource→user-message→collapsible-user-message-content 提取独立消息合同；没有沿用静态快照77%或compact变体。
+- 新增有独立状态需求的 `UserMessageBubble`，实际测量20行阈值、19行正文加省略号、显示更多/收起，全文保留；复用原气泡样式、图标与业务回调，不新增依赖。
+- 提问轨道在至少4条时显示，预览不混入助手内容，目标改为用户块；查找隐藏行先展开，键盘聚焦操作区保持可见。
+- UM01–UM11、内容17项、去重、TypeScript与完整标准检查通过；浏览器组件回放验证宽窄窗折叠高度、搜索第35行、焦点、短文本与窄内容重测。详见[02B记录](antigravity/runs/20261101-codex-thread-messages.md)。
+- 官方像素、原生真实会话、完整富文本/附件与编辑回滚仍待验。旧02PASS加注历史边界；后续推进02A顶栏及02C富内容，未提交/推送。
+- 完整标准检查与独立Release/MSI/NSIS构建退出0，6项绑定输入哈希一致；新版本 `dist-artifacts/02B-user-messages-20261101/CodexNative.exe` SHA-256 `6C5DA2F2A0F0FF50CF66C10E7C86454245C32870D84D6BDC3C9F4C568BD0FBA3`。新EXE未原生操作，组件回放页/视口/预览进程已清理。
+
+## 2026-11-01 — 02A 会话顶栏续修
+
+- 先核对固定官方包的标题 inline editor、本地会话身份与布局调用链；12 项资源从原包提取并校验 integrity，避免采用已修改的 scratch primary。实现与依据见[02A 记录](antigravity/runs/20261101-codex-thread-header.md)。
+- 标题改 button 激活并全选；Enter 统一经 blur 单次提交，Escape 后迟到 blur 不保存；空名/原名不写，组合输入不误提交。已有空会话保留标题、未知分支不再虚构 main。复用现有真实 rename 协议，删除孤立铅笔 hint 样式，无依赖或通用抽象新增。
+- TH01–TH08、类型检查、完整标准检查（8 组隔离协议探针）通过；浏览器提取生产 JSX 的宽窄回放确认焦点全选、一次保存、取消与空白不写。回放只用本地状态，没有冒充真实服务或原生验收。
+- Release/MSI/NSIS 构建退出 0；4 项绑定输入前后相同。[本轮 EXE](../dist-artifacts/02A-thread-header-20261101/CodexNative.exe) SHA-256 `DB87B93B2BF8C2A2C8C5268513C0429E2B0A71F8D3517DDEFD5836F3E8AEDDB8`。已有 Vite chunk 大小警告保留。
+- 官方运行时、当前 EXE 原生交互、配对像素及用户验收仍待完成，见[02A 待验表](antigravity/acceptance/02A.md)。下一单元为 02C 富内容；02 整页未验收。未提交或推送。
+
+## 2026-11-01 — 02C 用户 Markdown 与折叠可达性
+
+- 先从固定原包提取并校验用户 Markdown、格式化、折叠组件与 shared 前缀转换的 5 项资源；[规格](antigravity/specs/02-rich-content.md)在产品修改前建立 RC01–RC08。
+- 复用现有 MarkdownView 新增用户 variant：连续换行/空行分段、标题语义、基础富内容、图片转 `!` 与链接、composer 文件预览接线。助手默认分支保留，用户代码没有终端运行入口；原文复制仍由既有 userText 提供，无新增依赖。
+- 折叠时隐藏交互 inert/aria-hidden，展开和卸载恢复；代码跨裁切边界时完整显示。浏览器捕获标题外边距导致约 17px 代码裁切，保存失败证据后修复测量原点并补偏移回归。
+- 内容 23 项、消息 UM01–UM11 加 RC05–RC06、类型与完整标准检查（8 组隔离探针）通过；宽窄生产组件回放验证图片不自动加载、文件回调、隐藏链接 Tab 跳过/展开恢复和代码完整，详见[实施记录](antigravity/runs/20261101-codex-rich-content.md)。
+- Release/MSI/NSIS 退出 0，7 项绑定输入哈希一致；[本轮 EXE](../dist-artifacts/02C-rich-content-20261101/CodexNative.exe) SHA-256 `2A62B0EAF56BC4E28344EABDAC361B67313FC220398525DC92A054B6D36D396A`。预览 tab/视口/本轮 Vite 已清理，未提交推送。
+- 复杂嵌套/引用式链接/数学/插件、精确 tone、官方/原生/像素及用户验收仍有缺口，见[02C 待验表](antigravity/acceptance/02C.md)；不将本次增量称为完整富内容或 02 整页完成。继续后续消息/执行卡主要差距。
+
+## 2026-11-01 — 03A 命令执行卡
+
+- 先从固定原包提取核验 10 项资源并建立 EC01–EC09 合同，按默认折叠、原生 button、生命周期与退出码 footer 实现独立命令卡；复用现有协议、类型和图标，没有新增依赖。
+- 搜索隐藏输出先展开对应命令，再滚动，保留搜索焦点。权威空输出不回退旧文本，completed 无退出码不表示成功。
+- 生产组件回归、执行通知与宽窄浏览器回放留证；完整检查修复旧 UM11 mock 的兼容问题后重跑，失败原日志保留。[检查、构建与产物身份](antigravity/runs/20261101-codex-execution-cards.md)记录真实结果。
+- 官方运行时、原生与像素待验，03 整页未完成；下一主要差距是执行/消息按原 item 顺序呈现。未提交或推送。
+
+## 2026-11-01 — 03B 执行与回答顺序
+
+- 根据固定原包的有序遍历合同，将现有卡片回调移入 item 顺序派发，保留原卡片行为与回调；思考正文改用对应 item，系统事件单独的回合也能显示。
+- 增加生产派发回归 TO01–TO06，保留原命令/工具/杂项卡断言；960/600 宽窄生产回放验证交错 DOM 顺序、命令完成保持展开和无横向溢出。
+- 删除展示不再需要的类型分组数组，保留运行提示聚合，没有新依赖或协议行为。完整检查、构建和产物身份见 [03B 记录](antigravity/runs/20261101-codex-timeline-order.md)。
+- 官方连续活动分组、用户 steer 插入、原生及像素待验；下一主要项是 MCP 原始输出入口。未提交或推送。
+
+## 2026-11-01 — 03C MCP 原始输出
+
+- 先核验固定原包 h_r/yjn/Wq、弹窗和中文文案，建立 MC01–MC07；将 MCP 内联结果移到独立组件，新增真实字段原始输出 dialog 与错误适配。
+- 复用类型、图标和样式，无依赖或协议新增；普通文本/结构内容/媒体/资源分支可展示，运行态不冒充空结果，协议、工具与已证实的 codex_apps 错误不显示完成。
+- 专项及生产回放覆盖字段、metadata、状态、独立弹窗；浏览器发现 Tab 离开弹窗后补首尾循环并回归。检查、构建、产物与剩余差距见 [03C 记录](antigravity/runs/20261101-codex-mcp-output.md)。
+- widget、annotations、复制/高亮、原生和官方像素仍待对齐，03 整页未验收。下一批转入 04 组织与项目页缺口，未提交推送。
+
+## 2026-11-01 — 04A 项目页身份与异步
+
+- 先从固定原包提取 projects-index chunk 并校验 integrity，建立 PI01–PI06 合同；项目页新聊天传完整实体，复用侧栏既有选择及多根目录流程，避免共享首目录混淆。
+- 列表增加请求代次与卸载失效，新建表单增加同步单飞锁及组合输入/忙碌按键保护，无依赖或样式新增。
+- 生产回调专项、既有选择/发送上下文回归和完整组件浏览器回放验证；检查、构建与产物身份见 [04A 记录](antigravity/runs/20261101-codex-project-identity.md)。
+- 未映射 server 项目的本地实体同步闭环、完整来源编辑及原生/官方/像素仍有缺口；04 未完成。下一批复核 05 文件工作面，未提交推送。
+
+## 2026-11-01 — 05A 文件编辑异步与草稿
+
+- 先从固定原包核验本地文本编辑器和 storage；排除 ChatGPT library 预览错配，建立 FE01–FE06 合同。
+- 读取增加请求代次/编辑修订保护，保存固定路径内容快照并单飞；保存期间新编辑仍脏，关闭/删除使读取失效，脏切换/关闭明确阻止。
+- 复用原协议和 fallback，无依赖或样式新增；生产回调及编辑器 JSX 延迟 IO 回放验证逆序读取、编辑/保存交错、失败和关闭保护。标准检查、构建与产物见 [05A 记录](antigravity/runs/20261101-codex-file-editor.md)。
+- 磁盘冲突、保存/放弃流程、多文件草稿、原生及官方像素仍待做；05 未完成。下一批进入 06 Git 工作面复核，未提交推送。
+
+## 2026-11-01 — 06A Git 生命周期
+
+- 先核验固定原包 Git action/review-state，排除 commit 图标误用，建立 GL01–GL06 合同。
+- diff 旧响应失效；提交/提交并推送/推送共享同步锁，跨仓库停止下一步派发，成功保留新说明，组合输入不误提交。复用既有 Git 命令，没有依赖、权限或样式变化。
+- 生产回调专项、文件编辑回归、完整标准检查和 Release/MSI/NSIS 构建退出 0，绑定输入哈希一致；[06A 记录](antigravity/runs/20261101-codex-git-lifecycle.md)包含 EXE、日志及构建身份。
+- 官方完整策略、其他 Git 写入口、真实隔离 Git/原生/像素仍待验；06 未完成。下一批进入 07 终端与布局，未提交推送。
+
+## 2026-11-01 — 07A 终端视图生命周期
+
+- 从固定原包核验 xterm 输出视图清理合同，明确加载 stub/只读输出不能证明交互 shell 的全部行为，修改前建立 TL01–TL04。
+- 修复迟到事件订阅、卸载 xterm/DOM 释放、关闭后 attach 成功/失败写入和 fit 计时器清理；复用原 map、effect 和 PTY attach，没有新增依赖或改变后台 shell 关闭策略。
+- 生产 effect 专项、布局回归、TypeScript、完整标准检查和 Release/MSI/NSIS 退出 0；三项绑定输入一致，EXE SHA-256 `11DEABCAEE48F511077718911224A4367089F56D99049D0A5AC30F167D433240`。详见 [07A 记录](antigravity/runs/20261101-codex-terminal-lifecycle.md)。
+- 命令就绪/失败重试、标签恢复、完整键盘布局、真实 PTY/原生/官方像素仍待验；07 未完成。下一批先完成终端命令链主要缺口，再推进后续页面。未提交或推送。
+
+## 2026-11-01 — 07B 终端命令与恢复
+
+- 先核验交互终端 onAttach、isSessionStarted 和 releaseRenderer 分支，建立 TC01–TC07；用 PTY 创建结果替代 180ms 延时，成功清同 ID pending，失败仅显式重试并提示输入可能部分送达。
+- 保留已打开终端组件/DOM，隐藏重开不丢标签输出；UUID 避免固定 session ID 冲突，最后标签替换正确选中；项目命令按标签启动目录隔离。
+- 生产回调专项、原生命周期/布局回归、完整标准检查和 Release/MSI/NSIS 退出 0；构建与证据见 [07B 记录](antigravity/runs/20261101-codex-terminal-command.md)。复用原命令与状态，无新增依赖。
+- 浏览器测试入口先失败，修正后 CDP 超时，UI 回放没有通过；Vite 已停，临时 tab 关闭未获确认。真实 PTY/原生/像素、首 prompt 与输出回放边界仍待验，07 未完成，继续 08。
+
+## 2026-11-01 — 08A 搜索与命令路由
+
+- 先从固定原包核验 files/root 与 IME 分支，建立 SR01–SR06；slash 选择从终端入口分离，复用 Composer action/insertText。
+- Ctrl+P 展示文件，综合入口恢复 root；远端结果校验工作区身份、组合输入避让、focus timer 清理，复用既有请求取消和缓存，无新增依赖。
+- 生产 items/App/键盘/焦点回归、原搜索/终端/快捷键与类型通过；完整检查首轮 Rust generate_context 失败，打包成功，保留失败并串行重验，结果见 [08A 记录](antigravity/runs/20261101-codex-search-routing.md)。
+- 完整官方清单/gate/排序、真实搜索与原生/像素继续保留；08 不标完成。下一主要页为 09 Activity/Inbox，未提交推送。
+- 打包结束后串行重跑完整检查退出 0，首轮失败保留；六项绑定输入一致，EXE SHA-256 `640887A75D8EE2E72C73612DA30D096D9CCE90E5C2658D3DA2E0107D904283AB`。并发共享 dist 是候选干扰，未证实根因；后续构建与标准检查顺序运行。
+
+## 2026-11-01 — 09A 活动历史与持久化
+
+- 先核验固定原包并排除 Pages inbox 来源错配，建立 IL01–IL06；不宣称当前本地列表已等价官方全页。
+- 历史加载合并当前事件、尊重删除/清空/已读操作；空历史正常完成、读错可重试，未知历史不回写。保存串行并报告失败。
+- Rust 公共 desktop_state_set 复用现有原子 persist_state_map，成功落盘后才更新内存，避免假成功；内部旧 set_value 路径保留。无依赖新增。
+- 生产 merge/effect 回归、旧活动回归、类型与 Rust 隔离磁盘往返/失败专项通过；完整标准检查、全量 Rust 和原生打包见 [09A 记录](antigravity/runs/20261101-codex-inbox-lifecycle.md)及构建身份。
+- 真实 UI/原生、官方数据源/像素、跨窗口写冲突、退出前未写快照仍待验；09 未完成，下一主要页为 10 Scheduled。未提交推送。
+- 最终完整检查、全量 Rust（92 项）和 Release/MSI/NSIS 退出 0；七项绑定输入一致，EXE SHA-256 `289A9F74489B997DB3A11057DEB29E4A2C9E1AAC5AED36E65254292E5DB4177E`。原生 UI/像素没有放行。
+
+## 2026-11-01 — 10A Scheduled 写入与运行
+
+- 先核验固定原包编辑/删除/行组件并建立 AU01–AU06；CRUD 同步锁与异常反馈，表单失败保留，在途禁止切换；预设清除旧编辑身份。
+- 列表旧读失效、运行同步锁、生成会话复用 selectThread；删除调度不可用时 App 的 120ms 代执行路径，保持真实不可用。
+- 复用原 Rust 命令与调度器，没有新增依赖；生产回调专项、旧 Scheduled、类型与空白检查通过。完整标准检查/原生打包与绑定见 [10A 记录](antigravity/runs/20261101-codex-automation-actions.md)。
+- 真实任务文件/运行、官方布局/策略与原生/像素、历史/刷新异步仍待验；10 未完成，下一主单元11 Worktrees，未提交推送。
+- 最终完整标准检查与 Release/MSI/NSIS 退出 0；四项输入前后匹配，EXE SHA-256 `DAEBE891CBB89644CEDBB7390523ED93EFB3BC203AFEDA48D4772630A1D73CA1`，构建归档于 10-automation-actions-20261101。原生操作与像素待验。
+
+## 2026-11-01 — 11A Worktrees 上下文与会话入口
+
+- 固定原包重新提取两项 worktrees 资源并核验 integrity，修改前建立 WC01–WC05 合同；不复用旧字符串检查作为行为通过证据。
+- App 登记/激活现有目录后打开草稿，关闭另建工作树，登记失败和旧导航有保护；绑定会话复用 selectThread。
+- 按目录 key 复用 React 挂载隔离，读取加入请求代次/卸载保护；旧 list 不继续 branches，旧写完成不在已卸载组件发刷新。
+- 生产组件/回调及发送路径专项通过，无新依赖/无 Rust 修改；构建和最终检查见 [11A 记录](antigravity/runs/20261101-codex-worktree-context.md)。
+- 真实 Git 操作、完整发送原生交互、连击写入、终端与官方像素仍待验，11 整页未完成；未提交推送。
+- 最终完整检查（含协议探针）及 Release/MSI/NSIS 退出 0，四项输入哈希一致；EXE SHA-256 `17164FC9ACBEC14C3243907FF0E0228D499D1C1683A99EAE1AFCD39AED94FF72`。首次 Node UV_HANDLE_CLOSING 打包失败保留记录，重试和最终重建成功。下一主队列为 12 Plugins，11 的缺口继续保留。
+
+## 2026-11-01 — 12A 插件策略、目录与状态读回
+
+- 固定原包提取并核 integrity；按官方默认安装策略禁用卸载，按插件 ID 同步锁、详情收起失效、目录请求代次与项目 context 隔离。
+- 安装/卸载成功后重读 installed 和活动浏览目录，删除本地布尔 patch；恢复服务端默认远程目录和 forceRefetch，客户端按50项显示，搜索覆盖完整结果。
+- 无新增依赖；PA01–PA06、PC01–PC04 与旧插件检查通过，batch3 加入隔离默认目录协议探针。生产浏览器回放验证策略/显示更多/后段搜索/失败重试和接口读回；详情 fixture 形状纠正后 CDP 超时，未计通过。
+- 完整检查与构建结果见 [12A 记录](antigravity/runs/20261101-codex-plugin-actions.md)。原生/OAuth/真实安装文件/官方 HTTP 分类与像素仍待验；12 未完成，未提交推送。
+- 最终完整标准检查（含目录普通/强刷真实协议）、Release/MSI/NSIS 均退出 0，七项绑定输入一致；EXE SHA-256 `1F5EF2877E8E3E3C45982ECAA90D31334DC1BD7AA3F42F60E50F11DC43688409`。下一主队列为 13 Skills，12 的官方/原生/像素缺口继续保留。
+
+## 2026-11-01 — 13A 技能真实内容与写操作
+
+- 固定原包取证，先红复现同名技能作用域错配；移除名字回退绑定与失败后拼接YAML，复用readFileText及真实plugin/skill/read.contents，读错可重试。
+- 编辑revision、内容/列表请求代次、项目context和同步写锁保护；刷新不自动选择第一项覆盖草稿，写后读回已有接口。
+- Rust保存严格ID、删除安全单段目录名并兼容既有含点/中文目录，导入源必须存在且含SKILL.md；临时root测试不写真实配置，无新依赖。
+- SA01–SA06、旧技能/插件专项及类型检查通过；最终标准检查、全量Rust与打包见 [13A记录](antigravity/runs/20261101-codex-skill-actions.md)。
+- 官方完整页、推荐安装、真实隔离服务往返、原生/像素、导入原子性和junction仍待验；13未完成，未提交推送。
+- 最终复核修正后完整检查退出0、全量Rust 93项通过、Release/MSI/NSIS成功，四项输入指纹一致；EXE SHA-256 `F20ED53E6F500CA1B73275801602EB5140F24DE160478D76E3C29E7CD38A7F6A`。含点/中文既有目录卸载回退已据审查修复并通过临时目录测试。
+
+## 2026-11-01 — 14A 启动链路静态复核
+
+- 固定原包直接提取三项审查资源并校验integrity，记录UTF-16定位与片段。官方已追踪快捷审查先解析分支merge base，按会话/host选择inline turn或detached新会话；不能直接等同当前无条件新会话加review/start。
+- [复核草案](antigravity/specs/14-review-start.md)登记PR源/基准分支、普通turn封装至RPC、真实事件和视觉待证项，纠正旧页面“全量通过”的适用范围。本轮未修改Code Review产品代码，未将静态发现写成运行时通过。
+
+## 2026-11-01 — 14A 本地快捷审查开发
+
+- 补追E/T到turn/start和thread/start、caller的默认inline及提交锁，核当前CLI 0.165.0 schema后修改。未提交/分支使用普通turn，复用同cwd聊天；无当前聊天新建，提交/custom保留兼容RPC。
+- 新增只读merge-base命令及隔离Git回归；启动同步锁、上下文/导航失效，先完成现有会话加载再发turn，打开对应split差异。审查面板传同一基准SHA，包含已提交与工作区差异；保持普通手工分支对比语义。
+- 按cwd归属隔离分支/提交状态，分支未加载禁止启动；跨项目清旧审查基准。RA01先红复现双thread/start，RA01–09生产callback/effect转绿，另执行同cwd同分支更换SHA的diff重发验证。无新增依赖。
+- 完整检查、全量Rust、原生构建及未验范围见[本批记录](antigravity/runs/20261101-codex-review-actions.md)。PR、完整官方guidelines/权限档/设置、真实模型、原生与像素仍待验；14整页未完成，未提交推送。
+- 最终完整检查退出0、全量Rust95项通过、Release/MSI/NSIS成功，八项输入指纹一致；EXE SHA-256 `8296B6162A3428F6812326EA9F38D78347E3E727CA281C2479F83DD3CA634093`。下一主队列15归档，14遗留项继续保留，不将自动自验称整页通过。
+
+## 2026-11-01 — 15A 归档列表与真实删除
+
+- 先固定原包取证并区分offline补丁，按cursor读完整本地归档后本地搜索；明确恢复和查看分离，不再点标题自动恢复。
+- 写操作同步锁、列表代次/卸载保护、成功真实重读和失败保留；Rust真实delete成功后才清本地record，删除吞错及archive假替代。
+- AA01先红捕获首100条截断，生产callback专项AA01–AA06转绿；复用已有协议/导航/样式，无新依赖。[本批记录](antigravity/runs/20261101-codex-archive-actions.md)保留完整检查和构建结果、原生/视觉及筛选批量未验范围。
+- 最终完整检查退出0、全量Rust95项通过、Release/MSI/NSIS成功，八项输入指纹一致；EXE SHA-256 `899B9EF75F702F9870189C0AA33D5AA4F9A3585D060A068A66F0089F98F7241F`。CLI0.159.2隔离无模型往返验证真实分页/恢复/删除与另一条保留；不替代原生UI/像素/用户验收。下一主单元16.01通用设置已启动只读调研。
+
+## 2026-11-01 — 16.01 通用设置调研
+
+- 四项固定原包资源核integrity，记录Enter三模式、Windows隐藏防休眠、真实默认打开目标及终端shell偏好；[下一批合同](antigravity/specs/16-01-general-settings.md)先限定Enter真实闭环和平台适用性，不扩整套设置。
+- 当前仅取证/合同，未修改通用设置产品代码、未执行真实设置写入。旧26分区通过声明已标历史，不作为放行依据。
+
+## 2026-11-01 — 16.01A 发送快捷键
+
+- 先核官方实际键盘分支、三项中文及多行判定，再以独立 desktop_state 偏好连接设置与首页/会话 Composer。即时保存后读回，写失败回滚，首次加载锁和 revision 防异步覆盖。
+- 复用既有候选生成，补全确认优先于提交；保留运行中队列及真实鼠标发送/草稿回归。Windows 隐藏无执行消费者的防休眠项，无新依赖。
+- GS02 先红后绿；独立审查捕获启动读取/失败回滚竞态，修复后新增回归通过。首轮完整检查发现菜单测试桩缺 useMemo，修复桩后专项通过，失败证据保留。
+- [本批记录](antigravity/runs/20261101-codex-general-enter.md)与[验收步骤](antigravity/acceptance/16-01A.md)明确富文本、完整 queue/steer、恢复默认、编辑器/终端及原生/像素缺口。整个16.01未验收，未提交推送。
+
+- 16.01A 最终完整检查退出0，全量Rust95项通过，Release/MSI/NSIS成功，九项输入指纹一致；EXE SHA-256 `1EB3EBABD4E5251035E428EF43DECAD97AE742C365205D5B8F8274E219F5EB3B`。原生UI/官方与像素未验；下一增量为同分区默认编辑器与新终端shell实际消费。
+
+## 2026-11-01 — 16.01B 默认打开目标与 Shell
+
+- 先核原包目录、检测、默认fallback、中文和PTY消费，再接独立全局打开偏好/终端偏好；保留perPath，真实检测编辑器与Shell，新标签读取默认，已有PTY保留。
+- 移除固定只存defaultEditor下拉，现有配置文件菜单使用所选目标；文件管理器定位文件、系统默认ShellExecute错误透传。复用现有持久化/PTY，无新依赖。
+- GT生产callback回归与5项Rust专项通过（含真实隔离CMD PTY）；现有terminal command/lifecycle和Enter回归通过。只读审查修复目标顺序、资源管理器语义、系统默认错误判断与PATH依赖，完整检查/构建最终重跑中。
+- [本批记录](antigravity/runs/20261101-codex-general-open.md)明确完整目录、remote/位置参数、terminal_command、原生/像素缺口，整分区未验收。16.02[外观合同](antigravity/specs/16-02-appearance.md)已取证，尚未修改外观代码。
+
+- 16.01B 最终完整标准检查退出0、全量Rust100项通过、Release/MSI/NSIS退出0，九项输入指纹一致；EXE SHA-256 `A3861FBD05FAD91F4B0E6A3EFAEAE5CC684531BDFDF0EBF9F9AB3B9FDE053C8A`。原生UI/官方与像素未验，未提交推送。
+
+## 2026-11-01 — 16.02A 外观实际消费者
+
+- 固定原包合同先行，新增独立模式/双字号/减少动态效果持久化与读回，系统订阅、同步写锁、错误重试及晚到清理；输入框修复部分成功显示旧值的问题。
+- 复用现有desktop_state/样式变量，将CSS和inline固定文字字号接入UI比例，聊天/diff/工具/审批/编辑器代码独立消费代码字号；无新依赖。共享消费者改动的原生布局仍需回归。
+- 完整标准检查退出0，全量Rust100项通过，Release/MSI/NSIS退出0，223项输入指纹一致；EXE SHA-256 `716B3FE1B9281C656245800B40EEB3A171BF23015D9454B4859BD315616D0AE1`。
+- [本批记录](antigravity/runs/20261101-codex-appearance.md)和[待验表](antigravity/acceptance/16-02A.md)保留computedStyle、官方/原生/像素、完整主题/指针/恢复默认缺口。隔离浏览器命令被自动审批拒绝，未记通过；用户未验收，未提交推送。
+- 下一分区16.03已建立[快捷键静态合同草案](antigravity/specs/16-03-keyboard-shortcuts.md)，待追完整改绑/冲突/存储链后开发。
+
+## 2026-11-01 — 16.03A 快捷键文件、动作和菜单闭环
+
+- 原包后端/默认/中文/序列合同先行，新增真实keybindings.json读写、菜单同步与失败恢复；设置页搜索/录入/冲突/清除/默认接到实际动作，帮助使用相同有效绑定。无新依赖。
+- 修正旧终端/底部面板混用与命令菜单双入口重复，去除无依据默认；审查修复输入抢键、capture启动后离开锁残留、系统修饰符丢失，新增KB01–KB10回放与4项Rust。
+- 首轮完整检查的旧项目移动AST测试失败已修，重跑最终完整标准检查退出0；全量Rust104项通过，Release/MSI/NSIS退出0，229项输入一致。
+- [本批记录](antigravity/runs/20261101-codex-shortcuts.md)明确完整目录、OS-global、特殊规则与原生/像素未验。EXE SHA-256 `C1DDD6910FE4098740AAB10B3343AC074BECD318A46F9F06AE7D27CB2F6AB068`，未提交推送。
+- 下一分区16.04[通知合同草案](antigravity/specs/16-04-notifications.md)已开始原包取证，未改通知产品代码。
+
+## 2026-11-01 — 16.04A 通知分类与独立偏好
+
+- 官方schema／消费者／中文取证先行；五项key读写与读回复用desktop_state，无新依赖。旧总开关不再误抑制权限和提问，新增去重与发送前取消保护；修复音频重叠和资源释放。
+- NT01–NT08和最终完整标准检查退出0，104项Rust通过；默认EXE覆盖拒绝访问后使用备用target，Release/MSI/NSIS退出0，237项输入前后哈希一致。
+- [本批记录](antigravity/runs/20261101-codex-notifications.md)与[待验步骤](antigravity/acceptance/16-04A.md)保留官方音频／导入、dot、远程账户、系统交互与像素缺口；整个分区未验收。EXE SHA-256 `BB08F0508162375B72927BD3A9F25AEAA1E0D9C007BEBA632C3FF52DCF9B82D3`，未提交推送。
+
+## 2026-11-01 — 16.05A 模型目录与旧提供商页纠偏
+
+- 先核固定包路由/消费者/schema。没有providers-models静态入口依据，撤下旧表单和示例生成器，保留用户配置，旧路由转agent；固定参考补丁标记与Work模式边界登记。
+- 真实目录全分页、错误重试、空目录、乱序/卸载保护、隐藏/审核模型过滤、原样名称、UI ID与协议model区分；复用能力函数和bridge，无新依赖。
+- MC01–MC06、完整标准检查退出0，104项Rust通过，Release/MSI/NSIS退出0，240项输入一致；只读隔离探针11页11项、无模型轮次。
+- [本批记录](antigravity/runs/20261101-codex-model-catalog.md)与[待验表](antigravity/acceptance/16-05A.md)明确完整偏好、远程gate、原生/像素缺口。EXE SHA-256 `C4D047D20A5682DC19B91F37D49D3791C8FD5D1853447225483C9CD2A1E3BE8E`。未提交推送，目标仍未全部完成。
+
+## 2026-11-01 — 16.06A 本地智能体配置保存合同
+
+agent兼容入口改为独立用户层表单，最小变更+expectedVersion+读回；协议失败不走文件写入。撤下自创预设，保留复杂审批对象，推理候选来自模型能力。专项和隔离真实协议已通过，完整检查/产物见[本轮记录](antigravity/runs/20261101-codex-agent-settings.md)。官方Work远程、原生/像素与用户验收未完成；下一分区16.07。
+
+## 2026-11-01 — 16.07A 个性化指令文件链
+
+按原包纠偏为本机Codex home/AGENTS.md概览与编辑/取消/返回确认，非空AGENTS.override.md提示；撤下自创语气/工程风格/角色UI和混合保存路径，保留旧数据不自动迁移。Rust真实磁盘、生产JSX与真实隔离新会话消费探针已通过；完整检查/产物见[本轮记录](antigravity/runs/20261101-codex-personalization.md)。ChatGPT/远程分支、全局离页保护及原生/像素未验，下一16.08账号。
+
+## 2026-11-01 — 16.08A 账号快照身份与生命周期
+
+账号前后身份核对，额度/用量并行独立失败，刷新清旧值，通知/请求代次与离页隔离，移除账号页公共保存按钮；专项和真实隔离未登录读取通过。详见[本轮记录](antigravity/runs/20261101-codex-account-snapshot.md)。真实登录/额度、官方UI与原生像素未验，下一16.09个人资料。
+
+## 2026-11-01 — 16.09A / 16.10A
+
+资料页撤下示例身份/假本地编辑，真实只读身份和服务缺口分开；MCP状态改真实定向分页发现，移除HEAD/--help误报，补单飞/离页保护。见[资料纠偏](antigravity/runs/20261101-codex-profile-status.md)与[MCP记录](antigravity/runs/20261101-codex-mcp-status.md)。完整profile编辑/连接CRUD/OAuth/原生像素未验。
+
+## 2026-11-01 — 16.11A 插件设置组合管理
+
+按原包纠偏为插件/技能/MCP管理，复用12A真实动作与失败重试，撤下无消费者偏好表单，修复浏览目录跳错标签；专项通过，见[本轮记录](antigravity/runs/20261101-codex-plugin-settings.md)。完整官方UI/添加菜单/主机/原生像素仍待验。
+
+## 2026-11-02 — 16.12A Hooks启停与信任
+
+真实用户配置层版本锁、hash审阅及写后有效状态核验，独立组件单飞/离页保护；撤下假本地总开关和无归属全局运行记录。见[本轮记录](antigravity/runs/20261102-codex-hook-state.md)。来源抽屉/历史/主机及原生像素仍缺，下一16.13。
+
+## 2026-11-02 — 16.13A Git偏好真实消费
+
+仅本轮模式阻止Git差异源，force-with-lease和草稿PR默认接入真实操作；独立键读回、共享状态，撤下旧无消费者表单。见[本轮记录](antigravity/runs/20261102-codex-git-preferences.md)。分支前缀/指令/合并方式及原生像素仍缺，下一16.14。
+
+## 2026-11-02 — 16.14A 本地环境文件与动作
+
+官方结构校验、多文件读取、冲突/临时替换/读回，草稿保护与动作真实PTY队列（附工作区约束）。全量Rust108通过，见[记录](antigravity/runs/20261102-codex-local-environment.md)。祖先发现/官方表单/自动生命周期及原生像素仍缺；下一16.15。
+
+## 2026-11-02 — 16.15A 工作树目录
+
+工作树目录真实持久化与创建/列表/项目归属消费，临时Git与状态文件回归；撤无消费者策略表单，保留历史值。见[记录](antigravity/runs/20261102-codex-worktree-settings.md)。自动清理/快照恢复/上游刷新/多主机及原生像素未完成，下一16.16先取证。
+
+## 2026-11-02 — 16.16A 审查本地偏好
+
+纠正usage-code-review错配，接官方独立atom、PR链接/个人指令真实消费、3秒自动保存及失败保稿；撤旧假云端策略。见[记录](antigravity/runs/20261102-codex-review-settings.md)。云端、固定PR快照/结果、多provider及原生像素未完成。下一16.17。
+
+## 2026-11-02 — 16.17A 外部导入
+
+真实detect/import/completed与目标读回，选择/确认、单飞、源变化及断连未知结果保护；撤旧人设伪导入与整份偏好覆盖。见[记录](antigravity/runs/20261102-codex-external-import.md)。项目/历史/同步/Cowork及原生像素未完成，下一16.18。
+
+## 2026-11-03 · 16.18A 存储页语义纠偏
+
+先核原包真实云端usage合同，撤销本地容量冒充云端存储与删除rollouts的一键清理路径；保留其他本地统计消费者。未连接服务明确不可用，整页外部依赖阻塞。专项STG01–04通过，完整检查与原生构建记录见[验证](../.ref/parity/16.18/verification.md)。无新增依赖或通用云服务抽象。
+
+## 2026-11-03 · 16.19A 归档设置统一真实链路
+
+SettingsView不再读本地旧archivedThreads列表，直接复用ArchiveView和App同一分页/恢复/删除/查看/刷新处理器，去除重复写路径与通用配置保存按钮。未改共享归档组件/Rust，无新增依赖。ARS01–05与AA01–06回归通过；构建及完整检查见[验证](../.ref/parity/16.19/verification.md)。官方多主机/云端/筛选/批量、原生和像素仍待验。
+
+2026-11-03：16.20A实验功能改为通用设置Beta组，精确原包可见性、config/batchWrite持久化和用户层读回，去全阶段独立页。重复游标/截断报错、整组单飞/失败重读/卸载隔离。EF01–05、完整verify-all含隔离新进程消费、Release/MSI/NSIS构建通过；158输入稳定。见docs/antigravity/acceptance/16-20A.md。官方原生像素/特殊gate仍未验。
+
+2026-11-03：16.21A语音撤无执行器配置，保留明确标注的Web Speech回退并修复多段丢字、停止释放、跨会话/手动编辑保护和错误显示。VS01–04、Composer回归、完整verify-all、Release/MSI/NSIS通过，159输入稳定。官方语音能力仍阻塞，原生/像素未验。见docs/antigravity/acceptance/16-21A.md。
+
+2026-11-03：16.22A–16.24A依据原包撤无执行器的电脑操控/Appshots/浏览器配置，电脑操控接现有插件管理。屏幕截图改CODEX_HOME、UUID文件名、环境传路径、异常退出和图片解码校验；明确其为主屏PNG附件。CS01–04生产JSX与PowerShell 1x1夹具、完整verify-all、全量Rust113、Release/MSI/NSIS均通过，160输入前后稳定。构建及证据见.ref/parity/16.22/actual/build-manifest.json。完整官方服务/真实桌面捕获/原生像素仍未验；限定增量待验。
+
+2026-11-03：16.25A宠物真实本地清单/偏好与Mini共用状态，移除重复存储和自动首选；大小/可见模式即时持久化、版本/按需隐藏/IME/发送保稿已回归。16.26A撤无云服务假表单。完整verify-all、Rust117、Release/MSI/NSIS、164输入稳定；最终重置草稿修正由专项/tsc/构建覆盖。见[宠物验收](antigravity/acceptance/16-25A.md)和[云端偏好验收](antigravity/acceptance/16-26A.md)。原生独立overlay/云服务/像素未完成。
+
+2026-11-03：17A应用内Quick Chat撤定时轮询/伪成功与独立协议链，复用App真实Composer/turns/审批，关闭和主窗口接续保同会话，旧utility入口先初始化真实App。QC01–04、共享发送/输入法回归、完整verify-all含真实协议、Release/MSI/NSIS通过，164输入稳定。见docs/antigravity/acceptance/17A.md及.ref/parity/17/actual/build-manifest.json。原生独立窗口/全局热键/完整执行与队列UI/像素仍缺，限定增量待验。18 Library四个chunk已只读提取，未开发，下一先追真实provider/服务合同。
+
+2026-11-03：17B接入Tauri独立线程窗口/显隐单例/关闭保留/真实threadId主窗口接续、草稿隔离及主窗口独占全局通知/收件箱/托盘。QN回归、完整verify-all复跑、Rust120、常规Release/MSI/NSIS通过；首轮夹具失败与修复保留，166输入稳定。见docs/antigravity/acceptance/17B.md。原生烟测环境CDP不可用，显式测试启动被自动审批拒绝，未标原生通过；全局热键/双窗口转场/位置/像素等仍缺。下一18 Library按已取证真实服务合同纠偏，整页认证仍阻塞。
+
+2026-11-03：18A Library先完成13来源原包合同与认证/真实HTTP边界取证，再撤演示文件/随机假上传/localStorage假写成功与伪引用，保留用户旧数据。LB01生产JSX/完整verify-all/常规Release/MSI/NSIS通过，166输入稳定。见docs/antigravity/acceptance/18A.md。LB02–07认证服务/原生像素未实现，整页阻塞，纠偏待用户验收；下一19 Images原包取证。
+
+2026-11-03：17B复核修正newProjectlessTask与hotkeyWindow入口错配；补显式无项目发送/goal、跨窗口审批resolved、独立watchId和utility快捷键/chord范围。19A按30来源原包与CLI schema撤定时假SVG/图库/带图假回调，新增真实imageGeneration结果预览及错误/额度/中断/空结果状态，复用文件预览，无新增依赖。限定待验，整页认证、原生与像素仍缺。首轮完整检查暴露2处旧测试夹具，保留失败记录并修正夹具；最终验证和常规产物身份见.ref/parity/19/actual/build-manifest.json，验收见docs/antigravity/acceptance/19A.md。
+
+2026-11-03：20A GP01限定纠偏，撤假GPT目录/作者、固定退休与伪迁移、“普通提示词=GPT”回调；专项及草稿/类型检查通过，完整标准与常规构建进行中。整页真实服务/身份绑定与原生像素未完成，未用户验收；共同认证宿主请求链正在独立取证。见docs/antigravity/acceptance/20A.md。
+
+2026-11-03：19B真实会话图像字节保存与20B GPTs只读目录/分类分页/详情联合实施；共享Rust认证桥复用app-server并固定十种GET操作，不暴露token给renderer。生产helper/组件回归与完整verify-all含隔离认证方法探针通过，全量Rust135通过，常规构建归档中。见[19B](antigravity/acceptance/19B.md)、[20B](antigravity/acceptance/20B.md)及[共享桥](antigravity/acceptance/shared-service.md)。真实账号HTTP、GPT会话写链、Library/Images云端消费者、原生与像素仍未完成；未用户验收。
+
+19B/20B/共享桥联合归档完成：完整标准检查、全量Rust135、Release/MSI/NSIS、diff-check退出0，171产品输入稳定。见.ref/parity/shared-service/actual/20B/build-manifest.json；限定切片待用户验收，真实账号服务/原生/视觉仍未验。既有旧报告和20A产物保留历史身份。
+
+2026-11-03：21A Sites按41来源官方合同新增7个宿主只读操作，页面真实access/owned/shared/all/搜索分页/详情及域名环境读取；撤假站点缓存、假部署/保存/删除与丢站点身份的普通prompt编辑。专项生产helper/TSX通过，完整检查与常规构建进行中。见[21A验收](antigravity/acceptance/21A.md)。写链/缓存时序/官方路由与完整UI、真实账号HTTP、原生像素仍未完成，未用户验收。
+
+21A最终：独立审查补apex A记录遗漏，新增RED保留后修复，专项r2通过；最终完整verify-all-r2、全量Rust137、Release/MSI/NSIS、diff-check退出0，172输入稳定。产物/日志见.ref/parity/21/actual/build-manifest.json。21A限定真实读取实现待用户验收；原生/像素/真实账号HTTP及完整Sites写链仍未完成。22 Cloud Environments下一页官方合同正在取证，不沿用旧演示算力/假创建。
+
+2026-11-03：22A新Codex Cloud按13来源/178片段官方合同实现ASB固定只读链、host认证身份与个人plan访问窄推导、workspace显式读取差异、双scope全分页/仓库名resolver及真实详情/草稿元数据，撤旧假容器/算力/创建删除和普通prompt云任务回调。专项/类型/草稿回归通过，完整检查与独立审查进行中。见[22A](antigravity/acceptance/22A.md)。真实setup/draft审批写链/完整工作区gate/原生/像素仍未完成，未用户验收。
+
+2026-11-03：22A审查补齐草稿新增仓库真实名称，新增回归先红后绿，覆盖关闭/切换详情/切号后三类名称晚到隔离，复用resolver与AbortController。最终完整标准检查r2、全量Rust148、常规EXE/MSI/NSIS及diff-check均退出0，173产品输入哈希稳定，归档.ref/parity/22/actual/build-manifest.json。限定只读切片待用户验收，原生/真实认证HTTP/视觉仍未验；下一23先核原生窗口/分享/深链的实际断链。
+
+2026-11-03：23A依据五个原包来源与ASAR header integrity核对会话动作，先红后绿修正复数threads深链、缺会话ID不写、剪贴板真实结果；撤分享的伪深链结果、禁用未实现分享与独立窗口菜单，并消除未知宿主命令失败后的成功提示。复用clipboard工具，未新增依赖。实际App回调/菜单专项通过、完整检查与构建中，见[23A](antigravity/acceptance/23A.md)。原生窗口/多窗口并发、分享服务与OS协议接收保持未完成。
+
+2026-11-03：23A完整标准检查、常规EXE/MSI/NSIS与diff-check退出0，173输入稳定，24 Rust/config输入与22A全量148测试时相同。归档.ref/parity/23/actual/build-manifest.json，限定纠偏切片待验收。下一23B按已证同会话窗口合同开发，先锁初始化、通知owner与审批重复消费回归；未用户验收和原生像素未验状态保留。
+
+2026-11-03：23B接通真实同会话独立窗口，不fork/不新app-server。唯一窗口标签、合法ID与窗口权限、连接及订阅就绪后一次select、独立草稿/工作区/监听、主窗口通知与inbox owner、聚焦窗口菜单均已实施。审查修复Tauri Any监听误路由与WebView销毁不触发React cleanup导致watch泄漏：窗口限定listen实际Tauri API先红后绿，宿主登记/Destroyed回收/无连接不重启通过11项Rust专项。双实例生产handler回放验证流同步、切换隔离与缓冲不重复；完整标准/全量Rust/构建中。见[23B](antigravity/acceptance/23B.md)，原生UI/像素/真实关闭读回未验。
+
+2026-11-03：23B完整标准、全量Rust159、常规EXE/MSI/NSIS及diff-check退出0，175产品输入哈希稳定，归档.ref/parity/23/actual/23B/build-manifest.json。限定实现待验收，原生双窗口与像素未验。下一补跨窗口焦点通知抑制/通知owner生命周期，再继续真实分享与深链接收；不把所有23入口标完成。
+
+2026-11-03：23C按官方通知消费者及main全应用焦点/持久设置/去重合同，将系统通知改为宿主全局仲裁，各窗口竞争同事件；前端等待前后复查请求有效性，主窗口关闭不清宿主去重记录。审批/自动化均接通子窗口参与，收件箱和应用内toast仍主窗口负责。复用现有通知桥/存储/声音，无新增依赖。独立审查修复枚举后窗口销毁的查询竞态并补回归；9项Rust专项、完整标准检查、全量Rust168、常规EXE/MSI/NSIS和diff-check退出0，176输入稳定。见[23C](antigravity/acceptance/23C.md)及.ref/parity/23/actual/23C/build-manifest.json。原生焦点/系统弹窗/关窗竞态与像素未验，主窗口关闭后inbox追加、分享和OS深链仍有缺口。
+
+2026-11-03：23D修改前复核确认旧本地Inbox不等同于官方Pages/自动化Inbox，因此停止扩建该模型，优先纠正会话已读入口。顶栏读状态操作复用真实thread/readState/update与receipt能力判断，删除本地待办条目和提前成功提示；侧栏活动未读/红点改服务receipt，全部已读共享在途锁并统一刷新。生产回调先红后绿；默认CLI不支持和0.165.0真实读写/冲突/重启持久化均留证，零模型turn。完整标准/常规EXE/MSI/NSIS/diff-check退出0，176输入稳定，27项Rust输入与23C全量168测试时一致。见[23D](antigravity/acceptance/23D.md)。原生/像素/全Activity未验；下一推进真实分享快照/上传/发布合同和OS接收。
+
+2026-11-03：23E先补官方快照/清洗/资产/url_safe/PUT组织策略/受众合同，再实施完整历史读取、白名单转换、递归脱敏、资产准备流水线及内部宿主上传发布事务。独立审查先红后绿修复旧公开链接冒充变更受众、悬空图片引用；408/409结果未知不重发。生产函数专项、100个基础样本及变体的官方纯脱敏器对照通过；两版CLI仅证明上下文空历史和不resume，非空真实多页仍未验。见[23E](antigravity/acceptance/23E.md)。完整检查/原生构建归档中；尚未注册分享IPC或放行菜单，真实gate/读取器/受众/UI/HTTP及像素仍未完成，不称用户已可分享。
+
+23E最终归档：首次标准检查因并行Rust编译/测试发生LNK1104，占用测试EXE，保留退出1日志；冻结源码后串行完整标准r2退出0，全量Rust182通过，EXE/MSI/NSIS构建及diff-check退出0，180产品输入稳定。见.ref/parity/23/actual/23E/build-manifest.json。没有注册或开放分享入口；下一接真实gate/受众、权限绑定资产读取和弹窗，再验证真实服务。内部能力完成不等于23页或整个App完成。
+
+2026-11-03：23F先补分享gate/bootstrap/accounts/用户组/弹窗与本地资产合同，再接入真实服务命令、并发4上传、完整身份资产读取、会话准备/发布/复制与个人/工作空间弹窗。复用23E完整历史/快照/脱敏及既有剪贴板/bridge，无新增依赖。独立复核后修复完整身份缺口、搜索单侧失败未取消sibling和受众变化错误被当可重发；相应生产逻辑/静态接线回归已补。完整标准首轮旧夹具缺shareAvailable失败保留，修正真实入口条件后完整复跑退出0；最终Rust库全测200、EXE/MSI/NSIS及diff-check退出0，186产品输入稳定。见[23F](antigravity/acceptance/23F.md)及.ref/parity/23/actual/23F/build-manifest.json。真实服务/原生/像素未验，预览仍为简化纯文本/图片卡片，整页未完成。下一OS深链接接收合同已调研，尚未开发/改变系统协议。
+
+2026-11-03：23G裸本地会话深链接、Windows命名管道第二实例转发和main就绪后消费已完成限定本地自验。完整标准、Rust库全测213、EXE/MSI/NSIS与diff-check退出0，189产品输入稳定，见[23G](antigravity/acceptance/23G.md)。系统协议未修改；Tauri窗口恢复/真实会话跳转、其他官方链接语法和像素未验，整页未完成。下一单元转入05B保存前内容检查与写后回读。
+
+2026-11-03：05B按既有官方外部变更合同，优先修复无条件写盘风险：增加保存前内容比较与写后回读，冲突/错误保留草稿，已落盘快照可无写入收敛；移除编辑保存失败后的通用本地写回退，复用fs协议和现有单飞/版本/身份设施。生产函数替身回归与隔离真实文件BOM/CRLF往返、FE01–FE06、完整标准及EXE/MSI/NSIS构建均通过，190产品输入稳定。见[05B](antigravity/acceptance/05B.md)。非原子保护；完整冲突review、关闭先保存再条件放弃、原生/像素及用户验收未完成。无新依赖，未改Rust源码，未提交/推送。
+
+2026-11-03：05C当前文件预览关闭按官方静态合同改为先save-until-clean，失败后才显示继续查看/放弃两按钮；复用共享保存Promise、05B保护和现有compact dialog样式，无新依赖。FE01–FE06/FC01–FC06及生产弹窗浏览器按钮/Escape/焦点通过；补充隐藏重开不能复活旧关闭意图。首轮旧JSX静态断言失败保留，修正接线检查后完整标准含协议复跑0；末次生命周期补丁专项/类型及最终Fast0，Fast不含协议。原生EXE/MSI/NSIS0，最终192输入及前端资产哈希稳定，diff-check0，见[05C](antigravity/acceptance/05C.md)。非原子冲突保护、完整review/多标签/应用退出、Tauri实际操作和官方像素未完成；05整页未验收。下一06B暂存/取消暂存合同与参考哈希已补，不在本轮修改Git产品代码。
+
+2026-11-03：06B按已核验官方file/section动作合同修复索引往返。暂存/取消接入当前工作面提交/推送锁和上下文身份，混合staged/unstaged暴露两动作，原生排列尚未对照。Rust取消暂存省略显式HEAD并传播真实失败，5项隔离Git测试保留文件字节、覆盖无HEAD和index.lock。先测失败前端1/Rust101已保留；修复后完整标准、Rust库全测218、EXE/MSI/NSIS及diff-check退出0，192输入稳定，见[06B](antigravity/acceptance/06B.md)。无新依赖，未改discard策略，不声称所有Git入口/多窗口互斥或整页像素通过。下一[07C终端输出链合同](antigravity/specs/07-terminal-output.md)及当前包参考已补齐。
+
+2026-11-03：07C按已核验静态快照/回放合同打通终端输出链：等待双监听、generation与解码UTF-8字节水位、乱序/重叠去重、流式UTF-8、128KiB字符边界裁剪、创建注册顺序和真实进程释放。退出保留快照至close但不可写，xterm按解析回调完成hydration并释放销毁等待者；复用07B命令链，无新增依赖。7项Rust专项含真实Windows ConPTY，4份真实事件经生产前端全采样边界逆序/重复回放；完整标准含协议、Rust库225项、EXE/MSI/NSIS与diff-check均退出0，193产品输入稳定。见[07C](antigravity/acceptance/07C.md)及.ref/parity/07/actual/07C/build-manifest.json。初始化回放禁用全部stdin与官方分类存在待对照差异；原生WebView、官方/像素和用户验收未完成，07整页未验收。下一08只读补证区分ChatGPT/Pages重试与本地线程catch空数组，不把不同数据源行为混用。未提交/推送。
+
+## 2026-11-03：08B 搜索生命周期限定自验归档
+
+官方静态合同先于本轮修改，修正root/files边界、30秒线程缓存、真实fuzzy session订阅与停止、晚到事件及输入焦点。复用现有协议桥，无新依赖。完整首轮标准含协议退出0；最后清理修正后Fast标准、两版真实CLI搜索协议及EXE/MSI/NSIS均退出0；194产品输入稳定。Rust未改，本单元未重跑全库。见 docs/antigravity/acceptance/08B.md 与 .ref/parity/08/actual/08B/build-manifest.json。浏览器生产组件夹具通过模式/焦点/Escape，非官方或原生对照；整08、像素与用户验收均未完成。
+
+## 2026-11-03：09B Activity注意提示
+
+先复核官方Activity静态来源并纠正当前源码描述：23D已使用真实未读会话，09B实际缺口为waiting候选不计入注意提示。新增threadActivity共享两个判定，候选包括未读/active/waiting，提示仅未读/waiting；Sidebar复用候选集合并明确命名activityAttentionCount，移除重复status/flags分支。保留现有真实全部已读handler并扩展互斥、冲突、刷新和最新revision回归，无新依赖、无Rust变更。完整标准（含协议）、原生EXE/MSI/NSIS及diff-check退出0，195产品输入稳定。0.165.0真实隔离读状态/旧revision/重启往返通过；0.159.2明确不支持该能力。见docs/antigravity/acceptance/09B.md及.ref/parity/09/actual/09B/build-manifest.json。官方运行时、快照保留、原生和像素仍未验，09整页未验收。下一10 Scheduled优先研究持久运行记录与活动来源的衔接，不能继续把页面内临时历史当官方run库。
+
+## 2026-11-03：10B Scheduled真实执行终态
+
+官方main/bootstrap两份原始chunk、12处锚点先证实turn/start仅登记运行，真实成功来自匹配turn/completed。修复后端过早completed、周期running重入及前端中断默认成功。订阅先于turn/start，按thread/turn配对，早终态缓存、互斥声明先保存、终态保存成功后才通知，错误/中断/未知分别显示。写失败不启动模型；终态写失败仅重试本地存储，独立任务不阻塞全局扫描。前端按startedAt归并，移除临时记录key计数器及重复的启动记录构造。无新依赖。两轮只读审查发现P1存储失败仍启动和P2错误分支阻塞扫描，均修复并复核。完整标准显式隔离CODEX_HOME退出0、全Rust229通过、EXE/MSI/NSIS及diff-check退出0，195产品输入稳定。初次标准在协议探针前主动停止以补显式隔离，日志保留、不算通过。两版CLI实际schema生成核验通过，仅证明协议形状；未执行付费自动化端到端任务。详见docs/antigravity/acceptance/10B.md、.ref/parity/10/actual/10B/build-manifest.json。原生/像素、逐次持久run库及整10仍未验收。下一11B已完成只读删除合同：关联/置顶会话、归档、快照恢复及真实删除回读，不把现有force删除当完整闭环。
+
+## 2026-11-03：11B 工作树删除与恢复
+
+先完成官方静态合同，再补全分页关联会话/置顶复核、归档后回读、真实目标身份校验、临时 index 快照、Git remove 结果验证及 detached 恢复接口。复用 bridge、Git 和 Tauri 能力，无新依赖；前端共享在途 Promise 与上下文隔离，后端同路径互斥，主工作树按真实 Git 登记识别。独立审查发现 gitDir 等于被删 checkout 的 P1，新增真实先红回归并改为稳定主仓库上下文，复核闭环。完整标准显式隔离 CODEX_HOME、全 Rust 240、原生 EXE/MSI/NSIS、diff-check 均通过，196 产品输入稳定；两版 CLI 隔离归档协议通过且零模型 turn。见 docs/antigravity/acceptance/11B.md 与 .ref/parity/11/actual/11B/build-manifest.json。快照失败按定向删除例外明确 warning，不使用递归删除兜底；完整恢复 UI、原生、官方运行时及像素未验，整11未验收。下一12B安装后的连接准备合同已调研完成，见docs/antigravity/specs/12-next-closure.md。
+
+## 2026-11-03：12B 插件安装后的连接准备
+
+先调研安装准备及新连接生命周期，再实现严格安装响应、保留待连接项、HTTPS外链、新生命周期app/installed→100项分组app/read、明确方法不支持才回退全分页app/list。事实分别显示，打开外链不作OAuth成功；卸载/离页/新尝试使旧读取失效。审查P2“坏/部分目录解锁重装、普通刷新无法恢复待确认”已修并复核，PA07覆盖恢复。复用现有桥/外链/样式，无依赖和Rust改动。完整标准含新增隔离真实插件探针退出0，两版CLI均真实本地安装/双读回/卸载/双读回并生成schema；零turn。生产组件浏览器夹具验证连接/检查/收起/继续，非真实授权或原生。初两次构建遇EXE拒绝替换，日志保留；重命名保留旧产物、不终止应用，最终EXE/MSI/NSIS及diff-check退出0，197输入稳定。详见docs/antigravity/acceptance/12B.md、.ref/parity/12/actual/12B/build-manifest.json。完整OAuth/回调、官方gate与原生/像素未验，整12未验收。下一按docs/antigravity/specs/13-next-closure.md推进推荐技能真实目录与完整安装后协议发现。
+
+## 2026-11-03：13B 推荐技能与阶段提交
+
+按13B合同新增真实官方托管推荐目录、10分钟缓存/显式刷新/失败保留、两级目录优先级和完整技能用户/项目安装；项目桥校验登记root，复用解析器、写锁与样式，无新依赖。安装后精确skills/list发现，保留文件成功但发现待确认的状态。独立审查修复Git超时残留helpers及无界pipe收尾，Windows挂起入Job后恢复，真实ready/go父子测试确认终止和无晚写。完整标准含隔离协议退出0，全Rust252通过，原生EXE/MSI/NSIS成功，构建前后200输入稳定；暂存时仅修McpCallCard.css EOF空行，原标准快照和最终构建快照分开保留。两版CLI目录发现各9项通过，生产组件浏览器夹具也通过项目范围与发现状态；官方外网刷新、原生UI/像素仍未验。见docs/antigravity/acceptance/13B.md。按用户新授权将累计跨页面成果作为大阶段提交，临时运行状态和.ref证据不混入源码；下一按docs/antigravity/specs/14-next-closure.md处理真实审查终态与模型行评论。

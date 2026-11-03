@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { callAppServer } from "../bridge";
 import { ThreadSummary } from "../types";
@@ -41,81 +41,97 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState<string>("");
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [restoredThread, setRestoredThread] = useState<ArchivedThread | null>(null);
   const requestSeqRef = useRef(0);
+  const mountedRef = useRef(true);
+  const mutationPendingRef = useRef(false);
 
-  const load = useCallback(async (searchTerm?: string) => {
+  const load = useCallback(async (afterMutation = false) => {
+    if (mutationPendingRef.current && !afterMutation) return;
     const seq = ++requestSeqRef.current;
+    const isCurrent = () => mountedRef.current && seq === requestSeqRef.current;
     setLoading(true);
     setError(null);
     try {
-      const res = await callAppServer<{ data?: ArchivedThread[] }>("thread/list", {
-        archived: true,
-        limit: 100,
-        sortKey: "updated_at",
-        sortDirection: "desc",
-        ...(searchTerm ? { searchTerm } : {}),
-      });
-      if (seq !== requestSeqRef.current) return;
-      const list = res?.data || (res as any)?.threads || (Array.isArray(res) ? res : []);
-      setThreads(Array.isArray(list) ? list : []);
+      const list: ArchivedThread[] = [];
+      const cursors = new Set<string>();
+      let cursor: string | null = null;
+      do {
+        const res: { data: ArchivedThread[]; nextCursor?: string | null } = await callAppServer("thread/list", {
+          archived: true, limit: 100, sortKey: "updated_at", sortDirection: "desc", cursor,
+        });
+        if (!isCurrent()) return;
+        if (!Array.isArray(res?.data)) throw new Error("归档列表响应无效");
+        list.push(...res.data);
+        cursor = res.nextCursor ?? null;
+        if (cursor !== null && cursors.has(cursor)) throw new Error("归档列表返回重复分页游标");
+        if (cursor !== null) cursors.add(cursor);
+      } while (cursor !== null);
+      setThreads(list);
     } catch (e: any) {
-      if (seq !== requestSeqRef.current) return;
+      if (!isCurrent()) return;
       setError(String(e?.message || e));
     } finally {
-      if (seq === requestSeqRef.current) setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; ++requestSeqRef.current; };
   }, []);
 
   useEffect(() => {
     void load();
   }, [load, refreshToken]);
 
-  // 服务器端按标题搜索（thread/list.searchTerm），300ms 防抖
-  useEffect(() => {
-    const handle = setTimeout(() => {
-      void load(search.trim() || undefined);
-    }, 300);
-    return () => clearTimeout(handle);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search]);
-
-  const handleUnarchive = useCallback(
-    async (thread: ArchivedThread) => {
+  const mutate = useCallback(
+    async (thread: ArchivedThread, action: "restore" | "delete") => {
+      if (mutationPendingRef.current) return;
+      mutationPendingRef.current = true;
+      ++requestSeqRef.current;
+      setLoading(false);
       setBusyId(thread.id);
       try {
-        await onUnarchive(thread);
-        setThreads((prev) => prev.filter((t) => t.id !== thread.id));
-        onShowToast?.("✓ 已恢复会话", "success");
+        if (action === "restore") await onUnarchive(thread);
+        else await onDelete(thread);
+        if (!mountedRef.current) return;
+        setThreads((current) => current.filter((item) => item.id !== thread.id));
+        if (action === "restore") setRestoredThread(thread);
+        else if (restoredThread?.id === thread.id) setRestoredThread(null);
+        onShowToast?.(action === "restore" ? "聊天已取消归档" : "已删除归档聊天", "success");
+        await load(true);
       } catch (e: any) {
-        onShowToast?.(`恢复失败：${e?.message || e}`, "error");
+        if (mountedRef.current) onShowToast?.(`${action === "restore" ? "恢复" : "删除"}失败：${e?.message || e}`, "error");
       } finally {
-        setBusyId(null);
+        mutationPendingRef.current = false;
+        if (mountedRef.current) setBusyId(null);
       }
     },
-    [onUnarchive, onShowToast]
+    [onUnarchive, onDelete, onShowToast, load, restoredThread]
+  );
+
+  const handleUnarchive = useCallback(
+    async (thread: ArchivedThread) => { await mutate(thread, "restore"); },
+    [mutate]
   );
 
   const handleDelete = useCallback(
     async (thread: ArchivedThread) => {
+      if (mutationPendingRef.current) return;
       const label = thread.name || thread.preview || thread.id;
       if (!window.confirm(`确定要彻底删除归档会话「${label}」吗？此操作无法撤销。`)) {
         return;
       }
-      setBusyId(thread.id);
-      try {
-        await onDelete(thread);
-        setThreads((prev) => prev.filter((t) => t.id !== thread.id));
-        onShowToast?.("✓ 已彻底删除会话", "success");
-      } catch (e: any) {
-        onShowToast?.(`删除失败：${e?.message || e}`, "error");
-      } finally {
-        setBusyId(null);
-      }
+      await mutate(thread, "delete");
     },
-    [onDelete, onShowToast]
+    [mutate]
   );
 
-  const visible = useMemo(() => threads, [threads]);
+  const query = useDeferredValue(search.trim().toLocaleLowerCase());
+  const visible = useMemo(() => threads.filter((thread) =>
+    !query || (thread.name || thread.preview || thread.id).toLocaleLowerCase().includes(query)
+  ), [threads, query]);
 
   return (
     <div className="archive-view">
@@ -137,13 +153,20 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
           <button
             type="button"
             className="archive-refresh"
-            onClick={() => void load(search.trim() || undefined)}
-            disabled={loading}
+            onClick={() => void load()}
+            disabled={loading || busyId !== null}
           >
             {loading ? "刷新中…" : "刷新"}
           </button>
         </div>
       </header>
+
+      {restoredThread && (
+        <div className="archive-footer" role="status">
+          聊天已取消归档
+          <button type="button" className="archive-action" onClick={() => onSelectThread(restoredThread.id)}>查看</button>
+        </div>
+      )}
 
       {error && (
         <div className="archive-error">
@@ -157,7 +180,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
       {!error && !loading && visible.length === 0 && (
         <div className="archive-empty">
           <div className="archive-empty-icon">🗄️</div>
-          <div className="archive-empty-title">暂无归档会话</div>
+          <div className="archive-empty-title">{query ? "没有匹配的归档会话" : "暂无归档会话"}</div>
           <div className="archive-empty-desc">
             在侧边栏会话的「⋯」菜单中选择「归档会话」后，会出现在这里。
           </div>
@@ -168,12 +191,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
         <div className="archive-list">
           {visible.map((thread) => (
             <div key={thread.id} className="archive-row">
-              <button
-                type="button"
-                className="archive-row-main"
-                onClick={() => onSelectThread(thread.id)}
-                title="打开会话（会自动恢复）"
-              >
+              <div className="archive-row-main">
                 <span className="archive-row-title">
                   {thread.name || thread.preview || thread.id}
                 </span>
@@ -185,12 +203,12 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
                     </span>
                   )}
                 </span>
-              </button>
+              </div>
               <div className="archive-row-actions">
                 <button
                   type="button"
                   className="archive-action danger"
-                  disabled={busyId === thread.id}
+                  disabled={busyId !== null}
                   onClick={() => void handleDelete(thread)}
                   title="永久删除"
                 >
@@ -199,7 +217,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
                 <button
                   type="button"
                   className="archive-action"
-                  disabled={busyId === thread.id}
+                  disabled={busyId !== null}
                   onClick={() => void handleUnarchive(thread)}
                 >
                   取消归档

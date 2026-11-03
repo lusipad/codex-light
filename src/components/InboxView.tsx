@@ -4,6 +4,8 @@ import { InboxNotificationItem } from "../types";
 
 export interface InboxViewProps {
   items: InboxNotificationItem[];
+  loadError?: string | null;
+  onRetryLoad?: () => void;
   onMarkAllRead: () => void;
   onClearAll?: () => void;
   onDeleteItem?: (id: string, e: React.MouseEvent) => void;
@@ -14,6 +16,8 @@ export interface InboxViewProps {
 
 export const InboxView: React.FC<InboxViewProps> = ({
   items,
+  loadError,
+  onRetryLoad,
   onMarkAllRead,
   onClearAll,
   onDeleteItem,
@@ -107,6 +111,12 @@ export const InboxView: React.FC<InboxViewProps> = ({
           </div>
         </div>
 
+        {loadError && (
+          <div role="alert">
+            {loadError}
+            <button type="button" onClick={onRetryLoad}>重试读取通知</button>
+          </div>
+        )}
         {visibleItems.length === 0 ? (
           <div className="route-empty-state">
             <BellIcon size={32} />

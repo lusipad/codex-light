@@ -10,7 +10,7 @@ const { NOTIFICATION } = await load("../src/protocol.ts");
 const { extractTextFromItem } = await load("../src/threadText.ts");
 const source = fs.readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const ast = ts.createSourceFile("App.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-let reasoning, command, lifecycle, extract, output, label;
+let reasoning, command, lifecycle, extract;
 function visit(node) {
   if (ts.isIfStatement(node)) {
     const condition = node.expression.getText(ast);
@@ -19,11 +19,9 @@ function visit(node) {
     if (condition === 'method === "item/started" || method === "item/completed"') lifecycle = node.thenStatement.getText(ast);
   }
   if (ts.isFunctionDeclaration(node) && node.name?.text === "extractReasoningText") extract = node.getText(ast);
-  if (ts.isVariableDeclaration(node) && node.name.getText(ast) === "outText") output = node.initializer.getText(ast);
-  if (ts.isConditionalExpression(node) && node.condition.getText(ast).includes("cmd.exitCode !==") && node.whenTrue.getText(ast).includes("exit ${")) label = node.getText(ast);
   ts.forEachChild(node, visit);
 }
-visit(ast); for (const value of [reasoning, command, lifecycle, extract, output, label]) assert.ok(value);
+visit(ast); for (const value of [reasoning, command, lifecycle, extract]) assert.ok(value);
 let turns = [{ id: "t", status: "inProgress", items: [] }];
 const context = vm.createContext({ NOTIFICATION, mergeTimelineItem, extractTextFromItem, setTurns: update => { turns = update(turns); } });
 vm.runInContext(compile(`${extract}; globalThis.extract = extractReasoningText;`), context);
@@ -52,14 +50,9 @@ console.log("PASS indexed reasoning sections and authoritative completion withou
 notify(NOTIFICATION.ITEM_COMMAND_OUTPUT_DELTA, { itemId: "cmd", delta: "旧输出" });
 notify("item/completed", { item: { id: "cmd", type: "commandExecution", command: "fixed", aggregatedOutput: "最终输出", status: "failed", exitCode: null } });
 context.cmd = turns[0].items.find(item => item.id === "cmd");
-assert.equal(vm.runInContext(output, context), "最终输出", "completed output must replace stream buffer");
-assert.equal(vm.runInContext(label, context), "失败");
-for (const [status, expected] of [["completed", "完成"], ["declined", "已拒绝"], ["inProgress", "运行中..."]]) {
-  context.cmd = { status, aggregatedOutput: "", output: "stale", exitCode: null };
-  assert.equal(vm.runInContext(output, context), "", "authoritative empty output must not fall back to stale text");
-  assert.equal(vm.runInContext(label, context), expected);
-}
-console.log("PASS command output authority, empty output and terminal status labels");
+assert.equal(context.cmd.aggregatedOutput, "最终输出", "completed output must replace stream buffer");
+assert.equal(context.cmd.status, "failed", "terminal failure status must survive item completion");
+console.log("PASS command output authority and lifecycle remain intact for the dedicated card regression");
 
 const history = [{ id: "t", items: [{ id: "r", type: "reasoning", summary: ["第一段", "第二段"], content: ["正文"] }] }];
 const event = (method, params) => ({ method, params: { threadId: "a", turnId: "t", itemId: "r", ...params } });
@@ -83,3 +76,12 @@ const commandEvents = commandBuffer.release(1, "a", commandHistory);
 assert.equal(commandEvents[0].params.item.aggregatedOutput, "历史输出");
 assert.deepEqual(commandEvents.map(e => e.method), ["item/started", "item/completed"]);
 console.log("PASS command hydration keeps output and final completion suppresses buffered deltas");
+notify("item/started", { item: { id: "image", type: "imageGeneration", status: "inProgress", result: "" } });
+notify("item/completed", { item: { id: "image", type: "imageGeneration", status: "completed", result: "iVBORw0KGgo=" } });
+notify("item/completed", { item: { id: "image", type: "imageGeneration", status: "completed", result: "iVBORw0KGgo=" } });
+assert.equal(turns[0].items.filter(item => item.id === "image").length, 1);
+assert.equal(turns[0].items.find(item => item.id === "image").result, "iVBORw0KGgo=");
+const imageBuffer = new ThreadHistoryBuffer(); imageBuffer.begin(4, "a");
+assert.equal(imageBuffer.capture({ method: "item/completed", params: { threadId: "other", turnId: "t", item: { id: "image", result: "foreign" } } }, 4), false);
+assert.deepEqual(imageBuffer.release(4, "a", turns), []);
+console.log("PASS image generation lifecycle: completed result retained, duplicate completion replaces same ID, history buffer rejects another thread");

@@ -1,0 +1,17 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import vm from "node:vm";
+import ts from "typescript";
+const source = fs.readFileSync("src/components/LibraryView.tsx", "utf8");
+const React = { createElement: (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat(Infinity) }) }; React.default = React;
+const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React } }).outputText;
+const module = {};
+vm.runInNewContext(compiled, { exports: module, require: name => { if (name === "react") return React; if (name.endsWith(".css")) return {}; throw Error(`unconnected service cannot invoke ${name}`); }, localStorage: { getItem() { assert.fail("must not read old local data as official library"); }, setItem() { assert.fail("must preserve old local data"); } }, setTimeout() { assert.fail("no delayed simulated result"); } });
+const tree = module.LibraryView();
+const nodes = node => node && typeof node === "object" ? [node, ...(node.children ?? []).flatMap(nodes)] : [];
+assert.match(JSON.stringify(tree), /资料库服务尚未连接/);
+assert.ok(nodes(tree).some(node => node.props.role === "status"));
+assert.equal(nodes(tree).filter(node => ["button", "input", "form", "img"].includes(node.type)).length, 0, "no fake mutation, upload, note or demo image controls");
+assert.ok(!/DEFAULT_LIBRARY_ITEMS|fakeUpload|localStorage|Date.now|setTimeout|文件已删除|已创建/.test(source));
+const app = fs.readFileSync("src/App.tsx", "utf8"); assert.ok(app.includes("<LibraryView />")); assert.ok(!app.includes("onInsertToChat="));
+console.log("PASS LB01 production JSX: visible disconnected service, zero demo data/fake actions/local-storage mutation and removed synthetic reference callback; real authenticated operations remain unimplemented");

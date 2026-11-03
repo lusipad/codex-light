@@ -17,6 +17,7 @@ const ast = ts.createSourceFile(
 let hasCtrlSSave = false;
 let hasTabIndent = false;
 let hasClosePreviewBtn = false;
+let hasClosePreviewHandler = false;
 let hasDirErrorState = false;
 let hasDirErrorUI = false;
 let hasLiveFileRefreshWithoutDirty = false;
@@ -37,7 +38,8 @@ function visit(node) {
     // 2. 检查关闭文件预览按钮
     if (
       text.includes("file-editor-header") &&
-      text.includes("setFilePreview(null)")
+      text.includes('title="关闭预览"') &&
+      text.includes("closeFilePreview()")
     ) {
       hasClosePreviewBtn = true;
     }
@@ -53,6 +55,10 @@ function visit(node) {
     const name = node.name.getText(ast);
     if (name === "dirError" || name.includes("dirError")) {
       hasDirErrorState = true;
+    }
+    if (name === "closeFilePreview" &&
+      node.initializer?.getText(ast).includes("setFilePreview(null)")) {
+      hasClosePreviewHandler = true;
     }
   }
 
@@ -84,7 +90,7 @@ assert.ok(
   "DiffDrawer.tsx file-editor-textarea must handle Tab onKeyDown for code indentation"
 );
 assert.ok(
-  hasClosePreviewBtn,
+  hasClosePreviewBtn && hasClosePreviewHandler,
   "DiffDrawer.tsx file-editor-header must provide a close button to clear preview"
 );
 assert.ok(

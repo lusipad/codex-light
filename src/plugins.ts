@@ -5,13 +5,9 @@
  * The Rust bridge collapses JSON-RPC errors to their `error.message` string, so we
  * re-classify those strings into a small, UI-friendly error model.
  *
- * ⚠️ PERFORMANCE WARNING — `plugin/list`
- * Calling `plugin/list` WITHOUT `marketplaceKinds` returns the entire remote curated
- * catalog (~17 MB / 7300+ plugins on a real install). Never do that for a UI listing.
- * `listMarketplacePlugins()` therefore always sends `marketplaceKinds: ["local"]`
- * (measured ~139 KB for 3 local marketplaces) and the view only calls it once,
- * behind an explicit "browse" mode with a loading state. The default plugin view
- * uses `plugin/installed` (~34 KB) instead.
+ * Browsing omits marketplaceKinds so the server can include the default remote
+ * catalog when enabled. The response is not paginated; the view limits rendered
+ * cards and caches the result. The default view uses plugin/installed.
  */
 
 import { callAppServer } from "./bridge";
@@ -117,7 +113,7 @@ export interface PluginInstalledResponse {
   marketplaceLoadErrors?: MarketplaceLoadErrorInfo[];
 }
 
-/** `plugin/list` response (we only ever request `marketplaceKinds: ["local"]`). */
+/** `plugin/list` response; the protocol has no pagination cursor. */
 export interface PluginListResponse extends PluginInstalledResponse {
   featuredPluginIds?: string[];
 }
@@ -255,6 +251,13 @@ export interface InstalledApp {
 
 export interface AppsInstalledResponse {
   apps: InstalledApp[];
+}
+
+/** Readback facts only; catalog access and runtime callability do not prove OAuth completion. */
+export interface PluginPreparationState {
+  source: "runtime" | "catalog";
+  catalog: AppInfo[];
+  installed: InstalledApp[];
 }
 
 // ── Skills ───────────────────────────────────────────────────────────────────
@@ -409,12 +412,32 @@ function cwdsParam(cwds?: string[]): Record<string, unknown> {
   return cwds && cwds.length > 0 ? { cwds } : {};
 }
 
-function normalizeInstalledResponse(raw: PluginInstalledResponse | null | undefined): PluginInstalledResponse {
+function normalizeInstalledResponse(
+  raw: PluginInstalledResponse | null | undefined, method: string
+): PluginInstalledResponse {
+  if (!raw || !Array.isArray(raw.marketplaces)) {
+    throw new PluginProtocolError(method, "响应缺少 marketplaces 数组，无法确认安装状态");
+  }
+  for (const marketplace of raw.marketplaces) {
+    if (!marketplace || typeof marketplace.name !== "string" || !marketplace.name.trim() || !Array.isArray(marketplace.plugins)) {
+      throw new PluginProtocolError(method, "响应包含无效的市场名称或 plugins 数组");
+    }
+    for (const plugin of marketplace.plugins) {
+      if (!plugin || typeof plugin.id !== "string" || !plugin.id.trim() || typeof plugin.installed !== "boolean") {
+        throw new PluginProtocolError(method, "响应包含无效的插件 ID 或 installed 状态");
+      }
+    }
+  }
+  if (raw.marketplaceLoadErrors !== undefined) {
+    if (!Array.isArray(raw.marketplaceLoadErrors) || raw.marketplaceLoadErrors.some(error =>
+      !error || typeof error.marketplacePath !== "string" || !error.marketplacePath.trim() || typeof error.message !== "string"
+    )) {
+      throw new PluginProtocolError(method, "响应包含无效的 marketplaceLoadErrors");
+    }
+  }
   return {
-    marketplaces: Array.isArray(raw?.marketplaces) ? raw!.marketplaces : [],
-    marketplaceLoadErrors: Array.isArray(raw?.marketplaceLoadErrors)
-      ? raw!.marketplaceLoadErrors
-      : [],
+    marketplaces: raw.marketplaces,
+    marketplaceLoadErrors: raw.marketplaceLoadErrors ?? [],
   };
 }
 
@@ -434,24 +457,20 @@ export interface PluginRef {
  */
 export async function listInstalledPlugins(cwds?: string[]): Promise<PluginInstalledResponse> {
   const raw = await call<PluginInstalledResponse>("plugin/installed", cwdsParam(cwds));
-  return normalizeInstalledResponse(raw);
+  return normalizeInstalledResponse(raw, "plugin/installed");
 }
 
 /**
- * Browse listing: `plugin/list` restricted to LOCAL marketplaces only.
- *
- * The `marketplaceKinds: ["local"]` filter is mandatory: omitting it makes the
- * app-server return the whole remote curated catalog (~17 MB / 7300+ plugins).
- * Measured local-only response: ~139 KB. Cache the result; do not call repeatedly.
+ * Browse the server-enabled local and default remote catalog. Do not force
+ * marketplace kinds that depend on account capabilities or feature gates.
  */
-export async function listMarketplacePlugins(cwds?: string[]): Promise<PluginListResponse> {
+export async function listMarketplacePlugins(cwds?: string[], forceRefetch = false): Promise<PluginListResponse> {
   const raw = await call<PluginListResponse>("plugin/list", {
     ...cwdsParam(cwds),
-    marketplaceKinds: ["local"] as MarketplaceKind[],
-    forceRefetch: false,
+    forceRefetch,
   });
   return {
-    ...normalizeInstalledResponse(raw),
+    ...normalizeInstalledResponse(raw, "plugin/list"),
     featuredPluginIds: Array.isArray(raw?.featuredPluginIds) ? raw!.featuredPluginIds : [],
   };
 }
@@ -502,9 +521,16 @@ export async function installPlugin(
   if (ref.marketplacePath) params.marketplacePath = ref.marketplacePath;
   else params.remoteMarketplaceName = ref.remoteMarketplaceName;
   const res = await call<PluginInstallResponse>("plugin/install", params);
+  if (!res || (res.authPolicy !== "ON_INSTALL" && res.authPolicy !== "ON_USE")) {
+    throw new PluginProtocolError("plugin/install", "响应缺少有效的 authPolicy 字段");
+  }
+  if (!Array.isArray(res.appsNeedingAuth)) {
+    throw new PluginProtocolError("plugin/install", "响应缺少 appsNeedingAuth 数组");
+  }
+  for (const app of res.appsNeedingAuth) validateAppSummary(app, "plugin/install");
   return {
-    authPolicy: res?.authPolicy ?? "ON_USE",
-    appsNeedingAuth: Array.isArray(res?.appsNeedingAuth) ? res.appsNeedingAuth : [],
+    authPolicy: res.authPolicy,
+    appsNeedingAuth: uniqueApps(res.appsNeedingAuth),
   };
 }
 
@@ -578,23 +604,140 @@ export async function upgradeMarketplace(
  * Can fail with `403 Forbidden` when the account/network cannot reach the app
  * service; callers must degrade gracefully (see `listInstalledApps` fallback).
  */
-export async function listApps(options: { forceRefetch?: boolean } = {}): Promise<AppsListResponse> {
+export async function listApps(
+  options: { forceRefetch?: boolean; cursor?: string | null } = {}
+): Promise<AppsListResponse> {
   const res = await call<AppsListResponse>("app/list", {
     forceRefetch: options.forceRefetch ?? false,
+    ...(options.cursor != null ? { cursor: options.cursor } : {}),
   });
+  if (!res || !Array.isArray(res.data)) {
+    throw new PluginProtocolError("app/list", "响应缺少 data 数组");
+  }
+  if (res.nextCursor != null && (typeof res.nextCursor !== "string" || !res.nextCursor.trim())) {
+    throw new PluginProtocolError("app/list", "响应包含无效 nextCursor");
+  }
+  for (const app of res.data) {
+    validateAppSummary(app, "app/list");
+    for (const key of ["isEnabled", "isAccessible"] as const) {
+      if (app[key] !== undefined && typeof app[key] !== "boolean") {
+        throw new PluginProtocolError("app/list", `应用 ${app.id} 的 ${key} 不是布尔值`);
+      }
+    }
+  }
   return {
-    data: Array.isArray(res?.data) ? res.data : [],
-    nextCursor: res?.nextCursor ?? null,
+    data: res.data,
+    nextCursor: res.nextCursor ?? null,
   };
+}
+
+/** Traverse the complete remote catalog; repeated IDs retain the first observed facts. */
+export async function listAllApps(options: { forceRefetch?: boolean } = {}): Promise<AppInfo[]> {
+  const data: AppInfo[] = [];
+  const cursors = new Set<string>();
+  let cursor: string | null = null;
+  do {
+    const page: AppsListResponse = await listApps({ ...options, cursor });
+    data.push(...page.data);
+    cursor = page.nextCursor ?? null;
+    if (cursor !== null) {
+      if (cursors.has(cursor)) {
+        throw new PluginProtocolError("app/list", "分页 nextCursor 重复，无法确认完整应用目录");
+      }
+      cursors.add(cursor);
+    }
+  } while (cursor !== null);
+  return uniqueApps(data);
 }
 
 /**
  * `app/installed` — local committed connector runtime snapshot. Works without
  * network access and is the fallback when `app/list` is forbidden.
  */
-export async function listInstalledApps(): Promise<InstalledApp[]> {
-  const res = await call<AppsInstalledResponse>("app/installed", {});
-  return Array.isArray(res?.apps) ? res.apps : [];
+export async function listInstalledApps(
+  options: { forceRefresh?: boolean } = {}
+): Promise<InstalledApp[]> {
+  const res = await call<AppsInstalledResponse>(
+    "app/installed", options.forceRefresh ? { forceRefresh: true } : {}
+  );
+  if (!res || !Array.isArray(res.apps)) {
+    throw new PluginProtocolError("app/installed", "响应缺少 apps 数组");
+  }
+  for (const app of res.apps) {
+    if (
+      !app || typeof app.id !== "string" || !app.id.trim() ||
+      typeof app.enabled !== "boolean" || typeof app.callable !== "boolean" ||
+      (app.runtimeName != null && typeof app.runtimeName !== "string")
+    ) {
+      throw new PluginProtocolError("app/installed", "响应包含无效的应用运行时状态");
+    }
+  }
+  return uniqueApps(res.apps);
+}
+
+/** Prefer supported runtime APIs; this is capability detection, not an assertion about the account's lifecycle gate. */
+export async function readPluginPreparationState(
+  options: { forceRefetch?: boolean } = {}
+): Promise<PluginPreparationState> {
+  let installed: InstalledApp[] = [];
+  try {
+    installed = await listInstalledApps({ forceRefresh: options.forceRefetch });
+    const catalog: AppInfo[] = [];
+    for (let offset = 0; offset < installed.length; offset += 100) {
+      const batch = installed.slice(offset, offset + 100);
+      const requested = new Set(batch.map(app => app.id));
+      const response = await call<{ apps: AppSummary[]; missingAppIds: string[] }>(
+        "app/read", { appIds: [...requested] }
+      );
+      if (!response || !Array.isArray(response.apps) || !Array.isArray(response.missingAppIds)) {
+        throw new PluginProtocolError("app/read", "响应缺少 apps 或 missingAppIds 数组");
+      }
+      for (const app of response.apps) {
+        validateAppSummary(app, "app/read");
+        if (!requested.has(app.id)) {
+          throw new PluginProtocolError("app/read", "响应包含未请求的应用 ID");
+        }
+        const runtime = batch.find(item => item.id === app.id)!;
+        catalog.push({ ...app, isAccessible: runtime.callable, isEnabled: runtime.enabled });
+      }
+      for (const id of response.missingAppIds) {
+        if (typeof id !== "string" || !requested.has(id) || response.apps.some(app => app.id === id)) {
+          throw new PluginProtocolError("app/read", "响应包含无效的 missingAppIds");
+        }
+      }
+      if (batch.some(item => !response.apps.some(app => app.id === item.id) && !response.missingAppIds.includes(item.id))) {
+        throw new PluginProtocolError("app/read", "响应未说明部分应用的元数据结果");
+      }
+    }
+    return { source: "runtime", catalog: uniqueApps(catalog), installed };
+  } catch (error) {
+    if (!isUnsupportedAppMethod(error)) throw error;
+    return { source: "catalog", catalog: await listAllApps(options), installed };
+  }
+}
+
+function isUnsupportedAppMethod(error: unknown): boolean {
+  if (!(error instanceof PluginProtocolError) || !["app/installed", "app/read"].includes(error.method)) return false;
+  return /(?:-32601\b|method not found|unknown (?:method|request)|unsupported (?:method|request)|(?:method|request).*(?:not supported|unsupported))/i.test(error.detail);
+}
+
+function validateAppSummary(app: AppSummary, method: string): void {
+  if (
+    !app || typeof app.id !== "string" || !app.id.trim() ||
+    typeof app.name !== "string" || !app.name.trim() ||
+    (app.installUrl != null && typeof app.installUrl !== "string")
+  ) {
+    throw new PluginProtocolError(method, "响应包含无效的应用 id、name 或 installUrl");
+  }
+}
+
+function uniqueApps<T extends { id: string }>(apps: T[]): T[] {
+  const seen = new Set<string>();
+  return apps.filter(app => {
+    if (seen.has(app.id)) return false;
+    seen.add(app.id);
+    return true;
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

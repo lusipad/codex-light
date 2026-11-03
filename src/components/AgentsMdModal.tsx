@@ -51,8 +51,8 @@ export const AgentsMdModal: React.FC<AgentsMdModalProps> = ({
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontSize: 16, fontWeight: 600 }}>📜 AGENTS.md 工作区指引规范</span>
-            <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>{cwd}/AGENTS.md</span>
+            <span style={{ fontSize: "var(--text-lg)", fontWeight: 600 }}>📜 AGENTS.md 工作区指引规范</span>
+            <span style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)" }}>{cwd}/AGENTS.md</span>
           </div>
           <button className="modal-close-btn" style={{ position: "static" }} onClick={onClose}>
             <CloseIcon size={18} />
@@ -69,7 +69,7 @@ export const AgentsMdModal: React.FC<AgentsMdModalProps> = ({
               borderRadius: 8,
               color: "#fff",
               fontFamily: "var(--font-mono)",
-              fontSize: 13,
+              fontSize: "var(--text-sm)",
               lineHeight: 1.6,
               padding: 14,
               resize: "none",
@@ -92,7 +92,7 @@ export const AgentsMdModal: React.FC<AgentsMdModalProps> = ({
           }}
         >
           {savedSuccess && (
-            <span style={{ fontSize: 12.5, color: "#22c55e", display: "flex", alignItems: "center", gap: 4 }}>
+            <span style={{ fontSize: "calc(12.5px * var(--font-ui-scale, 1))", color: "#22c55e", display: "flex", alignItems: "center", gap: 4 }}>
               <CheckIcon size={14} /> 已保存
             </span>
           )}

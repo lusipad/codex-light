@@ -1,0 +1,13 @@
+# 18A Library 服务边界纠偏
+
+状态：LB01限定纠偏自验完成、待用户验收；整页真实服务仍阻塞，不能作为严格1:1完成。
+
+先核对[原包与动作合同](../specs/18-library.md)：真实列表/favorites/nodes/search/pages、字节上传与下载均依赖账号分区的认证HTTP宿主，现有app-server RPC不提供该桥。13项来源已核integrity，相关共享文件保存有界片段。
+
+LibraryView撤下架构说明/SVG/benchmarks演示文件、随机假上传、localStorage创建/收藏/删除成功，以及App合成文件引用回调；不读取、改写、删除用户旧codex_library_items数据。显示资料库服务未连接，不能将此状态解释为账号无权限或真实空库。复用既有页面容器，无新增依赖或通用假网络抽象。
+
+LB01生产JSX实际执行，未连接时加载任何未知模块、读写localStorage或启动计时器均使测试失败；检查可见服务状态、无假文件/图片/写控件，以及App撤销伪引用。修改前RED与最终专项结果保存在.ref/parity/18/actual。
+
+验收：进入资料库，确认服务未连接，不显示示例/假上传与假删除；原有本地记录不被覆盖。真实服务连接后的列表、分页、上传字节/结果、权限、收藏/管理、下载、原生对话框及像素均未验证。自动回归不代表这些动作已经实现。
+
+完整检查、常规原生构建及哈希见.ref/parity/18/actual/build-manifest.json。完整verify-all含真实隔离协议、专项及常规Release/MSI/NSIS均退出0，166产品输入前后相同。本构建同时包含17B原生Quick Chat实现；其原生烟测/像素限制见[17B验收](../acceptance/17B.md)。

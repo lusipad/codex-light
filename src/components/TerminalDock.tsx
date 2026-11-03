@@ -4,13 +4,16 @@ import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
+import type { DesktopOpenPreferences } from "./GeneralOpenPreferences";
 import { PlusIcon, TerminalIcon, TrashIcon, XIcon } from "./Icons";
+import { createTerminalOutput, type TerminalOutputData, type TerminalOutputExit, type TerminalSnapshot } from "../terminalOutput";
 
 interface TerminalDockProps {
   open?: boolean;
   cwd: string;
   onClose: () => void;
-  pendingCommand?: { id: number; command: string } | null;
+  pendingCommand?: { id: number; command: string; cwd?: string } | null;
+  onCommandHandled?: (id: number) => void;
 }
 
 interface SessionTab {
@@ -20,62 +23,92 @@ interface SessionTab {
   shell: string;
 }
 
-const SHELL_OPTIONS = [
-  { id: "powershell.exe", label: "PowerShell" },
-  { id: "cmd.exe", label: "CMD" },
-  { id: "bash.exe", label: "Git Bash" },
-  { id: "wsl.exe", label: "WSL" },
-];
+
 
 export const TerminalDock: React.FC<TerminalDockProps> = ({
   open = true,
   cwd,
   onClose,
   pendingCommand,
+  onCommandHandled,
 }) => {
-  const [selectedShell, setSelectedShell] = useState<string>("powershell.exe");
+  const [selectedShell, setSelectedShell] = useState<string>("");
+  const [shellOptions, setShellOptions] = useState<{ id: string; label: string }[]>([]);
   const [fontSize, setFontSize] = useState<number>(13);
   const [dockHeight, setDockHeight] = useState<number>(260);
-  const [tabs, setTabs] = useState<SessionTab[]>([
+  const [commandError, setCommandError] = useState<string | null>(null);
+  const [commandRetry, setCommandRetry] = useState(0);
+  const [tabs, setTabs] = useState<SessionTab[]>(() => [
     {
-      id: "term-1",
-      title: "PowerShell 1",
+      id: crypto.randomUUID(),
+      title: "终端 1",
       cwd: cwd || ".",
-      shell: "powershell.exe",
+      shell: "",
     },
   ]);
-  const [activeTabId, setActiveTabId] = useState<string>("term-1");
+  const [activeTabId, setActiveTabId] = useState<string>(tabs[0].id);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const subscriptionsReadyRef = useRef<Promise<boolean>>(Promise.resolve(false));
   const xtermMapRef = useRef<
-    Map<string, { term: Terminal; fit: FitAddon; el: HTMLDivElement }>
+    Map<string, {
+      term: Terminal; fit: FitAddon; el: HTMLDivElement; ready: Promise<boolean>;
+      output: ReturnType<typeof createTerminalOutput>; cancelHydration: () => void;
+    }>
   >(new Map());
 
   useEffect(() => {
+    let cancelled = false;
+    invoke<DesktopOpenPreferences>("desktop_open_preferences").then(value => {
+      if (!cancelled) setShellOptions(value.shells);
+    }).catch(error => { if (!cancelled) setCommandError(`读取终端 Shell 失败：${String(error)}`); });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
     let unlistenData: UnlistenFn | null = null;
     let unlistenExit: UnlistenFn | null = null;
 
-    listen<{ sessionId: string; data: string }>("terminal:data", (event) => {
+    const dataReady = listen<TerminalOutputData>("terminal:data", (event) => {
+      if (disposed) return;
       const entry = xtermMapRef.current.get(event.payload.sessionId);
       if (entry) {
-        entry.term.write(event.payload.data);
+        entry.output.data(event.payload);
       }
     }).then((fn) => {
-      unlistenData = fn;
+      if (disposed) fn();
+      else unlistenData = fn;
     });
 
-    listen<{ sessionId: string }>("terminal:exit", (event) => {
+    const exitReady = listen<TerminalOutputExit>("terminal:exit", (event) => {
+      if (disposed) return;
       const entry = xtermMapRef.current.get(event.payload.sessionId);
       if (entry) {
-        entry.term.writeln("\r\n\x1b[33m[进程已退出 Process exited]\x1b[0m");
+        entry.output.exit(event.payload);
       }
     }).then((fn) => {
-      unlistenExit = fn;
+      if (disposed) fn();
+      else unlistenExit = fn;
     });
+    subscriptionsReadyRef.current = Promise.all([dataReady, exitReady])
+      .then(() => !disposed)
+      .catch((error) => {
+        if (!disposed) setCommandError(`监听终端输出失败：${String(error)}`);
+        return false;
+      });
 
     return () => {
+      disposed = true;
       if (unlistenData) unlistenData();
       if (unlistenExit) unlistenExit();
+      xtermMapRef.current.forEach(({ term, el, output, cancelHydration }) => {
+        output.dispose();
+        cancelHydration();
+        term.dispose();
+        el.remove();
+      });
+      xtermMapRef.current.clear();
     };
   }, []);
 
@@ -91,26 +124,13 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
     });
   }, [fontSize]);
 
-  // Execute pending toolbar command (e.g. Run / Test / Build)
   const lastExecutedCmdId = useRef<number | null>(null);
-  useEffect(() => {
-    if (!open || !pendingCommand || pendingCommand.id === lastExecutedCmdId.current) {
-      return;
-    }
-    lastExecutedCmdId.current = pendingCommand.id;
-    const timer = setTimeout(() => {
-      invoke("terminal_write", {
-        sessionId: activeTabId,
-        data: `${pendingCommand.command}\r`,
-      }).catch(() => {});
-    }, 180);
-    return () => clearTimeout(timer);
-  }, [open, pendingCommand, activeTabId]);
 
   useEffect(() => {
     if (!open || !containerRef.current) return;
     const activeTab = tabs.find((t) => t.id === activeTabId) ?? tabs[0];
     if (!activeTab) return;
+    const fitTimers: ReturnType<typeof setTimeout>[] = [];
 
     xtermMapRef.current.forEach((val, key) => {
       val.el.style.display = key === activeTab.id ? "block" : "none";
@@ -124,6 +144,7 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
       containerRef.current.appendChild(el);
 
       const term = new Terminal({
+        disableStdin: true,
         cursorBlink: true,
         fontSize,
         fontFamily:
@@ -138,13 +159,38 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
       const fit = new FitAddon();
       term.loadAddon(fit);
       term.open(el);
-      setTimeout(() => {
+      fitTimers.push(setTimeout(() => {
         try {
           fit.fit();
         } catch {
           // ignore
         }
-      }, 30);
+      }, 30));
+
+      let hydrated = false;
+      let settleHydration: (ready: boolean) => void = () => {};
+      const hydration = new Promise<boolean>((resolve) => { settleHydration = resolve; });
+      const isCurrent = () => xtermMapRef.current.get(activeTab.id)?.term === term;
+      const output = createTerminalOutput(activeTab.id, {
+        write(data, replay) {
+          if (!isCurrent()) return;
+          if (!replay) {
+            term.write(data);
+            return;
+          }
+          const complete = () => {
+            if (!isCurrent()) return;
+            hydrated = true;
+            term.options.disableStdin = false;
+            settleHydration(true);
+          };
+          if (data) term.write(data, complete);
+          else complete();
+        },
+        onExit() {
+          if (isCurrent()) term.writeln("\r\n\x1b[33m[进程已退出 Process exited]\x1b[0m");
+        },
+      });
 
       term.attachCustomKeyEventHandler((arg: KeyboardEvent) => {
         if (arg.type === "keydown") {
@@ -161,7 +207,7 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
           }
           if ((arg.ctrlKey || arg.metaKey) && arg.key.toLowerCase() === "v") {
             navigator.clipboard.readText().then((clip) => {
-              if (clip) {
+              if (clip && hydrated && isCurrent()) {
                 invoke("terminal_write", { sessionId: activeTab.id, data: clip }).catch(() => {});
               }
             });
@@ -172,16 +218,18 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
       });
 
       term.onData((data) => {
+        if (!hydrated || !isCurrent()) return;
         invoke("terminal_write", { sessionId: activeTab.id, data }).catch(
           () => {}
         );
       });
 
-      entry = { term, fit, el };
+      entry = { term, fit, el, output, cancelHydration: () => settleHydration(false), ready: Promise.resolve(false) };
       xtermMapRef.current.set(activeTab.id, entry);
 
-      let disposed = false;
-      invoke<any>("terminal_create_or_attach", {
+      entry.ready = subscriptionsReadyRef.current.then((listening) => {
+        if (!listening || !isCurrent()) return false;
+        return invoke<TerminalSnapshot>("terminal_create_or_attach", {
         sessionId: activeTab.id,
         cwd: activeTab.cwd || cwd || ".",
         cols: term.cols || 100,
@@ -189,15 +237,19 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
         shell: activeTab.shell || selectedShell,
       })
         .then((info) => {
-          if (!disposed && info?.replayLog) {
-            term.write(info.replayLog);
-          }
+          if (!isCurrent()) return false;
+          output.attach(info);
+          return hydration;
         })
         .catch((err) => {
-          term.writeln(`\x1b[31m无法启动终端会话: ${String(err)}\x1b[0m`);
+          if (xtermMapRef.current.get(activeTab.id)?.term === term) {
+            term.writeln(`\x1b[31m无法启动终端会话: ${String(err)}\x1b[0m`);
+          }
+          return false;
         });
+      });
     } else {
-      setTimeout(() => {
+      fitTimers.push(setTimeout(() => {
         try {
           entry!.fit.fit();
           invoke("terminal_resize", {
@@ -208,7 +260,7 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
         } catch {
           // ignore
         }
-      }, 30);
+      }, 30));
     }
 
     const handleResize = () => {
@@ -234,16 +286,57 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
 
     window.addEventListener("resize", handleResize);
     return () => {
+      fitTimers.forEach(clearTimeout);
       window.removeEventListener("resize", handleResize);
       ro?.disconnect();
     };
   }, [open, activeTabId, tabs, cwd, fontSize, selectedShell]);
 
+  useEffect(() => {
+    if (!open || !pendingCommand || pendingCommand.id === lastExecutedCmdId.current) return;
+    if (pendingCommand.cwd && pendingCommand.cwd !== cwd) {
+      lastExecutedCmdId.current = pendingCommand.id;
+      setCommandError("环境动作的工作区已变化，已取消尚未发送的命令。");
+      onCommandHandled?.(pendingCommand.id);
+      return;
+    }
+    if (tabs.find((tab) => tab.id === activeTabId)?.cwd !== (cwd || ".")) {
+      const matchingTab = tabs.find((tab) => tab.cwd === (cwd || "."));
+      if (matchingTab) setActiveTabId(matchingTab.id);
+      else addNewTerminal();
+      return;
+    }
+    const entry = xtermMapRef.current.get(activeTabId);
+    if (!entry) return;
+    let cancelled = false;
+    setCommandError(null);
+    void (async () => {
+      if (!await entry.ready) {
+        if (!cancelled) setCommandError("终端尚未启动，请新建终端后重试命令。");
+        return;
+      }
+      if (cancelled || xtermMapRef.current.get(activeTabId) !== entry) return;
+      lastExecutedCmdId.current = pendingCommand.id;
+      try {
+        await invoke("terminal_write", {
+          sessionId: activeTabId,
+          data: `${pendingCommand.command}\r`,
+        });
+        onCommandHandled?.(pendingCommand.id);
+      } catch (error) {
+        if (xtermMapRef.current.get(activeTabId) === entry && lastExecutedCmdId.current === pendingCommand.id) {
+          setCommandError(`命令输入可能不完整，请检查终端后重试：${String(error)}`);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [open, pendingCommand, activeTabId, tabs, cwd, commandRetry, onCommandHandled]);
+
   const addNewTerminal = () => {
     const idx = tabs.length + 1;
-    const id = `term-${Date.now()}`;
+    const id = crypto.randomUUID();
     const shellMeta =
-      SHELL_OPTIONS.find((s) => s.id === selectedShell) || SHELL_OPTIONS[0];
+      shellOptions.find((s) => s.id === selectedShell) || { label: "终端" };
     const next: SessionTab = {
       id,
       title: `${shellMeta.label} ${idx}`,
@@ -302,6 +395,8 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
     invoke("terminal_close", { sessionId: id }).catch(() => {});
     const entry = xtermMapRef.current.get(id);
     if (entry) {
+      entry.output.dispose();
+      entry.cancelHydration();
       entry.term.dispose();
       entry.el.remove();
       xtermMapRef.current.delete(id);
@@ -309,14 +404,16 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
     const remaining = tabs.filter((t) => t.id !== id);
     if (remaining.length === 0) {
       onClose();
+      const id = crypto.randomUUID();
       setTabs([
         {
-          id: `term-${Date.now()}`,
-          title: "PowerShell 1",
+          id,
+          title: "终端 1",
           cwd: cwd || ".",
           shell: selectedShell,
         },
       ]);
+      setActiveTabId(id);
     } else {
       setTabs(remaining);
       if (activeTabId === id) {
@@ -325,10 +422,8 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
     }
   };
 
-  if (!open) return null;
-
   return (
-    <div className="terminal-dock" style={{ height: dockHeight }}>
+    <div className="terminal-dock" style={{ height: dockHeight, display: open ? undefined : "none" }}>
       <div className="terminal-dock-resizer" onMouseDown={handleStartResize} title="拖动调整终端高度" />
       <div className="terminal-dock-header">
         <div className="terminal-tabs">
@@ -358,7 +453,8 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
             onChange={(e) => setSelectedShell(e.target.value)}
             title="选择新建终端的默认 Shell"
           >
-            {SHELL_OPTIONS.map((s) => (
+            <option value="">使用通用设置默认 Shell</option>
+            {shellOptions.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.label}
               </option>
@@ -394,7 +490,7 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
             className="icon-btn"
             onClick={interruptActiveTerminal}
             title="中断当前运行 (Ctrl+C)"
-            style={{ fontWeight: 600, fontSize: 11 }}
+            style={{ fontWeight: 600, fontSize: "calc(11px * var(--font-ui-scale, 1))" }}
           >
             ^C
           </button>
@@ -410,6 +506,15 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
           </button>
         </div>
       </div>
+      {commandError && (
+        <div role="status">
+          {commandError}
+          <button onClick={() => {
+            lastExecutedCmdId.current = null;
+            setCommandRetry((value) => value + 1);
+          }}>重试命令</button>
+        </div>
+      )}
       <div className="terminal-xterm-wrapper" ref={containerRef} />
     </div>
   );

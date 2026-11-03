@@ -1,0 +1,31 @@
+.mcp-raw-trigger {
+  margin-left: auto;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.mcp-raw-trigger:hover { color: var(--text-primary); background: var(--bg-hover); }
+.mcp-text-block > div { padding: 4px 10px; color: var(--text-tertiary); font-size: var(--text-xs); }
+.mcp-result-image { max-width: 100%; max-height: 192px; object-fit: contain; border-radius: 6px; }
+.mcp-call-card audio { width: 100%; }
+.mcp-no-result { margin: 8px 12px; color: var(--text-secondary); }
+.mcp-raw-dialog {
+  width: min(800px, calc(100vw - 48px));
+  max-height: calc(100vh - 64px);
+  margin: auto;
+  padding: 24px;
+  border: 1px solid var(--border-default);
+  border-radius: 16px;
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  box-shadow: var(--shadow-lg);
+}
+.mcp-raw-dialog::backdrop { background: rgba(0, 0, 0, .45); }
+.mcp-raw-dialog[open] { display: flex; flex-direction: column; gap: 16px; }
+.mcp-raw-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.mcp-raw-dialog h2 { margin: 0; font-size: var(--text-lg); overflow-wrap: anywhere; }
+.mcp-raw-dialog header button { display: flex; border: 0; padding: 6px; background: transparent; color: inherit; cursor: pointer; }
+.mcp-raw-dialog pre { margin: 0; min-height: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--font-code-size); }

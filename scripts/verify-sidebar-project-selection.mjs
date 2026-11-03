@@ -33,7 +33,7 @@ function mount({ select = async () => snapshot, persist = async () => ({ errors:
     attachmentScopeRef: { current: "thread:old" },
     setComposerAttachmentDrafts: update => { state.attachmentDrafts = update(state.attachmentDrafts); },
     attachedFilesRef: { current: state.attachedFiles }, refreshWorkspaceGenerationRef: { current: 0 },
-    pendingNewThreadProjectRef: { current: null }, threadRequestRef: { current: 0 },
+    pendingNewThreadProjectRef: { current: null }, pendingProjectlessRef: { current: false }, threadRequestRef: { current: 0 },
     threadHistoryBufferRef: { current: { discard: () => calls.push(["discard"]) } },
     finishedTurnIdsRef: { current: new Set() }, earlierRequestRef: { current: false },
     composerTextareaRef: { current: { focus: () => calls.push(["focus"]) } },

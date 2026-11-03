@@ -2,6 +2,10 @@
 
 日期：2026-10-27。状态：调研完成，准备先红回归与代码实现。
 
+2026-11-01 复核：旧“已解决”和 W01–W04 字符串测试未证明实际会话/异步行为。本轮补充 [11A 合同](../../antigravity/specs/11-worktree-context.md)与[实现证据](../../antigravity/runs/20261101-codex-worktree-context.md)，修复现有目录被再次创建、绑定会话绕过完整加载、跨项目旧读取污染。固定原包重新核验；真实 Git、完整官方页面与原生/像素仍未验收。
+
+2026-11-03：11B 按[删除合同](../../antigravity/specs/11-worktree-removal.md)补齐真实关联/置顶会话复核、逐条归档和回读、工作树身份/主 checkout 保护、临时 index 快照、Git 删除与 detached 恢复。实现及验证边界见[11B](../../antigravity/acceptance/11B.md)和 `.ref/parity/11/actual/11B/build-manifest.json`。快照失败按候选定向删除例外返回明确 warning；无递归删除兜底。旧“已解决”不证明这些新链路或完整页面已验收；原生、官方运行时和配对像素仍待验证。
+
 ## 1. 范围与证据
 
 本单元覆盖 Git Worktree 隔离工作面的完整生命周期与交互：

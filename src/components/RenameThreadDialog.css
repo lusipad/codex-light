@@ -10,7 +10,7 @@
   background: color-mix(in srgb, var(--bg-tertiary) 90%, transparent);
   box-shadow: 0 0 0 0.5px var(--border-default), var(--shadow-lg);
   backdrop-filter: blur(24px);
-  font-size: 14px;
+  font-size: var(--text-base);
 }
 
 .rename-thread-dialog::backdrop {
@@ -26,15 +26,15 @@
 .rename-thread-dialog h2 {
   margin: 0;
   padding-right: 20px;
-  font-size: 20px;
+  font-size: var(--text-heading-md);
   font-weight: 600;
-  line-height: 28px;
+  line-height: calc(28px * var(--font-ui-scale, 1));
 }
 
 .rename-thread-dialog p {
   margin: 4px 0 0;
   color: var(--text-tertiary);
-  line-height: 21px;
+  line-height: calc(21px * var(--font-ui-scale, 1));
 }
 
 .rename-thread-dialog input {

@@ -1,450 +1,125 @@
-import React, { useState, useEffect } from "react";
-import {
-  ExternalWindowIcon,
-  PlusIcon,
-  SearchIcon,
-  SettingsIcon,
-  SparklesIcon,
-  TrashIcon,
-} from "./Icons";
+import React, { useEffect, useRef, useState } from "react";
+import { tauriListen } from "../bridge";
+import { cloudServiceAccess, readCloudService, serviceErrorMessage, type CloudAccess } from "../chatgptService";
+import { filterCloudCatalog, loadCloudCatalog, loadRepositoryName, parseCloudDetail,
+  type CloudCatalog, type CloudDetail, type RepositoryName } from "../cloudEnvironmentService";
 import "./CloudEnvironmentsView.css";
 
-export interface CloudEnvironment {
-  id: string;
-  name: string;
-  repo: string;
-  branch: string;
-  image: string;
-  resources: string;
-  status: "running" | "stopped" | "provisioning";
-  networkMode: "public" | "vpc";
-  secretsCount: number;
-  lastUsedAt: number;
-}
+export const CloudEnvironmentsView: React.FC = () => {
+  const [revision, setRevision] = useState(0);
+  const [access, setAccess] = useState<CloudAccess | null>(null);
+  const [catalog, setCatalog] = useState<CloudCatalog | null>(null);
+  const [names, setNames] = useState<Record<string, RepositoryName>>({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<CloudDetail | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const source = useRef<AbortController | null>(null);
+  const detailSource = useRef<AbortController | null>(null);
+  const catalogBusy = useRef(false);
+  const noResultRefresh = useRef<string | null>(null);
+  const dialogRef = useRef<HTMLDialogElement | null>(null);
+  const detailTrigger = useRef<HTMLButtonElement | null>(null);
+  const visible = filterCloudCatalog(catalog?.items ?? [], query, names);
 
-const DEFAULT_ENVIRONMENTS: CloudEnvironment[] = [
-  {
-    id: "env-codex-core",
-    name: "codex-desktop-native-builder",
-    repo: "https://github.com/openai/codex-desktop-native",
-    branch: "master",
-    image: "rust-1.80-node20-tauri:latest",
-    resources: "4 vCPU · 16 GB RAM · 60 GB NVMe",
-    status: "running",
-    networkMode: "public",
-    secretsCount: 3,
-    lastUsedAt: Date.now() - 3600000 * 2,
-  },
-  {
-    id: "env-eval-swarm",
-    name: "agent-eval-harness",
-    repo: "https://github.com/internal/agent-eval-swarm",
-    branch: "main",
-    image: "python-3.11-deeplearning:v2",
-    resources: "8 vCPU · 32 GB RAM · GPU-Enabled",
-    status: "stopped",
-    networkMode: "vpc",
-    secretsCount: 5,
-    lastUsedAt: Date.now() - 3600000 * 48,
-  },
-];
-
-export interface CloudEnvironmentsViewProps {
-  onStartChatInEnv?: (envName: string) => void;
-}
-
-export const CloudEnvironmentsView: React.FC<CloudEnvironmentsViewProps> = ({
-  onStartChatInEnv,
-}) => {
-  const [environments, setEnvironments] = useState<CloudEnvironment[]>(() => {
+  const readCatalog = async (current: CloudAccess) => {
+    const controller = source.current;
+    if (!controller || controller.signal.aborted || catalogBusy.current) return;
+    catalogBusy.current = true; setLoading(true); setError(null); setNames({});
     try {
-      const saved = localStorage.getItem("codex_cloud_environments");
-      return saved ? JSON.parse(saved) : DEFAULT_ENVIRONMENTS;
-    } catch {
-      return DEFAULT_ENVIRONMENTS;
-    }
-  });
-
-  const [statusFilter, setStatusFilter] = useState<"all" | "running" | "stopped">("all");
-  const [searchQuery, setSearchQuery] = useState<string>("");
-  const [selectedEnv, setSelectedEnv] = useState<CloudEnvironment | null>(null);
-  const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
-  const [toast, setToast] = useState<string | null>(null);
-
-  // Form states
-  const [newEnvName, setNewEnvName] = useState<string>("");
-  const [newEnvRepo, setNewEnvRepo] = useState<string>("");
-  const [newEnvBranch, setNewEnvBranch] = useState<string>("main");
-  const [newEnvImage, setNewEnvImage] = useState<string>("Ubuntu 24.04 + Node 20 / Rust");
-  const [newEnvTier, setNewEnvTier] = useState<string>("4 vCPU · 16 GB RAM");
-
+      const result = await loadCloudCatalog(current.identity, controller.signal);
+      if (controller.signal.aborted) return;
+      setCatalog(result);
+      const repositoryIds = [...new Set(result.items.flatMap(item => item.repositories.map(repo => repo.id)))];
+      await Promise.all(repositoryIds.map(async id => {
+        const name = await loadRepositoryName(id, current.identity, controller.signal);
+        if (!controller.signal.aborted) setNames(value => ({ ...value, [id]: name }));
+      }));
+    } catch (cause) { if (!controller.signal.aborted) setError(serviceErrorMessage(cause)); }
+    finally { if (!controller.signal.aborted) { catalogBusy.current = false; setLoading(false); } }
+  };
   useEffect(() => {
-    localStorage.setItem("codex_cloud_environments", JSON.stringify(environments));
-  }, [environments]);
-
-  const notify = (msg: string) => {
-    setToast(msg);
-    setTimeout(() => setToast(null), 3000);
+    let disposed = false;
+    const subscription = tauriListen("chatgpt-service:invalidated", () => {
+      if (disposed) return;
+      source.current?.abort(); detailSource.current?.abort();
+      setAccess(null); setCatalog(null); setNames({}); setSelectedId(null); setRevision(value => value + 1);
+    });
+    return () => { disposed = true; void subscription.then(unlisten => unlisten()); };
+  }, []);
+  useEffect(() => {
+    const controller = new AbortController(); source.current = controller;
+    catalogBusy.current = false; setAccess(null); setCatalog(null); setNames({}); setLoading(true); setError(null); setSelectedId(null);
+    void (async () => {
+      try {
+        const current = await cloudServiceAccess(controller.signal); if (controller.signal.aborted) return;
+        setAccess(current);
+        if (current.gateEvidence === "personal-plan-branch") await readCatalog(current); else setLoading(false);
+      } catch (cause) { if (!controller.signal.aborted) { setError(serviceErrorMessage(cause)); setLoading(false); } }
+    })();
+    return () => { controller.abort(); detailSource.current?.abort(); };
+  }, [revision]);
+  useEffect(() => { noResultRefresh.current = null; }, [query]);
+  useEffect(() => {
+    const search = query.trim();
+    if (!access || !catalog || loading || !search || visible.length || noResultRefresh.current === search) return;
+    const timer = setTimeout(() => { noResultRefresh.current = search; void readCatalog(access); }, 300);
+    return () => clearTimeout(timer);
+  }, [access, catalog, loading, query, visible.length]);
+  useEffect(() => {
+    if (!selectedId) return;
+    const dialog = dialogRef.current; dialog?.showModal();
+    return () => { dialog?.close(); detailTrigger.current?.focus(); };
+  }, [selectedId]);
+  const openDetail = async (id: string) => {
+    if (!access || source.current?.signal.aborted) return;
+    detailSource.current?.abort(); const controller = new AbortController(); detailSource.current = controller;
+    setSelectedId(id); setDetail(null); setDetailError(null);
+    try {
+      const value = parseCloudDetail(await readCloudService("detail", { id }, access.identity, controller.signal), id);
+      if (controller.signal.aborted || source.current?.signal.aborted) return;
+      setDetail(value);
+      const repositoryIds = [...new Set((value.draft ?? value).repositories.map(repo => repo.id))];
+      await Promise.all(repositoryIds.filter(repositoryId => !names[repositoryId]).map(async repositoryId => {
+        const name = await loadRepositoryName(repositoryId, access.identity, controller.signal);
+        if (!controller.signal.aborted && !source.current?.signal.aborted) setNames(current => ({ ...current, [repositoryId]: name }));
+      }));
+    } catch (cause) { if (!controller.signal.aborted) setDetailError(serviceErrorMessage(cause)); }
   };
-
-  const handleToggleStatus = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setEnvironments((prev) =>
-      prev.map((env) => {
-        if (env.id !== id) return env;
-        const newStatus = env.status === "running" ? "stopped" : "running";
-        notify(newStatus === "running" ? `环境「${env.name}」已启动` : `环境「${env.name}」已暂停`);
-        return { ...env, status: newStatus, lastUsedAt: Date.now() };
-      })
-    );
-  };
-
-  const handleResetCache = (id: string) => {
-    notify("✓ 构建缓存已清空，正在重置容器层…");
-  };
-
-  const handleDelete = (id: string) => {
-    setEnvironments((prev) => prev.filter((e) => e.id !== id));
-    if (selectedEnv?.id === id) setSelectedEnv(null);
-    notify("云开发环境已销毁");
-  };
-
-  const handleCreateEnv = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newEnvName.trim()) return;
-
-    const newRecord: CloudEnvironment = {
-      id: `env-${Date.now()}`,
-      name: newEnvName.trim(),
-      repo: newEnvRepo.trim() || "local/active-repo",
-      branch: newEnvBranch.trim() || "main",
-      image: newEnvImage,
-      resources: newEnvTier,
-      status: "running",
-      networkMode: "public",
-      secretsCount: 0,
-      lastUsedAt: Date.now(),
-    };
-
-    setEnvironments([newRecord, ...environments]);
-    setShowCreateModal(false);
-    setNewEnvName("");
-    setNewEnvRepo("");
-    notify(`✓ 云环境「${newRecord.name}」初始化完成并已分配算力`);
-  };
-
-  const filteredEnvs = environments.filter((env) => {
-    if (statusFilter !== "all" && env.status !== statusFilter) return false;
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      return (
-        env.name.toLowerCase().includes(q) ||
-        env.repo.toLowerCase().includes(q) ||
-        env.image.toLowerCase().includes(q)
-      );
-    }
-    return true;
-  });
-
-  return (
-    <div className="cloud-envs-container">
-      {toast && <div className="workbench-toast-banner">{toast}</div>}
-
-      <div className="cloud-envs-header">
-        <div>
-          <h2>云开发环境 (Cloud Environments)</h2>
-          <p className="subtitle">
-            远程安全容器化运行环境，支持按仓库配置隔离的容器镜像、环境变量与 secrets，加速云端智能体并行构建与测试。
-          </p>
-        </div>
-        <button
-          type="button"
-          className="primary-btn"
-          onClick={() => setShowCreateModal(true)}
-        >
-          <PlusIcon size={14} /> 新建云环境
-        </button>
-      </div>
-
-      {/* Filter and Search Bar */}
-      <div className="cloud-envs-filter-bar">
-        <div className="status-tabs">
-          <button
-            type="button"
-            className={`tab-chip ${statusFilter === "all" ? "active" : ""}`}
-            onClick={() => setStatusFilter("all")}
-          >
-            全部 ({environments.length})
-          </button>
-          <button
-            type="button"
-            className={`tab-chip ${statusFilter === "running" ? "active" : ""}`}
-            onClick={() => setStatusFilter("running")}
-          >
-            运行中 ({environments.filter((e) => e.status === "running").length})
-          </button>
-          <button
-            type="button"
-            className={`tab-chip ${statusFilter === "stopped" ? "active" : ""}`}
-            onClick={() => setStatusFilter("stopped")}
-          >
-            已休眠 ({environments.filter((e) => e.status === "stopped").length})
-          </button>
-        </div>
-
-        <div className="search-box">
-          <SearchIcon size={14} />
-          <input
-            type="text"
-            placeholder="搜索环境名称、镜像或绑定仓库…"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-        </div>
-      </div>
-
-      {/* Environments Grid */}
-      {filteredEnvs.length === 0 ? (
-        <div className="cloud-envs-empty">
-          <p>暂无符合条件的云开发环境</p>
-        </div>
-      ) : (
-        <div className="cloud-envs-grid">
-          {filteredEnvs.map((env) => (
-            <div
-              key={env.id}
-              className="env-card"
-              onClick={() => setSelectedEnv(env)}
-            >
-              <div className="env-card-header">
-                <span className={`status-tag ${env.status}`}>
-                  <span className="dot" />
-                  {env.status === "running" ? "运行中" : "已休眠"}
-                </span>
-                <span className="network-tag">{env.networkMode.toUpperCase()}</span>
-              </div>
-
-              <h3 className="env-title">{env.name}</h3>
-
-              <div className="env-meta-list">
-                <div className="meta-item">
-                  <span className="meta-k">绑定仓库:</span>
-                  <span className="meta-v code">{env.repo}</span>
-                </div>
-                <div className="meta-item">
-                  <span className="meta-k">分支:</span>
-                  <span className="meta-v">🌿 {env.branch}</span>
-                </div>
-                <div className="meta-item">
-                  <span className="meta-k">基础镜像:</span>
-                  <span className="meta-v">{env.image}</span>
-                </div>
-                <div className="meta-item">
-                  <span className="meta-k">算力规格:</span>
-                  <span className="meta-v">{env.resources}</span>
-                </div>
-              </div>
-
-              <div className="env-card-footer" onClick={(e) => e.stopPropagation()}>
-                <span className="time-hint">
-                  最近活跃: {new Date(env.lastUsedAt).toLocaleDateString()}
-                </span>
-                <div className="env-card-actions">
-                  <button
-                    type="button"
-                    className="env-btn"
-                    onClick={(e) => handleToggleStatus(env.id, e)}
-                  >
-                    {env.status === "running" ? "休眠" : "唤醒"}
-                  </button>
-                  <button
-                    type="button"
-                    className="env-btn secondary"
-                    onClick={() => setSelectedEnv(env)}
-                  >
-                    配置
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Drawer */}
-      {selectedEnv && (
-        <div className="env-drawer-backdrop" onClick={() => setSelectedEnv(null)}>
-          <div className="env-drawer" onClick={(e) => e.stopPropagation()}>
-            <div className="env-drawer-header">
-              <div>
-                <h2>{selectedEnv.name}</h2>
-                <span className="drawer-subtitle">
-                  {selectedEnv.resources} · {selectedEnv.image}
-                </span>
-              </div>
-              <button
-                type="button"
-                className="close-btn"
-                onClick={() => setSelectedEnv(null)}
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="env-drawer-body">
-              <div className="drawer-section">
-                <h4>环境状态与网络</h4>
-                <div className="info-grid">
-                  <div className="info-cell">
-                    <span className="info-label">运行状态</span>
-                    <strong className={selectedEnv.status === "running" ? "green" : "gray"}>
-                      {selectedEnv.status === "running" ? "● 运行就绪" : "○ 已暂停休眠"}
-                    </strong>
-                  </div>
-                  <div className="info-cell">
-                    <span className="info-label">网络访问模式</span>
-                    <strong>{selectedEnv.networkMode === "public" ? "公网出口 (Public)" : "私有安全通道 (VPC)"}</strong>
-                  </div>
-                </div>
-              </div>
-
-              <div className="drawer-section">
-                <h4>安全与密钥 (Secrets & Variables)</h4>
-                <p className="section-hint">当前已配置 {selectedEnv.secretsCount} 个密钥变量，注入在容器启动阶段。</p>
-                <div className="secrets-mock">
-                  <div className="secret-pill">🔒 GITHUB_TOKEN (******)</div>
-                  <div className="secret-pill">🔒 DATABASE_URL (******)</div>
-                  <div className="secret-pill">🔒 AWS_ACCESS_KEY (******)</div>
-                </div>
-              </div>
-
-              <div className="drawer-section">
-                <h4>操作与维护</h4>
-                <div className="action-row">
-                  <button
-                    type="button"
-                    className="secondary-btn"
-                    onClick={() => handleResetCache(selectedEnv.id)}
-                  >
-                    重置容器构建缓存 (Reset Cache)
-                  </button>
-                  {onStartChatInEnv && (
-                    <button
-                      type="button"
-                      className="primary-btn"
-                      onClick={() => {
-                        onStartChatInEnv(selectedEnv.name);
-                        setSelectedEnv(null);
-                      }}
-                    >
-                      <SparklesIcon size={14} /> 在此云环境中启动会话
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              <div className="drawer-section danger">
-                <h4>销毁云环境</h4>
-                <p>销毁后将释放当前容器关联的只读磁盘快照及 secrets 存储。</p>
-                <button
-                  type="button"
-                  className="danger-btn"
-                  onClick={() => handleDelete(selectedEnv.id)}
-                >
-                  <TrashIcon size={14} /> 彻底销毁此环境
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* New Env Modal */}
-      {showCreateModal && (
-        <div className="env-modal-overlay" onClick={() => setShowCreateModal(false)}>
-          <div className="env-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>创建远程云开发环境</h3>
-              <button
-                type="button"
-                className="close-btn"
-                onClick={() => setShowCreateModal(false)}
-              >
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateEnv}>
-              <div className="form-group">
-                <label>环境名称</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="例如：release-verify-env"
-                  value={newEnvName}
-                  onChange={(e) => setNewEnvName(e.target.value)}
-                />
-              </div>
-
-              <div className="form-group">
-                <label>Git 仓库地址</label>
-                <input
-                  type="text"
-                  placeholder="https://github.com/org/repo"
-                  value={newEnvRepo}
-                  onChange={(e) => setNewEnvRepo(e.target.value)}
-                />
-              </div>
-
-              <div className="form-group">
-                <label>目标分支 (Branch)</label>
-                <input
-                  type="text"
-                  value={newEnvBranch}
-                  onChange={(e) => setNewEnvBranch(e.target.value)}
-                />
-              </div>
-
-              <div className="form-group">
-                <label>基础镜像 (Base Image)</label>
-                <select
-                  value={newEnvImage}
-                  onChange={(e) => setNewEnvImage(e.target.value)}
-                >
-                  <option value="Ubuntu 24.04 + Node 20 / Rust">Ubuntu 24.04 LTS (Node 20, Rust, Go)</option>
-                  <option value="Python 3.11 Data Science / ML">Python 3.11 (PyTorch, Pandas, Jupyter)</option>
-                  <option value="Alpine Minimal CI Runner">Alpine 3.19 Minimal Runner</option>
-                </select>
-              </div>
-
-              <div className="form-group">
-                <label>规格规格 (Compute Spec)</label>
-                <select
-                  value={newEnvTier}
-                  onChange={(e) => setNewEnvTier(e.target.value)}
-                >
-                  <option value="2 vCPU · 8 GB RAM">Standard (2 vCPU · 8 GB RAM · 30 GB NVMe)</option>
-                  <option value="4 vCPU · 16 GB RAM">Performance (4 vCPU · 16 GB RAM · 60 GB NVMe)</option>
-                  <option value="8 vCPU · 32 GB RAM">High-Compute (8 vCPU · 32 GB RAM · 120 GB NVMe)</option>
-                </select>
-              </div>
-
-              <div className="modal-actions">
-                <button
-                  type="button"
-                  className="secondary-btn"
-                  onClick={() => setShowCreateModal(false)}
-                >
-                  取消
-                </button>
-                <button type="submit" className="primary-btn">
-                  创建并拉起
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+  const closeDetail = () => { detailSource.current?.abort(); setSelectedId(null); };
+  const repositoryLabel = (id: string) => names[id]?.name ?? (names[id]?.error === "未知仓库" ? "未知仓库" : names[id]?.error ? "仓库名称读取失败" : "仓库名称尚未解析");
+  const effective = detail?.draft ?? detail;
+  const hasScopeError = Boolean(catalog && Object.keys(catalog.errors).length);
+  return <div className="cloud-envs-container">
+    <div className="cloud-envs-header"><h2>Codex Cloud</h2><p role="status">新建、编辑与删除暂不可用。</p></div>
+    {loading && <p role="status">正在读取云端环境…</p>}
+    {error && <section><p role="alert">{error}</p><button type="button" onClick={() => setRevision(value => value + 1)}>重试</button></section>}
+    {access?.gateEvidence === "incomplete" && <p role="status">官方云访问资格尚未完成核对。</p>}
+    {access && <>
+      <div className="cloud-envs-filter-bar"><div className="search-box"><input aria-label="搜索云端环境" maxLength={128} placeholder="搜索环境或仓库…" value={query} onChange={event => setQuery(event.target.value.slice(0, 128))} /></div>
+        <button type="button" disabled={loading} onClick={() => void readCatalog(access)}>{catalog ? "刷新" : "读取云环境"}</button></div>
+      {catalog && Object.entries(catalog.errors).map(([scope, message]) => <p role="alert" key={scope}>{scope === "user" ? "个人" : "工作区"}目录读取未完成：{message}</p>)}
+      {hasScopeError && <button type="button" disabled={loading} onClick={() => void readCatalog(access)}>重试目录</button>}
+      {catalog && !loading && !error && !hasScopeError && !visible.length && <p role="status">没有匹配的环境配置。</p>}
+      {catalog && <table className="cloud-envs-table"><thead><tr><th>环境</th><th>共享</th></tr></thead><tbody>{visible.map(item => <tr key={item.id}>
+        <td><button type="button" className="link-btn" onClick={event => { detailTrigger.current = event.currentTarget; void openDetail(item.id); }}>{item.name}</button>
+          {item.repositories.map(repo => <div className="cloud-envs-repository" key={repo.id}>{repositoryLabel(repo.id)}</div>)}</td><td>{item.shareSettings === "private" ? "私密" : "工作区"}</td>
+      </tr>)}</tbody></table>}
+    </>}
+    {selectedId && <dialog ref={dialogRef} aria-label="云端环境详情" onCancel={event => { event.preventDefault(); closeDetail(); }}>
+      <button type="button" onClick={closeDetail}>关闭</button>
+      {detailError ? <><p role="alert">{detailError}</p><button type="button" onClick={() => void openDetail(selectedId)}>重试详情</button></> : !detail || !effective ? <p role="status">正在读取详情…</p> : <>
+        <h2>{detail.name}</h2><p>配置状态：{detail.status}</p><p>版本：{detail.versionId}</p><p>共享：{detail.shareSettings === "private" ? "私密" : "工作区"}</p>
+        {detail.draft && <p>正在显示草稿配置（修订 {detail.draft.revision}）。</p>}
+        <section><h3>仓库</h3>{!effective.repositories.length && <p>暂无仓库。</p>}{effective.repositories.map(repo => <p key={repo.id}>{repositoryLabel(repo.id)} · {repo.ref} <code>{repo.id}</code>{repo.depth != null && <span> 深度 {repo.depth}</span>}</p>)}</section>
+        <section><h3>网络</h3><p>{effective.network.type === "disabled" ? "禁用" : effective.network.type === "unrestricted" ? "不受限" : "受限"}</p>
+          {effective.network.packageManagers && <p>允许软件包管理器</p>}{effective.network.hosts.map(host => <p key={host}>{host}</p>)}</section>
+        {effective.cwd != null && <p>工作目录：{effective.cwd}</p>}{effective.installScript != null && <section><h3>安装脚本</h3><pre>{effective.installScript}</pre></section>}
+        {effective.startSkill != null && <section><h3>启动技能</h3><pre>{effective.startSkill}</pre></section>}
+        <section><h3>Secret 元数据</h3>{!effective.secrets.length && <p>暂无 Secret。</p>}{effective.secrets.map((secret, index) => <div key={index}><p>{secret.name} · {secret.source} · {secret.target}</p>{secret.domains.map(domain => <p key={domain}>{domain}</p>)}{secret.error && <p role="alert">{secret.error}</p>}</div>)}</section>
+      </>}
+    </dialog>}
+  </div>;
 };

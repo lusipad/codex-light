@@ -353,6 +353,120 @@ pub struct DesktopStateManager {
 mod workspace_transition_tests {
     use super::*;
 
+    #[test]
+    fn pet_preferences_preserve_atomic_patches_and_reject_invalid_storage() {
+        let (manager, directory) = fixture();
+        let path = directory.join("pets.json");
+        assert_eq!(manager.pet_preferences().unwrap(), json!({"selectedAvatarId":null,"petSize":112,"petVisibility":"always-visible"}));
+        manager.update_pet_preferences_at_path(json!({"selectedAvatarId":"custom-one"}), &path).unwrap();
+        std::thread::scope(|scope| {
+            scope.spawn(|| manager.update_pet_preferences_at_path(json!({"petSize":224}), &path).unwrap());
+            scope.spawn(|| manager.update_pet_preferences_at_path(json!({"petVisibility":"on-demand"}), &path).unwrap());
+        });
+        let expected = json!({"selectedAvatarId":"custom-one","petSize":224,"petVisibility":"on-demand"});
+        assert_eq!(manager.pet_preferences().unwrap(), expected);
+        let bytes = fs::read(&path).unwrap();
+        let disk: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(disk["unrelated"], "keep");
+        assert_eq!(disk[PERSISTED_ATOM_STATE_KEY]["selected-avatar-id"], "custom-one");
+        assert_eq!(disk[PERSISTED_ATOM_STATE_KEY]["avatar-overlay-mascot-width-px"], 224);
+        assert_eq!(disk[PERSISTED_ATOM_STATE_KEY]["pet-visibility"], "on-demand");
+        assert_eq!(disk[PERSISTED_ATOM_STATE_KEY]["thread-workspace-state-v1:t"]["revision"], "r1");
+        for invalid in [json!({"unknown":true}),json!({"petSize":79}),json!({"petSize":225}),json!({"petSize":112.5}),json!({"petSize":"112"}),json!({"selectedAvatarId":" "}),json!({"selectedAvatarId":false}),json!({"petVisibility":"hidden"}),json!([])] {
+            assert!(manager.update_pet_preferences_at_path(invalid, &path).is_err());
+            assert_eq!(manager.pet_preferences().unwrap(), expected);
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+        }
+        assert!(manager.update_pet_preferences_at_path(json!({"petSize":80}), &directory).is_err());
+        assert_eq!(manager.pet_preferences().unwrap(), expected);
+        manager.update_pet_preferences_at_path(json!({"selectedAvatarId":null,"petSize":80}), &path).unwrap();
+        assert_eq!(manager.pet_preferences().unwrap()["selectedAvatarId"], Value::Null);
+        manager.state_map.lock().unwrap().insert(PERSISTED_ATOM_STATE_KEY.into(), json!({"pet-visibility":false}));
+        assert!(manager.pet_preferences().is_err());
+        fs::remove_file(path).unwrap(); fs::remove_dir(directory).unwrap();
+    }
+
+    #[test]
+    fn review_preferences_roundtrip_merges_atoms_rejects_invalid_writes_and_preserves_on_failure() {
+        let (manager, directory) = fixture();
+        let path = directory.join("review.json");
+        assert_eq!(manager.review_preferences().unwrap()["githubLinkTarget"], "code-review-tab");
+        manager.update_review_preferences_at_path(json!({"localReviewInstructions":"关注并发"}), &path).unwrap();
+        let readback = manager.update_review_preferences_at_path(json!({"githubLinkTarget":"external-browser"}), &path).unwrap();
+        assert_eq!(readback["localReviewInstructions"], "关注并发");
+        let bytes = fs::read(&path).unwrap();
+        let disk: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(disk["unrelated"], "keep");
+        assert_eq!(disk[PERSISTED_ATOM_STATE_KEY]["thread-workspace-state-v1:t"]["revision"], "r1");
+        for invalid in [json!({"githubLinkTarget":"in-app-browser"}), json!({"githubLinkTarget":true}), json!({"unknown":"value"})] {
+            assert!(manager.update_review_preferences_at_path(invalid, &path).is_err());
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+            assert_eq!(manager.review_preferences().unwrap(), readback);
+        }
+        assert!(manager.update_review_preferences_at_path(json!({"localReviewInstructions":"failed"}), &directory).is_err());
+        assert_eq!(manager.review_preferences().unwrap(), readback);
+        std::thread::scope(|scope| {
+            scope.spawn(|| manager.update_review_preferences_at_path(json!({"localReviewInstructions":"parallel"}), &path).unwrap());
+            scope.spawn(|| manager.update_review_preferences_at_path(json!({"githubLinkTarget":"code-review-tab"}), &path).unwrap());
+        });
+        let merged = manager.review_preferences().unwrap();
+        assert_eq!(merged["localReviewInstructions"], "parallel");
+        assert_eq!(merged["githubLinkTarget"], "code-review-tab");
+        manager.update_review_preferences_at_path(json!({"localReviewInstructions":""}), &path).unwrap();
+        assert_eq!(manager.review_preferences().unwrap()["localReviewInstructions"], "");
+        fs::remove_file(path).unwrap(); fs::remove_dir(directory).unwrap();
+    }
+
+    #[test]
+    fn worktree_root_persistence_validates_before_write_and_preserves_state_on_failure() {
+        let (manager, directory) = fixture();
+        let path = directory.join("state.json");
+        let key = crate::git::WORKTREE_ROOT_KEY;
+        let root = directory.join("trees").to_string_lossy().to_string();
+        manager.set_value_persisted_at_path(key, json!(format!(" {} ", root)), &path).unwrap();
+        assert_eq!(manager.get_value(key), json!(root));
+        let bytes = fs::read(&path).unwrap();
+        let saved: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(saved[key], json!(root));
+        assert_eq!(saved["unrelated"], "keep");
+        for invalid in [json!("relative"), json!(42), Value::Null] {
+            assert!(manager.set_value_persisted_at_path(key, invalid, &path).is_err());
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+            assert_eq!(manager.get_value(key), json!(root));
+        }
+        assert!(manager.set_value_persisted_at_path(key, json!(""), &directory).is_err());
+        assert_eq!(manager.get_value(key), json!(root));
+        manager.set_value_persisted_at_path(key, json!(""), &path).unwrap();
+        assert_eq!(manager.get_value(key), json!(""));
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(directory).unwrap();
+    }
+
+    #[test]
+    fn inbox_persistence_roundtrip_preserves_other_keys_and_reports_disk_failure() {
+        let (manager, directory) = fixture();
+        let path = directory.join("inbox-state.json");
+        manager.set_value_persisted_at_path("inboxItems", json!([{"id":"first"}]), &path).unwrap();
+        let disk: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(disk["inboxItems"], json!([{"id":"first"}]));
+        assert_eq!(disk["unrelated"], "keep");
+
+        let blocked_path = directory.join("blocked");
+        fs::create_dir(&blocked_path).unwrap();
+        assert!(manager.set_value_persisted_at_path("inboxItems", json!([{"id":"failed"}]), &blocked_path).is_err());
+        assert_eq!(manager.get_value("inboxItems"), json!([{"id":"first"}]));
+        let unchanged: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(unchanged["inboxItems"], json!([{"id":"first"}]));
+
+        manager.set_value_persisted_at_path("inboxItems", json!([]), &path).unwrap();
+        let cleared: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(cleared["inboxItems"], json!([]));
+        assert_eq!(manager.get_value("inboxItems"), json!([]));
+        fs::remove_file(&path).unwrap();
+        fs::remove_dir(&blocked_path).unwrap();
+        fs::remove_dir(&directory).unwrap();
+    }
+
     fn fixture() -> (DesktopStateManager, PathBuf) {
         let map = json!({
             "unrelated":"keep",
@@ -1172,7 +1286,10 @@ impl DesktopStateManager {
             "cwd":cwd,"projectSources":source_roots,"runtimeWorkspaceRoots":runtime_roots,
         });
         if let Some(target_root) = plan["targetProject"]["rootPaths"][0].as_str() {
-            let worktree = crate::git::resolve_thread_project_worktree(thread_id, cwd, target_root);
+            let managed_roots = crate::git::managed_worktree_roots(
+                original.get(crate::git::WORKTREE_ROOT_KEY).unwrap_or(&Value::Null),
+            )?;
+            let worktree = crate::git::resolve_thread_project_worktree_at_roots(thread_id, cwd, target_root, &managed_roots);
             let roots: Vec<String> = plan["targetProject"]["rootPaths"].as_array().unwrap()
                 .iter().filter_map(Value::as_str).map(str::to_owned).collect();
             plan["workspaceTarget"] = crate::thread_workspace::project_target(
@@ -1479,10 +1596,122 @@ impl DesktopStateManager {
         Ok(())
     }
 
+    pub fn pet_preferences(&self) -> Result<Value, String> {
+        Self::read_pet_preferences(&self.state_map.lock().unwrap())
+    }
+
+    fn read_pet_preferences(state: &Map<String, Value>) -> Result<Value, String> {
+        let atoms = state.get(PERSISTED_ATOM_STATE_KEY).filter(|value| !value.is_null());
+        if atoms.is_some_and(|value| !value.is_object()) { return Err("偏好存储格式无效。".into()); }
+        let selected = atoms.and_then(|value| value.get("selected-avatar-id")).cloned().unwrap_or(Value::Null);
+        let size = atoms.and_then(|value| value.get("avatar-overlay-mascot-width-px")).cloned().unwrap_or(json!(112));
+        let visibility = atoms.and_then(|value| value.get("pet-visibility")).cloned().unwrap_or(json!("always-visible"));
+        if !(selected.is_null() || selected.as_str().is_some_and(|value| !value.trim().is_empty()))
+            || !size.as_u64().is_some_and(|value| (80..=224).contains(&value))
+            || !visibility.as_str().is_some_and(|value| matches!(value, "always-visible" | "on-demand")) {
+            return Err("宠物偏好格式无效。".into());
+        }
+        Ok(json!({"selectedAvatarId":selected,"petSize":size,"petVisibility":visibility}))
+    }
+
+    pub fn update_pet_preferences(&self, patch: Value) -> Result<Value, String> {
+        self.update_pet_preferences_at_path(patch, &desktop_global_state_path())
+    }
+
+    fn update_pet_preferences_at_path(&self, patch: Value, state_path: &Path) -> Result<Value, String> {
+        let patch = patch.as_object().ok_or("宠物偏好更新必须为对象。")?;
+        let mut entries = Vec::new();
+        for (field, value) in patch {
+            let key = match field.as_str() {
+                "selectedAvatarId" if value.is_null() || value.as_str().is_some_and(|value| !value.trim().is_empty()) => "selected-avatar-id",
+                "petSize" if value.as_u64().is_some_and(|value| (80..=224).contains(&value)) => "avatar-overlay-mascot-width-px",
+                "petVisibility" if value.as_str().is_some_and(|value| matches!(value, "always-visible" | "on-demand")) => "pet-visibility",
+                _ => return Err(format!("不支持的宠物偏好或值：{}", field)),
+            };
+            entries.push((key, value.clone()));
+        }
+        let mut guard = self.state_map.lock().unwrap();
+        let mut next = guard.clone();
+        let atoms = next.entry(PERSISTED_ATOM_STATE_KEY).or_insert_with(|| json!({}));
+        if atoms.is_null() { *atoms = json!({}); }
+        let atoms = atoms.as_object_mut().ok_or("偏好存储格式无效。")?;
+        for (key, value) in entries { atoms.insert(key.into(), value); }
+        let readback = Self::read_pet_preferences(&next)?;
+        persist_state_map(&next, state_path)?;
+        *guard = next;
+        Ok(readback)
+    }
+
+    pub fn review_preferences(&self) -> Result<Value, String> {
+        Self::read_review_preferences(&self.state_map.lock().unwrap())
+    }
+
+    fn read_review_preferences(state: &Map<String, Value>) -> Result<Value, String> {
+        let atoms = state.get(PERSISTED_ATOM_STATE_KEY).filter(|value| !value.is_null());
+        if atoms.is_some_and(|value| !value.is_object()) { return Err("偏好存储格式无效。".to_string()); }
+        let read = |key: &str, default: &str| -> Result<String, String> {
+            match atoms.and_then(|value| value.get(key)) {
+                None => Ok(default.to_string()),
+                Some(Value::String(value)) => Ok(value.clone()),
+                _ => Err(format!("审查偏好格式无效：{}", key)),
+            }
+        };
+        Ok(json!({
+            "githubLinkTarget": read("code-review-github-link-target", "code-review-tab")?,
+            "localReviewInstructions": read("code-review-local-instructions", "")?,
+        }))
+    }
+
+    pub fn update_review_preferences(&self, patch: Value) -> Result<Value, String> {
+        self.update_review_preferences_at_path(patch, &desktop_global_state_path())
+    }
+
+    fn update_review_preferences_at_path(&self, patch: Value, state_path: &Path) -> Result<Value, String> {
+        let patch = patch.as_object().ok_or("审查偏好更新必须为对象。")?;
+        let mut entries = Vec::new();
+        for (field, value) in patch {
+            let value = value.as_str().ok_or("审查偏好必须为字符串。")?;
+            let key = match field.as_str() {
+                "githubLinkTarget" if matches!(value, "code-review-tab" | "external-browser") => "code-review-github-link-target",
+                "localReviewInstructions" => "code-review-local-instructions",
+                _ => return Err(format!("不支持的审查偏好：{}", field)),
+            };
+            entries.push((key, Value::String(value.to_string())));
+        }
+        let mut guard = self.state_map.lock().unwrap();
+        let mut next = guard.clone();
+        let atoms = next.entry(PERSISTED_ATOM_STATE_KEY).or_insert_with(|| json!({}));
+        if atoms.is_null() { *atoms = json!({}); }
+        let atoms = atoms.as_object_mut().ok_or("偏好存储格式无效。")?;
+        for (key, value) in entries { atoms.insert(key.to_string(), value); }
+        let readback = Self::read_review_preferences(&next)?;
+        persist_state_map(&next, state_path)?;
+        *guard = next;
+        Ok(readback)
+    }
+
     pub fn set_value(&self, key: &str, value: Value) {
         let mut guard = self.state_map.lock().unwrap();
         guard.insert(key.to_string(), value);
         Self::save_locked(&guard);
+    }
+
+    pub fn set_value_persisted(&self, key: &str, value: Value) -> Result<(), String> {
+        self.set_value_persisted_at_path(key, value, &desktop_global_state_path())
+    }
+
+    fn set_value_persisted_at_path(
+        &self, key: &str, value: Value, state_path: &Path,
+    ) -> Result<(), String> {
+        let value = if key == crate::git::WORKTREE_ROOT_KEY {
+            Value::String(crate::git::validate_worktree_root(value.as_str().ok_or("工作树目录配置不是字符串。")?)?)
+        } else { value };
+        let mut guard = self.state_map.lock().unwrap();
+        let mut next = guard.clone();
+        next.insert(key.to_string(), value);
+        persist_state_map(&next, state_path)?;
+        *guard = next;
+        Ok(())
     }
 
     pub fn list_workspace_roots(&self) -> Vec<WorkspaceRootItem> {

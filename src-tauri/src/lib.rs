@@ -1,8 +1,22 @@
+pub mod local_environment;
 pub mod app_server;
 pub mod automations;
 pub mod config_skills;
+pub mod recommended_skills;
+pub mod desktop_open;
 pub mod git;
 pub mod menu;
+pub mod keybindings;
+pub mod personal_instructions;
+pub mod pets;
+pub mod quick_chat;
+pub mod thread_window;
+pub mod notification_broker;
+mod image_save;
+mod chatgpt_service;
+mod share_assets;
+mod deep_links;
+mod instance_transport;
 pub mod state;
 pub mod terminal;
 mod thread_workspace;
@@ -22,13 +36,30 @@ use state::{
 };
 use std::collections::HashMap;
 use std::fs;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use terminal::{TerminalManager, TerminalSessionInfo};
 
 pub struct AppState {
     pub app_server: AppServerManager,
+    pub chatgpt_service: chatgpt_service::ChatgptService,
     pub desktop_state: DesktopStateManager,
     pub terminal: TerminalManager,
+}
+
+fn invalidate_chatgpt_service(app: &AppHandle) {
+    if let Some(state) = app.try_state::<AppState>() {
+        let generation = state.chatgpt_service.invalidate();
+        let _ = app.emit("chatgpt-service:invalidated", generation);
+    }
+}
+
+#[tauri::command]
+fn shortcut_menu_sync(
+    app: AppHandle,
+    state: State<'_, menu::ShortcutMenuState>,
+    accelerators: std::collections::BTreeMap<String, Option<String>>,
+) -> Result<(), String> {
+    menu::sync_shortcut_menu(&app, &state, accelerators)
 }
 
 #[tauri::command]
@@ -59,11 +90,24 @@ async fn app_server_restart(
 #[tauri::command]
 async fn app_server_call(
     app: AppHandle,
+    window: tauri::WebviewWindow,
     state: State<'_, AppState>,
     method: String,
     params: Option<Value>,
 ) -> Result<Value, String> {
-    let res = if method == "turn/start" {
+    if method == "getAuthStatus" {
+        return Err("认证状态令牌只能由宿主服务读取".to_string());
+    }
+    if matches!(method.as_str(), "account/logout" | "account/login/start") {
+        invalidate_chatgpt_service(&app);
+    }
+    let res = if window.label().starts_with("thread-") && matches!(method.as_str(), "fs/watch" | "fs/unwatch") {
+        app.state::<thread_window::ThreadWindowState>()
+            .call_watch(window.label(), &method, params.clone(), |params| {
+                state.app_server.call(&app, &method, params)
+            })
+            .await?
+    } else if method == "turn/start" {
         let (result, warning) = state
             .desktop_state
             .call_turn_with_workspace(
@@ -108,6 +152,234 @@ async fn app_server_call(
         }
     }
     Ok(res)
+}
+
+#[tauri::command]
+async fn chatgpt_service_identity(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request_id: String,
+) -> Result<chatgpt_service::ServiceIdentity, chatgpt_service::ServiceError> {
+    state.chatgpt_service.identity(&request_id, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
+async fn chatgpt_service_read(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: chatgpt_service::ServiceRequest,
+) -> Result<chatgpt_service::ServiceResponse, chatgpt_service::ServiceError> {
+    state.chatgpt_service.read(request, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
+async fn share_thread_prepare(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: chatgpt_service::SharePrepareRequest,
+) -> Result<chatgpt_service::SharePreparation, chatgpt_service::ServiceError> {
+    state.chatgpt_service.share_prepare(request, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
+async fn share_thread_publish(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: chatgpt_service::SharePublishRequest,
+) -> Result<chatgpt_service::PublishedShare, chatgpt_service::ServiceError> {
+    state.chatgpt_service.share_publish(request, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
+fn share_thread_discard(
+    state: State<'_, AppState>,
+    preparation_id: String,
+    expected_identity: chatgpt_service::ServiceIdentity,
+) -> Result<(), chatgpt_service::ServiceError> {
+    state.chatgpt_service.share_discard(&preparation_id, &expected_identity)
+}
+
+#[tauri::command]
+async fn share_thread_url_safe(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: chatgpt_service::ShareUrlSafeRequest,
+) -> Result<bool, chatgpt_service::ServiceError> {
+    state.chatgpt_service.share_url_safe(request, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
+async fn share_thread_asset_read(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    expected_identity: chatgpt_service::ServiceIdentity,
+    host_id: String,
+    thread_id: String,
+    source: String,
+    kind: String,
+) -> Result<Option<share_assets::LocalShareAsset>, String> {
+    if host_id != "local" || state.chatgpt_service.generation() != expected_identity.generation {
+        return Err("分享主机或账号已改变。".into());
+    }
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let identity = state.chatgpt_service.identity(&request_id, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await.map_err(|error| error.message.to_string())?;
+    if identity != expected_identity {
+        return Err("分享账号已改变。".into());
+    }
+    let metadata = state.app_server.call(&app, "thread/read",
+        Some(json!({"threadId":thread_id,"includeTurns":false}))).await?;
+    if state.chatgpt_service.generation() != expected_identity.generation {
+        return Err("分享账号已改变。".into());
+    }
+    let thread = metadata.get("thread").cloned().ok_or("无法读取分享会话。")?;
+    let path = if source.starts_with("file:") {
+        let url = tauri::Url::parse(&source).map_err(|_| "无效的分享文件地址。")?;
+        if url.host_str().is_some_and(|host| host != "localhost" && !host.is_empty()) {
+            return Err("分享不支持远程文件地址。".into());
+        }
+        url.to_file_path().map_err(|_| "无效的分享文件地址。")?
+            .to_string_lossy().into_owned()
+    } else {
+        #[cfg(windows)]
+        let source = if source.as_bytes().get(0) == Some(&b'/')
+            && source.as_bytes().get(1).is_some_and(u8::is_ascii_alphabetic)
+            && source.as_bytes().get(2) == Some(&b':') {
+            source[1..].to_owned()
+        } else { source };
+        source
+    };
+    let home = state::codex_home_dir();
+    let result = tauri::async_runtime::spawn_blocking(move ||
+        share_assets::read_local_share_asset(&thread_id, &path, &kind, &thread, &home))
+        .await.map_err(|_| "分享资产读取失败。")??;
+    if state.chatgpt_service.generation() != expected_identity.generation {
+        return Err("分享账号已改变。".into());
+    }
+    Ok(result)
+}
+
+fn share_system_version() -> Option<String> {
+    static VERSION: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    VERSION.get_or_init(|| {
+        #[cfg(windows)]
+        let output = {
+            use std::os::windows::process::CommandExt;
+            let command = std::path::PathBuf::from(std::env::var_os("SystemRoot")?)
+                .join("System32/cmd.exe");
+            std::process::Command::new(command).args(["/d", "/c", "ver"])
+                .creation_flags(0x08000000).output().ok()?
+        };
+        #[cfg(not(windows))]
+        let output = std::process::Command::new("/usr/bin/uname").arg("-r").output().ok()?;
+        if !output.status.success() { return None; }
+        let value = String::from_utf8_lossy(&output.stdout).split_whitespace().collect::<Vec<_>>().join(" ");
+        (!value.is_empty()).then_some(value)
+    }).clone()
+}
+
+#[tauri::command]
+async fn share_thread_access(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    state: State<'_, AppState>,
+    request: chatgpt_service::ShareAccessRequest,
+) -> Result<Value, chatgpt_service::ServiceError> {
+    static SESSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    let version = share_system_version().ok_or(chatgpt_service::ServiceError {
+        code: "desktop_context_unavailable", message: "Host system version unavailable", status: None,
+    })?;
+    let context = chatgpt_service::ShareBootstrapContext {
+        app_session_id: SESSION.get_or_init(|| uuid::Uuid::new_v4().to_string()).clone(),
+        app_version: app.package_info().version.to_string(),
+        brand_name: app.config().product_name.clone().unwrap_or_else(|| app.package_info().name.clone()),
+        build_flavor: if cfg!(debug_assertions) { "debug" } else { "release" }.into(),
+        system_name: std::env::consts::OS.into(), system_version: version,
+        window_type: if window.label().starts_with("thread-") { "thread" } else { window.label() }.into(),
+    };
+    state.chatgpt_service.share_access_bootstrap(request, context, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
+async fn cloud_service_access(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request_id: String,
+) -> Result<chatgpt_service::CloudAccess, chatgpt_service::ServiceError> {
+    state.chatgpt_service.cloud_access(&request_id, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
+async fn cloud_service_identity(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request_id: String,
+) -> Result<chatgpt_service::ServiceIdentity, chatgpt_service::ServiceError> {
+    state.chatgpt_service.cloud_identity(&request_id, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
+async fn cloud_service_read(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: chatgpt_service::CloudServiceRequest,
+) -> Result<chatgpt_service::ServiceResponse, chatgpt_service::ServiceError> {
+    let status = state.app_server.get_status().await;
+    let user_agent = status.user_agent.filter(|value| !value.is_empty())
+        .ok_or(chatgpt_service::ServiceError {
+            code: "desktop_context_unavailable",
+            message: "Desktop app-server context unavailable",
+            status: None,
+        })?;
+    let profile = chatgpt_service::CloudProfile {
+        user_agent,
+        originator: "codex-tauri-native".to_owned(),
+    };
+    state.chatgpt_service.cloud_read(request, profile, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
+fn chatgpt_service_cancel(state: State<'_, AppState>, request_id: String) -> bool {
+    state.chatgpt_service.cancel(&request_id)
 }
 
 #[tauri::command]
@@ -305,14 +577,23 @@ async fn fs_search_files(
 }
 
 #[tauri::command]
+fn code_review_preferences_get(state: State<'_, AppState>) -> Result<Value, String> {
+    state.desktop_state.review_preferences()
+}
+
+#[tauri::command]
+fn code_review_preferences_update(state: State<'_, AppState>, patch: Value) -> Result<Value, String> {
+    state.desktop_state.update_review_preferences(patch)
+}
+
+#[tauri::command]
 fn desktop_state_get(state: State<'_, AppState>, key: String) -> Result<Value, String> {
     Ok(state.desktop_state.get_value(&key))
 }
 
 #[tauri::command]
 fn desktop_state_set(state: State<'_, AppState>, key: String, value: Value) -> Result<(), String> {
-    state.desktop_state.set_value(&key, value);
-    Ok(())
+    state.desktop_state.set_value_persisted(&key, value)
 }
 
 #[tauri::command]
@@ -385,23 +666,15 @@ async fn thread_delete(
     state: State<'_, AppState>,
     thread_id: String,
 ) -> Result<(), String> {
-    state.desktop_state.remove_thread_record(&thread_id);
-    let _ = state
+    state
         .app_server
         .call(
             &app,
             "thread/delete",
             Some(json!({ "threadId": &thread_id })),
         )
-        .await;
-    let _ = state
-        .app_server
-        .call(
-            &app,
-            "thread/archive",
-            Some(json!({ "threadId": &thread_id })),
-        )
-        .await;
+        .await?;
+    state.desktop_state.remove_thread_record(&thread_id);
     Ok(())
 }
 
@@ -448,51 +721,24 @@ fn reveal_path_in_explorer(path: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Opens a file or directory with the OS native handler.
-///
-/// Used by the native Help → "Open config.toml" menu item (the frontend
-/// invokes it with the path sent in the `native-menu` payload) and available to
-/// any other frontend feature that needs "open externally".
-///
-/// * Windows: directories via `explorer`, files via `notepad` (no console window).
-/// * macOS: `open`; other unix: `xdg-open`.
 #[tauri::command]
-fn open_path_external(path: String) -> Result<(), String> {
-    let p = std::path::Path::new(&path);
-    if !p.exists() {
-        return Err(format!("路径不存在: {}", path));
-    }
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        let mut cmd = if p.is_dir() {
-            let mut c = std::process::Command::new("explorer");
-            c.arg(&path);
-            c
-        } else {
-            let mut c = std::process::Command::new("notepad");
-            c.arg(&path);
-            c
-        };
-        cmd.creation_flags(CREATE_NO_WINDOW);
-        cmd.spawn().map_err(|e| e.to_string())?;
-    }
-    #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("open")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        std::process::Command::new("xdg-open")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(())
+fn desktop_open_preferences(state: State<'_, AppState>) -> desktop_open::DesktopOpenPreferences {
+    desktop_open::preferences(&state.desktop_state)
+}
+
+#[tauri::command]
+fn desktop_open_preference_set(state: State<'_, AppState>, kind: String, value: String) -> Result<(), String> {
+    desktop_open::set_preference(&state.desktop_state, &kind, &value)
+}
+
+#[tauri::command]
+fn review_link_open(url: String) -> Result<(), String> {
+    desktop_open::open_review_link(&url)
+}
+
+#[tauri::command]
+fn open_path_external(state: State<'_, AppState>, path: String) -> Result<(), String> {
+    desktop_open::open_external(&state.desktop_state, &path)
 }
 
 fn help_link_command(target: &str) -> Result<std::process::Command, String> {
@@ -700,8 +946,22 @@ fn git_diff(
     file_path: Option<String>,
     staged: Option<bool>,
     base_branch: Option<String>,
+    review_base_commit: Option<String>,
 ) -> Result<String, String> {
-    git::git_diff_for_path(&cwd, file_path, staged.unwrap_or(false), base_branch)
+    git::git_diff_for_path(
+        &cwd,
+        file_path,
+        staged.unwrap_or(false),
+        base_branch,
+        review_base_commit,
+    )
+}
+
+#[tauri::command]
+async fn git_merge_base(cwd: String, base_branch: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || git::merge_base(&cwd, &base_branch))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -751,23 +1011,42 @@ fn git_branch_checkout(cwd: String, branch: String) -> Result<GitStatusInfo, Str
 }
 
 #[tauri::command]
-fn git_worktrees_list(cwd: Option<String>) -> Result<Vec<GitWorktreeInfo>, String> {
-    Ok(git::list_worktrees(cwd))
+fn git_worktrees_list(state: State<'_, AppState>, cwd: Option<String>) -> Result<Vec<GitWorktreeInfo>, String> {
+    let roots = git::managed_worktree_roots(&state.desktop_state.get_value(git::WORKTREE_ROOT_KEY))?;
+    Ok(git::list_worktrees_at_roots(cwd, &roots))
 }
 
 #[tauri::command]
 fn git_worktree_create(
+    state: State<'_, AppState>,
     source_cwd: String,
     starting_mode: String,
     branch_name: Option<String>,
     owner_thread_id: Option<String>,
 ) -> Result<GitWorktreeInfo, String> {
-    git::create_codex_worktree(&source_cwd, &starting_mode, branch_name, owner_thread_id)
+    let roots = git::managed_worktree_roots(&state.desktop_state.get_value(git::WORKTREE_ROOT_KEY))?;
+    git::create_codex_worktree(&source_cwd, &starting_mode, branch_name, owner_thread_id, &roots[0])
 }
 
 #[tauri::command]
-fn git_worktree_delete(worktree_path: String, git_dir: Option<String>) -> Result<(), String> {
-    git::delete_worktree(&worktree_path, git_dir)
+async fn git_worktree_delete(worktree_path: String, git_dir: Option<String>) -> Result<git::WorktreeRemovalResult, String> {
+    tokio::task::spawn_blocking(move || git::delete_worktree(&worktree_path, git_dir))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn git_worktree_delete_prepare(worktree_path: String, git_dir: Option<String>) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || git::validate_worktree_removal(&worktree_path, git_dir))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn git_worktree_restore_snapshot(repo_cwd: String, snapshot_ref: String, target_path: String) -> Result<git::WorktreeRemovalResult, String> {
+    tokio::task::spawn_blocking(move || git::restore_worktree_snapshot(&repo_cwd, &snapshot_ref, &target_path))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -836,23 +1115,23 @@ fn storage_stats_get() -> Result<StorageStatsOverview, String> {
 }
 
 #[tauri::command]
-fn storage_clean_cache() -> Result<u64, String> {
-    config_skills::clean_storage_cache()
-}
-
-#[tauri::command]
 fn import_external_tool_config(kind: String, cwd: Option<String>) -> Result<Value, String> {
     config_skills::import_external_tool_config(&kind, cwd.as_deref())
 }
 
 #[tauri::command]
-fn local_environment_read(cwd: String) -> Result<Value, String> {
-    config_skills::read_local_environment_toml(&cwd)
+fn local_environment_read(cwd: String, file_name: Option<String>) -> Result<Value, String> {
+    local_environment::read(&cwd, file_name.as_deref())
 }
 
 #[tauri::command]
-fn local_environment_save(cwd: String, content: String) -> Result<String, String> {
-    config_skills::save_local_environment_toml(&cwd, &content)
+fn local_environment_save(cwd: String, file_name: String, content: String, expected_content: Option<String>) -> Result<Value, String> {
+    local_environment::save(&cwd, &file_name, &content, expected_content.as_deref())
+}
+
+#[tauri::command]
+fn local_environment_action(cwd: String, file_name: String, expected_content: String, index: usize) -> Result<String, String> {
+    local_environment::action(&cwd, &file_name, &expected_content, index)
 }
 
 #[tauri::command]
@@ -865,6 +1144,10 @@ fn terminal_create_or_attach(
     rows: Option<u16>,
     shell: Option<String>,
 ) -> Result<TerminalSessionInfo, String> {
+    #[cfg(target_os = "windows")]
+    let shell = Some(shell.filter(|value| !value.is_empty()).unwrap_or_else(|| {
+        desktop_open::preferences(&state.desktop_state).preferred_shell
+    }));
     state.terminal.create_or_attach(
         &app,
         &session_id,
@@ -956,91 +1239,24 @@ fn config_generate_models_api() -> Result<String, String> {
     config_skills::generate_sample_models_api_catalog()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InstalledPetInfo {
-    #[serde(rename = "id")]
-    pub id: String,
-    #[serde(rename = "displayName")]
-    pub display_name: String,
-    pub description: Option<String>,
-    #[serde(rename = "spriteVersionNumber")]
-    pub sprite_version_number: u32,
-    #[serde(rename = "spritesheetPath")]
-    pub spritesheet_path: String,
-    #[serde(rename = "spritesheetDataUrl")]
-    pub spritesheet_data_url: Option<String>,
+#[tauri::command]
+async fn pets_list_installed() -> Result<Vec<pets::InstalledPetInfo>, String> {
+    tokio::task::spawn_blocking(pets::list_installed).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-async fn pets_list_installed() -> Result<Vec<InstalledPetInfo>, String> {
-    tokio::task::spawn_blocking(|| {
-        let home = std::env::var("USERPROFILE")
-            .or_else(|_| std::env::var("HOME"))
-            .unwrap_or_default();
-        let pets_dir = std::path::Path::new(&home).join(".codex").join("pets");
-        if !pets_dir.is_dir() {
-            return Ok(Vec::new());
-        }
-        let mut result = Vec::new();
-        if let Ok(entries) = std::fs::read_dir(pets_dir) {
-            for entry in entries.flatten() {
-                let p = entry.path();
-                if p.is_dir() {
-                    let pet_json = p.join("pet.json");
-                    if pet_json.is_file() {
-                        if let Ok(content) = std::fs::read_to_string(&pet_json) {
-                            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
-                                let id = val
-                                    .get("id")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or_default()
-                                    .to_string();
-                                let display_name = val
-                                    .get("displayName")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or(&id)
-                                    .to_string();
-                                let description = val
-                                    .get("description")
-                                    .and_then(|v| v.as_str())
-                                    .map(|s| s.to_string());
-                                let sprite_version_number =
-                                    val.get("spriteVersionNumber")
-                                        .and_then(|v| v.as_u64())
-                                        .unwrap_or(1) as u32;
-                                let sheet_rel = val
-                                    .get("spritesheetPath")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("spritesheet.webp");
-                                let sheet_path = p.join(sheet_rel);
-                                let mut sheet_data_url = None;
-                                if sheet_path.is_file() {
-                                    if let Ok(bytes) = std::fs::read(&sheet_path) {
-                                        use base64::Engine;
-                                        let b64 = base64::engine::general_purpose::STANDARD
-                                            .encode(&bytes);
-                                        sheet_data_url =
-                                            Some(format!("data:image/webp;base64,{}", b64));
-                                    }
-                                }
-                                result.push(InstalledPetInfo {
-                                    id,
-                                    display_name,
-                                    description,
-                                    sprite_version_number,
-                                    spritesheet_path: sheet_path.to_string_lossy().to_string(),
-                                    spritesheet_data_url: sheet_data_url,
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        Ok(result)
-    })
-    .await
-    .map_err(|e| e.to_string())?
+fn pet_preferences_get(state: State<'_, AppState>) -> Result<Value, String> {
+    state.desktop_state.pet_preferences()
+}
+
+#[tauri::command]
+fn pet_preferences_update(state: State<'_, AppState>, patch: Value) -> Result<Value, String> {
+    state.desktop_state.update_pet_preferences(patch)
+}
+
+#[tauri::command]
+fn pets_open_folder() -> Result<(), String> {
+    pets::open_folder()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1052,34 +1268,32 @@ pub struct AppshotResult {
 #[tauri::command]
 async fn capture_appshot() -> Result<AppshotResult, String> {
     tokio::task::spawn_blocking(|| {
-        let home = std::env::var("USERPROFILE")
-            .or_else(|_| std::env::var("HOME"))
-            .unwrap_or_default();
-        let appshots_dir = std::path::Path::new(&home).join(".codex").join("appshots");
-        let _ = std::fs::create_dir_all(&appshots_dir);
+        let appshots_dir = state::codex_home_dir().join("appshots");
+        std::fs::create_dir_all(&appshots_dir).map_err(|e| e.to_string())?;
 
-        let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
-        let file_name = format!("appshot_{}.png", timestamp);
+        let file_name = format!("appshot_{}.png", uuid::Uuid::new_v4());
         let out_path = appshots_dir.join(&file_name);
         let out_path_str = out_path.to_string_lossy().to_string();
 
         #[cfg(target_os = "windows")]
         {
-            let ps_script = format!(
-                "Add-Type -AssemblyName System.Windows.Forms; \
+            let ps_script =
+                "$ErrorActionPreference = 'Stop'; \
+                 Add-Type -AssemblyName System.Windows.Forms; \
                  Add-Type -AssemblyName System.Drawing; \
                  $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; \
                  $bitmap = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height; \
-                 $graphics = [System.Drawing.Graphics]::FromImage($bitmap); \
-                 $graphics.CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size); \
-                 $bitmap.Save('{}', [System.Drawing.Imaging.ImageFormat]::Png); \
-                 $graphics.Dispose(); \
-                 $bitmap.Dispose();",
-                out_path_str.replace('\\', "\\\\")
-            );
+                 try { \
+                   $graphics = [System.Drawing.Graphics]::FromImage($bitmap); \
+                   try { \
+                     $graphics.CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size); \
+                     $bitmap.Save($env:CODEX_APPSHOT_OUTPUT, [System.Drawing.Imaging.ImageFormat]::Png); \
+                   } finally { $graphics.Dispose(); } \
+                 } finally { $bitmap.Dispose(); }";
 
             let mut cmd = std::process::Command::new("powershell");
-            cmd.args(["-NoProfile", "-NonInteractive", "-Command", &ps_script]);
+            cmd.args(["-NoProfile", "-NonInteractive", "-Command", ps_script])
+                .env("CODEX_APPSHOT_OUTPUT", &out_path);
             #[cfg(target_os = "windows")]
             {
                 use std::os::windows::process::CommandExt;
@@ -1114,9 +1328,9 @@ async fn capture_appshot() -> Result<AppshotResult, String> {
             }
         }
 
-        if !out_path.exists() {
-            return Err("Appshot image was not saved".to_string());
-        }
+        let bytes = std::fs::read(&out_path).map_err(|e| e.to_string())?;
+        tauri::image::Image::from_bytes(&bytes)
+            .map_err(|e| format!("Captured screenshot is not a valid image: {e}"))?;
 
         Ok(AppshotResult {
             path: out_path_str,
@@ -1145,6 +1359,36 @@ fn skill_save_or_install(
     source_dir: Option<String>,
 ) -> Result<SkillInfoItem, String> {
     config_skills::save_or_install_skill(&id, &content, source_dir)
+}
+
+#[tauri::command]
+async fn recommended_skills_list(refresh: bool) -> Result<recommended_skills::RecommendedSkillsResult, String> {
+    tokio::task::spawn_blocking(move || recommended_skills::list_recommended_skills(refresh))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn recommended_skill_install(
+    state: State<'_, AppState>,
+    skill_id: String,
+    repo_path: String,
+    install_root: Option<String>,
+) -> Result<recommended_skills::RecommendedSkillInstallResult, String> {
+    if let Some(root) = &install_root {
+        if !std::path::Path::new(root).is_absolute() {
+            return Err("项目技能安装需要绝对项目根目录".into());
+        }
+        let canonical = fs::canonicalize(root).map_err(|e| e.to_string())?;
+        if !state.desktop_state.list_workspace_roots().iter().any(|workspace| {
+            fs::canonicalize(&workspace.path).map(|path| path == canonical).unwrap_or(false)
+        }) {
+            return Err("技能只能安装到当前已登记的项目根目录".into());
+        }
+    }
+    tokio::task::spawn_blocking(move || {
+        recommended_skills::install_recommended_skill(&skill_id, &repo_path, install_root)
+    }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -1197,16 +1441,60 @@ fn show_desktop_notification(app: AppHandle, title: String, body: String) -> Res
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(windows)]
+    let mut primary_instance = {
+        let executable = match std::env::current_exe() {
+            Ok(path) => path,
+            Err(error) => { eprintln!("无法定位应用实例：{error}"); return; }
+        };
+        let scope = match instance_transport::instance_scope(&executable, &state::codex_home_dir()) {
+            Ok(scope) => scope,
+            Err(error) => { eprintln!("无法定位应用数据目录：{error}"); return; }
+        };
+        let args = std::env::args_os().skip(1).filter_map(|arg| arg.into_string().ok())
+            .filter(|arg| {
+                let lower = arg.to_ascii_lowercase();
+                lower.starts_with("codex:") || lower.starts_with("codex-dev:")
+            }).collect();
+        match instance_transport::acquire_or_forward(&scope, args) {
+            Ok(Some(instance)) => instance,
+            Ok(None) => return,
+            Err(error) => {
+                eprintln!("应用实例启动失败：{error}");
+                rfd::MessageDialog::new().set_title("无法启动 Codex")
+                    .set_description(&error).set_level(rfd::MessageLevel::Error).show();
+                return;
+            }
+        }
+    };
+    #[cfg(windows)]
+    let mut instance_receiver = primary_instance.take_receiver();
     let app_state = AppState {
         app_server: AppServerManager::new(),
+        chatgpt_service: chatgpt_service::ChatgptService::default(),
         desktop_state: DesktopStateManager::new(),
         terminal: TerminalManager::new(),
     };
 
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
-        .setup(|app| {
+        .setup(move |app| {
             use tauri::Manager;
+            #[cfg(windows)]
+            if let Some(mut receiver) = instance_receiver.take() {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    while let Some(args) = receiver.recv().await {
+                        if let Err(error) = deep_links::receive_args(&handle, &args).await {
+                            eprintln!("无法接收应用链接：{error}");
+                        }
+                    }
+                    eprintln!("应用实例接收器已停止。");
+                    // The pipe guard lost its listener. Do not leave an orphan primary
+                    // alive while another launch can acquire the same scope.
+                    handle.exit(1);
+                });
+            }
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
                 let _ = window.set_focus();
@@ -1235,7 +1523,46 @@ pub fn run() {
             Ok(())
         })
         .manage(app_state)
+        .manage(deep_links::DeepLinkState::default())
+        .manage(menu::ShortcutMenuState::default())
+        .manage(keybindings::KeyBindingsState::default())
+        .manage(personal_instructions::PersonalInstructionsState::default())
+        .manage(quick_chat::QuickChatState::default())
+        .manage(thread_window::ThreadWindowState::default())
+        .manage(notification_broker::NotificationBroker::default())
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                window.app_handle().state::<notification_broker::NotificationBroker>()
+                    .remove_window(window.label());
+            }
+        })
         .invoke_handler(tauri::generate_handler![
+            deep_links::deep_link_pending,
+            deep_links::deep_link_acknowledge,
+            notification_broker::notification_view_update,
+            notification_broker::notification_claim,
+            thread_window::open_thread_window,
+            quick_chat::quick_chat_toggle,
+            quick_chat::quick_chat_hide,
+            quick_chat::quick_chat_continue,
+            image_save::generated_image_save,
+            chatgpt_service_identity,
+            chatgpt_service_read,
+            share_thread_prepare,
+            share_thread_publish,
+            share_thread_discard,
+            share_thread_url_safe,
+            share_thread_asset_read,
+            share_thread_access,
+            chatgpt_service_cancel,
+            cloud_service_identity,
+            cloud_service_access,
+            cloud_service_read,
+            shortcut_menu_sync,
+            keybindings::keyboard_bindings_read,
+            keybindings::keyboard_bindings_write,
+            personal_instructions::personal_instructions_read,
+            personal_instructions::personal_instructions_write,
             app_server_status,
             app_server_connect,
             app_server_restart,
@@ -1257,6 +1584,8 @@ pub fn run() {
             fs_read_preview,
             fs_write_file,
             fs_search_files,
+            code_review_preferences_get,
+            code_review_preferences_update,
             desktop_state_get,
             desktop_state_set,
             thread_record_workspace,
@@ -1265,11 +1594,15 @@ pub fn run() {
             thread_archive_toggle,
             thread_delete,
             reveal_path_in_explorer,
+            review_link_open,
             open_path_external,
+            desktop_open_preferences,
+            desktop_open_preference_set,
             open_help_link,
             detect_project_scripts,
             git_status,
             git_diff,
+            git_merge_base,
             git_stage,
             git_unstage,
             git_discard,
@@ -1280,6 +1613,8 @@ pub fn run() {
             git_worktrees_list,
             git_worktree_create,
             git_worktree_delete,
+            git_worktree_delete_prepare,
+            git_worktree_restore_snapshot,
             git_worktree_bring_changes_back,
             git_worktree_repair,
             git_worktree_set_owner,
@@ -1290,10 +1625,10 @@ pub fn run() {
             git_create_pr,
             git_list_prs,
             storage_stats_get,
-            storage_clean_cache,
             import_external_tool_config,
             local_environment_read,
             local_environment_save,
+            local_environment_action,
             terminal_create_or_attach,
             terminal_write,
             terminal_resize,
@@ -1303,6 +1638,8 @@ pub fn run() {
             config_update,
             config_generate_models_api,
             skills_list_local,
+            recommended_skills_list,
+            recommended_skill_install,
             skill_save_or_install,
             skill_delete,
             automations_list,
@@ -1312,6 +1649,9 @@ pub fn run() {
             automations_refresh_schedule,
             automations_run_now,
             pets_list_installed,
+            pet_preferences_get,
+            pet_preferences_update,
+            pets_open_folder,
             capture_appshot,
             show_desktop_notification,
             exec_shell_command,

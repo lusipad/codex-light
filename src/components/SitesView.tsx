@@ -1,538 +1,181 @@
-import React, { useState, useEffect } from "react";
-import {
-  ExternalWindowIcon,
-  FolderIcon,
-  PlusIcon,
-  SearchIcon,
-  SparklesIcon,
-  SettingsIcon,
-  TrashIcon,
-} from "./Icons";
+import React, { useEffect, useRef, useState } from "react";
+import { tauriListen } from "../bridge";
+import { readChatgptService, serviceErrorMessage, serviceIdentity, type ServiceIdentity } from "../chatgptService";
+import { filterSites, mergeSites, parseSite, parseSiteDomains, parseSiteEnvironment, parseSitesAccess, parseSitesPage, safeSiteUrl,
+  type SiteDomain, type SiteEnvironment, type SiteRecord, type SitesAccess } from "../sitesService";
 import "./SitesView.css";
 
-export interface SiteRecord {
-  id: string;
-  name: string;
-  subdomain: string;
-  customDomain?: string;
-  template: string;
-  status: "ready" | "building" | "stopped";
-  ownerType: "owned" | "shared";
-  updatedAt: number;
-  envVars?: { key: string; value: string }[];
-}
-
-const DEFAULT_SITES: SiteRecord[] = [
-  {
-    id: "site-codex-docs",
-    name: "Codex Native 文档站",
-    subdomain: "codex-native-docs.codex.app",
-    customDomain: "docs.codex-desktop.dev",
-    template: "Vite + React 文档模版",
-    status: "ready",
-    ownerType: "owned",
-    updatedAt: Date.now() - 3600000 * 24,
-    envVars: [{ key: "NODE_ENV", value: "production" }],
-  },
-  {
-    id: "site-internal-dashboard",
-    name: "研发能效看板",
-    subdomain: "eng-metrics.codex.app",
-    template: "Next.js Dashboard",
-    status: "ready",
-    ownerType: "owned",
-    updatedAt: Date.now() - 3600000 * 48,
-    envVars: [{ key: "API_BASE_URL", value: "https://api.internal/v1" }],
-  },
-  {
-    id: "site-team-showcase",
-    name: "智能体协作演示",
-    subdomain: "agent-showcase.codex.app",
-    template: "Static Tailwind Landing",
-    status: "ready",
-    ownerType: "shared",
-    updatedAt: Date.now() - 3600000 * 12,
-  },
-];
-
-export interface SitesViewProps {
-  onStartChatForSite?: (siteName: string) => void;
-}
-
-export const SitesView: React.FC<SitesViewProps> = ({ onStartChatForSite }) => {
-  const [sites, setSites] = useState<SiteRecord[]>(() => {
-    try {
-      const saved = localStorage.getItem("codex_sites_data");
-      return saved ? JSON.parse(saved) : DEFAULT_SITES;
-    } catch {
-      return DEFAULT_SITES;
-    }
-  });
-
-  const [activeTab, setActiveTab] = useState<"owned" | "shared">("owned");
-  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
-  const [searchQuery, setSearchQuery] = useState<string>("");
-  const [selectedSite, setSelectedSite] = useState<SiteRecord | null>(null);
-  const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
-  const [newSiteName, setNewSiteName] = useState<string>("");
-  const [newSiteSubdomain, setNewSiteSubdomain] = useState<string>("");
-  const [newSiteTemplate, setNewSiteTemplate] = useState<string>("Vite + React");
-  const [toast, setToast] = useState<string | null>(null);
-
-  // Detail drawer sub-tab
-  const [drawerTab, setDrawerTab] = useState<"preview" | "config" | "deployments">("preview");
+type Tab = "owned" | "shared" | "all";
+interface Session { identity: ServiceIdentity; access: SitesAccess; controller: AbortController }
+interface Page { items: SiteRecord[]; cursor: string | null; loading: boolean; loaded: boolean; error: string | null; paging: boolean; pageError: string | null }
+const emptyPage = (): Page => ({ items: [], cursor: null, loading: false, loaded: false, error: null, paging: false, pageError: null });
+const statusText = { active: "活跃", archived: "已归档", suspended: "已暂停", deleting: "正在删除" };
+export const SitesView: React.FC = () => {
+  const [revision, setRevision] = useState(0);
+  const [session, setSession] = useState<Session | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [owned, setOwned] = useState<Page>(emptyPage);
+  const [shared, setShared] = useState<Page>(emptyPage);
+  const [tab, setTab] = useState<Tab>("owned");
+  const [query, setQuery] = useState("");
+  const [sharedRevision, setSharedRevision] = useState(0);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"list" | "grid">(() => localStorage.getItem("sites-view-mode") === "grid" ? "grid" : "list");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<SiteRecord | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [environment, setEnvironment] = useState<SiteEnvironment[] | null>(null);
+  const [domains, setDomains] = useState<SiteDomain[] | null>(null);
+  const [settingsErrors, setSettingsErrors] = useState<Record<string, string>>({});
+  const [settingsLoading, setSettingsLoading] = useState(false);
+  const source = useRef<AbortController | null>(null);
+  const sharedSource = useRef<AbortController | null>(null);
+  const detailSource = useRef<AbortController | null>(null);
+  const paging = useRef(new Set<string>());
+  const settingsPending = useRef(false);
+  const dialogRef = useRef<HTMLDialogElement | null>(null);
+  const detailTrigger = useRef<HTMLButtonElement | null>(null);
+  const needShared = tab !== "owned";
+  const sharedQuery = session?.access.workspace ? query.trim() : "";
 
   useEffect(() => {
-    localStorage.setItem("codex_sites_data", JSON.stringify(sites));
-  }, [sites]);
-
-  const notify = (msg: string) => {
-    setToast(msg);
-    setTimeout(() => setToast(null), 3000);
-  };
-
-  const filteredSites = sites.filter((s) => {
-    const matchesTab = s.ownerType === activeTab;
-    const matchesSearch =
-      !searchQuery.trim() ||
-      s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      s.subdomain.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesTab && matchesSearch;
-  });
-
-  const handleCreateSite = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newSiteName.trim() || !newSiteSubdomain.trim()) return;
-
-    const newRecord: SiteRecord = {
-      id: `site-${Date.now()}`,
-      name: newSiteName.trim(),
-      subdomain: `${newSiteSubdomain.trim().toLowerCase()}.codex.app`,
-      template: newSiteTemplate,
-      status: "ready",
-      ownerType: "owned",
-      updatedAt: Date.now(),
-      envVars: [{ key: "NODE_ENV", value: "production" }],
+    let disposed = false;
+    const subscription = tauriListen("chatgpt-service:invalidated", () => {
+      if (disposed) return;
+      source.current?.abort(); sharedSource.current?.abort(); detailSource.current?.abort();
+      setSession(null); setOwned(emptyPage()); setShared(emptyPage()); setSelectedId(null); setRevision(value => value + 1);
+    });
+    return () => { disposed = true; void subscription.then(unlisten => unlisten()); };
+  }, []);
+  useEffect(() => {
+    const controller = new AbortController(); source.current = controller;
+    setSession(null); setLoading(true); setError(null); setNotice(null); setOwned(emptyPage()); setShared(emptyPage()); setTab("owned"); setSelectedId(null); paging.current.clear();
+    void (async () => {
+      try {
+        const identity = await serviceIdentity(controller.signal); if (controller.signal.aborted) return;
+        const access = parseSitesAccess(await readChatgptService("sites_access", {}, identity, controller.signal)); if (controller.signal.aborted) return;
+        setSession({ identity, access, controller }); setLoading(false);
+        if (!access.enabled) return;
+        setOwned({ ...emptyPage(), loading: true });
+        try {
+          const page = parseSitesPage(await readChatgptService("sites_list", { limit: 20, include_editable: false }, identity, controller.signal));
+          if (!controller.signal.aborted) setOwned({ ...emptyPage(), ...page, items: mergeSites(page.items), loaded: true });
+        } catch (cause) { if (!controller.signal.aborted) setOwned({ ...emptyPage(), error: serviceErrorMessage(cause) }); }
+      } catch (cause) { if (!controller.signal.aborted) { setError(serviceErrorMessage(cause)); setLoading(false); } }
+    })();
+    return () => { controller.abort(); sharedSource.current?.abort(); detailSource.current?.abort(); };
+  }, [revision]);
+  useEffect(() => {
+    if (!session?.access.enabled || !needShared || (!session.access.workspace && !session.access.editable)) return;
+    const controller = new AbortController(); sharedSource.current = controller;
+    paging.current.delete("shared"); setShared({ ...emptyPage(), loading: true });
+    const load = async () => {
+      try {
+        const params = session.access.workspace ? { limit: 20, ...(sharedQuery ? { query: sharedQuery } : {}) }
+          : { limit: 20, include_editable: true, after: "sites-shared-projects:" };
+        const page = parseSitesPage(await readChatgptService(session.access.workspace ? "sites_shared" : "sites_list", params, session.identity, controller.signal));
+        if (!controller.signal.aborted && !session.controller.signal.aborted) setShared({ ...emptyPage(), ...page, items: mergeSites(page.items), loaded: true });
+      } catch (cause) {
+        if (controller.signal.aborted || session.controller.signal.aborted) return;
+        if (!session.access.workspace && (cause as { status?: number })?.status === 400) {
+          setSession({ ...session, access: { ...session.access, editable: false } }); setTab("owned"); setNotice("当前服务不支持共享站点列表。");
+        } else setShared({ ...emptyPage(), error: serviceErrorMessage(cause) });
+      }
     };
+    const timer = session.access.workspace && sharedQuery ? setTimeout(() => void load(), 300) : null;
+    if (!timer) void load();
+    return () => { if (timer) clearTimeout(timer); controller.abort(); };
+  }, [session, needShared, sharedQuery, sharedRevision]);
+  useEffect(() => {
+    if (!selectedId) return;
+    const dialog = dialogRef.current; dialog?.showModal();
+    return () => { dialog?.close(); detailTrigger.current?.focus(); };
+  }, [selectedId]);
 
-    setSites([newRecord, ...sites]);
-    setShowCreateModal(false);
-    setNewSiteName("");
-    setNewSiteSubdomain("");
-    notify(`✓ 站点「${newRecord.name}」创建并部署成功！`);
+  const loadMore = async (kind: "owned" | "shared") => {
+    const page = kind === "owned" ? owned : shared;
+    const controller = kind === "owned" ? source.current : sharedSource.current;
+    const setPage = kind === "owned" ? setOwned : setShared;
+    if (!session || !controller || controller.signal.aborted || !page.cursor || paging.current.has(kind)) return;
+    paging.current.add(kind); setPage(value => ({ ...value, paging: true, pageError: null }));
+    try {
+      const operation = kind === "shared" && session.access.workspace ? "sites_shared" : "sites_list";
+      const params = { limit: 20, after: page.cursor, ...(operation === "sites_shared" ? (sharedQuery ? { query: sharedQuery } : {}) : { include_editable: kind === "shared" }) };
+      const next = parseSitesPage(await readChatgptService(operation, params, session.identity, controller.signal));
+      if (next.cursor === page.cursor) throw Error("服务返回了重复分页游标，请刷新后重试。");
+      if (!controller.signal.aborted && !session.controller.signal.aborted) setPage(value => ({ ...value, items: mergeSites(value.items, next.items), cursor: next.cursor }));
+    } catch (cause) { if (!controller.signal.aborted && !session.controller.signal.aborted) setPage(value => ({ ...value, pageError: serviceErrorMessage(cause) })); }
+    finally { if (!controller.signal.aborted && !session.controller.signal.aborted) { paging.current.delete(kind); setPage(value => ({ ...value, paging: false })); } }
   };
-
-  const handleDeleteSite = (id: string) => {
-    setSites(sites.filter((s) => s.id !== id));
-    if (selectedSite?.id === id) {
-      setSelectedSite(null);
-    }
-    notify("站点已移除");
+  const openDetail = async (id: string) => {
+    if (!session || session.controller.signal.aborted) return;
+    detailSource.current?.abort(); const controller = new AbortController(); detailSource.current = controller;
+    settingsPending.current = false; setSelectedId(id); setDetail(null); setDetailError(null); setEnvironment(null); setDomains(null); setSettingsErrors({}); setSettingsLoading(false);
+    try {
+      const record = parseSite(await readChatgptService("sites_detail", { id }, session.identity, controller.signal));
+      if (record.id !== id) throw Error("站点详情身份与请求不匹配，请重试。");
+      if (!controller.signal.aborted && !session.controller.signal.aborted) setDetail(record);
+    } catch (cause) { if (!controller.signal.aborted && !session.controller.signal.aborted) setDetailError(serviceErrorMessage(cause)); }
   };
-
-  return (
-    <div className="sites-view-container">
-      {toast && <div className="workbench-toast-banner">{toast}</div>}
-
-      <div className="sites-view-header">
-        <div>
-          <h2>Sites 工作面</h2>
-          <p className="subtitle">
-            一键托管部署智能体前端应用、文档与演示原型，支持自定义域名、环境变量及自动化发布。
-          </p>
-        </div>
-        <button
-          type="button"
-          className="primary-btn"
-          onClick={() => setShowCreateModal(true)}
-        >
-          <PlusIcon size={14} /> 新建站点
-        </button>
+  const readSettings = async () => {
+    const controller = detailSource.current;
+    if (!session || !selectedId || !controller || controller.signal.aborted || settingsPending.current) return;
+    settingsPending.current = true; setSettingsLoading(true); setSettingsErrors({});
+    await Promise.all((["environment", "domains"] as const).map(async kind => {
+      try {
+        const body = await readChatgptService(kind === "environment" ? "sites_environment" : "sites_domains", { id: selectedId }, session.identity, controller.signal);
+        if (controller.signal.aborted || session.controller.signal.aborted) return;
+        if (kind === "environment") setEnvironment(parseSiteEnvironment(body, selectedId)); else setDomains(parseSiteDomains(body, selectedId));
+      } catch (cause) { if (!controller.signal.aborted && !session.controller.signal.aborted) setSettingsErrors(value => ({ ...value, [kind]: serviceErrorMessage(cause) })); }
+    }));
+    if (!controller.signal.aborted && !session.controller.signal.aborted) { settingsPending.current = false; setSettingsLoading(false); }
+  };
+  const closeDetail = () => { detailSource.current?.abort(); setSelectedId(null); };
+  const sharedAvailable = Boolean(session?.access.workspace || session?.access.editable);
+  const ownedItems = filterSites(owned.items, query);
+  const sharedItems = session?.access.workspace ? shared.items : filterSites(shared.items, query);
+  const items = tab === "owned" ? ownedItems : tab === "shared" ? sharedItems : mergeSites(ownedItems, sharedItems);
+  const pages = tab === "owned" ? [owned] : tab === "shared" ? [shared] : [owned, shared];
+  const ready = Boolean(session?.access.enabled && pages.every(page => page.loaded && !page.loading && !page.error));
+  const selectMode = (mode: "list" | "grid") => { setViewMode(mode); localStorage.setItem("sites-view-mode", mode); };
+  return <div className="sites-view-container">
+    <div className="sites-view-header"><h2>Sites</h2><p role="status">新建、编辑与发布服务尚未接通。</p></div>
+    {loading && <p role="status">正在读取 Sites…</p>}
+    {error && <section><p role="alert">{error}</p><button type="button" onClick={() => setRevision(value => value + 1)}>重试</button></section>}
+    {!loading && session && !session.access.enabled && <p role="status">当前账号不可使用 Sites。</p>}
+    {notice && <p role="status">{notice}</p>}
+    {session?.access.enabled && <>
+      <div className="sites-controls-bar"><div className="sites-tabs">{(["owned", "shared", "all"] as const).map(value => <button type="button" key={value} aria-pressed={tab === value} disabled={value !== "owned" && !sharedAvailable}
+        className={`sites-tab-btn ${tab === value ? "active" : ""}`} onClick={() => setTab(value)}>{value === "owned" ? "我创建的" : value === "shared" ? "共享" : "全部"}</button>)}</div>
+        <div className="sites-search-wrap"><input aria-label="搜索站点" placeholder="搜索站点…" value={query} onChange={event => setQuery(event.target.value)} /></div>
+        <div className="sites-layout-toggle">{(["list", "grid"] as const).map(mode => <button type="button" key={mode} aria-pressed={viewMode === mode} className="layout-btn" onClick={() => selectMode(mode)}>{mode === "list" ? "列表" : "网格"}</button>)}</div>
       </div>
-
-      {/* Control bar: Tabs, Search, ViewMode */}
-      <div className="sites-controls-bar">
-        <div className="sites-tabs">
-          <button
-            type="button"
-            className={`sites-tab-btn ${activeTab === "owned" ? "active" : ""}`}
-            onClick={() => setActiveTab("owned")}
-          >
-            我创建的站点 ({sites.filter((s) => s.ownerType === "owned").length})
-          </button>
-          <button
-            type="button"
-            className={`sites-tab-btn ${activeTab === "shared" ? "active" : ""}`}
-            onClick={() => setActiveTab("shared")}
-          >
-            共享给我的 ({sites.filter((s) => s.ownerType === "shared").length})
-          </button>
-        </div>
-
-        <div className="sites-search-wrap">
-          <SearchIcon size={14} />
-          <input
-            type="text"
-            placeholder="搜索站点名称或域名…"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-        </div>
-
-        <div className="sites-layout-toggle">
-          <button
-            type="button"
-            className={`layout-btn ${viewMode === "grid" ? "active" : ""}`}
-            onClick={() => setViewMode("grid")}
-            title="网格视图"
-          >
-            ⊞
-          </button>
-          <button
-            type="button"
-            className={`layout-btn ${viewMode === "list" ? "active" : ""}`}
-            onClick={() => setViewMode("list")}
-            title="列表视图"
-          >
-            ☰
-          </button>
-        </div>
-      </div>
-
-      {/* Sites Content */}
-      {filteredSites.length === 0 ? (
-        <div className="sites-empty-state">
-          <div className="empty-icon">🌐</div>
-          <h3>没有找到匹配的站点</h3>
-          <p>点击上方「新建站点」开始部署你的第一个智能体前端应用。</p>
-        </div>
-      ) : viewMode === "grid" ? (
-        <div className="sites-grid">
-          {filteredSites.map((site) => (
-            <div
-              key={site.id}
-              className="site-card"
-              onClick={() => setSelectedSite(site)}
-            >
-              <div className="site-card-header">
-                <span className="site-template-badge">{site.template}</span>
-                <span className={`site-status-dot ${site.status}`} title={site.status} />
-              </div>
-              <h3 className="site-name">{site.name}</h3>
-              <div className="site-domain">
-                <code>https://{site.subdomain}</code>
-              </div>
-              {site.customDomain && (
-                <div className="site-custom-domain">
-                  <span>自定义域名: {site.customDomain}</span>
-                </div>
-              )}
-              <div className="site-card-footer">
-                <span className="site-updated-date">
-                  更新于 {new Date(site.updatedAt).toLocaleDateString()}
-                </span>
-                <div className="card-quick-actions" onClick={(e) => e.stopPropagation()}>
-                  <button
-                    type="button"
-                    className="icon-action-btn"
-                    title="配置与详情"
-                    onClick={() => setSelectedSite(site)}
-                  >
-                    <SettingsIcon size={14} />
-                  </button>
-                  <a
-                    href={`https://${site.subdomain}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="icon-action-btn"
-                    title="新窗口打开"
-                  >
-                    <ExternalWindowIcon size={14} />
-                  </a>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="sites-list-view">
-          <table className="sites-table">
-            <thead>
-              <tr>
-                <th>站点名称</th>
-                <th>模版 / 架构</th>
-                <th>域名</th>
-                <th>状态</th>
-                <th>更新时间</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredSites.map((site) => (
-                <tr key={site.id} onClick={() => setSelectedSite(site)}>
-                  <td className="bold-cell">{site.name}</td>
-                  <td>{site.template}</td>
-                  <td>
-                    <code>https://{site.subdomain}</code>
-                  </td>
-                  <td>
-                    <span className={`status-pill ${site.status}`}>
-                      {site.status === "ready" ? "● 就绪" : "○ 停机"}
-                    </span>
-                  </td>
-                  <td>{new Date(site.updatedAt).toLocaleDateString()}</td>
-                  <td onClick={(e) => e.stopPropagation()}>
-                    <button
-                      type="button"
-                      className="link-btn"
-                      onClick={() => setSelectedSite(site)}
-                    >
-                      配置
-                    </button>
-                    <button
-                      type="button"
-                      className="link-btn danger-link"
-                      onClick={() => handleDeleteSite(site.id)}
-                    >
-                      删除
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* Detail & Configuration Drawer */}
-      {selectedSite && (
-        <div className="site-drawer-backdrop" onClick={() => setSelectedSite(null)}>
-          <div className="site-drawer" onClick={(e) => e.stopPropagation()}>
-            <div className="site-drawer-header">
-              <div>
-                <h2>{selectedSite.name}</h2>
-                <div className="drawer-subdomain">
-                  <code>https://{selectedSite.subdomain}</code>
-                </div>
-              </div>
-              <button
-                type="button"
-                className="close-drawer-btn"
-                onClick={() => setSelectedSite(null)}
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="drawer-tab-nav">
-              <button
-                type="button"
-                className={`drawer-tab ${drawerTab === "preview" ? "active" : ""}`}
-                onClick={() => setDrawerTab("preview")}
-              >
-                在线预览
-              </button>
-              <button
-                type="button"
-                className={`drawer-tab ${drawerTab === "config" ? "active" : ""}`}
-                onClick={() => setDrawerTab("config")}
-              >
-                域名与环境变量
-              </button>
-              <button
-                type="button"
-                className={`drawer-tab ${drawerTab === "deployments" ? "active" : ""}`}
-                onClick={() => setDrawerTab("deployments")}
-              >
-                发布流水线
-              </button>
-            </div>
-
-            <div className="drawer-body">
-              {drawerTab === "preview" && (
-                <div className="preview-pane">
-                  <div className="preview-toolbar">
-                    <span className="dot red" />
-                    <span className="dot yellow" />
-                    <span className="dot green" />
-                    <span className="preview-address-bar">
-                      https://{selectedSite.subdomain}
-                    </span>
-                  </div>
-                  <div className="preview-content-mock">
-                    <div className="mock-site-hero">
-                      <h3>欢迎访问 {selectedSite.name}</h3>
-                      <p>由 Codex Native Sites 自动化托管与分发引擎驱动。</p>
-                      <div className="mock-site-badges">
-                        <span>Node 20+</span>
-                        <span>Global Edge CDN</span>
-                        <span>Auto SSL</span>
-                      </div>
-                    </div>
-                  </div>
-                  {onStartChatForSite && (
-                    <div className="preview-chat-action">
-                      <button
-                        type="button"
-                        className="primary-btn"
-                        onClick={() => {
-                          onStartChatForSite(selectedSite.name);
-                          setSelectedSite(null);
-                        }}
-                      >
-                        <SparklesIcon size={14} /> 在会话中让智能体更新此站点代码
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {drawerTab === "config" && (
-                <div className="config-pane">
-                  <div className="config-group">
-                    <label>自定义独立域名 (Custom Domain)</label>
-                    <input
-                      type="text"
-                      defaultValue={selectedSite.customDomain || ""}
-                      placeholder="e.g. app.mycompany.com"
-                      onBlur={(e) => {
-                        const updated = sites.map((s) =>
-                          s.id === selectedSite.id ? { ...s, customDomain: e.target.value } : s
-                        );
-                        setSites(updated);
-                        notify("域名配置已更新");
-                      }}
-                    />
-                    <small>配置 CNAME 解析指向 <code>cname.codex.app</code> 即可完成绑定。</small>
-                  </div>
-
-                  <div className="config-group">
-                    <label>环境变量 (Environment Variables)</label>
-                    <div className="env-table">
-                      {(selectedSite.envVars || []).map((env, i) => (
-                        <div key={i} className="env-row">
-                          <input type="text" readOnly value={env.key} />
-                          <input type="text" readOnly value={env.value} />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="danger-zone">
-                    <h4>危险操作</h4>
-                    <p>删除此站点将立刻释放分配的域名与托管容器实例。</p>
-                    <button
-                      type="button"
-                      className="danger-btn"
-                      onClick={() => handleDeleteSite(selectedSite.id)}
-                    >
-                      <TrashIcon size={14} /> 删除此站点
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {drawerTab === "deployments" && (
-                <div className="deployments-pane">
-                  <div className="timeline-item">
-                    <div className="timeline-marker success" />
-                    <div className="timeline-content">
-                      <strong>Production 自动构建已完成</strong>
-                      <p>Git commit <code>#6166bb5</code> · 部署耗时 18s</p>
-                      <span className="timeline-time">
-                        {new Date(selectedSite.updatedAt).toLocaleString()}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="timeline-item">
-                    <div className="timeline-marker success" />
-                    <div className="timeline-content">
-                      <strong>首次初始化流水线成功</strong>
-                      <p>模版初始化生成 · 部署耗时 24s</p>
-                      <span className="timeline-time">
-                        {new Date(selectedSite.updatedAt - 86400000).toLocaleString()}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* New Site Modal */}
-      {showCreateModal && (
-        <div className="site-modal-overlay" onClick={() => setShowCreateModal(false)}>
-          <div className="site-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>新建 Sites 托管站点</h3>
-              <button
-                type="button"
-                className="close-drawer-btn"
-                onClick={() => setShowCreateModal(false)}
-              >
-                ✕
-              </button>
-            </div>
-            <form onSubmit={handleCreateSite}>
-              <div className="form-group">
-                <label>站点名称</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="例如：智能客服演示原型"
-                  value={newSiteName}
-                  onChange={(e) => setNewSiteName(e.target.value)}
-                />
-              </div>
-
-              <div className="form-group">
-                <label>专属子域名前缀 (*.codex.app)</label>
-                <div className="subdomain-input-wrap">
-                  <input
-                    type="text"
-                    required
-                    placeholder="my-cool-site"
-                    value={newSiteSubdomain}
-                    onChange={(e) =>
-                      setNewSiteSubdomain(e.target.value.replace(/[^a-zA-Z0-9-]/g, ""))
-                    }
-                  />
-                  <span className="subdomain-suffix">.codex.app</span>
-                </div>
-              </div>
-
-              <div className="form-group">
-                <label>启动架构与前端模版</label>
-                <select
-                  value={newSiteTemplate}
-                  onChange={(e) => setNewSiteTemplate(e.target.value)}
-                >
-                  <option value="Vite + React">Vite + React (单页应用 / 推荐)</option>
-                  <option value="Next.js SSR/SSG">Next.js (服务端渲染/API 路由)</option>
-                  <option value="Vue 3 + Vite">Vue 3 + Vite 现代化应用</option>
-                  <option value="Static HTML/Tailwind">极简纯静态 + Tailwind CSS</option>
-                  <option value="Docusaurus 文档">Docusaurus 技术文档模版</option>
-                </select>
-              </div>
-
-              <div className="modal-actions">
-                <button
-                  type="button"
-                  className="secondary-btn"
-                  onClick={() => setShowCreateModal(false)}
-                >
-                  取消
-                </button>
-                <button type="submit" className="primary-btn">
-                  创建并上线
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+      {query.trim() && tab !== "shared" && <p role="status">我创建的站点仅搜索已加载内容。</p>}
+      {pages.some(page => page.loading) && <p role="status">正在加载站点…</p>}
+      {pages.map((page, index) => page.error && <div key={index}><p role="alert">{page.error}</p><button type="button" onClick={() => tab === "shared" || (tab === "all" && index === 1) ? setSharedRevision(value => value + 1) : setRevision(value => value + 1)}>重试列表</button></div>)}
+      {ready && !items.length && <p role="status">没有匹配的站点。</p>}
+      <div className={viewMode === "grid" ? "sites-grid" : "sites-list-view"}>{items.map(site => <article className="site-card" key={site.id}>
+        <button type="button" className="link-btn site-name" onClick={event => { detailTrigger.current = event.currentTarget; void openDetail(site.id); }}>{site.title}</button>
+        <span>{statusText[site.status]}</span>{site.disabledBy && <span>此站点已被停用</span>}
+        <p>{site.description}</p><time dateTime={site.updatedAt}>{new Date(site.updatedAt).toLocaleString()}</time>
+        {!site.disabledBy && site.status === "active" && safeSiteUrl(site.liveUrl) ? <a href={safeSiteUrl(site.liveUrl)!} target="_blank" rel="noreferrer">打开在线站点</a> : <span>暂无可用在线地址</span>}
+      </article>)}</div>
+      {(["owned", "shared"] as const).filter(kind => tab === kind || tab === "all").map(kind => {
+        const page = kind === "owned" ? owned : shared;
+        return <div key={kind}>{page.pageError && <p role="alert">{page.pageError}</p>}{page.cursor && <button type="button" disabled={page.paging} onClick={() => void loadMore(kind)}>{page.paging ? "正在加载…" : page.pageError ? `重试加载${kind === "owned" ? "我的站点" : "共享站点"}` : `加载更多${kind === "owned" ? "我的站点" : "共享站点"}`}</button>}</div>;
+      })}
+    </>}
+    {selectedId && <dialog ref={dialogRef} aria-label="站点详情" onCancel={event => { event.preventDefault(); closeDetail(); }}>
+      <button type="button" onClick={closeDetail}>关闭</button>
+      {detailError ? <><p role="alert">{detailError}</p><button type="button" onClick={() => void openDetail(selectedId)}>重试详情</button></> : !detail ? <p role="status">正在读取详情…</p> : <>
+        <h2>{detail.title}</h2><p>{detail.description}</p><p>{statusText[detail.status]}</p>
+        {!detail.disabledBy && detail.status === "active" && safeSiteUrl(detail.liveUrl) ? <a href={safeSiteUrl(detail.liveUrl)!} target="_blank" rel="noreferrer">打开在线站点</a> : <p>暂无可用在线地址</p>}
+        <button type="button" disabled={settingsLoading} onClick={() => void readSettings()}>{settingsLoading ? "正在读取配置…" : "读取域名与环境变量"}</button>
+        {Object.entries(settingsErrors).map(([kind, message]) => <p role="alert" key={kind}>{kind === "environment" ? "环境变量" : "域名"}：{message}</p>)}
+        {environment && <section aria-label="环境变量"><h3>环境变量</h3>{!environment.length && <p>暂无环境变量。</p>}{environment.map(entry => <p key={entry.key}><code>{entry.key}</code>：{entry.secret ? "••••••" : entry.value ?? "未设置"}</p>)}</section>}
+        {domains && <section aria-label="自定义域名"><h3>自定义域名</h3>{!domains.length && <p>暂无自定义域名。</p>}{domains.map(domain => <div key={domain.id}><p>{domain.hostname} · {domain.status}</p>{domain.cname && <p>CNAME：{domain.cname}</p>}{domain.ipv4.map(ip => <p key={ip}>A：{ip}</p>)}{domain.ssl && <p>SSL：{domain.ssl}</p>}{domain.error && <p role="alert">{domain.error}</p>}{domain.records.map((record, index) => <p key={index}>{record.type} {record.name} {record.value}</p>)}</div>)}</section>}
+      </>}
+    </dialog>}
+  </div>;
 };

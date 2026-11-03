@@ -56,7 +56,7 @@ export const ThreadGoalModal: React.FC<ThreadGoalModalProps> = ({
         <div className="modal-header">
           <div className="modal-title-with-badge">
             <TargetIcon size={16} className="text-secondary" />
-            <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>
+            <h3 style={{ margin: 0, fontSize: "calc(15px * var(--font-ui-scale, 1))", fontWeight: 600 }}>
               {isExistingGoal ? "Edit goal" : "Set goal"}
             </h3>
           </div>

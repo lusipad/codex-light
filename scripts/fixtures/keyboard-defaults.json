@@ -1,0 +1,32 @@
+{
+  "source": ".vite/build/bootstrap-DvSEn4qy.js",
+  "sha256": "5a901ee1d59062eed03495e017158f6c44b9414cf27e876d4124e0361e91ddd6",
+  "note": "Windows Electron defaults extracted from fixed app.asar; evidence: 16.03 defaults-trace.json. This fixture is independent of the product registry.",
+  "defaults": {
+    "newTask": ["CmdOrCtrl+N", "CmdOrCtrl+Shift+O"],
+    "newProjectlessTask": ["CmdOrCtrl+Alt+O"],
+    "toggleSidebar": ["CmdOrCtrl+Shift+S", "CmdOrCtrl+B"],
+    "toggleTerminal": ["Control+`"],
+    "toggleBottomPanel": ["CmdOrCtrl+J"],
+    "toggleSidePanel": ["CmdOrCtrl+Alt+B"],
+    "settings": ["CmdOrCtrl+,"],
+    "showKeyboardShortcuts": ["CmdOrCtrl+/"],
+    "openCommandMenu": ["CmdOrCtrl+K", "CmdOrCtrl+Shift+P"],
+    "searchFiles": ["CmdOrCtrl+P"],
+    "renameThread": ["CmdOrCtrl+Alt+R"],
+    "toggleThreadPin": ["CmdOrCtrl+Alt+P"],
+    "archiveThread": ["CmdOrCtrl+Shift+A"],
+    "copyLastCodeBlock": ["CmdOrCtrl+Shift+;"],
+    "forkThread": [],
+    "openReviewTab": ["Ctrl+Shift+G"],
+    "openSideChat": ["CmdOrCtrl+Alt+S"],
+    "copyWorkingDirectory": ["CmdOrCtrl+Shift+C"],
+    "composer.openModelPicker": ["Ctrl+Shift+M"],
+    "recentThread1": ["CmdOrCtrl+Alt+1"],
+    "recentThread2": ["CmdOrCtrl+Alt+2"],
+    "recentThread3": ["CmdOrCtrl+Alt+3"],
+    "recentThread4": ["CmdOrCtrl+Alt+4", "CmdOrCtrl+Shift+9"],
+    "recentThread5": ["CmdOrCtrl+Alt+5", "CmdOrCtrl+Shift+8"],
+    "recentThread6": ["CmdOrCtrl+Alt+6"]
+  }
+}

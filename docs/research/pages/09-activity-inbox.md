@@ -2,6 +2,8 @@
 
 日期：2026-10-27。状态：调研与最小代码实现完成；先红断言锁定、标准检查通过；待原生操作体验与整页用户验收。
 
+2026-11-01 复核：以下为历史实现声明，不能证明官方 1:1。本轮发现 `inbox-adea90c576b4.js` 属于 Pages 提及通知，与当前本地活动列表来源不同；不再混作同页依据。加载覆盖新事件、清空复活和写回竞态按 [09A 合同](../../antigravity/specs/09-inbox-lifecycle.md)修复，Rust 公共保存入口增加落盘失败返回；见 [最新实施记录](../../antigravity/runs/20261101-codex-inbox-lifecycle.md)。官方入口/数据源/像素及原生仍待验。
+
 ## 1. 范围与证据
 
 本单元覆盖动态通知与收件箱的核心能力：
@@ -59,3 +61,7 @@
    - 原生 Release 编译完成（退出码 0）；
    - 产物归档于 `dist-artifacts/09-activity-inbox-20261027/CodexNative.exe`；
    - SHA-256：`4D653F48C240F8726C01759926B5CD5CBB09BA216010CAC1BEDFD34616EE8640`（记录于 `.ref/parity/09/build-activity-inbox.json`）。
+
+## 2026-11-03 09B来源纠偏与限定实现
+
+以[官方来源合同](../../antigravity/specs/09-activity-source.md)和[09B记录](../../antigravity/acceptance/09B.md)为当前结论。旧A01/A02测试仅证明本项目增加Inbox入口，未证明官方存在该入口；旧“已解决”不能视为官方一致。23D已把侧栏提示接真实未读会话；09B进一步统一候选与提示的状态判定，waiting显示并亮点，单纯running显示但不亮点。本地通知、自动化run库和Pages mentions是不同数据源。完整检查及原生包构建通过、195输入稳定，不代表原生UI/官方像素或整09完成。下一继续Scheduled运行历史与真实持久数据来源调研。

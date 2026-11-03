@@ -26,14 +26,14 @@
   border-radius: 50%;
   color: #fff;
   background: #5470d6;
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: 600;
 }
 
 .nav-rail-avatar.large {
   width: 32px;
   height: 32px;
-  font-size: 14px;
+  font-size: var(--text-base);
 }
 
 .nav-rail-popover {
@@ -77,7 +77,7 @@
   color: var(--text-primary);
   background: transparent;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--text-sm);
   text-align: left;
   cursor: pointer;
 }
@@ -100,7 +100,7 @@
 .nav-rail-menu-item kbd {
   color: var(--text-tertiary);
   font: inherit;
-  font-size: 11px;
+  font-size: calc(11px * var(--font-ui-scale, 1));
 }
 
 .nav-rail-menu-badge {
@@ -110,7 +110,7 @@
   border-radius: 999px;
   color: #fff;
   background: var(--accent-blue);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-ui-scale, 1));
   text-align: center;
 }
 
@@ -130,11 +130,11 @@
 }
 
 .nav-rail-profile-summary strong {
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 600;
 }
 
 .nav-rail-profile-summary span:not(.nav-rail-avatar) {
   color: var(--text-tertiary);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-ui-scale, 1));
 }

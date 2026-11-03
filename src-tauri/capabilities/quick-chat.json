@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "quick-chat",
+  "description": "Quick Chat utility window",
+  "windows": ["quick-chat"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:window:default",
+    "core:window:allow-start-dragging",
+    "core:webview:default",
+    "core:webview:allow-set-webview-zoom"
+  ]
+}

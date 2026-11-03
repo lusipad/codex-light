@@ -11,28 +11,31 @@ import {
   X,
 } from "lucide-react";
 import { callAppServer, isTauriRuntime } from "../bridge";
-import { MainViewRoute, ProjectScriptCommands, SettingsSectionSlug, SkillInfoItem, ThreadSummary, WorkspaceFileHit } from "../types";
+import { createFuzzyFileSearch } from "../fuzzyFileSearch";
+import { MainViewRoute, ProjectScriptCommands, SettingsSectionSlug, SkillInfoItem, ThreadSummary } from "../types";
 import { SLASH_COMMANDS } from "../slashCommands";
+import type { SlashCommand } from "../slashCommands";
 
 export interface QuickSearchModalProps {
   open: boolean;
+  mode?: "root" | "files";
   threads: ThreadSummary[];
-  workspaceFileHits: WorkspaceFileHit[];
   skills: SkillInfoItem[];
   projectScripts?: ProjectScriptCommands;
   /**
-   * 当前工作区绝对路径（可选）。传入后文件搜索会并行调用 app-server 的
-   * `fuzzyFileSearch`；未传入时仅保留本地缓存结果，不发起文件协议搜索。
+   * 当前工作区绝对路径（可选）。files 模式下用真实 fuzzy session 搜索。
    */
   workspacePath?: string;
   onClose: () => void;
   onSelectThread: (threadId: string) => void;
   onSelectFile: (filePath: string) => void;
+  onSearchFiles: () => void;
   onSelectSkill: (skillId: string) => void;
   onNavigateSettings: (slug: SettingsSectionSlug) => void;
   onNavigateRoute: (route: MainViewRoute) => void;
   onStartNewChat: () => void;
   onTriggerCommand: (cmd: string) => void;
+  onSelectSlashCommand: (command: SlashCommand) => void;
 }
 
 interface SearchResultItem {
@@ -52,12 +55,12 @@ interface SearchResultItem {
 /* ------------------------------------------------------------------ */
 
 /** 查询词最短长度：过短的查询走本地过滤，避免协议搜索噪音。 */
-const REMOTE_QUERY_MIN_LENGTH = 2;
+const REMOTE_QUERY_MIN_LENGTH = 3;
 /** 输入防抖窗口（毫秒）。 */
-const REMOTE_DEBOUNCE_MS = 150;
+const REMOTE_DEBOUNCE_MS = 200;
 /** 单次协议搜索返回上限（与本地结果数量保持平衡）。 */
-const REMOTE_FILE_LIMIT = 8;
-const REMOTE_THREAD_LIMIT = 6;
+const REMOTE_THREAD_LIMIT = 9;
+const REMOTE_THREAD_STALE_MS = 30_000;
 /** 查询 -> 结果缓存上限，避免反复输入同一查询词时重复请求。 */
 const REMOTE_CACHE_LIMIT = 40;
 
@@ -101,6 +104,8 @@ interface RemoteThreadResult {
 interface RemoteSearchResults {
   /** 产生这批结果的查询词（trim 后），用于丢弃与当前输入不匹配的旧结果。 */
   query: string;
+  workspacePath?: string;
+  mode: "root" | "files";
   files: RemoteFileResult[];
   threads: RemoteThreadResult[];
 }
@@ -133,6 +138,11 @@ function normalizeRemoteFileHits(
     const hit = entry as FuzzyFileSearchHit;
     const relativePath = typeof hit.path === "string" ? hit.path.trim() : "";
     if (!relativePath) continue;
+    if (hit.match_type && hit.match_type !== "file") continue;
+    if (relativePath.split(/[\\/]+/).some(part => [
+      ".git", ".hg", ".next", ".pnpm-store", ".svn", ".turbo", ".yarn",
+      "build", "coverage", "dist", "node_modules",
+    ].includes(part))) continue;
 
     const root =
       typeof hit.root === "string" && hit.root.trim()
@@ -151,7 +161,6 @@ function normalizeRemoteFileHits(
           ? hit.file_name
           : relativePath.split(/[\\/]/).pop() || relativePath,
     });
-    if (results.length >= REMOTE_FILE_LIMIT) break;
   }
 
   return results;
@@ -184,31 +193,6 @@ function normalizeRemoteThreadHits(raw: unknown): RemoteThreadResult[] {
 }
 
 /**
- * 调用 `fuzzyFileSearch` 搜索工作区文件。
- * 非 Tauri 环境、协议不可用或参数错误时静默降级为空结果（本地结果不受影响）。
- */
-async function searchWorkspaceFiles(
-  query: string,
-  workspacePath?: string
-): Promise<RemoteFileResult[]> {
-  if (!workspacePath) return [];
-  try {
-    const response = await callAppServer<
-      { files?: FuzzyFileSearchHit[] } | FuzzyFileSearchHit[]
-    >("fuzzyFileSearch", {
-      roots: [workspacePath],
-      query,
-      limit: REMOTE_FILE_LIMIT,
-    });
-    const files = Array.isArray(response) ? response : response?.files;
-    return normalizeRemoteFileHits(files, workspacePath);
-  } catch {
-    // 静默降级：非 Tauri 环境 / app-server 未就绪 / 协议变更都只丢协议结果。
-    return [];
-  }
-}
-
-/**
  * 调用 `thread/search` 搜索历史会话。
  * 返回结构为 `{ data: [{ snippet, thread }] }`（兼容 `threads` 扁平数组）。
  */
@@ -236,19 +220,21 @@ async function searchThreadsProtocol(query: string): Promise<RemoteThreadResult[
 
 export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   open,
+  mode = "root",
   threads,
-  workspaceFileHits,
   skills,
   projectScripts,
   workspacePath,
   onClose,
   onSelectThread,
   onSelectFile,
+  onSearchFiles,
   onSelectSkill,
   onNavigateSettings,
   onNavigateRoute,
   onStartNewChat,
   onTriggerCommand,
+  onSelectSlashCommand,
 }) => {
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -258,9 +244,10 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   const [remoteLoading, setRemoteLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const lastActiveElementRef = useRef<HTMLElement | null>(null);
+  const fileSearchRef = useRef<ReturnType<typeof createFuzzyFileSearch> | null>(null);
   /** 查询词 -> 协议结果缓存：避免每次渲染/重复输入重复请求 app-server。 */
   const remoteCacheRef = useRef<
-    Map<string, { files: RemoteFileResult[]; threads: RemoteThreadResult[] }>
+    Map<string, { threads: RemoteThreadResult[]; updatedAt: number }>
   >(new Map());
 
   const runCmd = projectScripts?.runCommand || "npm run dev";
@@ -272,7 +259,8 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
       lastActiveElementRef.current = document.activeElement as HTMLElement | null;
       setQuery("");
       setSelectedIndex(0);
-      setTimeout(() => inputRef.current?.focus(), 40);
+      const timer = setTimeout(() => inputRef.current?.focus(), 40);
+      return () => clearTimeout(timer);
     } else {
       if (lastActiveElementRef.current && typeof lastActiveElementRef.current.focus === "function") {
         lastActiveElementRef.current.focus();
@@ -285,21 +273,49 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
     remoteCacheRef.current.clear();
   }, [workspacePath]);
 
-  // 协议搜索：>=2 字符时 150ms 防抖后并行查询 fuzzyFileSearch + thread/search。
+  useEffect(() => {
+    if (!open || mode !== "files" || !workspacePath || !isTauriRuntime()) return;
+    let disposed = false;
+    setRemoteResults(null);
+    const search = createFuzzyFileSearch([workspacePath], {
+      onResults(response) {
+        if (!disposed) setRemoteResults({
+          query: response.query, workspacePath, mode: "files",
+          files: normalizeRemoteFileHits(response.files, workspacePath), threads: [],
+        });
+      },
+      onLoading(loading) { if (!disposed) setRemoteLoading(loading); },
+      onError(error) { console.warn("文件搜索失败", error); },
+    });
+    fileSearchRef.current = search;
+    return () => {
+      disposed = true;
+      fileSearchRef.current = null;
+      search.dispose();
+    };
+  }, [open, mode, workspacePath]);
+
+  useEffect(() => {
+    if (open && mode === "files") void fileSearchRef.current?.update(query);
+  }, [open, mode, workspacePath, query]);
+
+  // root: 3+ characters, 200ms debounce, including catch-to-empty 30s cache.
   useEffect(() => {
     const trimmed = query.trim();
     const canSearch =
-      open && trimmed.length >= REMOTE_QUERY_MIN_LENGTH && isTauriRuntime();
+      open && mode === "root" && trimmed.length >= REMOTE_QUERY_MIN_LENGTH && isTauriRuntime();
     if (!canSearch) {
-      setRemoteResults(null);
-      setRemoteLoading(false);
+      if (mode !== "files" || !open || !workspacePath) {
+        setRemoteResults(null);
+        setRemoteLoading(false);
+      }
       return;
     }
 
-    const cacheKey = `${workspacePath || ""}\u0000${trimmed}`;
+    const cacheKey = `${mode}\u0000${workspacePath || ""}\u0000${trimmed}`;
     const cached = remoteCacheRef.current.get(cacheKey);
-    if (cached) {
-      setRemoteResults({ query: trimmed, files: cached.files, threads: cached.threads });
+    if (cached && Date.now() - cached.updatedAt < REMOTE_THREAD_STALE_MS) {
+      setRemoteResults({ query: trimmed, workspacePath, mode, files: [], threads: cached.threads });
       setRemoteLoading(false);
       return;
     }
@@ -310,20 +326,17 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
 
     let cancelled = false;
     const timer = window.setTimeout(async () => {
-      const [files, threads] = await Promise.all([
-        searchWorkspaceFiles(trimmed, workspacePath),
-        searchThreadsProtocol(trimmed),
-      ]);
+      const threads = await searchThreadsProtocol(trimmed);
       if (cancelled) return;
 
       const cache = remoteCacheRef.current;
-      cache.set(cacheKey, { files, threads });
+      cache.set(cacheKey, { threads, updatedAt: Date.now() });
       if (cache.size > REMOTE_CACHE_LIMIT) {
         const oldestKey = cache.keys().next().value as string | undefined;
         if (oldestKey !== undefined) cache.delete(oldestKey);
       }
 
-      setRemoteResults({ query: trimmed, files, threads });
+      setRemoteResults({ query: trimmed, workspacePath, mode, files: [], threads });
       setRemoteLoading(false);
     }, REMOTE_DEBOUNCE_MS);
 
@@ -331,14 +344,14 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [open, query, workspacePath]);
+  }, [open, query, workspacePath, mode]);
 
   const items = useMemo(() => {
     const q = query.trim().toLowerCase();
     const trimmedQuery = query.trim();
     // 只采用与当前查询词匹配的协议结果。
     const remote =
-      remoteResults && remoteResults.query === trimmedQuery
+      remoteResults && remoteResults.mode === mode && remoteResults.query === trimmedQuery && remoteResults.workspacePath === workspacePath
         ? remoteResults
         : null;
     const results: SearchResultItem[] = [];
@@ -363,13 +376,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
       rightLabel: cmd.kind === "action" ? "动作" : "指令",
       icon: <Command size={14} />,
       onSelect: () => {
-        if (cmd.kind === "action" && cmd.action) {
-          onTriggerCommand(cmd.command);
-        } else if (cmd.insertText) {
-          onTriggerCommand(cmd.insertText);
-        } else {
-          onTriggerCommand(cmd.command);
-        }
+        onSelectSlashCommand(cmd);
         onClose();
       },
     }));
@@ -491,14 +498,14 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
 
     threads
       .filter((t) => {
-        if (!q || remoteThreadIds.has(t.id)) return false;
+        if (mode !== "root" || q.length < 2 || remoteThreadIds.has(t.id)) return false;
         return (
           t.name?.toLowerCase().includes(q) ||
           t.preview?.toLowerCase().includes(q) ||
           t.id.toLowerCase().includes(q)
         );
       })
-      .slice(0, 5)
+      .slice(0, Math.max(0, REMOTE_THREAD_LIMIT - remoteThreads.length))
       .forEach((t) => {
         results.push({
           id: `th-${t.id}`,
@@ -515,13 +522,16 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
         });
       });
 
-    // Workspace Files —— 协议结果优先，本地结果按绝对路径去重补充。
-    const remoteFiles = remote?.files ?? [];
-    const remoteFileKeys = new Set(
-      remoteFiles.map((f) => fileDedupeKey(f.absPath))
-    );
-
-    remoteFiles.slice(0, REMOTE_FILE_LIMIT).forEach((f) => {
+    if (mode === "root" && (!q || "搜索文件 search files workspace project cmd+p".includes(q))) {
+      results.push({
+        id: "search-files", category: "action", section: "操作",
+        title: "搜索文件", shortcut: "Ctrl+P", icon: <FileText size={14} />,
+        onSelect: () => { setQuery(""); onSearchFiles(); inputRef.current?.focus(); },
+      });
+    }
+    // File hits belong exclusively to files mode; no stale directory-list fallback.
+    const remoteFiles = mode === "files" ? remote?.files ?? [] : [];
+    remoteFiles.forEach((f) => {
       results.push({
         id: `rfile-${f.absPath}`,
         category: "file",
@@ -536,31 +546,6 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
         },
       });
     });
-
-    workspaceFileHits
-      .filter((f) => {
-        if (!q) return false;
-        if (remoteFileKeys.has(fileDedupeKey(f.absPath))) return false;
-        return (
-          f.name.toLowerCase().includes(q) || f.relPath.toLowerCase().includes(q)
-        );
-      })
-      .slice(0, 6)
-      .forEach((f) => {
-        results.push({
-          id: `file-${f.absPath}`,
-          category: "file",
-          section: "工作区文件 (Files)",
-          title: f.name,
-          subtitle: f.relPath,
-          rightLabel: "File",
-          icon: <FileText size={14} />,
-          onSelect: () => {
-            onSelectFile(f.absPath);
-            onClose();
-          },
-        });
-      });
 
     // Skills
     skills
@@ -767,18 +752,22 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
         });
       });
 
-    return results;
+    return mode === "files" ? results.filter((item) => item.category === "file") : results;
   }, [
     query,
+    mode,
+    workspacePath,
     threads,
-    workspaceFileHits,
     skills,
     remoteResults,
     onStartNewChat,
     onTriggerCommand,
+    onSelectSlashCommand,
+    onNavigateSettings,
     onNavigateRoute,
     onSelectThread,
     onSelectFile,
+    onSearchFiles,
     onSelectSkill,
     onClose,
     runCmd,
@@ -791,6 +780,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   }, [items]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
       setSelectedIndex((idx) => (idx + 1) % Math.max(1, items.length));
@@ -848,7 +838,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
             ref={inputRef}
             type="text"
             className="quick-search-input"
-            placeholder="搜索会话、文件、技能、设置或执行快捷命令..."
+            placeholder={mode === "files" ? "搜索文件…" : "搜索会话、技能、设置或执行快捷命令..."}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
@@ -860,13 +850,13 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
               className="empty-hint-small"
               style={{ padding: "8px 12px", textAlign: "left", opacity: 0.75 }}
             >
-              正在从 Codex 服务端搜索工作区与会话…
+              {mode === "files" ? "正在搜索文件…" : "正在搜索会话…"}
             </div>
           )}
           {items.length === 0 ? (
             remoteLoading ? null : (
               <div className="empty-hint-small" style={{ padding: "20px 0" }}>
-                未找到匹配项
+                {mode === "files" && !query.trim() ? "输入以搜索文件" : "未找到匹配项"}
               </div>
             )
           ) : (

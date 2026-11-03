@@ -1,5 +1,7 @@
 # 15 Archive (归档会话) 调研与实现
 
+2026-11-01复核：下方旧“全量通过”为历史声明，旧字符串检查未覆盖分页或真实写入。本轮发现首100条截断、标题点击隐式恢复以及Rust吞delete错误后归档并报成功，见[15A合同](../../antigravity/specs/15-archive-actions.md)和[实施证据](../../antigravity/runs/20261101-codex-archive-actions.md)。当前使用真实thread/unarchive，不是旧文所称metadata/update；整页尚未完成官方/原生/像素验收。
+
 日期：2026-10-27。状态：调研完成，代码实现与全量验证通过。
 
 ## 1. 范围与证据

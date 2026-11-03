@@ -443,26 +443,32 @@ export async function experimentalFeatureList(
       threadId: params.threadId ?? null,
     }
   );
-  return {
-    data: Array.isArray(result?.data) ? result.data : [],
-    nextCursor: result?.nextCursor ?? null,
-  };
+  if (!Array.isArray(result?.data) ||
+      (result.nextCursor != null && typeof result.nextCursor !== "string") ||
+      result.data.some(feature => !feature || typeof feature.name !== "string" ||
+        typeof feature.stage !== "string" || typeof feature.enabled !== "boolean")) {
+    throw Error("实验功能列表响应格式无效");
+  }
+  return { data: result.data, nextCursor: result.nextCursor ?? null };
 }
 
-/** Read every experimental feature, following `nextCursor` pages (152 on 0.159.0). */
+/** Read every experimental feature, rejecting incomplete pagination. */
 export async function experimentalFeatureListAll(
-  pageSize = 500,
+  pageSize = 100,
   maxPages = 20
 ): Promise<ExperimentalFeature[]> {
   const all: ExperimentalFeature[] = [];
+  const cursors = new Set<string>();
   let cursor: string | null = null;
   for (let page = 0; page < maxPages; page += 1) {
     const result = await experimentalFeatureList({ cursor, limit: pageSize });
     all.push(...result.data);
-    if (!result.nextCursor) break;
+    if (!result.nextCursor) return all;
+    if (cursors.has(result.nextCursor)) throw Error("实验功能分页游标重复");
+    cursors.add(result.nextCursor);
     cursor = result.nextCursor;
   }
-  return all;
+  throw Error("实验功能列表超过允许页数，未读取完整");
 }
 
 /** `experimentalFeature/enablement/set` — process-wide runtime enablement toggles. */
@@ -485,7 +491,7 @@ export async function experimentalFeatureSetEnablement(
 
 /** `account/read` — current ChatGPT / API-key account, null when logged out. */
 export async function accountRead(): Promise<AccountReadResult> {
-  const result = await callProtocol<AccountReadResult>("account/read", {});
+  const result = await callProtocol<AccountReadResult>("account/read", { refreshToken: false });
   return {
     account: result?.account ?? null,
     requiresOpenaiAuth: result?.requiresOpenaiAuth === true,

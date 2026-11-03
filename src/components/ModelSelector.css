@@ -33,7 +33,7 @@
   color: var(--text-primary);
   background: transparent;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--text-sm);
   cursor: pointer;
 }
 
@@ -150,7 +150,7 @@
 .model-list-heading {
   padding: 5px 9px 4px;
   color: var(--text-tertiary);
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 
 .model-selector-popover .model-choice {

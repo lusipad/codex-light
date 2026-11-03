@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   FolderIcon,
   PlusIcon,
@@ -26,7 +26,7 @@ export interface ProjectsIndexViewProps {
   threads: ThreadSummary[];
   workspaceHints: Record<string, string>;
   onSelectWorkspace: (path: string) => void;
-  onStartNewChatInProject: (path: string) => void;
+  onStartNewChatInProject: (path: string, project?: Project) => void;
   onSelectThread: (threadId: string) => void;
   onPickNewFolder: () => void;
   onRemoveWorkspace: (path: string, e: React.MouseEvent) => void;
@@ -98,6 +98,8 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
   const [loadState, setLoadState] = useState<ProjectLoadState>("loading");
   const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
   const [actionBusyId, setActionBusyId] = useState<string | null>(null);
+  const projectLoadRequestRef = useRef(0);
+  const createPendingRef = useRef(false);
 
   /* ── 新建项目表单 ── */
   const [creating, setCreating] = useState(false);
@@ -119,12 +121,15 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
   );
 
   const loadProjects = useCallback(async (): Promise<Project[] | null> => {
+    const request = ++projectLoadRequestRef.current;
     try {
       const list = await listProjects();
+      if (request !== projectLoadRequestRef.current) return null;
       setProjects(list);
       setLoadState("ready");
       return list;
     } catch (e) {
+      if (request !== projectLoadRequestRef.current) return null;
       // 协议不可用 / app-server 未连接：回退到原有 workspace 视图（不得白屏）
       console.warn("project/list failed, falling back to workspace view:", e);
       setProjects([]);
@@ -136,6 +141,7 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
   // 挂载时 & refreshToken 变化时加载项目
   useEffect(() => {
     void loadProjects();
+    return () => { ++projectLoadRequestRef.current; };
   }, [loadProjects, refreshToken]);
 
   // app-server 连接成功后重试（首次挂载时可能尚未连接）
@@ -285,6 +291,7 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
   };
 
   const handleCreateProject = async () => {
+    if (createPendingRef.current) return;
     const name = draftName.trim();
     if (!name) {
       setFormError("请输入项目名称");
@@ -294,6 +301,7 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
       setFormError("请至少添加一个项目根目录");
       return;
     }
+    createPendingRef.current = true;
     setFormBusy(true);
     setFormError(null);
     try {
@@ -308,6 +316,8 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
     } catch (e: any) {
       setFormError(`创建项目失败：${e?.message || e}`);
       setFormBusy(false);
+    } finally {
+      createPendingRef.current = false;
     }
   };
 
@@ -330,7 +340,7 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
       notify("该项目没有根目录，无法新建聊天", "error");
       return;
     }
-    onStartNewChatInProject(root);
+    onStartNewChatInProject(root, project);
   };
 
   const handleRenameProject = async (project: Project) => {
@@ -408,7 +418,7 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
           padding: "8px 16px",
           background: "rgba(245, 158, 11, 0.08)",
           borderBottom: "1px solid var(--border-subtle)",
-          fontSize: 12.5,
+          fontSize: "calc(12.5px * var(--font-ui-scale, 1))",
           color: "var(--text-secondary)",
           display: "flex",
           alignItems: "center",
@@ -650,7 +660,7 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
                 >
                   {project.name}
                 </span>
-                <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+                <span style={{ fontSize: "calc(11px * var(--font-ui-scale, 1))", color: "var(--text-tertiary)" }}>
                   更新于 {formatRelativeTime(effectiveUpdated)}
                 </span>
               </div>
@@ -685,7 +695,7 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
               <button
                 type="button"
                 className="thread-icon-btn"
-                title="在该项目中新建聊天（使用第一个根目录）"
+                title="在该项目中新建聊天"
                 disabled={isBusy}
                 onClick={() => handleStartChatInProject(project)}
               >
@@ -854,6 +864,7 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
                   disabled={formBusy}
                   onChange={(e) => setDraftName(e.target.value)}
                   onKeyDown={(e) => {
+                    if (e.nativeEvent.isComposing || e.keyCode === 229 || createPendingRef.current) return;
                     if (e.key === "Enter") {
                       e.preventDefault();
                       void handleCreateProject();
@@ -883,6 +894,7 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
                     disabled={formBusy}
                     onChange={(e) => setDraftManualRoot(e.target.value)}
                     onKeyDown={(e) => {
+                      if (e.nativeEvent.isComposing || e.keyCode === 229 || createPendingRef.current) return;
                       if (e.key === "Enter") {
                         e.preventDefault();
                         handleAddManualRoot();
@@ -920,7 +932,7 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
                       border: "1px solid var(--border-subtle)",
                       borderRadius: 8,
                       padding: "7px 10px",
-                      fontSize: 12.5,
+                      fontSize: "calc(12.5px * var(--font-ui-scale, 1))",
                     }}
                   >
                     <span
@@ -940,7 +952,7 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
                         <button
                           type="button"
                           className="secondary-pill-action-btn"
-                          style={{ padding: "2px 8px", fontSize: 11 }}
+                          style={{ padding: "2px 8px", fontSize: "calc(11px * var(--font-ui-scale, 1))" }}
                           disabled={formBusy}
                           onClick={() => {
                             setDraftRoots((prev) => [root, ...prev.filter((r) => r !== root)]);
@@ -966,7 +978,7 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
             )}
 
             {formError && (
-              <p style={{ color: "#fca5a5", fontSize: 12.5, margin: 0 }}>
+              <p style={{ color: "#fca5a5", fontSize: "calc(12.5px * var(--font-ui-scale, 1))", margin: 0 }}>
                 {formError}
               </p>
             )}

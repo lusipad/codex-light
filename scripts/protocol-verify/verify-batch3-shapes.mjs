@@ -213,6 +213,14 @@ try {
     !localPlugins.error && Array.isArray(localPlugins?.result?.marketplaces),
     errText(localPlugins)
   );
+  for (const forceRefetch of [false, true]) {
+    const catalog = await rpc("plugin/list", { cwds: [scratch], forceRefetch });
+    record(
+      `plugin/list server-enabled catalog forceRefetch=${forceRefetch}`,
+      !catalog.error && Array.isArray(catalog?.result?.marketplaces),
+      errText(catalog)
+    );
+  }
   const marketAdd = await rpc("marketplace/add", { source: path.join(scratch, "no-such-market") });
   record(
     "marketplace/add shape accepted (missing path error ok)",

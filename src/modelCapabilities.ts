@@ -17,9 +17,20 @@ export function getSupportedEfforts(model?: ModelInfo | null): ModelReasoningOpt
 }
 
 export function getDefaultModel(models: ModelInfo[]): ModelInfo | undefined {
-  return models.find((model) => model.isDefault && !model.hidden)
-    || models.find((model) => !model.hidden)
-    || models[0];
+  const visible = getPickerModels(models);
+  return visible.find((model) => model.isDefault) || visible[0];
+}
+
+export function getPickerModels(models: ModelInfo[]): ModelInfo[] {
+  return models.filter(model => !model.hidden && (model.model || model.id) !== "codex-auto-review");
+}
+
+export function findModel(models: ModelInfo[], id: string): ModelInfo | undefined {
+  return models.find(model => model.id === id || model.model === id);
+}
+
+export function modelRequestName(models: ModelInfo[], id: string): string | undefined {
+  return findModel(models, id)?.model || id || undefined;
 }
 
 export function modelSupportsFast(model?: ModelInfo | null): boolean {

@@ -8,36 +8,45 @@ const source = fs.readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8
 const ast = ts.createSourceFile("App.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 
 const React = {
-  createElement: (type, props, ...children) => ({ type, props, children: children.flat() })
+  createElement: (type, props, ...children) => typeof type === "function" ? type(props) : ({ type, props, children: children.flat() }),
+  useState: initial => [initial, () => {}],
+  useRef: initial => ({ current: initial }), useEffect() {},
 };
+React.default = React;
+const imageExports = {};
+vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/components/GeneratedImageCard.tsx", "utf8"), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React },
+}).outputText, { exports: imageExports, require: name => { if (name === "../imageSave") return { saveGeneratedImageBytes() { assert.fail("render alone cannot save"); } }; assert.equal(name, "react"); return React; } });
 
 let webSearchMapBody, imageViewsMapBody, systemEventsMapBody;
 
 function visit(node) {
-  if (ts.isCallExpression(node)) {
-    const expr = node.expression.getText(ast);
-    if (expr === "webSearches.map" && node.arguments.length > 0) {
-      webSearchMapBody = node.arguments[0].getText(ast);
+  if (ts.isVariableDeclaration(node)) {
+    const name = node.name.getText(ast);
+    if (name === "renderWebSearch") {
+      webSearchMapBody = node.initializer.getText(ast);
     }
-    if (expr === "imageViews.map" && node.arguments.length > 0) {
-      imageViewsMapBody = node.arguments[0].getText(ast);
+    if (name === "renderImage") {
+      imageViewsMapBody = node.initializer.getText(ast);
     }
-    if (expr === "systemEvents.map" && node.arguments.length > 0) {
-      systemEventsMapBody = node.arguments[0].getText(ast);
+    if (name === "renderSystemEvent") {
+      systemEventsMapBody = node.initializer.getText(ast);
     }
   }
   ts.forEachChild(node, visit);
 }
 visit(ast);
 
-assert.ok(webSearchMapBody, "App.tsx must contain webSearches.map");
-assert.ok(imageViewsMapBody, "App.tsx must contain imageViews.map");
-assert.ok(systemEventsMapBody, "App.tsx must contain systemEvents.map");
+assert.ok(webSearchMapBody, "App.tsx must contain the production search renderer");
+assert.ok(imageViewsMapBody, "App.tsx must contain the production image renderer");
+assert.ok(systemEventsMapBody, "App.tsx must contain the production system-event renderer");
 
 // 1. ImageGeneration: 检查 status === "failed" 或 failure 存在时的错误状态展示
 {
   const fakeContext = vm.createContext({
     React,
+    GeneratedImageCard: imageExports.GeneratedImageCard,
+    turn: { status: "running" },
     setSelectedPreviewFile: () => {},
     setShowRightDrawer: () => {},
   });

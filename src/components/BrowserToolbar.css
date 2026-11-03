@@ -19,14 +19,14 @@
 
 .browser-info-popover h2 {
   margin: 0 0 10px;
-  font-size: 14px;
+  font-size: var(--text-base);
   font-weight: 600;
 }
 
 .browser-info-popover p,
 .browser-info-popover dt,
 .browser-info-popover dd {
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 1.55;
 }
 
@@ -76,7 +76,7 @@
   color: var(--text-primary);
   background: transparent;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--text-sm);
   text-align: left;
   text-decoration: none;
   cursor: pointer;

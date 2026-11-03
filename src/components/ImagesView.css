@@ -15,7 +15,7 @@
 }
 
 .images-view-header h2 {
-  font-size: 20px;
+  font-size: var(--text-heading-md);
   font-weight: 600;
   margin: 0 0 4px 0;
 }
@@ -37,7 +37,7 @@
   border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.1));
   border-radius: 8px;
   color: var(--text-primary, #e2e2e5);
-  font-size: 14px;
+  font-size: var(--text-base);
   line-height: 1.5;
   padding: 12px;
   resize: vertical;
@@ -62,7 +62,7 @@
 }
 
 .aspect-label {
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--text-muted, #8a8a92);
 }
 
@@ -72,7 +72,7 @@
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 6px;
   color: var(--text-muted, #8a8a92);
-  font-size: 12px;
+  font-size: var(--text-xs);
   cursor: pointer;
   transition: all 0.12s ease;
 }
@@ -86,7 +86,7 @@
 
 .image-templates-section h3,
 .image-gallery-section h3 {
-  font-size: 15px;
+  font-size: calc(15px * var(--font-ui-scale, 1));
   font-weight: 600;
   margin: 0 0 12px 0;
 }
@@ -113,7 +113,7 @@
 }
 
 .template-tag {
-  font-size: 10px;
+  font-size: calc(10px * var(--font-ui-scale, 1));
   padding: 2px 6px;
   border-radius: 4px;
   background: rgba(255, 255, 255, 0.08);
@@ -122,12 +122,12 @@
 
 .template-title {
   display: block;
-  font-size: 13px;
+  font-size: var(--text-sm);
   margin: 8px 0 4px 0;
 }
 
 .template-prompt {
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--text-muted, #8a8a92);
   line-height: 1.4;
   margin: 0;
@@ -180,14 +180,14 @@
 }
 
 .gallery-card-info strong {
-  font-size: 12px;
+  font-size: var(--text-xs);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .gallery-meta {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-ui-scale, 1));
   color: var(--text-muted, #777780);
 }
 
@@ -238,12 +238,12 @@
 }
 
 .lightbox-details h3 {
-  font-size: 16px;
+  font-size: var(--text-lg);
   margin: 0;
 }
 
 .lightbox-prompt {
-  font-size: 13px;
+  font-size: var(--text-sm);
   color: var(--text-muted, #9999a0);
   margin: 0;
   line-height: 1.5;

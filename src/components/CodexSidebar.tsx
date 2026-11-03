@@ -49,7 +49,7 @@ export interface CodexSidebarProps {
   workspaceHints: Record<string, string>;
   projectMembership?: SidebarProjectMembership;
   activeThreadId: string | null;
-  unreadInboxCount: number;
+  activityAttentionCount: number;
   activityOnly: boolean;
   activityThreadIds: string[];
   onToggleActivity: () => void;
@@ -123,7 +123,7 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
   workspaceHints,
   projectMembership = EMPTY_PROJECT_MEMBERSHIP,
   activeThreadId,
-  unreadInboxCount,
+  activityAttentionCount,
   activityOnly,
   activityThreadIds,
   onToggleActivity,
@@ -447,19 +447,9 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
   }, [collapsed, threads, hoverCard, dragVisual, renamingThread, closeHoverCard]);
 
   const filteredThreads = useMemo(() => {
-    const unreadIds = new Set(activityThreadIds);
+    const activityIds = new Set(activityThreadIds);
     const visible = activityOnly
-      ? threads.filter((thread) => {
-          if (unreadIds.has(thread.id)) return true;
-          const status = thread.status;
-          const type = typeof status === "string" ? status : status?.type;
-          const flags = typeof status === "object" && status
-            ? (status as any).activeFlags || []
-            : [];
-          return type === "active" || type === "running" ||
-            type === "waitingOnApproval" || type === "waitingOnUserInput" ||
-            flags.includes("waitingOnApproval") || flags.includes("waitingOnUserInput");
-        })
+      ? threads.filter((thread) => activityIds.has(thread.id))
       : threads;
     if (!searchQuery.trim()) return visible;
     const query = searchQuery.toLowerCase();
@@ -1352,7 +1342,7 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
             title="查看活动"
           >
             <BellIcon size={15} />
-            {unreadInboxCount > 0 && <span className="sidebar-bell-dot" />}
+            {activityAttentionCount > 0 && <span className="sidebar-bell-dot" />}
           </button>
           <button
             type="button"
@@ -1559,7 +1549,7 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
                             </span>
                             <span
                               style={{
-                                fontSize: 11,
+                                fontSize: "calc(11px * var(--font-ui-scale, 1))",
                                 color: "var(--text-tertiary)",
                                 flexShrink: 0,
                               }}

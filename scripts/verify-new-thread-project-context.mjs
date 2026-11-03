@@ -23,18 +23,18 @@ const root = "D:/projects/shared", second = "D:/projects/second";
 const multi = { id: "multi", name: "Multi", rootPaths: [root, second], serverProjectId: "server-multi", createdAt: 1 };
 const same = { id: "same", name: "Same", rootPaths: [root], serverProjectId: "server-same", createdAt: 2 };
 const metadata = { selectedProjectId: "multi", localProjects: [multi, same], threadProjectAssignments: {}, projectlessThreadIds: [], workspaceProjectAssignments: {} };
-export function mountProjectContext({ pending = null, membership = metadata, workspace = root, threadId = null, start, turn, worktree = false } = {}) {
+export function mountProjectContext({ pending = null, membership = metadata, workspace = root, threadId = null, start, turn, worktree = false, projectless = false } = {}) {
   const calls = [], state = { promptInput: "hello", turns: [] };
   const context = {
     ...module.exports, promptInput: "hello", attachedFiles: [], isStreaming: false,
     activeThreadId: threadId, activeThreadIdRef: { current: threadId }, activeTurnIdRef: { current: null },
-    pendingNewThreadProjectRef: { current: pending }, sidebarProjectMembership: membership,
+    pendingNewThreadProjectRef: { current: pending }, pendingProjectlessRef: { current: projectless }, sidebarProjectMembership: membership,
     activeWorkspace: { path: workspace }, handleSaveGoalRef: { current: null },
     pendingTurnIdRef: { current: null }, threadRequestRef: { current: 0 }, pendingAttachmentSaveRef: { current: null },
     attachmentScopeRef: { current: threadId ? `thread:${threadId}` : "home" },
-    steerSendPendingRef: { current: new Set() }, useWorktree: worktree, planMode: false,
+    steerSendPendingRef: { current: new Set() }, sendStartPendingRef: { current: new Set() }, useWorktree: worktree, planMode: false,
     tauriInvoke: async (method, params) => { calls.push([method, plain(params)]); return { path: "D:/worktree" }; },
-    permissionMode: "default", selectedModelId: undefined, reasoningEffort: null, reasoningSummary: "auto",
+    permissionMode: "default", selectedModelId: undefined, selectedModelName: undefined, reasoningEffort: null, reasoningSummary: "auto",
     sessionAllowNetwork: false, fastMode: false, models: [], console: { error() {}, warn() {} },
     callAppServer: async (method, params) => {
       calls.push([method, plain(params)]);
@@ -126,4 +126,14 @@ for (const options of [
   assert.equal(view.calls.find(c => c[0] === "goalSet")[1], "created");
   assert.equal(view.calls.find(c => c[0] === "turn/start")[1].threadId, "created");
 }
-console.log("PASS production send/goal callbacks: restored selected entity, shared-root identity, explicit draft precedence, legacy isolation, missing mapping and single goal-created thread (L2)");
+for (const action of ["send", "goal"]) {
+  const view = mountProjectContext({ projectless: true, worktree: true });
+  await view[action]("projectless request");
+  const params = view.calls.find(call => call[0] === "thread/start")[1];
+  assert.equal(params.projectId, null);
+  assert.equal(params.cwd, undefined);
+  assert.equal(params.runtimeWorkspaceRoots, undefined);
+  assert.equal(view.calls.some(call => call[0] === "git_worktree_create"), false);
+  assert.equal(view.context.pendingProjectlessRef.current, false);
+}
+console.log("PASS production send/goal callbacks: selected project, explicit projectless send/goal without cwd/worktree, draft precedence, missing mapping and single goal-created thread (L2)");

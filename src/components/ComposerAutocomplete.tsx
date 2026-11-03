@@ -18,11 +18,7 @@ export interface AutocompleteItem {
 }
 
 export interface ComposerAutocompleteProps {
-  mode: "slash" | "mention";
-  query: string;
-  files: string[];
-  fileHits?: WorkspaceFileHit[];
-  skills?: SkillInfoItem[];
+  items: AutocompleteItem[];
   onSelect: (item: AutocompleteItem) => void;
   onClose: () => void;
   selectedIndex: number;
@@ -47,85 +43,86 @@ function toSlashAutocompleteItem(cmd: SlashCommand): AutocompleteItem {
   };
 }
 
+export function getAutocompleteItems(
+  mode: "slash" | "mention", query: string, files: string[],
+  fileHits: WorkspaceFileHit[] = [], skills: SkillInfoItem[] = [],
+): AutocompleteItem[] {
+  if (mode === "slash") {
+    return findSlashCommands(query).map(toSlashAutocompleteItem);
+  } else {
+    const q = query.toLowerCase().replace(/^@/, "");
+    const out: AutocompleteItem[] = [];
+
+    // 1. Workspace files from recursive search hits (or fallback top-level files)
+    if (fileHits.length > 0) {
+      const matchedHits = fileHits
+        .filter(
+          (h) =>
+            !q ||
+            h.name.toLowerCase().includes(q) ||
+            h.relPath.toLowerCase().includes(q)
+        )
+        .slice(0, 14);
+      for (const h of matchedHits) {
+        out.push({
+          id: `file:${h.relPath}`,
+          type: "file",
+          title: h.name,
+          subtitle: h.relDir || "",
+          insertText: `@${h.relPath} `,
+        });
+      }
+    } else {
+      const matchedFiles = files
+        .filter((f) => !q || f.toLowerCase().includes(q))
+        .slice(0, 12);
+      for (const f of matchedFiles) {
+        const parts = f.replace(/\\/g, "/").split("/");
+        const name = parts.pop() || f;
+        const dir = parts.join("/");
+        out.push({
+          id: `file:${f}`,
+          type: "file",
+          title: name,
+          subtitle: dir,
+          insertText: `@${f} `,
+        });
+      }
+    }
+
+    // 3. Installed Skills
+    const matchedSkills = skills
+      .filter(
+        (s) =>
+          s.installed &&
+          (!q ||
+            s.id.toLowerCase().includes(q) ||
+            s.name.toLowerCase().includes(q))
+      )
+      .slice(0, 5);
+    for (const s of matchedSkills) {
+      out.push({
+        id: `skill:${s.id}`,
+        type: "skill",
+        title: `$${s.id}`,
+        subtitle: s.description,
+        insertText: `$${s.id} `,
+      });
+    }
+
+    return out;
+  }
+}
+
 export const ComposerAutocomplete: React.FC<ComposerAutocompleteProps> = ({
-  mode,
-  query,
-  files,
-  fileHits = [],
-  skills = [],
+  items,
   onSelect,
   onClose,
   selectedIndex,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const items: AutocompleteItem[] = React.useMemo(() => {
-    if (mode === "slash") {
-      return findSlashCommands(query).map(toSlashAutocompleteItem);
-    } else {
-      const q = query.toLowerCase().replace(/^@/, "");
-      const out: AutocompleteItem[] = [];
 
-      // 1. Workspace files from recursive search hits (or fallback top-level files)
-      if (fileHits.length > 0) {
-        const matchedHits = fileHits
-          .filter(
-            (h) =>
-              !q ||
-              h.name.toLowerCase().includes(q) ||
-              h.relPath.toLowerCase().includes(q)
-          )
-          .slice(0, 14);
-        for (const h of matchedHits) {
-          out.push({
-            id: `file:${h.relPath}`,
-            type: "file",
-            title: h.name,
-            subtitle: h.relDir || "",
-            insertText: `@${h.relPath} `,
-          });
-        }
-      } else {
-        const matchedFiles = files
-          .filter((f) => !q || f.toLowerCase().includes(q))
-          .slice(0, 12);
-        for (const f of matchedFiles) {
-          const parts = f.replace(/\\/g, "/").split("/");
-          const name = parts.pop() || f;
-          const dir = parts.join("/");
-          out.push({
-            id: `file:${f}`,
-            type: "file",
-            title: name,
-            subtitle: dir,
-            insertText: `@${f} `,
-          });
-        }
-      }
-
-      // 3. Installed Skills
-      const matchedSkills = skills
-        .filter(
-          (s) =>
-            s.installed &&
-            (!q ||
-              s.id.toLowerCase().includes(q) ||
-              s.name.toLowerCase().includes(q))
-        )
-        .slice(0, 5);
-      for (const s of matchedSkills) {
-        out.push({
-          id: `skill:${s.id}`,
-          type: "skill",
-          title: `$${s.id}`,
-          subtitle: s.description,
-          insertText: `$${s.id} `,
-        });
-      }
-
-      return out;
-    }
-  }, [mode, query, files, fileHits, skills]);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {

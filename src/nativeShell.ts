@@ -1,4 +1,5 @@
-import { tauriListen } from "./bridge";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { isTauriRuntime, tauriListen } from "./bridge";
 
 /**
  * Native shell bridge (Tauri-only): native menu bar / system tray events.
@@ -44,10 +45,11 @@ export interface TrayHandlers {
 export async function installNativeMenuHandler(
   handlers: NativeMenuHandlers
 ): Promise<() => void> {
+  if (!isTauriRuntime()) return () => {};
   try {
-    return await tauriListen<NativeMenuEventPayload>(
+    return await getCurrentWebviewWindow().listen<NativeMenuEventPayload>(
       NATIVE_MENU_EVENT,
-      (event) => {
+      ({ payload: event }) => {
         const id = event?.id;
         if (typeof id !== "string" || !id) return;
         const handler = handlers[id];

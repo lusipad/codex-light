@@ -39,7 +39,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration as StdDuration, SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Listener, Manager};
+use tokio::sync::mpsc;
 
 /// Delay before the very first scan, giving the app-server connection a head start.
 const INITIAL_SCAN_DELAY: StdDuration = StdDuration::from_secs(5);
@@ -591,6 +592,7 @@ fn jitter_ms(id: &str, salt: &[u8]) -> u64 {
 #[serde(rename_all = "camelCase", default)]
 struct AutomationScheduleState {
     last_run_at: Option<u64>,
+    last_finished_at: Option<u64>,
     next_run_at: Option<u64>,
     last_thread_id: Option<String>,
     last_status: Option<String>,
@@ -650,40 +652,21 @@ fn load_state() -> SchedulerState {
     }
 }
 
-/// Write the state file atomically (tmp file + rename). Failures are logged and
-/// never panic; scheduling simply continues with in-memory data.
-fn persist_state(state: &mut SchedulerState) {
+/// Persist state before acknowledging a run claim or terminal transition.
+fn persist_state(state: &mut SchedulerState) -> Result<(), String> {
+    persist_state_at(state, &scheduler_state_path())
+}
+
+fn persist_state_at(state: &mut SchedulerState, path: &std::path::Path) -> Result<(), String> {
     state.version = STATE_VERSION;
     state.updated_at = now_ms();
-
-    let path = scheduler_state_path();
     if let Some(parent) = path.parent() {
-        if let Err(err) = fs::create_dir_all(parent) {
-            eprintln!("[automations] failed to create scheduler state dir: {err}");
-            return;
-        }
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    let serialized = match serde_json::to_string_pretty(state) {
-        Ok(text) => text,
-        Err(err) => {
-            eprintln!("[automations] failed to serialize scheduler state: {err}");
-            return;
-        }
-    };
+    let serialized = serde_json::to_vec_pretty(state).map_err(|error| error.to_string())?;
     let temp_path = path.with_extension("json.tmp");
-    if let Err(err) = fs::write(&temp_path, serialized.as_bytes()) {
-        eprintln!("[automations] failed to write scheduler state temp file: {err}");
-        return;
-    }
-    if let Err(first_err) = fs::rename(&temp_path, &path) {
-        // Windows can refuse to rename over an existing file on some volumes.
-        let _ = fs::remove_file(&path);
-        if let Err(second_err) = fs::rename(&temp_path, &path) {
-            eprintln!(
-                "[automations] failed to persist scheduler state: {first_err} / {second_err}"
-            );
-        }
-    }
+    fs::write(&temp_path, serialized).map_err(|error| error.to_string())?;
+    fs::rename(&temp_path, &path).map_err(|error| error.to_string())
 }
 
 /// Guards read-modify-write cycles of the state file across the scheduler loop
@@ -697,18 +680,26 @@ fn read_state() -> SchedulerState {
     load_state()
 }
 
-fn with_state<T>(mutate: impl FnOnce(&mut SchedulerState) -> T) -> T {
-    let _guard = STATE_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+fn mutate_state<T>(mutate: impl FnOnce(&mut SchedulerState) -> T) -> (T, Result<(), String>) {
+    let _guard = STATE_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let mut state = load_state();
     let before = serde_json::to_string(&state).unwrap_or_default();
     let result = mutate(&mut state);
     let after = serde_json::to_string(&state).unwrap_or_default();
-    if before != after {
-        persist_state(&mut state);
-    }
+    let persisted = if before != after { persist_state(&mut state) } else { Ok(()) };
+    (result, persisted)
+}
+
+fn with_state<T>(mutate: impl FnOnce(&mut SchedulerState) -> T) -> T {
+    let (result, persisted) = mutate_state(mutate);
+    if let Err(error) = persisted { eprintln!("[automations] state persistence failed: {error}"); }
     result
+}
+
+fn try_with_state<T>(mutate: impl FnOnce(&mut SchedulerState) -> T) -> Result<T, String> {
+    let (result, persisted) = mutate_state(mutate);
+    persisted?;
+    Ok(result)
 }
 
 fn baseline_ms(item: &AutomationItem) -> u64 {
@@ -807,6 +798,9 @@ fn prepare_item(
         }
     };
     entry.schedule_warning = None;
+    if matches!(entry.last_status.as_deref(), Some("running" | "unknown")) {
+        return false;
+    }
 
     let anchor_ms = entry.anchor_at.unwrap_or_else(|| baseline_ms(item));
     if force_reschedule || signature_changed || entry.next_run_at.is_none() {
@@ -832,6 +826,7 @@ fn prepare_item(
 
     // Mark the run before executing it.
     entry.last_run_at = Some(now);
+    entry.last_finished_at = None;
     entry.last_status = Some("running".to_string());
     entry.last_error = None;
     entry.run_count = entry.run_count.saturating_add(1);
@@ -845,12 +840,86 @@ fn prepare_item(
 
 struct RunOutcome {
     thread_id: String,
-    turn_id: Option<String>,
+    turn_id: String,
+    watch: CompletionWatch,
+}
+
+struct CompletionWatch {
+    app: AppHandle,
+    listeners: [tauri::EventId; 2],
+    receiver: mpsc::UnboundedReceiver<Value>,
+}
+
+impl CompletionWatch {
+    fn new(app: &AppHandle, thread_id: &str) -> Self {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        let thread_id = thread_id.to_string();
+        let notifications = sender.clone();
+        let notification = app.listen("app-server:notification", move |event| {
+            if let Ok(value) = serde_json::from_str::<Value>(event.payload()) {
+                if value["method"] == "turn/completed" &&
+                    value["params"]["threadId"].as_str() == Some(thread_id.as_str()) {
+                    let _ = notifications.send(value);
+                }
+            }
+        });
+        let status = app.listen("app-server:status", move |event| {
+            if let Ok(value) = serde_json::from_str::<Value>(event.payload()) {
+                if value["connected"] == false {
+                    let _ = sender.send(json!({"method": "$connection/closed"}));
+                }
+            }
+        });
+        Self { app: app.clone(), listeners: [notification, status], receiver }
+    }
+}
+
+impl Drop for CompletionWatch {
+    fn drop(&mut self) {
+        for id in self.listeners { self.app.unlisten(id); }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+struct RunTerminal {
+    status: &'static str,
+    error: Option<String>,
+}
+
+async fn wait_turn_terminal(
+    receiver: &mut mpsc::UnboundedReceiver<Value>,
+    thread_id: &str,
+    turn_id: &str,
+) -> RunTerminal {
+    while let Some(value) = receiver.recv().await {
+        if value["method"] == "$connection/closed" { break; }
+        if value["method"] != "turn/completed" ||
+            value["params"]["threadId"].as_str() != Some(thread_id) ||
+            value["params"]["turn"]["id"].as_str() != Some(turn_id) {
+            continue;
+        }
+        let turn = &value["params"]["turn"];
+        let status = match turn["status"].as_str() {
+            Some("completed") => "completed",
+            Some("failed") => "failed",
+            Some("interrupted") => "interrupted",
+            _ => continue,
+        };
+        return RunTerminal {
+            status,
+            error: turn["error"]["message"].as_str().map(str::to_string),
+        };
+    }
+    RunTerminal {
+        status: "unknown",
+        error: Some("app-server连接中断，任务执行结果未知；请打开会话核对".into()),
+    }
 }
 
 struct ExecutionError {
     message: String,
     thread_id: Option<String>,
+    uncertain: bool,
 }
 
 impl ExecutionError {
@@ -858,6 +927,7 @@ impl ExecutionError {
         Self {
             message: message.into(),
             thread_id: None,
+            uncertain: false,
         }
     }
 }
@@ -954,21 +1024,86 @@ async fn execute_automation(
         turn_params["effort"] = json!(effort);
     }
 
+    // Subscribe before turn/start: completion can precede its RPC response.
+    let watch = CompletionWatch::new(app, &thread_id);
     let turn_response = manager
         .call(app, "turn/start", Some(turn_params))
         .await
         .map_err(|err| ExecutionError {
             message: format!("turn/start failed: {err}"),
             thread_id: Some(thread_id.clone()),
+            uncertain: true,
         })?;
     let turn_id = turn_response
         .get("turn")
         .and_then(|turn| turn.get("id"))
         .and_then(Value::as_str)
         .or_else(|| turn_response.get("turnId").and_then(Value::as_str))
-        .map(str::to_string);
+        .map(str::to_string)
+        .ok_or_else(|| ExecutionError {
+            message: "turn/start response did not contain a turn id; execution outcome unknown".into(),
+            thread_id: Some(thread_id.clone()),
+            uncertain: true,
+        })?;
 
-    Ok(RunOutcome { thread_id, turn_id })
+    Ok(RunOutcome { thread_id, turn_id, watch })
+}
+
+async fn finish_run(
+    app: &AppHandle, item: &AutomationItem, started_at: u64,
+    thread_id: Option<String>, terminal: RunTerminal,
+) {
+    let finished_at = now_ms();
+    let mut storage_error_reported = false;
+    loop {
+        let changed = try_with_state(|state| {
+            let Some(entry) = state.automations.get_mut(&item.id) else { return false };
+            if entry.last_run_at != Some(started_at) || entry.last_status.as_deref() != Some("running") {
+                return false;
+            }
+            entry.last_status = Some(terminal.status.into());
+            entry.last_finished_at = Some(finished_at);
+            entry.last_thread_id = thread_id.clone();
+            entry.last_error = terminal.error.clone();
+            true
+        });
+        match changed {
+            Ok(true) => {
+                emit_event(app, "automation:run-finished", json!({
+                    "id": item.id, "name": item.name, "status": terminal.status,
+                    "threadId": thread_id, "error": terminal.error,
+                    "startedAt": started_at, "finishedAt": finished_at,
+                }));
+                return;
+            }
+            Ok(false) => return,
+            Err(error) => {
+                if !storage_error_reported {
+                    emit_event(app, "automation:storage-error", json!({
+                        "id": item.id, "name": item.name,
+                        "error": format!("运行结果尚未保存：{error}；正在重试，请勿重复启动任务"),
+                    }));
+                    storage_error_reported = true;
+                }
+                tokio::time::sleep(StdDuration::from_secs(5)).await;
+            }
+        }
+    }
+}
+
+async fn monitor_run(app: AppHandle, item: AutomationItem, started_at: u64, mut outcome: RunOutcome) {
+    with_state(|state| {
+        if let Some(entry) = state.automations.get_mut(&item.id) {
+            if entry.last_run_at == Some(started_at) {
+                entry.last_thread_id = Some(outcome.thread_id.clone());
+            }
+        }
+    });
+    let terminal = wait_turn_terminal(
+        &mut outcome.watch.receiver, &outcome.thread_id, &outcome.turn_id,
+    ).await;
+    drop(outcome.watch);
+    finish_run(&app, &item, started_at, Some(outcome.thread_id), terminal).await;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1017,14 +1152,14 @@ impl AutomationScheduler {
         let mut due_items: Vec<AutomationItem> = Vec::new();
         let known_ids: HashSet<String> = items.iter().map(|item| item.id.clone()).collect();
 
-        with_state(|state| {
+        try_with_state(|state| {
             state.automations.retain(|id, _| known_ids.contains(id));
             for item in &items {
                 if prepare_item(state, item, now, &salt, false) {
                     due_items.push(item.clone());
                 }
             }
-        });
+        })?;
 
         for item in due_items {
             self.execute_due(item).await;
@@ -1033,7 +1168,8 @@ impl AutomationScheduler {
     }
 
     async fn execute_due(&self, item: AutomationItem) {
-        let started_at = now_ms();
+        let started_at = read_state().automations.get(&item.id)
+            .and_then(|entry| entry.last_run_at).unwrap_or_else(now_ms);
         emit_event(
             &self.app,
             "automation:run-started",
@@ -1044,55 +1180,17 @@ impl AutomationScheduler {
             }),
         );
 
-        let result = execute_automation(&self.app, &item).await;
-        let finished_at = now_ms();
-
-        match result {
+        match execute_automation(&self.app, &item).await {
             Ok(outcome) => {
-                let thread_id = outcome.thread_id.clone();
-                with_state(|state| {
-                    if let Some(entry) = state.automations.get_mut(&item.id) {
-                        entry.last_status = Some("completed".to_string());
-                        entry.last_thread_id = Some(thread_id.clone());
-                        entry.last_error = None;
-                    }
-                });
-                emit_event(
-                    &self.app,
-                    "automation:run-finished",
-                    json!({
-                        "id": &item.id,
-                        "name": &item.name,
-                        "status": "completed",
-                        "threadId": outcome.thread_id,
-                        "error": Value::Null,
-                        "finishedAt": finished_at,
-                    }),
-                );
+                let app = self.app.clone();
+                tauri::async_runtime::spawn(monitor_run(app, item, started_at, outcome));
             }
-            Err(err) => {
-                let thread_id = err.thread_id.clone();
-                with_state(|state| {
-                    if let Some(entry) = state.automations.get_mut(&item.id) {
-                        entry.last_status = Some("failed".to_string());
-                        if let Some(thread_id) = thread_id.clone() {
-                            entry.last_thread_id = Some(thread_id);
-                        }
-                        entry.last_error = Some(err.message.clone());
-                    }
+            Err(error) => {
+                let app = self.app.clone();
+                tauri::async_runtime::spawn(async move {
+                    finish_run(&app, &item, started_at, error.thread_id,
+                        RunTerminal { status: if error.uncertain { "unknown" } else { "failed" }, error: Some(error.message) }).await;
                 });
-                emit_event(
-                    &self.app,
-                    "automation:run-finished",
-                    json!({
-                        "id": &item.id,
-                        "name": &item.name,
-                        "status": "failed",
-                        "threadId": err.thread_id,
-                        "error": err.message,
-                        "finishedAt": finished_at,
-                    }),
-                );
             }
         }
     }
@@ -1102,9 +1200,9 @@ fn recover_interrupted_runs() {
     with_state(|state| {
         for entry in state.automations.values_mut() {
             if entry.last_status.as_deref() == Some("running") {
-                entry.last_status = Some("failed".to_string());
+                entry.last_status = Some("unknown".to_string());
                 entry.last_error =
-                    Some("scheduler stopped while this run was in progress".to_string());
+                    Some("scheduler stopped while this run was in progress; execution outcome unknown".to_string());
             }
         }
     });
@@ -1142,6 +1240,7 @@ pub fn scheduler_status() -> Value {
                 "rrule": &item.rrule,
                 "executionEnvironment": &item.execution_environment,
                 "lastRunAt": entry.and_then(|entry| entry.last_run_at),
+                "lastFinishedAt": entry.and_then(|entry| entry.last_finished_at),
                 "nextRunAt": entry.and_then(|entry| entry.next_run_at),
                 "lastStatus": entry.and_then(|entry| entry.last_status.clone()),
                 "lastThreadId": entry.and_then(|entry| entry.last_thread_id.clone()),
@@ -1177,6 +1276,27 @@ pub fn refresh_schedule() -> Value {
     scheduler_status()
 }
 
+fn claim_manual_run(state: &mut SchedulerState, item: &AutomationItem, now: u64) -> Result<(), String> {
+    let entry = state.automations.entry(item.id.clone()).or_default();
+    if entry.last_status.as_deref() == Some("running") {
+        return Err("该任务仍在运行，请等待真实执行结束".into());
+    }
+    if entry.anchor_at.is_none() {
+        entry.anchor_at = Some(baseline_ms(&item));
+    }
+    entry.config_signature = Some(schedule_signature(&item));
+    entry.last_run_at = Some(now);
+    entry.last_finished_at = None;
+    entry.last_status = Some("running".to_string());
+    entry.last_error = None;
+    entry.run_count = entry.run_count.saturating_add(1);
+    if let Ok(rule) = Rrule::parse(&item.rrule) {
+        let anchor_ms = entry.anchor_at.unwrap_or_else(|| baseline_ms(&item));
+        entry.next_run_at = compute_next_run_ms(&rule, anchor_ms, now);
+    }
+    Ok(())
+}
+
 /// Execute an automation immediately (manual "Run now").
 pub async fn run_now(app: AppHandle, id: String) -> Result<Value, String> {
     let item = config_skills::list_automations()
@@ -1197,21 +1317,7 @@ pub async fn run_now(app: AppHandle, id: String) -> Result<Value, String> {
     let now = now_ms();
     // Persist "running" before the app-server round-trips so the UI sees the
     // state and the periodic scan does not run the same automation again.
-    with_state(|state| {
-        let entry = state.automations.entry(item.id.clone()).or_default();
-        if entry.anchor_at.is_none() {
-            entry.anchor_at = Some(baseline_ms(&item));
-        }
-        entry.config_signature = Some(schedule_signature(&item));
-        entry.last_run_at = Some(now);
-        entry.last_status = Some("running".to_string());
-        entry.last_error = None;
-        entry.run_count = entry.run_count.saturating_add(1);
-        if let Ok(rule) = Rrule::parse(&item.rrule) {
-            let anchor_ms = entry.anchor_at.unwrap_or_else(|| baseline_ms(&item));
-            entry.next_run_at = compute_next_run_ms(&rule, anchor_ms, now);
-        }
-    });
+    try_with_state(|state| claim_manual_run(state, &item, now))??;
 
     emit_event(
         &app,
@@ -1219,61 +1325,22 @@ pub async fn run_now(app: AppHandle, id: String) -> Result<Value, String> {
         json!({ "id": &item.id, "name": &item.name, "at": now }),
     );
 
-    let result = execute_automation(&app, &item).await;
-    let finished_at = now_ms();
-
-    match result {
+    match execute_automation(&app, &item).await {
         Ok(outcome) => {
-            let thread_id = outcome.thread_id.clone();
-            with_state(|state| {
-                if let Some(entry) = state.automations.get_mut(&item.id) {
-                    entry.last_status = Some("completed".to_string());
-                    entry.last_thread_id = Some(thread_id.clone());
-                    entry.last_error = None;
-                }
+            let response = json!({
+                "threadId": outcome.thread_id, "turnId": outcome.turn_id,
+                "status": "running", "startedAt": now,
             });
-            emit_event(
-                &app,
-                "automation:run-finished",
-                json!({
-                    "id": &item.id,
-                    "name": &item.name,
-                    "status": "completed",
-                    "threadId": outcome.thread_id,
-                    "error": Value::Null,
-                    "finishedAt": finished_at,
-                }),
-            );
-            Ok(json!({
-                "threadId": outcome.thread_id,
-                "turnId": outcome.turn_id,
-                "status": "completed",
-            }))
+            tauri::async_runtime::spawn(monitor_run(app, item, now, outcome));
+            Ok(response)
         }
-        Err(err) => {
-            let thread_id = err.thread_id.clone();
-            with_state(|state| {
-                if let Some(entry) = state.automations.get_mut(&item.id) {
-                    entry.last_status = Some("failed".to_string());
-                    if let Some(thread_id) = thread_id {
-                        entry.last_thread_id = Some(thread_id);
-                    }
-                    entry.last_error = Some(err.message.clone());
-                }
+        Err(error) => {
+            let message = error.message.clone();
+            tauri::async_runtime::spawn(async move {
+                finish_run(&app, &item, now, error.thread_id,
+                    RunTerminal { status: if error.uncertain { "unknown" } else { "failed" }, error: Some(error.message) }).await;
             });
-            emit_event(
-                &app,
-                "automation:run-finished",
-                json!({
-                    "id": &item.id,
-                    "name": &item.name,
-                    "status": "failed",
-                    "threadId": err.thread_id,
-                    "error": err.message,
-                    "finishedAt": finished_at,
-                }),
-            );
-            Err(err.message)
+            Err(message)
         }
     }
 }
@@ -1285,6 +1352,98 @@ pub async fn run_now(app: AppHandle, id: String) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn terminal_event(thread: &str, turn: &str, status: &str) -> Value {
+        json!({"method": "turn/completed", "params": {
+            "threadId": thread, "turn": {"id": turn, "status": status, "error": {"message": "detail"}}
+        }})
+    }
+
+    #[test]
+    fn automation_completion_state_roundtrip_and_write_failure_preserves_previous_file() {
+        let root = std::env::temp_dir().join(format!("codex-run-state-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        let path = root.join("scheduler-state.json");
+        let mut state = SchedulerState::default();
+        state.automations.insert("task".into(), AutomationScheduleState {
+            last_status: Some("running".into()), last_run_at: Some(100),
+            ..Default::default()
+        });
+        persist_state_at(&mut state, &path).unwrap();
+        state.automations.get_mut("task").unwrap().last_status = Some("completed".into());
+        state.automations.get_mut("task").unwrap().last_finished_at = Some(200);
+        persist_state_at(&mut state, &path).unwrap();
+        let previous = fs::read(&path).unwrap();
+        let restored: SchedulerState = serde_json::from_slice(&previous).unwrap();
+        assert_eq!(restored.automations["task"].last_status.as_deref(), Some("completed"));
+        assert_eq!(restored.automations["task"].last_finished_at, Some(200));
+        let blocked = path.with_extension("json.tmp");
+        fs::create_dir(&blocked).unwrap();
+        state.automations.get_mut("task").unwrap().last_status = Some("running".into());
+        assert!(persist_state_at(&mut state, &path).is_err());
+        assert_eq!(fs::read(&path).unwrap(), previous);
+        fs::remove_dir(&blocked).unwrap();
+        fs::remove_file(&path).unwrap();
+        fs::remove_dir(&root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn automation_completion_requires_matching_terminal_not_start_response() {
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let wait = wait_turn_terminal(&mut receiver, "thread", "turn");
+        tokio::pin!(wait);
+        sender.send(json!({"method": "turn/started", "params": {"threadId": "thread"}})).unwrap();
+        sender.send(terminal_event("other", "turn", "completed")).unwrap();
+        sender.send(terminal_event("thread", "old-turn", "completed")).unwrap();
+        sender.send(terminal_event("thread", "turn", "inProgress")).unwrap();
+        assert!(tokio::time::timeout(StdDuration::from_millis(10), &mut wait).await.is_err());
+        sender.send(terminal_event("thread", "turn", "completed")).unwrap();
+        assert_eq!(wait.await.status, "completed");
+    }
+
+    #[tokio::test]
+    async fn automation_completion_early_terminal_failure_interruption_and_disconnect() {
+        for status in ["completed", "failed", "interrupted"] {
+            let (sender, mut receiver) = mpsc::unbounded_channel();
+            // Already queued before the caller can examine turn/start's response.
+            sender.send(terminal_event("thread", "turn", status)).unwrap();
+            let result = wait_turn_terminal(&mut receiver, "thread", "turn").await;
+            assert_eq!(result.status, status);
+            assert_eq!(result.error.as_deref(), Some("detail"));
+        }
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        sender.send(json!({"method": "$connection/closed"})).unwrap();
+        assert_eq!(wait_turn_terminal(&mut receiver, "thread", "turn").await.status, "unknown");
+        drop(sender);
+        assert_eq!(wait_turn_terminal(&mut receiver, "thread", "turn").await.status, "unknown");
+    }
+
+    #[test]
+    fn automation_completion_running_run_cannot_be_scheduled_again() {
+        let now = now_ms();
+        let item = test_automation(
+            "still-running", "FREQ=HOURLY", "ACTIVE", "local",
+            vec!["D:\\work".to_string()], now.saturating_sub(86_400_000),
+        );
+        let mut state = SchedulerState::default();
+        state.automations.insert(item.id.clone(), AutomationScheduleState {
+            last_status: Some("running".into()),
+            next_run_at: Some(now.saturating_sub(61_000)),
+            anchor_at: Some(item.updated_at),
+            config_signature: Some(schedule_signature(&item)),
+            run_count: 1,
+            ..Default::default()
+        });
+        assert!(!prepare_item(&mut state, &item, now, b"salt", false));
+        assert!(claim_manual_run(&mut state, &item, now + 1).is_err());
+        assert_eq!(state.automations[&item.id].run_count, 1);
+        state.automations.get_mut(&item.id).unwrap().last_status = Some("unknown".into());
+        assert!(!prepare_item(&mut state, &item, now + 2, b"salt", false));
+        claim_manual_run(&mut state, &item, now + 3).unwrap();
+        assert!(claim_manual_run(&mut state, &item, now + 4).is_err());
+        assert!(!prepare_item(&mut state, &item, now + 5, b"salt", false));
+        assert_eq!(state.automations[&item.id].run_count, 2);
+    }
 
     fn dt(year: i32, month: u32, day: u32, hour: u32, minute: u32) -> NaiveDateTime {
         NaiveDate::from_ymd_opt(year, month, day)

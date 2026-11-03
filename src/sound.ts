@@ -16,15 +16,27 @@ export const NOTIFICATION_SOUND_THEMES: Array<{
   { id: "none", label: "None (完全静音)", desc: "不播放任何声音提示" },
 ];
 
+let activeContext: AudioContext | null = null;
+let closeTimer: ReturnType<typeof setTimeout> | undefined;
+
 export function playNotificationChime(
   kind: "nudge" | "done" = "done",
   soundTheme: NotificationSoundTheme = "default"
 ) {
+  if (closeTimer) clearTimeout(closeTimer);
+  if (activeContext) {
+    void activeContext.close().catch(() => {});
+    activeContext = null;
+  }
   if (soundTheme === "none") return;
-  try {
     const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-    if (!AudioCtx) return;
+    if (!AudioCtx) throw Error("当前环境不支持音频播放");
     const ctx = new AudioCtx();
+    activeContext = ctx;
+    closeTimer = setTimeout(() => {
+      if (activeContext === ctx) activeContext = null;
+      void ctx.close().catch(() => {});
+    }, 500);
     const now = ctx.currentTime;
 
     if (kind === "nudge") {
@@ -172,7 +184,4 @@ export function playNotificationChime(
         break;
       }
     }
-  } catch {
-    // AudioContext blocked or unsupported
-  }
 }

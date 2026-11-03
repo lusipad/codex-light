@@ -449,7 +449,7 @@ pub fn update_structured_config(payload: CodexConfigUpdatePayload) -> Result<Cod
     read_config_overview()
 }
 
-fn parse_skill_dir(skill_dir: &Path, installed: bool) -> Option<SkillInfoItem> {
+pub(crate) fn parse_skill_dir(skill_dir: &Path, installed: bool) -> Option<SkillInfoItem> {
     let skill_md = skill_dir.join("SKILL.md");
     if !skill_md.is_file() {
         return None;
@@ -550,20 +550,40 @@ pub fn save_or_install_skill(
     content: &str,
     source_dir: Option<String>,
 ) -> Result<SkillInfoItem, String> {
-    let clean_id: String = id
-        .trim()
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
-        .collect();
-    if clean_id.is_empty() {
+    save_or_install_skill_at_root(
+        &codex_home_dir().join("skills"),
+        id,
+        content,
+        source_dir.as_deref(),
+    )
+}
+
+fn validated_skill_id(id: &str) -> Result<&str, String> {
+    let id = id.trim();
+    if id.is_empty()
+        || !id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
         return Err("Invalid skill ID".to_string());
     }
-    let target_dir = codex_home_dir().join("skills").join(&clean_id);
-    if let Some(src) = source_dir.filter(|s| !s.trim().is_empty()) {
+    Ok(id)
+}
+
+fn save_or_install_skill_at_root(
+    skills_root: &Path,
+    id: &str,
+    content: &str,
+    source_dir: Option<&str>,
+) -> Result<SkillInfoItem, String> {
+    let id = validated_skill_id(id)?;
+    let target_dir = skills_root.join(id);
+    if let Some(src) = source_dir {
         let src_path = Path::new(&src);
-        if src_path.is_dir() {
-            copy_dir_recursive(src_path, &target_dir)?;
+        if src.trim().is_empty() || !src_path.is_dir() || !src_path.join("SKILL.md").is_file() {
+            return Err("Skill source must be a directory containing SKILL.md".to_string());
         }
+        copy_dir_recursive(src_path, &target_dir)?;
     } else {
         fs::create_dir_all(&target_dir).map_err(|e| e.to_string())?;
         fs::write(target_dir.join("SKILL.md"), content).map_err(|e| e.to_string())?;
@@ -572,7 +592,22 @@ pub fn save_or_install_skill(
 }
 
 pub fn delete_installed_skill(id: &str) -> Result<(), String> {
-    let target_dir = codex_home_dir().join("skills").join(id.trim());
+    delete_installed_skill_at_root(&codex_home_dir().join("skills"), id)
+}
+
+fn delete_installed_skill_at_root(skills_root: &Path, id: &str) -> Result<(), String> {
+    let id = id.trim();
+    // Existing skill directories can contain dots or non-ASCII names.
+    // Deletion must preserve their exact basename without accepting a path.
+    if id.is_empty()
+        || id == "."
+        || id == ".."
+        || id.ends_with('.')
+        || id.chars().any(|c| c.is_control() || "<>:\"/\\|?*".contains(c))
+    {
+        return Err("Invalid skill ID".to_string());
+    }
+    let target_dir = skills_root.join(id);
     if target_dir.is_dir() {
         fs::remove_dir_all(&target_dir).map_err(|e| e.to_string())?;
     }
@@ -876,85 +911,6 @@ pub fn compute_storage_stats() -> StorageStatsOverview {
     }
 }
 
-pub fn clean_storage_cache() -> Result<u64, String> {
-    let home = codex_home_dir();
-    let mut cleaned: u64 = 0;
-    let log_dir = home.join("log");
-    if log_dir.is_dir() {
-        if let Ok(entries) = fs::read_dir(&log_dir) {
-            for entry in entries.flatten() {
-                if let Ok(meta) = entry.metadata() {
-                    cleaned += meta.len();
-                }
-                let _ = fs::remove_file(entry.path());
-            }
-        }
-    }
-    let rollouts_dir = home.join("rollouts");
-    if rollouts_dir.is_dir() {
-        if let Ok(entries) = fs::read_dir(&rollouts_dir) {
-            for entry in entries.flatten() {
-                if let Ok(meta) = entry.metadata() {
-                    if let Ok(modified) = meta.modified() {
-                        if let Ok(elapsed) = modified.elapsed() {
-                            if elapsed.as_secs() > 3 * 86400 {
-                                cleaned += meta.len();
-                                let _ = fs::remove_file(entry.path());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    Ok(cleaned)
-}
-
-pub fn read_local_environment_toml(cwd: &str) -> Result<serde_json::Value, String> {
-    let norm = normalize_fs_path(cwd);
-    if norm.is_empty() {
-        return Err("Workspace path is empty".to_string());
-    }
-    let env_path = Path::new(&norm)
-        .join(".codex")
-        .join("environments")
-        .join("default.toml");
-    if env_path.is_file() {
-        let content = fs::read_to_string(&env_path).map_err(|e| e.to_string())?;
-        Ok(json!({
-            "exists": true,
-            "path": normalize_fs_path(&env_path.to_string_lossy()),
-            "content": content
-        }))
-    } else {
-        let default_template = "# Codex Local Environment Configuration (.codex/environments/default.toml)\nname = \"Default Environment\"\nsetup_script = \"\"\n\n[actions.run]\nlabel = \"Run\"\ncommand = \"npm run dev\"\n\n[actions.test]\nlabel = \"Test\"\ncommand = \"npm test\"\n\n[actions.build]\nlabel = \"Build\"\ncommand = \"npm run build\"\n";
-        Ok(json!({
-            "exists": false,
-            "path": normalize_fs_path(&env_path.to_string_lossy()),
-            "content": default_template
-        }))
-    }
-}
-
-pub fn save_local_environment_toml(cwd: &str, content: &str) -> Result<String, String> {
-    let norm = normalize_fs_path(cwd);
-    if norm.is_empty() {
-        return Err("Workspace path is empty".to_string());
-    }
-    content
-        .parse::<DocumentMut>()
-        .map_err(|e| format!("Invalid TOML syntax: {}", e))?;
-    let env_path = Path::new(&norm)
-        .join(".codex")
-        .join("environments")
-        .join("default.toml");
-    if let Some(parent) = env_path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    fs::write(&env_path, content).map_err(|e| e.to_string())?;
-    Ok(normalize_fs_path(&env_path.to_string_lossy()))
-}
-
 pub fn import_external_tool_config(kind: &str, cwd: Option<&str>) -> Result<serde_json::Value, String> {
     match kind {
         "claude" => {
@@ -1104,6 +1060,78 @@ pub fn import_external_tool_config(kind: &str, cwd: Option<&str>) -> Result<serd
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn skill_writes_reject_invalid_ids_and_invalid_sources_without_changing_existing_files() {
+        let test_root = std::env::temp_dir().join(format!(
+            "codex-native-skill-writes-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let skills_root = test_root.join("skills");
+        let outside = test_root.join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("SKILL.md"), "# Outside\n").unwrap();
+
+        let saved = save_or_install_skill_at_root(&skills_root, " valid-ID_1 ", "# Original\n", None)
+            .unwrap();
+        assert_eq!(saved.id, "valid-ID_1");
+        for id in ["", " ", "..", "../outside", "..\\outside", "a/b", "a\\b", "valid-ID_1!", "名字"] {
+            assert!(save_or_install_skill_at_root(&skills_root, id, "# Changed\n", None).is_err());
+        }
+        for id in ["", " ", ".", "..", "../outside", "..\\outside", "a/b", "a\\b", "C:outside", "name."] {
+            assert!(delete_installed_skill_at_root(&skills_root, id).is_err());
+        }
+        for id in ["foo.bar", "名字", "valid-ID_1!"] {
+            let existing = skills_root.join(id);
+            fs::create_dir_all(&existing).unwrap();
+            fs::write(existing.join("SKILL.md"), "# Existing\n").unwrap();
+            assert_eq!(parse_skill_dir(&existing, true).unwrap().id, id);
+            delete_installed_skill_at_root(&skills_root, id).unwrap();
+            assert!(!existing.exists());
+            assert_eq!(fs::read_to_string(outside.join("SKILL.md")).unwrap(), "# Outside\n");
+        }
+        assert_eq!(fs::read_to_string(outside.join("SKILL.md")).unwrap(), "# Outside\n");
+        assert_eq!(
+            fs::read_to_string(skills_root.join("valid-ID_1/SKILL.md")).unwrap(),
+            "# Original\n"
+        );
+
+        let empty_source = test_root.join("empty-source");
+        fs::create_dir_all(&empty_source).unwrap();
+        let missing_source = test_root.join("missing-source");
+        for source in [
+            "",
+            empty_source.to_str().unwrap(),
+            missing_source.to_str().unwrap(),
+        ] {
+            assert!(save_or_install_skill_at_root(
+                &skills_root, "valid-ID_1", "# Changed\n", Some(source)
+            ).is_err());
+        }
+        assert_eq!(
+            fs::read_to_string(skills_root.join("valid-ID_1/SKILL.md")).unwrap(),
+            "# Original\n"
+        );
+        assert!(!skills_root.join("valid-ID_1!").exists());
+
+        let source = test_root.join("source");
+        fs::create_dir_all(source.join("scripts")).unwrap();
+        fs::write(source.join("SKILL.md"), "# Imported\n").unwrap();
+        fs::write(source.join("scripts/run.txt"), "script fixture").unwrap();
+        let installed = save_or_install_skill_at_root(
+            &skills_root, "valid-ID_1", "ignored content", Some(source.to_str().unwrap())
+        ).unwrap();
+        assert_eq!(installed.content, "# Imported\n");
+        assert_eq!(
+            fs::read_to_string(skills_root.join("valid-ID_1/scripts/run.txt")).unwrap(),
+            "script fixture"
+        );
+        delete_installed_skill_at_root(&skills_root, " valid-ID_1 ").unwrap();
+        assert!(!skills_root.join("valid-ID_1").exists());
+        assert_eq!(fs::read_to_string(outside.join("SKILL.md")).unwrap(), "# Outside\n");
+        fs::remove_dir_all(&test_root).unwrap();
+    }
 
     #[test]
     fn keeps_model_catalog_json_at_root_before_tables() {

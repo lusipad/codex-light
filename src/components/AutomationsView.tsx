@@ -32,7 +32,6 @@ interface AutomationsViewProps {
   activeWorkspaceRoot: string;
   models: ModelInfo[];
   onSelectThread?: (threadId: string) => void;
-  onRunAutomationNow: (item: AutomationItem) => void;
 }
 
 const PRESET_TEMPLATES = [
@@ -69,7 +68,7 @@ const SCHEDULE_PRESETS = [
 const MAX_RUN_HISTORY = 20;
 
 type SchedulerUiState = "loading" | "ready" | "unavailable" | "error";
-type RunRecordStatus = "running" | "completed" | "failed";
+type RunRecordStatus = "running" | "completed" | "failed" | "interrupted" | "unknown";
 type NoticeKind = "success" | "error" | "info";
 
 interface RunHistoryRecord {
@@ -144,6 +143,8 @@ function runStatusLabel(status?: string | null): string {
   if (value === "running") return "运行中";
   if (value === "completed" || value === "success" || value === "succeeded") return "成功";
   if (value === "failed" || value === "error") return "失败";
+  if (value === "interrupted") return "已中断";
+  if (value === "unknown") return "结果未知";
   return "未运行";
 }
 
@@ -184,17 +185,8 @@ function applyStartedEvent(
   records: RunHistoryRecord[],
   event: AutomationRunStartedEvent
 ): RunHistoryRecord[] {
-  const runningIndex = records.findIndex(
-    (record) => record.automationId === event.id && record.status === "running"
-  );
-  if (runningIndex >= 0) {
-    const next = [...records];
-    next[runningIndex] = {
-      ...next[runningIndex],
-      name: event.name || next[runningIndex].name,
-      startedAt: event.at || next[runningIndex].startedAt,
-    };
-    return next;
+  if (records.some(record => record.automationId === event.id && record.startedAt === event.at)) {
+    return records;
   }
   return appendRunRecord(records, {
     key: `started:${event.id}:${event.at}`,
@@ -210,7 +202,8 @@ function applyFinishedEvent(
   event: AutomationRunFinishedEvent
 ): RunHistoryRecord[] {
   const runningIndex = records.findIndex(
-    (record) => record.automationId === event.id && record.status === "running"
+    (record) => record.automationId === event.id &&
+      (event.startedAt != null ? record.startedAt === event.startedAt : record.status === "running")
   );
   if (runningIndex >= 0) {
     const next = [...records];
@@ -229,7 +222,7 @@ function applyFinishedEvent(
     automationId: event.id,
     name: event.name,
     status: event.status,
-    startedAt: event.finishedAt,
+    startedAt: event.startedAt ?? event.finishedAt,
     finishedAt: event.finishedAt,
     threadId: event.threadId ?? undefined,
     error: event.error ?? undefined,
@@ -240,7 +233,6 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
   activeWorkspaceRoot,
   models,
   onSelectThread,
-  onRunAutomationNow,
 }) => {
   const [automations, setAutomations] = useState<AutomationItem[]>([]);
   const [activeSubTab, setActiveSubTab] = useState<"all" | "scheduled" | "goals">(
@@ -270,19 +262,18 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
   const [runThreads, setRunThreads] = useState<Record<string, string>>({});
   const [clock, setClock] = useState<number>(Date.now());
   const [notice, setNotice] = useState<Notice | null>(null);
-  const recordSeqRef = useRef<number>(0);
-
-  const makeRecordKey = useCallback((prefix: string, id: string): string => {
-    recordSeqRef.current += 1;
-    return `${prefix}:${id}:${Date.now()}:${recordSeqRef.current}`;
-  }, []);
+  const writePendingRef = useRef(false);
+  const runPendingRef = useRef(false);
+  const listRequestRef = useRef(0);
+  const [writeBusy, setWriteBusy] = useState(false);
 
   const refresh = async () => {
+    const request = ++listRequestRef.current;
     try {
       const list = await tauriInvoke<AutomationItem[]>("automations_list");
-      setAutomations(list);
-    } catch {
-      // automations_list already existed before the scheduler task; keep silent.
+      if (request === listRequestRef.current) setAutomations(list);
+    } catch (error) {
+      if (request === listRequestRef.current) setNotice({ kind: "error", text: `读取任务失败：${String(error)}` });
     }
   };
 
@@ -310,6 +301,7 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
 
   useEffect(() => {
     void refresh();
+    return () => { ++listRequestRef.current; };
   }, []);
 
   useEffect(() => {
@@ -372,11 +364,14 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
                 event.error ? `：${truncateText(event.error, 120)}` : ""
               }`,
             }
-          : {
+          : event.status === "completed" ? {
               kind: "success",
               text: `「${event.name}」运行完成${
                 event.threadId ? `（线程 ${shortId(event.threadId)}）` : ""
               }`,
+            } : {
+              kind: "info",
+              text: `「${event.name}」${event.status === "interrupted" ? "已中断" : "执行结果未知"}${event.error ? `：${event.error}` : ""}`,
             }
       );
       void loadScheduler({ silent: true });
@@ -395,11 +390,11 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
         const entry = scheduler.entries.find((candidate) => candidate.id === record.automationId);
         if (!entry) return record;
         const status = (entry.lastStatus || "").toLowerCase();
-        const finishedAt = entry.lastRunAt;
+        const finishedAt = entry.lastFinishedAt;
         if (
-          (status === "completed" || status === "failed") &&
+          ["completed", "failed", "interrupted", "unknown"].includes(status) &&
           typeof finishedAt === "number" &&
-          finishedAt >= record.startedAt - 1000
+          entry.lastRunAt === record.startedAt
         ) {
           changed = true;
           return {
@@ -416,6 +411,7 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
   }, [scheduler]);
 
   const handleStartEdit = (item: AutomationItem) => {
+    if (writePendingRef.current) return;
     setEditingItem(item);
     setName(item.name);
     setKind(
@@ -431,7 +427,7 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
   };
 
   const handleCreate = async () => {
-    if (!name.trim() || !prompt.trim()) return;
+    if (writePendingRef.current || !name.trim() || !prompt.trim()) return;
     const item: AutomationItem = {
       id: editingItem ? editingItem.id : "",
       kind,
@@ -447,49 +443,76 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
       createdAt: editingItem ? editingItem.createdAt : Date.now(),
       updatedAt: Date.now(),
     };
-    const updated = await tauriInvoke<AutomationItem[]>("automation_save", {
-      item,
-    });
-    setAutomations(updated);
-    setName("");
-    setPrompt("");
-    setEditingItem(null);
-    setShowCreateForm(false);
-    void syncScheduleAfterConfigChange();
+    writePendingRef.current = true;
+    setWriteBusy(true);
+    ++listRequestRef.current;
+    try {
+      const updated = await tauriInvoke<AutomationItem[]>("automation_save", { item });
+      ++listRequestRef.current;
+      setAutomations(updated);
+      setName("");
+      setPrompt("");
+      setEditingItem(null);
+      setShowCreateForm(false);
+      void syncScheduleAfterConfigChange();
+    } catch (error) {
+      setNotice({ kind: "error", text: `保存任务失败：${String(error)}` });
+    } finally {
+      writePendingRef.current = false;
+      setWriteBusy(false);
+    }
   };
 
   const handleToggleStatus = async (item: AutomationItem, targetStatus?: string) => {
+    if (writePendingRef.current) return;
     const nextStatus =
       targetStatus || (item.status === "PAUSED" ? "ACTIVE" : "PAUSED");
     const next: AutomationItem = {
       ...item,
       status: nextStatus,
     };
-    const updated = await tauriInvoke<AutomationItem[]>("automation_save", {
-      item: next,
-    });
-    setAutomations(updated);
-    void syncScheduleAfterConfigChange();
+    writePendingRef.current = true;
+    setWriteBusy(true);
+    ++listRequestRef.current;
+    try {
+      const updated = await tauriInvoke<AutomationItem[]>("automation_save", { item: next });
+      ++listRequestRef.current;
+      setAutomations(updated);
+      void syncScheduleAfterConfigChange();
+    } catch (error) {
+      setNotice({ kind: "error", text: `更新任务状态失败：${String(error)}` });
+    } finally {
+      writePendingRef.current = false;
+      setWriteBusy(false);
+    }
   };
 
   const handleDelete = async (id: string) => {
+    if (writePendingRef.current) return;
     if (!confirm("确定要删除该计划任务 / 目标吗？")) return;
-    const updated = await tauriInvoke<AutomationItem[]>("automation_delete", {
-      id,
-    });
-    setAutomations(updated);
-    void syncScheduleAfterConfigChange();
+    writePendingRef.current = true;
+    setWriteBusy(true);
+    ++listRequestRef.current;
+    try {
+      const updated = await tauriInvoke<AutomationItem[]>("automation_delete", { id });
+      ++listRequestRef.current;
+      setAutomations(updated);
+      void syncScheduleAfterConfigChange();
+    } catch (error) {
+      setNotice({ kind: "error", text: `删除任务失败：${String(error)}` });
+    } finally {
+      writePendingRef.current = false;
+      setWriteBusy(false);
+    }
   };
 
   const handleRunNow = async (item: AutomationItem) => {
-    if (runBusyId) return;
+    if (runPendingRef.current) return;
 
-    // Scheduler missing / not supported: keep the previous local behavior.
     if (schedulerState === "unavailable") {
-      onRunAutomationNow(item);
       setNotice({
-        kind: "info",
-        text: "调度器不可用（后端未就绪），已回退为本地立即运行。",
+        kind: "error",
+        text: "调度器不可用，任务尚未运行。请恢复调度器后重试。",
       });
       return;
     }
@@ -498,6 +521,7 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
       return;
     }
 
+    runPendingRef.current = true;
     setRunBusyId(item.id);
     try {
       const result = await runAutomationNow(item.id);
@@ -505,21 +529,14 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
       if (threadId) {
         setRunThreads((prev) => ({ ...prev, [item.id]: threadId }));
       }
-      setRunHistory((prev) =>
-        appendRunRecord(prev, {
-          key: makeRecordKey("scheduler-run", item.id),
-          automationId: item.id,
-          name: item.name,
-          status: "running",
-          startedAt: Date.now(),
-          threadId: threadId || undefined,
-        })
-      );
+      setRunHistory((prev) => applyStartedEvent(prev, {
+        kind: "started", id: item.id, name: item.name, at: result.startedAt ?? Date.now(),
+      }));
       setNotice({
-        kind: "success",
+        kind: "info",
         text: `已触发「${item.name}」${
           threadId ? `（线程 ${shortId(threadId)}）` : ""
-        }，调度器正在执行…`,
+        }，请在运行记录或会话中查看结果。`,
       });
       void loadScheduler({ silent: true });
     } catch (error) {
@@ -527,15 +544,15 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
       if (isSchedulerUnavailableError(error)) {
         setSchedulerState("unavailable");
         setScheduler(null);
-        onRunAutomationNow(item);
         setNotice({
-          kind: "info",
-          text: "调度器不可用（后端未就绪），已回退为本地立即运行。",
+          kind: "error",
+          text: "调度器不可用，任务尚未运行。请恢复调度器后重试。",
         });
       } else {
         setNotice({ kind: "error", text: `立即运行失败：${message}` });
       }
     } finally {
+      runPendingRef.current = false;
       setRunBusyId(null);
     }
   };
@@ -653,6 +670,7 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
           <button
             type="button"
             className="primary-btn"
+            disabled={writeBusy}
             onClick={() => setShowCreateForm((v) => !v)}
           >
             <Plus size={14} /> {showCreateForm ? "收起表单" : "新建任务 / 目标"}
@@ -689,7 +707,7 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
                     : "none",
               }}
             />
-            <strong style={{ fontSize: 13.5 }}>
+            <strong style={{ fontSize: "calc(13.5px * var(--font-ui-scale, 1))" }}>
               调度器{schedulerStateText}
             </strong>
             <span className="tag-badge">当前时间 {formatClock(clock)}</span>
@@ -726,7 +744,7 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
               alignItems: "center",
               gap: 6,
               margin: 0,
-              fontSize: 12,
+              fontSize: "var(--text-xs)",
               color: "var(--accent-amber)",
             }}
           >
@@ -742,7 +760,7 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
               alignItems: "center",
               gap: 6,
               margin: 0,
-              fontSize: 12,
+              fontSize: "var(--text-xs)",
               color: "var(--accent-red)",
             }}
           >
@@ -752,7 +770,7 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
         )}
 
         {nextScheduledEntry && (
-          <p style={{ margin: 0, fontSize: 12, color: "var(--text-tertiary)" }}>
+          <p style={{ margin: 0, fontSize: "var(--text-xs)", color: "var(--text-tertiary)" }}>
             下次运行摘要：{nextScheduledEntry.name} 将于{" "}
             {formatDateTime(nextScheduledEntry.nextRunAt)}（
             {formatRelativeTime(nextScheduledEntry.nextRunAt as number, clock)}）触发，
@@ -761,7 +779,7 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
         )}
 
         {notice && (
-          <p style={{ margin: 0, fontSize: 12, color: noticeColor(notice.kind) }}>
+          <p style={{ margin: 0, fontSize: "var(--text-xs)", color: noticeColor(notice.kind) }}>
             {notice.text}
           </p>
         )}
@@ -828,7 +846,7 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
             placeholder="搜索任务或目标..."
             style={{
               padding: "4px 8px 4px 26px",
-              fontSize: 12,
+              fontSize: "var(--text-xs)",
               borderRadius: 6,
               background: "var(--bg-input)",
               color: "var(--text-primary)",
@@ -848,6 +866,8 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
               key={i}
               className="preset-template-card"
               onClick={() => {
+                if (writePendingRef.current) return;
+                setEditingItem(null);
                 setName(tpl.title);
                 setKind(tpl.kind);
                 setRrule(tpl.rrule);
@@ -867,7 +887,7 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
 
       {/* Create Automation / Goal Form */}
       {showCreateForm && (
-        <div className="card-section">
+        <fieldset className="card-section" disabled={writeBusy} style={{ minWidth: 0 }}>
           <h3>{editingItem ? "编辑计划任务或长期目标" : "创建计划任务或长期目标"}</h3>
           <div className="form-grid-row">
             <div className="form-field">
@@ -979,7 +999,7 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
               取消
             </button>
           </div>
-        </div>
+        </fieldset>
       )}
 
       {/* Automations & Goals List */}
@@ -1234,7 +1254,7 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
                 <div className="item-card-actions">
                   <span
                     style={{
-                      fontSize: 11.5,
+                      fontSize: "calc(11.5px * var(--font-ui-scale, 1))",
                       color: "var(--text-tertiary)",
                       whiteSpace: "nowrap",
                     }}

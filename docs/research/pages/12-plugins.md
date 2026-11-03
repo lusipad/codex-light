@@ -2,6 +2,10 @@
 
 日期：2026-10-27。状态：调研完成，准备先红回归与验证。
 
+2026-11-01 复核：旧“必须强制 local-only”结论不代表官方完整目录，已根据固定原包 shared 与当前 schema 修正为服务端默认目录，手动强刷传 forceRefetch。管理员默认安装卸载策略、操作锁、详情/目录生命周期与真实接口重读见 [12A 合同](../../antigravity/specs/12-plugin-actions.md)和[实施证据](../../antigravity/runs/20261101-codex-plugin-actions.md)。以下旧结论保留为历史，不作为当前通过依据；官方 HTTP 分类、原生/像素和真实安装仍未验。
+
+2026-11-03：12B 按[连接准备合同](../../antigravity/specs/12-next-closure.md)及[连接生命周期补证](../../antigravity/specs/12-connection-lifecycle.md)补严格安装结果、待连接项保留、服务端 HTTPS 外链、新生命周期 app/installed→分组 app/read、明确不支持才回退全分页 app/list，以及安装结果未知时的真实读回恢复。见[12B 验收记录](../../antigravity/acceptance/12B.md)。两版 CLI 的无应用本地插件安装/卸载往返已有真实隔离证据；OAuth 回调、官方 gate、原生/像素仍未验，不将旧“真实安装未验”扩展为本轮无应用探针也未执行。
+
 ## 1. 范围与证据
 
 本单元覆盖插件市场与已安装插件的完整生命周期：
