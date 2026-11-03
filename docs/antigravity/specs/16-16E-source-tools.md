@@ -1,6 +1,6 @@
 # 16.16E 私人审查源码工具与协议接线合同
 
-状态：前置调研完成，产品尚未实施。接续[固定比较](16-16D-pinned-comparison.md)；不以自有工具替代官方全部功能的最终验收。
+状态：前置调研完成，完整文件阅读与真实能力预检开发/自验中；私人审查仍未闭环。接续[固定比较](16-16D-pinned-comparison.md)；不以自有工具替代官方全部功能的最终验收。
 
 ## 当前证据
 
@@ -10,6 +10,10 @@
 - app/installed、app/read(includeTools)、mcpServerStatus/list(含threadId/detail)与collaborationMode/list实际接受。隔离账号为null，apps/MCP为空；协作模式为Plan/Default，未发现reviewer预置，不能硬编码专门reviewer能力。
 - InstalledApp.callable描述为committed runtime中的有效非synthetic、model-visible工具，enabled与callable不同。app/read(includeTools)仅返回display-only公开摘要，不能把摘要当授权。
 - 当前App.tsx与app_server.rs未有dynamicTools或item/tool/call业务处理。不能只把字段塞进thread/start就把私人审查标成可用。
+
+上述为调研时状态。16.16E现已新增单独的私有动态回调桥，但生产预检不注册自有源码工具、不会创建turn；只能读取真实运行时，明确报告尚缺账号/完整清单与分页/补丁覆盖/独立审查者流程证据。已有三个pinned读取操作不足以证明完整源码覆盖，不据此启动一个已知无法完整执行的模型任务。完整私人审查仍须实现并独立验收。
+
+当前预检不覆盖用户MCP或multi-agent/fanout配置；仅设置临时只读/never上下文，保留真实disabledPluginIds和线程目录。目录为空只说明本次读取未见，不把未读MCP分页或目录摘要当作全量能力结论。按钮标为“检查审查可用性”，不会标成“开始审查”或“审查成功”。
 
 ## 接线与安全边界
 

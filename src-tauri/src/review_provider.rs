@@ -225,7 +225,7 @@ pub async fn code_review_revision_file_read(app: AppHandle, window: WebviewWindo
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn pinned_comparison_read(app: AppHandle, window: WebviewWindow, state: State<'_, crate::AppState>, request: ShareAccessRequest, url: String, snapshot_id: Option<String>, commit_sha: Option<String>, file: Option<(Option<String>,Option<String>)>) -> Result<Value,String> {
+pub(crate) async fn pinned_comparison_read(app: AppHandle, window: WebviewWindow, state: State<'_, crate::AppState>, request: ShareAccessRequest, url: String, snapshot_id: Option<String>, commit_sha: Option<String>, file: Option<(Option<String>,Option<String>)>) -> Result<Value,String> {
     let pull_request=parse_pull_request_url(&url)?;
     let identity=request.expected_identity.clone();let profile=request.profile.clone();let request_id=request.request_id.clone();
     let provider=code_review_provider_read(app.clone(),window,state.clone(),request).await?;

@@ -1907,3 +1907,12 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 - 生产浏览器发现connection文案误清旧快照，独立复核发现bootstrap 401/403丢码误保旧内容；先留失败变体，再修分类与真实错误传递，并补Rust返回→生产TS/组件回放。限定增量见[待验记录](antigravity/acceptance/16-16D.md)；完整标准及最终原生包终态随后登记。
 - 下一源码工具能力已隔离取证：实验dynamicTools定义被真实只读临时thread接受，item/tool/call schema、apps/MCP/协作查询有据；空目录不证明真实账号工具可用。见[16.16E合同](antigravity/specs/16-16E-source-tools.md)。无真实模型任务、账号HTTP或新依赖。
 - 最终归档：完整标准非Fast退出0；运行中网络失效分类与bootstrap丢码两处修复保留前后快照，最终provider6项/共享服务99项/check及实际错误字符串→生产组件回归通过。最终EXE/MSI/NSIS退出0、301项输入构建前后稳定、8项产物归档；独立复核确认P2修复。阶段待用户验收，官方/真实账号/原生GUI/像素和其他审查工作面未完成。
+
+
+## 2026-11-04 — 16.16E 固定文件阅读与真实审查能力前置
+
+- 固定SHA两侧完整文件按需读取，保留patch，支持新增/删除/改名及Git quoted路径；完整内容与hunk/间隙不一致明确不可用。修复同快照diff重排按index串全文，旧变体失败1、生产组件修复后0。
+- 真实能力预检复核账号/固定比较、读取运行时默认模型与thread-scoped工具目录/disabledPluginIds；不覆盖MCP/多代理配置，缺完整清单与独立reviewer证据时只返回缺证，零模型turn。私有动态回调桥另用真实stdin验证，不让Git生成临时线程接收工具。
+- 6项private_review、12项Git生成隔离、前端真实客户端/组件和TypeScript通过；取消前置/终态重放、scope/快照/提交变化与晚到已回归。浏览器宽窄/文件失败重试/新增空侧/缺项呈现留证，不是官方或原生像素验收。
+- 完整非Fast标准及最终原生构建退出0，307项冻结输入无漂移，8项产物归档至 `dist-artifacts/16-16E-remote-review-20261104/`，见[阶段记录](antigravity/acceptance/16-16E.md)。完整私人review执行、官方DiffViewer视觉、真实账号与原生GUI/IME仍未完成，整体目标继续active。
+- 下一页面[16.18B云端配额合同](antigravity/specs/16-18B-cloud-usage.md)已基于固定新包14资源/21锚点复验；先接真实总配额，再Library清理，软删除不本地扣配额。旧设置chunk不在新包中，不能沿用旧布局当当前通过。

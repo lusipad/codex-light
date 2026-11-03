@@ -153,9 +153,9 @@ asar 作为前端静态实现的主要参照，与官方文档、官方运行时
 | 16.13 | git-settings | [16.13B真实生成待验](antigravity/acceptance/16-13B.md)：指令保存/消费、tracked上下文、隔离生成与草稿/取消保护已实施；原生/官方像素/真实模型及用户验收未完成 |
 | 16.14 | local-environments | [16.14C阶段待验](antigravity/acceptance/16-14C.md)：环境发现/结构编辑/选择、真实setup、专用动作终端和删除前cleanup已接，完整标准/全Rust390项及原生包通过；原生GUI/官方像素及用户验收待完成 |
 | 16.15 | worktrees | [16.15B阶段待验](antigravity/acceptance/16-15B.md)：本地偏好/eligible排序、持久automatic队列、最终受锁保护、上游刷新及分支起点已接，限定阶段自验与原生包完成；thread/attached恢复、远程、原生GUI/官方像素和用户验收未完成 |
-| 16.16 | code-review | [16.16B本地偏好](antigravity/acceptance/16-16B-local.md)与[16.16C账号绑定PR阅读](antigravity/acceptance/16-16C.md)限定增量已归档待验；[16.16D固定快照/提交比较](antigravity/acceptance/16-16D.md)限定增量自验及原生包已归档待验；完整文件呈现、私人审查、专用侧面tab、inbox/search、GitLab MR/cloud及官方原生/像素仍有缺口 |
+| 16.16 | code-review | [16.16B本地偏好](antigravity/acceptance/16-16B-local.md)与[16.16C账号绑定PR阅读](antigravity/acceptance/16-16C.md)限定增量已归档待验；[16.16D固定快照/提交比较](antigravity/acceptance/16-16D.md)限定增量自验及原生包已归档待验；[16.16E固定文件阅读/能力前置](antigravity/acceptance/16-16E.md)限定增量及完整标准自验通过，原生包已归档待用户验收；完整私人审查、官方DiffViewer、专用侧面tab、inbox/search、GitLab MR/cloud及官方原生/像素仍有缺口 |
 | 16.17 | import | 导入来源、预览、结果与失败恢复 |
-| 16.18 | storage | 云端Library/Space配额、文件/图像管理入口；认证缺失时阻塞 |
+| 16.18 | storage | 16.18A保留未连接状态；[16.18B修改前合同](antigravity/specs/16-18B-cloud-usage.md)已固定真实配额GET与cleanup语义，下一批先接配额；当前设置页布局/分类/升级能力和真实账号仍待验 |
 | 16.19 | archived-chats | 与 Archive 页数据和操作一致 |
 | 16.20 | experimental | Feature gate、限制、配置读写 |
 | 16.21 | voice | 设备/权限/转写/实时语音真实能力 |

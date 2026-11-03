@@ -249,6 +249,17 @@ export async function readPinnedReviewFile(url: string, identity: ServiceIdentit
   return parsePinnedReviewFile(responseBody(result, requestId, identity), target.url, snapshotId, commitSha);
 }
 
+export function readPrivateReviewPreflight(url: string, snapshotId: string, commitSha: string | null,
+  identity: ServiceIdentity, reviewId: string): Promise<unknown> {
+  const target = parseRemotePullRequestUrl(url);
+  return tauriInvoke("code_review_private_preflight", { request: { requestId: crypto.randomUUID(), expectedIdentity: identity,
+    profile: browserProfile() }, url: target.url, snapshotId, commitSha, modelId: null, reviewId });
+}
+
+export function cancelPrivateReviewRequest(reviewId: string): Promise<boolean> {
+  return tauriInvoke("code_review_private_cancel", { reviewId });
+}
+
 export async function updateReviewProviderPreference<K extends keyof ReviewProviderPreferences>(
   field: K, value: ReviewProviderPreferences[K], identity: ServiceIdentity, signal: AbortSignal, expectedValue: ReviewProviderPreferences[K],
 ): Promise<ReviewProviderAccess> {

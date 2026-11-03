@@ -16,6 +16,7 @@ vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/chatgptService.ts", "
    if (command === "chatgpt_service_identity" || command === "cloud_service_identity") return identity;
    if (command === "cloud_service_access") return { identity, gateEvidence: "personal-plan-branch" };
    if (command === "chatgpt_service_cancel") return true;
+   if (command === "code_review_private_cancel") return true;
    if (pending) return new Promise(resolve => { pending.resolve = resolve; });
    return { requestId: params.request.requestId, identity: mismatch ? { ...identity, userId: "other" } : identity, body: responseBody };
  } }; } });
@@ -143,3 +144,10 @@ control.abort(); assert.equal(calls.at(-1)[1].requestId, pinnedRequestId);
 pending.resolve({ requestId: pinnedRequestId, identity, body: responseBody });
 await assert.rejects(readingPinned, /取消/); pending = null;
 console.log("PASS pinned PR clients: opaque snapshot binding, no renderer-supplied account/revisions, file paths, identity and cancellation");
+await exports.readPrivateReviewPreflight(prUrl, "host-snapshot", null, identity, "private-check");
+assert.equal(calls.at(-1)[0], "code_review_private_preflight");
+assert.equal(calls.at(-1)[1].reviewId, "private-check"); assert.equal(calls.at(-1)[1].snapshotId, "host-snapshot");
+assert.equal(calls.at(-1)[1].modelId, null, "host chooses a real runtime default, not a static model");
+assert.equal("account" in calls.at(-1)[1], false); assert.equal("comparison" in calls.at(-1)[1], false);
+await exports.cancelPrivateReviewRequest("private-check");
+assert.equal(calls.at(-1)[0], "code_review_private_cancel"); assert.equal(calls.at(-1)[1].reviewId, "private-check");

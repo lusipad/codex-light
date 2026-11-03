@@ -129,6 +129,8 @@ function pinnedSurface() {
   const source = process.argv.includes("--network-invalidation-baseline")
     ? fs.readFileSync("src/components/PinnedReviewChanges.tsx", "utf8").replace(".test(code)", ".test(String(cause))") : undefined;
   const view = component("src/components/PinnedReviewChanges.tsx", "PinnedReviewChanges", key => {
+    if (key === "./PrivateReviewPanel") return { PrivateReviewPanel: "PrivateReviewPanel" };
+    if (key === "./RemoteRevisionFiles") return { RemoteRevisionFiles: props => props.value.diff.unifiedDiff };
     assert.equal(key, "../chatgptService"); return { serviceIdentity: async () => identity,
       readPinnedReviewComparison: (...args) => { reads.push(args); return control.read(...args); } };
   }, { url: target.url, scope: "account-a" }, source);

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -48,6 +48,10 @@ struct InnerState {
     private_threads: HashMap<String, Option<mpsc::UnboundedSender<Value>>>,
     private_starts: HashMap<u64, Option<mpsc::UnboundedSender<Value>>>,
     held_private_events: Vec<Value>,
+    private_tool_starts: HashSet<u64>,
+    private_tool_threads: HashSet<String>,
+    private_tool_requests: HashMap<String, Value>,
+    private_tool_seen: HashSet<String>,
     private_turn_starts: HashMap<u64,String>,
     private_turns: HashMap<String,String>,
 }
@@ -57,8 +61,10 @@ enum PrivateRoute {Global,Held,Owned {thread_id:String,delivered:bool}}
 impl InnerState {
     fn claim_private_start(&mut self,id:u64,message:&Value)->Option<Option<String>> {
         let sender=self.private_starts.remove(&id)?;
+        let tools=self.private_tool_starts.remove(&id);
         if let Some(thread)=message.pointer("/result/thread/id").and_then(Value::as_str) {
             self.private_threads.insert(thread.into(),sender);
+            if tools {self.private_tool_threads.insert(thread.into());}
             Some(Some(thread.into()))
         } else {
             // A failed/malformed start must not release already observed ephemeral metadata to the UI.
@@ -77,6 +83,11 @@ impl InnerState {
             self.private_threads.insert(thread_id.clone(),None);
         }
         if let Some(sender)=self.private_threads.get(&thread_id) {
+            if self.private_tool_threads.contains(&thread_id) && message["method"]=="item/tool/call" && message.get("id").is_some() {
+                let key=server_request_key(&message["id"]);
+                if !self.private_tool_seen.insert(key.clone()) {return PrivateRoute::Owned {thread_id,delivered:true};}
+                self.private_tool_requests.insert(key,message.clone());
+            }
             let delivered=sender.as_ref().is_some_and(|sender|sender.send(message.clone()).is_ok());
             if message["method"]=="turn/started" {
                 if let Some(turn_id)=message.pointer("/params/turn/id").and_then(Value::as_str) {self.private_turns.insert(thread_id.clone(),turn_id.to_owned());}
@@ -110,6 +121,10 @@ impl InnerState {
         self.status.connecting = false;
         self.stdin = None;
         self.pending_server_requests.clear();
+        self.private_tool_starts.clear();
+        self.private_tool_threads.clear();
+        self.private_tool_requests.clear();
+        self.private_tool_seen.clear();
         self.private_threads.clear();
         self.private_starts.clear();
         self.held_private_events.clear();
@@ -151,6 +166,10 @@ impl AppServerManager {
                 private_threads: HashMap::new(),
                 private_starts: HashMap::new(),
                 held_private_events: Vec::new(),
+                private_tool_starts: HashSet::new(),
+                private_tool_threads: HashSet::new(),
+                private_tool_requests: HashMap::new(),
+                private_tool_seen: HashSet::new(),
                 private_turn_starts: HashMap::new(),
                 private_turns: HashMap::new(),
             })),
@@ -258,6 +277,10 @@ impl AppServerManager {
                 let _ = tx.send(Err("app-server restarting".to_string()));
             }
             guard.pending_server_requests.clear();
+            guard.private_tool_starts.clear();
+            guard.private_tool_threads.clear();
+            guard.private_tool_requests.clear();
+            guard.private_tool_seen.clear();
             guard.private_threads.clear();
             guard.private_starts.clear();
             guard.held_private_events.clear();
@@ -517,6 +540,11 @@ impl AppServerManager {
     }
 
     pub async fn isolated_start(&self, app:&AppHandle, generation: u64, params: Value) -> Result<(Value, mpsc::UnboundedReceiver<Value>), String> {
+        if params.get("dynamicTools").is_some_and(|tools|!tools.is_null()) {return Err("Git generation cannot register tools".into());}
+        self.isolated_review_start(app,generation,params).await
+    }
+
+    pub(crate) async fn isolated_review_start(&self, app:&AppHandle,generation:u64,params:Value)->Result<(Value,mpsc::UnboundedReceiver<Value>),String> {
         let _creation = self.private_creation.lock().await;
         let (sender, receiver) = mpsc::unbounded_channel();
         let result = self.isolated_request(generation, "thread/start", params, Some(sender), Some(app.clone())).await?;
@@ -532,7 +560,10 @@ impl AppServerManager {
             let mut guard = self.inner.lock().await;
             if guard.generation != generation || guard.stdin.is_none() { return Err("Temporary generation belongs to a disconnected app-server".into()); }
             guard.pending_requests.insert(id,tx);
-            if let Some(sender) = sender { guard.private_starts.insert(id,Some(sender)); }
+            if let Some(sender) = sender {
+                if params.get("dynamicTools").and_then(Value::as_array).is_some_and(|tools| !tools.is_empty()) {guard.private_tool_starts.insert(id);}
+                guard.private_starts.insert(id,Some(sender));
+            }
             if method=="turn/start" {
                 if let Some(thread_id)=params.get("threadId").and_then(Value::as_str) {
                     if guard.private_threads.contains_key(thread_id) {guard.private_turn_starts.insert(id,thread_id.to_owned());}
@@ -560,10 +591,26 @@ impl AppServerManager {
         }
     }
 
+    /// Only a request captured on an explicitly dynamic private thread can be answered here.
+    pub async fn isolated_tool_respond(&self,generation:u64,thread:&str,turn:&str,id:&Value,result:Value)->Result<(),String> {
+        let mut guard=self.inner.lock().await;
+        if guard.generation!=generation || !guard.private_tool_threads.contains(thread) || guard.private_threads.get(thread).is_none_or(|sender|sender.as_ref().is_none_or(|sender|sender.is_closed())) {return Err("Private review is no longer active".into());}
+        let key=server_request_key(id);
+        let request=guard.private_tool_requests.get(&key).ok_or("Unknown or already answered private tool request")?;
+        if request.pointer("/params/threadId").and_then(Value::as_str)!=Some(thread) || request.pointer("/params/turnId").and_then(Value::as_str)!=Some(turn) || guard.private_turns.get(thread).is_some_and(|known|known!=turn) {return Err("Private tool request scope does not match".into());}
+        let mut line=serde_json::to_vec(&json!({"id":id,"result":result})).map_err(|error|error.to_string())?;line.push(b'\n');
+        guard.private_tool_requests.remove(&key);
+        let writer=guard.stdin.as_mut().ok_or("Private review connection closed")?;
+        writer.write_all(&line).await.map_err(|error|error.to_string())?;
+        writer.flush().await.map_err(|error|error.to_string())
+    }
+
     pub async fn isolate_finish(&self, generation:u64, thread_id:&str, interrupt:bool) {
         let mut guard=self.inner.lock().await;
         if guard.generation==generation {
             if let Some(sender)=guard.private_threads.get_mut(thread_id) {*sender=None;}
+            guard.private_tool_threads.remove(thread_id);
+            guard.private_tool_requests.retain(|_,request|request.pointer("/params/threadId").and_then(Value::as_str)!=Some(thread_id));
             if interrupt {
                 if let Some(turn_id)=guard.private_turns.get(thread_id).cloned() {
                     private_cleanup_write(&mut guard,"turn/interrupt",json!({"threadId":thread_id,"turnId":turn_id})).await;
@@ -743,7 +790,8 @@ async fn handle_incoming_message(
         match guard.route_private(&msg) {
             PrivateRoute::Held=>continue,
             PrivateRoute::Owned {thread_id,delivered}=>{
-                if has_id && !has_result && !has_error {
+                let dynamic = delivered && guard.private_tool_threads.contains(&thread_id) && msg["method"]=="item/tool/call";
+                if !dynamic && has_id && !has_result && !has_error {
                     // No private tool/approval request enters global pending state or the renderer.
                     let response=json!({"id":msg["id"],"error":{"code":-32601,"message":"Tools and approvals are disabled for temporary Git message generation"}});
                     if let (Some(writer),Ok(mut line))=(guard.stdin.as_mut(),serde_json::to_vec(&response)) {
@@ -929,6 +977,31 @@ fn enrich_turn_timing(turn: &mut Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn private_review_tool_roundtrip_uses_actual_stdin_and_request_id() {
+        // A controlled child acts as an app-server: emits one request and echoes the actual response.
+        let script = r#"$request='{"id":"wire-7","method":"item/tool/call","params":{"threadId":"review","turnId":"turn","callId":"call-99","tool":"native_pinned_review_diff","arguments":{}}}';[Console]::Out.WriteLine($request);[Console]::Out.Flush();$line=[Console]::ReadLine();[Console]::Out.WriteLine($line);[Console]::Out.Flush()"#;
+        let mut command=Command::new("pwsh");command.args(["-NoProfile","-NonInteractive","-Command",script]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+        #[cfg(target_os="windows")] command.creation_flags(CREATE_NO_WINDOW);
+        let mut child=command.spawn().unwrap();let stdin=child.stdin.take().unwrap();let stdout=child.stdout.take().unwrap();let mut lines=BufReader::new(stdout).lines();
+        let request:Value=serde_json::from_str(&tokio::time::timeout(Duration::from_secs(10),lines.next_line()).await.unwrap().unwrap().unwrap()).unwrap();
+        let manager=AppServerManager::new();let (sender,mut receiver)=mpsc::unbounded_channel();
+        {let mut state=manager.inner.lock().await;state.generation=9;state.stdin=Some(stdin);state.private_threads.insert("review".into(),Some(sender));state.private_tool_threads.insert("review".into());state.private_turns.insert("review".into(),"turn".into());
+            assert!(matches!(state.route_private(&request),PrivateRoute::Owned{delivered:true,..}));
+            assert!(state.pending_server_requests.is_empty());
+            assert!(matches!(state.route_private(&request),PrivateRoute::Owned{delivered:true,..}));}
+        assert_eq!(receiver.recv().await.unwrap(),request);assert!(receiver.try_recv().is_err(),"duplicate wire id is not executed twice");
+        let result=json!({"success":false,"contentItems":[{"type":"inputText","text":"fixture unavailable"}]});
+        for (generation,thread,turn) in [(8,"review","turn"),(9,"other","turn"),(9,"review","stale")] {assert!(manager.isolated_tool_respond(generation,thread,turn,&request["id"],result.clone()).await.is_err());}
+        manager.isolated_tool_respond(9,"review","turn",&request["id"],result.clone()).await.unwrap();
+        let response:Value=serde_json::from_str(&tokio::time::timeout(Duration::from_secs(10),lines.next_line()).await.unwrap().unwrap().unwrap()).unwrap();
+        assert_eq!(response,json!({"id":"wire-7","result":result}));assert_ne!(response["id"],request["params"]["callId"]);
+        assert!(manager.isolated_tool_respond(9,"review","turn",&request["id"],json!({})).await.is_err());
+        assert!(child.wait().await.unwrap().success());
+        manager.isolate_finish(9,"review",true).await;
+        assert!(manager.isolated_tool_respond(9,"review","turn",&request["id"],json!({})).await.is_err());
+    }
 
     #[tokio::test]
     async fn git_generation_isolation_claims_before_releasing_early_events_and_preserves_user_events() {

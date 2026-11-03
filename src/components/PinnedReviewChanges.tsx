@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { readPinnedReviewComparison, serviceIdentity } from "../chatgptService";
 import type { PinnedReviewComparison } from "../remoteReview";
+import { PrivateReviewPanel } from "./PrivateReviewPanel";
+import { RemoteRevisionFiles } from "./RemoteRevisionFiles";
 
 export function PinnedReviewChanges({ url, scope }: { url: string; scope: string }) {
   const [loaded, setLoaded] = useState<{ url: string; scope: string; commitSha: string | null; value: PinnedReviewComparison } | null>(null);
@@ -41,7 +43,7 @@ export function PinnedReviewChanges({ url, scope }: { url: string; scope: string
   }, [url, scope]);
 
   const value = selected?.value;
-  return <section className="card-section" aria-label="Pull Request 固定提交差异">
+  return <><section className="card-section" aria-label="Pull Request 固定提交差异">
     <div className="remote-review-comparison-header">
       <h3>Changes</h3>
       {value && <label className="form-field"><span className="sr-only">比较来源</span>
@@ -58,8 +60,13 @@ export function PinnedReviewChanges({ url, scope }: { url: string; scope: string
     {error && <p role="alert" className="error-banner">{error}</p>}
     {value && <>
       <p className="remote-review-revision">{value.comparison.baseRevision} → {value.comparison.headRevision}</p>
-      {value.diff.unifiedDiff ? <pre className="remote-review-diff" tabIndex={0}>{value.diff.unifiedDiff}</pre>
+      {value.diff.unifiedDiff ? <>
+        <pre className="remote-review-diff" tabIndex={0}>{value.diff.unifiedDiff}</pre>
+        <RemoteRevisionFiles url={url} scope={scope} value={value} commitSha={selected.commitSha} disabled={busy} />
+      </>
         : <p role="status">此提交没有差异。</p>}
     </>}
-  </section>;
+  </section>
+    {value && <PrivateReviewPanel url={url} scope={scope} snapshotId={value.snapshotId} commitSha={selected.commitSha} disabled={busy} />}
+  </>;
 }

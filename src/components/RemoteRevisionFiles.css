@@ -1,0 +1,10 @@
+.remote-revision-files { min-width: 0; }
+.remote-revision-file { border: 1px solid var(--border-default); border-radius: 8px; margin-top: 8px; overflow: hidden; }
+.remote-revision-file-toggle { width: 100%; padding: 10px 12px; text-align: left; color: var(--text-primary); background: var(--bg-secondary); border: 0; overflow-wrap: anywhere; cursor: pointer; }
+.remote-revision-file-toggle:disabled { cursor: default; opacity: .6; }
+.remote-revision-file-content, .remote-revision-file > p { padding: 8px 12px; }
+.remote-revision-file-sides { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.remote-revision-file-sides section { min-width: 0; }
+.remote-revision-file-sides h4 { font-size: 12px; font-weight: 500; color: var(--text-secondary); overflow-wrap: anywhere; }
+.remote-revision-file-sides pre { overflow: auto; max-height: 520px; font-family: var(--font-mono); font-size: 12px; line-height: 1.5; tab-size: 4; }
+@media (max-width: 720px) { .remote-revision-file-sides { grid-template-columns: minmax(0, 1fr); } }

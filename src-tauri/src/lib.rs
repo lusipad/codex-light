@@ -38,6 +38,7 @@ mod archive_delete;
 mod appearance_preferences;
 mod plugin_operations;
 mod git_message_generation;
+mod remote_review;
 
 use app_server::{AppServerManager, AppServerStatus, PendingServerRequest};
 use config_skills::{
@@ -1983,6 +1984,7 @@ pub fn run() {
         .manage(memory_preferences::MemoryPreferencesState::default())
         .manage(plugin_operations::PluginOperationState::default())
         .manage(git_message_generation::GenerationState::default())
+        .manage(remote_review::RemoteReviewState::default())
         .manage(local_environment_setup::SetupState::default())
         .manage(worktree_cleanup_runtime::WorktreeCleanupRuntime::default())
         .on_window_event(|window, event| {
@@ -1995,6 +1997,7 @@ pub fn run() {
                     eprintln!("Cannot close window action terminals: {error}");
                 }
                 window.app_handle().state::<git_message_generation::GenerationState>().cancel_owner(window.label());
+                window.app_handle().state::<remote_review::RemoteReviewState>().cancel_owner(window.label());
                 window.app_handle().state::<local_environment_setup::SetupState>().cancel_owner(window.label());
                 if let Err(error) = menu::remove_shortcut_window(window.app_handle(), window.label()) {
                     eprintln!("Cannot restore native shortcuts after window close: {error}");
@@ -2084,6 +2087,8 @@ pub fn run() {
             fs_write_file,
             fs_search_files,
             code_review_preferences_get,
+            remote_review::code_review_private_preflight,
+            remote_review::code_review_private_cancel,
             review_provider::code_review_provider_read,
             review_provider::code_review_pull_request_read,
             review_provider::code_review_comparison_read,
