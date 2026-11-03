@@ -5,6 +5,7 @@ import { useCodeReviewPreferences } from "./reviewPreferences";
 import { buildQuickReviewPrompt, parseReviewFindings, type ModelReviewComment } from "./reviewFindings";
 import { createReviewResults, type ReviewRun } from "./reviewResults";
 import { useGitPreferences } from "./gitPreferences";
+import { useWorkspaceOpenTargets } from "./workspaceOpenTargets";
 import { loadModelCatalog } from "./modelCatalog";
 import { createNotificationDispatcher, notificationRequestCategory, notificationSoundTheme, shouldNotifyTurn, useNotificationPreferences } from "./notificationPreferences";
 import { useAppearancePreferences } from "./appearancePreferences";
@@ -4000,6 +4001,12 @@ export const App: React.FC = () => {
     showAppToast,
   ]);
 
+  const showWorkspaceOpenError = useCallback((message: string) => showAppToast(message, "error"), [showAppToast]);
+  const workspaceOpenTargets = useWorkspaceOpenTargets({
+    threadId: activeThreadId,
+    cwd: activeWorkspace?.path,
+    onError: showWorkspaceOpenError,
+  });
   const threadMenuItems: ThreadActionItem[] = useMemo(() => {
     const pinned = !!(activeThreadId && pinnedThreadIds.includes(activeThreadId));
     const readState = activeThreadObj?.readState;
@@ -4090,15 +4097,12 @@ export const App: React.FC = () => {
         icon: <ExternalWindowIcon size={14} />,
         separatorBefore: true,
       },
-      {
+      ...(workspaceOpenTargets.items ? [{
         id: "open_with_menu",
         label: "打开方式",
         icon: <OpenWithIcon size={14} />,
-        children: [
-          { id: "open_vscode", label: "VS Code" },
-          { id: "open_terminal", label: "系统终端" },
-        ],
-      },
+        children: workspaceOpenTargets.items,
+      }] : []),
       {
         id: "archive_thread",
         label: "归档",
@@ -4114,6 +4118,7 @@ export const App: React.FC = () => {
     activeThreadObj?.readState,
     sidebarProjectMembership.localProjects,
     projectMoveBusy,
+    workspaceOpenTargets.items,
   ]);
 
   const handleThreadMenuAction = useCallback(
@@ -4187,15 +4192,8 @@ export const App: React.FC = () => {
         } else if (id === "open_new_window") {
           if (!activeThreadId) return;
           await tauriInvoke("open_thread_window", { threadId: activeThreadId });
-        } else if (id === "open_vscode") {
-          try {
-            await tauriInvoke("open_in_vscode", { path: activeWorkspace?.path });
-            showAppToast("正在 VS Code 中打开工作区...", "info");
-          } catch (e) {
-            showAppToast(`VS Code 打开失败: ${String(e)}`, "error");
-          }
-        } else if (id === "open_terminal") {
-          setShowTerminal(true);
+        } else if (id.startsWith("open_target:")) {
+          await workspaceOpenTargets.openTarget(id.slice("open_target:".length));
         } else if (id === "archive_thread") {
           if (activeThreadObj) await handleArchiveThread(activeThreadObj, {} as any);
         }
@@ -4217,6 +4215,7 @@ export const App: React.FC = () => {
       handleSetThreadReadState,
       sidebarProjectMembership.localProjects,
       moveThreadToProject,
+      workspaceOpenTargets.openTarget,
     ]
   );
 
@@ -4703,6 +4702,7 @@ export const App: React.FC = () => {
               <ThreadActionsMenu
                 items={threadMenuItems}
                 onSelect={handleThreadMenuAction}
+                onOpenChange={workspaceOpenTargets.onMenuOpenChange}
                 align="right"
                 buttonClassName="window-chrome-icon-btn thread-actions-more-btn"
                 label={<EllipsisIcon size={16} />}

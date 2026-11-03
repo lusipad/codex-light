@@ -112,6 +112,7 @@ try {
   Invoke-Step "Profile real identity and unavailable write regression" { node scripts/verify-profile-settings.mjs }
   Invoke-Step "MCP runtime status discovery regression" { node scripts/verify-mcp-status.mjs }
   Invoke-Step "General open target and shell regression" { node scripts/verify-general-open.mjs }
+  Invoke-Step "Workspace explicit open target and lifecycle regression" { node scripts/verify-workspace-open-targets.mjs }
   Invoke-Step "Native open target and isolated PTY regression" { cargo test --manifest-path src-tauri/Cargo.toml desktop_open }
   Invoke-Step "General Enter preference and composer regression" { node scripts/verify-general-enter.mjs }
   Invoke-Step "Composer multiline input regression" { node scripts/verify-composer-multiline.mjs }

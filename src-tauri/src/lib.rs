@@ -4,6 +4,7 @@ pub mod automations;
 pub mod config_skills;
 pub mod recommended_skills;
 pub mod desktop_open;
+mod desktop_open_context;
 pub mod git;
 pub mod menu;
 pub mod keybindings;
@@ -747,13 +748,35 @@ fn desktop_open_preference_set(state: State<'_, AppState>, kind: String, value: 
 }
 
 #[tauri::command]
+async fn desktop_open_targets(
+    app: AppHandle, state: State<'_, AppState>, thread_id: Option<String>, cwd: Option<String>,
+) -> Result<desktop_open::WorkspaceOpenTargets, String> {
+    let cwd = desktop_open_context::resolve(&app, &state, thread_id.as_deref(), cwd.as_deref()).await?;
+    let desktop_state = state.desktop_state.clone();
+    tauri::async_runtime::spawn_blocking(move || desktop_open::workspace_targets(&desktop_state, cwd))
+        .await.map_err(|error| format!("读取打开方式失败：{error}"))?
+}
+
+#[tauri::command]
+async fn desktop_open_workspace(
+    app: AppHandle, state: State<'_, AppState>, thread_id: Option<String>, cwd: Option<String>, target: String,
+) -> Result<(), String> {
+    let cwd = desktop_open_context::resolve(&app, &state, thread_id.as_deref(), cwd.as_deref()).await?;
+    let desktop_state = state.desktop_state.clone();
+    tauri::async_runtime::spawn_blocking(move || desktop_open::open_workspace(&desktop_state, &cwd, &target))
+        .await.map_err(|error| format!("打开工作区失败：{error}"))?
+}
+
+#[tauri::command]
 fn review_link_open(url: String) -> Result<(), String> {
     desktop_open::open_review_link(&url)
 }
 
 #[tauri::command]
-fn open_path_external(state: State<'_, AppState>, path: String) -> Result<(), String> {
-    desktop_open::open_external(&state.desktop_state, &path)
+async fn open_path_external(state: State<'_, AppState>, path: String) -> Result<(), String> {
+    let desktop_state = state.desktop_state.clone();
+    tauri::async_runtime::spawn_blocking(move || desktop_open::open_external(&desktop_state, &path))
+        .await.map_err(|error| format!("打开文件失败：{error}"))?
 }
 
 fn help_link_command(target: &str) -> Result<std::process::Command, String> {
@@ -1614,6 +1637,8 @@ pub fn run() {
             open_path_external,
             desktop_open_preferences,
             desktop_open_preference_set,
+            desktop_open_targets,
+            desktop_open_workspace,
             open_help_link,
             detect_project_scripts,
             git_status,

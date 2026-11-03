@@ -23,6 +23,7 @@ export interface ThreadActionsMenuProps {
   align?: "left" | "right";
   buttonClassName?: string;
   triggerAriaLabel?: string;
+  onOpenChange?: (open: boolean) => void;
 }
 
 interface MenuPosition {
@@ -42,6 +43,7 @@ export const ThreadActionsMenu: React.FC<ThreadActionsMenuProps> = ({
   align = "right",
   buttonClassName,
   triggerAriaLabel = "聊天操作",
+  onOpenChange,
 }) => {
   const [open, setOpen] = useState<boolean>(false);
   const [activeSubmenuId, setActiveSubmenuId] = useState<string | null>(null);
@@ -52,11 +54,22 @@ export const ThreadActionsMenu: React.FC<ThreadActionsMenuProps> = ({
   const submenuRef = useRef<HTMLDivElement>(null);
   const submenuTriggerRef = useRef<HTMLButtonElement | null>(null);
   const focusSubmenuRef = useRef(false);
+  const lifecycleRef = useRef({ open, onOpenChange });
+  lifecycleRef.current = { open, onOpenChange };
+
+  useEffect(() => () => {
+    if (lifecycleRef.current.open) {
+      lifecycleRef.current.open = false;
+      lifecycleRef.current.onOpenChange?.(false);
+    }
+  }, []);
 
   const safeItems = Array.isArray(items) ? items : [];
 
   const closeMenu = useCallback((refocusTrigger: boolean) => {
     setOpen(false);
+    lifecycleRef.current.open = false;
+    onOpenChange?.(false);
     setActiveSubmenuId(null);
     setPosition(null);
     setSubmenuPosition(null);
@@ -64,7 +77,7 @@ export const ThreadActionsMenu: React.FC<ThreadActionsMenuProps> = ({
     if (refocusTrigger) {
       triggerRef.current?.focus();
     }
-  }, []);
+  }, [onOpenChange]);
 
   const updateSubmenuPosition = useCallback(() => {
     const trigger = submenuTriggerRef.current;
@@ -85,10 +98,13 @@ export const ThreadActionsMenu: React.FC<ThreadActionsMenuProps> = ({
     if (!open || !activeSubmenuId) return;
     updateSubmenuPosition();
     if (focusSubmenuRef.current) {
-      focusSubmenuRef.current = false;
-      submenuRef.current?.querySelector<HTMLButtonElement>('[role^="menuitem"]:not(:disabled)')?.focus();
+      const firstItem = submenuRef.current?.querySelector<HTMLButtonElement>('[role^="menuitem"]:not(:disabled)');
+      if (firstItem) {
+        focusSubmenuRef.current = false;
+        firstItem.focus();
+      }
     }
-  }, [open, activeSubmenuId, position, updateSubmenuPosition]);
+  }, [open, activeSubmenuId, position, items, updateSubmenuPosition]);
 
   const updatePosition = useCallback(() => {
     const trigger = triggerRef.current;
@@ -115,6 +131,10 @@ export const ThreadActionsMenu: React.FC<ThreadActionsMenuProps> = ({
   useLayoutEffect(() => {
     if (!open) return;
     updatePosition();
+  }, [open, items, updatePosition]);
+
+  useLayoutEffect(() => {
+    if (!open) return;
 
     const handleReflow = () => { updatePosition(); updateSubmenuPosition(); };
     window.addEventListener("resize", handleReflow);
@@ -169,6 +189,7 @@ export const ThreadActionsMenu: React.FC<ThreadActionsMenuProps> = ({
       event.stopPropagation();
       setActiveSubmenuId(null);
       setSubmenuPosition(null);
+      focusSubmenuRef.current = false;
       submenuTriggerRef.current?.focus();
       return;
     }
@@ -181,8 +202,11 @@ export const ThreadActionsMenu: React.FC<ThreadActionsMenuProps> = ({
         submenuTriggerRef.current = button;
         focusSubmenuRef.current = true;
         if (activeSubmenuId === item.id) {
-          focusSubmenuRef.current = false;
-          submenuRef.current?.querySelector<HTMLButtonElement>('[role^="menuitem"]:not(:disabled)')?.focus();
+          const firstItem = submenuRef.current?.querySelector<HTMLButtonElement>('[role^="menuitem"]:not(:disabled)');
+          if (firstItem) {
+            focusSubmenuRef.current = false;
+            firstItem.focus();
+          }
         } else {
           setActiveSubmenuId(item.id);
         }
@@ -233,8 +257,11 @@ export const ThreadActionsMenu: React.FC<ThreadActionsMenuProps> = ({
       submenuTriggerRef.current = button;
       focusSubmenuRef.current = true;
       if (activeSubmenuId === item.id) {
-        focusSubmenuRef.current = false;
-        submenuRef.current?.querySelector<HTMLButtonElement>('[role^="menuitem"]:not(:disabled)')?.focus();
+        const firstItem = submenuRef.current?.querySelector<HTMLButtonElement>('[role^="menuitem"]:not(:disabled)');
+        if (firstItem) {
+          focusSubmenuRef.current = false;
+          firstItem.focus();
+        }
       } else {
         setActiveSubmenuId(item.id);
       }
@@ -314,6 +341,8 @@ export const ThreadActionsMenu: React.FC<ThreadActionsMenuProps> = ({
             closeMenu(false);
           } else {
             setOpen(true);
+            lifecycleRef.current.open = true;
+            onOpenChange?.(true);
           }
         }}
       >

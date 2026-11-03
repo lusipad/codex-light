@@ -9,8 +9,8 @@ const code = ts.transpileModule(fs.readFileSync("src/components/ThreadActionsMen
 }).outputText;
 const all = node => node && typeof node === "object" ? [node, ...node.children.flatMap(all)] : [];
 const text = node => node && typeof node === "object" ? node.children.map(text).join("") : typeof node === "string" ? node : "";
-function mount({ width = 800, height = 600, edge = false, align = "right", followRoot = false } = {}) {
-  const hooks = [], effects = [], cleanups = new Map(), dom = new Map(), listeners = new Map(), frames = new Map(), calls = [];
+function mount({ width = 800, height = 600, edge = false, align = "right", followRoot = false, measurements = {} } = {}) {
+  const hooks = [], effects = [], cleanups = new Map(), dom = new Map(), listeners = new Map(), frames = new Map(), calls = [], openChanges = [];
   let cursor = 0, frameId = 0, tree;
   const browser = {
     innerWidth: width, innerHeight: height,
@@ -45,7 +45,7 @@ function mount({ width = 800, height = 600, edge = false, align = "right", follo
       { id: "sort", label: "Sort", children: [{ id: "recent", label: "Recent", type: "radio", checked: true }, { id: "manual", label: "Manual", type: "radio", checked: false }] },
       { id: "heading", label: "Show", type: "label", separatorBefore: true },
       { id: "projects", label: "Projects", type: "checkbox", checked: true },
-    ], onSelect: id => calls.push(id),
+    ], onSelect: id => calls.push(id), onOpenChange: open => openChanges.push(open),
   };
   const element = node => {
     const id = node.props["data-menu-item-id"] || (node.type === "button" && node.props["aria-label"] === "Test menu" ? "trigger" : node.type === "button" && node.props.title ? node.props.title.toLowerCase() : node.props.className?.startsWith("thread-actions-submenu") ? "submenu" : node.props.role === "menu" ? "main" : null);
@@ -54,6 +54,11 @@ function mount({ width = 800, height = 600, edge = false, align = "right", follo
     if (!entry) { entry = { focus: () => { document.activeElement = entry; }, contains: target => entry === target, getAttribute: key => entry.node.props[key] ?? null }; dom.set(id, entry); }
     entry.node = node;
     entry.getBoundingClientRect = () => {
+      if (id === "main" || id === "submenu") {
+        const width = measurements[id]?.width ?? (id === "submenu" ? 170 : 230);
+        const height = measurements[id]?.height ?? 100;
+        return { top: 0, bottom: height, left: 0, right: width, width, height };
+      }
       if (id === "sort" && followRoot) {
         const style = dom.get("main")?.node.props.style || {};
         const left = style.left ?? browser.innerWidth - (style.right ?? 0) - 230;
@@ -77,7 +82,7 @@ function mount({ width = 800, height = 600, edge = false, align = "right", follo
   const flush = () => { for (const [id, fn] of [...frames]) { frames.delete(id); fn(); } };
   const key = (name, submenu = false) => { const node = all(render()).find(n => n.props.role === "menu" && n.props.className?.startsWith(submenu ? "thread-actions-submenu" : "thread-actions-menu")); node.props.onKeyDown({ key: name, target: document.activeElement, currentTarget: element(node), preventDefault() {}, stopPropagation() {} }); render(); flush(); };
   render();
-  return { render, find, props, calls, dom, document, browser, flush, key, listeners, unmount: () => { for (const fn of cleanups.values()) fn?.(); } };
+  return { render, find, props, calls, openChanges, dom, document, browser, flush, key, listeners, unmount: () => { for (const fn of cleanups.values()) fn?.(); } };
 }
 
 const menu = mount();
@@ -113,6 +118,13 @@ menu.render(); assert.equal(menu.find("Plain"), undefined); assert.equal(menu.do
 menu.find("Test menu").props.onClick(); menu.render(); menu.flush();
 for (const fn of menu.listeners.get("mousedown") || []) fn({ target: {} });
 menu.render(); assert.equal(menu.find("Plain"), undefined);
+assert.deepEqual(menu.openChanges, [true, false, true, false, true, false, true, false], "open callback covers leaf, Escape and outside closure");
+menu.find("Test menu").props.onClick(); menu.render(); menu.flush();
+menu.key("Tab");
+assert.equal(menu.openChanges.at(-1), false, "Tab closure notifies query owner");
+menu.find("Test menu").props.onClick(); menu.render();
+menu.find("Test menu").props.onClick(); menu.render();
+assert.deepEqual(menu.openChanges.slice(-2), [true, false], "trigger toggle notifies query owner");
 menu.unmount(); assert.equal([...menu.listeners.values()].reduce((n, entries) => n + entries.size, 0), 0, "listeners released");
 
 const edge = mount({ edge: true });
@@ -147,4 +159,37 @@ const committedSubmenu = all(followsRoot.render()).find(n => n.props.className =
 const committedAnchor = followsRoot.dom.get("sort").getBoundingClientRect();
 assert.equal(committedSubmenu.props.style.left, committedAnchor.left - 6 - 170, "submenu must remeasure after the root position commits, not retain its pre-commit anchor");
 followsRoot.unmount();
+const measurements = { main: { width: 230 }, submenu: { width: 100, height: 40 } };
+const dynamic = mount({ edge: true, align: "left", measurements });
+dynamic.props.items = [{ id: "sort", label: "Open with", children: [{ id: "loading", label: "Loading", disabled: true }] }];
+dynamic.find("Test menu").props.onClick(); dynamic.render(); dynamic.flush();
+dynamic.key("ArrowRight"); dynamic.render(); dynamic.flush();
+assert.equal(dynamic.document.activeElement, dynamic.dom.get("sort"), "loading submenu retains focus on its parent");
+dynamic.key("ArrowRight");
+measurements.main.width = 300; measurements.submenu = { width: 400, height: 180 };
+dynamic.props.items = [{ id: "sort", label: "Open with", children: [{ id: "editor", label: "Detected editor" }] }];
+dynamic.render(); dynamic.render(); dynamic.flush();
+assert.equal(dynamic.document.activeElement, dynamic.dom.get("editor"), "async ready submenu fulfills preserved keyboard focus without root RAF stealing it");
+const dynamicRoot = all(dynamic.render()).find(n => n.props.className === "thread-actions-menu thread-actions-menu--left");
+const dynamicSubmenu = all(dynamic.render()).find(n => n.props.className === "thread-actions-submenu");
+assert.ok(dynamicRoot.props.style.left + 300 <= 792, "new root width is measured after async items change");
+assert.ok(dynamicSubmenu.props.style.left >= 8 && dynamicSubmenu.props.style.left + 400 <= 792, "new submenu width is measured after async items change");
+assert.ok(dynamicSubmenu.props.style.top >= 8 && dynamicSubmenu.props.style.top + 180 <= 592, "new submenu height fits the viewport");
+dynamic.unmount();
+assert.equal(dynamic.openChanges.at(-1), false, "unmounting an open menu invalidates its pending query");
+const closedLifecycle = mount();
+closedLifecycle.unmount();
+assert.deepEqual(closedLifecycle.openChanges, [], "unmounting a closed menu does not manufacture a close event");
+const latestLifecycle = mount();
+latestLifecycle.find("Test menu").props.onClick(); latestLifecycle.render(); latestLifecycle.flush();
+const latestChanges = [];
+latestLifecycle.props.onOpenChange = open => latestChanges.push(open);
+latestLifecycle.render();
+assert.deepEqual(latestChanges, [], "callback replacement does not run unmount cleanup");
+latestLifecycle.unmount();
+assert.deepEqual(latestChanges, [false], "unmount uses the latest callback");
+const closedBeforeCommit = mount();
+closedBeforeCommit.find("Test menu").props.onClick(); closedBeforeCommit.render();
+closedBeforeCommit.find("Test menu").props.onClick(); closedBeforeCommit.unmount();
+assert.deepEqual(closedBeforeCommit.openChanges, [true, false], "close followed by unmount before a render does not double-notify");
 console.log("PASS actual shared menu: typed items, separate portal, scoped keyboard/focus, selection, disabled/plain paths, outside/Escape, viewport and listener cleanup (L2)");

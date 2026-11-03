@@ -99,6 +99,7 @@ const menuCode = declarations.get("threadMenuItems").arguments[0].getText(ast);
 const menuContext = {
   ...context, pinnedThreadIds: [], sidebarProjectMembership: { localProjects: [] }, projectMoveBusy: false,
   shareAvailable: false,
+  workspaceOpenTargets: { items: null },
   React: { createElement: () => null },
 };
 for (const [, name] of menuCode.matchAll(/<(\w+Icon)/g)) menuContext[name] = () => null;

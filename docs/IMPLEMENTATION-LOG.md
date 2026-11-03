@@ -1717,3 +1717,7 @@ SettingsView不再读本地旧archivedThreads列表，直接复用ArchiveView和
 ## 2026-11-03：15B 归档全部删除与归档身份重查
 
 先完成8来源/33锚点静态合同，再新增归档专用Rust删除边界：完整分页验证、单条重查、顺序真实删除、仅成功ID清记录、部分失败返回及跨窗口互斥；普通聊天删除语义保留。两个前端入口复用服务和同步锁，按实际ID处理零/部分/未知结果，确认复用现有dialog样式，无新依赖。独立审查P2确认后焦点丢失已修并复核，浏览器受控生产组件验证取消/Escape/搜索范围/单次调用/稳定焦点。完整标准含新隔离协议、全Rust库259、EXE/MSI/NSIS退出0，206产品输入稳定。两版CLI各6项真实协议通过但不是Tauri AppManager端到端；枚举/删除非原子，原生UI/官方像素未验，整15未验收，见[15B](antigravity/acceptance/15B.md)。另只读核验Store包签名及9768个ASAR块，引入新来源但不混同旧版本记录；下一[16.01C合同](antigravity/specs/16-01-next-closure.md)已补旧/Store两套独立证据，将修复动态打开目标、精确路径偏好与点击前工作树根确认。
+
+## 2026-11-03：16.01C 工作区动态打开方式
+
+先按旧候选/Store两套独立证据完成动态getTargets/open、精确路径偏好与最新会话根合同，再接真实宿主查询/执行命令。菜单过滤、loading/error、偏好读回和晚到隔离复用现有组件；每次查询/执行重新thread/read并核工作树owner，显式目标执行前保存，失败不伪成功。没有新依赖。独立审查发现Windows隐藏systemDefault空executable被过严校验拒绝，已补生产形状回归并复核关闭。专项、完整标准含隔离协议和全Rust库270通过；原生构建与指纹见[16.01C](antigravity/acceptance/16-01C.md)。浏览器仅受控生产组件，真实编辑器/原生UI/官方像素未验；ShellExecute只确认系统接受，Git根查询无单独deadline、完整目标/远程/独立root服务仍有缺口。下一[16.02B合同](antigravity/specs/16-02-next-closure.md)已完成Store14文件/47锚点调研，将推进完整主题操作与CSS消费，不以小开关冒充整页。按授权完成阶段检查与构建后提交，并视远程情况推送。

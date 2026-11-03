@@ -15,7 +15,7 @@ function visit(node) {
 visit(ast);
 assert.equal(Object.keys(functions).length, 3);
 const compile = code => ts.transpileModule(`(${code})`, { fileName: "action.tsx", compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React } }).outputText;
-const writes = [], toasts = [], invokes = [], shares = [];
+const writes = [], toasts = [], invokes = [], shares = [], openTargets = [];
 let copySuccess = true;
 const context = vm.createContext({
   activeThreadId: "11111111-1111-4111-8111-111111111111",
@@ -26,6 +26,7 @@ const context = vm.createContext({
   isQuickChatWindow: false,
   shareAvailable: false,
   setShareThreadId: id => shares.push(id),
+  workspaceOpenTargets: { openTarget: async id => openTargets.push(id) },
 });
 const menu = vm.runInContext(compile(functions.handleThreadMenuAction), context);
 await menu("copy_deeplink");
@@ -62,6 +63,7 @@ const menuContext = {
   activeThreadObj: null, isThreadReadState: () => false,
   sidebarProjectMembership: { localProjects: [] }, projectMoveBusy: false,
   shareAvailable: false,
+  workspaceOpenTargets: { items: null },
   React: { createElement: () => null },
 };
 for (const name of icons) menuContext[name] = () => null;
@@ -73,4 +75,25 @@ menuContext.activeThreadId = null;
 assert.equal(items().find(item => item.id === "share_thread").disabled, true);
 menuContext.activeThreadId = context.activeThreadId;
 assert.equal(items().find(item => item.id === "open_new_window").disabled, false);
+const detected = [{ id: "open_target:fileManager", label: "文件资源管理器", type: "radio", checked: true }];
+menuContext.workspaceOpenTargets.items = detected;
+assert.equal(items().find(item => item.id === "open_with_menu").children, detected, "OC01: actual App menu consumes detected targets without a static list");
+menuContext.workspaceOpenTargets.items = null;
+assert.equal(items().some(item => item.id === "open_with_menu"), false, "OC08: no fake menu for an empty catalog");
+await menu("open_target:fileManager");
+assert.deepEqual(openTargets, ["fileManager"], "OC02: the actual menu action passes the explicit target to the shared hook");
+assert.equal(invokes.length, 0, "OC06: the old unregistered VS Code command is no longer invoked");
+let forwardedOpen = false;
+function findMenu(node) {
+  if (ts.isJsxSelfClosingElement(node) && node.tagName.getText(ast) === "ThreadActionsMenu") {
+    const attrs = node.attributes.properties;
+    if (attrs.some(attr => attr.name?.getText(ast) === "items" && attr.initializer?.getText(ast) === "{threadMenuItems}")) {
+      forwardedOpen = attrs.some(attr => attr.name?.getText(ast) === "onOpenChange" && attr.initializer?.getText(ast) === "{workspaceOpenTargets.onMenuOpenChange}");
+    }
+  }
+  ts.forEachChild(node, findMenu);
+}
+findMenu(ast);
+assert.ok(forwardedOpen, "OC07: the actual menu opens and cancels the target query through its hook");
 console.log("PASS NA01-NA03: canonical local deeplink and clipboard results; share opens the session only with verified availability and a thread, without fake links/success. Native receiver/live sharing and visual remain unverified.");
+console.log("PASS OC App wiring: dynamic children, absent empty menu, explicit target delegation and open-change query lifecycle");

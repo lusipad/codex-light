@@ -108,3 +108,9 @@ Profile真实写服务尚未桥接，撤下示例表单，以真实账号只读�
 原包storage-settings的ChatGptStorageSettings调用/files/library/storage/usage，管理云端Library/Space文件与图像。旧计划将其归为CODEX_HOME磁盘统计错误；[16.18规格](../../antigravity/specs/16-18-storage-settings.md)取代此假设。先撤销错误本地清理入口；认证桥缺失，页面未完成。
 
 2026-11-03：16.19A[合同](../../antigravity/specs/16-19-archived-chats-settings.md)将归档设置接入独立归档页同一真实链路；撤销旧threads_meta_get列表、重复恢复/删除和通用配置按钮。共享分页/晚到隔离/写锁/恢复后查看回归复用，整页原生像素仍未验。
+
+## 2026-11-03 — 16.01C / 16.02B下一合同
+
+[16.01C待验表](../../antigravity/acceptance/16-01C.md)：工作区菜单改真实动态目标，查询/点击分别核最新会话工作树根，精确路径偏好执行前保存；修复未注册VS Code链与内嵌终端冒充外部目标。完整标准和全Rust库270通过，受控浏览器验证错误重试/焦点/选择读回；原生交互和官方像素未验，完整目录、remote/location、独立root服务等仍有差距。复用菜单/存储/协议桥，无新依赖。
+
+[16.02B修改前合同](../../antigravity/specs/16-02-next-closure.md)独立提取Store14文件、47锚点，下一主要动作是浅深主题/preset/颜色编辑→真实CSS消费→持久化。宿主configuration映射、完整preset资源及跨窗时序仍待补证，不能把静态调研当产品或视觉验收。
