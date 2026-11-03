@@ -115,6 +115,10 @@ impl AppServerManager {
         guard.status.clone()
     }
 
+    pub async fn connection_generation(&self) -> u64 {
+        self.inner.lock().await.generation
+    }
+
     pub async fn list_pending_server_requests(&self) -> Vec<PendingServerRequest> {
         let guard = self.inner.lock().await;
         guard.pending_server_requests.values().cloned().collect()

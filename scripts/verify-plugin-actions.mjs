@@ -21,7 +21,7 @@ function mount() {
   const requests = [], notices = [], reads = [];
   const context = {
     pluginActionRef: { current: new Set() }, busyPluginIds: new Set(), pluginMode: "browse",
-    unconfirmedInstalls: new Set(), installedData: null, pluginPreparations: {},
+    unconfirmedInstalls: new Set(), installedData: null, pluginPreparations: {}, pluginUpdates: {},
     preparationAttemptRef: { current: 0 }, PluginProtocolError: class extends Error {},
     pluginContextRef: { current: 0 }, pluginMountedRef: { current: true },
     installedRequestRef: { current: 0 }, browseRequestRef: { current: 0 },
@@ -46,7 +46,7 @@ function mount() {
 }
 {
   const view = mount();
-  const blocked = view.handleUninstallPlugin({ ...plugin, installPolicy: "INSTALLED_BY_DEFAULT" });
+    const blocked = view.handleUninstallPlugin({ ...plugin, source: { type: "remote" }, installPolicy: "INSTALLED_BY_DEFAULT" });
   assert.equal(view.requests.length, 0, "PA02: admin-installed plugin cannot be uninstalled");
   await blocked;
   assert.equal(view.reads.length, 0, "PA02: admin policy blocks before confirmation");

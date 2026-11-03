@@ -25,7 +25,7 @@ const context = {
   commitActiveRoute:route=>routeCommits.push(route),
   activeSectionRef:{current:'personalization'},commitActiveSection:section=>sectionCommits.push(section),
   onNavigationGuardChange:value=>forwarded.push(value),
-  settingsGuardsRef:{current:{personalization:null,account:null,profile:null,mcp:null}},
+  settingsGuardsRef:{current:{personalization:null,account:null,profile:null,mcp:null,plugins:null}},
 };
 context.setActiveRoute=vm.runInNewContext(code(app,'setActiveRoute'),context);
 context.setActiveRoute('thread');
@@ -61,6 +61,10 @@ assert.equal(forwarded.at(-1),profileGuard,'account cleanup must not erase the a
 context.setActiveSection('profile');assert.deepEqual(sectionCommits,['agent','account']);
 profileDirty=false;profilePending();assert.deepEqual(sectionCommits,['agent','account','profile']);
 registerProfile(null);assert.equal(forwarded.at(-1),null);
+const registerPlugins=vm.runInNewContext(code(settings,'registerPluginNavigationGuard'),context);
+registerPlugins(guard);registerMcp(()=>true);registerMcp(null);
+assert.equal(forwarded.at(-1),guard,'MCP cleanup must not erase the nested management draft guard');
+registerPlugins(null);assert.equal(forwarded.at(-1),null);
 context.personalizationNavigationGuardRef.current=guard;
 context.routeHistoryRef={current:{entries:['home','thread','settings'],index:2}};
 context.navigatingRouteHistoryRef={current:false};context.setRouteHistoryVersion=()=>{};

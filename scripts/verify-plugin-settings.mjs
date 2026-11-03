@@ -24,6 +24,9 @@ for (const manageOnly of [true, false]) {
     const context = { React: react, manageOnly, subTab, onBrowseDirectory: tab => visits.push(tab),
       searchQuery: "", setSearchQuery() {}, setSubTab: tab => changes.push(tab), refreshAll() {},
       installedCount: 2, remoteSkills: [], skills: [], config: null, appsData: [], appsInstalled: [], installedMarketplaces: [],
+      selectTab: tab => changes.push(tab), visibleManagementTabs: ["plugins", "apps", "mcp", "skills", "marketplaces"],
+      tabCounts: { plugins: 2, apps: 1, mcp: 0, skills: 1, marketplaces: 1 },
+      tabLabels: { plugins: "插件", apps: "应用", mcp: "MCP", skills: "技能", marketplaces: "市场" },
       pluginMode: "installed", setPluginMode() {},
     };
     for (const name of ["Plus", "RefreshCw", "Boxes", "BookOpen", "Server", "AppWindow", "ShoppingBag", "Package", "Store"]) context[name] = name;
@@ -33,9 +36,9 @@ for (const manageOnly of [true, false]) {
     assert.equal(!!browse, manageOnly);
     if (browse) { browse.props.onClick(); assert.deepEqual(visits, [subTab === "skills" ? "skills" : "plugins"]); }
     const tabs = nodes(render("sub-tabs")).filter(node => node.type === "button");
-    assert.equal(tabs.length, manageOnly ? 3 : 5);
+    assert.equal(tabs.length, 5);
     tabs.forEach(node => node.props.onClick());
-    assert.deepEqual(changes, manageOnly ? ["plugins", "skills", "mcp"] : ["plugins", "skills", "mcp", "apps", "marketplaces"]);
+    assert.deepEqual(changes, manageOnly ? ["plugins", "apps", "mcp", "skills", "marketplaces"] : ["plugins", "skills", "mcp", "apps", "marketplaces"]);
     assert.equal(text(render("pm-segment")).includes("浏览市场"), !manageOnly);
   }
 }

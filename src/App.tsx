@@ -5233,6 +5233,10 @@ export const App: React.FC = () => {
             <div className="full-route-container">
               <SkillsMcpView
                 activeWorkspaceRoot={activeWorkspace?.path || ""}
+                connectionIdentity={JSON.stringify([modelAccountIdentity, appServerStatus.connected, appServerStatus.binaryPath, appServerStatus.appServerVersion, appServerStatus.userAgent])}
+                onConfigUpdated={refreshConfigOverview}
+                onRestartAppServer={() => tauriInvoke("app_server_restart", { customCliPath: null })}
+                onNavigationGuardChange={setPersonalizationNavigationGuard}
                 initialTab={activeRoute === "skills" ? "skills" : "plugins"}
                 initialPluginMode={pluginDirectoryMode}
                 onStartSkillCreatorSession={(prompt) => {

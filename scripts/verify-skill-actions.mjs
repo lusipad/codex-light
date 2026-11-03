@@ -25,11 +25,11 @@ function mount() {
     remoteSkillsRequestRef: { current: 0 }, localSkillsRequestRef: { current: 0 },
     skillSelectionRequestRef: { current: 0 }, skillEditorRevisionRef: { current: 0 }, skillSelectionRef: { current: null },
     skillWritePendingRef: { current: false }, selectedSkill: null, selectedSkillKey: null, readOnlyRemoteSkill: null,
-    newSkillId: "tool", skillContent: "draft", activeWorkspaceRoot: "A", subTab: "skills",
+    newSkillId: "tool", skillContent: "draft", activeWorkspaceRoot: "A", subTab: "skills", manageOnly: false,
     appsLoadedRef: { current: false }, skillScopeLabel: value => value,
     notify: (...args) => notices.push(args), confirm: () => true,
     workspaceCwds: () => ["A"], toViewError: error => ({ message: error.message }), errorSummary: error => error.message,
-    flattenSkills: result => ({ skills: result.data }), loadInstalledPlugins: async () => {}, loadApps: async () => {},
+    flattenSkills: result => ({ skills: result.data }), loadInstalledPlugins: async () => {}, loadManagement: async () => {}, loadApps: async () => {},
   };
   for (const method of ["tauriInvoke", "callAppServer", "readFileText", "writeSkillEnabled", "listSkills"]) {
     context[method] = (...args) => { const pending = deferred(); requests.push({ method, args, ...pending }); return pending.promise; };
@@ -129,8 +129,7 @@ for (const action of ["handleToggleSkill", "handleInstallSeedSkill", "handleDele
   view.handleStartNewSkill();
   const text = view.context.skillContent;
   view.requests[0].resolve([local]); await flush();
-  view.requests[1].resolve({}); await flush(); view.requests[2].resolve({ data: [] }); await flush();
-  view.requests[3].resolve({ data: [] }); await refreshing;
+  view.requests[1].resolve({ data: [] }); await refreshing;
   assert.equal(view.context.skillContent, text, "SA05: refreshed local list cannot select first row over draft");
 }
 {

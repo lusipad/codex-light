@@ -29,6 +29,7 @@ pub mod terminal;
 mod thread_workspace;
 mod archive_delete;
 mod appearance_preferences;
+mod plugin_operations;
 
 use app_server::{AppServerManager, AppServerStatus, PendingServerRequest};
 use config_skills::{
@@ -143,6 +144,25 @@ async fn app_server_call(
             );
         }
         result
+    } else if plugin_operations::is_plugin_mutation(&method, params.as_ref()) {
+        state.app_server.ensure_connected(&app).await?;
+        let generation = state.app_server.connection_generation().await;
+        let result = app.state::<plugin_operations::PluginOperationState>()
+            .call(&method, params.clone(), |method, params| {
+                let app = &app;
+                let state = &state;
+                async move {
+                    if state.app_server.connection_generation().await != generation {
+                        return Err("插件操作所属连接已更改，请重新读取状态".to_string());
+                    }
+                    state.app_server.call(app, &method, params).await
+                }
+            }).await;
+        let _ = app.emit("plugin-management-changed", json!({}));
+        if is_mcp_config_write(&method, params.as_ref()) {
+            let _ = app.emit("mcp-settings-changed", json!({}));
+        }
+        result?
     } else {
         let result = state.app_server.call(&app, &method, params.clone()).await;
         if is_mcp_config_write(&method, params.as_ref()) {
@@ -1668,6 +1688,7 @@ pub fn run() {
         .manage(model_preferences::ModelPreferencesState::default())
         .manage(agent_configuration::AgentConfigurationState::default())
         .manage(memory_preferences::MemoryPreferencesState::default())
+        .manage(plugin_operations::PluginOperationState::default())
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 if let Err(error) = menu::remove_shortcut_window(window.app_handle(), window.label()) {

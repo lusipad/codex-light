@@ -17,18 +17,20 @@ import {
   Plus,
   RefreshCw,
   Save,
-  Server,
   ShoppingBag,
   Sparkles,
   Store,
   Trash2,
   WifiOff,
 } from "lucide-react";
-import { callAppServer, tauriInvoke } from "../bridge";
+import { callAppServer, tauriInvoke, tauriListen } from "../bridge";
 import { readFileText } from "../fsClient";
+import { experimentalFeatureListAll } from "../config";
+import { readMcpSettings } from "../mcpSettings";
+import { McpSettings } from "./McpSettings";
+import { managementTabs, managementFallback, useMarketplaceRemoval } from "../pluginManagementState";
+import { readConfiguredMarketplaces, setPluginEnabled, verifyPluginEnabled, type ConfiguredMarketplace } from "../pluginManagement";
 import {
-  CodexConfigOverview,
-  McpServerConfigItem,
   SkillInfoItem,
 } from "../types";
 import "./PluginsMarket.css";
@@ -69,7 +71,6 @@ import {
   pluginSourceLabel,
   pluginVersion,
   readPlugin,
-  removeMarketplace,
   setSkillEnabled as writeSkillEnabled,
   uninstallPlugin,
   upgradeMarketplace,
@@ -80,6 +81,10 @@ interface SkillsMcpViewProps {
   initialTab?: SubTab;
   initialPluginMode?: "installed" | "browse";
   manageOnly?: boolean;
+  connectionIdentity?: string;
+  onConfigUpdated?: () => void | Promise<void>;
+  onRestartAppServer?: () => void | Promise<unknown>;
+  onNavigationGuardChange?: (guard: ((action: () => void) => boolean) | null) => void;
   onBrowseDirectory?: (tab: "plugins" | "skills") => void;
   onStartSkillCreatorSession?: (prompt: string) => void;
 }
@@ -195,6 +200,10 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   initialTab,
   initialPluginMode = "installed",
   manageOnly = false,
+  connectionIdentity = "local",
+  onConfigUpdated,
+  onRestartAppServer,
+  onNavigationGuardChange,
   onBrowseDirectory,
   onStartSkillCreatorSession,
 }) => {
@@ -224,15 +233,16 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   const skillWritePendingRef = useRef(false);
   const [skillWriteBusy, setSkillWriteBusy] = useState(false);
 
-  // MCP State (kept from the previous implementation)
-  const [config, setConfig] = useState<CodexConfigOverview | null>(null);
-  const [mcpLiveStatus, setMcpLiveStatus] = useState<any[]>([]);
-  const [mcpTransport, setMcpTransport] = useState<"stdio" | "http">("stdio");
-  const [mcpId, setMcpId] = useState<string>("");
-  const [mcpCommand, setMcpCommand] = useState<string>("");
-  const [mcpArgs, setMcpArgs] = useState<string>("");
-  const [mcpUrl, setMcpUrl] = useState<string>("");
-  const [mcpEnvText, setMcpEnvText] = useState<string>("");
+  const [mcpCount, setMcpCount] = useState(0);
+  const [configuredMarkets, setConfiguredMarkets] = useState<ConfiguredMarketplace[]>([]);
+  const [managementError, setManagementError] = useState<string | null>(null);
+  const [managementLoading, setManagementLoading] = useState(true);
+  const [showNonMcpTabs, setShowNonMcpTabs] = useState(true);
+  const managementRequest = useRef(0), appsRequest = useRef(0);
+  const [pluginUpdates, setPluginUpdates] = useState<Record<string, { pending: boolean; enabled: boolean; configFilePath: string | null; error: string | null; refreshError: string | null }>>({});
+  const mcpNavigationGuard = useRef<((action: () => void) => boolean) | null>(null);
+  const removalDialog = useRef<HTMLDialogElement>(null);
+  const removalTrigger = useRef<HTMLButtonElement | null>(null);
 
   // Toast
   const [toast, setToast] = useState<{
@@ -338,6 +348,9 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     setInstalledData(null);
     setInstalledError(null);
     setInstalledLoading(false);
+    setConfiguredMarkets([]); setManagementError(null); setManagementLoading(true); setPluginUpdates({});
+    appsLoadedRef.current = false; appsLoadingRef.current = false;
+    setAppsData(null); setAppsInstalled(null); setAppsLoaded(false); setAppsLoading(false); setAppsError(null);
     setBrowseData(null);
     setBrowseError(null);
     setBrowseLoading(false);
@@ -369,7 +382,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       pluginMountedRef.current = false;
       ++pluginContextRef.current;
     };
-  }, [activeWorkspaceRoot]);
+  }, [activeWorkspaceRoot, connectionIdentity]);
 
   // ───────────────────────────────────────────────────────────────────────────
   // Data loaders
@@ -444,7 +457,6 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     } catch (err) {
       if (isCurrent()) {
         setRemoteSkillsError(toViewError(err));
-        setRemoteSkills(null);
       }
     } finally {
       if (isCurrent()) {
@@ -456,31 +468,53 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
 
   const loadApps = async (force = false) => {
     if (appsLoadingRef.current && !force) return;
+    const context = pluginContextRef.current;
+    const request = ++appsRequest.current;
+    const isCurrent = () => isPluginContextCurrent(context) && appsRequest.current === request;
     appsLoadingRef.current = true;
     setAppsLoading(true);
     setAppsError(null);
     try {
       const res = await listApps({ forceRefetch: force });
+      if (!isCurrent()) return;
       setAppsData(res.data);
       setAppsInstalled(null);
       appsLoadedRef.current = true;
       setAppsLoaded(true);
     } catch (err) {
-      setAppsData(null);
+      if (!isCurrent()) return;
       setAppsError(toViewError(err));
       // Graceful fallback: local committed connector runtime snapshot.
       try {
         const installed = await listInstalledApps();
+        if (!isCurrent()) return;
         setAppsInstalled(installed);
       } catch {
+        if (!isCurrent()) return;
         setAppsInstalled(null);
       }
       appsLoadedRef.current = true;
       setAppsLoaded(true);
     } finally {
-      appsLoadingRef.current = false;
-      setAppsLoading(false);
+      if (isCurrent()) { appsLoadingRef.current = false; setAppsLoading(false); }
     }
+  };
+
+  const loadManagement = async () => {
+    const context = pluginContextRef.current, request = ++managementRequest.current;
+    setManagementLoading(true); setManagementError(null);
+    const results = await Promise.allSettled([
+      readConfiguredMarketplaces(workspaceCwds()),
+      readMcpSettings(activeWorkspaceRoot || undefined), experimentalFeatureListAll(),
+    ]);
+    if (!isPluginContextCurrent(context) || request !== managementRequest.current) return;
+    const [markets, mcp, features] = results;
+    if (markets.status === "fulfilled") setConfiguredMarkets(markets.value);
+    if (mcp.status === "fulfilled") setMcpCount(mcp.value.entries.length);
+    if (features.status === "fulfilled") setShowNonMcpTabs(features.value.find(item => item.name === "plugins")?.enabled ?? true);
+    const failures = results.filter(result => result.status === "rejected");
+    if (failures.length) setManagementError(failures.map(result => String((result as PromiseRejectedResult).reason)).join("；"));
+    setManagementLoading(false);
   };
 
   const refreshAll = async () => {
@@ -501,29 +535,8 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       }
     }
     if (!isPluginContextCurrent(context)) return;
-
-    try {
-      const cfg = await tauriInvoke<CodexConfigOverview>("config_read");
-      setConfig(cfg);
-    } catch {}
-
-    try {
-      const statusRes = await callAppServer<any>("mcpServerStatus/list", {});
-      const list = Array.isArray(statusRes?.data)
-        ? statusRes.data
-        : Array.isArray(statusRes?.servers)
-          ? statusRes.servers
-          : Array.isArray(statusRes)
-            ? statusRes
-            : [];
-      setMcpLiveStatus(list);
-    } catch {
-      setMcpLiveStatus([]);
-    }
-
-    if (!isPluginContextCurrent(context)) return;
-    await Promise.allSettled([loadInstalledPlugins({ confirmInstallResult: true }), loadRemoteSkills()]);
-    if (subTab === "apps" && appsLoadedRef.current) {
+    await Promise.allSettled([loadInstalledPlugins({ confirmInstallResult: true }), loadRemoteSkills(), loadManagement()]);
+    if (manageOnly || subTab === "apps") {
       await loadApps(true);
     }
   };
@@ -531,7 +544,17 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   useEffect(() => {
     refreshAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeWorkspaceRoot]);
+  }, [activeWorkspaceRoot, connectionIdentity]);
+  useEffect(() => {
+    let disposed = false, unlisten: (() => void) | undefined;
+    const refresh = () => {
+      if (disposed) return;
+      void Promise.allSettled([loadInstalledPlugins({ silent: true }), loadManagement(), loadRemoteSkills(true), loadApps(true)]);
+    };
+    window.addEventListener("focus", refresh);
+    void tauriListen("plugin-management-changed", refresh).then(stop => { if (disposed) stop(); else unlisten = stop; }).catch(() => {});
+    return () => { disposed = true; window.removeEventListener("focus", refresh); unlisten?.(); onNavigationGuardChange?.(null); };
+  }, [activeWorkspaceRoot, connectionIdentity]);
 
   useEffect(() => {
     if (subTab === "apps" && !appsLoadedRef.current) {
@@ -640,7 +663,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   const handleUninstallPlugin = async (
     plugin: PluginSummary
   ) => {
-    if (pluginActionRef.current.has(plugin.id) || plugin.installPolicy === "INSTALLED_BY_DEFAULT") return;
+    if (pluginActionRef.current.has(plugin.id) || pluginUpdates[plugin.id]?.pending || plugin.source?.type === "remote") return;
     const name = pluginDisplayName(plugin);
     const warning = `确定要卸载插件「${name}」吗？`;
     if (!confirm(warning)) return;
@@ -668,6 +691,44 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     } finally {
       pluginActionRef.current.delete(plugin.id);
       if (pluginMountedRef.current) setBusyPluginIds(new Set(pluginActionRef.current));
+    }
+  };
+
+  const handleTogglePlugin = async (plugin: PluginSummary) => {
+    if (pluginActionRef.current.has(plugin.id) || pluginUpdates[plugin.id]?.pending || plugin.availability === "DISABLED_BY_ADMIN") return;
+    const context = pluginContextRef.current, enabled = !plugin.enabled;
+    pluginActionRef.current.add(plugin.id); setBusyPluginIds(new Set(pluginActionRef.current));
+    try {
+      const result = await setPluginEnabled(plugin, enabled, { cwd: activeWorkspaceRoot || undefined, hostId: "local", isCurrent: () => isPluginContextCurrent(context) });
+      if (!isPluginContextCurrent(context) || result.stale) return;
+      setPluginUpdates(current => ({ ...current, [plugin.id]: { pending: result.verification === "pending", enabled, configFilePath: result.configFilePath, error: result.error, refreshError: result.refreshError } }));
+      if (result.verification === "confirmed") {
+        notify(`${pluginDisplayName(plugin)} 插件已${enabled ? "启用" : "禁用"}`);
+        await Promise.all([loadInstalledPlugins({ silent: true }), loadRemoteSkills(true)]);
+      }
+    } catch (error) {
+      if (isPluginContextCurrent(context)) setPluginUpdates(current => ({ ...current, [plugin.id]: { pending: false, enabled, configFilePath: null, error: String(error), refreshError: null } }));
+    } finally {
+      pluginActionRef.current.delete(plugin.id);
+      if (isPluginContextCurrent(context)) setBusyPluginIds(new Set(pluginActionRef.current));
+    }
+  };
+  const verifyPluginUpdate = async (plugin: PluginSummary) => {
+    if (pluginActionRef.current.has(plugin.id)) return;
+    const context = pluginContextRef.current;
+    const update = pluginUpdates[plugin.id];
+    if (!update) return;
+    pluginActionRef.current.add(plugin.id); setBusyPluginIds(new Set(pluginActionRef.current));
+    try {
+      const result = await verifyPluginEnabled(plugin, update.enabled, { cwd: activeWorkspaceRoot || undefined, hostId: "local", expectedFilePath: update.configFilePath ?? undefined, isCurrent: () => isPluginContextCurrent(context) });
+      if (!isPluginContextCurrent(context) || result.stale) return;
+      setPluginUpdates(current => ({ ...current, [plugin.id]: { ...update, pending: result.verification !== "confirmed", error: result.error, refreshError: result.refreshError } }));
+      await Promise.all([loadInstalledPlugins({ silent: true }), loadRemoteSkills()]);
+    } catch (error) {
+      if (isPluginContextCurrent(context)) setPluginUpdates(current => ({ ...current, [plugin.id]: { ...current[plugin.id], error: String(error) } }));
+    } finally {
+      pluginActionRef.current.delete(plugin.id);
+      if (isPluginContextCurrent(context)) setBusyPluginIds(new Set(pluginActionRef.current));
     }
   };
 
@@ -711,7 +772,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       setMarketplaceSparsePaths("");
       setShowAddMarketplace(false);
       resetBrowseCache();
-      await loadInstalledPlugins({ silent: true });
+      await Promise.all([loadInstalledPlugins({ silent: true }), loadManagement()]);
     } catch (err) {
       const summary = errorSummary(err, 400);
       notify(`添加市场失败：${summary}`, "error");
@@ -721,35 +782,28 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     }
   };
 
-  const handleRemoveMarketplace = async (
-    marketplace: PluginMarketplaceEntry
-  ) => {
-    const name = marketplaceDisplayName(marketplace);
-    if (
-      !confirm(
-        `确定要移除市场「${name}」吗？该市场中的插件将不再可用（marketplace/remove）。`
-      )
-    ) {
-      return;
-    }
-    setMarketplaceBusy(marketplace.name);
-    try {
-      await removeMarketplace(marketplace.name);
-      notify(`已移除市场 ${name}`);
-      resetBrowseCache();
-      await loadInstalledPlugins({ silent: true });
-    } catch (err) {
-      notify(`移除市场失败：${errorSummary(err)}`, "error");
-    } finally {
-      setMarketplaceBusy(null);
-    }
+  const removal = useMarketplaceRemoval(JSON.stringify([activeWorkspaceRoot, connectionIdentity]), workspaceCwds(), async () => {
+    resetBrowseCache();
+    await Promise.all([loadInstalledPlugins({ silent: true }), loadManagement(), loadRemoteSkills(true)]);
+  });
+  useEffect(() => {
+    if (removal.target) removalDialog.current?.showModal(); else removalDialog.current?.close();
+  }, [removal.target]);
+  const closeRemoval = () => {
+    removal.close();
+    requestAnimationFrame(() => removalTrigger.current?.focus());
   };
+  const handleRemoveMarketplace = (marketplace: PluginMarketplaceEntry) => { void removal.open(marketplace); };
 
   const handleUpgradeMarketplaces = async (marketplaceName?: string) => {
+    const eligible = configuredMarkets.filter(item => item.canUpgrade && (!marketplaceName || item.marketplace.name === marketplaceName));
+    if (!eligible.length || marketplaceBusy !== null) return;
     setMarketplaceBusy(marketplaceName ?? "upgrade");
     setUpgradeReport(null);
     try {
-      const res = await upgradeMarketplace(marketplaceName);
+      const results: MarketplaceUpgradeResponse[] = [];
+      for (const item of eligible) results.push(await upgradeMarketplace(item.marketplace.name));
+      const res = { selectedMarketplaces: results.flatMap(result => result.selectedMarketplaces), upgradedRoots: results.flatMap(result => result.upgradedRoots), errors: results.flatMap(result => result.errors) };
       setUpgradeReport(res);
       if (res.errors.length > 0) {
         notify(
@@ -760,7 +814,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
         notify(`✓ 已升级 ${res.selectedMarketplaces.length} 个市场`);
       }
       resetBrowseCache();
-      await loadInstalledPlugins({ silent: true });
+      await Promise.all([loadInstalledPlugins({ silent: true }), loadManagement()]);
     } catch (err) {
       notify(`市场升级失败：${errorSummary(err)}`, "error");
     } finally {
@@ -964,83 +1018,6 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   };
 
   // ───────────────────────────────────────────────────────────────────────────
-  // MCP actions (kept unchanged in behavior)
-  // ───────────────────────────────────────────────────────────────────────────
-
-  const handleAddMcpServer = async () => {
-    if (!config || !mcpId.trim()) return;
-    const envMap: Record<string, string> = {};
-    mcpEnvText
-      .split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean)
-      .forEach((line) => {
-        const idx = line.indexOf("=");
-        if (idx > 0) {
-          envMap[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
-        }
-      });
-
-    const nextItem: McpServerConfigItem = {
-      id: mcpId.trim(),
-      command: mcpTransport === "stdio" ? mcpCommand.trim() || "npx" : null,
-      args:
-        mcpTransport === "stdio"
-          ? mcpArgs
-              .split(/\s+/)
-              .map((s) => s.trim())
-              .filter(Boolean)
-          : [],
-      url: mcpTransport === "http" ? mcpUrl.trim() || null : null,
-      env: envMap,
-      enabled: true,
-    };
-    const nextServers = [
-      ...config.mcpServers.filter((s) => s.id !== nextItem.id),
-      nextItem,
-    ];
-    try {
-      const updated = await tauriInvoke<CodexConfigOverview>("config_update", {
-        payload: {
-          mcpServers: nextServers,
-        },
-      });
-      setConfig(updated);
-      setMcpId("");
-      setMcpCommand("");
-      setMcpArgs("");
-      setMcpUrl("");
-      setMcpEnvText("");
-      notify(`✓ 已连接 MCP 服务器: ${nextItem.id}`);
-    } catch (err: any) {
-      notify(`连接 MCP 失败: ${err?.message || String(err)}`, "error");
-    }
-  };
-
-  const handleToggleMcpServer = async (srv: McpServerConfigItem) => {
-    if (!config) return;
-    const nextServers = config.mcpServers.map((s) =>
-      s.id === srv.id ? { ...s, enabled: !s.enabled } : s
-    );
-    const updated = await tauriInvoke<CodexConfigOverview>("config_update", {
-      payload: { mcpServers: nextServers },
-    });
-    setConfig(updated);
-  };
-
-  const handleRemoveMcpServer = async (id: string) => {
-    if (!config) return;
-    const nextServers = config.mcpServers.filter((s) => s.id !== id);
-    const updated = await tauriInvoke<CodexConfigOverview>("config_update", {
-      payload: {
-        mcpServers: nextServers,
-      },
-    });
-    setConfig(updated);
-    notify(`已移除 MCP 服务器 ${id}`);
-  };
-
-  // ───────────────────────────────────────────────────────────────────────────
   // Derived data
   // ───────────────────────────────────────────────────────────────────────────
 
@@ -1061,6 +1038,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     );
 
   const installedMarketplaces = installedData?.marketplaces ?? [];
+  const manageableMarkets = configuredMarkets.map(item => item.marketplace);
   const marketplaceLoadErrors = installedData?.marketplaceLoadErrors ?? [];
   const installedCount = installedMarketplaces.reduce(
     (sum, marketplace) => sum + (marketplace.plugins?.length ?? 0),
@@ -1094,10 +1072,25 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   }).filter((group) => group.plugins.length > 0);
   const matchingBrowseCount = browseGroups.reduce((sum, group) => sum + group.plugins.length, 0);
 
-  const skillRows = buildSkillRows(skills, remoteSkills);
+  const skillRows = buildSkillRows(manageOnly ? skills.filter(skill => skill.installed) : skills, remoteSkills);
   const filteredSkillRows = skillRows.filter(
     (row) => matchesSearch(row.name) || matchesSearch(row.description)
   );
+  const tabCounts: Record<SubTab, number> = { plugins: installedCount, apps: appsData ? appsData.filter(app => app.isAccessible === true).length : (appsInstalled?.filter(app => app.callable).length ?? 0),
+    mcp: mcpCount, skills: skillRows.length, marketplaces: manageableMarkets.length };
+  const tabLabels: Record<SubTab, string> = { plugins: "插件", apps: "应用", mcp: "MCP", skills: "技能", marketplaces: "市场" };
+  const visibleManagementTabs = managementTabs(tabCounts, showNonMcpTabs);
+  const selectTab = (tab: SubTab) => {
+    const action = () => setSubTab(tab);
+    if (subTab === "mcp" && mcpNavigationGuard.current && !mcpNavigationGuard.current(action)) return;
+    action();
+  };
+  useEffect(() => {
+    if (!manageOnly) return;
+    const loading = managementLoading || !!managementError || (subTab === "plugins" ? installedLoading || !installedData || !!installedError : subTab === "apps" ? appsLoading || !appsLoaded || !!appsError : subTab === "skills" ? remoteSkillsLoading || remoteSkills === null || !!remoteSkillsError : false);
+    const next = managementFallback(subTab, tabCounts, loading, showNonMcpTabs);
+    if (next !== subTab) selectTab(next);
+  }, [manageOnly, subTab, installedCount, tabCounts.apps, tabCounts.skills, tabCounts.marketplaces, mcpCount, showNonMcpTabs, managementLoading, managementError, installedLoading, installedError, appsLoading, appsLoaded, appsError, remoteSkillsLoading, remoteSkillsError]);
 
   // ───────────────────────────────────────────────────────────────────────────
   // Reusable renderers
@@ -1377,6 +1370,12 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
             {!options.browse && <span className="pm-mono">{plugin.id}</span>}
           </div>
           {isOpen && <div className="pm-detail-panel">{renderPluginDetail()}</div>}
+          {!options.browse && pluginUpdates[plugin.id] && <div role="status">
+            {pluginUpdates[plugin.id].pending && <p>启禁结果待核验；核验只读取状态，不重复提交。</p>}
+            {pluginUpdates[plugin.id].error && <p role="alert">{pluginUpdates[plugin.id].error}</p>}
+            {pluginUpdates[plugin.id].refreshError && <p role="alert">{pluginUpdates[plugin.id].refreshError}</p>}
+            {(pluginUpdates[plugin.id].pending || pluginUpdates[plugin.id].refreshError) && <button type="button" disabled={busy} onClick={() => verifyPluginUpdate(plugin)}>重新核验并刷新技能</button>}
+          </div>}
         </div>
         <div className="pm-card-actions">
           <button
@@ -1406,12 +1405,16 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
               )}{" "}
               {busy ? "安装中…" : installed ? "已安装" : unconfirmedInstalls.has(plugin.id) ? "待确认" : "安装"}
             </button>
-          ) : (
+          ) : (<>
+            <button type="button" className="secondary-btn-sm" role="switch" aria-checked={plugin.enabled}
+              aria-label={`${pluginDisplayName(plugin)} 启用`} disabled={busy || !!pluginUpdates[plugin.id]?.pending || plugin.availability === "DISABLED_BY_ADMIN" || plugin.source.type === "remote"}
+              title={plugin.source.type === "remote" ? "远程服务启禁尚未接通" : plugin.availability === "DISABLED_BY_ADMIN" ? "管理员已禁用" : undefined}
+              onClick={() => handleTogglePlugin(plugin)}>{busy ? "更新中…" : plugin.enabled ? "禁用" : "启用"}</button>
             <button
               type="button"
               className="secondary-btn-sm"
-              disabled={busy || plugin.installPolicy === "INSTALLED_BY_DEFAULT"}
-              title={plugin.installPolicy === "INSTALLED_BY_DEFAULT" ? "由管理员安装" : "卸载插件"}
+              disabled={busy || !!pluginUpdates[plugin.id]?.pending || plugin.source.type === "remote"}
+              title={plugin.source.type === "remote" ? "远程插件卸载服务尚未接通" : "卸载插件"}
               onClick={() => handleUninstallPlugin(plugin)}
             >
               {busy ? (
@@ -1419,9 +1422,9 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
               ) : (
                 <Trash2 size={13} />
               )}{" "}
-              {plugin.installPolicy === "INSTALLED_BY_DEFAULT" ? "由管理员安装" : "卸载"}
+              {plugin.source.type === "remote" ? "远程服务未接通" : "卸载"}
             </button>
-          )}
+          </>)}
         </div>
       </div>
     );
@@ -1539,7 +1542,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
           <button
             type="button"
             className="primary-btn"
-            onClick={() => setSubTab("mcp")}
+            onClick={() => selectTab("mcp")}
           >
             <Plus size={14} /> 连接至自定义 MCP
           </button>
@@ -1548,6 +1551,26 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
           </button>
         </div>
       </div>
+
+      <dialog ref={removalDialog} className="pm-removal-dialog" aria-labelledby="pm-remove-market-title"
+        onCancel={event => { event.preventDefault(); closeRemoval(); }}>
+        <h3 id="pm-remove-market-title">移除市场{removal.target ? `「${marketplaceDisplayName(removal.target)}」` : ""}</h3>
+        {!removal.plan && removal.busy && <p role="status">正在完整读取该市场的已安装插件…</p>}
+        {removal.plan && <>
+          <p>先卸载该市场的全部已安装插件，再移除市场。关闭不会撤销已完成的卸载。</p>
+          <p role="status">已卸载 {removal.plan.completedIds.length} / {removal.plan.plugins.length}</p>
+          <ul>{removal.plan.plugins.map(plugin => <li key={plugin.id}>{pluginDisplayName(plugin)}{removal.plan?.completedIds.includes(plugin.id) ? "：已卸载" : ""}</li>)}</ul>
+          {(removal.plan.pendingPluginId || removal.plan.removePending) && <p>上次操作结果待核验；重试会先读取实际结果。</p>}
+          {removal.plan.removed && <p role="status">市场已移除</p>}
+        </>}
+        {removal.error && <p role="alert">{removal.error}</p>}
+        <div className="pm-form-actions">
+          {removal.plan && !removal.plan.removed && <button type="button" className="danger-btn-sm" disabled={removal.busy} onClick={() => removal.confirm()}>
+            {removal.busy ? "正在移除…" : removal.error ? "重试剩余操作" : "卸载插件并移除市场"}</button>}
+          {!removal.plan && removal.target && removal.error && <button type="button" disabled={removal.busy} onClick={() => removal.open(removal.target!)}>重新读取插件</button>}
+          <button type="button" className="secondary-btn-sm" onClick={closeRemoval}>关闭</button>
+        </div>
+      </dialog>
 
       {toast && (
         <div
@@ -1577,61 +1600,14 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
         部分插件的安装结果尚未确认，请刷新安装状态后再重试。
       </p>}
 
-      {/* 5-Tab Bar */}
-      <div className="sub-tabs" style={{ marginBottom: 16 }}>
-        <button
-          type="button"
-          className={`sub-tab ${subTab === "plugins" ? "active" : ""}`}
-          onClick={() => setSubTab("plugins")}
-        >
-          <Boxes size={15} />
-          <span>插件 ({installedCount})</span>
-        </button>
-        <button
-          type="button"
-          className={`sub-tab ${subTab === "skills" ? "active" : ""}`}
-          onClick={() => setSubTab("skills")}
-        >
-          <BookOpen size={15} />
-          <span>
-            技能 ({remoteSkills ? remoteSkills.length : skills.length})
-          </span>
-        </button>
-        <button
-          type="button"
-          className={`sub-tab ${subTab === "mcp" ? "active" : ""}`}
-          onClick={() => setSubTab("mcp")}
-        >
-          <Server size={15} />
-          <span>MCP 服务器 ({config?.mcpServers?.length || 0})</span>
-        </button>
-        {!manageOnly && <>
-        <button
-          type="button"
-          className={`sub-tab ${subTab === "apps" ? "active" : ""}`}
-          onClick={() => setSubTab("apps")}
-        >
-          <AppWindow size={15} />
-          <span>
-            应用连接器 (
-            {appsData
-              ? appsData.length
-              : appsInstalled
-                ? appsInstalled.length
-                : "—"}
-            )
-          </span>
-        </button>
-        <button
-          type="button"
-          className={`sub-tab ${subTab === "marketplaces" ? "active" : ""}`}
-          onClick={() => setSubTab("marketplaces")}
-        >
-          <ShoppingBag size={15} />
-          <span>市场 ({installedMarketplaces.length})</span>
-        </button>
-        </>}
+      <div className="sub-tabs" role="tablist" aria-label="管理扩展程序" style={{ marginBottom: 16 }}>
+        {(manageOnly ? visibleManagementTabs : ["plugins", "skills", "mcp", "apps", "marketplaces"] as SubTab[]).map(tab =>
+          <button key={tab} type="button" role="tab" aria-selected={subTab === tab}
+            className={`sub-tab ${subTab === tab ? "active" : ""}`} onClick={() => selectTab(tab)}>
+            <span>{tabLabels[tab]} ({tabCounts[tab]})</span>
+          </button>)}
       </div>
+      {managementError && <p role="alert">管理信息读取失败：{managementError} <button type="button" onClick={loadManagement}>重试</button></p>}
 
       {/* TAB 1: PLUGINS */}
       {subTab === "plugins" && (
@@ -1755,7 +1731,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       )}
 
       {/* TAB 2: SKILLS (skills/list + skills/config/write, local fallback) */}
-      {subTab === "skills" && <RecommendedSkillsPanel key={activeWorkspaceRoot}
+      {subTab === "skills" && !manageOnly && <RecommendedSkillsPanel key={activeWorkspaceRoot}
         workspaceRoot={activeWorkspaceRoot} onInstalled={refreshAll} writeBusy={skillWriteBusy}
         beginInstall={() => {
           if (skillWritePendingRef.current) return false;
@@ -1961,148 +1937,10 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       )}
 
       {/* TAB 3: MCP SERVERS (unchanged behavior) */}
-      {subTab === "mcp" && (
-        <div className="mcp-management-body">
-          <div className="card-section">
-            <h3>连接至自定义 MCP 服务器 (`[mcp_servers.*]`)</h3>
-            <div className="form-grid-row">
-              <div className="form-field">
-                <label>Server ID (唯一标识符)</label>
-                <input
-                  type="text"
-                  placeholder="例如：filesystem 或 playwright"
-                  value={mcpId}
-                  onChange={(e) => setMcpId(e.target.value)}
-                />
-              </div>
-              <div className="form-field">
-                <label>传输协议类型</label>
-                <select
-                  value={mcpTransport}
-                  onChange={(e) =>
-                    setMcpTransport(e.target.value as "stdio" | "http")
-                  }
-                >
-                  <option value="stdio">STDIO (本地命令行进程)</option>
-                  <option value="http">Streamable HTTP / SSE 远程端点</option>
-                </select>
-              </div>
-              {mcpTransport === "stdio" ? (
-                <>
-                  <div className="form-field">
-                    <label>可执行命令 (Command)</label>
-                    <input
-                      type="text"
-                      placeholder="例如：npx 或 uvx"
-                      value={mcpCommand}
-                      onChange={(e) => setMcpCommand(e.target.value)}
-                    />
-                  </div>
-                  <div className="form-field">
-                    <label>启动参数 Args (空格分隔)</label>
-                    <input
-                      type="text"
-                      placeholder="-y @modelcontextprotocol/server-filesystem ."
-                      value={mcpArgs}
-                      onChange={(e) => setMcpArgs(e.target.value)}
-                    />
-                  </div>
-                </>
-              ) : (
-                <div className="form-field">
-                  <label>HTTP / SSE 服务器 URL</label>
-                  <input
-                    type="text"
-                    placeholder="https://example.com/mcp"
-                    value={mcpUrl}
-                    onChange={(e) => setMcpUrl(e.target.value)}
-                  />
-                </div>
-              )}
-            </div>
-            <div className="form-field" style={{ marginTop: 10 }}>
-              <label>环境变量 Env (可选，每行一个 KEY=VALUE)</label>
-              <textarea
-                rows={2}
-                placeholder="GITHUB_PERSONAL_ACCESS_TOKEN=ghp_xxx"
-                value={mcpEnvText}
-                onChange={(e) => setMcpEnvText(e.target.value)}
-              />
-            </div>
-            <div style={{ marginTop: 10 }}>
-              <button
-                type="button"
-                className="primary-btn"
-                onClick={handleAddMcpServer}
-                disabled={!mcpId.trim()}
-              >
-                <Plus size={14} /> 保存并连接 MCP Server
-              </button>
-            </div>
-          </div>
-
-          <div className="card-section">
-            <h3>已配置的 MCP 服务器 ({config?.mcpServers?.length || 0})</h3>
-            {(config?.mcpServers || []).length === 0 ? (
-              <div className="empty-hint">
-                暂未在 `config.toml` 中配置外部 MCP Server，可在上方填写或前往「市场」一键安装。
-              </div>
-            ) : (
-              <div className="item-cards-list">
-                {(config?.mcpServers || []).map((srv) => (
-                  <div key={srv.id} className="item-card">
-                    <div className="item-card-main">
-                      <div className="item-card-title-row">
-                        <Server size={15} className="accent-icon" />
-                        <strong>{srv.id}</strong>
-                        <span className="tag-badge accent">
-                          {srv.url ? "Streamable HTTP" : "STDIO"}
-                        </span>
-                        <span className="tag-badge">
-                          {srv.enabled ? "已启用" : "已禁用"}
-                        </span>
-                      </div>
-                      <div className="item-card-meta">
-                        {srv.command && (
-                          <span className="mono-text">
-                            {srv.command} {srv.args.join(" ")}
-                          </span>
-                        )}
-                        {srv.url && <span className="mono-text">{srv.url}</span>}
-                      </div>
-                    </div>
-                    <div className="item-card-actions">
-                      <button
-                        type="button"
-                        className="secondary-btn-sm"
-                        onClick={() => handleToggleMcpServer(srv)}
-                      >
-                        {srv.enabled ? "禁用" : "启用"}
-                      </button>
-                      <button
-                        type="button"
-                        className="danger-btn-sm"
-                        onClick={() => handleRemoveMcpServer(srv.id)}
-                      >
-                        <Trash2 size={13} /> 删除
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {mcpLiveStatus.length > 0 && (
-            <div className="card-section">
-              <h3>App-Server 实时 MCP 运行状态</h3>
-              <pre className="code-block-pre">
-                <code>{JSON.stringify(mcpLiveStatus, null, 2)}</code>
-              </pre>
-            </div>
-          )}
-        </div>
-      )}
+      {subTab === "mcp" && <McpSettings cwd={activeWorkspaceRoot || undefined} connectionIdentity={connectionIdentity}
+        onConfigUpdated={async () => { await onConfigUpdated?.(); await loadManagement(); }}
+        onRestartAppServer={onRestartAppServer ?? (async () => { throw new Error("当前入口尚未连接应用服务重启操作"); })}
+        onNavigationGuardChange={guard => { mcpNavigationGuard.current = guard; onNavigationGuardChange?.(guard); }} />}
 
       {/* TAB 4: APP CONNECTORS (app/list + app/installed fallback) */}
       {subTab === "apps" && (
@@ -2113,10 +1951,6 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
                 应用连接器
                 {appsData ? ` (${appsData.length})` : ""}
               </h3>
-              <p className="pm-hint">
-                数据来源：app/list（应用目录）；请求失败时自动回退
-                app/installed 本地连接器快照。
-              </p>
             </div>
             <div className="pm-toolbar-right">
               <button
@@ -2144,7 +1978,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
               <div className="empty-hint">应用目录为空（app/list 返回 0 项）。</div>
             ) : (
               <div className="pm-apps-grid">
-                {appsData.map((app) => (
+                {(manageOnly ? appsData.filter(app => app.isAccessible === true) : appsData).map((app) => (
                   <div className="pm-app-card" key={app.id}>
                     <div className="pm-app-icon">
                       <AppWindow size={16} />
@@ -2197,7 +2031,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
                 {appsInstalled.length} 项
               </p>
               <div className="pm-apps-grid">
-                {appsInstalled.map((app) => (
+                {(manageOnly ? appsInstalled.filter(app => app.callable) : appsInstalled).map((app) => (
                   <div className="pm-app-card" key={app.id}>
                     <div className="pm-app-icon">
                       <AppWindow size={16} />
@@ -2230,12 +2064,8 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
           <div className="pm-toolbar">
             <div>
               <h3 style={{ margin: 0 }}>
-                已配置的插件市场 ({installedMarketplaces.length})
+                已配置的插件市场 ({manageableMarkets.length})
               </h3>
-              <p className="pm-hint">
-                数据来源：plugin/installed；市场操作使用 marketplace/add ·
-                marketplace/remove · marketplace/upgrade。
-              </p>
             </div>
             <div className="pm-toolbar-right">
               <button
@@ -2252,7 +2082,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
                 type="button"
                 className="primary-btn-sm"
                 onClick={() => handleUpgradeMarketplaces()}
-                disabled={marketplaceBusy !== null}
+                disabled={marketplaceBusy !== null || !configuredMarkets.some(item => item.canUpgrade)}
               >
                 {marketplaceBusy === "upgrade" ? (
                   <Loader2 size={13} className="pm-spin" />
@@ -2386,14 +2216,14 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
           {!isInstalledBusy && installedError &&
             renderLoadError(installedError, "插件市场", () => loadInstalledPlugins())}
           {!isInstalledBusy && !installedError && (
-            installedMarketplaces.length === 0 ? (
+            manageableMarkets.length === 0 ? (
               <div className="empty-hint">
                 尚未配置任何插件市场。可使用「添加市场」通过 marketplace/add 添加 Git
                 仓库或本地市场目录。
               </div>
             ) : (
               <div className="pm-stack">
-                {installedMarketplaces.map((marketplace) => {
+                {manageableMarkets.map((marketplace) => {
                   const counts = countMarketplacePlugins(marketplace);
                   const busy =
                     marketplaceBusy === marketplace.name ||
@@ -2426,7 +2256,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
                         <button
                           type="button"
                           className="secondary-btn-sm"
-                          disabled={busy}
+                          disabled={busy || !configuredMarkets.find(item => item.marketplace.name === marketplace.name)?.canUpgrade}
                           onClick={() => handleUpgradeMarketplaces(marketplace.name)}
                         >
                           {marketplaceBusy === marketplace.name ? (
@@ -2439,8 +2269,9 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
                         <button
                           type="button"
                           className="secondary-btn-sm"
-                          disabled={busy}
-                          onClick={() => handleRemoveMarketplace(marketplace)}
+                          disabled={busy || removal.busy || !!configuredMarkets.find(item => item.marketplace.name === marketplace.name)?.readOnlyReason}
+                          title={configuredMarkets.find(item => item.marketplace.name === marketplace.name)?.readOnlyReason || undefined}
+                          onClick={event => { removalTrigger.current = event.currentTarget; handleRemoveMarketplace(marketplace); }}
                         >
                           <Trash2 size={13} /> 移除
                         </button>

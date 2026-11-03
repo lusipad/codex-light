@@ -225,6 +225,9 @@ try {
   Invoke-Step "Extended worksurfaces & cross-page parity (17-23)" { node scripts/verify-extended-worksurfaces.mjs }
   Invoke-Step "Hook state and settings regression" { node scripts/verify-hook-state.mjs }
   Invoke-Step "Plugin settings management" { node scripts/verify-plugin-settings.mjs }
+  Invoke-Step "Plugin enablement and marketplace dependency regression" { node scripts/verify-plugin-management-b.mjs }
+  Invoke-Step "Plugin management lifecycle and component regression" { node scripts/verify-plugin-management-ui-b.mjs }
+  Invoke-Step "Rust shared plugin operation regression" { cargo test --locked --manifest-path src-tauri/Cargo.toml plugin_operations }
 
 Invoke-Step "TypeScript typecheck (tsc --noEmit)" { npx tsc --noEmit }
   Invoke-Step "Frontend production build (vite)" { npm run build }
@@ -270,6 +273,7 @@ Invoke-Step "TypeScript typecheck (tsc --noEmit)" { npx tsc --noEmit }
       "scripts/protocol-verify/verify-archive-actions.mjs"
       "scripts/protocol-verify/verify-archive-deletion.mjs"
       "scripts/protocol-verify/verify-plugin-preparation.mjs"
+      "scripts/protocol-verify/verify-plugin-management-b.mjs"
       "scripts/protocol-verify/verify-recommended-skills.mjs"
       "scripts/protocol-verify/verify-model-catalog.mjs"
       "scripts/protocol-verify/verify-model-preferences.mjs"

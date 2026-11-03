@@ -224,7 +224,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const activeSectionRef = useRef(activeSection);
   activeSectionRef.current = activeSection;
   const personalizationNavigationGuardRef = useRef<((action: () => void) => boolean) | null>(null);
-  const settingsGuardsRef = useRef<Record<"personalization" | "account" | "profile" | "mcp", ((action: () => void) => boolean) | null>>({ personalization: null, account: null, profile: null, mcp: null });
+  const settingsGuardsRef = useRef<Record<"personalization" | "account" | "profile" | "mcp" | "plugins", ((action: () => void) => boolean) | null>>({ personalization: null, account: null, profile: null, mcp: null, plugins: null });
   const publishSettingsGuard = useCallback(() => {
     const guards = Object.values(settingsGuardsRef.current).filter((guard): guard is (action: () => void) => boolean => guard !== null);
     const combined = guards.length === 1 ? guards[0] : guards.length ? (action: () => void) => guards.every(guard => guard(action)) : null;
@@ -242,6 +242,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   }, [publishSettingsGuard]);
   const registerMcpNavigationGuard = useCallback((guard: ((action: () => void) => boolean) | null) => {
     settingsGuardsRef.current.mcp = guard; publishSettingsGuard();
+  }, [publishSettingsGuard]);
+  const registerPluginNavigationGuard = useCallback((guard: ((action: () => void) => boolean) | null) => {
+    settingsGuardsRef.current.plugins = guard; publishSettingsGuard();
   }, [publishSettingsGuard]);
   const setActiveSection = useCallback((section: SettingsSectionSlug) => {
     if (section === activeSectionRef.current) return;
@@ -961,6 +964,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               key={activeWorkspaceRoot}
               activeWorkspaceRoot={activeWorkspaceRoot}
               manageOnly
+              connectionIdentity={JSON.stringify([connectionIdentity, accountIdentity])}
+              onConfigUpdated={onConfigUpdated}
+              onRestartAppServer={() => onRestartAppServer()}
+              onNavigationGuardChange={registerPluginNavigationGuard}
               onBrowseDirectory={(tab) => onNavigateRoute?.(tab === "skills" ? "skills" : "plugins")}
             />
           </div>
