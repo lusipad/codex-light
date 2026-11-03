@@ -1837,3 +1837,14 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 16.12B 最终交付：完整标准（非 Fast）、当前 0.159.2 与 Store 0.166.0-alpha.5.1 隔离 Hook 信任/启停往返、EXE/MSI/NSIS 退出 0；276 产品输入/helper/许可稳定。本轮无 Rust 改动，运行标准相关检查，未额外重跑全 Rust 库。原生/官方像素/实际执行与用户验收仍待完成。
 
 下一 [16.13B](antigravity/specs/16-13-next-closure.md)已核固定 Store 真实临时 thread/turn 生成链、指令偏好和严格结果/取消合同；尚未开发，不将旧固定文件名文案称作真实生成。
+
+## 2026-11-03 — 16.13B Git 真实提交 / PR 文案生成
+
+- 先提取固定 Store 完整三模式提示、纯上下文函数及黄金样本，再接两项宿主全局指令、真实 tracked Git 上下文和专用 ephemeral thread/turn；见[阶段待验](antigravity/acceptance/16-13B.md)。
+- 删除文件名模板生成和空稿固定 update 提交旁路；生成失败/取消/草稿变化不进入 stage/commit/push/createPR，独立生成只填表，PR 保留已填字段。复用现有存储、桥接、Git 写入链与样式，无新依赖。
+- 宿主按真实窗口/operationId/连接世代隔离；私有事件不进用户时间线或审批，工具请求拒绝，超时/重连/晚到创建清理。结果再验精确字段和标题换行，completed 与迟到 start 响应竞速。
+- 指令保存旧错误污染新稿 P2 已由生产回归复现并关闭；Windows 单测加载问题保留 PE/DLL 根因证据，通过事件回放回调边界修复，未跳过实际 cleanup 测试。最终专项和集中复核通过，完整标准/全 Rust/原生包进行中。
+- 双 CLI 无模型探针均确认三 source 的 ephemeral/readOnly/never/low。受控 Chrome 生成/取消/PR 填写 Git 写 0；初次夹具默认空数组触发重复 diff 更新已记失败及修正重验。无真实模型/Git写/账号测试，不代替原生/官方像素或用户验收。
+- 保留共同版本 sandbox 适配、PR merge-base adapter 未证官方底层完全等价、多 Git 读取非原子及整页其他表单缺口。下一本地环境只读调研中，产品不混入本阶段冻结输入。
+
+16.13B 最终交付：完整标准（非 Fast）、全 Rust 360 项及 EXE/MSI/NSIS 退出 0，279 项产品输入/helper/许可五文件稳定。限定阶段待用户验收；真实模型、原生/官方像素、远程 evaluation 和 PR 底层适配边界继续保留。下一[16.14B 本地环境合同](antigravity/specs/16-14B-next-closure.md)已冻结，尚未开发。

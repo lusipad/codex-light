@@ -36,6 +36,7 @@ function mount() {
     gitStatus: { entries: [{ path: "a.ts", staged: false }] }, displayedEntries: [{ path: "a.ts" }],
     commitMessage: "original draft", forceWithLease: false,
     gitWritePendingRef: { current: false }, gitContextRef: { current: { cwd: "repo-A" } },
+    generationRef: { current: null }, generationMountedRef: { current: true },
     invoke(method, params) { const pending = deferred(); requests.push({ method, params, ...pending }); return pending.promise; },
     setCommitMessage(value) { context.commitMessage = typeof value === "function" ? value(context.commitMessage) : value; },
     onRefreshGit: () => events.push(["refresh"]), showToast: message => events.push(["toast", message]),

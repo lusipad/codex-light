@@ -44,7 +44,8 @@ invoke = (cmd, args) => {
   return Promise.resolve(args.value);
 };
 const pending = state.save("git-always-force-push", true);
-await state.save("git-always-force-push", true); assert.equal(count, 1);
+const duplicate = state.save("git-always-force-push", true);
+assert.equal(duplicate, pending); await flush(); assert.equal(count, 1);
 cleanup(); const snapshot = slots.slice(); release(); await pending;
 assert.deepEqual(slots, snapshot);
 console.log("PASS GT01: defaults, isolated key readback, failure retains prior value, reload, single-flight and unmount protection");
@@ -77,6 +78,7 @@ assert.ok(source.includes('{!lastTurnOnly && <>'));
 console.log("PASS GT02: production diff effect reads recorded changes with zero Git calls, unread preferences block Git diff");
 Object.assign(context, {
   gitWritePendingRef: { current: false }, gitContextRef: { current: {} },
+  generationRef: { current: null }, generationMountedRef: { current: true }, prDraftRef: { current: { title: "Title", body: "Body" } },
   gitPreferences: { "git-always-force-push": true }, forceWithLease: false,
   setPushing() {}, onRefreshGit() {}, showToast() {},
   prTitle: "Title", prBody: "Body", prDraft: true, baseBranch: "main",

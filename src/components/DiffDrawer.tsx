@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { invoke } from "@tauri-apps/api/core";
 import { copyTextToClipboard } from "../clipboard";
 import { tauriListen } from "../bridge";
+import { generateGitMessage, type GitGenerationMode } from "../gitMessageGeneration";
 import { saveFileEditorSnapshot } from "../fileEditorSave";
 import { FileDiscardDialog } from "./FileDiscardDialog";
 import {
@@ -71,6 +72,7 @@ export interface DiffDrawerProps {
   open?: boolean;
   gitPreferences?: GitPreferences;
   gitPreferencesReady?: boolean;
+  connectionIdentity?: string;
   cwd: string;
   gitStatus: GitStatusInfo | null;
   branches?: string[];
@@ -424,6 +426,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   open = true,
   gitPreferences = GIT_DEFAULTS,
   gitPreferencesReady = true,
+  connectionIdentity = "local",
   cwd,
   gitStatus,
   branches = [],
@@ -661,10 +664,13 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   const [committing, setCommitting] = useState(false);
   const [indexWriting, setIndexWriting] = useState(false);
   const gitWritePendingRef = useRef(false);
-  const gitContextRef = useRef({ cwd });
-  if (gitContextRef.current.cwd !== cwd) gitContextRef.current = { cwd };
+  const gitContextRef = useRef({ cwd, connectionIdentity, open });
+  if (gitContextRef.current.cwd !== cwd || gitContextRef.current.connectionIdentity !== connectionIdentity || gitContextRef.current.open !== open) gitContextRef.current = { cwd, connectionIdentity, open };
   const [pushing, setPushing] = useState(false);
-  const gitWriteBusy = committing || pushing || indexWriting;
+  const [generationKind, setGenerationKind] = useState<GitGenerationMode | null>(null);
+  const generationRef = useRef<{ controller: AbortController; mode: GitGenerationMode } | null>(null);
+  const generationMountedRef = useRef(true);
+  const commitDraftRef = useRef(commitMessage); commitDraftRef.current = commitMessage;
   const [forceWithLease, setForceWithLease] = useState(gitPreferences["git-always-force-push"]);
   const [showPrModal, setShowPrModal] = useState(false);
   const [shortcutGitCwd, setShortcutGitCwd] = useState<string | null>(null);
@@ -674,11 +680,18 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   const [shortcutFocus, setShortcutFocus] = useState<{ target: "commit" | "pr"; cwd: string } | null>(null);
   const [prTitle, setPrTitle] = useState("");
   const [prBody, setPrBody] = useState("");
+  const prDraftRef = useRef({ title: prTitle, body: prBody }); prDraftRef.current = { title: prTitle, body: prBody };
   const [prDraft, setPrDraft] = useState(gitPreferences["git-create-pull-request-as-draft"]);
   useEffect(() => { setForceWithLease(gitPreferences["git-always-force-push"]); }, [gitPreferences["git-always-force-push"]]);
   useEffect(() => { setPrDraft(gitPreferences["git-create-pull-request-as-draft"]); }, [gitPreferences["git-create-pull-request-as-draft"]]);
   const [creatingPr, setCreatingPr] = useState(false);
+  const gitWriteBusy = committing || pushing || indexWriting || creatingPr || generationKind !== null;
   const [gitToast, setGitToast] = useState<string | null>(null);
+  useEffect(() => {
+    generationRef.current?.controller.abort(); generationRef.current = null; setGenerationKind(null);
+  }, [cwd, connectionIdentity, open]);
+  useEffect(() => { generationMountedRef.current = true; return () => { generationMountedRef.current = false; generationRef.current?.controller.abort(); }; }, []);
+  useEffect(() => { if (!showPrModal && generationRef.current?.mode === "pull_request") generationRef.current.controller.abort(); }, [showPrModal]);
 
   // Files & Editor state
   const [currentDir, setCurrentDir] = useState<string>(cwd);
@@ -721,7 +734,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   }, [filePreview]);
   useEffect(() => () => {
     ++previewRequestRef.current;
-    gitContextRef.current = { cwd: "" };
+    gitContextRef.current = { cwd: "", connectionIdentity: "", open: false };
   }, []);
   const [watchActive, setWatchActive] = useState(false);
   const [explorerDraft, setExplorerDraft] = useState<ExplorerDraft | null>(null);
@@ -976,7 +989,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   };
 
   const handleStage = async (filePath?: string) => {
-    if (gitWritePendingRef.current) return;
+    if (gitWritePendingRef.current || generationRef.current) return;
     const context = gitContextRef.current;
     gitWritePendingRef.current = true;
     setIndexWriting(true);
@@ -992,7 +1005,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   };
 
   const handleUnstage = async (filePath?: string) => {
-    if (gitWritePendingRef.current) return;
+    if (gitWritePendingRef.current || generationRef.current) return;
     const context = gitContextRef.current;
     gitWritePendingRef.current = true;
     setIndexWriting(true);
@@ -1062,42 +1075,58 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     }
   }, [diffContent]);
 
-  const handleGenerateCommitMessage = useCallback(() => {
-    const files = displayedEntries.map((e) => e.path);
-    if (files.length === 0) {
-      showToast("暂无改动文件可生成提交说明");
-      return;
+  const cancelGeneration = () => { generationRef.current?.controller.abort(); };
+  const requestGeneration = async (mode: GitGenerationMode, draftMessage = "") => {
+    if (!cwd || !open || !gitPreferencesReady) throw Error("Git 设置或工作区尚未就绪，请重新读取。");
+    if (generationRef.current) throw Error("正在生成，请等待完成或取消。");
+    const context = gitContextRef.current, controller = new AbortController();
+    const operation = { controller, mode }; generationRef.current = operation; setGenerationKind(mode);
+    try {
+      const result = await generateGitMessage(cwd, mode, {
+        includeUnstaged: !gitStatus?.entries.some(entry => entry.staged), baseBranch: baseBranch || null, draftMessage,
+      }, controller.signal);
+      if (controller.signal.aborted || context !== gitContextRef.current) throw Error("生成已取消或工作区已改变。");
+      return result;
+    } finally {
+      if (generationRef.current === operation) { generationRef.current = null; if (generationMountedRef.current) setGenerationKind(null); }
     }
-    const isDoc = files.every((f) => /\.(md|txt|doc)$/i.test(f));
-    const isTest = files.every((f) => /(test|spec)/i.test(f));
-    const isStyle = files.every((f) => /\.(css|scss|less)$/i.test(f));
-    const prefix = isDoc ? "docs" : isTest ? "test" : isStyle ? "style" : "fix";
-    const firstBase = files[0].split(/[/\\]/).pop()?.replace(/\.[^.]+$/, "") || "core";
-    const msg =
-      files.length === 1
-        ? `${prefix}(${firstBase}): update ${files[0]}`
-        : `${prefix}: update ${firstBase} and ${files.length - 1} other file${files.length > 2 ? "s" : ""}`;
-    setCommitMessage(msg);
-    showToast(`✓ 已自动生成提交说明: ${msg}`);
-  }, [displayedEntries]);
+  };
+  const handleGenerateCommitMessage = async () => {
+    if (gitWritePendingRef.current || generationRef.current) return;
+    const context = gitContextRef.current, draft = commitDraftRef.current;
+    try {
+      const result = await requestGeneration("commit", draft);
+      if (context !== gitContextRef.current) return;
+      if (commitDraftRef.current !== draft) { showToast("提交草稿已改变，已保留当前输入。"); return; }
+      commitDraftRef.current = result.message!; setCommitMessage(result.message!);
+    } catch (error) { if (context === gitContextRef.current) showToast(`生成失败: ${String(error)}`); }
+  };
+  const handleGeneratePrMessage = async () => {
+    if (gitWritePendingRef.current || generationRef.current) return;
+    const context = gitContextRef.current, draft = { ...prDraftRef.current };
+    try {
+      const result = await requestGeneration("pull_request");
+      if (context !== gitContextRef.current) return;
+      const current = prDraftRef.current;
+      const title = !draft.title.trim() && current.title === draft.title ? result.title! : current.title;
+      const body = !draft.body.trim() && current.body === draft.body ? result.body! : current.body;
+      prDraftRef.current = { title, body }; setPrTitle(title); setPrBody(body);
+    } catch (error) { if (context === gitContextRef.current) showToast(`生成失败: ${String(error)}`); }
+  };
 
   const handleCommit = async () => {
-    if (gitWritePendingRef.current) return;
+    if (gitWritePendingRef.current || generationRef.current) return;
     const context = gitContextRef.current;
     const draftMessage = commitMessage;
     let messageToUse = commitMessage.trim();
-    if (!messageToUse) {
-      const files = displayedEntries.map((e) => e.path);
-      if (files.length === 0) {
-        showToast("暂无可提交的改动");
-        return;
-      }
-      const firstBase = files[0].split(/[/\\]/).pop()?.replace(/\.[^.]+$/, "") || "core";
-      messageToUse = files.length === 1 ? `update ${files[0]}` : `update ${files.length} files (${firstBase})`;
-    }
     gitWritePendingRef.current = true;
     setCommitting(true);
     try {
+      if (!messageToUse) {
+        const generated = await requestGeneration("commit", draftMessage);
+        if (context !== gitContextRef.current || commitDraftRef.current !== draftMessage) throw Error("提交草稿已改变，未执行 Git 写入。");
+        messageToUse = generated.message!;
+      }
       const hasStaged = gitStatus?.entries.some((e) => e.staged);
       if (!hasStaged && (gitStatus?.entries.length || 0) > 0) {
         await invoke("git_stage", { cwd, filePath: null });
@@ -1112,27 +1141,23 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
       if (context === gitContextRef.current) showToast(`提交失败: ${String(e)}`);
     } finally {
       gitWritePendingRef.current = false;
-      setCommitting(false);
+      if (generationMountedRef.current) setCommitting(false);
     }
   };
 
   const handleCommitAndPush = async () => {
-    if (gitWritePendingRef.current) return;
+    if (gitWritePendingRef.current || generationRef.current) return;
     const context = gitContextRef.current;
     const draftMessage = commitMessage;
     let messageToUse = commitMessage.trim();
-    if (!messageToUse) {
-      const files = displayedEntries.map((e) => e.path);
-      if (files.length === 0) {
-        showToast("暂无可提交的改动");
-        return;
-      }
-      const firstBase = files[0].split(/[/\\]/).pop()?.replace(/\.[^.]+$/, "") || "core";
-      messageToUse = files.length === 1 ? `update ${files[0]}` : `update ${files.length} files (${firstBase})`;
-    }
     gitWritePendingRef.current = true;
     setCommitting(true);
     try {
+      if (!messageToUse) {
+        const generated = await requestGeneration("commit", draftMessage);
+        if (context !== gitContextRef.current || commitDraftRef.current !== draftMessage) throw Error("提交草稿已改变，未执行 Git 写入。");
+        messageToUse = generated.message!;
+      }
       const hasStaged = gitStatus?.entries.some((e) => e.staged);
       if (!hasStaged && (gitStatus?.entries.length || 0) > 0) {
         await invoke("git_stage", { cwd, filePath: null });
@@ -1151,12 +1176,12 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
       if (context === gitContextRef.current) showToast(`操作失败: ${String(e)}`);
     } finally {
       gitWritePendingRef.current = false;
-      setCommitting(false);
+      if (generationMountedRef.current) setCommitting(false);
     }
   };
 
   const handlePush = async () => {
-    if (gitWritePendingRef.current) return;
+    if (gitWritePendingRef.current || generationRef.current) return;
     const context = gitContextRef.current;
     gitWritePendingRef.current = true;
     setPushing(true);
@@ -1174,25 +1199,24 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   };
 
   const handleCreatePr = async () => {
-    if (!prTitle.trim()) return;
-    setCreatingPr(true);
+    if (gitWritePendingRef.current || generationRef.current) return;
+    const context = gitContextRef.current, draft = { ...prDraftRef.current };
+    gitWritePendingRef.current = true; setCreatingPr(true);
     try {
-      const url = await invoke<string>("git_create_pr", {
-        cwd,
-        title: prTitle.trim(),
-        body: prBody,
-        baseBranch: baseBranch || null,
-        draft: prDraft,
-      });
+      let title = draft.title, body = draft.body;
+      if (!title.trim() || !body.trim()) {
+        const generated = await requestGeneration("pull_request");
+        if (context !== gitContextRef.current || prDraftRef.current.title !== draft.title || prDraftRef.current.body !== draft.body) throw Error("PR 草稿已改变，未创建 PR。");
+        title = title.trim() ? title : generated.title!; body = body.trim() ? body : generated.body!;
+      }
+      if (context !== gitContextRef.current) return;
+      const url = await invoke<string>("git_create_pr", { cwd, title: title.trim(), body, baseBranch: baseBranch || null, draft: prDraft });
+      if (context !== gitContextRef.current) return;
       setShowPrModal(false);
-      setPrTitle("");
-      setPrBody("");
+      setPrTitle(current => current === draft.title ? "" : current); setPrBody(current => current === draft.body ? "" : current);
       showToast(`✓ PR 已创建: ${url}`);
-    } catch (e) {
-      showToast(`创建 PR 失败: ${String(e)}`);
-    } finally {
-      setCreatingPr(false);
-    }
+    } catch (error) { if (context === gitContextRef.current) showToast(`创建 PR 失败: ${String(error)}`); }
+    finally { gitWritePendingRef.current = false; if (generationMountedRef.current) setCreatingPr(false); }
   };
 
   /**
@@ -2180,14 +2204,14 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                     ref={prTitleInputRef}
                     placeholder="PR 标题..."
                     value={prTitle}
-                    onChange={(e) => setPrTitle(e.target.value)}
+                    onChange={(e) => { prDraftRef.current.title = e.target.value; setPrTitle(e.target.value); }}
                   />
                   <textarea
                     className="commit-input"
                     rows={3}
                     placeholder="PR 描述与变更摘要..."
                     value={prBody}
-                    onChange={(e) => setPrBody(e.target.value)}
+                    onChange={(e) => { prDraftRef.current.body = e.target.value; setPrBody(e.target.value); }}
                     style={{ height: "auto" }}
                   />
                   <div className="diff-pr-panel-footer">
@@ -2199,10 +2223,12 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                       />
                       <span>草稿 (Draft PR)</span>
                     </label>
+                    <button type="button" className="secondary-btn compact" disabled={gitWriteBusy || (!!prTitle.trim() && !!prBody.trim())} onClick={handleGeneratePrMessage}>生成标题与描述</button>
+                    {generationKind === "pull_request" && <button type="button" className="secondary-btn compact" onClick={cancelGeneration}>取消生成</button>}
                     <button
                       type="button"
                       className="primary-btn compact"
-                      disabled={creatingPr || !prTitle.trim()}
+                      disabled={gitWriteBusy}
                       onClick={handleCreatePr}
                     >
                       {creatingPr ? "创建中..." : "创建 PR"}
@@ -2217,7 +2243,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                   ref={commitInputRef}
                   placeholder="输入 Git 提交说明 (留空自动生成)..."
                   value={commitMessage}
-                  onChange={(e) => setCommitMessage(e.target.value)}
+                  onChange={(e) => { commitDraftRef.current = e.target.value; setCommitMessage(e.target.value); }}
                   onKeyDown={(e) => {
                     if (e.nativeEvent.isComposing || e.keyCode === 229) return;
                     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
@@ -2230,11 +2256,13 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                   type="button"
                   className="secondary-btn compact"
                   onClick={handleGenerateCommitMessage}
-                  title="根据改动自动生成 Conventional Commits 提交说明"
+                  disabled={gitWriteBusy}
+                  title="根据真实 Git 改动和提交指令生成提交说明"
                 >
                   <SparklesIcon size={12} />
-                  <span>生成</span>
+                  <span>{generationKind === "commit" ? "生成中…" : "生成"}</span>
                 </button>
+                {generationKind === "commit" && <button type="button" className="secondary-btn compact" onClick={cancelGeneration}>取消生成</button>}
                 <button
                   type="button"
                   className="primary-btn compact"

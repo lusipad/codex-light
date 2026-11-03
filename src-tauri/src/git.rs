@@ -460,6 +460,72 @@ pub fn git_stage_file(target_path: &str, file_path: Option<String>) -> Result<()
     Ok(())
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitMessageContext {
+    pub unified_diff: String,
+    pub files_changed: u64,
+    pub lines_added: u64,
+    pub lines_removed: u64,
+    pub file_paths: Vec<String>,
+    pub head_branch: Option<String>,
+    pub base_branch: Option<String>,
+}
+
+pub fn message_generation_context(target_path: &str, mode: &str, include_unstaged: bool, base_branch: Option<String>) -> Result<GitMessageContext, String> {
+    let root = find_git_root(target_path).ok_or("Not a git repository")?;
+    let head_branch = run_git(&root, &["symbolic-ref", "--quiet", "--short", "HEAD"]).ok().map(|s| s.trim().to_string());
+    let has_head = run_git(&root, &["rev-parse", "--verify", "HEAD^{commit}"]).is_ok();
+    let mut ranges: Vec<Vec<String>> = Vec::new();
+    let base = match mode {
+        "commit" => {
+            if include_unstaged && has_head { ranges.push(vec!["HEAD".into()]); }
+            else {
+                ranges.push(vec!["--cached".into()]);
+                if include_unstaged { ranges.push(vec![]); }
+            }
+            None
+        },
+        "pull_request" => {
+            if !has_head || head_branch.is_none() { return Err("Pull request generation requires a named branch with commits".into()); }
+            let base = base_branch.filter(|s| !s.trim().is_empty()).or_else(|| default_branch(&root)).ok_or("Unable to determine pull request base branch")?;
+            let merge = merge_base(&root, &base)?;
+            ranges.push(vec![merge]);
+            Some(base)
+        },
+        _ => return Err("Unsupported Git message context mode".into()),
+    };
+    let mut result = GitMessageContext { unified_diff: String::new(), files_changed: 0, lines_added: 0, lines_removed: 0, file_paths: Vec::new(), head_branch, base_branch: base };
+    for range in ranges {
+        let read = |format: &[&str]| {
+            let mut args = vec!["-c", "core.quotepath=false", "diff", "--no-ext-diff", "--no-textconv"];
+            args.extend_from_slice(format);
+            args.extend(range.iter().map(String::as_str)); args.push("--");
+            run_git(&root, &args)
+        };
+        let patch = read(&[])?;
+        if !patch.is_empty() { result.unified_diff.push_str(&patch); }
+        let stats = read(&["--numstat", "-z"])?;
+        let mut records = stats.split('\0');
+        while let Some(record) = records.next() {
+            if record.is_empty() { continue; }
+            let mut fields = record.splitn(3, '\t');
+            let added = fields.next().ok_or("Invalid Git numstat")?;
+            let removed = fields.next().ok_or("Invalid Git numstat")?;
+            let mut path = fields.next().ok_or("Invalid Git numstat path")?;
+            if path.is_empty() {
+                records.next().ok_or("Invalid Git rename source")?;
+                path = records.next().filter(|s| !s.is_empty()).ok_or("Invalid Git rename destination")?;
+            }
+            result.lines_added += if added == "-" { 0 } else { added.parse::<u64>().map_err(|_| "Invalid Git addition count")? };
+            result.lines_removed += if removed == "-" { 0 } else { removed.parse::<u64>().map_err(|_| "Invalid Git deletion count")? };
+            if !result.file_paths.iter().any(|p| p == path) { result.file_paths.push(path.to_string()); }
+        }
+    }
+    result.files_changed = result.file_paths.len() as u64;
+    Ok(result)
+}
+
 pub fn git_unstage_file(target_path: &str, file_path: Option<String>) -> Result<(), String> {
     let git_root = find_git_root(target_path).ok_or("Not a git repository")?;
     match file_path.filter(|s| !s.trim().is_empty()) {
@@ -534,6 +600,46 @@ mod index_action_tests {
                 .starts_with("codex-index-actions-"));
             fs::remove_dir_all(target).unwrap();
         }
+    }
+
+    #[test]
+    fn message_context_uses_actual_index_or_tracked_worktree_without_untracked_content() {
+        let fixture = Fixture::new(true);
+        fixture.write("tracked.txt", b"staged content\n");
+        fixture.git(&["add", "tracked.txt"]);
+        fixture.write("tracked.txt", b"working content\n");
+        fixture.write("untracked.txt", b"must not enter generation context\n");
+        let before = fixture.git(&["status", "--porcelain=v1"]);
+        let staged = message_generation_context(&fixture.cwd, "commit", false, None).unwrap();
+        assert!(staged.unified_diff.contains("+staged content"));
+        assert!(!staged.unified_diff.contains("working content"));
+        let working = message_generation_context(&fixture.cwd, "commit", true, None).unwrap();
+        assert!(working.unified_diff.contains("+working content"));
+        assert!(!working.unified_diff.contains("untracked"));
+        assert_eq!(working.file_paths, vec!["tracked.txt"]);
+        assert_eq!((working.files_changed, working.lines_added, working.lines_removed), (1, 1, 1));
+        assert_eq!(before, fixture.git(&["status", "--porcelain=v1"]));
+        assert_eq!(fixture.git(&["show", ":tracked.txt"]), "staged content\n");
+    }
+
+    #[test]
+    fn message_context_unborn_keeps_staged_changes_and_pr_requires_real_branch_base() {
+        let unborn = Fixture::new(false);
+        unborn.write("first.txt", b"staged initial\n"); unborn.git(&["add", "first.txt"]);
+        unborn.write("first.txt", b"working initial\n");
+        let context = message_generation_context(&unborn.cwd, "commit", true, None).unwrap();
+        assert!(context.unified_diff.contains("staged initial") && context.unified_diff.contains("working initial"));
+        assert_eq!(context.files_changed, 1);
+        assert!(message_generation_context(&unborn.cwd, "pull_request", true, None).is_err());
+        let fixture = Fixture::new(true);
+        fixture.git(&["branch", "base-fixture"]);
+        fixture.git(&["checkout", "-b", "feature-fixture"]);
+        fixture.write("tracked.txt", b"feature content\n");
+        let context = message_generation_context(&fixture.cwd, "pull_request", true, Some("base-fixture".into())).unwrap();
+        assert!(context.unified_diff.contains("feature content"));
+        assert_eq!(context.head_branch.as_deref(), Some("feature-fixture"));
+        assert_eq!(context.base_branch.as_deref(), Some("base-fixture"));
+        assert!(message_generation_context(&fixture.cwd, "pull_request", true, Some("--bad-option".into())).is_err());
     }
 
     #[test]

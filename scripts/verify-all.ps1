@@ -33,6 +33,11 @@ function Invoke-Step {
 }
 
 try {
+  Invoke-Step "Git message production contexts and cancellation" { node scripts/verify-git-generation-b.mjs }
+  Invoke-Step "Git message generation before actual write actions" { node scripts/verify-git-generation-ui-b.mjs }
+  Invoke-Step "Git instruction autosave and readback" { node scripts/verify-git-instructions-b.mjs }
+  Invoke-Step "Rust isolated Git message generation" { cargo test --manifest-path src-tauri/Cargo.toml git_generation }
+  Invoke-Step "Rust Git message context read-only contracts" { cargo test --manifest-path src-tauri/Cargo.toml message_context }
   Invoke-Step "Remote plugin mapping and service recovery contracts" { node scripts/verify-remote-plugins-c.mjs }
   Invoke-Step "Remote plugin component state and source isolation" { node scripts/verify-remote-plugin-ui-c.mjs }
   Invoke-Step "Recommended skills native client and discovery contracts" { node scripts/verify-recommended-skills.mjs }
@@ -292,6 +297,7 @@ Invoke-Step "TypeScript typecheck (tsc --noEmit)" { npx tsc --noEmit }
       "scripts/protocol-verify/verify-mcp-status.mjs"
       "scripts/protocol-verify/verify-mcp-settings-b.mjs"
       "scripts/protocol-verify/verify-hook-state.mjs"
+      "scripts/protocol-verify/verify-git-generation-b.mjs"
       "scripts/protocol-verify/verify-external-import.mjs"
       "scripts/protocol-verify/verify-experimental-features.mjs"
     )

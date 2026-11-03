@@ -1,0 +1,6 @@
+.git-instructions { margin-top: 24px; }
+.git-instructions-header { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 12px; }
+.git-instructions-header h4 { margin: 0; font: inherit; font-weight: 500; }
+.git-instructions-header p { margin: 4px 0 0; }
+.git-instructions-header > span { flex-shrink: 0; color: var(--text-secondary); font-size: calc(12px * var(--font-ui-scale, 1)); }
+.git-instructions textarea { width: 100%; box-sizing: border-box; min-width: 0; resize: vertical; border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; background: var(--bg-primary); color: var(--text-primary); font: inherit; line-height: 1.5; }

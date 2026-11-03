@@ -6149,6 +6149,7 @@ export const App: React.FC = () => {
 
       {/* ── 4. Right-Hand Diff & File Review Workbench ── */}
       <DiffDrawer
+        connectionIdentity={JSON.stringify([modelAccountIdentity, appServerStatus.connected, appServerStatus.binaryPath, appServerStatus.appServerVersion, appServerStatus.userAgent])}
         open={showRightDrawer}
         shortcutRequest={workbenchShortcutRequest ?? undefined}
         onShortcutHandled={requestId => setWorkbenchShortcutRequest(current => current?.requestId === requestId ? null : current)}

@@ -30,6 +30,7 @@ mod thread_workspace;
 mod archive_delete;
 mod appearance_preferences;
 mod plugin_operations;
+mod git_message_generation;
 
 use app_server::{AppServerManager, AppServerStatus, PendingServerRequest};
 use config_skills::{
@@ -80,6 +81,21 @@ fn shortcut_menu_sync(
 #[tauri::command]
 async fn app_server_status(state: State<'_, AppState>) -> Result<AppServerStatus, String> {
     Ok(state.app_server.get_status().await)
+}
+
+#[tauri::command]
+async fn git_message_generate(app:AppHandle,window:tauri::WebviewWindow,state:State<'_,AppState>,generation:State<'_,git_message_generation::GenerationState>,request:git_message_generation::GenerationRequest)->Result<git_message_generation::GenerationResponse,String> {
+    git_message_generation::generate(&generation,&state.app_server,&app,window.label(),request).await
+}
+
+#[tauri::command]
+fn git_message_generation_cancel(window:tauri::WebviewWindow,state:State<'_,git_message_generation::GenerationState>,operation_id:String)->Result<bool,String> {
+    state.cancel(window.label(),&operation_id)
+}
+
+#[tauri::command]
+async fn git_message_context(cwd:String,mode:String,include_unstaged:bool,base_branch:Option<String>)->Result<git::GitMessageContext,String> {
+    tauri::async_runtime::spawn_blocking(move||git::message_generation_context(&cwd,&mode,include_unstaged,base_branch)).await.map_err(|error|error.to_string())?
 }
 
 #[tauri::command]
@@ -1719,8 +1735,10 @@ pub fn run() {
         .manage(agent_configuration::AgentConfigurationState::default())
         .manage(memory_preferences::MemoryPreferencesState::default())
         .manage(plugin_operations::PluginOperationState::default())
+        .manage(git_message_generation::GenerationState::default())
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
+                window.app_handle().state::<git_message_generation::GenerationState>().cancel_owner(window.label());
                 if let Err(error) = menu::remove_shortcut_window(window.app_handle(), window.label()) {
                     eprintln!("Cannot restore native shortcuts after window close: {error}");
                 }
@@ -1788,6 +1806,9 @@ pub fn run() {
             app_server_connect,
             app_server_restart,
             app_server_call,
+            git_message_generate,
+            git_message_generation_cancel,
+            git_message_context,
             app_server_respond,
             app_server_pending_requests,
             workspace_list,

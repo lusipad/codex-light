@@ -9,7 +9,7 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex};
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -45,9 +45,47 @@ struct InnerState {
     pending_server_requests: HashMap<String, PendingServerRequest>,
     status: AppServerStatus,
     custom_cli_path: Option<String>,
+    private_threads: HashMap<String, Option<mpsc::UnboundedSender<Value>>>,
+    private_starts: HashMap<u64, Option<mpsc::UnboundedSender<Value>>>,
+    held_private_events: Vec<Value>,
+    private_turn_starts: HashMap<u64,String>,
+    private_turns: HashMap<String,String>,
 }
 
+enum PrivateRoute {Global,Held,Owned {thread_id:String,delivered:bool}}
+
 impl InnerState {
+    fn claim_private_start(&mut self,id:u64,message:&Value)->Option<Option<String>> {
+        let sender=self.private_starts.remove(&id)?;
+        if let Some(thread)=message.pointer("/result/thread/id").and_then(Value::as_str) {
+            self.private_threads.insert(thread.into(),sender);
+            Some(Some(thread.into()))
+        } else {
+            // A failed/malformed start must not release already observed ephemeral metadata to the UI.
+            for event in &self.held_private_events {
+                if event.pointer("/params/thread/ephemeral")==Some(&Value::Bool(true)) {
+                    if let Some(thread)=incoming_thread_id(event) {self.private_threads.insert(thread.into(),None);}
+                }
+            }
+            Some(None)
+        }
+    }
+    fn route_private(&mut self,message:&Value)->PrivateRoute {
+        let Some(thread_id)=incoming_thread_id(message).map(str::to_owned) else {return PrivateRoute::Global;};
+        if !self.private_threads.contains_key(&thread_id) && !self.private_starts.is_empty() &&
+            message.pointer("/params/thread/ephemeral")==Some(&Value::Bool(true)) && self.private_starts.values().all(Option::is_none) {
+            self.private_threads.insert(thread_id.clone(),None);
+        }
+        if let Some(sender)=self.private_threads.get(&thread_id) {
+            let delivered=sender.as_ref().is_some_and(|sender|sender.send(message.clone()).is_ok());
+            if message["method"]=="turn/started" {
+                if let Some(turn_id)=message.pointer("/params/turn/id").and_then(Value::as_str) {self.private_turns.insert(thread_id.clone(),turn_id.to_owned());}
+            }
+            return PrivateRoute::Owned {thread_id,delivered};
+        }
+        if self.private_starts.values().any(Option::is_some) {self.held_private_events.push(message.clone());return PrivateRoute::Held;}
+        PrivateRoute::Global
+    }
     fn resolve_server_request(&mut self, generation: u64, params: &Value) {
         if self.generation != generation {
             return;
@@ -72,6 +110,11 @@ impl InnerState {
         self.status.connecting = false;
         self.stdin = None;
         self.pending_server_requests.clear();
+        self.private_threads.clear();
+        self.private_starts.clear();
+        self.held_private_events.clear();
+        self.private_turn_starts.clear();
+        self.private_turns.clear();
         for (_, tx) in self.pending_requests.drain() {
             let _ = tx.send(Err("app-server connection closed".to_string()));
         }
@@ -84,6 +127,7 @@ pub struct AppServerManager {
     inner: Arc<Mutex<InnerState>>,
     next_id: Arc<AtomicU64>,
     lifecycle: Arc<Mutex<()>>,
+    private_creation: Arc<Mutex<()>>,
 }
 
 impl AppServerManager {
@@ -104,9 +148,15 @@ impl AppServerManager {
                     last_error: None,
                 },
                 custom_cli_path: None,
+                private_threads: HashMap::new(),
+                private_starts: HashMap::new(),
+                held_private_events: Vec::new(),
+                private_turn_starts: HashMap::new(),
+                private_turns: HashMap::new(),
             })),
             next_id: Arc::new(AtomicU64::new(1)),
             lifecycle: Arc::new(Mutex::new(())),
+            private_creation: Arc::new(Mutex::new(())),
         }
     }
 
@@ -117,6 +167,12 @@ impl AppServerManager {
 
     pub async fn connection_generation(&self) -> u64 {
         self.inner.lock().await.generation
+    }
+
+    pub async fn require_generation(&self,generation:u64)->Result<(),String> {
+        let guard=self.inner.lock().await;
+        if guard.generation!=generation || !guard.status.connected || guard.stdin.is_none() {return Err("Temporary generation connection changed or disconnected".into());}
+        Ok(())
     }
 
     pub async fn list_pending_server_requests(&self) -> Vec<PendingServerRequest> {
@@ -202,6 +258,11 @@ impl AppServerManager {
                 let _ = tx.send(Err("app-server restarting".to_string()));
             }
             guard.pending_server_requests.clear();
+            guard.private_threads.clear();
+            guard.private_starts.clear();
+            guard.held_private_events.clear();
+            guard.private_turn_starts.clear();
+            guard.private_turns.clear();
             guard.status.connected = false;
             guard.status.connecting = true;
             guard.status.last_error = None;
@@ -450,6 +511,68 @@ impl AppServerManager {
         Ok(post_process_result(actual_method, raw_result))
     }
 
+    /// Dedicated temporary generation calls never reconnect or bind a user's workspace thread.
+    pub async fn isolated_call(&self, generation: u64, method: &str, params: Value) -> Result<Value, String> {
+        self.isolated_request(generation, method, params, None, None).await
+    }
+
+    pub async fn isolated_start(&self, app:&AppHandle, generation: u64, params: Value) -> Result<(Value, mpsc::UnboundedReceiver<Value>), String> {
+        let _creation = self.private_creation.lock().await;
+        let (sender, receiver) = mpsc::unbounded_channel();
+        let result = self.isolated_request(generation, "thread/start", params, Some(sender), Some(app.clone())).await?;
+        Ok((result, receiver))
+    }
+
+    async fn isolated_request(&self, generation: u64, method: &str, params: Value, sender: Option<mpsc::UnboundedSender<Value>>, app:Option<AppHandle>) -> Result<Value, String> {
+        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        let (tx, rx) = oneshot::channel();
+        let mut line = serde_json::to_vec(&json!({"id":id,"method":method,"params":params})).map_err(|error|error.to_string())?;
+        line.push(b'\n');
+        {
+            let mut guard = self.inner.lock().await;
+            if guard.generation != generation || guard.stdin.is_none() { return Err("Temporary generation belongs to a disconnected app-server".into()); }
+            guard.pending_requests.insert(id,tx);
+            if let Some(sender) = sender { guard.private_starts.insert(id,Some(sender)); }
+            if method=="turn/start" {
+                if let Some(thread_id)=params.get("threadId").and_then(Value::as_str) {
+                    if guard.private_threads.contains_key(thread_id) {guard.private_turn_starts.insert(id,thread_id.to_owned());}
+                }
+            }
+            let writer = guard.stdin.as_mut().unwrap();
+            if let Err(error) = async {writer.write_all(&line).await?; writer.flush().await}.await {
+                guard.pending_requests.remove(&id);
+                if let Some(slot)=guard.private_starts.get_mut(&id) {*slot=None;}
+                return Err(format!("Temporary request delivery is unknown: {error}"));
+            }
+        }
+        let replay=app.map(|app| {
+            let inner=self.inner.clone();
+            Arc::new(move |messages:Vec<Value>| {
+                let inner=inner.clone();let app=app.clone();
+                tokio::spawn(async move {for message in messages {handle_incoming_message(&inner,&app,generation,message).await;}});
+            }) as PrivateReplay
+        });
+        let _cleanup = IsolatedPendingCleanup { inner:self.inner.clone(), generation, id, replay };
+        match tokio::time::timeout(Duration::from_secs(10),rx).await {
+            Ok(Ok(result))=>result,
+            Ok(Err(_))=>Err("Temporary generation connection closed".into()),
+            Err(_)=>Err("Temporary generation request timed out; it will not be replayed".into()),
+        }
+    }
+
+    pub async fn isolate_finish(&self, generation:u64, thread_id:&str, interrupt:bool) {
+        let mut guard=self.inner.lock().await;
+        if guard.generation==generation {
+            if let Some(sender)=guard.private_threads.get_mut(thread_id) {*sender=None;}
+            if interrupt {
+                if let Some(turn_id)=guard.private_turns.get(thread_id).cloned() {
+                    private_cleanup_write(&mut guard,"turn/interrupt",json!({"threadId":thread_id,"turnId":turn_id})).await;
+                }
+            }
+            private_cleanup_write(&mut guard,"thread/unsubscribe",json!({"threadId":thread_id})).await;
+        }
+    }
+
     pub async fn respond_to_server_request(
         &self,
         app: &AppHandle,
@@ -469,6 +592,50 @@ impl AppServerManager {
         write_server_response(pending_server_requests, stdin.as_mut(), &id, generation, result, error).await?;
         let _ = app.emit("app-server:server-request-resolved", json!({ "id": id, "generation": generation, "notificationNonce":instance }));
         Ok(())
+    }
+}
+
+type PrivateReplay=Arc<dyn Fn(Vec<Value>)+Send+Sync>;
+struct IsolatedPendingCleanup {inner:Arc<Mutex<InnerState>>,generation:u64,id:u64,replay:Option<PrivateReplay>}
+impl Drop for IsolatedPendingCleanup {
+    fn drop(&mut self) {
+        let inner=self.inner.clone(); let generation=self.generation; let id=self.id;let replay=self.replay.clone();
+        tokio::spawn(async move {
+            let mut guard=inner.lock().await;
+            if guard.generation==generation {
+                guard.pending_requests.remove(&id);
+                if let Some(sender)=guard.private_starts.get_mut(&id) {*sender=None;}
+                let closed:Vec<_>=guard.private_threads.iter().filter_map(|(thread,sender)|sender.as_ref().filter(|sender|sender.is_closed()).map(|_|thread.clone())).collect();
+                for thread in closed {
+                    guard.private_threads.insert(thread.clone(),None);
+                    if let Some(turn)=guard.private_turns.get(&thread).cloned() {private_cleanup_write(&mut guard,"turn/interrupt",json!({"threadId":thread,"turnId":turn})).await;}
+                    private_cleanup_write(&mut guard,"thread/unsubscribe",json!({"threadId":thread})).await;
+                }
+                if replay.is_some() && !guard.private_starts.values().any(Option::is_some) {
+                    let messages=std::mem::take(&mut guard.held_private_events);
+                    for message in &messages {
+                        if message.pointer("/params/thread/ephemeral")==Some(&Value::Bool(true)) {
+                            if let Some(thread_id)=incoming_thread_id(message) {guard.private_threads.insert(thread_id.to_owned(),None);}
+                        }
+                    }
+                    drop(guard);
+                    replay.as_ref().unwrap()(messages);
+                }
+            }
+        });
+    }
+}
+
+fn incoming_thread_id(message:&Value)->Option<&str> {
+    message.pointer("/params/threadId").and_then(Value::as_str)
+        .or_else(||message.pointer("/params/conversationId").and_then(Value::as_str))
+        .or_else(||message.pointer("/params/thread/id").and_then(Value::as_str))
+}
+
+async fn private_cleanup_write(guard:&mut InnerState, method:&str, params:Value) {
+    let payload=json!({"id":format!("private-cleanup-{}",uuid::Uuid::new_v4()),"method":method,"params":params});
+    if let (Some(writer),Ok(mut line))=(guard.stdin.as_mut(),serde_json::to_vec(&payload)) {
+        line.push(b'\n'); let _=writer.write_all(&line).await; let _=writer.flush().await;
     }
 }
 
@@ -528,6 +695,8 @@ async fn handle_incoming_message(
     if guard.generation != generation {
         return;
     }
+    let mut queue=std::collections::VecDeque::from([msg]);
+    while let Some(msg)=queue.pop_front() {
     let has_id = msg.get("id").is_some();
     let has_method = msg.get("method").and_then(|m| m.as_str()).is_some();
     let has_result = msg.get("result").is_some();
@@ -536,6 +705,22 @@ async fn handle_incoming_message(
     // 1. Response to a client-initiated request
     if has_id && (has_result || has_error) {
         if let Some(id_u64) = msg.get("id").and_then(|v| v.as_u64()) {
+            if let Some(thread_id)=guard.private_turn_starts.remove(&id_u64) {
+                if let Some(turn_id)=msg.pointer("/result/turn/id").and_then(Value::as_str) {
+                    guard.private_turns.insert(thread_id.clone(),turn_id.to_owned());
+                    if guard.private_threads.get(&thread_id).is_some_and(Option::is_none) {
+                        private_cleanup_write(&mut guard,"turn/interrupt",json!({"threadId":thread_id,"turnId":turn_id})).await;
+                    }
+                }
+            }
+            if let Some(thread_id)=guard.claim_private_start(id_u64,&msg) {
+                if let Some(thread_id)=thread_id {
+                    if guard.private_threads[&thread_id].is_none() {
+                        private_cleanup_write(&mut guard,"thread/unsubscribe",json!({"threadId":thread_id})).await;
+                    }
+                }
+                queue.extend(std::mem::take(&mut guard.held_private_events));
+            }
             let tx_opt = guard.pending_requests.remove(&id_u64);
             if let Some(tx) = tx_opt {
                 if let Some(err) = msg.get("error") {
@@ -549,8 +734,34 @@ async fn handle_incoming_message(
                     let result = msg.get("result").cloned().unwrap_or(Value::Null);
                     let _ = tx.send(Ok(result));
                 }
-                return;
+                continue;
             }
+        }
+    }
+
+    if has_method {
+        match guard.route_private(&msg) {
+            PrivateRoute::Held=>continue,
+            PrivateRoute::Owned {thread_id,delivered}=>{
+                if has_id && !has_result && !has_error {
+                    // No private tool/approval request enters global pending state or the renderer.
+                    let response=json!({"id":msg["id"],"error":{"code":-32601,"message":"Tools and approvals are disabled for temporary Git message generation"}});
+                    if let (Some(writer),Ok(mut line))=(guard.stdin.as_mut(),serde_json::to_vec(&response)) {
+                        line.push(b'\n');let _=writer.write_all(&line).await;let _=writer.flush().await;
+                    }
+                }
+                if !delivered {
+                    guard.private_threads.insert(thread_id.clone(),None);
+                    if msg["method"]=="turn/started" {
+                        if let Some(turn_id)=msg.pointer("/params/turn/id").and_then(Value::as_str) {
+                            private_cleanup_write(&mut guard,"turn/interrupt",json!({"threadId":thread_id,"turnId":turn_id})).await;
+                        }
+                    }
+                    if msg["method"]=="thread/started" {private_cleanup_write(&mut guard,"thread/unsubscribe",json!({"threadId":thread_id})).await;}
+                }
+                continue;
+            },
+            PrivateRoute::Global=>{},
         }
     }
 
@@ -575,7 +786,7 @@ async fn handle_incoming_message(
             .pending_server_requests
             .entry(server_request_key(&id)).or_insert(req).clone();
         let _ = app.emit("app-server:server-request", req);
-        return;
+        continue;
     }
 
     // 3. Server notification (streaming deltas, turn/started, turn/completed, etc.)
@@ -598,6 +809,7 @@ async fn handle_incoming_message(
                 "params": params,
             }),
         );
+    }
     }
 }
 
@@ -717,6 +929,66 @@ fn enrich_turn_timing(turn: &mut Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn git_generation_isolation_claims_before_releasing_early_events_and_preserves_user_events() {
+        let manager=AppServerManager::new();let (sender,mut receiver)=mpsc::unbounded_channel();
+        let mut state=manager.inner.lock().await;state.generation=2;state.private_starts.insert(7,Some(sender));
+        let private=json!({"method":"thread/started","params":{"thread":{"id":"private","ephemeral":true}}});
+        let user=json!({"method":"item/agentMessage/delta","params":{"threadId":"user","delta":"user text"}});
+        assert!(matches!(state.route_private(&private),PrivateRoute::Held));assert!(matches!(state.route_private(&user),PrivateRoute::Held));
+        assert_eq!(state.claim_private_start(7,&json!({"result":{"thread":{"id":"private"}}})),Some(Some("private".into())));
+        let held=std::mem::take(&mut state.held_private_events);
+        assert!(matches!(state.route_private(&held[0]),PrivateRoute::Owned {delivered:true,..}));
+        assert!(matches!(state.route_private(&held[1]),PrivateRoute::Global));assert_eq!(receiver.try_recv().unwrap(),private);
+        let approval=json!({"id":10,"method":"item/commandExecution/requestApproval","params":{"threadId":"private","turnId":"private-turn"}});
+        assert!(matches!(state.route_private(&approval),PrivateRoute::Owned {delivered:true,..}));
+        assert!(state.pending_server_requests.is_empty(),"private requests never enter global approval state");
+        assert_eq!(receiver.try_recv().unwrap(),approval);
+    }
+
+    #[tokio::test]
+    async fn git_generation_isolation_tombstones_hide_late_events_and_old_cleanup_cannot_touch_new_generation() {
+        let manager=AppServerManager::new();
+        {
+            let mut state=manager.inner.lock().await;state.generation=2;state.private_starts.insert(7,None);
+            let late=json!({"method":"thread/started","params":{"thread":{"id":"private","ephemeral":true}}});
+            assert!(matches!(state.route_private(&late),PrivateRoute::Owned {delivered:false,..}));
+            let turn=json!({"method":"turn/started","params":{"threadId":"private","turn":{"id":"turn-private"}}});
+            assert!(matches!(state.route_private(&turn),PrivateRoute::Owned {delivered:false,..}));
+            assert_eq!(state.private_turns["private"],"turn-private");
+            assert!(matches!(state.route_private(&json!({"method":"turn/completed","params":{"threadId":"user","turn":{"id":"user-turn"}}})),PrivateRoute::Global));
+        }
+        manager.isolate_finish(1,"private",true).await;
+        let mut state=manager.inner.lock().await;assert!(state.private_threads.contains_key("private"));
+        state.close_generation(2);assert!(state.private_threads.is_empty());assert!(state.private_starts.is_empty());assert!(state.private_turns.is_empty());
+    }
+
+    #[tokio::test]
+    async fn git_generation_isolation_malformed_start_does_not_release_private_metadata() {
+        let manager=AppServerManager::new();let (sender,_receiver)=mpsc::unbounded_channel();let mut state=manager.inner.lock().await;
+        state.private_starts.insert(9,Some(sender));let event=json!({"method":"thread/started","params":{"thread":{"id":"created-before-error","ephemeral":true}}});
+        assert!(matches!(state.route_private(&event),PrivateRoute::Held));
+        assert_eq!(state.claim_private_start(9,&json!({"error":{"message":"malformed fixture"}})),Some(None));
+        assert!(matches!(state.route_private(&event),PrivateRoute::Owned {delivered:false,..}));
+    }
+
+    #[tokio::test]
+    async fn git_generation_dropped_request_removes_pending_and_retires_closed_private_receivers() {
+        let manager=AppServerManager::new();let (sender,receiver)=mpsc::unbounded_channel();drop(receiver);let (tx,_rx)=oneshot::channel();
+        {let mut state=manager.inner.lock().await;state.generation=2;state.pending_requests.insert(7,tx);state.private_starts.insert(7,Some(sender.clone()));state.private_threads.insert("orphan".into(),Some(sender));}
+        drop(IsolatedPendingCleanup{inner:manager.inner.clone(),generation:2,id:7,replay:None});
+        loop {if !manager.inner.lock().await.pending_requests.contains_key(&7) {break;}tokio::task::yield_now().await;}
+        let state=manager.inner.lock().await;assert!(state.private_starts[&7].is_none());assert!(state.private_threads["orphan"].is_none());
+    }
+
+    #[tokio::test]
+    async fn git_generation_old_request_drop_cannot_remove_new_generation_pending_calls() {
+        let manager=AppServerManager::new();let (tx,_rx)=oneshot::channel();
+        {let mut state=manager.inner.lock().await;state.generation=3;state.pending_requests.insert(7,tx);}
+        drop(IsolatedPendingCleanup{inner:manager.inner.clone(),generation:2,id:7,replay:None});tokio::task::yield_now().await;
+        assert!(manager.inner.lock().await.pending_requests.contains_key(&7));
+    }
 
     #[tokio::test]
     async fn thread_window_watch_cleanup_does_not_connect_or_leave_pending_request() {
