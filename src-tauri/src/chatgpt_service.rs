@@ -30,6 +30,7 @@ pub struct ServiceIdentity {
 pub enum ServiceOperation {
     LibraryFavorites,
     LibraryNodes,
+    StorageUsage,
     ImagesInit,
     ImagesStyles,
     ImagesRecent,
@@ -1449,7 +1450,7 @@ impl ChatgptService {
                         http_request.headers.insert("X-Codex-Expected-User-Id".into(), request.expected_identity.user_id.clone());
                         http_request.headers.insert("X-Codex-Expected-Account-Id".into(), request.expected_identity.account_id.clone());
                     }
-                    if profile_read || review_connections {
+                    if profile_read || review_connections || matches!(request.operation, ServiceOperation::StorageUsage) {
                         share_network_allowed(&call, &http_request.url).await?;
                         self.check_share_current(&request.expected_identity, &registration)?;
                     }
@@ -2144,6 +2145,7 @@ fn resolve_route(operation: &ServiceOperation, params: &Value) -> ServiceResult<
                 "hydrate_folder_thumbnails",
             ],
         ),
+        ServiceOperation::StorageUsage => ("/backend-api/files/library/storage/usage".into(), &[]),
         ServiceOperation::WhamUsage => ("/backend-api/wham/usage".into(), &[]),
         ServiceOperation::AccountMe => ("/backend-api/me".into(), &[]),
         ServiceOperation::ProfileIdentity => ("/backend-api/profiles/me".into(), &[]),
@@ -5127,6 +5129,85 @@ mod tests {
 
     fn instructions_request(id: &str) -> AccountInstructionsRequest {
         AccountInstructionsRequest { request_id:id.into(), expected_identity:identity(), profile:request("unused").profile }
+    }
+
+    fn storage_request(id: &str) -> ServiceRequest {
+        let mut request = request(id);
+        request.operation = ServiceOperation::StorageUsage;
+        request
+    }
+
+    #[tokio::test]
+    async fn storage_usage_is_fixed_get_with_authenticated_headers_and_real_body() {
+        let service = ChatgptService::default();
+        let body = json!({"used_bytes":943718400,"allowed_bytes":1048576000,"remaining_bytes":104857600,
+            "is_over_limit":false,"limit_tier":"plus","plan_type":"plus"});
+        let transport = instructions_transport(&[200], &[body.clone()]);
+        let result = service.read_with(storage_request("storage-fixture"), share_rpc, &transport).await.unwrap();
+        assert_eq!(result.body, body);
+        assert_eq!(result.identity, identity());
+        let public = serde_json::to_string_pretty(&result).unwrap();
+        assert!(!public.contains(&fixture_token()));
+        if let Ok(path) = std::env::var("CODEX_STORAGE_USAGE_FIXTURE") {
+            std::fs::write(path, public).unwrap();
+        }
+        let requests = transport.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].method, HttpMethod::Get);
+        assert_eq!(requests[0].url, "https://chatgpt.com/backend-api/files/library/storage/usage");
+        assert!(requests[0].body.is_empty());
+        assert_eq!(requests[0].headers["Authorization"], format!("Bearer {}", fixture_token()));
+        assert_eq!(requests[0].headers["ChatGPT-Account-Id"], "account-fixture");
+        assert_eq!(requests[0].headers["oai-did"], "fixture-device");
+        assert_eq!(requests[0].headers["OAI-Language"], "zh-CN");
+        for params in [json!({"url":"https://other.test"}), json!({"accountId":"other"}),
+            json!({"headers":{}}), json!({"cursor":"unknown"})] {
+            assert!(resolve_route(&ServiceOperation::StorageUsage, &params).is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn storage_usage_http_errors_never_become_success_or_zero_usage() {
+        for (status, code) in [(401,"unauthorized"),(403,"forbidden"),(404,"not_found"),(429,"rate_limited"),(500,"service_error")] {
+            let service = ChatgptService::default();
+            let transport = FakeTransport::new(if status == 401 { &[401,401] } else { std::slice::from_ref(&status) });
+            let error = service.read_with(storage_request("storage-failed"), share_rpc, &transport).await.err().unwrap();
+            assert_eq!(error.code, code);
+            assert_eq!(transport.requests.lock().unwrap().len(), if status == 401 {2} else {1});
+        }
+    }
+
+    #[tokio::test]
+    async fn storage_usage_network_policy_and_identity_prevent_cross_account_reads() {
+        let service = ChatgptService::default();
+        let transport = FakeTransport::new(&[]);
+        let denied = |method, params| {
+            if method == "configRequirements/read" { std::future::ready(Ok(json!({"requirements":{"application":{"network":{"enabled":true,"domains":{}}}}}))) }
+            else { share_rpc(method, params) }
+        };
+        assert_eq!(service.read_with(storage_request("storage-denied"), denied, &transport).await.err().unwrap().code, "network_restricted");
+        let mut wrong = storage_request("storage-wrong");
+        wrong.expected_identity.account_id = "other-account".into();
+        assert_eq!(service.read_with(wrong, share_rpc, &transport).await.err().unwrap().code, "account_changed");
+        assert!(transport.requests.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn storage_usage_cancellation_and_generation_drop_pending_http() {
+        for invalidate in [false,true] {
+            let service = ChatgptService::default();
+            let mut transport = FakeTransport::new(&[200]);
+            transport.delay_ms = 2000;
+            let read = service.read_with(storage_request("storage-pending"), share_rpc, &transport);
+            let change = async {
+                while !transport.entered.load(Ordering::SeqCst) { tokio::task::yield_now().await; }
+                if invalidate { service.invalidate(); } else { service.cancel("storage-pending"); }
+            };
+            let result = tokio::join!(read,change).0;
+            assert_eq!(result.err().unwrap().code, if invalidate {"account_changed"} else {"cancelled"});
+            assert!(transport.dropped.load(Ordering::SeqCst));
+            assert!(service.active.lock().unwrap().is_empty());
+        }
     }
 
     fn instructions_transport(statuses: &[u16], bodies: &[Value]) -> FakeTransport {

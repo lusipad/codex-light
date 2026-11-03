@@ -934,7 +934,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         {activeSection === "pets" && <PetsSettings state={petPreferencesState} visible={petVisible} onSetVisible={onTogglePetVisible} />}
 
         {/* SECTION: STORAGE */}
-        {activeSection === "storage" && <StorageSettings />}
+        {activeSection === "storage" && <StorageSettings scope={JSON.stringify([connectionIdentity, accountIdentity])} />}
 
         {/* SECTION: ARCHIVED CHATS */}
         {activeSection === "archived-chats" && (

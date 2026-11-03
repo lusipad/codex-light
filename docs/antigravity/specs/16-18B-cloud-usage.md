@@ -1,6 +1,6 @@
 # 16.18B 云端配额与后续Library清理合同
 
-状态：修改前调研合同，尚未实施；接续16.18A，先真实配额，再Library清理工作面。原始取证归档于 .ref/parity/16.18/actual/16-18B-research/，14项原始资源与21条UTF-16锚点已复验。
+状态：修改前调研合同，16.18B总配额增量现已实施（见阶段验收记录）；接续16.18A，先真实配额，再Library清理工作面。原始取证归档于 .ref/parity/16.18/actual/16-18B-research/，14项原始资源与21条UTF-16锚点已复验。
 
 ## 固定基准与证据边界
 
@@ -18,7 +18,7 @@
 
 ## list/delete 已找到的后续合同
 
-- list：initial `_Ki` @5722277，POST `/files/library` requestBody实际含cursor、limit50、q、categories、source、include_hidden_files、include_pages、exclude_saved_responses、include_saved_entities、include_sites、trashed_only、ranking等，由场景/真实gates决定；响应 `items`/`cursor`。既有 `LibraryNodes` 是GET目录节点，并不等于全存储清理POST列表。
+- list（后续分支复核见[16.18C](16-18C-library-cleanup-read.md)：all根列表走GET nodes，images根列表才走以下POST，不能泛化）：initial `_Ki` @5722277，POST `/files/library` requestBody实际含cursor、limit50、q、categories、source、include_hidden_files、include_pages、exclude_saved_responses、include_saved_entities、include_sites、trashed_only、ranking等，由场景/真实gates决定；响应 `items`/`cursor`。既有 `LibraryNodes` 是GET目录节点，并不等于全存储清理POST列表。
 - native file 单删除：initial @9730488 DELETE `/files/library/files/{library_file_id}`，query `file_id,parent_directory_id,file_name,soft_delete:!permanently`；要求响应success为true。
 - native directory 单删除：同一分支 DELETE `/files/library/directories/{directory_id}`。Site、saved entity、page、space走不同分支，不可统一映射成file删除。
 - 软删除批量：@9732715 POST `/files/library/files/delete-batch`，最多25一组；body.files包含library_file_id/file_id/parent_directory_id/file_name；返回files逐项 success、library_file_id；部分失败必须保留未删除项，不能用HTTP200当全成功。
@@ -30,6 +30,6 @@
 
 优先16.18B：真实账号绑定配额GET、初始加载/失败重试/账号变更清旧状态、总额/满额warning；保留分类和升级缺口的真实说明。按当前已有ServiceOperation/ChatgptService客户端结构加入，复用身份和取消机制，无新增依赖。测试真实Rust service构造传输fixture→生产TS parser/UI，覆盖0 allowed、超限、10%边界、非数字或负值、账号/代次变更、晚到取消、离页与重试。固定API方法路径headers、请求无任意URL。可直接构成有用户价值的阶段，不继续留在未连接占位。
 
-之后独立推进Library storage_cleanup工作面：POST list、默认size desc/临时视图scope、空/失败/重试、分页、只读文件能力，再有权限的软删除→trash→永久删除真实复读。不要同一轮混入所有pages/spaces/sites删除，避免再次陷入单功能长尾。
+之后独立推进[Library storage_cleanup只读工作面](16-18C-library-cleanup-read.md)：all GET nodes / images POST list、已加载页本地size desc/临时视图scope、空/失败/重试、分页、只读文件能力，再有权限的软删除→trash→永久删除真实复读。不要同一轮混入所有pages/spaces/sites删除，避免再次陷入单功能长尾。
 
-当前产品映射：StorageSettings.tsx只显示未连接提示，无真实配额；chatgpt_service.rs已有真实认证固定服务但没有StorageUsage操作；LibraryView已有自己的固定读取逻辑，不自动具有cleanup排序或删除资格。官方像素、当前设置页实际chunk、response完整schema/分类分组、新包升级能力运行时和原生管理入口都仍待证。
+修改前产品映射：StorageSettings.tsx仅未连接提示，chatgpt_service.rs尚无StorageUsage；16.18B已补固定GET与真实总额消费者。集成时复核发现LibraryView.tsx仍为未连接占位，虽然共享服务已有LibraryFavorites/LibraryNodes操作，但未接该页面；不能把服务操作存在当成页面已读取，也没有cleanup排序或删除资格。官方像素、当前设置页实际chunk、response完整schema/分类分组、新包升级能力运行时和原生管理入口都仍待证。

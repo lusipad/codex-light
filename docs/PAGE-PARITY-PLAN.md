@@ -155,7 +155,7 @@ asar 作为前端静态实现的主要参照，与官方文档、官方运行时
 | 16.15 | worktrees | [16.15B阶段待验](antigravity/acceptance/16-15B.md)：本地偏好/eligible排序、持久automatic队列、最终受锁保护、上游刷新及分支起点已接，限定阶段自验与原生包完成；thread/attached恢复、远程、原生GUI/官方像素和用户验收未完成 |
 | 16.16 | code-review | [16.16B本地偏好](antigravity/acceptance/16-16B-local.md)与[16.16C账号绑定PR阅读](antigravity/acceptance/16-16C.md)限定增量已归档待验；[16.16D固定快照/提交比较](antigravity/acceptance/16-16D.md)限定增量自验及原生包已归档待验；[16.16E固定文件阅读/能力前置](antigravity/acceptance/16-16E.md)限定增量及完整标准自验通过，原生包已归档待用户验收；完整私人审查、官方DiffViewer、专用侧面tab、inbox/search、GitLab MR/cloud及官方原生/像素仍有缺口 |
 | 16.17 | import | 导入来源、预览、结果与失败恢复 |
-| 16.18 | storage | 16.18A保留未连接状态；[16.18B修改前合同](antigravity/specs/16-18B-cloud-usage.md)已固定真实配额GET与cleanup语义，下一批先接配额；当前设置页布局/分类/升级能力和真实账号仍待验 |
+| 16.18 | storage | [16.18B真实总配额](antigravity/acceptance/16-18B.md)已接固定GET、失败重试、身份隔离与超额状态，Rust4项/跨层及完整标准自验通过，原生包已归档待用户验收；当前官方设置布局/分类/Library清理/升级和真实账号仍待验 |
 | 16.19 | archived-chats | 与 Archive 页数据和操作一致 |
 | 16.20 | experimental | Feature gate、限制、配置读写 |
 | 16.21 | voice | 设备/权限/转写/实时语音真实能力 |
