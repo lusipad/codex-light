@@ -2,7 +2,7 @@
 
 制定日期：2026-10-25。目标：以用户实际安装的 Windows Codex App 为基准，逐页达到功能、交互和像素布局一致。
 
-最新增量（16.05B）：模型组合、会话作用域与真实发送参数主要链已通过完整自验与原生构建，待用户验收，见[待验表](antigravity/acceptance/16-05B.md)。16.03B/16.04B 已阶段提交，均保留原生交互、官方与像素缺口；阶段提交不等于用户已验收。完整 Work 偏好与受限 gate 不以本地配置替代。
+最新增量（16.07C）：记忆三项真实读写/重置与账号指令宿主桥已通过完整标准、318项Rust测试及EXE/MSI/NSIS构建，待用户验收，见[待验表](antigravity/acceptance/16-07C.md)。账号编辑器与未知gate未强开；原生交互、官方与像素缺口单列，阶段提交不等于用户已验收。完整Work偏好与受限gate不以本地配置替代。
 
 执行更新（2026-11-01，用户最新指令）：持续开发全部页面，避免单一交互细节阻塞整体推进。按 01C→01D→01E→01F→后续页面顺序逐单元开发；前序原生/官方/像素与用户验收缺口单独保留，不以进入下一单元表示已验收。此推进授权覆盖下文及 Antigravity 旧计划“前序未验收不得进入下一页”的开发门槛，不降低最终验收标准。当前 01C 首页标题状态与项目入口进入自验；01B 保留未验收。
 
@@ -144,7 +144,7 @@ asar 作为前端静态实现的主要参照，与官方文档、官方运行时
 | 16.04 | notifications | [分类／独立偏好增量](antigravity/runs/20261101-codex-notifications.md)完整标准检查通过；系统交互、官方音频、远程设置与像素未验收 |
 | 16.05 | providers-models（旧别名） | [16.05B 模型组合与真实提交](antigravity/acceptance/16-05B.md)完整标准、全Rust与原生构建通过，待用户验收；归属Composer/agent，无独立Provider页；Work/gates、原生交互与像素未验 |
 | 16.06 | agent（配置） | [16.06B本地六项即时配置与执行权限](antigravity/acceptance/16-06B.md)完整标准、全Rust299项及EXE/MSI/NSIS通过，待用户验收；官方/原生交互/像素未完，Work独立远程 |
-| 16.07 | personalization | [16.07B本机指令/全局导航](antigravity/acceptance/16-07B.md)完整标准、全Rust303及EXE/MSI/NSIS通过，待用户验收；账号指令/Memory/原生/像素未完 |
+| 16.07 | personalization | [16.07C记忆/账号指令桥](antigravity/acceptance/16-07C.md)完整标准、全Rust318及EXE/MSI/NSIS通过，待用户验收；16.07B本机指令保留，账号编辑器/gate、原生与像素未完 |
 | 16.08 | account | 账号、登录/退出、额度、错误与失效恢复 |
 | 16.09 | profile | 资料来源、编辑权限与保存结果 |
 | 16.10 | connections | MCP/连接、认证、重连、错误 |

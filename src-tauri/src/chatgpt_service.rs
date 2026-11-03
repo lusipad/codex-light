@@ -111,6 +111,32 @@ pub struct ServiceProfile {
     pub platform_client_hint: String,
 }
 
+/// Fixed account instruction operations; neither a URL nor arbitrary settings cross IPC.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AccountInstructionsRequest {
+    pub request_id: String,
+    pub expected_identity: ServiceIdentity,
+    pub profile: ServiceProfile,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AccountInstructionsWriteRequest {
+    pub request_id: String,
+    pub expected_identity: ServiceIdentity,
+    pub profile: ServiceProfile,
+    pub contents: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountInstructionsResponse {
+    pub request_id: String,
+    pub identity: ServiceIdentity,
+    pub contents: String,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ShareAsset {
@@ -330,6 +356,126 @@ impl Drop for Registration<'_> {
 }
 
 impl ChatgptService {
+    pub async fn account_instructions_read<F, Fut>(
+        &self, request: AccountInstructionsRequest, call: F,
+    ) -> ServiceResult<AccountInstructionsResponse>
+    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>> {
+        self.account_instructions_with(request, None, call, &CurlTransport).await
+    }
+
+    pub async fn account_instructions_write<F, Fut>(
+        &self, request: AccountInstructionsWriteRequest, call: F,
+    ) -> ServiceResult<AccountInstructionsResponse>
+    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>> {
+        self.account_instructions_with(AccountInstructionsRequest {
+            request_id: request.request_id, expected_identity: request.expected_identity,
+            profile: request.profile,
+        }, Some(request.contents), call, &CurlTransport).await
+    }
+
+    async fn account_instructions_with<F, Fut, T>(
+        &self, request: AccountInstructionsRequest, contents: Option<String>, call: F, transport: &T,
+    ) -> ServiceResult<AccountInstructionsResponse>
+    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>>, T: Transport {
+        // The official textarea sends a string, including an empty string to clear it.
+        // This is a transport bound, not a claim about the account's configured UI limit.
+        let patch = contents.as_ref().map(|contents| serde_json::to_vec(&json!({"custom_instructions":contents})))
+            .transpose().map_err(|_| failure("invalid_request", "Invalid account instructions"))?;
+        if patch.as_ref().is_some_and(|body| body.len() > 256 * 1024) {
+            return Err(failure("invalid_request", "Account instructions exceeded request limit"));
+        }
+        let registration = self.register(&request.request_id)?;
+        let identity = &request.expected_identity;
+        self.check_share_current(identity, &registration)?;
+        let write_confirmed = AtomicBool::new(false);
+        let result = tokio::select! {
+            _ = cancelled(&registration.cancelled) => Err(failure("cancelled", "Service request cancelled; a sent write may already have applied")),
+            result = async {
+                let mut session = self.session.lock().await;
+                self.prepare(&mut session, identity.generation, &call, false).await?;
+                self.check_share_current(identity, &registration)?;
+                // Serialize PATCH and its GET verification under the existing session lock.
+                if let Some(body) = patch {
+                    // Official transport retries only an explicit 401 after one token refresh.
+                    // Identity is checked again before sending the same serialized body.
+                    for attempt in 0..2 {
+                        let credentials = session.credentials.as_ref().unwrap();
+                        if &credentials.identity != identity { return Err(failure("account_changed", "Authenticated identity changed")); }
+                        let integrity = session.integrity.clone();
+                        let mut outgoing = build_http_request("/backend-api/wham/settings/user", credentials, integrity.as_deref(), &request.profile)?;
+                        outgoing.method = HttpMethod::Patch;
+                        outgoing.body = body.clone();
+                        outgoing.headers.insert("Content-Type".into(), "application/json".into());
+                        share_network_allowed(&call, &outgoing.url).await?;
+                        self.check_share_current(identity, &registration)?;
+                        let response = send_bounded(transport, outgoing, registration.cancelled.clone(), Duration::from_secs(50)).await
+                            .map_err(|_| failure("instructions_write_unknown", "Account instruction write outcome is unknown; read before retrying"))?;
+                        self.check_share_current(identity, &registration)?;
+                        apply_integrity(&mut session.integrity, integrity.as_deref(), response.headers.get("x-oai-is-update"));
+                        if account_instructions_ip_denied(&response) {
+                            return Err(ServiceError { code:"ip_not_authorized", message:"Current IP address is not authorized for this workspace", status:Some(401) });
+                        }
+                        if response.status == 401 && attempt == 0 {
+                            self.prepare(&mut session, identity.generation, &call, true).await?;
+                            self.check_share_current(identity, &registration)?;
+                            continue;
+                        }
+                        if response.status >= 500 {
+                            return Err(ServiceError { code:"instructions_write_unknown", message:"Account instruction write outcome is unknown; read before retrying", status:Some(response.status) });
+                        }
+                        if !(200..300).contains(&response.status) {
+                            // A second 401 and all other statuses fail without further replay.
+                            return Err(decode_response(response, registration.id.clone(), identity.clone()).err()
+                                .unwrap_or_else(|| failure("instructions_write_unknown", "Account instruction write was not confirmed")));
+                        }
+                        write_confirmed.store(true, Ordering::SeqCst);
+                        // No PATCH response schema is proven. Only the following GET can prove its value.
+                        break;
+                    }
+                }
+                for attempt in 0..2 {
+                    let credentials = session.credentials.as_ref().unwrap();
+                    if &credentials.identity != identity { return Err(failure("account_changed", "Authenticated identity changed")); }
+                    let integrity = session.integrity.clone();
+                    let outgoing = build_http_request("/backend-api/wham/settings/user", credentials, integrity.as_deref(), &request.profile)?;
+                    share_network_allowed(&call, &outgoing.url).await?;
+                    self.check_share_current(identity, &registration)?;
+                    let response = send_bounded(transport, outgoing, registration.cancelled.clone(), Duration::from_secs(50)).await?;
+                    self.check_share_current(identity, &registration)?;
+                    apply_integrity(&mut session.integrity, integrity.as_deref(), response.headers.get("x-oai-is-update"));
+                    if account_instructions_ip_denied(&response) {
+                            return Err(ServiceError { code:"ip_not_authorized", message:"Current IP address is not authorized for this workspace", status:Some(401) });
+                        }
+                        if response.status == 401 && attempt == 0 {
+                        // Verification GET has its own bounded refresh, never re-enters PATCH.
+                        self.prepare(&mut session, identity.generation, &call, true).await?;
+                        continue;
+                    }
+                    let response = decode_response(response, registration.id.clone(), identity.clone())?;
+                    let object = response.body.as_object().ok_or_else(|| failure("invalid_response", "Invalid account instruction response"))?;
+                    let actual = match object.get("custom_instructions") {
+                        None | Some(Value::Null) => String::new(),
+                        Some(Value::String(value)) => value.clone(),
+                        _ => return Err(failure("invalid_response", "Invalid account instruction value")),
+                    };
+                    if contents.as_ref().is_some_and(|expected| expected != &actual) {
+                        return Err(failure("instructions_readback_mismatch", "Account instructions changed or were not saved; read before retrying"));
+                    }
+                    return Ok(AccountInstructionsResponse { request_id:request.request_id.clone(), identity:identity.clone(), contents:actual });
+                }
+                unreachable!()
+            } => result,
+        };
+        self.check_share_current(identity, &registration)?;
+        if write_confirmed.load(Ordering::SeqCst) {
+            return result.map_err(|error| match error.code {
+                "instructions_readback_mismatch" | "account_changed" | "cancelled" => error,
+                _ => failure("instructions_readback_failed", "Account instructions may be saved but readback failed; read before retrying"),
+            });
+        }
+        result
+    }
+
     pub async fn share_access_bootstrap<F, Fut>(
         &self, request: ShareAccessRequest, context: ShareBootstrapContext, call: F,
     ) -> ServiceResult<Value>
@@ -1601,7 +1747,7 @@ fn build_cloud_http_request(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum HttpMethod { Get, Post, Put }
+enum HttpMethod { Get, Post, Put, Patch }
 
 struct HttpRequest {
     url: String,
@@ -1968,6 +2114,15 @@ fn apply_integrity(
     false
 }
 
+// early-bootstrap-339 hT: a workspace IP refusal is not an expired-token response.
+fn account_instructions_ip_denied(response: &HttpResponse) -> bool {
+    if response.status != 401 { return false; }
+    let Ok(body) = serde_json::from_slice::<Value>(&response.body) else { return false; };
+    body.pointer("/error/type").and_then(Value::as_str) == Some("ip_not_authorized") ||
+        matches!(body.pointer("/error/code").and_then(Value::as_str),
+            Some("ip_not_authorized" | "validate_whitelist_failed" | "workspace_ip_not_authorized"))
+}
+
 fn decode_response(
     response: HttpResponse,
     request_id: String,
@@ -2056,7 +2211,7 @@ fn curl_config(request: &HttpRequest) -> ServiceResult<String> {
     match request.method {
         HttpMethod::Get if !request.body.is_empty() =>
             return Err(failure("invalid_request", "GET cannot carry an upload body")),
-        HttpMethod::Post if request.body.len() > 256 * 1024 =>
+        HttpMethod::Post | HttpMethod::Patch if request.body.len() > 256 * 1024 =>
             return Err(failure("invalid_request", "Share request exceeded size limit")),
         HttpMethod::Put if request.body.len() > MAX_SHARE_ASSET =>
             return Err(failure("invalid_request", "Share upload exceeded size limit")),
@@ -2134,7 +2289,7 @@ async fn curl_request(
             "--silent",
             "--show-error",
             "--request",
-            match request.method { HttpMethod::Get => "GET", HttpMethod::Post => "POST", HttpMethod::Put => "PUT" },
+            match request.method { HttpMethod::Get => "GET", HttpMethod::Post => "POST", HttpMethod::Put => "PUT", HttpMethod::Patch => "PATCH" },
             "--proto",
             "=https",
             "--proto-redir",
@@ -3227,6 +3382,227 @@ mod tests {
             "configRequirements/read" => Ok(json!({"requirements":null})),
             _ => Err("unexpected fixture RPC".into()),
         })
+    }
+
+    fn instructions_request(id: &str) -> AccountInstructionsRequest {
+        AccountInstructionsRequest { request_id:id.into(), expected_identity:identity(), profile:request("unused").profile }
+    }
+
+    fn instructions_transport(statuses: &[u16], bodies: &[Value]) -> FakeTransport {
+        let transport = FakeTransport::new(statuses);
+        for (response, body) in transport.responses.lock().unwrap().iter_mut().zip(bodies) {
+            response.body = serde_json::to_vec(body).unwrap();
+        }
+        transport
+    }
+
+    #[tokio::test]
+    async fn account_instructions_fixed_read_and_null_empty_values_do_not_expose_other_settings() {
+        for (body, expected) in [
+            (json!({"custom_instructions":"真实 fixture 指令\nnext","unrelated":"private fixture"}), "真实 fixture 指令\nnext"),
+            (json!({"custom_instructions":null}), ""),
+            (json!({"unrelated":true}), ""),
+        ] {
+            let service = ChatgptService::default();
+            let transport = instructions_transport(&[200], &[body]);
+            let result = service.account_instructions_with(instructions_request("instructions-read"), None, share_rpc, &transport).await.unwrap();
+            assert_eq!(result.contents, expected);
+            assert_eq!(result.identity, identity());
+            let public = serde_json::to_string(&result).unwrap();
+            assert!(!public.contains("private fixture"));
+            assert!(!public.contains(&fixture_token()));
+            let requests = transport.requests.lock().unwrap();
+            assert_eq!(requests.len(), 1);
+            assert_eq!(requests[0].method, HttpMethod::Get);
+            assert_eq!(requests[0].url, "https://chatgpt.com/backend-api/wham/settings/user");
+            assert_eq!(requests[0].headers["ChatGPT-Account-Id"], "account-fixture");
+        }
+        for body in [json!([]), json!({"custom_instructions":17}), json!({"custom_instructions":{}})] {
+            let service = ChatgptService::default();
+            let transport = instructions_transport(&[200], &[body]);
+            assert_eq!(service.account_instructions_with(instructions_request("instructions-bad-read"), None, share_rpc, &transport).await.err().unwrap().code, "invalid_response");
+        }
+    }
+
+    #[tokio::test]
+    async fn account_instructions_patch_is_one_field_once_then_identity_bound_readback() {
+        for contents in ["", "中文 fixture instructions\nkeep trailing newline\n"] {
+            let service = ChatgptService::default();
+            let transport = instructions_transport(&[204, 200], &[Value::Null, json!({"custom_instructions":contents,"ignored":true})]);
+            transport.responses.lock().unwrap()[0].body.clear();
+            let result = service.account_instructions_with(instructions_request("instructions-write"), Some(contents.into()), share_rpc, &transport).await.unwrap();
+            assert_eq!(result.contents, contents);
+            let requests = transport.requests.lock().unwrap();
+            assert_eq!(requests.len(), 2);
+            assert_eq!(requests[0].method, HttpMethod::Patch);
+            assert_eq!(requests[1].method, HttpMethod::Get);
+            assert_eq!(requests[0].url, requests[1].url);
+            assert_eq!(requests[0].headers["Content-Type"], "application/json");
+            assert_eq!(serde_json::from_slice::<Value>(&requests[0].body).unwrap(), json!({"custom_instructions":contents}));
+            assert_eq!(requests[1].headers["ChatGPT-Account-Id"], "account-fixture");
+        }
+        assert!(serde_json::from_value::<AccountInstructionsWriteRequest>(json!({
+            "requestId":"unknown-key","expectedIdentity":identity(),"profile":{
+                "language":"zh-CN","deviceId":"fixture","userAgent":"Chrome/140.0.0.0","userAgentClientHints":"fixture","platformClientHint":"fixture"},
+            "contents":"fixture","url":"https://example.test/","communication_guide":"injected"
+        })).is_err());
+    }
+
+    #[tokio::test]
+    async fn account_instructions_patch_refreshes_explicit_401_once_but_other_failures_never_replay() {
+        for (status, code) in [(401,"unauthorized"), (403,"forbidden"), (409,"conflict"), (429,"rate_limited"), (500,"instructions_write_unknown")] {
+            let service = ChatgptService::default();
+            let transport = FakeTransport::new(if status == 401 { &[401,401] } else { std::slice::from_ref(&status) });
+            let refreshes = AtomicUsize::new(0);
+            let rpc = |method, params: Value| {
+                if params["refreshToken"] == true { refreshes.fetch_add(1, Ordering::SeqCst); }
+                share_rpc(method, params)
+            };
+            let error = service.account_instructions_with(instructions_request("instructions-error"), Some("fixture".into()), rpc, &transport).await.err().unwrap();
+            assert_eq!(error.code, code);
+            assert_eq!(transport.requests.lock().unwrap().len(), if status == 401 {2} else {1});
+            assert_eq!(refreshes.load(Ordering::SeqCst), if status == 401 {1} else {0});
+        }
+        let service = ChatgptService::default();
+        let transport = instructions_transport(&[200,401,200], &[json!({}),json!({}),json!({"custom_instructions":"confirmed"})]);
+        let refreshes = AtomicUsize::new(0);
+        let rpc = |method, params: Value| {
+            if params["refreshToken"] == true { refreshes.fetch_add(1, Ordering::SeqCst); }
+            share_rpc(method, params)
+        };
+        let result = service.account_instructions_with(instructions_request("instructions-read-refresh"), Some("confirmed".into()), rpc, &transport).await.unwrap();
+        assert_eq!(result.contents, "confirmed");
+        let requests = transport.requests.lock().unwrap();
+        assert_eq!(requests.iter().filter(|request| request.method == HttpMethod::Patch).count(), 1);
+        assert_eq!(requests.iter().filter(|request| request.method == HttpMethod::Get).count(), 2);
+        assert_eq!(refreshes.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn account_instructions_patch_401_same_identity_replays_same_body_but_changed_identity_cannot() {
+        let service = ChatgptService::default();
+        let transport = instructions_transport(&[401,200,200], &[json!({}),json!({}),json!({"custom_instructions":"fixture"})]);
+        let refreshes = AtomicUsize::new(0);
+        let rpc = |method, params: Value| {
+            if params["refreshToken"] == true { refreshes.fetch_add(1, Ordering::SeqCst); }
+            share_rpc(method, params)
+        };
+        let result = service.account_instructions_with(instructions_request("instructions-patch-refresh"), Some("fixture".into()), rpc, &transport).await.unwrap();
+        assert_eq!(result.contents, "fixture");
+        assert_eq!(refreshes.load(Ordering::SeqCst), 1);
+        let requests = transport.requests.lock().unwrap();
+        assert_eq!(requests.len(), 3);
+        assert_eq!(requests[0].method, HttpMethod::Patch);
+        assert_eq!(requests[1].method, HttpMethod::Patch);
+        assert_eq!(requests[0].url, requests[1].url);
+        assert_eq!(requests[0].body, requests[1].body);
+        drop(requests);
+
+        let service = ChatgptService::default();
+        let transport = FakeTransport::new(&[401]);
+        let refreshed = AtomicBool::new(false);
+        let rpc = |method, params: Value| {
+            if params["refreshToken"] == true { refreshed.store(true, Ordering::SeqCst); }
+            let changed = refreshed.load(Ordering::SeqCst);
+            if changed && method == "getAuthStatus" {
+                return std::future::ready(Ok(auth(&token("another-account", "user-fixture", u64::MAX / 2))));
+            }
+            if changed && method == "account/read" {
+                return std::future::ready(Ok(json!({"account":{"type":"chatgpt"},"workspaceRouting":{
+                    "backendOrigin":"https://chatgpt.com","chatgptAccountId":"another-account","accountRoutingOverride":"NO_CONSTRAINT"
+                }})));
+            }
+            share_rpc(method, params)
+        };
+        let error = service.account_instructions_with(instructions_request("instructions-patch-account-changed"), Some("fixture".into()), rpc, &transport).await.err().unwrap();
+        assert_eq!(error.code, "account_changed");
+        assert_eq!(transport.requests.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn account_instructions_workspace_ip_refusal_never_refreshes_or_replays() {
+        for error in [
+            json!({"type":"ip_not_authorized"}),
+            json!({"code":"ip_not_authorized"}),
+            json!({"code":"validate_whitelist_failed"}),
+            json!({"code":"workspace_ip_not_authorized"}),
+        ] {
+            for contents in [None, Some("fixture".to_owned())] {
+                let service = ChatgptService::default();
+                let transport = instructions_transport(&[401], &[json!({"error":error})]);
+                let refreshes = AtomicUsize::new(0);
+                let rpc = |method, params: Value| {
+                    if params["refreshToken"] == true { refreshes.fetch_add(1, Ordering::SeqCst); }
+                    share_rpc(method, params)
+                };
+                let result = service.account_instructions_with(instructions_request("instructions-ip-denied"), contents, rpc, &transport).await;
+                assert_eq!(result.err().unwrap().code, "ip_not_authorized");
+                assert_eq!(refreshes.load(Ordering::SeqCst), 0);
+                assert_eq!(transport.requests.lock().unwrap().len(), 1);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn account_instructions_unconfirmed_readback_is_not_success_or_automatic_rewrite() {
+        for (status, body, code) in [
+            (200, json!({"custom_instructions":"another window"}), "instructions_readback_mismatch"),
+            (200, json!({"custom_instructions":17}), "instructions_readback_failed"),
+            (403, json!({}), "instructions_readback_failed"),
+        ] {
+            let service = ChatgptService::default();
+            let transport = instructions_transport(&[200,status], &[json!({}),body]);
+            let error = service.account_instructions_with(instructions_request("instructions-mismatch"), Some("requested".into()), share_rpc, &transport).await.err().unwrap();
+            assert_eq!(error.code, code);
+            assert_eq!(transport.requests.lock().unwrap().len(), 2);
+        }
+        struct FailedTransport(AtomicUsize);
+        impl Transport for FailedTransport {
+            fn send(&self, _: HttpRequest, _: Arc<AtomicBool>) -> TransportFuture<'_> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async { Err(failure("transport_error", "fixture transport failure")) })
+            }
+        }
+        let service = ChatgptService::default();
+        let transport = FailedTransport(AtomicUsize::new(0));
+        assert_eq!(service.account_instructions_with(instructions_request("instructions-network"), Some("fixture".into()), share_rpc, &transport).await.err().unwrap().code, "instructions_write_unknown");
+        assert_eq!(transport.0.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn account_instructions_invalid_identity_oversize_and_pre_cancel_cannot_send() {
+        let service = ChatgptService::default();
+        let transport = FakeTransport::new(&[]);
+        let rpc_calls = AtomicUsize::new(0);
+        let rpc = |method, params| { rpc_calls.fetch_add(1, Ordering::SeqCst); share_rpc(method, params) };
+        let mut wrong = instructions_request("instructions-wrong");
+        wrong.expected_identity.generation += 1;
+        assert_eq!(service.account_instructions_with(wrong, None, &rpc, &transport).await.err().unwrap().code, "account_changed");
+        assert_eq!(service.account_instructions_with(instructions_request("instructions-large"), Some("x".repeat(256*1024)), &rpc, &transport).await.err().unwrap().code, "invalid_request");
+        service.cancel("instructions-cancelled");
+        assert_eq!(service.account_instructions_with(instructions_request("instructions-cancelled"), Some("fixture".into()), &rpc, &transport).await.err().unwrap().code, "cancelled");
+        assert_eq!(rpc_calls.load(Ordering::SeqCst), 0);
+        assert!(transport.requests.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn account_instructions_pending_cancel_and_account_switch_discard_late_results() {
+        for invalidate in [false, true] {
+            let service = ChatgptService::default();
+            let mut transport = instructions_transport(&[200,200], &[json!({}),json!({"custom_instructions":"fixture"})]);
+            transport.delay_ms = 100;
+            let result = {
+                let read = service.account_instructions_with(instructions_request("instructions-pending"), Some("fixture".into()), share_rpc, &transport);
+                let change = async {
+                    while !transport.entered.load(Ordering::SeqCst) { tokio::task::yield_now().await; }
+                    if invalidate { service.invalidate(); } else { service.cancel("instructions-pending"); }
+                };
+                tokio::join!(read, change).0
+            };
+            assert_eq!(result.err().unwrap().code, if invalidate { "account_changed" } else { "cancelled" });
+            assert_eq!(transport.requests.lock().unwrap().len(), 1);
+            assert!(service.active.lock().unwrap().is_empty());
+        }
     }
 
     fn bootstrap_request(id: &str) -> ShareAccessRequest {

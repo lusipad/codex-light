@@ -26,3 +26,11 @@ reset前必须展示真实确认，说明选定host的全部记忆。两版exper
 - MC04：隔离真实记忆目录的reset确认→协议→数据结果；取消零写，失败/未知结果不显示成功；chronicle有/无能力两支分别证明或未验。
 - AC01：账号固定transport操作、PATCH白名单、一次发送、取消/身份世代和读回；真实服务资格不足不以fixture或本地文件替代。
 - MC05：生产专项、真实隔离协议、完整标准、相关/全Rust、同源码原生构建和输入指纹；官方runtime/原生/IME/配对像素/用户验收单列。阶段通过自验后Lore提交，远程无分叉可推送；整App目标保持未完成。
+
+## 开工补证与实现选择
+
+真实transport与Windows Chronicle补证见[16.07C transport](16-07C-transport.md)。官方Windows无native Chronicle（仅macOS+gate+requirements具备），reset跳过其原生清理；关闭记忆却仍走fallback写features.chronicle=false，不能遗漏关联写。三组（feature/config/chronicle）不是原子事务；宿主各组版本化写入并读回，部分失败返回实际快照和分组错误，不用旧开关掩盖已落盘状态。
+
+此前合同对PATCH绝不401重试的推断被early transport源码反证，现明确修正：仅明确401允许同身份、同body刷新后重试一次；刷新后身份改变禁止重试；网络/超时/取消/未知送达不重放。账号桥资格仍独立于可调用操作，不能强开未知gate。
+
+主机取真实user层文件父目录和物理身份；单个控件managed/复杂值/featureRequirements独立锁定。记忆写入复用现有协议，无依赖；跨窗事件无正文。账户桥另行隔离transport单测，暂不修改真实账号偏好。实施注记见[16.07C实施记录](16-07C-implementation-notes.md)，阶段完成才提交，官方/原生/像素和用户验收单独保留。

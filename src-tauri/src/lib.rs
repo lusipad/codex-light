@@ -17,6 +17,7 @@ pub mod desktop_notifications;
 pub mod notification_audio;
 pub mod notification_preferences;
 mod model_preferences;
+mod memory_preferences;
 mod agent_configuration;
 mod image_save;
 mod chatgpt_service;
@@ -187,6 +188,32 @@ async fn chatgpt_service_read(
     request: chatgpt_service::ServiceRequest,
 ) -> Result<chatgpt_service::ServiceResponse, chatgpt_service::ServiceError> {
     state.chatgpt_service.read(request, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
+async fn account_instructions_read(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: chatgpt_service::AccountInstructionsRequest,
+) -> Result<chatgpt_service::AccountInstructionsResponse, chatgpt_service::ServiceError> {
+    state.chatgpt_service.account_instructions_read(request, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
+async fn account_instructions_write(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: chatgpt_service::AccountInstructionsWriteRequest,
+) -> Result<chatgpt_service::AccountInstructionsResponse, chatgpt_service::ServiceError> {
+    state.chatgpt_service.account_instructions_write(request, |method, params| {
         let app = &app;
         let state = &state;
         async move { state.app_server.call(app, method, Some(params)).await }
@@ -1586,6 +1613,7 @@ pub fn run() {
         .manage(notification_preferences::NotificationPreferencesState::default())
         .manage(model_preferences::ModelPreferencesState::default())
         .manage(agent_configuration::AgentConfigurationState::default())
+        .manage(memory_preferences::MemoryPreferencesState::default())
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 if let Err(error) = menu::remove_shortcut_window(window.app_handle(), window.label()) {
@@ -1608,6 +1636,9 @@ pub fn run() {
             agent_configuration::agent_configuration_read,
             agent_configuration::agent_configuration_write,
             agent_configuration::agent_configuration_open,
+            memory_preferences::memory_preferences_read,
+            memory_preferences::memory_preferences_write,
+            memory_preferences::memory_preferences_reset,
             desktop_notifications::desktop_notification_show,
             desktop_notifications::desktop_notification_hide,
             desktop_notifications::desktop_notification_hide_conversation,
@@ -1626,6 +1657,8 @@ pub fn run() {
             image_save::generated_image_save,
             chatgpt_service_identity,
             chatgpt_service_read,
+            account_instructions_read,
+            account_instructions_write,
             share_thread_prepare,
             share_thread_publish,
             share_thread_discard,

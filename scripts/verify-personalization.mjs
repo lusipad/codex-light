@@ -27,6 +27,7 @@ const react = {
   },
 };
 const mod = { exports: {} };
+const MemorySettings = Symbol("MemorySettings");
 vm.runInNewContext(ts.transpileModule(source, {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React, esModuleInterop: true },
 }).outputText, {
@@ -38,7 +39,7 @@ vm.runInNewContext(ts.transpileModule(source, {
       const handlers = hostListeners.get(name) || new Set(); hostListeners.set(name, handlers); handlers.add(handler);
       return () => { handlers.delete(handler); };
     },
-  } : name.endsWith(".css") ? {} : { ChevronRightIcon: () => null },
+  } : name === "./MemorySettings" ? { MemorySettings } : name.endsWith(".css") ? {} : { ChevronRightIcon: () => null },
   window: {
     addEventListener(name, handler) { const handlers = listeners.get(name) || new Set(); listeners.set(name, handlers); handlers.add(handler); },
     removeEventListener(name, handler) { listeners.get(name)?.delete(handler); },
@@ -80,6 +81,13 @@ const snapshot = { hostId: "local:home-one", path: "C:/isolated/AGENTS.md", cont
 let persisted = snapshot;
 invoke = async () => persisted;
 render(); await settle();
+const memory = nodes(tree).find(node => node.type === MemorySettings);
+assert.ok(memory, "memory is composed into the actual personalization overview");
+memory.props.onNavigationGuardChange(() => false);
+entry().props.onClick(); render();
+assert.equal(editor(), undefined, "pending memory mutation prevents switching to the file editor");
+assert.equal(guard(() => assert.fail("navigation must not run")), false, "memory busy protection reaches the global parent guard");
+memory.props.onNavigationGuardChange(null);
 assert.equal(editor(), undefined); assert.ok(entry()); assert.ok(text(entry()).includes("Codex 指令"));
 assert.ok(text(entry()).includes("编辑所选机器上的 AGENTS.md 文件。代码仓库的说明也可能适用。"));
 assert.equal(nodes(tree).filter(node => node.type === "a")[0].props.href, "https://developers.openai.com/codex/guides/agents-md/#create-global-guidance");
@@ -198,4 +206,4 @@ console.log("PASS PI-B05: account/connection identity and reconnect isolate late
 
 assert.ok(!source.includes("config_update") && !source.includes("desktop_state_set"));
 assert.ok(!source.includes("custom_instructions:"), "local AGENTS.md must not masquerade as cloud account instructions");
-console.log("PASS PI-B06: only real file contract is used; account/gated Markdown/Memory are not fabricated by this local page");
+console.log("PASS PI-B06: local file contract and real Memory composition; account/gated Markdown are not fabricated");

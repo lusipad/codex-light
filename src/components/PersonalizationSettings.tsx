@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { isTauriRuntime, tauriInvoke, tauriListen } from "../bridge";
 import { ChevronRightIcon } from "./Icons";
+import { MemorySettings } from "./MemorySettings";
 import "./PersonalizationSettings.css";
 
 interface PersonalInstructions {
@@ -35,6 +36,8 @@ export function PersonalizationSettings({ active, accountIdentity, connectionIde
   const currentEditing = useRef(false);
   const currentActive = useRef(active);
   const pendingNavigation = useRef<(() => void) | null>(null);
+  const memoryNavigationGuard = useRef<NavigationGuard | null>(null);
+  const registerMemoryNavigationGuard = useRef((next: NavigationGuard | null) => { memoryNavigationGuard.current = next; }).current;
   const refreshQueued = useRef(false);
   const refresh = useRef<() => Promise<void>>(async () => {});
   const saveCurrent = useRef<() => Promise<void>>(async () => {});
@@ -99,6 +102,7 @@ export function PersonalizationSettings({ active, accountIdentity, connectionIde
   };
   const guard: NavigationGuard = action => {
     if (currentIdentity.current !== identity) return true;
+    if (memoryNavigationGuard.current?.(action) === false) return false;
     if (!currentActive.current || !currentEditing.current) return true;
     if (operation.current) return false;
     if (!dirtyNow()) return true;
@@ -194,7 +198,8 @@ export function PersonalizationSettings({ active, accountIdentity, connectionIde
     {visible && linkError && <div role="alert" className="error-banner">{linkError}</div>}
     {!visible || !editing ? <div className="personalization-instructions-entry">
       <button type="button" ref={entryButton} className="personalization-entry-row" onClick={() => {
-        currentEditing.current = true; setEditing(true); setSaved(false); void load();
+        const open = () => { currentEditing.current = true; setEditing(true); setSaved(false); void load(); };
+        if (guard(open)) open();
       }}><span><span className="personalization-entry-title">Codex 指令</span>
         <span className="personalization-entry-description">编辑所选机器上的 AGENTS.md 文件。代码仓库的说明也可能适用。</span></span>
         <ChevronRightIcon /></button>
@@ -218,6 +223,8 @@ export function PersonalizationSettings({ active, accountIdentity, connectionIde
         aria-label="Codex 指令" placeholder="添加自定义指令…" disabled={operation.current === "write"}
         value={draft} onChange={event => setDraftValue(event.target.value)} />}
     </div>}
+    {visible && !editing && <MemorySettings active={active} accountIdentity={accountIdentity} connectionIdentity={connectionIdentity}
+      onNavigationGuardChange={registerMemoryNavigationGuard} />}
     <dialog ref={dialog} className="codex-modal-dialog personalization-discard-dialog" onCancel={event => { event.preventDefault(); cancelConfirmation(); }}>
       <h3>放弃未保存的更改？</h3>
       <p>{confirmation === "reload" ? "重新加载将放弃当前指令草稿。" : "离开将放弃当前指令草稿。"}</p>

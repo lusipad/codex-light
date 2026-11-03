@@ -132,6 +132,9 @@ try {
   Invoke-Step "Personal Codex instructions editor and draft lifecycle regression" { node scripts/verify-personalization.mjs }
   Invoke-Step "Personal instruction global navigation regression" { node scripts/verify-personalization-navigation-b.mjs }
   Invoke-Step "Personal instruction notification and reset continuation regression" { node scripts/verify-personalization-action-guards-b.mjs }
+  Invoke-Step "Memory settings state and actual component regression" { node scripts/verify-memory-preferences-c.mjs }
+  Invoke-Step "Rust memory preferences and isolated operation contracts" { cargo test --locked --manifest-path src-tauri/Cargo.toml memory_preferences }
+  Invoke-Step "Rust account instructions authenticated transport contracts" { cargo test --locked --manifest-path src-tauri/Cargo.toml account_instructions_ }
   Invoke-Step "Personal Codex instructions isolated file regression" { cargo test --manifest-path src-tauri/Cargo.toml personal_instructions }
   Invoke-Step "Account identity, partial failure and lifecycle regression" { node scripts/verify-account-snapshot.mjs }
   Invoke-Step "Profile real identity and unavailable write regression" { node scripts/verify-profile-settings.mjs }
@@ -268,6 +271,7 @@ Invoke-Step "TypeScript typecheck (tsc --noEmit)" { npx tsc --noEmit }
       "scripts/protocol-verify/verify-keyboard-number-target.mjs"
       "scripts/protocol-verify/verify-notification-preferences.mjs"
       "scripts/protocol-verify/verify-personal-instructions.mjs"
+      "scripts/protocol-verify/verify-memory-preferences.mjs"
       "scripts/protocol-verify/verify-account-snapshot.mjs"
       "scripts/protocol-verify/verify-service-auth-support.mjs"
       "scripts/protocol-verify/verify-mcp-status.mjs"

@@ -1768,3 +1768,10 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 16.07B最终冻结源码完整标准（非Fast，含增强隔离指令协议）退出0，日志verify-all-final.log；全Rust303项退出0。焦点修复前后两轮完整日志独立保留，输入快照未混用；最终原生构建进行中，尚未以构建替代原生UI/官方像素。下一16.07C固定来源与双CLI记忆catalog/status/schema合同已准备，未提前执行删除/写入或账号服务操作。
 
 16.07B最终EXE/MSI/NSIS构建退出0，251产品输入及原生helper指纹一致、五项许可sidecar逐项匹配；完整标准与全Rust303均通过，已具备阶段提交条件。原生/IME/多窗/官方像素与用户验收仍未完。见[待验表](antigravity/acceptance/16-07B.md)和[16.07C下一合同](antigravity/specs/16-07C-next-closure.md)，不把本机指令阶段自验当整页或整App完成。
+
+## 2026-11-03 — 16.07C 记忆真实闭环与账号指令桥
+
+- 先按固定Store asar、transport、公开固定源码及隔离协议补证，完成记忆资格/配置/重置与Windows无native Chronicle边界；账号仅实现固定鉴权宿主桥，不强开未知gate或用AGENTS.md替代账号指令。
+- 复用现有用户层身份/CAS、服务鉴权和导航保护；关联写部分失败展示实际快照，未知写/删除不重放。修复runtime catalog=false被配置true覆盖的回归，保留首败与修复后证据。无新依赖、无相邻重构。
+- 完整标准（非Fast）、全Rust318项、EXE/MSI/NSIS均退出0，255产品输入/原生helper稳定，许可五文件逐项哈希一致。隔离真实文件/SQLite探针、生产组件专项与受控浏览器覆盖通过；账号测试为隔离fixture，无真实账号写入。
+- [阶段待验记录](antigravity/acceptance/16-07C.md)与[本地EXE](../dist-artifacts/16-07C-memory-account-20261103/CodexNative.exe)已备。原生交互/IME/多窗、官方运行时、同条件像素及用户验收未完成，账号编辑器/统一gate另阶段；不声称整页或整App达成1:1。
