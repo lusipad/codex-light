@@ -367,3 +367,10 @@
   font-family: inherit;
   font-size: var(--text-sm);
 }
+
+/* Root catalog reading; directory navigation and write actions remain unavailable. */
+.library-root-table { width: 100%; border-collapse: collapse; text-align: left; table-layout: fixed; }
+.library-root-table th, .library-root-table td { padding: 12px 8px; border-bottom: 1px solid var(--border-subtle); overflow-wrap: anywhere; }
+.library-root-table th { color: var(--text-muted); font-size: var(--text-sm); font-weight: 500; }
+.library-root-table th:first-child { width: 55%; }
+.library-root-table th:last-child { width: 18%; }

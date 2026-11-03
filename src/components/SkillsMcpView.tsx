@@ -88,6 +88,7 @@ interface SkillsMcpViewProps {
   onRestartAppServer?: () => void | Promise<unknown>;
   onNavigationGuardChange?: (guard: ((action: () => void) => boolean) | null) => void;
   onBrowseDirectory?: (tab: "plugins" | "skills") => void;
+  onManagePlugins?: () => void;
   onStartSkillCreatorSession?: (prompt: string) => void;
 }
 
@@ -219,6 +220,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   onRestartAppServer,
   onNavigationGuardChange,
   onBrowseDirectory,
+  onManagePlugins,
   onStartSkillCreatorSession,
 }) => {
   const [subTab, setSubTab] = useState<SubTab>(initialTab || "plugins");
@@ -232,6 +234,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   const [skills, setSkills] = useState<SkillInfoItem[]>([]);
   const [selectedSkill, setSelectedSkill] = useState<SkillInfoItem | null>(null);
   const [selectedSkillKey, setSelectedSkillKey] = useState<string | null>(null);
+  const [creatingSkill, setCreatingSkill] = useState(false);
   const [readOnlyRemoteSkill, setReadOnlyRemoteSkill] =
     useState<SkillMetadata | null>(null);
   const [newSkillId, setNewSkillId] = useState<string>("");
@@ -396,6 +399,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     setLocalSkillsError(null);
     setSelectedSkill(null);
     setSelectedSkillKey(null);
+    setCreatingSkill(false);
     setReadOnlyRemoteSkill(null);
     setNewSkillId("");
     setSkillContent("");
@@ -955,6 +959,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       if (revision === skillEditorRevisionRef.current) {
         setSelectedSkill(saved);
         setSelectedSkillKey(saved.path);
+        setCreatingSkill(false);
         setReadOnlyRemoteSkill(null);
       }
       notify(`✓ 已保存技能 ${saved.id}`);
@@ -1049,6 +1054,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   };
 
   const handleSelectSkillRow = async (row: SkillRow) => {
+    setCreatingSkill(false);
     const request = ++skillSelectionRequestRef.current;
     ++skillEditorRevisionRef.current;
     const context = pluginContextRef.current;
@@ -1107,6 +1113,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   };
 
   const handleStartNewSkill = () => {
+    setCreatingSkill(true);
     ++skillSelectionRequestRef.current;
     ++skillEditorRevisionRef.current;
     skillSelectionRef.current = null;
@@ -1254,7 +1261,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   );
 
   const renderPluginDetail = () => {
-    if (detailLoading) return renderLoadingRow("正在读取插件详情（plugin/read）…");
+    if (detailLoading) return renderLoadingRow("正在读取插件详情…");
     if (detailError) {
       return (
         <div className="pm-state-body">
@@ -1432,9 +1439,11 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     return (
       <div className="item-card pm-plugin-card" key={key}>
         <div className="item-card-main">
-          <div
-            className="item-card-title-row pm-clickable"
-            title="点击查看插件详情（plugin/read）"
+          <button
+            type="button"
+            className="item-card-title-row pm-plugin-title"
+            aria-expanded={isOpen}
+            title="查看插件详情"
             onClick={() => handleToggleDetail(plugin, marketplace)}
           >
             <Boxes size={15} className="accent-icon" />
@@ -1453,7 +1462,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
             {plugin.availability === "DISABLED_BY_ADMIN" && (
               <span className="tag-badge pm-badge-off">管理员禁用</span>
             )}
-          </div>
+          </button>
           <p className="item-card-desc">{pluginDescription(plugin)}</p>
           {!options.browse && isServicePlugin(plugin) && plugin.remotePolicyKnown === false && <p role="alert">无法识别此插件的服务策略，暂不能变更。</p>}
           <div className="item-card-meta">
@@ -1507,7 +1516,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
               title={
                 installed ? "插件已安装" : unconfirmedInstalls.has(plugin.id) ? "请先刷新确认安装状态" : installBlocked
                   ? "该插件当前不可安装（管理员禁用或市场未提供安装）"
-                  : "安装插件（plugin/install）"
+                  : "安装插件"
               }
               onClick={() => handleInstallPlugin(plugin, marketplace)}
             >
@@ -1631,34 +1640,38 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   const isInstalledBusy = installedLoading && installedData === null;
 
   return (
-    <div className="panel-page">
+    <div className={`panel-page pm-extensions-page ${manageOnly ? "pm-management-page" : "pm-directory-page"}`}>
       <div className="panel-page-header">
         <div>
-          <h2>{manageOnly ? "插件" : "插件、技能与 MCP"}</h2>
+          <h2>{manageOnly ? "插件" : subTab === "skills" ? "技能" : "插件"}</h2>
           <p className="subtitle">
-            管理插件、技能和 MCP。
+            {manageOnly ? "管理插件、技能和 MCP。" : subTab === "skills" ? "通过任务专用技能扩展 Codex" : "连接插件，让 Codex 在你的各类工具中协同工作"}
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <input
             type="text"
             className="hub-search-input"
-            placeholder="搜索插件、技能或 MCP..."
+            aria-label={manageOnly ? "搜索插件、技能或 MCP" : subTab === "skills" ? "搜索技能" : "搜索插件"}
+            placeholder={manageOnly ? "搜索插件、技能或 MCP..." : subTab === "skills" ? "搜索技能" : "搜索插件"}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
+          {!manageOnly && subTab === "plugins" && onManagePlugins && (
+            <button type="button" className="secondary-btn" onClick={onManagePlugins}>管理</button>
+          )}
           {manageOnly && onBrowseDirectory && (
             <button type="button" className="secondary-btn" onClick={() => onBrowseDirectory(subTab === "skills" ? "skills" : "plugins")}>
               浏览目录
             </button>
           )}
-          <button
+          {manageOnly && <button
             type="button"
             className="primary-btn"
             onClick={() => selectTab("mcp")}
           >
             <Plus size={14} /> 连接至自定义 MCP
-          </button>
+          </button>}
           <button type="button" className="secondary-btn" onClick={refreshAll}>
             <RefreshCw size={14} /> 刷新
           </button>
@@ -1715,7 +1728,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       </p>}
 
       <div className="sub-tabs" role="tablist" aria-label="管理扩展程序" style={{ marginBottom: 16 }}>
-        {(manageOnly ? visibleManagementTabs : ["plugins", "skills", "mcp", "apps", "marketplaces"] as SubTab[]).map(tab =>
+        {(manageOnly ? visibleManagementTabs : ["plugins", "skills"] as SubTab[]).map(tab =>
           <button key={tab} type="button" role="tab" aria-selected={subTab === tab}
             className={`sub-tab ${subTab === tab ? "active" : ""}`} onClick={() => selectTab(tab)}>
             <span>{tabLabels[tab]} ({tabCounts[tab]})</span>
@@ -1848,25 +1861,12 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       )}
 
       {/* TAB 2: SKILLS (skills/list + skills/config/write, local fallback) */}
-      {subTab === "skills" && !manageOnly && <RecommendedSkillsPanel key={activeWorkspaceRoot}
-        workspaceRoot={activeWorkspaceRoot} onInstalled={refreshAll} writeBusy={skillWriteBusy}
-        beginInstall={() => {
-          if (skillWritePendingRef.current) return false;
-          skillWritePendingRef.current = true;
-          setSkillWriteBusy(true);
-          return true;
-        }}
-        finishInstall={() => {
-          skillWritePendingRef.current = false;
-          if (pluginMountedRef.current) setSkillWriteBusy(false);
-        }} />}
       {subTab === "skills" && (
-        <div className="split-panel-layout">
+        <div className={`split-panel-layout pm-skills-layout ${!manageOnly && selectedSkillKey === null && !creatingSkill ? "pm-skills-overview" : ""}`}>
           <div className="split-left-list">
             <div className="list-toolbar">
               <span>
-                技能 ({remoteSkills ? remoteSkills.length : skills.length})
-                {remoteSkills ? " · app-server" : " · 本地回退"}
+                {skillRows.some(row => row.scope === "seed") ? "技能与本地模版" : "已安装"} ({skillRows.length})
               </span>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 {remoteSkillsLoading && (
@@ -1909,13 +1909,22 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
                 <button type="button" className="secondary-btn-sm" onClick={refreshAll}>重试</button>
               </div>
             )}
-            <div className="scrollable-items">
+            <div className="scrollable-items pm-installed-skills-grid">
               {filteredSkillRows.map((row) => (
                 <div
                   key={row.key}
                   className={`skill-list-row ${
                     selectedSkillKey === row.key ? "active" : ""
                   }`}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(event) => {
+                    if (event.target !== event.currentTarget) return;
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      void handleSelectSkillRow(row);
+                    }
+                  }}
                   onClick={() => handleSelectSkillRow(row)}
                 >
                   <div className="skill-row-top">
@@ -1931,9 +1940,11 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
                           className={`pm-skill-toggle ${row.enabled ? "on" : ""}`}
                           title={
                             row.enabled
-                              ? "点击禁用（skills/config/write）"
-                              : "点击启用（skills/config/write）"
+                              ? "禁用技能"
+                              : "启用技能"
                           }
+                          role="switch"
+                          aria-checked={row.enabled}
                           aria-label={row.enabled ? "禁用技能" : "启用技能"}
                           disabled={skillWriteBusy || skillToggleBusy === row.key}
                           onClick={(e) => {
@@ -1953,7 +1964,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
             </div>
           </div>
 
-          <div className="split-right-editor">
+          {(manageOnly || selectedSkillKey !== null || creatingSkill) && <div className="split-right-editor">
             <div className="editor-header-bar">
               <div className="form-field-inline">
                 <label>技能 ID (`$skill`):</label>
@@ -2049,9 +2060,22 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
                   : "编写 SKILL.md 内容..."
               }
             />
-          </div>
+          </div>}
         </div>
       )}
+
+      {subTab === "skills" && !manageOnly && <RecommendedSkillsPanel key={activeWorkspaceRoot}
+        workspaceRoot={activeWorkspaceRoot} onInstalled={refreshAll} writeBusy={skillWriteBusy}
+        beginInstall={() => {
+          if (skillWritePendingRef.current) return false;
+          skillWritePendingRef.current = true;
+          setSkillWriteBusy(true);
+          return true;
+        }}
+        finishInstall={() => {
+          skillWritePendingRef.current = false;
+          if (pluginMountedRef.current) setSkillWriteBusy(false);
+        }} />}
 
       {/* TAB 3: MCP SERVERS (unchanged behavior) */}
       {subTab === "mcp" && <McpSettings cwd={activeWorkspaceRoot || undefined} connectionIdentity={connectionIdentity}

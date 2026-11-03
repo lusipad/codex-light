@@ -254,5 +254,5 @@ const settings = fs.readFileSync("src/components/SettingsView.tsx", "utf8");
 assert.ok(app.includes("codeReviewPreferencesState={codeReviewPreferencesState}"));
 assert.ok(review.includes("runPullRequestReview(pr, onStartReview, isCurrent)"));
 assert.ok(!settings.includes("代码审查规范与门禁"));
-assert.ok(settings.includes("codeReviewPathOverrides,"), "old preferences retained");
+assert.ok(!settings.includes("desktopPreferences"), "historical preferences stay untouched without a generic overwrite path");
 console.log("PASS CRS UI: rows=10, debounce, editable during save, draft identity, deduplicated flush, failure retry, 3s Saved, IME and unmount");

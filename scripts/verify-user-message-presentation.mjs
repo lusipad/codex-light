@@ -12,7 +12,7 @@ const createElement = (type, props, ...children) => ({ type, props: props ?? {},
 const MarkdownView = () => {};
 function mount(initialText = "short", initialHeight = 24, elements = [], codeBlocks = [], contentTop = 0) {
   let cursor = 0, text = initialText, height = initialHeight, width = 400, lineHeight = "24px";
-  const hooks = [], effects = [], cleanups = new Map(), observers = [];
+  const hooks = [], effects = [], cleanups = new Map(), observers = [], listeners = new Map();
   const content = {
     get clientWidth() { return width; }, get scrollHeight() { return height; }, get offsetHeight() { return height; },
     getBoundingClientRect: () => ({ top: contentTop, bottom: height + contentTop, left: 0, right: width, height }),
@@ -45,11 +45,16 @@ function mount(initialText = "short", initialHeight = 24, elements = [], codeBlo
     exports: module.exports,
     require(name) {
       if (name === "react") return react;
+      if (name === "react-dom") return { flushSync: callback => callback() };
       if (name === "./Icons") return { ChevronDownIcon() {} };
       if (name === "./MarkdownView") return { MarkdownView };
       throw Error(name);
     },
-    window: { getComputedStyle: () => ({ lineHeight, fontSize: "16px" }) },
+    window: {
+      getComputedStyle: () => ({ lineHeight, fontSize: "16px" }),
+      addEventListener: (name, handler) => listeners.set(name, handler),
+      removeEventListener: (name, handler) => { if (listeners.get(name) === handler) listeners.delete(name); },
+    },
     ResizeObserver: class {
       constructor(callback) { this.callback = callback; this.disconnected = false; observers.push(this); }
       observe(element) { assert.equal(element, content); }
@@ -71,7 +76,8 @@ function mount(initialText = "short", initialHeight = 24, elements = [], codeBlo
   }
   function flush() { let tree = render(); while (effects.length) { effects.shift()(); tree = render(); } return tree; }
   return {
-    render: flush, observers,
+    render: flush, observers, listeners,
+    printEvent(name) { listeners.get(name)?.(); return flush(); },
     resize(nextHeight, nextWidth = width, nextLineHeight = lineHeight) {
       height = nextHeight; width = nextWidth; lineHeight = nextLineHeight;
       for (const observer of [...observers].filter(observer => !observer.disconnected)) observer.callback();
@@ -83,6 +89,24 @@ function mount(initialText = "short", initialHeight = 24, elements = [], codeBlo
 }
 const button = tree => nodes(tree).find(node => node.type === "button");
 const body = tree => nodes(tree).find(node => node.props.className === "user-message-content");
+{
+  const original = "long print message";
+  const view = mount(original, 960);
+  assert.equal(button(view.render()).props["data-markdown-copy"], "exclude", "UD01: disclosure text is excluded from Markdown copy");
+  assert.equal(button(view.render()).props["aria-expanded"], false);
+  const printed = view.printEvent("beforeprint");
+  assert.equal(body(printed).props.style, undefined, "UD01: print reveals the complete message");
+  assert.equal(button(printed), undefined, "UD01: print has no interactive disclosure");
+  assert.equal(nodes(printed).some(node => node.props.className === "user-message-ellipsis"), false);
+  assert.equal(nodes(body(printed)).find(node => node.type === MarkdownView).props.content, original);
+  assert.equal(button(view.printEvent("afterprint")).props["aria-expanded"], false, "UD01: print does not change the user's collapsed choice");
+  button(view.render()).props.onClick();
+  view.printEvent("beforeprint");
+  assert.equal(button(view.printEvent("afterprint")).props["aria-expanded"], true, "UD02: an expanded message stays expanded after printing");
+  view.unmount();
+  assert.equal(view.listeners.size, 0, "UD03: print listeners are released on unmount");
+  console.log("PASS UD01–UD03 production user message print: full content, prior expansion restored, copy exclusions and listener cleanup");
+}
 {
   const view = mount();
   assert.equal(button(view.render()), undefined, "UM01: short message has no expansion control");

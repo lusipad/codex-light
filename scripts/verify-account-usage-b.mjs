@@ -97,7 +97,7 @@ console.log("PASS AC08-U03: production hook clears old data; notification invali
 
 const source = fs.readFileSync("src/components/SettingsView.tsx", "utf8");
 assert.ok(source.includes('<UsageSettings accountIdentity={accountIdentity} connectionIdentity={connectionIdentity} />'));
-assert.ok(source.includes('slug: "usage"')); assert.ok(source.includes('activeSection !== "usage" &&'));
+assert.ok(source.includes('slug: "usage"')); assert.ok(!source.includes("handleSaveVisual"), "dedicated settings must not expose generic configuration writes");
 assert.ok(!source.includes("usageLast14Days")); assert.ok(!source.includes("accountRateSnapshot"));
 const app = fs.readFileSync("src/App.tsx", "utf8");
 assert.match(app, /onOpenUsage=\{\(\) => \{\s*setSettingsInitialSection\("usage"\)/);

@@ -10,7 +10,30 @@ export const CommandExecutionCard: React.FC<{ item: TurnItem; turnStatus?: strin
   const running = !interrupted && (item.status === "inProgress" || item.status === "running");
   const command = Array.isArray(item.command) ? item.command.join(" ") : item.command || "command";
   const output = item.aggregatedOutput ?? item.output ?? "";
-  const summary = interrupted ? "已停止命令" : running ? "正在运行命令" : "已运行命令";
+  let summary = interrupted ? "已停止命令" : running ? "正在运行命令" : "已运行命令";
+  let detail = command;
+  const action = Array.isArray(item.commandActions) && item.commandActions.length === 1
+    ? item.commandActions[0] : null;
+  if (!interrupted && item.status !== "declined" && action) {
+    if (action.type === "read" && !running && action.name) {
+      summary = "已读取";
+      detail = action.name;
+    } else if (action.type === "search") {
+      if (action.query && action.path) {
+        summary = running ? "正在" : "已在";
+        detail = `${action.path} 中搜索“${action.query}”`;
+      } else if (action.query) {
+        summary = running ? "正在搜索" : "已对";
+        detail = running ? `“${action.query}”` : `“${action.query}”进行搜索`;
+      } else {
+        summary = running ? "正在搜索" : "已搜索";
+        detail = "文件";
+      }
+    } else if (action.type === "listFiles") {
+      summary = running ? "正在列出" : action.path ? "已列出" : "已列出的";
+      detail = action.path ? `${action.path} 中的文件` : "文件";
+    }
+  }
   const result = interrupted ? "已停止" : item.exitCode === 0 ? "成功" : `退出码 ${item.exitCode ?? "未知"}`;
 
   return (
@@ -25,7 +48,7 @@ export const CommandExecutionCard: React.FC<{ item: TurnItem; turnStatus?: strin
       >
         <TerminalIcon size={13} />
         <span className="command-exec-summary">{summary}</span>
-        {!expanded && <span className="command-exec-title" title={command}>{command}</span>}
+        {!expanded && <span className="command-exec-title" title={command}>{detail}</span>}
         <ChevronDownIcon size={12} className={expanded ? "expanded" : ""} />
       </button>
       {expanded && (

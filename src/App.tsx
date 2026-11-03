@@ -114,7 +114,7 @@ import type { EnvironmentActionRunRequest } from "./environmentActions";
 import { WorktreesView } from "./components/WorktreesView";
 import { AutomationsView } from "./components/AutomationsView";
 import { SkillsMcpView } from "./components/SkillsMcpView";
-import { SettingsView, applyColorTheme } from "./components/SettingsView";
+import { SettingsView } from "./components/SettingsView";
 import { WorkspacePopover } from "./components/WorkspacePopover";
 import { AgentsMdModal } from "./components/AgentsMdModal";
 import { NavigationRail } from "./components/NavigationRail";
@@ -3889,22 +3889,9 @@ export const App: React.FC = () => {
 
   const zoomRef = useRef(1);
   const cycleTheme = useCallback(async () => {
-    try {
-      const { OFFICIAL_COLOR_THEMES } = await import("./components/SettingsView");
-      const themes = (OFFICIAL_COLOR_THEMES || []).map((theme: any) => theme.id);
-      if (!themes.length) return;
-      const current =
-        (await tauriInvoke<string | null>("desktop_state_get", { key: "colorTheme" })) || "codex";
-      const index = Math.max(0, themes.indexOf(current));
-      const next = themes[(index + 1) % themes.length];
-      applyColorTheme(next);
-      await tauriInvoke("desktop_state_set", { key: "colorTheme", value: next });
-      showAppToast(`主题已切换：${next}`, "info");
-    } catch (error) {
-      console.warn("toggle-theme failed:", error);
-      showAppToast(`主题切换失败: ${String(error)}`, "error");
-    }
-  }, [showAppToast]);
+    setSettingsInitialSection("appearance");
+    setActiveRoute("settings");
+  }, []);
 
   const applyZoom = useCallback(async (next: number) => {
     zoomRef.current = Math.min(3, Math.max(0.5, next));
@@ -3922,7 +3909,7 @@ export const App: React.FC = () => {
     const shortcutAction = shortcutHandlersRef.current[command];
     if (projectMoveConfirmation && (
       (typeof shortcutAction === "function" && !["zoom-in", "zoom-out", "zoom-reset"].includes(command)) ||
-      ["open-workspace", "settings", "reload"].includes(command)
+      ["open-workspace", "settings", "toggle-theme", "reload"].includes(command)
     )) return;
     if (shortcutAction) {
       if (keyboardShortcutsOpenRef.current && command !== "show-keyboard-shortcuts") return;
@@ -4052,15 +4039,6 @@ export const App: React.FC = () => {
       offMenu?.();
       offTray?.();
     };
-  }, []);
-
-  // 启动时应用已保存的配色主题
-  useEffect(() => {
-    tauriInvoke<string | null>("desktop_state_get", { key: "colorTheme" })
-      .then((theme) => {
-        if (theme) applyColorTheme(theme);
-      })
-      .catch(() => {});
   }, []);
 
   const handleExportMarkdown = useCallback(() => {
@@ -4689,6 +4667,7 @@ export const App: React.FC = () => {
     return <>
       <HotkeyWindow
         native
+        title={activeWorkspace?.label || activeThreadObj?.name || "Codex"}
         threadId={activeThreadId}
         turns={turns}
         isStreaming={isStreaming}
@@ -5338,6 +5317,10 @@ export const App: React.FC = () => {
                 onNavigationGuardChange={setPersonalizationNavigationGuard}
                 initialTab={activeRoute === "skills" ? "skills" : "plugins"}
                 initialPluginMode={pluginDirectoryMode}
+                onManagePlugins={() => {
+                  setSettingsInitialSection("plugins-settings");
+                  setActiveRoute("settings");
+                }}
                 onStartSkillCreatorSession={(prompt) => {
                   startNewThread();
                   setThreadPrompt(null, prompt);

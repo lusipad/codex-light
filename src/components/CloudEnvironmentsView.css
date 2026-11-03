@@ -368,3 +368,11 @@
   color: var(--text-muted);
   font-size: var(--text-sm);
 }
+
+.cloud-envs-container dialog { max-width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; color: var(--text-primary); background: var(--bg-main); border: 1px solid var(--border-subtle); border-radius: 12px; padding: 24px; }
+.cloud-envs-properties { margin: 16px 0; }
+.cloud-envs-properties > div { display: flex; justify-content: space-between; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--border-subtle); }
+.cloud-envs-properties dt { color: var(--text-muted); }
+.cloud-envs-properties dd { margin: 0; }
+.cloud-envs-technical { margin-top: 24px; color: var(--text-muted); overflow-wrap: anywhere; }
+.cloud-envs-container dialog pre { white-space: pre-wrap; overflow-wrap: anywhere; }

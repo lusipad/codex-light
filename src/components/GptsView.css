@@ -216,3 +216,8 @@
   font-size: calc(11px * var(--font-ui-scale, 1));
   color: var(--text-muted, #777780);
 }
+
+.gpts-search-input { width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--bg-input); color: var(--text-primary); font: inherit; }
+.gpts-search-input:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 2px; }
+.gpts-view-container .gpt-card { text-align: start; min-width: 0; color: inherit; }
+@media (max-width: 600px) { .gpts-view-container .gpts-grid { grid-template-columns: minmax(0, 1fr); } }

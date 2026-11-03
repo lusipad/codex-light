@@ -33,6 +33,11 @@ function Invoke-Step {
 }
 
 try {
+  Invoke-Step "All-page workflow UI correction" { node scripts/verify-workflow-ui-d.mjs }
+  Invoke-Step "Workspace file tree and actual file selection" { node scripts/verify-workspace-file-tree.mjs }
+  Invoke-Step "Settings wrapper and immediate-save UI correction" { node scripts/verify-settings-ui-correction.mjs }
+  Invoke-Step "Project, worktree and archive UI correction" { node scripts/verify-organization-ui.mjs }
+  Invoke-Step "Plugin and skill directory UI correction" { node scripts/verify-extensions-ui-d.mjs }
   Invoke-Step "Worktree cleanup planner against official golden cases" { node scripts/verify-worktree-policy.mjs }
   Invoke-Step "Worktree cleanup lifecycle and recovery contracts" { node scripts/verify-worktree-cleanup-runtime.mjs }
   Invoke-Step "Worktree preference component and progress contracts" { node scripts/verify-worktree-preferences-ui.mjs }

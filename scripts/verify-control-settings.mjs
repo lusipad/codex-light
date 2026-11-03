@@ -30,7 +30,8 @@ for (const tree of [computer, exports.AppshotsSettings(), exports.BrowserUseSett
 }
 assert.ok(source.includes('onManagePlugins={() => setActiveSection("plugins-settings")}'));
 for (const slug of ["computer-use", "appshots", "browser-use"]) {
-  assert.ok(source.includes(`activeSection !== "${slug}" &&`));
+  assert.ok(source.includes(`activeSection === "${slug}" &&`));
+  assert.ok(!source.includes("handleSaveVisual"));
 }
 const native = fs.readFileSync("src-tauri/src/lib.rs", "utf8");
 assert.ok(native.includes('.env("CODEX_APPSHOT_OUTPUT", &out_path)'));

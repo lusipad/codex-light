@@ -9,7 +9,7 @@ function gptResource(value: any): Gpt | null {
   const gpt = value?.resource?.gizmo;
   if (!gpt || typeof gpt.id !== "string" || !gpt.id) throw Error("GPT 服务返回了无法识别的资源。");
   if (gpt.gizmo_type === "snorlax") return null;
-  return { id: gpt.id, name: gpt.display?.name || gpt.id, description: gpt.display?.description || "", author: gpt.author?.name };
+  return { id: gpt.id, name: gpt.display?.name || gpt.id, description: gpt.display?.description || "", author: gpt.author?.display_name || gpt.author?.name };
 }
 export function parseGptSection(value: any): Section {
   if (typeof value?.info?.id !== "string" || !Array.isArray(value?.list?.items) ||
@@ -21,6 +21,11 @@ export function parseGptDiscovery(value: any): Section[] {
   if (!Array.isArray(value?.cuts)) throw Error("GPT 目录响应格式无法识别。");
   return value.cuts.map(parseGptSection).filter((section: Section) => section.items.length || section.cursor);
 }
+export function parseGptSearch(value: any): Section {
+  if (!Array.isArray(value?.items) || (value.cursor != null && typeof value.cursor !== "string"))
+    throw Error("GPT 搜索响应格式无法识别。");
+  return { id: "search", title: "搜索结果", items: value.items.map((resource: any) => gptResource({ resource })).filter((item: Gpt | null): item is Gpt => item !== null), cursor: value.cursor || null };
+}
 export function appendGptPage(section: Section, page: Section): Section {
   if (section.id !== page.id) throw Error("GPT 分类在读取期间发生变化，请刷新。");
   const items = new Map(section.items.map(item => [item.id, item]));
@@ -29,6 +34,12 @@ export function appendGptPage(section: Section, page: Section): Section {
 }
 
 export const GptsView: React.FC = () => {
+  const [query, setQuery] = useState("");
+  const [search, setSearch] = useState<Section | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [searchRevision, setSearchRevision] = useState(0);
+  const searchRequest = useRef<AbortController | null>(null);
   const [revision, setRevision] = useState(0);
   const [sections, setSections] = useState<Section[]>([]);
   const [loading, setLoading] = useState(true);
@@ -49,7 +60,7 @@ export const GptsView: React.FC = () => {
     let disposed = false;
     const subscription = tauriListen("chatgpt-service:invalidated", () => {
       if (disposed) return;
-      source.current?.abort(); detailRequest.current?.abort(); identity.current = null;
+      source.current?.abort(); searchRequest.current?.abort(); detailRequest.current?.abort(); identity.current = null; setSearch(null);
       setSections([]); setSelectedId(null); setRevision(value => value + 1);
     });
     return () => { disposed = true; void subscription.then(unlisten => unlisten()); };
@@ -69,8 +80,25 @@ export const GptsView: React.FC = () => {
       } catch (cause) { if (!controller.signal.aborted) setError(serviceErrorMessage(cause)); }
       finally { if (!controller.signal.aborted) setLoading(false); }
     })();
-    return () => { controller.abort(); detailRequest.current?.abort(); };
+    return () => { controller.abort(); searchRequest.current?.abort(); detailRequest.current?.abort(); };
   }, [revision]);
+
+  useEffect(() => {
+    const current = identity.current;
+    setSearch(null); setSearchError(null); setSearchLoading(false);
+    if (!query.trim() || loading || !current) return;
+    const controller = new AbortController(); searchRequest.current = controller;
+    setSearchLoading(true); pageRequests.current.delete("search");
+    setPaging(value => value.filter(id => id !== "search"));
+    setPageError(value => ({ ...value, search: "" }));
+    const timer = setTimeout(() => {
+      void readChatgptService("gpts_search", { q: query.trim(), limit: 20 }, current, controller.signal).then(result => {
+        if (!controller.signal.aborted) setSearch(parseGptSearch(result));
+      }).catch(cause => { if (!controller.signal.aborted) setSearchError(serviceErrorMessage(cause)); })
+        .finally(() => { if (!controller.signal.aborted) setSearchLoading(false); });
+    }, 300);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [query, loading, searchRevision]);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -80,15 +108,22 @@ export const GptsView: React.FC = () => {
   }, [selectedId]);
 
   const loadMore = async (section: Section) => {
-    const current = identity.current, controller = source.current;
+    const isSearch = section.id === "search";
+    const current = identity.current, controller = isSearch ? searchRequest.current : source.current;
     if (!current || !controller || controller.signal.aborted || !section.cursor || pageRequests.current.has(section.id)) return;
     pageRequests.current.add(section.id); setPaging(value => [...value, section.id]);
     setPageError(value => ({ ...value, [section.id]: "" }));
     try {
-      let page = parseGptSection(await readChatgptService("gpts_category", { id: section.id, cursor: section.cursor, limit: 20 }, current, controller.signal));
-      if (!page.items.length && page.cursor) page = parseGptSection(await readChatgptService("gpts_category", { id: section.id, cursor: page.cursor, limit: 20 }, current, controller.signal));
+      let page = isSearch
+        ? parseGptSearch(await readChatgptService("gpts_search", { q: query.trim(), cursor: section.cursor, limit: 20 }, current, controller.signal))
+        : parseGptSection(await readChatgptService("gpts_category", { id: section.id, cursor: section.cursor, limit: 20 }, current, controller.signal));
+      if (!isSearch && !page.items.length && page.cursor) page = parseGptSection(await readChatgptService("gpts_category", { id: section.id, cursor: page.cursor, limit: 20 }, current, controller.signal));
+      if (page.cursor && page.cursor === section.cursor) throw Error("GPT 服务返回了重复分页游标，请重试。");
       if (page.id !== section.id) throw Error("GPT 分类在读取期间发生变化，请刷新。");
-      if (!controller.signal.aborted && identity.current === current) setSections(value => value.map(item => item.id === section.id ? appendGptPage(item, page) : item));
+      if (!controller.signal.aborted && identity.current === current) {
+        if (isSearch) setSearch(value => value ? appendGptPage(value, page) : value);
+        else setSections(value => value.map(item => item.id === section.id ? appendGptPage(item, page) : item));
+      }
     } catch (cause) {
       if (!controller.signal.aborted) setPageError(value => ({ ...value, [section.id]: serviceErrorMessage(cause) }));
     } finally {
@@ -113,10 +148,14 @@ export const GptsView: React.FC = () => {
   return (
     <div className="gpts-view-container">
       <div className="gpts-header-row"><div><h2>GPTs</h2></div></div>
+      <input className="gpts-search-input" type="search" aria-label="搜索 GPT" placeholder="搜索 GPT" maxLength={256} value={query} onChange={event => setQuery(event.target.value)} />
+      {searchLoading && <p role="status">正在搜索 GPT…</p>}
+      {searchError && <section><p role="alert">{searchError}</p><button type="button" onClick={() => setSearchRevision(value => value + 1)}>重试搜索</button></section>}
+      {query.trim() && search && !search.items.length && !search.cursor && <p role="status">未找到 GPT。请尝试其他搜索。</p>}
       {loading && <p role="status">正在读取 GPTs…</p>}
       {error && <section aria-label="GPTs 服务状态"><p role="alert">{error}</p><button type="button" onClick={() => setRevision(value => value + 1)}>重试</button></section>}
-      {!loading && !error && !sections.length && <p role="status">暂无可显示的 GPTs。</p>}
-      {sections.map(section => <section key={section.id} aria-label={section.title}>
+      {!query.trim() && !loading && !error && !sections.length && <p role="status">暂无可显示的 GPTs。</p>}
+      {(query.trim() ? search ? [search] : [] : sections).map(section => <section key={section.id} aria-label={section.title}>
         <h3>{section.title}</h3>
         <div className="gpts-grid">{section.items.map(gpt => <button type="button" className="gpt-card" key={gpt.id}
           onClick={event => { detailTrigger.current = event.currentTarget; void openDetail(gpt.id); }}>

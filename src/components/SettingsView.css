@@ -1,0 +1,75 @@
+/* Store settings-content-layout uses max-w-3xl and spacing(10) section gaps.
+   These are static CSS constraints; physical-pixel parity still needs paired captures. */
+.settings-center-shell .settings-right-content > .panel-page-header,
+.settings-center-shell .settings-right-content > .settings-scroll-container {
+  width: 100%;
+  max-width: 48rem;
+  margin-inline: auto;
+}
+
+.settings-center-shell .settings-right-content > .panel-page-header {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.settings-center-shell .settings-general-content,
+.settings-center-shell .settings-appearance-content {
+  gap: 40px;
+}
+
+.settings-general-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-center-shell .settings-general-group > h3,
+.settings-center-shell .settings-appearance-content > .card-section > h3 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 500;
+}
+
+.settings-center-shell .settings-general-content > .card-section,
+.settings-center-shell .settings-appearance-content > .card-section {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.settings-general-group > .form-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(160px, auto);
+  align-items: center;
+  gap: 4px 24px;
+  padding-block: 12px;
+}
+
+.settings-general-group > .form-field > label,
+.settings-general-group > .form-field > p {
+  grid-column: 1;
+  margin: 0;
+}
+
+.settings-general-group > .form-field > select {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  max-width: 100%;
+}
+
+.settings-general-group > .form-field > [role="alert"] {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 680px) {
+  .settings-general-group > .form-field {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-general-group > .form-field > select {
+    grid-column: 1;
+    grid-row: auto;
+  }
+}

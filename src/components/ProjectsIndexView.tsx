@@ -19,6 +19,8 @@ import {
   moveProject,
   updateProject,
 } from "../projects";
+import { ThreadActionsMenu } from "./ThreadActionsMenu";
+import "./ProjectsIndexView.css";
 
 export interface ProjectsIndexViewProps {
   workspaces: WorkspaceRootItem[];
@@ -597,7 +599,6 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
         <div className="route-empty-state">
           <FolderIcon size={32} />
           <h3>正在加载项目…</h3>
-          <p>正在从 app-server 读取项目列表。</p>
         </div>
       );
     }
@@ -606,7 +607,7 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
       return (
         <div className="route-empty-state">
           <FolderIcon size={32} />
-          <h3>{projects.length === 0 ? "还没有项目" : "没有匹配的项目"}</h3>
+          <h3>{projects.length === 0 ? "没有项目" : "没有匹配的项目"}</h3>
           <p>
             {projects.length === 0
               ? "点击右上角“新建项目”，选择本地文件夹创建第一个项目。"
@@ -631,16 +632,22 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
         <div className="projects-table-group" key={project.id}>
           <div
             className={`projects-table-row ${isExpanded ? "active" : ""}`}
-            onClick={() => handleToggleProject(project)}
-            onDoubleClick={() => handleStartChatInProject(project)}
+            onClick={(event) => { if (event.detail <= 1) handleToggleProject(project); }}
+            onDoubleClick={(event) => {
+              if (event.target instanceof Element && event.target.closest("button,a,input,select,textarea")) return;
+              handleStartChatInProject(project);
+            }}
             title={`${project.name} (双击直接启动聊天)`}
           >
-            <div className="project-col-name">
+            <div className="project-col-name" title={roots.map((root) => root.path).join("\n")}>
+              <button type="button" className="thread-icon-btn" aria-label="展开/折叠项目"
+                aria-expanded={isExpanded} onClick={event => { event.stopPropagation(); handleToggleProject(project); }}>
               {isExpanded ? (
                 <ChevronDownIcon size={14} />
               ) : (
                 <ChevronRightIcon size={14} />
               )}
+              </button>
               <FolderIcon size={16} />
               <div
                 style={{
@@ -660,33 +667,10 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
                 >
                   {project.name}
                 </span>
-                <span style={{ fontSize: "calc(11px * var(--font-ui-scale, 1))", color: "var(--text-tertiary)" }}>
-                  更新于 {formatRelativeTime(effectiveUpdated)}
-                </span>
               </div>
             </div>
 
-            <div
-              className="project-col-path"
-              title={roots.map((root) => root.path).join("\n")}
-            >
-              {roots.length === 0 ? (
-                <span style={{ color: "var(--text-tertiary)" }}>（无根目录）</span>
-              ) : (
-                <>
-                  {roots[0].path}
-                  {roots.length > 1 && (
-                    <span className="popover-badge" style={{ marginLeft: 6 }}>
-                      {roots.length} 个根目录
-                    </span>
-                  )}
-                </>
-              )}
-            </div>
-
-            <div className="project-col-count">
-              {projectThreads.length} 个聊天
-            </div>
+            <div className="project-col-updated">{formatRelativeTime(effectiveUpdated)}</div>
 
             <div
               className="project-col-actions"
@@ -701,53 +685,19 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
               >
                 <NewChatComposeIcon size={13} />
               </button>
-              {onRevealPath && roots.length > 0 && (
-                <button
-                  type="button"
-                  className="thread-icon-btn"
-                  title="在系统文件管理器中打开第一个根目录"
-                  disabled={isBusy}
-                  onClick={() => onRevealPath(roots[0].path)}
-                >
-                  📂
-                </button>
-              )}
-              <button
-                type="button"
-                className="thread-icon-btn"
-                title="上移项目"
-                disabled={isBusy || index <= 0}
-                onClick={() => void handleMoveProject(project, "up")}
-              >
-                ↑
-              </button>
-              <button
-                type="button"
-                className="thread-icon-btn"
-                title="下移项目"
-                disabled={isBusy || index < 0 || index >= projects.length - 1}
-                onClick={() => void handleMoveProject(project, "down")}
-              >
-                ↓
-              </button>
-              <button
-                type="button"
-                className="thread-icon-btn"
-                title="重命名项目"
-                disabled={isBusy}
-                onClick={() => void handleRenameProject(project)}
-              >
-                ✏️
-              </button>
-              <button
-                type="button"
-                className="thread-icon-btn danger"
-                title="删除项目（聊天不会被删除）"
-                disabled={isBusy}
-                onClick={() => void handleDeleteProject(project)}
-              >
-                🗑️
-              </button>
+              <ThreadActionsMenu triggerAriaLabel="项目操作" items={[
+                ...(onRevealPath && roots.length > 0 ? [{ id: "reveal", label: "打开目录", disabled: isBusy }] : []),
+                { id: "rename", label: "重命名项目", disabled: isBusy },
+                { id: "up", label: "上移项目", disabled: isBusy || index <= 0 },
+                { id: "down", label: "下移项目", disabled: isBusy || index < 0 || index >= projects.length - 1 },
+                { id: "delete", label: "删除项目（聊天不会被删除）", danger: true, disabled: isBusy },
+              ]} onSelect={action => {
+                if (isBusy) return;
+                if (action === "reveal") onRevealPath?.(roots[0].path);
+                else if (action === "rename") void handleRenameProject(project);
+                else if (action === "up" || action === "down") void handleMoveProject(project, action);
+                else if (action === "delete") void handleDeleteProject(project);
+              }} />
             </div>
           </div>
 
@@ -823,9 +773,9 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
         <div className="full-route-header">
           <div>
             <h1 className="full-route-title">项目</h1>
-            <p className="full-route-subtitle">
+            {projects.length === 0 && <p className="full-route-subtitle">
               创建项目以整理聊天，并授予 Codex 访问你电脑上本地文件夹的权限。
-            </p>
+            </p>}
           </div>
           <button
             type="button"
@@ -834,7 +784,7 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
             disabled={!isFallback && (creating || formBusy)}
           >
             <PlusIcon size={15} />
-            <span>新建项目</span>
+            <span>{projects.length === 0 ? "新建项目" : "创建"}</span>
           </button>
         </div>
 
@@ -843,7 +793,8 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
           <SearchIcon size={15} />
           <input
             type="text"
-            placeholder={isFallback ? "搜索项目名称或路径..." : "搜索项目名称或根目录路径..."}
+            placeholder="搜索项目"
+            aria-label="搜索项目"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -1006,12 +957,11 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
 
         {/* 列表：真实项目实体；协议失败时回退 workspace 视图 */}
         {isFallback ? renderWorkspaceFallback() : (
-          <div className="projects-index-table">
+          <div className="projects-index-table projects-official-table">
             <div className="projects-table-head">
               <span>名称</span>
-              <span>根目录</span>
-              <span>聊天数</span>
-              <span style={{ textAlign: "right" }}>项目操作</span>
+              <span className="project-col-updated">已更新</span>
+              <span />
             </div>
             {renderProjectRows()}
           </div>

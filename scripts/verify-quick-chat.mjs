@@ -30,6 +30,9 @@ const render = () => { cursor = 0; effects = []; tree = mod.HotkeyWindow(props);
 const nodes = node => node && typeof node === "object" ? [node, ...(node.children ?? []).flatMap(nodes)] : [];
 const contents = () => nodes(tree).filter(n => n.type === "MarkdownView").map(n => n.props.content);
 render();
+props.native = true; props.title = "真实工作区"; render();
+assert.ok(JSON.stringify(tree).includes("真实工作区"), "native detail header uses its real title");
+assert.ok(!JSON.stringify(tree).includes("隐藏后继续运行，未发送草稿"), "no permanent implementation banner in native chat");
 assert.deepEqual(contents(), ["真实用户内容", "部分"]);
 assert.ok(nodes(tree).includes(composer) && nodes(tree).includes(approvals), "render the same production composer and approval nodes");
 assert.equal(tree.props["data-thread-id"], "t1");
@@ -40,7 +43,7 @@ assert.ok(!JSON.stringify(tree).includes("正在运行"), "only real streaming s
 props.error = "history failed"; props.loading = true; render();
 assert.match(JSON.stringify(tree), /history failed/); assert.match(JSON.stringify(tree), /正在加载会话/);
 const button = label => nodes(tree).find(n => n.type === "button" && n.props["aria-label"] === label);
-button("新建聊天").props.onClick(); button("在主窗口继续").props.onClick(); button("关闭").props.onClick();
+button("开始新对话").props.onClick(); button("在主窗口中打开").props.onClick(); button("关闭弹出窗口").props.onClick();
 assert.equal(created, 1); assert.equal(opened, 1); assert.equal(closed, 1);
 const key = (patch = {}) => ({ key: "Escape", nativeEvent: {}, preventDefault() { this.prevented = true; }, stopPropagation() { this.stopped = true; }, ...patch });
 tree.props.onKeyDown(key({ nativeEvent: { isComposing: true } }));

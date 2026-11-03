@@ -55,6 +55,41 @@ import { BrowserToolbar } from "./BrowserToolbar";
 import { SideChatPanel } from "./SideChatPanel";
 import "./FileExplorer.css";
 import "./DiffDrawer.css";
+import "./DiffDrawerWorkspace.css";
+
+function WorkspaceFileTree({ width, onResize, children }: {
+  width: number;
+  onResize: (width: number) => void;
+  children: React.ReactNode;
+}) {
+  const drag = useRef<{ x: number; width: number } | null>(null);
+  const resize = (value: number, parentWidth: number) => {
+    onResize(value < 100 ? 0 : Math.min(Math.max(200, value), Math.max(200, parentWidth * .6)));
+  };
+  return <aside className="workspace-file-tree" style={{ width }} aria-label="文件树">
+    <div className="workspace-file-tree-resize" role="separator" tabIndex={0}
+      aria-label="调整文件树宽度" aria-orientation="vertical" aria-valuemin={200} aria-valuenow={width}
+      onPointerDown={event => {
+        drag.current = { x: event.clientX, width };
+        event.currentTarget.setPointerCapture(event.pointerId);
+        event.preventDefault();
+      }}
+      onPointerMove={event => {
+        if (!drag.current) return;
+        const parentWidth = event.currentTarget.parentElement?.parentElement?.clientWidth ?? 0;
+        resize(drag.current.width + drag.current.x - event.clientX, parentWidth);
+      }}
+      onPointerUp={event => { drag.current = null; event.currentTarget.releasePointerCapture(event.pointerId); }}
+      onLostPointerCapture={() => { drag.current = null; }}
+      onKeyDown={event => {
+        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+        event.preventDefault();
+        const parentWidth = event.currentTarget.parentElement?.parentElement?.clientWidth ?? 0;
+        resize(width + (event.key === "ArrowLeft" ? 16 : -16), parentWidth);
+      }} />
+    {children}
+  </aside>;
+}
 
 export interface WorkbenchTabItem {
   id: string;
@@ -450,6 +485,8 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   onShortcutHandled,
 }) => {
   const [isFullWidth, setIsFullWidth] = useState(false);
+  const [fileTreeWidth, setFileTreeWidth] = useState(250);
+  const [selectedTreePath, setSelectedTreePath] = useState<string | null>(null);
   const [openTabs, setOpenTabs] = useState<WorkbenchTabItem[]>([
     { id: "newTab", kind: "newTab", title: "新标签页", icon: <GlobeIcon size={13} />, closable: true },
     { id: "changes", kind: "changes", title: "变更", icon: <DiffIcon size={13} />, closable: false },
@@ -1354,8 +1391,8 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     if (open && shortcutRequest.cwd === cwd) {
       if (id === "toggle-file-tree") {
         if (!cwd) { onShortcutHandled?.(requestId); return; }
-        if (activeKind === "files" && shortcutRequest.wasOpen !== false) onClose();
-        else setActiveTab("files");
+        if ((activeKind === "files" || activeKind === "changes") && shortcutRequest.wasOpen !== false) setFileTreeWidth(value => value > 0 ? 0 : 250);
+        else { setActiveTab("files"); setFileTreeWidth(250); }
       }
       else if (id === "next-tab" || id === "previous-tab") {
         const index = openTabs.findIndex(tab => tab.id === activeTabId);
@@ -1672,7 +1709,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                 title={tab.url ? `${tab.title}\n${tab.url}` : tab.title}
               >
                 <span className="diff-tab-icon">{tab.icon}</span>
-                <span className="diff-tab-label">{tab.title}</span>
+                <span className="diff-tab-label">{tab.kind === "files" && filePreview ? `${baseNameFsPath(filePreview.path)}${isDirty ? " •" : ""}` : tab.title}</span>
                 {badgeCount !== undefined && badgeCount > 0 && (
                   <span className="badge-pill">{badgeCount}</span>
                 )}
@@ -1703,14 +1740,11 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
         </div>
 
         <div className="diff-drawer-actions">
-          <button
-            type="button"
-            className="icon-btn"
-            onClick={onRefreshGit}
-            title="刷新工作区与 Git 状态"
-          >
-            <RefreshIcon size={14} />
-          </button>
+          {(activeKind === "files" || activeKind === "changes") && <button type="button" className="icon-btn"
+            title="切换文件树" aria-label="切换文件树" aria-pressed={fileTreeWidth > 0}
+            onClick={() => setFileTreeWidth(value => value > 0 ? 0 : 250)}>
+            <FolderIcon size={14} />
+          </button>}
           <button
             type="button"
             className={`icon-btn ${isFullWidth ? "active" : ""}`}
@@ -1911,7 +1945,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
           )}
 
           {/* Scrollable Main Area */}
-          <div className="diff-content-scroll-area">
+          <div className="diff-content-scroll-area workspace-review-body">
             {diffMode === "lastTurn" ? (
               <pre className="diff-code-content" style={{ whiteSpace: wordWrap ? "pre-wrap" : "pre", padding: 16 }}>{loadingDiff ? "读取中…" : diffContent}</pre>
             ) : diffMode === "commits" ? (
@@ -1966,10 +2000,11 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
               </div>
             ) : (
               <>
-                <div className="diff-file-list">
+                {fileTreeWidth > 0 && <WorkspaceFileTree width={fileTreeWidth} onResize={setFileTreeWidth}>
+<div className="diff-file-list">
                   <div className="diff-file-list-header">
                     <span>
-                      更改的文件 ({gitStatus?.entries.length ?? 0})
+                      已更改的文件 ({gitStatus?.entries.length ?? 0})
                       {gitStatus && (
                         <span className="diff-stat-inline">
                           <span className="diff-add">+{gitStatus.additions}</span>{" "}
@@ -1983,7 +2018,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                         className="mini-link-btn"
                         onClick={() => setSelectedFile(null)}
                       >
-                        全部
+                        所有更改
                       </button>
                       <button
                         type="button"
@@ -2086,6 +2121,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                     })}
                   </div>
                 </div>
+                </WorkspaceFileTree>}
 
                 {/* Diff Code Viewer (Unified or Split + Inline Line Comments) */}
                 <div className="diff-code-container">
@@ -2322,7 +2358,8 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
 
       {/* TAB 2: FILES & EDITOR */}
       {activeKind === "files" ? (
-        <div className="diff-drawer-body">
+        <div className="diff-drawer-body workspace-files-body">
+          {fileTreeWidth > 0 && <WorkspaceFileTree width={fileTreeWidth} onResize={setFileTreeWidth}>
           <div className="file-browser-path-bar">
             <span className="file-browser-cwd" title={currentDir}>
               {currentDir}
@@ -2358,6 +2395,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
             </div>
           </div>
 
+          <details className="workspace-file-actions"><summary>文件操作</summary>
           <div className="fe-toolbar">
             <button
               className="fe-toolbar-btn"
@@ -2388,6 +2426,8 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
             {dirLoading && <span className="fe-toolbar-hint">加载中…</span>}
             {explorerBusy && <span className="fe-toolbar-hint">处理中…</span>}
           </div>
+
+          </details>
 
           {explorerDraft && (
             <form className="fe-inline-form" onSubmit={submitExplorerDraft}>
@@ -2436,21 +2476,25 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
             <SearchIcon size={13} />
             <input
               className="branch-input-mini"
-              placeholder="快速搜索工作区文件名..."
+              placeholder="筛选文件…"
               value={fileFilterQuery}
               onChange={(e) => setFileFilterQuery(e.target.value)}
             />
           </div>
 
+          <details className="workspace-all-files" open><summary>所有文件</summary>
           <div className="file-browser-list">
             {fileFilterQuery.trim() ? (
               fileSearchHits.map((hit) => (
                 <div
                   key={hit.absPath}
                   className={`diff-file-row ${
-                    filePreview?.path === hit.absPath ? "active" : ""
+                    selectedTreePath === hit.absPath ? "active" : ""
                   }`}
-                  onClick={() => void openFilePreview(hit.absPath)}
+                  role="button" tabIndex={0} aria-label={hit.relPath}
+                  onClick={() => setSelectedTreePath(hit.absPath)}
+                  onDoubleClick={() => void openFilePreview(hit.absPath)}
+                  onKeyDown={event => { if (event.key === "Enter") void openFilePreview(hit.absPath); }}
                 >
                   <span className="file-icon-tag">📄</span>
                   <span className="diff-file-path">{hit.relPath}</span>
@@ -2486,15 +2530,22 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                   <div
                     key={item.path}
                     className={`diff-file-row fe-file-row ${
-                      filePreview?.path === item.path ? "active" : ""
+                      selectedTreePath === item.path ? "active" : ""
                     } ${isRenaming ? "fe-renaming" : ""}`}
-                    onClick={() => {
+                    role="button" tabIndex={0} aria-label={item.name}
+                    onClick={() => setSelectedTreePath(item.path)}
+                    onDoubleClick={() => {
                       if (item.isDirectory) {
                         setExplorerDraft(null);
                         setCurrentDir(item.path);
                       } else {
                         void openFilePreview(item.path);
                       }
+                    }}
+                    onKeyDown={event => {
+                      if (event.key !== "Enter" || event.target !== event.currentTarget) return;
+                      if (item.isDirectory) { setExplorerDraft(null); setCurrentDir(item.path); }
+                      else void openFilePreview(item.path);
                     }}
                   >
                     <span className="file-icon-tag">
@@ -2511,6 +2562,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                     <span
                       className="fe-row-actions"
                       onClick={(event) => event.stopPropagation()}
+                      onDoubleClick={(event) => event.stopPropagation()}
                     >
                       <button
                         type="button"
@@ -2545,6 +2597,9 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
             )}
           </div>
 
+          </details>
+          </WorkspaceFileTree>}
+          {!filePreview && <div className="workspace-file-empty">从文件树选择文件，双击打开</div>}
           {filePreview && (
             <div className="file-editor-pane">
               <div className="file-editor-header">

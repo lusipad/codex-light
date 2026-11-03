@@ -35,7 +35,7 @@ function mount() {
     activeTabId: "changes", activeKind: "changes", openTabs: [{ id: "changes" }, { id: "files" }, { id: "summary" }],
     filePreview: null, isDirty: false, savingFile: false, lastTurnOnly: false,
     gitWriteBusy: false, creatingPr: false, gitPreferences: { "git-create-pull-request-as-draft": false },
-    shortcutFocus: null,
+    shortcutFocus: null, fileTreeWidth: 250,
     commitInputRef: { current: { focus: () => events.push(["focus", "commit"]) } },
     prTitleInputRef: { current: { focus: () => events.push(["focus", "pr"]) } },
     onShortcutHandled: id => events.push(["ack", id]),
@@ -46,6 +46,7 @@ function mount() {
   for (const key of ["activeTabId", "diffMode", "shortcutGitCwd", "shortcutFocus", "prDraft", "showPrModal"]) {
     context[`set${key[0].toUpperCase()}${key.slice(1)}`] = value => { context[key] = value; events.push([key, value]); };
   }
+  context.setFileTreeWidth = value => { context.fileTreeWidth = typeof value === "function" ? value(context.fileTreeWidth) : value; events.push(["treeWidth", context.fileTreeWidth]); };
   context.setActiveTab = tab => { context.activeTabId = tab; context.activeKind = tab; events.push(["tab", tab]); };
   const run = node => vm.runInNewContext(ts.transpileModule(`(${node.getText(ast)})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
   const dispatch = run(requestEffect), focus = run(focusEffect), key = run(editorKey);
@@ -79,11 +80,15 @@ function mount() {
   view.request("previous-tab"); assert.equal(view.context.activeTabId, "summary", "tab cycling wraps");
   view.request("focus-tab-2"); assert.equal(view.context.activeTabId, "files");
   view.request("focus-tab-9"); assert.equal(view.context.activeTabId, "files", "missing slot never creates a tab");
-  view.request("toggle-file-tree"); assert.equal(view.context.activeKind, "files");
-  view.request("toggle-file-tree"); assert.ok(view.events.some(event => event[0] === "close"), "toggle closes actual Files tab, independent of initialTab");
-  const closeCount = view.events.filter(event => event[0] === "close").length;
+  view.context.activeKind = "changes";
+  view.request("toggle-file-tree"); assert.equal(view.context.fileTreeWidth, 0, "toggle hides the review tree, retaining Changes");
+  view.request("toggle-file-tree"); assert.equal(view.context.fileTreeWidth, 250, "toggle restores the shared tree");
+  view.context.activeKind = "files";
+  view.request("toggle-file-tree"); assert.equal(view.context.fileTreeWidth, 0, "file editor uses the same tree visibility");
+  assert.equal(view.events.some(event => event[0] === "close"), false, "tree toggle never closes the workspace or editor");
   view.context.shortcutRequest = { id: "toggle-file-tree", requestId: 999, cwd: "A", wasOpen: false }; view.dispatch();
-  assert.equal(view.events.filter(event => event[0] === "close").length, closeCount, "opening a closed drawer with cached Files must not close it again");
+  assert.equal(view.context.fileTreeWidth, 250, "opening a closed drawer shows its tree");
+  assert.equal(view.context.activeKind, "files");
   view.context.cwd = ""; view.context.activeTabId = "changes";
   view.request("next-tab"); assert.equal(view.context.activeTabId, "files", "projectless existing tabs can still navigate");
 }

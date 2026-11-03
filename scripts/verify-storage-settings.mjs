@@ -13,9 +13,7 @@ assert.ok(!view.includes('"storage_clean_cache"'));
 assert.ok(native.includes("storage_stats_get"), "STG04: unrelated local-stat consumers remain supported");
 assert.ok(view.includes('activeSection === "storage" && <StorageSettings scope={JSON.stringify([connectionIdentity, accountIdentity])} onOpenLibrary={onOpenLibraryStorage} />'));
 assert.ok(!view.includes("setStorageStats") && !view.includes("const formatBytes"), "STG01: cloud quota never substitutes local disk usage");
-for (const suffix of ['<div className="header-right-btns">', 'saveBanner &&', 'errorBanner &&']) {
-  assert.ok(view.includes(`activeSection !== "import" && activeSection !== "storage" && ${suffix}`), "STG03: no generic storage save/refresh/banner");
-}
+assert.ok(!view.includes("handleSaveVisual") && !view.includes("saveBanner"), "STG03: no generic storage save/refresh/banner");
 const transpile = source => ts.transpileModule(source, { compilerOptions: {
   target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React, esModuleInterop: true,
 } }).outputText;

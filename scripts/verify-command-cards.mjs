@@ -52,6 +52,46 @@ function mount(initial, turnStatus = "completed") {
 const header = tree => nodes(tree).find(node => node.type === "button" && node.props.className === "command-exec-header");
 const output = tree => nodes(tree).find(node => node.props.className === "command-exec-body");
 const footer = tree => nodes(tree).find(node => node.props.className === "command-exec-footer");
+const summary = tree => textOf(nodes(tree).find(node => node.props.className === "command-exec-summary"));
+const detail = tree => textOf(nodes(tree).find(node => node.props.className === "command-exec-title"));
+for (const [action, status, expectedSummary, expectedDetail] of [
+  [{ type: "read", name: "README.md", path: "D:/project/README.md" }, "completed", "已读取", "README.md"],
+  [{ type: "read", name: "README.md", path: "D:/project/README.md" }, "inProgress", "正在运行命令", "raw command"],
+  [{ type: "search", query: "needle", path: "src" }, "inProgress", "正在", "src 中搜索“needle”"],
+  [{ type: "search", query: "needle", path: "src" }, "completed", "已在", "src 中搜索“needle”"],
+  [{ type: "search", query: "needle" }, "completed", "已对", "“needle”进行搜索"],
+  [{ type: "search" }, "inProgress", "正在搜索", "文件"],
+  [{ type: "search" }, "completed", "已搜索", "文件"],
+  [{ type: "listFiles", path: "src" }, "inProgress", "正在列出", "src 中的文件"],
+  [{ type: "listFiles", path: "src" }, "completed", "已列出", "src 中的文件"],
+  [{ type: "listFiles" }, "completed", "已列出的", "文件"],
+]) {
+  const sample = mount({ type: "commandExecution", command: "raw command", commandActions: [action], status, aggregatedOutput: "full output", exitCode: status === "completed" ? 0 : null });
+  assert.equal(summary(sample.render()), expectedSummary, `CD01–CD03: ${action.type}/${status}`);
+  assert.equal(detail(sample.render()), expectedDetail);
+  header(sample.render()).props.onClick();
+  assert.equal(textOf(nodes(sample.render()).find(node => node.props.className === "command-exec-command")), "raw command", "CD05: semantic summary does not erase the complete command");
+  assert.equal(textOf(output(sample.render())), "full output");
+}
+for (const commandActions of [[], [{ type: "unknown" }], [{ type: "read", name: "a" }, { type: "read", name: "b" }]]) {
+  const sample = mount({ type: "commandExecution", command: "compound", commandActions, status: "completed" });
+  assert.equal(summary(sample.render()), "已运行命令", "CD04: never guess a compound or unknown action");
+  assert.equal(detail(sample.render()), "compound");
+}
+for (const status of ["declined", "interrupted"]) {
+  const sample = mount({ type: "commandExecution", command: "raw command", commandActions: [{ type: "read", name: "never-read" }], status });
+  assert.doesNotMatch(textOf(header(sample.render())), /已读取/);
+}
+{
+  const action = { type: "search", query: "needle", path: "src" };
+  const sample = mount({ type: "commandExecution", command: "rg needle src", commandActions: [action], status: "inProgress", aggregatedOutput: "stream" });
+  header(sample.render()).props.onClick();
+  sample.update({ type: "commandExecution", command: "rg needle src", commandActions: [action], status: "completed", aggregatedOutput: "authoritative final", exitCode: 1 });
+  assert.equal(header(sample.render()).props["aria-expanded"], true, "CD05: semantic summary updates cannot collapse an expanded command");
+  assert.equal(summary(sample.render()), "已在");
+  assert.equal(textOf(output(sample.render())), "authoritative final");
+  assert.equal(textOf(footer(sample.render())), "退出码 1", "CD05: finished search does not imply exit-code success");
+}
 const view = mount({ id: "a", type: "commandExecution", command: "npm test", status: "inProgress", aggregatedOutput: "marker-output", output: "stale" }, "inProgress");
 assert.ok(header(view.render()), "EC01: the production command summary must be a real button");
 assert.equal(header(view.render()).props["aria-expanded"], false);
@@ -111,4 +151,4 @@ assert.equal(header(other.render()).props["aria-expanded"], false, "EC08: a diff
   vm.runInNewContext(ts.transpileModule(`(${scroll.getText(findAst)})`, { compilerOptions: options }).outputText, context)(0);
   assert.deepEqual(actions, ["expand:command-cmd-a", "scroll"], "searching hidden command output expands its card before scrolling");
 }
-console.log("PASS EC01–EC08 production command cards: real button, collapsed default, toggle, stream updates, exact exit results, interruption and independent state");
+console.log("PASS EC01–EC08/CD01–CD05 production command cards: official semantic summaries, raw command/output retention, lifecycle, toggle and exact exit results");

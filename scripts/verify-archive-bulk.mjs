@@ -86,7 +86,7 @@ function openAll(ui) {
 {
   const ui = await loaded();
   nodes(ui.tree).find(node => node.tag === "input").props.onChange({ target: { value: "not-matching" } }); ui.render();
-  assert(text(ui.tree).includes("没有匹配"));
+  assert(text(ui.tree).includes("未找到匹配的归档聊天"));
   let dialog = openAll(ui);
   const confirmation = mount("ArchiveDeleteDialog", dialog.props); confirmation.runEffects();
   assert(text(confirmation.tree).includes("删除所有已归档本地聊天？"));

@@ -38,6 +38,31 @@
   gap: 10px;
 }
 
+.hotkey-thread-header {
+  position: relative;
+  height: var(--height-toolbar-sm, 36px);
+  min-height: var(--height-toolbar-sm, 36px);
+  padding: 0 12px;
+  background: var(--bg-surface);
+  border-bottom: 0;
+}
+
+.hotkey-thread-header .hotkey-brand-badge {
+  position: absolute;
+  left: 64px;
+  right: 96px;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.hotkey-thread-header .hotkey-brand-badge strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
 .hotkey-brand-badge {
   display: flex;
   align-items: center;

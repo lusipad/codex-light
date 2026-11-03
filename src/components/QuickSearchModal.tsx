@@ -370,7 +370,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
     const slashItems: SearchResultItem[] = matchingSlashCommands.map((cmd) => ({
       id: `slash-${cmd.id}`,
       category: "action",
-      section: "斜杠命令 (Slash commands)",
+      section: "斜杠命令",
       title: `${cmd.command} ${cmd.title}`,
       subtitle: cmd.description,
       rightLabel: cmd.kind === "action" ? "动作" : "指令",
@@ -389,7 +389,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
       {
         id: "act-new-chat",
         category: "action",
-        section: "快捷操作 (Quick actions)",
+        section: "快捷操作",
         title: "新建聊天会话",
         subtitle: "创建新的空白对话流",
         shortcut: "Ctrl+N",
@@ -402,7 +402,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
       {
         id: "act-run-dev",
         category: "action",
-        section: "快捷操作 (Quick actions)",
+        section: "快捷操作",
         title: `运行启动服务 (${runCmd})`,
         subtitle: "在集成终端中执行本地启动命令",
         icon: <Play size={14} />,
@@ -414,7 +414,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
       {
         id: "act-run-test",
         category: "action",
-        section: "快捷操作 (Quick actions)",
+        section: "快捷操作",
         title: `运行单元测试 (${testCmd})`,
         subtitle: "在集成终端中运行测试套件",
         icon: <Command size={14} />,
@@ -426,7 +426,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
       {
         id: "act-run-build",
         category: "action",
-        section: "快捷操作 (Quick actions)",
+        section: "快捷操作",
         title: `运行构建编译 (${buildCmd})`,
         subtitle: "在集成终端中执行生产打包命令",
         icon: <Play size={14} />,
@@ -438,7 +438,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
       {
         id: "act-projects",
         category: "action",
-        section: "快捷操作 (Quick actions)",
+        section: "快捷操作",
         title: "打开项目中心",
         subtitle: "管理已注册的本地工作区目录",
         shortcut: "Ctrl+Shift+P",
@@ -451,7 +451,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
       {
         id: "act-settings",
         category: "action",
-        section: "快捷操作 (Quick actions)",
+        section: "快捷操作",
         title: "打开设置中心",
         subtitle: "常规、外观、模型与提供商设置",
         shortcut: "Ctrl+,",
@@ -484,7 +484,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
       results.push({
         id: `rth-${t.id}`,
         category: "thread",
-        section: "会话记录 (Chats)",
+        section: "聊天",
         title: t.name || t.preview || t.id,
         subtitle: `历史会话${t.cwd ? ` · ${t.cwd}` : ""}`,
         rightLabel: t.cwd ? t.cwd.split(/[/\\]/).pop() : "Chat",
@@ -510,7 +510,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
         results.push({
           id: `th-${t.id}`,
           category: "thread",
-          section: "会话记录 (Chats)",
+          section: "聊天",
           title: t.name || t.preview || t.id,
           subtitle: `历史会话 · ${t.cwd || ""}`,
           rightLabel: t.cwd ? t.cwd.split(/[/\\]/).pop() : "Chat",
@@ -535,7 +535,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
       results.push({
         id: `rfile-${f.absPath}`,
         category: "file",
-        section: "工作区文件 (Files)",
+        section: "文件",
         title: f.fileName,
         subtitle: f.relPath,
         rightLabel: "File",
@@ -562,7 +562,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
         results.push({
           id: `sk-${s.id}`,
           category: "skill",
-          section: "扩展技能 (Skills)",
+          section: "技能",
           title: `$${s.id} (${s.name})`,
           subtitle: s.description,
           rightLabel: "Skill",
@@ -740,7 +740,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
         results.push({
           id: `set-${s.slug}`,
           category: "setting",
-          section: "设置中心 (Settings)",
+          section: "设置",
           title: s.title,
           subtitle: s.subtitle,
           rightLabel: "Setting",
@@ -829,6 +829,10 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
     <div className="quick-search-backdrop" onClick={onClose}>
       <div
         className="quick-search-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label="命令菜单"
+        aria-description="搜索命令和过往对话记录。"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={handleKeyDown}
       >
@@ -838,7 +842,8 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
             ref={inputRef}
             type="text"
             className="quick-search-input"
-            placeholder={mode === "files" ? "搜索文件…" : "搜索会话、技能、设置或执行快捷命令..."}
+            aria-label={mode === "files" ? "搜索文件" : "搜索聊天或运行命令"}
+            placeholder={mode === "files" ? "搜索文件" : "搜索聊天或运行命令"}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />

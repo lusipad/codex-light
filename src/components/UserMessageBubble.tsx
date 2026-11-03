@@ -1,4 +1,5 @@
 import React, { useId, useLayoutEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { ChevronDownIcon } from "./Icons";
 import { MarkdownView } from "./MarkdownView";
 
@@ -8,7 +9,19 @@ export const UserMessageBubble: React.FC<{ text: string; onOpenFile?: (path: str
   const clipRef = useRef<HTMLDivElement>(null);
   const [measurement, setMeasurement] = useState({ collapsible: false, clipHeight: 456 });
   const [expandedText, setExpandedText] = useState<string | null>(null);
-  const collapsed = measurement.collapsible && expandedText !== text;
+  const [printing, setPrinting] = useState(false);
+  const collapsed = !printing && measurement.collapsible && expandedText !== text;
+
+  useLayoutEffect(() => {
+    const beforePrint = () => flushSync(() => setPrinting(true));
+    const afterPrint = () => setPrinting(false);
+    window.addEventListener("beforeprint", beforePrint);
+    window.addEventListener("afterprint", afterPrint);
+    return () => {
+      window.removeEventListener("beforeprint", beforePrint);
+      window.removeEventListener("afterprint", afterPrint);
+    };
+  }, []);
 
   useLayoutEffect(() => {
     const content = contentRef.current;
@@ -103,7 +116,7 @@ export const UserMessageBubble: React.FC<{ text: string; onOpenFile?: (path: str
         <div ref={contentRef}><MarkdownView content={text} variant="user-message" onOpenFile={onOpenFile} /></div>
       </div>
       {collapsed && <span className="user-message-ellipsis" aria-hidden="true">…</span>}
-      {measurement.collapsible && (
+      {!printing && measurement.collapsible && (
         <button
           type="button"
           className="user-message-expand"
@@ -111,6 +124,7 @@ export const UserMessageBubble: React.FC<{ text: string; onOpenFile?: (path: str
           aria-controls={contentId}
           data-user-message-expand
           data-thread-find-skip
+          data-markdown-copy="exclude"
           onClick={() => setExpandedText(current => current === text ? null : text)}
         >
           {collapsed ? "显示更多" : "收起"}

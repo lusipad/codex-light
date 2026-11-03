@@ -78,9 +78,9 @@ export function RecommendedSkillsPanel({ workspaceRoot, onInstalled, writeBusy, 
     }
   };
 
-  return <section className="pm-detail-panel" aria-label="推荐技能">
+  return <section className="pm-recommended-skills" aria-label="推荐技能">
     <div className="list-toolbar">
-      <strong>推荐技能</strong>
+      <strong>推荐</strong>
       <label>安装到 <select aria-label="技能安装范围" value={scope} disabled={writeBusy || busyId !== null}
         onChange={event => setScope(event.target.value)}>
         <option value="user">用户</option>
@@ -97,7 +97,7 @@ export function RecommendedSkillsPanel({ workspaceRoot, onInstalled, writeBusy, 
       {catalog.fetchedAt !== null ? ` · ${new Date(catalog.fetchedAt).toLocaleString()}` : ""}
     </p>}
     {!loading && catalog?.skills.length === 0 && <p className="empty-hint">推荐目录没有可用技能。</p>}
-    <div className="scrollable-items">
+    <div className="scrollable-items pm-recommended-skills-grid">
       {catalog?.skills.map(skill => <div className="item-card" key={skill.id}>
         <div className="item-card-main">
           <strong>{skill.name}</strong>

@@ -8,7 +8,7 @@ for (const unused of ["voiceEngine", "voiceAutoSendDelay", "voiceHotkey", "voice
   assert.ok(!settings.includes(unused), `VS01: remove ineffective ${unused}`);
 }
 assert.ok(settings.includes('activeSection === "voice" && <VoiceSettings />'));
-assert.ok(settings.includes('activeSection !== "voice" && activeSection !== "archived-chats"'));
+assert.ok(!settings.includes("handleSaveVisual"), "dedicated settings must not expose generic configuration writes");
 const source = fs.readFileSync("src/components/ComposerBox.tsx", "utf8");
 const ast = ts.createSourceFile("ComposerBox.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const functions = {};

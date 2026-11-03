@@ -545,3 +545,6 @@
   gap: 12px;
   margin-top: 24px;
 }
+
+.sites-view-container dialog { max-width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; color: var(--text-primary); background: var(--bg-main); border: 1px solid var(--border-subtle); border-radius: 12px; padding: 24px; overflow-wrap: anywhere; }
+@media (max-width: 680px) { .sites-view-container .sites-controls-bar { flex-wrap: wrap; } .sites-view-container .sites-search-wrap { width: 100%; min-width: 0; box-sizing: border-box; } }

@@ -159,9 +159,9 @@ for (const confirmation of [null, { threadId: "source" }]) {
     ]) {
       calls.length = 0;
       await callback();
-      const blocked = confirmation && ![...zoomCommands, "toggle-theme"].includes(command);
+      const blocked = confirmation && !zoomCommands.includes(command);
       assert.equal(calls.length, blocked ? 0 : 1, `native callback ${command}, modal=${!!confirmation}`);
     }
   }
 }
-console.log("PASS production command dispatcher and menu/tray callbacks: modal blocks background actions, preserves zoom/theme, resumes after close (PMK07, L2)");
+console.log("PASS production command dispatcher and menu/tray callbacks: modal blocks navigation including legacy appearance entry, preserves zoom, resumes after close (PMK07, L2)");

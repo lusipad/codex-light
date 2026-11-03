@@ -58,5 +58,5 @@ const parent = fs.readFileSync("src/components/SettingsView.tsx", "utf8");
 assert.ok(parent.includes('<WorktreeSettings />'));
 assert.ok(!parent.includes("闲置工作树自动清理保留天数"));
 assert.ok(!parent.includes("自动共享 node_modules"));
-assert.ok(parent.includes("worktreeRetentionDays,"), "preserve historical preference data");
+assert.ok(!parent.includes("desktopPreferences"), "wrapper no longer rewrites or erases historical preference data");
 console.log("PASS WT UI wiring: dedicated root editor replaces unsupported policy controls while retaining historical data");

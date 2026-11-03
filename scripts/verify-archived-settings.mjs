@@ -45,20 +45,5 @@ for (const [key, value] of Object.entries(shared)) {
   assert.ok(attribute, `ARS04: standalone archive has ${key}`);
   assert.equal(vm.runInNewContext(compile(`(${attribute.initializer.expression.getText(appAst)})`), bindings), value, `ARS02-04: both entry points use identical ${key}`);
 }
-const header = view.match(/\{([^{}]+)<div className="header-right-btns">/)?.[1];
-assert.ok(header?.includes('activeSection !== "archived-chats"'), "ARS05: archive manages its own refresh and actions");
-const bannerConditions = [];
-function findBannerConditions(node) {
-  if (ts.isJsxExpression(node) && node.expression && ts.isBinaryExpression(node.expression)) {
-    const source = node.expression.getText(ast);
-    if (/\b(saveBanner|errorBanner) &&/.test(source)) bannerConditions.push(node.expression.left.getText(ast));
-  }
-  ts.forEachChild(node, findBannerConditions);
-}
-findBannerConditions(ast);
-assert.ok(bannerConditions.length >= 2, "ARS05: banner conditions exist");
-for (const condition of bannerConditions) {
-  assert.equal(vm.runInNewContext(condition, { activeSection: "archived-chats", saveBanner: "saved", errorBanner: "error" }), false,
-    "ARS05: both generic and section-specific banners excluded from archive");
-}
+assert.ok(!view.includes("handleSaveVisual") && !view.includes("saveBanner"), "ARS05: archive manages its own refresh and actions without generic saves/banners");
 console.log("PASS ARS01-05: production settings JSX forwards shared archive callbacks and refresh identity; no legacy metadata list or duplicate write paths");

@@ -12,6 +12,7 @@ export interface HotkeyWindowProps {
   loading: boolean;
   error: string | null;
   native?: boolean;
+  title?: string;
   notice?: string;
   composer: React.ReactNode;
   approvals: React.ReactNode;
@@ -21,7 +22,7 @@ export interface HotkeyWindowProps {
 }
 
 export const HotkeyWindow: React.FC<HotkeyWindowProps> = ({
-  threadId, turns, isStreaming, loading, error, native = false, notice, composer, approvals, onNewChat, onClose, onOpenMainApp,
+  threadId, turns, isStreaming, loading, error, native = false, title = "Codex", notice, composer, approvals, onNewChat, onClose, onOpenMainApp,
 }) => {
   const dialogRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -49,16 +50,18 @@ export const HotkeyWindow: React.FC<HotkeyWindowProps> = ({
           }
         }
       }}>
-      <div className="hotkey-window-header" data-tauri-drag-region={native ? true : undefined}>
-        <span className="hotkey-brand-badge"><SparklesIcon size={13} /><strong>Codex</strong></span>
+      <div className={`hotkey-window-header${native && threadId ? " hotkey-thread-header" : ""}`} data-tauri-drag-region={native ? true : undefined}>
+        {native && threadId && <div className="hotkey-header-left">
+          <button type="button" className="hotkey-btn-icon" onClick={onClose} title="关闭弹出窗口" aria-label="关闭弹出窗口"><CloseIcon size={13} /></button>
+        </div>}
+        <span className="hotkey-brand-badge">{native && threadId ? <strong title={title}>{title}</strong> : <><SparklesIcon size={13} /><strong>Codex</strong></>}</span>
         <div className="hotkey-header-right">
-          <button type="button" className="hotkey-btn-icon" onClick={onNewChat} title="新建聊天" aria-label="新建聊天"><MessagePlusIcon size={13} /></button>
-          <button type="button" className="hotkey-btn-icon" onClick={onOpenMainApp} title="在主窗口继续" aria-label="在主窗口继续"><ExternalWindowIcon size={13} /></button>
-          <button type="button" className="hotkey-btn-icon" onClick={onClose} title="关闭 (Esc)" aria-label="关闭"><CloseIcon size={13} /></button>
+          <button type="button" className="hotkey-btn-icon" onClick={onNewChat} title="开始新对话" aria-label="开始新对话"><MessagePlusIcon size={13} /></button>
+          <button type="button" className="hotkey-btn-icon" onClick={onOpenMainApp} title="在主窗口中打开" aria-label="在主窗口中打开"><ExternalWindowIcon size={13} /></button>
+          {!(native && threadId) && <button type="button" className="hotkey-btn-icon" onClick={onClose} title="关闭弹出窗口" aria-label="关闭弹出窗口"><CloseIcon size={13} /></button>}
         </div>
       </div>
       <div className="hotkey-messages-scroll">
-        <p className="hotkey-tip">{native ? "独立聊天；隐藏后继续运行，未发送草稿和附件保留在此窗口。" : "应用内快捷面板，使用主会话的草稿、模型和权限。"}</p>
         {notice && <div role="alert">{notice}</div>}
         {loading && <div role="status">正在加载会话…</div>}
         {error && <div role="alert">{error} <button type="button" onClick={onOpenMainApp}>在主窗口重试</button></div>}

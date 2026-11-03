@@ -8,7 +8,7 @@ for (const key of ["cloudDiffMode", "cloudBranchFormat", "cloudAutoSync", "cloud
   assert.ok(!source.includes(key), `CP01 local ${key} cannot substitute cloud preference`);
 }
 assert.ok(source.includes('activeSection === "cloud-settings" && <CloudPreferencesSettings />'));
-assert.ok(source.includes('activeSection !== "cloud-settings" &&'));
+assert.ok(!source.includes("handleSaveVisual"), "dedicated settings must not expose generic configuration writes");
 const exports = {};
 vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/components/CloudPreferencesSettings.tsx", "utf8"), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React, esModuleInterop: true },

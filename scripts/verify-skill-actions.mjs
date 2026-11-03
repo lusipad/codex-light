@@ -34,7 +34,7 @@ function mount() {
   for (const method of ["tauriInvoke", "callAppServer", "readFileText", "writeSkillEnabled", "listSkills"]) {
     context[method] = (...args) => { const pending = deferred(); requests.push({ method, args, ...pending }); return pending.promise; };
   }
-  for (const name of ["Skills", "RemoteSkills", "RemoteSkillsLoading", "RemoteSkillsError", "LocalSkillsError", "SelectedSkill", "SelectedSkillKey", "ReadOnlyRemoteSkill", "NewSkillId", "SkillContent", "SkillContentError", "SkillContentLoading", "SkillWriteBusy", "SkillToggleBusy", "Config", "McpLiveStatus"]) {
+  for (const name of ["Skills", "RemoteSkills", "RemoteSkillsLoading", "RemoteSkillsError", "LocalSkillsError", "SelectedSkill", "SelectedSkillKey", "CreatingSkill", "ReadOnlyRemoteSkill", "NewSkillId", "SkillContent", "SkillContentError", "SkillContentLoading", "SkillWriteBusy", "SkillToggleBusy", "Config", "McpLiveStatus"]) {
     const key = name[0].toLowerCase() + name.slice(1);
     context[`set${name}`] = value => { context[key] = typeof value === "function" ? value(context[key]) : value; };
   }

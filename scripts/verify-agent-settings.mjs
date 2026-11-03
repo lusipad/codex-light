@@ -158,5 +158,5 @@ console.log("PASS AS-B05: production menu legacy display-only, keyboard loop, IM
 
 const parent = fs.readFileSync("src/components/SettingsView.tsx", "utf8");
 assert.match(parent, /<AgentSettings\b/);
-assert.ok(parent.includes('activeSection !== "agent"'), "configuration must not expose generic save actions");
+assert.ok(!parent.includes("handleSaveVisual"), "dedicated settings must not expose generic configuration writes");
 console.log("PASS AS-B06: dedicated configuration page remains in settings without generic save actions; hook and host scopes verified separately");

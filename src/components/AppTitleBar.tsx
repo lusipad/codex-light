@@ -60,7 +60,6 @@ const MENU_SECTIONS: Array<{ id: string; label: string; entries: MenuEntry[] }> 
       { type: "separator" },
       { type: "item", id: "command-palette", label: "命令面板", shortcut: "Ctrl+K" },
       { type: "item", id: "file-search", label: "搜索文件", shortcut: "Ctrl+P" },
-      { type: "item", id: "toggle-theme", label: "切换主题" },
       { type: "separator" },
       { type: "item", id: "reload", label: "重新加载", shortcut: "Ctrl+R" },
       { type: "item", id: "zoom-in", label: "放大", shortcut: "Ctrl++" },

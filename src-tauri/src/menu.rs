@@ -325,7 +325,6 @@ pub fn build_app_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> 
                 Some("CmdOrCtrl+K"),
             )?,
             &item(app, "file-search", "File Search…", Some("CmdOrCtrl+P"))?,
-            &item(app, "toggle-theme", "Toggle Theme", None)?,
             &PredefinedMenuItem::separator(app)?,
             &item(app, "reload", "Reload", Some("CmdOrCtrl+R"))?,
             &item(

@@ -49,6 +49,7 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
   const [creationProgress, setCreationProgress] = useState<WorktreeCreationProgress | null>(null);
   const [refreshSkipped, setRefreshSkipped] = useState(false);
   const refreshControllerRef = useRef<AbortController | null>(null);
+  const [loading, setLoading] = useState(true);
 
   const notify = (msg: string) => {
     setToast(msg);
@@ -59,6 +60,7 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
     if (!mountedRef.current) return;
     const request = ++requestRef.current;
     const isCurrent = () => mountedRef.current && request === requestRef.current;
+    setLoading(true);
     setConversations(null);
     setConversationError(null);
     try {
@@ -86,6 +88,8 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
       setError(null);
     } catch (err: any) {
       if (isCurrent()) setError(err?.message || String(err));
+    } finally {
+      if (isCurrent()) setLoading(false);
     }
   };
 
@@ -174,7 +178,7 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
     <div className="panel-page">
       <div className="panel-page-header">
         <div>
-          <h2>Git Worktrees 隔离工作区管理</h2>
+          <h2>工作树</h2>
           <p className="subtitle">
             在设置的工作树目录中并行运行多个 Agent 任务，互不污染主工作区。
           </p>
@@ -198,7 +202,7 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
           >
             🔧 修复工作树
           </button>
-          <button type="button" className="secondary-btn" onClick={refresh}>
+          <button type="button" className="secondary-btn" onClick={refresh} disabled={loading} aria-label="刷新">
             <RefreshCw size={14} /> 刷新列表
           </button>
         </div>
@@ -275,8 +279,12 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
         <h3>已存在的 Worktrees ({worktrees.length})</h3>
         {conversationError && <div className="error-banner">{conversationError}</div>}
         {actionBusyPath && deletionControllerRef.current && <button type="button" className="secondary-btn" onClick={() => deletionControllerRef.current?.abort()}>取消移除 / 清理</button>}
-        {worktrees.length === 0 ? (
-          <div className="empty-hint">暂无 Worktree</div>
+        {loading && worktrees.length === 0 ? (
+          <div className="empty-hint" role="status">正在获取工作树详细信息…</div>
+        ) : error && worktrees.length === 0 ? (
+          <div className="empty-hint" role="alert">无法加载工作树</div>
+        ) : worktrees.length === 0 ? (
+          <div className="empty-hint">尚无工作树</div>
         ) : (
           <div className="item-cards-list">
             {worktrees.map((wt) => {

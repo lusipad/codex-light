@@ -13,6 +13,7 @@ const button = (tree, label) => nodes(tree).find(node => node.type === "button" 
 const flush = async () => { for (let i = 0; i < 16; i++) await Promise.resolve(); };
 function harness() {
   const hooks = [], effects = [], requests = [], identities = [];
+  const timers = new Map(); let timerId = 0;
   let cursor = 0, writes = 0, listener, unlistened = 0, opened = 0, closed = 0;
   const dialog = { showModal() { opened++; }, close() { closed++; } };
   const React = {
@@ -22,7 +23,7 @@ function harness() {
     useEffect: (effect, deps) => { const index = cursor++; const old = hooks[index]; if (!old || deps.some((value, i) => !Object.is(value, old.deps[i]))) { hooks[index] = { deps, cleanup: old?.cleanup }; effects.push(() => { hooks[index].cleanup?.(); hooks[index].cleanup = effect(); }); } },
   }; React.default = React;
   const exports = {};
-  vm.runInNewContext(output, { exports, AbortController, require: name => {
+  vm.runInNewContext(output, { exports, AbortController, setTimeout: callback => { timers.set(++timerId, callback); return timerId; }, clearTimeout: id => timers.delete(id), require: name => {
     if (name === "react") return React;
     if (name.endsWith(".css")) return {};
     if (name === "../bridge") return { tauriListen: (_event, callback) => { listener = callback; return Promise.resolve(() => unlistened++); } };
@@ -34,6 +35,7 @@ function harness() {
     assert.fail(name);
   } });
   return { exports, requests, identities,
+    tick() { const current = [...timers.values()]; timers.clear(); current.forEach(callback => callback()); },
     render() { cursor = 0; const tree = exports.GptsView(); while (effects.length) effects.shift()(); return tree; },
     invalidate() { listener(); }, unmount() { for (const hook of hooks) hook?.cleanup?.(); },
     get writes() { return writes; }, get unlistened() { return unlistened; }, get opened() { return opened; }, get closed() { return closed; },
@@ -91,3 +93,31 @@ h = harness(); assert.match(text(await boot(h, [])), /暂无可显示/);
 assert.doesNotMatch(source, /SAMPLE_GPTS|promptStarter|尚未创建|12 月 11|无缝迁移/);
 const app = fs.readFileSync("src/App.tsx", "utf8"); assert.ok(app.includes("<GptsView />")); assert.ok(!app.includes("onStartGptChat="));
 console.log("PASS GP01/20B production JSX contracts: authentic resources, loading/error/retry/empty, pagination single-flight/deduplication/retained data/empty cursor/mismatch, real detail ID/404/retry/dialog cancellation/focus callbacks, identity invalidation and unmount late-response isolation; native focus and actual HTTP remain unverified");
+
+// 20D: Production search requests and cancellation, never a client-side catalog filter.
+h = harness(); await boot(h);
+const searchInput = () => nodes(h.render()).find(node => node.type === "input" && node.props.type === "search");
+searchInput().props.onChange({ target: { value: " first " } }); h.render();
+assert.equal(h.requests.length, 1, "search waits for debounce");
+h.tick(); const firstSearch = h.requests.at(-1);
+assert.equal(firstSearch.operation, "gpts_search"); assert.equal(firstSearch.params.q, "first");
+searchInput().props.onChange({ target: { value: "second" } }); h.render();
+assert.equal(firstSearch.signal.aborted, true); h.tick();
+firstSearch.resolve({ items: [{ gizmo: { id: "old", display: { name: "stale search" } } }], cursor: null }); await flush();
+assert.doesNotMatch(text(h.render()), /stale search/);
+h.requests.at(-1).resolve({ items: [{ gizmo: { id: "result", display: { name: "search GPT" }, author: { display_name: "real creator" } } }, { gizmo: { id: "project", gizmo_type: "snorlax" } }], cursor: "page2" }); await flush();
+assert.match(text(h.render()), /search GPT/); assert.match(text(h.render()), /real creator/);
+assert.doesNotMatch(text(h.render()), /真实 GPT/);
+button(h.render(), "加载更多").props.onClick(); assert.equal(h.requests.at(-1).params.cursor, "page2");
+h.requests.at(-1).resolve({ items: [{ gizmo: { id: "result", display: { name: "updated search" } } }], cursor: "page2" }); await flush();
+assert.match(text(h.render()), /重复分页游标/); assert.match(text(h.render()), /search GPT/);
+searchInput().props.onChange({ target: { value: "broken" } }); h.render(); h.tick();
+h.requests.at(-1).reject(Error("search failed")); await flush(); assert.match(text(h.render()), /search failed/);
+assert.doesNotMatch(text(h.render()), /未找到 GPT/);
+button(h.render(), "重试搜索").props.onClick(); h.render(); h.tick();
+h.requests.at(-1).resolve({ items: [], cursor: null }); await flush(); assert.match(text(h.render()), /未找到 GPT/);
+searchInput().props.onChange({ target: { value: "pending" } }); h.render(); h.tick(); const pendingSearch = h.requests.at(-1);
+h.invalidate(); assert.equal(pendingSearch.signal.aborted, true); h.render(); pendingSearch.resolve({ items: [], cursor: null }); await flush();
+assert.doesNotMatch(text(h.render()), /未找到 GPT/);
+assert.throws(() => h.exports.parseGptSearch({ items: [null] }), /无法识别/);
+console.log("PASS 20D search debounce, resource parsing, author display name, stale-response cancellation, pagination loop guard, errors/retry/empty and account invalidation");

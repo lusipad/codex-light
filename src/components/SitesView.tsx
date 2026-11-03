@@ -140,7 +140,7 @@ export const SitesView: React.FC = () => {
   const ready = Boolean(session?.access.enabled && pages.every(page => page.loaded && !page.loading && !page.error));
   const selectMode = (mode: "list" | "grid") => { setViewMode(mode); localStorage.setItem("sites-view-mode", mode); };
   return <div className="sites-view-container">
-    <div className="sites-view-header"><h2>Sites</h2><p role="status">新建、编辑与发布服务尚未接通。</p></div>
+    <div className="sites-view-header"><h2>Sites</h2></div>
     {loading && <p role="status">正在读取 Sites…</p>}
     {error && <section><p role="alert">{error}</p><button type="button" onClick={() => setRevision(value => value + 1)}>重试</button></section>}
     {!loading && session && !session.access.enabled && <p role="status">当前账号不可使用 Sites。</p>}
@@ -148,7 +148,7 @@ export const SitesView: React.FC = () => {
     {session?.access.enabled && <>
       <div className="sites-controls-bar"><div className="sites-tabs">{(["owned", "shared", "all"] as const).map(value => <button type="button" key={value} aria-pressed={tab === value} disabled={value !== "owned" && !sharedAvailable}
         className={`sites-tab-btn ${tab === value ? "active" : ""}`} onClick={() => setTab(value)}>{value === "owned" ? "我创建的" : value === "shared" ? "共享" : "全部"}</button>)}</div>
-        <div className="sites-search-wrap"><input aria-label="搜索站点" placeholder="搜索站点…" value={query} onChange={event => setQuery(event.target.value)} /></div>
+        <div className="sites-search-wrap"><input type="search" maxLength={256} aria-label="搜索站点" placeholder="搜索站点…" value={query} onChange={event => setQuery(event.target.value)} /></div>
         <div className="sites-layout-toggle">{(["list", "grid"] as const).map(mode => <button type="button" key={mode} aria-pressed={viewMode === mode} className="layout-btn" onClick={() => selectMode(mode)}>{mode === "list" ? "列表" : "网格"}</button>)}</div>
       </div>
       {query.trim() && tab !== "shared" && <p role="status">我创建的站点仅搜索已加载内容。</p>}

@@ -211,7 +211,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
     <div className="archive-view" ref={viewRef} tabIndex={-1}>
       <header className="archive-header">
         <div>
-          <h2 className="archive-title">已归档会话</h2>
+          <h2 className="archive-title">归档</h2>
           <p className="archive-subtitle">
             归档的会话不会出现在侧边栏；可随时恢复或在需要时彻底删除。
           </p>
@@ -224,7 +224,8 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
           <input
             className="archive-search"
             type="text"
-            placeholder="搜索归档会话标题…"
+            aria-label="搜索已归档的聊天"
+            placeholder="搜索已归档的聊天"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -257,11 +258,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
 
       {!error && !loading && visible.length === 0 && (
         <div className="archive-empty">
-          <div className="archive-empty-icon">🗄️</div>
-          <div className="archive-empty-title">{query ? "没有匹配的归档会话" : "暂无归档会话"}</div>
-          <div className="archive-empty-desc">
-            在侧边栏会话的「⋯」菜单中选择「归档会话」后，会出现在这里。
-          </div>
+          <div className="archive-empty-title">{query ? "未找到匹配的归档聊天" : "暂无已归档的聊天"}</div>
         </div>
       )}
 
@@ -289,6 +286,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
                   disabled={loading || busyId !== null}
                   onClick={() => void handleDelete(thread)}
                   title="永久删除"
+                  aria-label="删除已归档的聊天"
                 >
                   <Trash2 size={13} />
                 </button>

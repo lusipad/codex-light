@@ -21,7 +21,7 @@ const react = { createElement: (type, props, ...children) => ({ type, props: pro
 for (const manageOnly of [true, false]) {
   for (const subTab of ["plugins", "skills", "mcp"]) {
     const visits = [], changes = [];
-    const context = { React: react, manageOnly, subTab, onBrowseDirectory: tab => visits.push(tab),
+    const context = { React: react, manageOnly, subTab, onManagePlugins: () => visits.push("management"), onBrowseDirectory: tab => visits.push(tab),
       searchQuery: "", setSearchQuery() {}, setSubTab: tab => changes.push(tab), refreshAll() {},
       installedCount: 2, remoteSkills: [], skills: [], config: null, appsData: [], appsInstalled: [], installedMarketplaces: [],
       selectTab: tab => changes.push(tab), visibleManagementTabs: ["plugins", "apps", "mcp", "skills", "marketplaces"],
@@ -36,20 +36,23 @@ for (const manageOnly of [true, false]) {
     assert.equal(!!browse, manageOnly);
     if (browse) { browse.props.onClick(); assert.deepEqual(visits, [subTab === "skills" ? "skills" : "plugins"]); }
     const tabs = nodes(render("sub-tabs")).filter(node => node.type === "button");
-    assert.equal(tabs.length, 5);
+    assert.equal(tabs.length, manageOnly ? 5 : 2);
     tabs.forEach(node => node.props.onClick());
-    assert.deepEqual(changes, manageOnly ? ["plugins", "apps", "mcp", "skills", "marketplaces"] : ["plugins", "skills", "mcp", "apps", "marketplaces"]);
+    assert.deepEqual(changes, manageOnly ? ["plugins", "apps", "mcp", "skills", "marketplaces"] : ["plugins", "skills"]);
     assert.equal(text(render("pm-segment")).includes("浏览市场"), !manageOnly);
   }
 }
-console.log("PASS PS02/PS03: production JSX management tabs and directory callbacks, standalone tabs preserved");
+console.log("PASS PS02/PS03: production JSX management tabs and directory callbacks, directory and management tabs separated");
 const parent = fs.readFileSync("src/components/SettingsView.tsx", "utf8");
 assert.ok(parent.includes("<SkillsMcpView"));
 assert.ok(parent.includes("key={activeWorkspaceRoot}"));
 assert.ok(parent.includes('onNavigateRoute?.(tab === "skills" ? "skills" : "plugins")'));
 assert.ok(!parent.includes("插件市场与更新源"));
 assert.ok(!parent.includes("setRealPlugins"));
-assert.ok(parent.includes('activeSection !== "plugins-settings" &&'));
+assert.ok(parent.includes('activeSection === "plugins-settings" &&'));
+assert.ok(parent.includes("manageOnly"));
+assert.ok(!parent.includes("handleSaveVisual"));
+assert.ok(!parent.includes("setConfigKeys"), "dedicated plugin settings cannot inherit generic config batch writes");
 const app = fs.readFileSync("src/App.tsx", "utf8");
 assert.ok(app.includes('if (r === "plugins" || r === "skills") setPluginDirectoryMode("browse")'));
 assert.ok(app.includes('initialPluginMode={pluginDirectoryMode}'));

@@ -78,13 +78,12 @@ assert.ok(
   "config.ts: Must export complete config/* and experimentalFeature/* RPC clients"
 );
 
-// ST04: 检查 SettingsView.tsx 接线与本地持久化
+// ST04: Dedicated settings own persistence; the wrapper must not batch-write unrelated config.
 assert.ok(
-  viewSource.includes("configRead") &&
-    viewSource.includes("<ExperimentalFeatures connected={appServerStatus.connected} />") &&
-    viewSource.includes("desktop_state_get") &&
-    viewSource.includes("desktop_state_set"),
-  "SettingsView.tsx: Must wire configRead, experimentalFeatureList, and desktop_state_set"
+  viewSource.includes("<AgentSettings") &&
+    viewSource.includes('<ExperimentalFeatures connected={appServerStatus.connected} />') &&
+    !viewSource.includes("handleSaveVisual") && !viewSource.includes("desktopPreferences"),
+  "SettingsView delegates config and desktop persistence to the real dedicated consumers"
 );
 
 console.log(`PASS settings route compatibility, ${EXPECTED_26_SLUGS.filter(slug => slug !== "providers-models" && slug !== "experimental").length} current navigation entries and protocol wiring (not full page acceptance)`);

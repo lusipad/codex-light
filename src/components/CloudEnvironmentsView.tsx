@@ -93,7 +93,7 @@ export const CloudEnvironmentsView: React.FC = () => {
   const effective = detail?.draft ?? detail;
   const hasScopeError = Boolean(catalog && Object.keys(catalog.errors).length);
   return <div className="cloud-envs-container">
-    <div className="cloud-envs-header"><h2>Codex Cloud</h2><p role="status">新建、编辑与删除暂不可用。</p></div>
+    <div className="cloud-envs-header"><h2>云端环境</h2></div>
     {loading && <p role="status">正在读取云端环境…</p>}
     {error && <section><p role="alert">{error}</p><button type="button" onClick={() => setRevision(value => value + 1)}>重试</button></section>}
     {access?.gateEvidence === "incomplete" && <p role="status">官方云访问资格尚未完成核对。</p>}
@@ -111,14 +111,15 @@ export const CloudEnvironmentsView: React.FC = () => {
     {selectedId && <dialog ref={dialogRef} aria-label="云端环境详情" onCancel={event => { event.preventDefault(); closeDetail(); }}>
       <button type="button" onClick={closeDetail}>关闭</button>
       {detailError ? <><p role="alert">{detailError}</p><button type="button" onClick={() => void openDetail(selectedId)}>重试详情</button></> : !detail || !effective ? <p role="status">正在读取详情…</p> : <>
-        <h2>{detail.name}</h2><p>配置状态：{detail.status}</p><p>版本：{detail.versionId}</p><p>共享：{detail.shareSettings === "private" ? "私密" : "工作区"}</p>
+        <h2>{detail.name}</h2><dl className="cloud-envs-properties"><div><dt>共享</dt><dd>{detail.shareSettings === "private" ? "私密" : "工作区"}</dd></div><div><dt>配置状态</dt><dd>{detail.status}</dd></div></dl>
         {detail.draft && <p>正在显示草稿配置（修订 {detail.draft.revision}）。</p>}
-        <section><h3>仓库</h3>{!effective.repositories.length && <p>暂无仓库。</p>}{effective.repositories.map(repo => <p key={repo.id}>{repositoryLabel(repo.id)} · {repo.ref} <code>{repo.id}</code>{repo.depth != null && <span> 深度 {repo.depth}</span>}</p>)}</section>
+        <section><h3>仓库</h3>{!effective.repositories.length && <p>暂无仓库。</p>}{effective.repositories.map(repo => <p key={repo.id}>{repositoryLabel(repo.id)} · {repo.ref}</p>)}</section>
         <section><h3>网络</h3><p>{effective.network.type === "disabled" ? "禁用" : effective.network.type === "unrestricted" ? "不受限" : "受限"}</p>
           {effective.network.packageManagers && <p>允许软件包管理器</p>}{effective.network.hosts.map(host => <p key={host}>{host}</p>)}</section>
         {effective.cwd != null && <p>工作目录：{effective.cwd}</p>}{effective.installScript != null && <section><h3>安装脚本</h3><pre>{effective.installScript}</pre></section>}
         {effective.startSkill != null && <section><h3>启动技能</h3><pre>{effective.startSkill}</pre></section>}
-        <section><h3>Secret 元数据</h3>{!effective.secrets.length && <p>暂无 Secret。</p>}{effective.secrets.map((secret, index) => <div key={index}><p>{secret.name} · {secret.source} · {secret.target}</p>{secret.domains.map(domain => <p key={domain}>{domain}</p>)}{secret.error && <p role="alert">{secret.error}</p>}</div>)}</section>
+        <section><h3>密钥</h3>{!effective.secrets.length && <p>暂无密钥。</p>}{effective.secrets.map((secret, index) => <div key={index}><p>{secret.name} · {secret.source} · {secret.target}</p>{secret.domains.map(domain => <p key={domain}>{domain}</p>)}{secret.error && <p role="alert">{secret.error}</p>}</div>)}</section>
+        <details className="cloud-envs-technical"><summary>技术详情</summary><p>版本：{detail.versionId}</p>{effective.repositories.map(repo => <p key={repo.id}><code>{repo.id}</code>{repo.depth != null && <span> 深度 {repo.depth}</span>}</p>)}</details>
       </>}
     </dialog>}
   </div>;

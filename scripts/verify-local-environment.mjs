@@ -10,7 +10,7 @@ assert.ok(parent.includes("<LocalEnvironmentSettings"));
 assert.ok(parent.includes("projects={environmentProjects}"));
 assert.ok(parent.includes("onNavigationGuardChange={registerEnvironmentNavigationGuard}"));
 assert.ok(!parent.includes("setLocalEnvToml"));
-assert.ok(parent.includes('activeSection !== "local-environments" &&'));
+assert.ok(!parent.includes("handleSaveVisual"), "dedicated settings must not expose generic configuration writes");
 assert.ok(app.includes('if (pendingTermCommand) throw Error'));
 assert.ok(app.includes("setPendingTermCommand({ id: Date.now(), command, cwd });"));
 console.log("PASS LE02/LE03/LE04: structured editor retains conflict/dirty/action/unmount invariants and registered-project real PTY queue wiring");

@@ -100,9 +100,9 @@ const race = mount(async method => method === "desktop_state_get" ? (++reads ===
 race.load(); await race.save("cmdAlways"); late.resolve("enter"); await new Promise(setImmediate); assert.equal(race.state.value, "cmdAlways");
 const removedRead = defer(); const removed = mount(async () => removedRead.promise); const cleanup = removed.load(); cleanup(); removedRead.resolve("cmdAlways"); await new Promise(setImmediate); assert.equal(removed.state.value, "enter");
 const settings = fs.readFileSync("src/components/SettingsView.tsx", "utf8");
-assert.match(settings, /!navigator\.userAgent\.includes\("Windows"\) && \([\s\S]*?<label>后台任务防休眠策略/);
+assert.doesNotMatch(settings, /后台任务防休眠策略|setPreventSleep/, "Windows shell no longer renders or batch-persists an unsupported sleep control");
 assert.match(settings, /发送快捷键/); assert.match(settings, /Ctrl \+ Enter 用于多行提示/);
-console.log("PASS GS01/GS04/GS05: independent preference key, normalization, persistence readback, remount, single-flight, rollback, read failure, stale load and Windows sleep-row condition (L2; native UI untested)");
+console.log("PASS GS01/GS04/GS05: independent preference key, normalization, persistence readback, remount, single-flight, rollback, read failure, stale load and Windows unsupported sleep-row removal (L2; native UI untested)");
 
 const startupRead = defer();
 const startup = mount(async () => startupRead.promise);
