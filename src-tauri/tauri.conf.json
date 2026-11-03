@@ -31,6 +31,13 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": {
+      "../src/themes/THIRD-PARTY-NOTICES": "licenses/themes/THIRD-PARTY-NOTICES",
+      "../src/themes/SHIKI-THEMES-LICENSE": "licenses/themes/SHIKI-THEMES-LICENSE",
+      "../src/themes/GITHUB-LICENSE": "licenses/themes/GITHUB-LICENSE",
+      "../src/themes/DRACULA-LICENSE": "licenses/themes/DRACULA-LICENSE",
+      "../src/themes/SOURCES.md": "licenses/themes/SOURCES.md"
+    },
     "icon": [
       "icons/icon.png",
       "icons/icon.ico"

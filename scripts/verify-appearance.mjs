@@ -14,7 +14,15 @@ const react={
  useEffect(fn,deps){const i=cursor++,previous=hooks[i];if(!previous||deps.some((d,j)=>d!==previous.deps[j])){previous?.cleanup?.();hooks[i]={deps};effects.push(()=>hooks[i].cleanup=fn());}},
 };
 const mod={exports:{}};
-vm.runInNewContext(code,{exports:mod.exports,require:name=>name==="react"?react:{tauriInvoke:(...args)=>invoke(...args)},document:{documentElement:root},window:{matchMedia:query},console});
+const themeModule={exports:{}};
+const themeCode=ts.transpileModule(fs.readFileSync('src/appearanceTheme.ts','utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS,resolveJsonModule:true,esModuleInterop:true}}).outputText;
+const loadThemeDependency=name=> {
+ if(name.endsWith('.json'))return JSON.parse(fs.readFileSync(new URL('../src/'+name.replace(/^\.\//,''),import.meta.url),'utf8'));
+ throw Error('Unexpected theme dependency '+name);
+};
+vm.runInNewContext(themeCode,{exports:themeModule.exports,require:loadThemeDependency,console});
+const listeners=new Set();
+vm.runInNewContext(code,{exports:mod.exports,require:name=>name==='react'?react:name==='./appearanceTheme'?themeModule.exports:{tauriInvoke:(...args)=>invoke(...args),tauriListen:async(_,fn)=>{listeners.add(fn);return()=>listeners.delete(fn);}},document:{documentElement:root},window:{matchMedia:query},console});
 const {normalizeAppearanceValue,parseAppearanceFontSize,useAppearancePreferences}=mod.exports;
 assert.equal(normalizeAppearanceValue("appearanceTheme","bad"),"system");
 assert.equal(normalizeAppearanceValue("sansFontSize",18),14);assert.equal(normalizeAppearanceValue("codeFontSize",7),12);
@@ -29,7 +37,7 @@ invoke=async()=>initialGate;
 render();
 assert.equal(await rendered.save("sansFontSize",15),"failed","initial read prevents writes");
 releaseInitial(null);await flush();
-invoke=async(method,args)=>{calls.push([method,args]);if(method==="desktop_state_set")store[args.key]=args.value;return store[args.key];};
+invoke=async(method,args)=>{calls.push([method,args]);if(method==="appearance_preference_write"){store[args.key]=args.value;return;}return {...store};};
 render();rendered.reload();render();await flush();render();assert.equal(root.dataset.theme,"dark");assert.equal(values.get("--font-ui-size"),"14px");assert.equal(values.get("--font-code-size"),"12px");
 const system=query("(prefers-color-scheme: dark)");system.matches=false;for(const fn of system.listeners)fn();assert.equal(root.dataset.theme,"light");
 await rendered.save("appearanceTheme","dark");render();system.matches=false;for(const fn of system.listeners)fn();assert.equal(root.dataset.theme,"dark");
@@ -40,14 +48,14 @@ await rendered.save("reduced-motion-preference","off");render();assert.equal(roo
 invoke=async()=>{throw Error("disk denied");};await rendered.save("appearanceTheme","light");render();assert.equal(root.dataset.theme,"dark");assert.match(rendered.error,/保存失败/);
 
 let rejectWrite;const writeGate=new Promise((_,reject)=>rejectWrite=reject);let writeCount=0;
-invoke=async(method,args)=>{if(method==='desktop_state_set'){writeCount++;return writeGate;}return store[args.key];};
+invoke=async(method,args)=>{if(method==='appearance_preference_write'){writeCount++;return writeGate;}return {...store};};
 const numericPending=rendered.save('sansFontSize',15);render();assert.equal(values.get('--font-ui-size'),'15px','numeric changes are optimistic');
 assert.equal(await rendered.save('appearanceTheme','light'),'failed');assert.equal(writeCount,1,'single lock prevents overlapping writes');
 rejectWrite(Error('denied'));assert.equal(await numericPending,'failed');render();assert.equal(values.get('--font-ui-size'),'16px','failed numeric write rolls back');
-invoke=async(method,args)=>{if(method==='desktop_state_set'){store[args.key]=args.value;return;}throw Error('confirmation unavailable');};
+invoke=async(method,args)=>{if(method==='appearance_preference_write'){store[args.key]=args.value;return;}throw Error('confirmation unavailable');};
 assert.equal(await rendered.save('codeFontSize',22),'unconfirmed');render();assert.equal(values.get('--font-code-size'),'22px');assert.match(rendered.error,/已保存，但读取确认失败/);
 rendered.reload();render();await flush();render();assert.match(rendered.error,/读取外观设置失败/);
-invoke=async(_,args)=>store[args.key];
+invoke=async()=>({...store});
 rendered.reload();render();await flush();render();assert.equal(rendered.error,null);assert.equal(rendered.preferences.codeFontSize,22);
 let releaseLate;
 const lateGate=new Promise(resolve=>releaseLate=resolve);

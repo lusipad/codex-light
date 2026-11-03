@@ -1721,3 +1721,9 @@ SettingsView不再读本地旧archivedThreads列表，直接复用ArchiveView和
 ## 2026-11-03：16.01C 工作区动态打开方式
 
 先按旧候选/Store两套独立证据完成动态getTargets/open、精确路径偏好与最新会话根合同，再接真实宿主查询/执行命令。菜单过滤、loading/error、偏好读回和晚到隔离复用现有组件；每次查询/执行重新thread/read并核工作树owner，显式目标执行前保存，失败不伪成功。没有新依赖。独立审查发现Windows隐藏systemDefault空executable被过严校验拒绝，已补生产形状回归并复核关闭。专项、完整标准含隔离协议和全Rust库270通过；原生构建与指纹见[16.01C](antigravity/acceptance/16-01C.md)。浏览器仅受控生产组件，真实编辑器/原生UI/官方像素未验；ShellExecute只确认系统接受，Git根查询无单独deadline、完整目标/远程/独立root服务仍有缺口。下一[16.02B合同](antigravity/specs/16-02-next-closure.md)已完成Store14文件/47锚点调研，将推进完整主题操作与CSS消费，不以小开关冒充整页。按授权完成阶段检查与构建后提交，并视远程情况推送。
+
+## 2026-11-03：16.02B 独立主题与真实desktop配置
+
+先补Store宿主映射，纠正global-state分类误读，八键改真实用户desktop配置/版本写入及null编解码，旧JSON仅缺值回退。主题串行保存、部分补偿/失败读回、独立浅深数据、真实semantic/代码/diff/正文消费者与跨窗刷新接通；设置新增预设/三色/字体/高级精确恢复/导入导出。16个preset ID、23份公开主题数据逐项匹配固定官方资源，保留MIT/Apache-2.0及作者许可，无新依赖。独立审查P2预设误清高级字段已先红后绿修复并复核；未实现的官方已存preset保留原ID并明示不可用，不悄改codex。272项全Rust通过，完整标准/原生构建以[16.02B](antigravity/acceptance/16-02B.md)及构建清单为准。首次完整检查因隔离home目录未创建而旧探针初始化超时，进程已确认并停止、日志保留后修正重跑。受控浏览器验证实际颜色/模式/导入焦点，不代表原生与像素验收。私有完整目录、完整TextMate/OKLab、账号accent、系统字体/原生透明等仍未完成；下一[16.03B](antigravity/specs/16-03-next-closure.md)已准备命令目录与真实handler作用域合同。
+
+16.02B最终完整标准含新增协议、EXE/MSI/NSIS均退出0；238产品输入稳定，许可资源随安装器/便携目录分发。首次缺home中止、代码前景专项修正、最后许可打包变更及各次快照独立保留于.ref/parity/16.02/actual/16-02B，不把旧快照冒充最终输入。构建清单和待验表已更新，整外观仍未验收。

@@ -22,6 +22,7 @@ pub mod state;
 pub mod terminal;
 mod thread_workspace;
 mod archive_delete;
+mod appearance_preferences;
 
 use app_server::{AppServerManager, AppServerStatus, PendingServerRequest};
 use config_skills::{
@@ -1565,6 +1566,7 @@ pub fn run() {
         .manage(menu::ShortcutMenuState::default())
         .manage(keybindings::KeyBindingsState::default())
         .manage(personal_instructions::PersonalInstructionsState::default())
+        .manage(appearance_preferences::AppearancePreferencesState::default())
         .manage(quick_chat::QuickChatState::default())
         .manage(thread_window::ThreadWindowState::default())
         .manage(notification_broker::NotificationBroker::default())
@@ -1626,6 +1628,8 @@ pub fn run() {
             code_review_preferences_update,
             desktop_state_get,
             desktop_state_set,
+            appearance_preferences::appearance_preferences_read,
+            appearance_preferences::appearance_preference_write,
             thread_record_workspace,
             threads_meta_get,
             thread_toggle_pin,

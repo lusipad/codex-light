@@ -98,6 +98,10 @@ try {
   Invoke-Step "Composer attachment draft scope regression" { node scripts/verify-composer-attachment-drafts.mjs }
   Invoke-Step "Composer native file drop regression" { node scripts/verify-composer-drop.mjs }
   Invoke-Step "Appearance preferences and consumers regression" { node scripts/verify-appearance.mjs }
+  Invoke-Step "Appearance theme semantics and preset data regression" { node scripts/verify-appearance-theme.mjs }
+  Invoke-Step "Appearance theme writes and multiwindow regression" { node scripts/verify-appearance-theme-state.mjs }
+  Invoke-Step "Appearance theme settings component regression" { node scripts/verify-appearance-theme-ui.mjs }
+  Invoke-Step "Rust appearance configuration boundaries" { cargo test --manifest-path src-tauri/Cargo.toml appearance_preferences }
   Invoke-Step "Notification classification, persistence and dispatch regression" { node scripts/verify-notification-preferences.mjs }
   Invoke-Step "Rust cross-window notification arbitration regression" {
     cargo test --manifest-path src-tauri/Cargo.toml notification_broker
@@ -236,6 +240,7 @@ Invoke-Step "TypeScript typecheck (tsc --noEmit)" { npx tsc --noEmit }
       "scripts/protocol-verify/verify-recommended-skills.mjs"
       "scripts/protocol-verify/verify-model-catalog.mjs"
       "scripts/protocol-verify/verify-agent-settings.mjs"
+      "scripts/protocol-verify/verify-appearance-preferences.mjs"
       "scripts/protocol-verify/verify-personal-instructions.mjs"
       "scripts/protocol-verify/verify-account-snapshot.mjs"
       "scripts/protocol-verify/verify-service-auth-support.mjs"

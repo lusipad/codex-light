@@ -107,6 +107,8 @@
 
 [data-theme="dark"] { color-scheme: dark; }
 
+::selection { background: var(--selection-bg); }
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -784,8 +786,9 @@ html, body, #root {
 }
 
 .user-bubble {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
+  background: var(--color-background-user-message, var(--bg-tertiary));
+  color: var(--color-text-user-message, var(--text-primary));
+  font-family: var(--font-content, var(--font-sans));
   border-radius: 22px;
   padding: 10px 16px;
   font-size: calc(15px * var(--font-ui-scale, 1));
@@ -847,6 +850,7 @@ html, body, #root {
    Markdown & Assistant Output Typography (Matches Official Codex Spec)
    ============================================================================ */
 .markdown-body {
+  font-family: var(--font-content, var(--font-sans));
   font-size: calc(15px * var(--font-ui-scale, 1));
   line-height: 1.62;
   color: var(--text-primary);
@@ -1113,7 +1117,8 @@ html, body, #root {
 }
 
 .markdown-body .code-block-wrapper {
-  background: #141414;
+  background: var(--code-background, #141414);
+  color: var(--code-foreground, var(--text-primary));
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
   margin: 12px 0;
@@ -1125,7 +1130,7 @@ html, body, #root {
   align-items: center;
   justify-content: space-between;
   padding: 6px 12px;
-  background: #1c1c1c;
+  background: var(--bg-secondary, #1c1c1c);
   border-bottom: 1px solid var(--border-subtle);
 }
 
@@ -1182,7 +1187,7 @@ html, body, #root {
   font-family: var(--font-mono);
   font-size: var(--font-code-size);
   line-height: 1.55;
-  color: #ececec;
+  color: var(--code-foreground, #ececec);
   background: transparent;
 }
 
@@ -1192,28 +1197,30 @@ html, body, #root {
 }
 
 .markdown-body .tok-kw {
-  color: #c678dd;
+  color: var(--code-keyword, #c678dd);
 }
 .markdown-body .tok-string {
-  color: #98c379;
+  color: var(--code-string, #98c379);
 }
 .markdown-body .tok-comment {
-  color: #6b7280;
+  color: var(--code-comment, #6b7280);
   font-style: italic;
 }
-.markdown-body .tok-number,
+.markdown-body .tok-number {
+  color: var(--code-number, #d19a66);
+}
 .markdown-body .tok-bool {
-  color: #d19a66;
+  color: var(--code-boolean, #d19a66);
 }
 .markdown-body .tok-diff-add {
-  color: #4ade80;
-  background: rgba(34, 197, 94, 0.12);
+  color: var(--app-color-decoration-added, #4ade80);
+  background: var(--app-color-editor-added, rgba(34, 197, 94, 0.12));
   display: inline-block;
   width: 100%;
 }
 .markdown-body .tok-diff-del {
-  color: #f87171;
-  background: rgba(239, 68, 68, 0.12);
+  color: var(--app-color-decoration-deleted, #f87171);
+  background: var(--app-color-editor-deleted, rgba(239, 68, 68, 0.12));
   display: inline-block;
   width: 100%;
 }
@@ -3875,13 +3882,13 @@ html, body, #root {
 }
 
 .diff-line-add {
-  background: rgba(34, 197, 94, 0.12);
-  color: #86efac;
+  background: var(--app-color-editor-added, rgba(34, 197, 94, 0.12));
+  color: var(--app-color-decoration-added, #86efac);
 }
 
 .diff-line-del {
-  background: rgba(239, 68, 68, 0.12);
-  color: #fca5a5;
+  background: var(--app-color-editor-deleted, rgba(239, 68, 68, 0.12));
+  color: var(--app-color-decoration-deleted, #fca5a5);
 }
 
 .diff-line-hunk {
@@ -6971,4 +6978,36 @@ html, body, #root {
   animation-iteration-count: 1 !important;
   transition-duration: 0.01ms !important;
   scroll-behavior: auto !important;
+}
+
+/* Independent light/dark theme controls; geometry still needs official runtime comparison. */
+.appearance-theme-card { border: 1px solid var(--border-default); border-radius: 12px; padding: 16px; margin-top: 12px; }
+.appearance-theme-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.appearance-theme-heading h3, .appearance-theme-heading h4 { margin: 0; }
+.appearance-theme-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.appearance-theme-actions select { max-width: 220px; }
+.appearance-theme-preview { display: flex; align-items: center; justify-content: space-between; min-height: 72px; border: 1px solid; border-radius: 8px; padding: 12px 16px; margin: 12px 0; }
+.appearance-theme-preview span { font-size: 28px; }
+.appearance-theme-preview i { display: block; width: 40px; height: 12px; border-radius: 6px; }
+.appearance-setting-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; padding: 6px 0; }
+.appearance-setting-row > span:first-child, .appearance-setting-row > label { flex: 1; }
+.appearance-setting-row > input[type="range"] { width: min(45%, 180px); }
+.appearance-setting-row > select { max-width: 220px; }
+.appearance-setting-row output { min-width: 24px; text-align: right; font-variant-numeric: tabular-nums; }
+.appearance-value-control { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; max-width: 60%; }
+.appearance-value-control input[type="text"] { width: 180px; max-width: 100%; }
+.appearance-value-control input[type="color"] { width: 28px; height: 28px; padding: 2px; border: 1px solid var(--border-default); border-radius: 6px; background: transparent; cursor: pointer; }
+.appearance-value-control input[aria-invalid="true"] { outline: 1px solid var(--error, #d94747); }
+.appearance-value-control [role="alert"] { font-size: var(--text-xs); }
+.appearance-advanced-toggle { display: inline-flex; gap: 8px; align-items: center; padding: 0; border: 0; color: inherit; background: transparent; font: inherit; cursor: pointer; }
+.appearance-dialog-backdrop { position: fixed; inset: 0; z-index: 10000; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, .4); padding: 20px; }
+.appearance-import-dialog { width: min(480px, 100%); max-height: calc(100vh - 40px); overflow: auto; border: 1px solid var(--border-default); border-radius: 16px; background: var(--bg-primary); color: var(--text-primary); padding: 24px; box-shadow: 0 12px 48px rgba(0, 0, 0, .25); }
+.appearance-import-dialog h3 { margin: 0 0 16px; }
+.appearance-import-dialog textarea { display: block; box-sizing: border-box; width: 100%; min-height: 140px; resize: vertical; padding: 12px; border: 1px solid var(--border-default); border-radius: 8px; color: inherit; background: var(--bg-secondary); font: inherit; overflow-wrap: anywhere; }
+.appearance-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+@media (max-width: 600px) {
+  .appearance-theme-card { padding: 12px; }
+  .appearance-theme-heading { align-items: flex-start; }
+  .appearance-value-control { max-width: 65%; }
+  .appearance-value-control input[type="text"] { width: 130px; }
 }

@@ -1,0 +1,351 @@
+{
+  "reference": "Store 26.1021.3705 code-theme-20b725ca5561.js",
+  "sha256": "1b054b3e081ec9e1c8a1bdbbc0402164538f451c2c73321c81530886be252028",
+  "samples": [
+    {
+      "id": "ayu",
+      "variant": "dark",
+      "file": "ayu-dark",
+      "expected": {
+        "accent": "#e6b450",
+        "ink": "#bfbdb6",
+        "semanticColors": {
+          "diffAdded": "#70bf56",
+          "diffRemoved": "#f26d78",
+          "skill": "#d0a1ff"
+        },
+        "surface": "#10141c"
+      }
+    },
+    {
+      "id": "catppuccin",
+      "variant": "light",
+      "file": "catppuccin-latte",
+      "expected": {
+        "accent": "#8839ef",
+        "ink": "#4c4f69",
+        "semanticColors": {
+          "diffAdded": "#40a02b",
+          "diffRemoved": "#d20f39",
+          "skill": "#8839ef"
+        },
+        "surface": "#eff1f5"
+      }
+    },
+    {
+      "id": "catppuccin",
+      "variant": "dark",
+      "file": "catppuccin-mocha",
+      "expected": {
+        "accent": "#cba6f7",
+        "ink": "#cdd6f4",
+        "semanticColors": {
+          "diffAdded": "#a6e3a1",
+          "diffRemoved": "#f38ba8",
+          "skill": "#cba6f7"
+        },
+        "surface": "#1e1e2e"
+      }
+    },
+    {
+      "id": "dracula",
+      "variant": "dark",
+      "file": "dracula",
+      "expected": {
+        "accent": "#ff79c6",
+        "ink": "#f8f8f2",
+        "semanticColors": {
+          "diffAdded": "#50fa7b",
+          "diffRemoved": "#ff5555",
+          "skill": "#ff79c6"
+        },
+        "surface": "#282a36"
+      }
+    },
+    {
+      "id": "everforest",
+      "variant": "light",
+      "file": "everforest-light",
+      "expected": {
+        "accent": "#93b259",
+        "ink": "#5c6a72",
+        "semanticColors": {
+          "diffAdded": "#8da101",
+          "diffRemoved": "#f85552",
+          "skill": "#df69ba"
+        },
+        "surface": "#fdf6e3"
+      }
+    },
+    {
+      "id": "everforest",
+      "variant": "dark",
+      "file": "everforest-dark",
+      "expected": {
+        "accent": "#a7c080",
+        "ink": "#d3c6aa",
+        "semanticColors": {
+          "diffAdded": "#a7c080",
+          "diffRemoved": "#e67e80",
+          "skill": "#d699b6"
+        },
+        "surface": "#2d353b"
+      }
+    },
+    {
+      "id": "github",
+      "variant": "light",
+      "file": "github-light-default",
+      "expected": {
+        "accent": "#0969da",
+        "ink": "#1f2328",
+        "semanticColors": {
+          "diffAdded": "#1a7f37",
+          "diffRemoved": "#cf222e",
+          "skill": "#8250df"
+        },
+        "surface": "#ffffff"
+      }
+    },
+    {
+      "id": "github",
+      "variant": "dark",
+      "file": "github-dark-default",
+      "expected": {
+        "accent": "#1f6feb",
+        "ink": "#e6edf3",
+        "semanticColors": {
+          "diffAdded": "#3fb950",
+          "diffRemoved": "#f85149",
+          "skill": "#bc8cff"
+        },
+        "surface": "#0d1117"
+      }
+    },
+    {
+      "id": "gruvbox",
+      "variant": "light",
+      "file": "gruvbox-light-medium",
+      "expected": {
+        "accent": "#458588",
+        "ink": "#3c3836",
+        "semanticColors": {
+          "diffAdded": "#3c3836",
+          "diffRemoved": "#cc241d",
+          "skill": "#b16286"
+        },
+        "surface": "#fbf1c7"
+      }
+    },
+    {
+      "id": "gruvbox",
+      "variant": "dark",
+      "file": "gruvbox-dark-medium",
+      "expected": {
+        "accent": "#458588",
+        "ink": "#ebdbb2",
+        "semanticColors": {
+          "diffAdded": "#ebdbb2",
+          "diffRemoved": "#cc241d",
+          "skill": "#b16286"
+        },
+        "surface": "#282828"
+      }
+    },
+    {
+      "id": "material",
+      "variant": "dark",
+      "file": "material-theme-darker",
+      "expected": {
+        "accent": "#80cbc4",
+        "ink": "#eeffff",
+        "semanticColors": {
+          "diffAdded": "#c3e88d",
+          "diffRemoved": "#f07178",
+          "skill": "#c792ea"
+        },
+        "surface": "#212121"
+      }
+    },
+    {
+      "id": "monokai",
+      "variant": "dark",
+      "file": "monokai",
+      "expected": {
+        "accent": "#99947c",
+        "ink": "#f8f8f2",
+        "semanticColors": {
+          "diffAdded": "#86b42b",
+          "diffRemoved": "#c4265e",
+          "skill": "#8c6bc8"
+        },
+        "surface": "#272822"
+      }
+    },
+    {
+      "id": "night-owl",
+      "variant": "dark",
+      "file": "night-owl",
+      "expected": {
+        "accent": "#44596b",
+        "ink": "#d6deeb",
+        "semanticColors": {
+          "diffAdded": "#c5e478",
+          "diffRemoved": "#ef5350",
+          "skill": "#c792ea"
+        },
+        "surface": "#011627"
+      }
+    },
+    {
+      "id": "nord",
+      "variant": "dark",
+      "file": "nord",
+      "expected": {
+        "accent": "#88c0d0",
+        "ink": "#d8dee9",
+        "semanticColors": {
+          "diffAdded": "#a3be8c",
+          "diffRemoved": "#bf616a",
+          "skill": "#b48ead"
+        },
+        "surface": "#2e3440"
+      }
+    },
+    {
+      "id": "one",
+      "variant": "light",
+      "file": "one-light",
+      "expected": {
+        "accent": "#526fff",
+        "ink": "#383a42",
+        "semanticColors": {
+          "diffAdded": "#3bba54",
+          "diffRemoved": "#e45649",
+          "skill": "#526fff"
+        },
+        "surface": "#fafafa"
+      }
+    },
+    {
+      "id": "one",
+      "variant": "dark",
+      "file": "one-dark-pro",
+      "expected": {
+        "accent": "#4d78cc",
+        "ink": "#abb2bf",
+        "semanticColors": {
+          "diffAdded": "#8cc265",
+          "diffRemoved": "#e05561",
+          "skill": "#c162de"
+        },
+        "surface": "#282c34"
+      }
+    },
+    {
+      "id": "rose-pine",
+      "variant": "light",
+      "file": "rose-pine-dawn",
+      "expected": {
+        "accent": "#d7827e",
+        "ink": "#575279",
+        "semanticColors": {
+          "diffAdded": "#56949f",
+          "diffRemoved": "#797593",
+          "skill": "#907aa9"
+        },
+        "surface": "#faf4ed"
+      }
+    },
+    {
+      "id": "rose-pine",
+      "variant": "dark",
+      "file": "rose-pine-moon",
+      "expected": {
+        "accent": "#ea9a97",
+        "ink": "#e0def4",
+        "semanticColors": {
+          "diffAdded": "#9ccfd8",
+          "diffRemoved": "#908caa",
+          "skill": "#c4a7e7"
+        },
+        "surface": "#232136"
+      }
+    },
+    {
+      "id": "solarized",
+      "variant": "light",
+      "file": "solarized-light",
+      "expected": {
+        "accent": "#b58900",
+        "ink": "#657b83",
+        "semanticColors": {
+          "diffAdded": "#859900",
+          "diffRemoved": "#dc322f",
+          "skill": "#d33682"
+        },
+        "surface": "#fdf6e3"
+      }
+    },
+    {
+      "id": "solarized",
+      "variant": "dark",
+      "file": "solarized-dark",
+      "expected": {
+        "accent": "#d30102",
+        "ink": "#839496",
+        "semanticColors": {
+          "diffAdded": "#859900",
+          "diffRemoved": "#dc322f",
+          "skill": "#d33682"
+        },
+        "surface": "#002b36"
+      }
+    },
+    {
+      "id": "tokyo-night",
+      "variant": "dark",
+      "file": "tokyo-night",
+      "expected": {
+        "accent": "#3d59a1",
+        "ink": "#a9b1d6",
+        "semanticColors": {
+          "diffAdded": "#449dab",
+          "diffRemoved": "#914c54",
+          "skill": "#9d7cd8"
+        },
+        "surface": "#1a1b26"
+      }
+    },
+    {
+      "id": "vscode-plus",
+      "variant": "light",
+      "file": "light-plus",
+      "expected": {
+        "accent": "#007acc",
+        "ink": "#000000",
+        "semanticColors": {
+          "diffAdded": "#008000",
+          "diffRemoved": "#ee0000",
+          "skill": "#0000ff"
+        },
+        "surface": "#ffffff"
+      }
+    },
+    {
+      "id": "vscode-plus",
+      "variant": "dark",
+      "file": "dark-plus",
+      "expected": {
+        "accent": "#007acc",
+        "ink": "#d4d4d4",
+        "semanticColors": {
+          "diffAdded": "#369432",
+          "diffRemoved": "#f44747",
+          "skill": "#000080"
+        },
+        "surface": "#1e1e1e"
+      }
+    }
+  ]
+}
