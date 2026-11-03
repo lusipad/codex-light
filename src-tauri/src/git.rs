@@ -838,10 +838,7 @@ pub(crate) fn list_worktrees_at_roots(target_path: Option<String>, managed_roots
                                detached: bool,
                                out: &mut Vec<GitWorktreeInfo>| {
                     let norm_path = normalize_fs_path(&path);
-                    let owner = run_git(&norm_path, &["config", "--get", "codex.ownerThreadId"])
-                        .ok()
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty());
+                    let owner = read_worktree_owner(&norm_path).ok().flatten();
                     let dirty = run_git(&norm_path, &["status", "--porcelain"])
                         .map(|s| !s.trim().is_empty())
                         .unwrap_or(false);
@@ -924,10 +921,7 @@ pub(crate) fn list_worktrees_at_roots(target_path: Option<String>, managed_roots
                         {
                             continue;
                         }
-                        let owner = run_git(&norm_dir, &["config", "--get", "codex.ownerThreadId"])
-                            .ok()
-                            .map(|s| s.trim().to_string())
-                            .filter(|s| !s.is_empty());
+                        let owner = read_worktree_owner(&norm_dir).ok().flatten();
                         let dirty = run_git(&norm_dir, &["status", "--porcelain"])
                             .map(|s| !s.trim().is_empty())
                             .unwrap_or(false);
@@ -1014,27 +1008,7 @@ pub(crate) fn resolve_thread_project_worktree_at_roots(
         if !same_git_common_dir(&target_git_root, &candidate_root) {
             continue;
         }
-        let metadata_path = run_git(
-            &candidate_path,
-            &[
-                "rev-parse",
-                "--path-format=absolute",
-                "--git-path",
-                "codex-thread.json",
-            ],
-        )
-        .ok()
-        .map(|s| normalize_fs_path(s.trim()));
-        let metadata = metadata_path.and_then(|path| fs::read_to_string(path).ok());
-        let owner_matches = metadata
-            .as_deref()
-            .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
-            .and_then(|value| {
-                (value.get("version").and_then(|v| v.as_i64()) == Some(1)
-                    && value.get("ownerThreadId").and_then(|v| v.as_str()) == Some(thread_id))
-                .then_some(true)
-            })
-            .unwrap_or(false);
+        let owner_matches = read_worktree_owner(&candidate_path).ok().flatten().as_deref() == Some(thread_id);
         let candidate_is_managed = managed_roots
             .iter()
             .any(|root| path_is_within(&candidate_path, root));
@@ -1222,6 +1196,58 @@ mod project_worktree_tests {
                 .starts_with("codex-project-worktree-"));
             fs::remove_dir_all(target).unwrap();
         }
+    }
+
+    #[test]
+    fn worktree_owner_metadata_is_private_across_linked_trees_and_all_consumers() {
+        let fixture = Fixture::new();
+        let custom = normalize_fs_path(&fixture.root.join("owner-custom").to_string_lossy());
+        let created = create_codex_worktree(&fixture.repo, "branch", None, Some("owner-created".into()), &custom).unwrap();
+        assert_eq!(read_worktree_owner(&created.path).unwrap().as_deref(), Some("owner-created"));
+        assert!(run_git(&fixture.repo, &["config", "--get", "codex.ownerThreadId"]).is_err());
+        set_worktree_owner_thread(&fixture.worktree, "owner-a").unwrap();
+        set_worktree_owner_thread(&created.path, "owner-b").unwrap();
+        assert_eq!(read_worktree_owner(&fixture.worktree).unwrap().as_deref(), Some("owner-a"));
+        assert_eq!(read_worktree_owner(&created.path).unwrap().as_deref(), Some("owner-b"));
+        assert!(read_worktree_owner(&fixture.repo).unwrap().is_none());
+        let roots = vec![custom.clone()];
+        let linked = list_worktrees_at_roots(Some(fixture.repo.clone()), &roots);
+        assert!(linked.iter().any(|item| item.path == created.path && item.owner_thread_id.as_deref() == Some("owner-b")));
+        let scanned = list_worktrees_at_roots(None, &roots);
+        assert!(scanned.iter().any(|item| item.path == created.path && item.owner_thread_id.as_deref() == Some("owner-b")));
+        assert_eq!(resolve_thread_project_worktree_at_roots("owner-b", &fixture.repo, &fixture.target(), &roots),
+            Some((fixture.target(), normalize_fs_path(&Path::new(&created.path).join("nested").to_string_lossy()))));
+        let path = owner_context(&created.path).unwrap().1.join("codex-thread.json");
+        assert!(fs::read_to_string(path).unwrap().ends_with('\n'));
+    }
+
+    #[test]
+    fn worktree_owner_metadata_distinguishes_missing_empty_corrupt_and_legacy_shared() {
+        let fixture = Fixture::new();
+        run_git(&fixture.repo, &["config", "codex.ownerThreadId", "legacy-shared"]).unwrap();
+        assert!(read_worktree_owner(&fixture.worktree).unwrap().is_none());
+        let path = owner_context(&fixture.worktree).unwrap().1.join("codex-thread.json");
+        for raw in ["{", "null", r#"{"version":2,"ownerThreadId":"x"}"#, r#"{"version":1,"ownerThreadId":42}"#, r#"{"ownerThreadId":"x"}"#] {
+            fs::write(&path, raw).unwrap(); assert!(read_worktree_owner(&fixture.worktree).is_err(), "{raw}");
+        }
+        set_worktree_owner_thread(&fixture.worktree, "").unwrap();
+        assert_eq!(read_worktree_owner(&fixture.worktree).unwrap(), Some(String::new()));
+        assert_eq!(run_git(&fixture.repo, &["config", "--get", "codex.ownerThreadId"]).unwrap().trim(), "legacy-shared");
+        fs::remove_file(&path).unwrap(); fs::create_dir(&path).unwrap();
+        assert!(read_worktree_owner(&fixture.worktree).is_err());
+        assert!(set_worktree_owner_thread(&fixture.worktree, "must-not-succeed").is_err());
+        assert!(path.is_dir(), "write failure must preserve existing path");
+    }
+
+    #[test]
+    fn worktree_owner_metadata_rejects_redirected_git_marker_without_external_write() {
+        let fixture = Fixture::new(); let other = Fixture::new();
+        let marker = Path::new(&fixture.worktree).join(".git"); let before = fs::read(&marker).unwrap();
+        fs::write(&marker, format!("gitdir: {}\n", Path::new(&other.repo).join(".git").to_string_lossy())).unwrap();
+        assert!(set_worktree_owner_thread(&fixture.worktree, "must-not-leak").is_err());
+        assert!(!Path::new(&other.repo).join(".git/codex-thread.json").exists());
+        fs::write(marker, before).unwrap();
+        assert!(read_worktree_owner(&fixture.worktree).unwrap().is_none());
     }
 
     #[test]
@@ -1570,7 +1596,8 @@ pub fn create_codex_worktree(
     }
 
     if let Some(ref tid) = owner_thread_id {
-        let _ = run_git(&worktree_path_str, &["config", "codex.ownerThreadId", tid]);
+        set_worktree_owner_thread(&worktree_path_str, tid).map_err(|error|
+            format!("工作树已创建并保留在 {worktree_path_str}，但所属会话元数据未保存：{error}"))?;
     }
 
     let norm_wt = normalize_fs_path(&worktree_path_str);
@@ -1794,9 +1821,34 @@ pub fn delete_worktree_with_cleanup_context(
     operation: crate::local_environment_setup::SetupOperation,
     shell: Option<String>,
 ) -> Result<WorktreeRemovalResult, String> {
+    delete_worktree_for_reason(worktree_path, git_dir, operation, shell, WorktreeRemovalReason::SettingsTargeted)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorktreeRemovalReason { SettingsTargeted, AutomaticCleanup }
+
+pub fn delete_worktree_for_reason(
+    worktree_path: &str,
+    git_dir: Option<String>,
+    operation: crate::local_environment_setup::SetupOperation,
+    shell: Option<String>,
+    reason: WorktreeRemovalReason,
+) -> Result<WorktreeRemovalResult, String> {
+    delete_worktree_with_guard(worktree_path, git_dir, operation, shell, reason, &|| Ok(()))
+}
+
+pub fn delete_worktree_with_guard(
+    worktree_path: &str,
+    git_dir: Option<String>,
+    operation: crate::local_environment_setup::SetupOperation,
+    shell: Option<String>,
+    reason: WorktreeRemovalReason,
+    guard: &dyn Fn() -> Result<(), String>,
+) -> Result<WorktreeRemovalResult, String> {
     operation.check()?;
     let target = worktree_checked_path(worktree_path)?;
     let _operation = WorktreeOperation::acquire(&target)?;
+    guard()?;
     let repo = worktree_checked_path(git_dir.as_deref().filter(|s| !s.trim().is_empty())
         .ok_or("删除工作树需要明确指定所属仓库。")?)?;
     let repo = worktree_path_string(&repo);
@@ -1813,6 +1865,9 @@ pub fn delete_worktree_with_cleanup_context(
     // that exception explicitly rather than implying the deleted checkout is recoverable.
     let snapshot_ref = match snapshot_worktree(&target) {
         Ok(reference) => Some(reference),
+        Err(error) if reason == WorktreeRemovalReason::AutomaticCleanup => {
+            return Err(format!("自动清理快照失败，工作树保留在 {}：{error}", worktree_path_string(&target)));
+        }
         Err(error) => {
             warnings.push(format!("恢复快照保存失败；本次删除没有可恢复快照：{error}"));
             None
@@ -1821,6 +1876,7 @@ pub fn delete_worktree_with_cleanup_context(
     let retained_error = |error: String| format!("工作树保留在 {}（已保存快照：{}）：{error}",
         worktree_path_string(&target), snapshot_ref.as_deref().unwrap_or("无"));
     operation.check().map_err(&retained_error)?;
+    guard().map_err(&retained_error)?;
     if let Some(warning) = crate::local_environment_setup::cleanup_worktree(&operation, &target, Path::new(&repo), shell).map_err(&retained_error)? {
         warnings.push(warning);
     }
@@ -1830,6 +1886,7 @@ pub fn delete_worktree_with_cleanup_context(
         return Err(retained_error("cleanup 后工作树身份已变化，未执行删除。".into()));
     }
     operation.check().map_err(&retained_error)?;
+    guard().map_err(&retained_error)?;
     run_git(&repo, &["worktree", "remove", "--force", &worktree_path_string(&target)])
         .map_err(|error| format!("删除工作树失败（已保存快照：{}）：{error}",
             snapshot_ref.as_deref().unwrap_or("无")))?;
@@ -2190,6 +2247,31 @@ mod worktree_removal_tests {
     }
 
     #[test]
+    fn automatic_cleanup_requires_snapshot_before_script_or_removal() {
+        let fixture = Fixture::new();
+        let marker = fixture.root.join("automatic-cleanup-ran");
+        let script = if cfg!(windows) {
+            format!("[IO.File]::WriteAllText('{}', 'cleanup')", marker.to_string_lossy().replace('\'', "''"))
+        } else { format!("printf cleanup > '{}'", marker.to_string_lossy()) };
+        cleanup_config(&fixture, &script);
+        let nested = Path::new(&fixture.checkout).join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        run_git(&nested.to_string_lossy(), &["init", "--quiet"]).unwrap();
+        let state = crate::local_environment_setup::SetupState::default();
+        let operation = state.prepare_operation("automatic-cleanup-test", "snapshot-failure").unwrap();
+        let error = delete_worktree_for_reason(&fixture.checkout, Some(fixture.repo.clone()), operation, None, WorktreeRemovalReason::AutomaticCleanup).unwrap_err();
+        assert!(error.contains("自动清理快照失败") && error.contains(&fixture.checkout), "{error}");
+        assert!(Path::new(&fixture.checkout).is_dir());
+        assert!(!marker.exists(), "cleanup must not run without a recovery snapshot");
+        assert!(registered_worktree_paths(&fixture.repo).unwrap().iter().any(|path| worktree_path_key(Path::new(path)) == worktree_path_key(Path::new(&fixture.checkout))));
+        // The same snapshot failure remains an explicit exception for manual settings deletion.
+        let result = fixture.delete().unwrap();
+        assert!(result.snapshot_ref.is_none());
+        assert!(marker.exists());
+        assert!(!Path::new(&fixture.checkout).exists());
+    }
+
+    #[test]
     fn initialized_submodule_snapshot_failure_and_locked_removal_do_not_claim_recoverability() {
         let fixture = Fixture::new();
         let source = Fixture::new();
@@ -2303,9 +2385,73 @@ pub fn repair_worktrees(cwd: &str) -> Result<String, String> {
     run_git(&repo, &["worktree", "repair"])
 }
 
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorktreeOwnerMetadata { version: u64, owner_thread_id: String }
+
+fn owner_context(cwd: &str) -> Result<(PathBuf, PathBuf, Vec<u8>), String> {
+    let cwd = worktree_checked_path(cwd)?;
+    let root = worktree_checked_path(run_git(&worktree_path_string(&cwd), &["rev-parse", "--show-toplevel"])?.trim())?;
+    if !cwd.starts_with(&root) { return Err("所属会话目标不属于当前工作树。".into()); }
+    let marker = root.join(".git");
+    worktree_checked_path(&marker.to_string_lossy())?;
+    let marker_content = if marker.is_file() { fs::read(&marker).map_err(|e| e.to_string())? } else { Vec::new() };
+    if !registered_worktree_paths(&worktree_path_string(&root))?.iter().any(|path| worktree_path_key(Path::new(path)) == worktree_path_key(&root)) {
+        return Err("所属会话目标不是其 Git 仓库登记的工作树。".into());
+    }
+    let git_dir = worktree_checked_path(run_git(&worktree_path_string(&root), &["rev-parse", "--absolute-git-dir"])?.trim())?;
+    let path = PathBuf::from(normalize_fs_path(run_git(&worktree_path_string(&root), &["rev-parse", "--path-format=absolute", "--git-path", "codex-thread.json"])?.trim()));
+    if worktree_path_key(&path) != worktree_path_key(&git_dir.join("codex-thread.json")) {
+        return Err("所属会话元数据不在工作树私有 Git 路径。".into());
+    }
+    Ok((root, git_dir, marker_content))
+}
+fn owner_file_is_regular(path: &Path) -> Result<(), String> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            let mut redirected = metadata.file_type().is_symlink();
+            #[cfg(windows)] { use std::os::windows::fs::MetadataExt; redirected |= metadata.file_attributes() & 0x400 != 0; }
+            if redirected || !metadata.is_file() { return Err("所属会话元数据必须是私有普通文件，不能是重定向路径。".into()); }
+            Ok(())
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+pub fn read_worktree_owner(cwd: &str) -> Result<Option<String>, String> {
+    let context = owner_context(cwd)?;
+    let path = context.1.join("codex-thread.json"); owner_file_is_regular(&path)?;
+    let raw = match fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("无法读取所属会话元数据：{error}")),
+    };
+    let value: WorktreeOwnerMetadata = serde_json::from_str(&raw).map_err(|error| format!("所属会话元数据结构无效：{error}"))?;
+    if value.version != 1 { return Err("所属会话元数据版本必须为 1。".into()); }
+    if owner_context(cwd)? != context { return Err("读取所属会话期间工作树身份已变化。".into()); }
+    Ok(Some(value.owner_thread_id))
+}
 pub fn set_worktree_owner_thread(worktree_path: &str, thread_id: &str) -> Result<(), String> {
-    run_git(worktree_path, &["config", "codex.ownerThreadId", thread_id])?;
-    Ok(())
+    static WRITE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = WRITE.lock().map_err(|error| error.to_string())?;
+    let context = owner_context(worktree_path)?;
+    if worktree_path_key(&worktree_checked_path(worktree_path)?) != worktree_path_key(&context.0) {
+        return Err("写入所属会话需要完整工作树根目录。".into());
+    }
+    let path = context.1.join("codex-thread.json"); owner_file_is_regular(&path)?;
+    let raw = format!("{}\n", serde_json::to_string_pretty(&WorktreeOwnerMetadata { version: 1, owner_thread_id: thread_id.into() }).map_err(|e| e.to_string())?);
+    let temporary = context.1.join(format!("codex-thread-{}.tmp", uuid::Uuid::new_v4()));
+    let result = (|| {
+        let mut file = fs::OpenOptions::new().create_new(true).write(true).open(&temporary).map_err(|e| e.to_string())?;
+        file.write_all(raw.as_bytes()).and_then(|_| file.sync_all()).map_err(|e| e.to_string())?; drop(file);
+        if owner_context(worktree_path)? != context { return Err("写入所属会话期间工作树身份已变化。".into()); }
+        owner_file_is_regular(&path)?;
+        fs::rename(&temporary, &path).map_err(|e| e.to_string())?;
+        if read_worktree_owner(worktree_path)?.as_deref() != Some(thread_id) { return Err("所属会话元数据已写入，但读回不一致。".into()); }
+        Ok(())
+    })();
+    if result.is_err() { let _ = fs::remove_file(temporary); }
+    result
 }
 
 pub fn check_gh_cli_status() -> GhCliStatus {

@@ -33,6 +33,9 @@ function Invoke-Step {
 }
 
 try {
+  Invoke-Step "Worktree cleanup planner against official golden cases" { node scripts/verify-worktree-policy.mjs }
+  Invoke-Step "Worktree cleanup lifecycle and recovery contracts" { node scripts/verify-worktree-cleanup-runtime.mjs }
+  Invoke-Step "Worktree preference component and progress contracts" { node scripts/verify-worktree-preferences-ui.mjs }
   Invoke-Step "Environment action App scope and native dispatch contracts" { node scripts/verify-environment-app-c.mjs }
   Invoke-Step "Local environment structured settings and selection contracts" { node scripts/verify-local-environments-ui-b.mjs }
   Invoke-Step "Local environment toolbar actions and selection scope" { node scripts/verify-environment-actions-c-ui.mjs }

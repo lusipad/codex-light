@@ -1,0 +1,1734 @@
+{
+  "sourceFile": "early-bootstrap-339-096ec1020e8592e0.js",
+  "sourceSha256": "25c8371f76e580829e8f387446901c5f09227fc645a0bce6efbfaaee2946ebc8",
+  "locale": "zh-CN",
+  "note": "Unchanged official pure function in isolated Node VM; localeCompare fixtures depend on the recorded ICU locale. Five-day host grace is outside planner.",
+  "cases": [
+    {
+      "id": "WB03-empty",
+      "input": {
+        "keepCount": 1,
+        "threadMetadataById": {},
+        "pinnedThreadIds": [],
+        "protectedWorktreeDirs": [],
+        "nowMs": 1793664000000,
+        "protectPreMigrationOwnerlessWorktrees": false,
+        "records": []
+      },
+      "expected": {
+        "candidates": [],
+        "eligibleCount": 0
+      }
+    },
+    {
+      "id": "WB03-total-at-limit",
+      "input": {
+        "keepCount": 3,
+        "threadMetadataById": {},
+        "pinnedThreadIds": [],
+        "protectedWorktreeDirs": [],
+        "nowMs": 1793664000000,
+        "protectPreMigrationOwnerlessWorktrees": false,
+        "records": [
+          {
+            "path": "C:/worktree/00",
+            "ownerThreadId": null,
+            "createdAtMs": 1793642400000
+          },
+          {
+            "path": "C:/worktree/01",
+            "ownerThreadId": null,
+            "createdAtMs": 1793649600000
+          },
+          {
+            "path": "C:/worktree/02",
+            "ownerThreadId": null,
+            "createdAtMs": 1793656800000
+          }
+        ]
+      },
+      "expected": {
+        "candidates": [],
+        "eligibleCount": 3
+      }
+    },
+    {
+      "id": "WB03-all-protected",
+      "input": {
+        "keepCount": 1,
+        "threadMetadataById": {},
+        "pinnedThreadIds": [],
+        "protectedWorktreeDirs": [
+          "C:/worktree/00",
+          "C:/worktree/01",
+          "C:/worktree/02",
+          "C:/worktree/03",
+          "C:/worktree/04"
+        ],
+        "nowMs": 1793664000000,
+        "protectPreMigrationOwnerlessWorktrees": false,
+        "records": [
+          {
+            "path": "C:/worktree/00",
+            "ownerThreadId": null,
+            "createdAtMs": 1793628000000
+          },
+          {
+            "path": "C:/worktree/01",
+            "ownerThreadId": null,
+            "createdAtMs": 1793635200000
+          },
+          {
+            "path": "C:/worktree/02",
+            "ownerThreadId": null,
+            "createdAtMs": 1793642400000
+          },
+          {
+            "path": "C:/worktree/03",
+            "ownerThreadId": null,
+            "createdAtMs": 1793649600000
+          },
+          {
+            "path": "C:/worktree/04",
+            "ownerThreadId": null,
+            "createdAtMs": 1793656800000
+          }
+        ]
+      },
+      "expected": {
+        "candidates": [],
+        "eligibleCount": 0
+      }
+    },
+    {
+      "id": "WB03-total20-protected10-keep15",
+      "input": {
+        "keepCount": 15,
+        "threadMetadataById": {},
+        "pinnedThreadIds": [],
+        "protectedWorktreeDirs": [
+          "C:/worktree/00",
+          "C:/worktree/01",
+          "C:/worktree/02",
+          "C:/worktree/03",
+          "C:/worktree/04",
+          "C:/worktree/05",
+          "C:/worktree/06",
+          "C:/worktree/07",
+          "C:/worktree/08",
+          "C:/worktree/09"
+        ],
+        "nowMs": 1793664000000,
+        "protectPreMigrationOwnerlessWorktrees": false,
+        "records": [
+          {
+            "path": "C:/worktree/00",
+            "ownerThreadId": null,
+            "createdAtMs": 1793520000000
+          },
+          {
+            "path": "C:/worktree/01",
+            "ownerThreadId": null,
+            "createdAtMs": 1793527200000
+          },
+          {
+            "path": "C:/worktree/02",
+            "ownerThreadId": null,
+            "createdAtMs": 1793534400000
+          },
+          {
+            "path": "C:/worktree/03",
+            "ownerThreadId": null,
+            "createdAtMs": 1793541600000
+          },
+          {
+            "path": "C:/worktree/04",
+            "ownerThreadId": null,
+            "createdAtMs": 1793548800000
+          },
+          {
+            "path": "C:/worktree/05",
+            "ownerThreadId": null,
+            "createdAtMs": 1793556000000
+          },
+          {
+            "path": "C:/worktree/06",
+            "ownerThreadId": null,
+            "createdAtMs": 1793563200000
+          },
+          {
+            "path": "C:/worktree/07",
+            "ownerThreadId": null,
+            "createdAtMs": 1793570400000
+          },
+          {
+            "path": "C:/worktree/08",
+            "ownerThreadId": null,
+            "createdAtMs": 1793577600000
+          },
+          {
+            "path": "C:/worktree/09",
+            "ownerThreadId": null,
+            "createdAtMs": 1793584800000
+          },
+          {
+            "path": "C:/worktree/10",
+            "ownerThreadId": null,
+            "createdAtMs": 1793592000000
+          },
+          {
+            "path": "C:/worktree/11",
+            "ownerThreadId": null,
+            "createdAtMs": 1793599200000
+          },
+          {
+            "path": "C:/worktree/12",
+            "ownerThreadId": null,
+            "createdAtMs": 1793606400000
+          },
+          {
+            "path": "C:/worktree/13",
+            "ownerThreadId": null,
+            "createdAtMs": 1793613600000
+          },
+          {
+            "path": "C:/worktree/14",
+            "ownerThreadId": null,
+            "createdAtMs": 1793620800000
+          },
+          {
+            "path": "C:/worktree/15",
+            "ownerThreadId": null,
+            "createdAtMs": 1793628000000
+          },
+          {
+            "path": "C:/worktree/16",
+            "ownerThreadId": null,
+            "createdAtMs": 1793635200000
+          },
+          {
+            "path": "C:/worktree/17",
+            "ownerThreadId": null,
+            "createdAtMs": 1793642400000
+          },
+          {
+            "path": "C:/worktree/18",
+            "ownerThreadId": null,
+            "createdAtMs": 1793649600000
+          },
+          {
+            "path": "C:/worktree/19",
+            "ownerThreadId": null,
+            "createdAtMs": 1793656800000
+          }
+        ]
+      },
+      "expected": {
+        "candidates": [],
+        "eligibleCount": 10
+      }
+    },
+    {
+      "id": "WB03-eligible20-protected5-keep15",
+      "input": {
+        "keepCount": 15,
+        "threadMetadataById": {},
+        "pinnedThreadIds": [],
+        "protectedWorktreeDirs": [
+          "C:/worktree/00",
+          "C:/worktree/01",
+          "C:/worktree/02",
+          "C:/worktree/03",
+          "C:/worktree/04"
+        ],
+        "nowMs": 1793664000000,
+        "protectPreMigrationOwnerlessWorktrees": false,
+        "records": [
+          {
+            "path": "C:/worktree/00",
+            "ownerThreadId": null,
+            "createdAtMs": 1793484000000
+          },
+          {
+            "path": "C:/worktree/01",
+            "ownerThreadId": null,
+            "createdAtMs": 1793491200000
+          },
+          {
+            "path": "C:/worktree/02",
+            "ownerThreadId": null,
+            "createdAtMs": 1793498400000
+          },
+          {
+            "path": "C:/worktree/03",
+            "ownerThreadId": null,
+            "createdAtMs": 1793505600000
+          },
+          {
+            "path": "C:/worktree/04",
+            "ownerThreadId": null,
+            "createdAtMs": 1793512800000
+          },
+          {
+            "path": "C:/worktree/05",
+            "ownerThreadId": null,
+            "createdAtMs": 1793520000000
+          },
+          {
+            "path": "C:/worktree/06",
+            "ownerThreadId": null,
+            "createdAtMs": 1793527200000
+          },
+          {
+            "path": "C:/worktree/07",
+            "ownerThreadId": null,
+            "createdAtMs": 1793534400000
+          },
+          {
+            "path": "C:/worktree/08",
+            "ownerThreadId": null,
+            "createdAtMs": 1793541600000
+          },
+          {
+            "path": "C:/worktree/09",
+            "ownerThreadId": null,
+            "createdAtMs": 1793548800000
+          },
+          {
+            "path": "C:/worktree/10",
+            "ownerThreadId": null,
+            "createdAtMs": 1793556000000
+          },
+          {
+            "path": "C:/worktree/11",
+            "ownerThreadId": null,
+            "createdAtMs": 1793563200000
+          },
+          {
+            "path": "C:/worktree/12",
+            "ownerThreadId": null,
+            "createdAtMs": 1793570400000
+          },
+          {
+            "path": "C:/worktree/13",
+            "ownerThreadId": null,
+            "createdAtMs": 1793577600000
+          },
+          {
+            "path": "C:/worktree/14",
+            "ownerThreadId": null,
+            "createdAtMs": 1793584800000
+          },
+          {
+            "path": "C:/worktree/15",
+            "ownerThreadId": null,
+            "createdAtMs": 1793592000000
+          },
+          {
+            "path": "C:/worktree/16",
+            "ownerThreadId": null,
+            "createdAtMs": 1793599200000
+          },
+          {
+            "path": "C:/worktree/17",
+            "ownerThreadId": null,
+            "createdAtMs": 1793606400000
+          },
+          {
+            "path": "C:/worktree/18",
+            "ownerThreadId": null,
+            "createdAtMs": 1793613600000
+          },
+          {
+            "path": "C:/worktree/19",
+            "ownerThreadId": null,
+            "createdAtMs": 1793620800000
+          },
+          {
+            "path": "C:/worktree/20",
+            "ownerThreadId": null,
+            "createdAtMs": 1793628000000
+          },
+          {
+            "path": "C:/worktree/21",
+            "ownerThreadId": null,
+            "createdAtMs": 1793635200000
+          },
+          {
+            "path": "C:/worktree/22",
+            "ownerThreadId": null,
+            "createdAtMs": 1793642400000
+          },
+          {
+            "path": "C:/worktree/23",
+            "ownerThreadId": null,
+            "createdAtMs": 1793649600000
+          },
+          {
+            "path": "C:/worktree/24",
+            "ownerThreadId": null,
+            "createdAtMs": 1793656800000
+          }
+        ]
+      },
+      "expected": {
+        "candidates": [
+          {
+            "path": "C:/worktree/05",
+            "ownerThreadId": null,
+            "createdAtMs": 1793520000000
+          },
+          {
+            "path": "C:/worktree/06",
+            "ownerThreadId": null,
+            "createdAtMs": 1793527200000
+          },
+          {
+            "path": "C:/worktree/07",
+            "ownerThreadId": null,
+            "createdAtMs": 1793534400000
+          },
+          {
+            "path": "C:/worktree/08",
+            "ownerThreadId": null,
+            "createdAtMs": 1793541600000
+          },
+          {
+            "path": "C:/worktree/09",
+            "ownerThreadId": null,
+            "createdAtMs": 1793548800000
+          }
+        ],
+        "eligibleCount": 20
+      }
+    },
+    {
+      "id": "WB03-no20-deletion-cap",
+      "input": {
+        "keepCount": 2,
+        "threadMetadataById": {},
+        "pinnedThreadIds": [],
+        "protectedWorktreeDirs": [],
+        "nowMs": 1793664000000,
+        "protectPreMigrationOwnerlessWorktrees": false,
+        "records": [
+          {
+            "path": "C:/worktree/00",
+            "ownerThreadId": null,
+            "createdAtMs": 1793304000000
+          },
+          {
+            "path": "C:/worktree/01",
+            "ownerThreadId": null,
+            "createdAtMs": 1793311200000
+          },
+          {
+            "path": "C:/worktree/02",
+            "ownerThreadId": null,
+            "createdAtMs": 1793318400000
+          },
+          {
+            "path": "C:/worktree/03",
+            "ownerThreadId": null,
+            "createdAtMs": 1793325600000
+          },
+          {
+            "path": "C:/worktree/04",
+            "ownerThreadId": null,
+            "createdAtMs": 1793332800000
+          },
+          {
+            "path": "C:/worktree/05",
+            "ownerThreadId": null,
+            "createdAtMs": 1793340000000
+          },
+          {
+            "path": "C:/worktree/06",
+            "ownerThreadId": null,
+            "createdAtMs": 1793347200000
+          },
+          {
+            "path": "C:/worktree/07",
+            "ownerThreadId": null,
+            "createdAtMs": 1793354400000
+          },
+          {
+            "path": "C:/worktree/08",
+            "ownerThreadId": null,
+            "createdAtMs": 1793361600000
+          },
+          {
+            "path": "C:/worktree/09",
+            "ownerThreadId": null,
+            "createdAtMs": 1793368800000
+          },
+          {
+            "path": "C:/worktree/10",
+            "ownerThreadId": null,
+            "createdAtMs": 1793376000000
+          },
+          {
+            "path": "C:/worktree/11",
+            "ownerThreadId": null,
+            "createdAtMs": 1793383200000
+          },
+          {
+            "path": "C:/worktree/12",
+            "ownerThreadId": null,
+            "createdAtMs": 1793390400000
+          },
+          {
+            "path": "C:/worktree/13",
+            "ownerThreadId": null,
+            "createdAtMs": 1793397600000
+          },
+          {
+            "path": "C:/worktree/14",
+            "ownerThreadId": null,
+            "createdAtMs": 1793404800000
+          },
+          {
+            "path": "C:/worktree/15",
+            "ownerThreadId": null,
+            "createdAtMs": 1793412000000
+          },
+          {
+            "path": "C:/worktree/16",
+            "ownerThreadId": null,
+            "createdAtMs": 1793419200000
+          },
+          {
+            "path": "C:/worktree/17",
+            "ownerThreadId": null,
+            "createdAtMs": 1793426400000
+          },
+          {
+            "path": "C:/worktree/18",
+            "ownerThreadId": null,
+            "createdAtMs": 1793433600000
+          },
+          {
+            "path": "C:/worktree/19",
+            "ownerThreadId": null,
+            "createdAtMs": 1793440800000
+          },
+          {
+            "path": "C:/worktree/20",
+            "ownerThreadId": null,
+            "createdAtMs": 1793448000000
+          },
+          {
+            "path": "C:/worktree/21",
+            "ownerThreadId": null,
+            "createdAtMs": 1793455200000
+          },
+          {
+            "path": "C:/worktree/22",
+            "ownerThreadId": null,
+            "createdAtMs": 1793462400000
+          },
+          {
+            "path": "C:/worktree/23",
+            "ownerThreadId": null,
+            "createdAtMs": 1793469600000
+          },
+          {
+            "path": "C:/worktree/24",
+            "ownerThreadId": null,
+            "createdAtMs": 1793476800000
+          },
+          {
+            "path": "C:/worktree/25",
+            "ownerThreadId": null,
+            "createdAtMs": 1793484000000
+          },
+          {
+            "path": "C:/worktree/26",
+            "ownerThreadId": null,
+            "createdAtMs": 1793491200000
+          },
+          {
+            "path": "C:/worktree/27",
+            "ownerThreadId": null,
+            "createdAtMs": 1793498400000
+          },
+          {
+            "path": "C:/worktree/28",
+            "ownerThreadId": null,
+            "createdAtMs": 1793505600000
+          },
+          {
+            "path": "C:/worktree/29",
+            "ownerThreadId": null,
+            "createdAtMs": 1793512800000
+          },
+          {
+            "path": "C:/worktree/30",
+            "ownerThreadId": null,
+            "createdAtMs": 1793520000000
+          },
+          {
+            "path": "C:/worktree/31",
+            "ownerThreadId": null,
+            "createdAtMs": 1793527200000
+          },
+          {
+            "path": "C:/worktree/32",
+            "ownerThreadId": null,
+            "createdAtMs": 1793534400000
+          },
+          {
+            "path": "C:/worktree/33",
+            "ownerThreadId": null,
+            "createdAtMs": 1793541600000
+          },
+          {
+            "path": "C:/worktree/34",
+            "ownerThreadId": null,
+            "createdAtMs": 1793548800000
+          },
+          {
+            "path": "C:/worktree/35",
+            "ownerThreadId": null,
+            "createdAtMs": 1793556000000
+          },
+          {
+            "path": "C:/worktree/36",
+            "ownerThreadId": null,
+            "createdAtMs": 1793563200000
+          },
+          {
+            "path": "C:/worktree/37",
+            "ownerThreadId": null,
+            "createdAtMs": 1793570400000
+          },
+          {
+            "path": "C:/worktree/38",
+            "ownerThreadId": null,
+            "createdAtMs": 1793577600000
+          },
+          {
+            "path": "C:/worktree/39",
+            "ownerThreadId": null,
+            "createdAtMs": 1793584800000
+          },
+          {
+            "path": "C:/worktree/40",
+            "ownerThreadId": null,
+            "createdAtMs": 1793592000000
+          },
+          {
+            "path": "C:/worktree/41",
+            "ownerThreadId": null,
+            "createdAtMs": 1793599200000
+          },
+          {
+            "path": "C:/worktree/42",
+            "ownerThreadId": null,
+            "createdAtMs": 1793606400000
+          },
+          {
+            "path": "C:/worktree/43",
+            "ownerThreadId": null,
+            "createdAtMs": 1793613600000
+          },
+          {
+            "path": "C:/worktree/44",
+            "ownerThreadId": null,
+            "createdAtMs": 1793620800000
+          },
+          {
+            "path": "C:/worktree/45",
+            "ownerThreadId": null,
+            "createdAtMs": 1793628000000
+          },
+          {
+            "path": "C:/worktree/46",
+            "ownerThreadId": null,
+            "createdAtMs": 1793635200000
+          },
+          {
+            "path": "C:/worktree/47",
+            "ownerThreadId": null,
+            "createdAtMs": 1793642400000
+          },
+          {
+            "path": "C:/worktree/48",
+            "ownerThreadId": null,
+            "createdAtMs": 1793649600000
+          },
+          {
+            "path": "C:/worktree/49",
+            "ownerThreadId": null,
+            "createdAtMs": 1793656800000
+          }
+        ]
+      },
+      "expected": {
+        "candidates": [
+          {
+            "path": "C:/worktree/00",
+            "ownerThreadId": null,
+            "createdAtMs": 1793304000000
+          },
+          {
+            "path": "C:/worktree/01",
+            "ownerThreadId": null,
+            "createdAtMs": 1793311200000
+          },
+          {
+            "path": "C:/worktree/02",
+            "ownerThreadId": null,
+            "createdAtMs": 1793318400000
+          },
+          {
+            "path": "C:/worktree/03",
+            "ownerThreadId": null,
+            "createdAtMs": 1793325600000
+          },
+          {
+            "path": "C:/worktree/04",
+            "ownerThreadId": null,
+            "createdAtMs": 1793332800000
+          },
+          {
+            "path": "C:/worktree/05",
+            "ownerThreadId": null,
+            "createdAtMs": 1793340000000
+          },
+          {
+            "path": "C:/worktree/06",
+            "ownerThreadId": null,
+            "createdAtMs": 1793347200000
+          },
+          {
+            "path": "C:/worktree/07",
+            "ownerThreadId": null,
+            "createdAtMs": 1793354400000
+          },
+          {
+            "path": "C:/worktree/08",
+            "ownerThreadId": null,
+            "createdAtMs": 1793361600000
+          },
+          {
+            "path": "C:/worktree/09",
+            "ownerThreadId": null,
+            "createdAtMs": 1793368800000
+          },
+          {
+            "path": "C:/worktree/10",
+            "ownerThreadId": null,
+            "createdAtMs": 1793376000000
+          },
+          {
+            "path": "C:/worktree/11",
+            "ownerThreadId": null,
+            "createdAtMs": 1793383200000
+          },
+          {
+            "path": "C:/worktree/12",
+            "ownerThreadId": null,
+            "createdAtMs": 1793390400000
+          },
+          {
+            "path": "C:/worktree/13",
+            "ownerThreadId": null,
+            "createdAtMs": 1793397600000
+          },
+          {
+            "path": "C:/worktree/14",
+            "ownerThreadId": null,
+            "createdAtMs": 1793404800000
+          },
+          {
+            "path": "C:/worktree/15",
+            "ownerThreadId": null,
+            "createdAtMs": 1793412000000
+          },
+          {
+            "path": "C:/worktree/16",
+            "ownerThreadId": null,
+            "createdAtMs": 1793419200000
+          },
+          {
+            "path": "C:/worktree/17",
+            "ownerThreadId": null,
+            "createdAtMs": 1793426400000
+          },
+          {
+            "path": "C:/worktree/18",
+            "ownerThreadId": null,
+            "createdAtMs": 1793433600000
+          },
+          {
+            "path": "C:/worktree/19",
+            "ownerThreadId": null,
+            "createdAtMs": 1793440800000
+          },
+          {
+            "path": "C:/worktree/20",
+            "ownerThreadId": null,
+            "createdAtMs": 1793448000000
+          },
+          {
+            "path": "C:/worktree/21",
+            "ownerThreadId": null,
+            "createdAtMs": 1793455200000
+          },
+          {
+            "path": "C:/worktree/22",
+            "ownerThreadId": null,
+            "createdAtMs": 1793462400000
+          },
+          {
+            "path": "C:/worktree/23",
+            "ownerThreadId": null,
+            "createdAtMs": 1793469600000
+          },
+          {
+            "path": "C:/worktree/24",
+            "ownerThreadId": null,
+            "createdAtMs": 1793476800000
+          },
+          {
+            "path": "C:/worktree/25",
+            "ownerThreadId": null,
+            "createdAtMs": 1793484000000
+          },
+          {
+            "path": "C:/worktree/26",
+            "ownerThreadId": null,
+            "createdAtMs": 1793491200000
+          },
+          {
+            "path": "C:/worktree/27",
+            "ownerThreadId": null,
+            "createdAtMs": 1793498400000
+          },
+          {
+            "path": "C:/worktree/28",
+            "ownerThreadId": null,
+            "createdAtMs": 1793505600000
+          },
+          {
+            "path": "C:/worktree/29",
+            "ownerThreadId": null,
+            "createdAtMs": 1793512800000
+          },
+          {
+            "path": "C:/worktree/30",
+            "ownerThreadId": null,
+            "createdAtMs": 1793520000000
+          },
+          {
+            "path": "C:/worktree/31",
+            "ownerThreadId": null,
+            "createdAtMs": 1793527200000
+          },
+          {
+            "path": "C:/worktree/32",
+            "ownerThreadId": null,
+            "createdAtMs": 1793534400000
+          },
+          {
+            "path": "C:/worktree/33",
+            "ownerThreadId": null,
+            "createdAtMs": 1793541600000
+          },
+          {
+            "path": "C:/worktree/34",
+            "ownerThreadId": null,
+            "createdAtMs": 1793548800000
+          },
+          {
+            "path": "C:/worktree/35",
+            "ownerThreadId": null,
+            "createdAtMs": 1793556000000
+          },
+          {
+            "path": "C:/worktree/36",
+            "ownerThreadId": null,
+            "createdAtMs": 1793563200000
+          },
+          {
+            "path": "C:/worktree/37",
+            "ownerThreadId": null,
+            "createdAtMs": 1793570400000
+          },
+          {
+            "path": "C:/worktree/38",
+            "ownerThreadId": null,
+            "createdAtMs": 1793577600000
+          },
+          {
+            "path": "C:/worktree/39",
+            "ownerThreadId": null,
+            "createdAtMs": 1793584800000
+          },
+          {
+            "path": "C:/worktree/40",
+            "ownerThreadId": null,
+            "createdAtMs": 1793592000000
+          },
+          {
+            "path": "C:/worktree/41",
+            "ownerThreadId": null,
+            "createdAtMs": 1793599200000
+          },
+          {
+            "path": "C:/worktree/42",
+            "ownerThreadId": null,
+            "createdAtMs": 1793606400000
+          },
+          {
+            "path": "C:/worktree/43",
+            "ownerThreadId": null,
+            "createdAtMs": 1793613600000
+          },
+          {
+            "path": "C:/worktree/44",
+            "ownerThreadId": null,
+            "createdAtMs": 1793620800000
+          },
+          {
+            "path": "C:/worktree/45",
+            "ownerThreadId": null,
+            "createdAtMs": 1793628000000
+          },
+          {
+            "path": "C:/worktree/46",
+            "ownerThreadId": null,
+            "createdAtMs": 1793635200000
+          },
+          {
+            "path": "C:/worktree/47",
+            "ownerThreadId": null,
+            "createdAtMs": 1793642400000
+          }
+        ],
+        "eligibleCount": 50
+      }
+    },
+    {
+      "id": "WB03-ownerless-before-owned",
+      "input": {
+        "keepCount": 1,
+        "threadMetadataById": {
+          "a": {
+            "updatedAtMs": -100,
+            "isInProgress": false
+          }
+        },
+        "pinnedThreadIds": [],
+        "protectedWorktreeDirs": [],
+        "nowMs": 1793664000000,
+        "protectPreMigrationOwnerlessWorktrees": false,
+        "records": [
+          {
+            "path": "C:/owned",
+            "ownerThreadId": "a",
+            "createdAtMs": 0
+          },
+          {
+            "path": "C:/unknown-time",
+            "ownerThreadId": null,
+            "createdAtMs": null
+          },
+          {
+            "path": "C:/old",
+            "ownerThreadId": null,
+            "createdAtMs": 1
+          },
+          {
+            "path": "C:/recent",
+            "ownerThreadId": null,
+            "createdAtMs": 1793660399999
+          }
+        ]
+      },
+      "expected": {
+        "candidates": [
+          {
+            "path": "C:/old",
+            "ownerThreadId": null,
+            "createdAtMs": 1
+          },
+          {
+            "path": "C:/recent",
+            "ownerThreadId": null,
+            "createdAtMs": 1793660399999
+          },
+          {
+            "path": "C:/unknown-time",
+            "ownerThreadId": null,
+            "createdAtMs": null
+          }
+        ],
+        "eligibleCount": 4
+      }
+    },
+    {
+      "id": "WB03-missing-owned-metadata",
+      "input": {
+        "keepCount": 1,
+        "threadMetadataById": {
+          "a": null,
+          "b": {
+            "updatedAtMs": null,
+            "isInProgress": false
+          },
+          "c": {
+            "updatedAtMs": 1,
+            "isInProgress": false
+          }
+        },
+        "pinnedThreadIds": [],
+        "protectedWorktreeDirs": [],
+        "nowMs": 1793664000000,
+        "protectPreMigrationOwnerlessWorktrees": false,
+        "records": [
+          {
+            "path": "C:/z",
+            "ownerThreadId": "z",
+            "createdAtMs": 1
+          },
+          {
+            "path": "C:/a",
+            "ownerThreadId": "a",
+            "createdAtMs": 1
+          },
+          {
+            "path": "C:/b",
+            "ownerThreadId": "b",
+            "createdAtMs": 1
+          },
+          {
+            "path": "C:/c",
+            "ownerThreadId": "c",
+            "createdAtMs": 1
+          }
+        ]
+      },
+      "expected": {
+        "candidates": [
+          {
+            "path": "C:/a",
+            "ownerThreadId": "a",
+            "createdAtMs": 1
+          },
+          {
+            "path": "C:/b",
+            "ownerThreadId": "b",
+            "createdAtMs": 1
+          },
+          {
+            "path": "C:/z",
+            "ownerThreadId": "z",
+            "createdAtMs": 1
+          }
+        ],
+        "eligibleCount": 4
+      }
+    },
+    {
+      "id": "WB03-locale-nonascii-and-canonical-stability",
+      "input": {
+        "keepCount": 1,
+        "threadMetadataById": {},
+        "pinnedThreadIds": [],
+        "protectedWorktreeDirs": [],
+        "nowMs": 1793664000000,
+        "protectPreMigrationOwnerlessWorktrees": false,
+        "records": [
+          {
+            "path": "C:/中",
+            "ownerThreadId": null,
+            "createdAtMs": 1
+          },
+          {
+            "path": "C:/张",
+            "ownerThreadId": null,
+            "createdAtMs": 1
+          },
+          {
+            "path": "C:/阿",
+            "ownerThreadId": null,
+            "createdAtMs": 1
+          },
+          {
+            "path": "C:/é",
+            "ownerThreadId": null,
+            "createdAtMs": 1
+          },
+          {
+            "path": "C:/é",
+            "ownerThreadId": null,
+            "createdAtMs": 1
+          },
+          {
+            "path": "C:/e",
+            "ownerThreadId": null,
+            "createdAtMs": 1
+          },
+          {
+            "path": "C:/E",
+            "ownerThreadId": null,
+            "createdAtMs": 1
+          },
+          {
+            "path": "C:/a-2",
+            "ownerThreadId": null,
+            "createdAtMs": 1
+          },
+          {
+            "path": "C:/a_1",
+            "ownerThreadId": null,
+            "createdAtMs": 1
+          },
+          {
+            "path": "C:/😀",
+            "ownerThreadId": null,
+            "createdAtMs": 1
+          },
+          {
+            "path": "C:/2",
+            "ownerThreadId": null,
+            "createdAtMs": 1
+          },
+          {
+            "path": "C:/10",
+            "ownerThreadId": null,
+            "createdAtMs": 1
+          }
+        ]
+      },
+      "expected": {
+        "candidates": [
+          {
+            "path": "C:/😀",
+            "ownerThreadId": null,
+            "createdAtMs": 1
+          },
+          {
+            "path": "C:/10",
+            "ownerThreadId": null,
+            "createdAtMs": 1
+          },
+          {
+            "path": "C:/2",
+            "ownerThreadId": null,
+            "createdAtMs": 1
+          },
+          {
+            "path": "C:/阿",
+            "ownerThreadId": null,
+            "createdAtMs": 1
+          },
+          {
+            "path": "C:/张",
+            "ownerThreadId": null,
+            "createdAtMs": 1
+          },
+          {
+            "path": "C:/中",
+            "ownerThreadId": null,
+            "createdAtMs": 1
+          },
+          {
+            "path": "C:/a_1",
+            "ownerThreadId": null,
+            "createdAtMs": 1
+          },
+          {
+            "path": "C:/a-2",
+            "ownerThreadId": null,
+            "createdAtMs": 1
+          },
+          {
+            "path": "C:/é",
+            "ownerThreadId": null,
+            "createdAtMs": 1
+          },
+          {
+            "path": "C:/é",
+            "ownerThreadId": null,
+            "createdAtMs": 1
+          },
+          {
+            "path": "C:/e",
+            "ownerThreadId": null,
+            "createdAtMs": 1
+          }
+        ],
+        "eligibleCount": 12
+      }
+    },
+    {
+      "id": "WB03-owned-locale-tie",
+      "input": {
+        "keepCount": 1,
+        "threadMetadataById": {},
+        "pinnedThreadIds": [],
+        "protectedWorktreeDirs": [],
+        "nowMs": 1793664000000,
+        "protectPreMigrationOwnerlessWorktrees": false,
+        "records": [
+          {
+            "path": "C:/中",
+            "ownerThreadId": "中",
+            "createdAtMs": 1
+          },
+          {
+            "path": "C:/阿",
+            "ownerThreadId": "阿",
+            "createdAtMs": 1
+          },
+          {
+            "path": "C:/é",
+            "ownerThreadId": "é",
+            "createdAtMs": 1
+          },
+          {
+            "path": "C:/a",
+            "ownerThreadId": "a",
+            "createdAtMs": 1
+          },
+          {
+            "path": "C:/A",
+            "ownerThreadId": "A",
+            "createdAtMs": 1
+          }
+        ]
+      },
+      "expected": {
+        "candidates": [
+          {
+            "path": "C:/阿",
+            "ownerThreadId": "阿",
+            "createdAtMs": 1
+          },
+          {
+            "path": "C:/中",
+            "ownerThreadId": "中",
+            "createdAtMs": 1
+          },
+          {
+            "path": "C:/a",
+            "ownerThreadId": "a",
+            "createdAtMs": 1
+          },
+          {
+            "path": "C:/A",
+            "ownerThreadId": "A",
+            "createdAtMs": 1
+          }
+        ],
+        "eligibleCount": 5
+      }
+    },
+    {
+      "id": "WB03-path-protection-covers-duplicate-record",
+      "input": {
+        "keepCount": 1,
+        "threadMetadataById": {},
+        "pinnedThreadIds": [
+          "pin"
+        ],
+        "protectedWorktreeDirs": [],
+        "nowMs": 1793664000000,
+        "protectPreMigrationOwnerlessWorktrees": false,
+        "records": [
+          {
+            "path": "C:/same",
+            "ownerThreadId": "pin",
+            "createdAtMs": 0
+          },
+          {
+            "path": "C:/same",
+            "ownerThreadId": null,
+            "createdAtMs": 0
+          },
+          {
+            "path": "C:/free",
+            "ownerThreadId": null,
+            "createdAtMs": 0
+          }
+        ]
+      },
+      "expected": {
+        "candidates": [],
+        "eligibleCount": 1
+      }
+    },
+    {
+      "id": "WB04-newborn-one-ms-before-hour",
+      "input": {
+        "keepCount": 1,
+        "threadMetadataById": {},
+        "pinnedThreadIds": [],
+        "protectedWorktreeDirs": [],
+        "nowMs": 1793664000000,
+        "protectPreMigrationOwnerlessWorktrees": false,
+        "records": [
+          {
+            "path": "C:/newborn",
+            "ownerThreadId": null,
+            "createdAtMs": 1793660400001
+          },
+          {
+            "path": "C:/old",
+            "ownerThreadId": null,
+            "createdAtMs": 0
+          },
+          {
+            "path": "C:/older",
+            "ownerThreadId": null,
+            "createdAtMs": -1
+          }
+        ]
+      },
+      "expected": {
+        "candidates": [
+          {
+            "path": "C:/older",
+            "ownerThreadId": null,
+            "createdAtMs": -1
+          }
+        ],
+        "eligibleCount": 2
+      }
+    },
+    {
+      "id": "WB04-newborn-exact-hour",
+      "input": {
+        "keepCount": 1,
+        "threadMetadataById": {},
+        "pinnedThreadIds": [],
+        "protectedWorktreeDirs": [],
+        "nowMs": 1793664000000,
+        "protectPreMigrationOwnerlessWorktrees": false,
+        "records": [
+          {
+            "path": "C:/hour",
+            "ownerThreadId": null,
+            "createdAtMs": 1793660400000
+          },
+          {
+            "path": "C:/old",
+            "ownerThreadId": null,
+            "createdAtMs": 0
+          }
+        ]
+      },
+      "expected": {
+        "candidates": [
+          {
+            "path": "C:/old",
+            "ownerThreadId": null,
+            "createdAtMs": 0
+          }
+        ],
+        "eligibleCount": 2
+      }
+    },
+    {
+      "id": "WB04-newborn-one-ms-after-hour",
+      "input": {
+        "keepCount": 1,
+        "threadMetadataById": {},
+        "pinnedThreadIds": [],
+        "protectedWorktreeDirs": [],
+        "nowMs": 1793664000000,
+        "protectPreMigrationOwnerlessWorktrees": false,
+        "records": [
+          {
+            "path": "C:/hour",
+            "ownerThreadId": null,
+            "createdAtMs": 1793660399999
+          },
+          {
+            "path": "C:/old",
+            "ownerThreadId": null,
+            "createdAtMs": 0
+          }
+        ]
+      },
+      "expected": {
+        "candidates": [
+          {
+            "path": "C:/old",
+            "ownerThreadId": null,
+            "createdAtMs": 0
+          }
+        ],
+        "eligibleCount": 2
+      }
+    },
+    {
+      "id": "WB04-future-protected",
+      "input": {
+        "keepCount": 1,
+        "threadMetadataById": {},
+        "pinnedThreadIds": [],
+        "protectedWorktreeDirs": [],
+        "nowMs": 1793664000000,
+        "protectPreMigrationOwnerlessWorktrees": false,
+        "records": [
+          {
+            "path": "C:/future",
+            "ownerThreadId": null,
+            "createdAtMs": 1793664000001
+          },
+          {
+            "path": "C:/old",
+            "ownerThreadId": null,
+            "createdAtMs": 0
+          },
+          {
+            "path": "C:/older",
+            "ownerThreadId": null,
+            "createdAtMs": -1
+          }
+        ]
+      },
+      "expected": {
+        "candidates": [
+          {
+            "path": "C:/older",
+            "ownerThreadId": null,
+            "createdAtMs": -1
+          }
+        ],
+        "eligibleCount": 2
+      }
+    },
+    {
+      "id": "WB04-unknown-birth-not-protected",
+      "input": {
+        "keepCount": 1,
+        "threadMetadataById": {},
+        "pinnedThreadIds": [],
+        "protectedWorktreeDirs": [],
+        "nowMs": 1793664000000,
+        "protectPreMigrationOwnerlessWorktrees": false,
+        "records": [
+          {
+            "path": "C:/unknown",
+            "ownerThreadId": null,
+            "createdAtMs": null
+          },
+          {
+            "path": "C:/old",
+            "ownerThreadId": null,
+            "createdAtMs": 0
+          }
+        ]
+      },
+      "expected": {
+        "candidates": [
+          {
+            "path": "C:/old",
+            "ownerThreadId": null,
+            "createdAtMs": 0
+          }
+        ],
+        "eligibleCount": 2
+      }
+    },
+    {
+      "id": "WB04-owned-recent-birth-not-newborn-protected",
+      "input": {
+        "keepCount": 1,
+        "threadMetadataById": {},
+        "pinnedThreadIds": [],
+        "protectedWorktreeDirs": [],
+        "nowMs": 1793664000000,
+        "protectPreMigrationOwnerlessWorktrees": false,
+        "records": [
+          {
+            "path": "C:/owned",
+            "ownerThreadId": "a",
+            "createdAtMs": 1793664000001
+          },
+          {
+            "path": "C:/old",
+            "ownerThreadId": null,
+            "createdAtMs": 0
+          }
+        ]
+      },
+      "expected": {
+        "candidates": [
+          {
+            "path": "C:/old",
+            "ownerThreadId": null,
+            "createdAtMs": 0
+          }
+        ],
+        "eligibleCount": 2
+      }
+    },
+    {
+      "id": "WB04-migration-before-at-after",
+      "input": {
+        "keepCount": 1,
+        "threadMetadataById": {},
+        "pinnedThreadIds": [],
+        "protectedWorktreeDirs": [],
+        "nowMs": 1793664000000,
+        "protectPreMigrationOwnerlessWorktrees": true,
+        "records": [
+          {
+            "path": "C:/before",
+            "ownerThreadId": null,
+            "createdAtMs": 1771631999999
+          },
+          {
+            "path": "C:/at",
+            "ownerThreadId": null,
+            "createdAtMs": 1771632000000
+          },
+          {
+            "path": "C:/after",
+            "ownerThreadId": null,
+            "createdAtMs": 1771632000001
+          }
+        ]
+      },
+      "expected": {
+        "candidates": [
+          {
+            "path": "C:/at",
+            "ownerThreadId": null,
+            "createdAtMs": 1771632000000
+          }
+        ],
+        "eligibleCount": 2
+      }
+    },
+    {
+      "id": "WB04-migration-protection-disabled",
+      "input": {
+        "keepCount": 1,
+        "threadMetadataById": {},
+        "pinnedThreadIds": [],
+        "protectedWorktreeDirs": [],
+        "nowMs": 1793664000000,
+        "protectPreMigrationOwnerlessWorktrees": false,
+        "records": [
+          {
+            "path": "C:/before",
+            "ownerThreadId": null,
+            "createdAtMs": 1771631999999
+          },
+          {
+            "path": "C:/at",
+            "ownerThreadId": null,
+            "createdAtMs": 1771632000000
+          }
+        ]
+      },
+      "expected": {
+        "candidates": [
+          {
+            "path": "C:/before",
+            "ownerThreadId": null,
+            "createdAtMs": 1771631999999
+          }
+        ],
+        "eligibleCount": 2
+      }
+    },
+    {
+      "id": "WB04-owned-not-migration-protected",
+      "input": {
+        "keepCount": 1,
+        "threadMetadataById": {},
+        "pinnedThreadIds": [],
+        "protectedWorktreeDirs": [],
+        "nowMs": 1793664000000,
+        "protectPreMigrationOwnerlessWorktrees": true,
+        "records": [
+          {
+            "path": "C:/owned",
+            "ownerThreadId": "a",
+            "createdAtMs": 1771631999999
+          },
+          {
+            "path": "C:/old",
+            "ownerThreadId": null,
+            "createdAtMs": 0
+          }
+        ]
+      },
+      "expected": {
+        "candidates": [],
+        "eligibleCount": 1
+      }
+    },
+    {
+      "id": "WB04-pinned-and-active",
+      "input": {
+        "keepCount": 1,
+        "threadMetadataById": {
+          "thread-1": {
+            "updatedAtMs": 0,
+            "isInProgress": true
+          }
+        },
+        "pinnedThreadIds": [
+          "thread-0"
+        ],
+        "protectedWorktreeDirs": [],
+        "nowMs": 1793664000000,
+        "protectPreMigrationOwnerlessWorktrees": false,
+        "records": [
+          {
+            "path": "C:/worktree/00",
+            "ownerThreadId": "thread-0",
+            "createdAtMs": 1793628000000
+          },
+          {
+            "path": "C:/worktree/01",
+            "ownerThreadId": "thread-1",
+            "createdAtMs": 1793635200000
+          },
+          {
+            "path": "C:/worktree/02",
+            "ownerThreadId": "thread-2",
+            "createdAtMs": 1793642400000
+          },
+          {
+            "path": "C:/worktree/03",
+            "ownerThreadId": "thread-3",
+            "createdAtMs": 1793649600000
+          },
+          {
+            "path": "C:/worktree/04",
+            "ownerThreadId": "thread-4",
+            "createdAtMs": 1793656800000
+          }
+        ]
+      },
+      "expected": {
+        "candidates": [
+          {
+            "path": "C:/worktree/02",
+            "ownerThreadId": "thread-2",
+            "createdAtMs": 1793642400000
+          },
+          {
+            "path": "C:/worktree/03",
+            "ownerThreadId": "thread-3",
+            "createdAtMs": 1793649600000
+          }
+        ],
+        "eligibleCount": 3
+      }
+    },
+    {
+      "id": "WB04-null-vs-max-safe-stable-sort",
+      "input": {
+        "keepCount": 1,
+        "threadMetadataById": {},
+        "pinnedThreadIds": [],
+        "protectedWorktreeDirs": [],
+        "nowMs": 9007199261940992,
+        "protectPreMigrationOwnerlessWorktrees": false,
+        "records": [
+          {
+            "path": "C:/z",
+            "ownerThreadId": null,
+            "createdAtMs": null
+          },
+          {
+            "path": "C:/a",
+            "ownerThreadId": null,
+            "createdAtMs": 9007199254740991
+          },
+          {
+            "path": "C:/old",
+            "ownerThreadId": null,
+            "createdAtMs": 0
+          }
+        ]
+      },
+      "expected": {
+        "candidates": [
+          {
+            "path": "C:/old",
+            "ownerThreadId": null,
+            "createdAtMs": 0
+          },
+          {
+            "path": "C:/z",
+            "ownerThreadId": null,
+            "createdAtMs": null
+          }
+        ],
+        "eligibleCount": 3
+      }
+    },
+    {
+      "id": "WB04-five-day-host-flag-before-boundary",
+      "input": {
+        "keepCount": 1,
+        "threadMetadataById": {},
+        "pinnedThreadIds": [],
+        "protectedWorktreeDirs": [],
+        "nowMs": 1793664000000,
+        "protectPreMigrationOwnerlessWorktrees": true,
+        "records": [
+          {
+            "path": "C:/pre",
+            "ownerThreadId": null,
+            "createdAtMs": 1771631999999
+          },
+          {
+            "path": "C:/post",
+            "ownerThreadId": null,
+            "createdAtMs": 1771632000001
+          }
+        ]
+      },
+      "expected": {
+        "candidates": [],
+        "eligibleCount": 1
+      }
+    },
+    {
+      "id": "WB04-five-day-host-flag-at-boundary",
+      "input": {
+        "keepCount": 1,
+        "threadMetadataById": {},
+        "pinnedThreadIds": [],
+        "protectedWorktreeDirs": [],
+        "nowMs": 1793664000000,
+        "protectPreMigrationOwnerlessWorktrees": false,
+        "records": [
+          {
+            "path": "C:/pre",
+            "ownerThreadId": null,
+            "createdAtMs": 1771631999999
+          },
+          {
+            "path": "C:/post",
+            "ownerThreadId": null,
+            "createdAtMs": 1771632000001
+          }
+        ]
+      },
+      "expected": {
+        "candidates": [
+          {
+            "path": "C:/pre",
+            "ownerThreadId": null,
+            "createdAtMs": 1771631999999
+          }
+        ],
+        "eligibleCount": 2
+      }
+    }
+  ]
+}

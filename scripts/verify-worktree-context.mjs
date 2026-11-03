@@ -23,8 +23,10 @@ const deferred = () => { let resolve, reject; const promise = new Promise((a, b)
 const flush = async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); };
 const row = path => ({ path, gitDir: path, branch: "main" });
 
-function mount(root) {
+function mount(root, options = {}) {
   const slots = [], effects = [], requests = [];
+  const listeners = new Map();
+  const confirmations = [], removals = [];
   let cursor = 0, mounted = true, tree;
   const react = {
     createElement: (tag, props, ...children) => ({ tag, props: props ?? {}, children: children.flat(Infinity) }),
@@ -36,10 +38,21 @@ function mount(root) {
     useRef(initial) { const index = cursor++; return slots[index] ??= { current: initial }; },
     useEffect(callback) { cursor++; if (!mountedOnce) effects.push(callback); },
   };
-  const invoke = (method, args) => { const pending = deferred(); requests.push({ method, args, ...pending }); return pending.promise; };
+  const invoke = (method, args) => {
+    const pending = deferred(); requests.push({ method, args, ...pending });
+    if (options.autoIO) {
+      if (method === "git_worktrees_list") pending.resolve([{ ...row("isolated-checkout"), gitDir: "isolated-source", isPrimary: false }]);
+      else if (method === "git_branches") pending.resolve(["main"]);
+      else if (method === "worktree_preferences_read") Promise.resolve().then(() => options.preferences()).then(pending.resolve, pending.reject);
+      else pending.reject(Error(method));
+    }
+    return pending.promise;
+  };
   const client = {};
-  execute(fs.readFileSync("src/worktreeCreation.ts", "utf8"), { exports: client, require: () => ({ tauriInvoke: invoke }), crypto: { randomUUID: () => "context-worktree-operation" } });
-  const context = { exports: {}, setTimeout, clearTimeout, confirm: () => true, AbortController,
+  execute(fs.readFileSync("src/worktreeCreation.ts", "utf8"), { exports: client, require: () => ({ tauriInvoke: invoke,
+    tauriListen: async (name, callback) => { listeners.set(name, callback); return () => listeners.delete(name); },
+  }), crypto: { randomUUID: () => "context-worktree-operation" } });
+  const context = { exports: {}, setTimeout: options.autoIO ? () => 0 : setTimeout, clearTimeout, confirm: text => { confirmations.push(text); return options.confirm ?? true; }, AbortController,
     require(name) {
       if (name === "react") return { ...react, default: react };
       if (name === "lucide-react") return {};
@@ -48,7 +61,7 @@ function mount(root) {
       if (name === "../worktreeRemoval") return {
         loadWorktreeConversations: async () => [],
         cwdInWorktree: () => false,
-        removeWorktreeWithConversations: async () => { throw Error("Unexpected deletion in context test"); },
+        removeWorktreeWithConversations: async (...args) => { removals.push(args); if (options.autoIO) return { warnings: [] }; throw Error("Unexpected deletion in context test"); },
       };
       throw Error(`Unexpected import ${name}`);
     },
@@ -63,9 +76,14 @@ function mount(root) {
     if (predicate(node)) return node;
     for (const child of node.children ?? []) { const found = find(child, predicate); if (found) return found; }
   }
-  return { requests, state: slots,
+  return { requests, state: slots, confirmations, removals,
     refresh: () => find(tree, node => node.tag === "button" && node.children.some(child => typeof child === "string" && child.trim() === "刷新列表")).props.onClick(),
     create: () => find(tree, node => node.tag === "button" && node.props.className === "primary-btn").props.onClick(),
+    button: label => find(tree, node => node.tag === "button" && node.children.includes(label)),
+    delete: () => find(tree, node => node.tag === "button" && node.props.className === "danger-btn-sm").props.onClick(),
+    changeRoot: value => { root = value; render(); },
+    emit: progress => listeners.get("worktree:create-progress")?.(progress),
+    listeners,
     unmount() { mounted = false; cleanups.forEach(cleanup => cleanup?.()); },
   };
 }
@@ -143,12 +161,57 @@ function mount(root) {
   b.requests[0].reject(Error("B failure")); await flush(); b.unmount();
   const newA = mount("A");
   assert.equal(newA.state[0].length, 0, "WC04: A to B to A does not reuse old mount");
-  const writing = newA.create(); newA.unmount();
+  const writing = newA.create(); await flush(); newA.unmount();
   assert.equal(newA.requests[1].args.operationId, "context-worktree-operation", "creation uses a dedicated operation identity");
   assert.equal(newA.requests[2].method, "git_worktree_create_cancel");
   assert.equal(newA.requests[2].args.operationId, newA.requests[1].args.operationId, "unmount cancels precisely the operation that was started");
   newA.requests[2].resolve();
   newA.requests[1].resolve(row("created")); await writing;
   assert.equal(newA.requests.length, 3, "WC05: canceled completed old write cannot refresh after unmount");
+}
+{
+  const view = mount("refresh-fixture"), writing = view.create(); await flush();
+  assert.equal(view.requests[1].method, "git_worktree_create");
+  view.emit({ operationId: "foreign-operation", phase: "upstream-refresh" });
+  assert.equal(view.button("跳过更新"), undefined, "foreign progress must not reveal a skip control");
+  view.emit({ operationId: "context-worktree-operation", phase: "upstream-refresh", text: "isolated fetch output" });
+  assert.equal(view.button("跳过更新").props.disabled, false);
+  view.button("跳过更新").props.onClick(); view.button("跳过更新").props.onClick();
+  assert.equal(view.requests.filter(request => request.method === "git_worktree_refresh_skip").length, 1, "skip is one signal for this fetch");
+  assert.equal(view.requests.some(request => request.method === "git_worktree_create_cancel"), false, "skip must not cancel creation");
+  assert.equal(view.requests[2].args.operationId, view.requests[1].args.operationId);
+  view.requests[2].resolve();
+  view.emit({ operationId: "context-worktree-operation", phase: "creating" });
+  assert.equal(view.button("跳过更新"), undefined, "skip is shown only during upstream-refresh phase");
+  view.button("取消创建 / 设置").props.onClick();
+  assert.equal(view.requests[3].method, "git_worktree_create_cancel", "main cancel still uses creation signal");
+  view.requests[3].resolve(); view.unmount(); const before = view.state.slice();
+  view.emit({ operationId: "context-worktree-operation", phase: "upstream-refresh", text: "late output" });
+  assert.deepEqual(view.state, before, "canceled/unmounted progress must not change state");
+  view.requests[1].resolve(row("ignored-late-create")); await writing;
+  assert.equal(view.listeners.size, 0, "native progress listener is released after operation");
+}
+for (const enabled of [true, false]) {
+  const view = mount("delete-scope", { autoIO: true, confirm: false, preferences: async () => ({ hostId: "local", preferences: { confirmBeforeDelete: enabled } }) });
+  await flush(); await view.delete();
+  assert.equal(view.requests.filter(request => request.method === "worktree_preferences_read").length, 1);
+  assert.equal(view.confirmations.length, enabled ? 1 : 0);
+  assert.equal(view.removals.length, enabled ? 0 : 1, "only explicit false skips manual confirmation; cancel retains worktree");
+  view.unmount();
+}
+{
+  const view = mount("delete-scope", { autoIO: true, preferences: async () => { throw Error("preference read denied"); } });
+  await flush(); await view.delete();
+  assert.equal(view.removals.length, 0); assert.equal(view.confirmations.length, 0);
+  assert.match(view.state[6], /preference read denied/); view.unmount();
+}
+{
+  const preference = deferred(), view = mount("old-delete-scope", { autoIO: true, preferences: () => preference.promise });
+  await flush(); const first = view.delete(); const second = view.delete(); await flush();
+  assert.equal(view.requests.filter(request => request.method === "worktree_preferences_read").length, 1, "read phase must own the deletion singleflight lock");
+  view.changeRoot("new-delete-scope"); preference.resolve({ hostId: "local", preferences: { confirmBeforeDelete: false } });
+  await first; await second;
+  assert.equal(view.removals.length, 0); assert.equal(view.confirmations.length, 0, "late preference response must not act in a changed context");
+  view.unmount();
 }
 console.log("WC01–WC05 worktree context regressions passed");

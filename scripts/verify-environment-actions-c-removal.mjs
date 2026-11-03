@@ -50,7 +50,7 @@ const viewSource = fs.readFileSync("src/components/WorktreesView.tsx", "utf8"), 
 let lifecycle;
 function visit(node) { if (ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect" && node.arguments[1]?.getText(ast) === "[activeWorkspaceRoot]") lifecycle = node.arguments[0].getText(ast); ts.forEachChild(node,visit); } visit(ast); assert.ok(lifecycle);
 for (const reason of ["scope", "unmount"]) {
-  const deleting = new AbortController(), creating = new AbortController(), context = { exports: {}, mountedRef: { current: false }, creationControllerRef: { current: creating }, deletionControllerRef: { current: deleting }, requestRef: { current: 3 }, setCreating() {}, refresh() {} };
+  const deleting = new AbortController(), creating = new AbortController(), context = { exports: {}, mountedRef: { current: false }, creationControllerRef: { current: creating }, deletionControllerRef: { current: deleting }, refreshControllerRef: { current: new AbortController() }, requestRef: { current: 3 }, setCreating() {}, setCreationProgress() {}, setRefreshSkipped() {}, refresh() {} };
   vm.runInNewContext(ts.transpileModule(`exports.effect = ${lifecycle}`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText, context); const cleanup = context.exports.effect(); assert.equal(context.mountedRef.current,true); cleanup(); assert.equal(deleting.signal.aborted,true,reason); assert.equal(creating.signal.aborted,true,reason); assert.equal(context.deletionControllerRef.current,null); assert.equal(context.requestRef.current,4);
 }
 console.log("PASS ECRM03: production WorktreesView scope/unmount lifecycle aborts active deletion and setup and invalidates late list reads");

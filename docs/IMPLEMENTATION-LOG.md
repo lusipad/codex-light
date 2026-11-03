@@ -1871,3 +1871,11 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 最终冻结前补证：首轮标准指出默认槽位1并非空；固定26.1027 `early-bootstrap-339`（integrity核验）仍为literal `Command+Shift+D`，其余八槽无默认，归一化恒为Meta。修正产品定义，旧26.1021独立键位fixture不变。另将新取消测试按真实cleanup就绪握手，保留并发/取消/目录断言；App在render即屏蔽旧scope pending，晚ACK先校验scope再确认。首轮日志与旧快照保留，最终输入重冻后重跑完整验证。
 
 16.14C 最终交付：修正后完整标准（非Fast）、全Rust390项和EXE/MSI/NSIS退出0，286项产品输入/helper/许可五文件稳定。阶段待用户验收；官方运行时/原生GUI/IME/配对像素、Unix及远程仍未验。下一[16.15B工作树保留清理合同](antigravity/specs/16-15B-next-closure.md)已完成只读调研，未实施自主删除调度；不以阶段完成关闭全App复刻目标。
+
+## 2026-11-03 — 16.15B 工作树策略与上游消费者
+
+- 按固定 Store 偏好、JS候选计划器、持久队列/身份/附件保护及真实上游刷新合同实施，见[阶段记录](antigravity/acceptance/16-15B.md)。真实 local 偏好CAS/读回、eligible保留算法、automatic队列/退避/恢复、受锁最终删除guard及普通分支上游起点已接；无新依赖。
+- 复核发现并修正会话文件mtime遗漏、普通main刷新后仍检出旧本地提交、新生保护衔接、单目标失败阻塞、进度事件跨窗与预先skip顺序；专项保留回归，不仅比对按钮外观。
+- 受控Chrome宽窄/确认焦点/失败草稿/独立skip留证，实际修复dialog CSS级联覆盖。完整标准首轮发现旧夹具缺新增状态与偏好接口，补齐夹具保留原取消/连击/晚到断言，失败日志与最终重验分别留存。
+- 最终完整标准非Fast退出0，全Rust420项退出0；其后仅两文件输入主题经Node/TypeScript/宽窄浏览器回归，最新原生构建前后295项输入稳定、EXE/MSI/NSIS及5许可文件归档。文档EOF空行首次检查2已修复为0，失败日志保留。真实账号、原生GUI/IME、官方配对像素、thread/attached恢复和远程host未验，不写成整页或全App完成。
+- 用户新交付约定为大阶段验证后提交，按远程状态决定推送；下一[16.16B代码审查设置合同](antigravity/specs/16-16B-next-closure.md)已固定取证，未实施，不把调研当验收。

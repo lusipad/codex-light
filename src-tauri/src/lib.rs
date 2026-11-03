@@ -7,6 +7,11 @@ pub mod recommended_skills;
 pub mod desktop_open;
 mod desktop_open_context;
 pub mod git;
+mod worktree_preferences;
+mod worktree_inventory;
+mod worktree_archive_queue;
+mod worktree_upstream;
+mod worktree_cleanup_runtime;
 pub mod menu;
 pub mod keybindings;
 pub mod personal_instructions;
@@ -48,7 +53,7 @@ use state::{
 };
 use std::collections::HashMap;
 use std::fs;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Listener, Manager, State};
 use terminal::{TerminalManager, TerminalSessionInfo};
 
 pub struct AppState {
@@ -65,7 +70,26 @@ fn invalidate_chatgpt_service(app: &AppHandle) {
             eprintln!("Cannot withdraw notifications after identity change: {error}");
         }
         let _ = app.emit("chatgpt-service:invalidated", generation);
+        if let (Some(cleanup), Some(setup)) = (
+            app.try_state::<worktree_cleanup_runtime::WorktreeCleanupRuntime>(),
+            app.try_state::<local_environment_setup::SetupState>(),
+        ) {
+            cleanup.invalidate(&state.desktop_state, &setup);
+        }
+        request_worktree_cleanup(app);
     }
+}
+
+fn request_worktree_cleanup(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<AppState>();
+        let cleanup = app.state::<worktree_cleanup_runtime::WorktreeCleanupRuntime>();
+        if let Err(error) = cleanup.request_cleanup(&state).await {
+            eprintln!("工作树自动清理排队失败：{error}");
+        }
+        let _ = app.emit("worktree:cleanup-requested", ());
+    });
 }
 
 #[tauri::command]
@@ -133,6 +157,13 @@ async fn app_server_call(
     if matches!(method.as_str(), "account/logout" | "account/login/start") {
         invalidate_chatgpt_service(&app);
     }
+    let attachment_mutation = matches!(method.as_str(), "thread/attachment/add" | "thread/attachment/remove")
+        && params.as_ref().and_then(|params| params["attachmentType"].as_str()) == Some("worktree");
+    let attachment_protection = if attachment_mutation {
+        let path = params.as_ref().and_then(|params| params["identityKey"].as_str())
+            .ok_or("工作树附件缺少明确路径，未执行。")?;
+        Some(app.state::<worktree_cleanup_runtime::WorktreeCleanupRuntime>().protect_attachment(path)?)
+    } else { None };
     let res = if window.label().starts_with("thread-") && matches!(method.as_str(), "fs/watch" | "fs/unwatch") {
         app.state::<thread_window::ThreadWindowState>()
             .call_watch(window.label(), &method, params.clone(), |params| {
@@ -206,8 +237,16 @@ async fn app_server_call(
             });
         if let (Some(t), Some(c)) = (tid, cwd) {
             state.desktop_state.record_thread_workspace(t, c);
+            let cleanup = app.state::<worktree_cleanup_runtime::WorktreeCleanupRuntime>();
+            if let Some(root) = git::find_git_root(c).filter(|root| cleanup.is_newborn(root)) {
+                git::set_worktree_owner_thread(&root, t)?;
+                cleanup.release_worktree(&root);
+                request_worktree_cleanup(&app);
+            }
         }
     }
+    drop(attachment_protection);
+    if attachment_mutation { request_worktree_cleanup(&app); }
     Ok(res)
 }
 
@@ -1220,6 +1259,7 @@ fn git_worktrees_list(state: State<'_, AppState>, cwd: Option<String>) -> Result
 async fn git_worktree_create(
     state: State<'_, AppState>,
     setup: State<'_, local_environment_setup::SetupState>,
+    cleanup: State<'_, worktree_cleanup_runtime::WorktreeCleanupRuntime>,
     window: tauri::WebviewWindow,
     source_cwd: String,
     starting_mode: String,
@@ -1238,7 +1278,11 @@ async fn git_worktree_create(
         return Err(format!("工作树创建窗口已关闭：{error}"));
     }
     let shell = Some(desktop_open::preferences(&desktop).preferred_shell);
-    tokio::task::spawn_blocking(move || {
+    let refresh_mode = worktree_preferences::read(&desktop, "local")?.preferences.upstream_refresh_mode;
+    let progress_id = operation_id.clone();
+    let progress_window = window.clone();
+    let source_protection = cleanup.protect_source_repository(&source_cwd)?;
+    let result = tokio::task::spawn_blocking(move || {
         let selection = serde_json::to_value(local_environment::selection_get(&desktop, &source_cwd)?).map_err(|error| error.to_string())?;
         let explicit = selection.get("explicit").and_then(Value::as_bool).ok_or("环境选择状态无效。")?;
         let config_path = if explicit {
@@ -1247,13 +1291,79 @@ async fn git_worktree_create(
             let list = serde_json::to_value(local_environment::list(&source_cwd)?).map_err(|error| error.to_string())?;
             list["defaultPath"].as_str().map(str::to_owned)
         };
+        let refresh_log_window = progress_window.clone();
+        let refresh_log_id = progress_id.clone();
+        let log: worktree_upstream::LogSink = std::sync::Arc::new(move |kind, text| {
+            let _ = refresh_log_window.emit_to(tauri::EventTarget::webview_window(refresh_log_window.label()), "worktree:create-progress", json!({
+                "operationId": refresh_log_id, "phase": "upstream-refresh", "kind": kind, "text": text,
+            }));
+        });
+        let refresh_mode_name = if starting_mode == "HEAD" { "branch" } else { &starting_mode };
+        let refresh_request = worktree_upstream::RefreshRequest {
+            cwd: &source_cwd,
+            starting_mode: refresh_mode_name,
+            branch_name: if starting_mode == "HEAD" { Some("HEAD") } else { branch_name.as_deref() },
+            remote_ref: None,
+            resolved_starting_commit: None,
+            mode: refresh_mode,
+        };
+        worktree_upstream::refresh(refresh_request.clone(), &operation, operation.upstream_skip_signal(), log)?;
+        let resolved_ref = worktree_upstream::resolve_starting_ref(&refresh_request, &operation)?;
+        operation.check()?;
+        let _ = progress_window.emit_to(tauri::EventTarget::webview_window(progress_window.label()), "worktree:create-progress", json!({"operationId": progress_id, "phase": "creating"}));
+        let branch_name = if starting_mode == "branch" { Some(resolved_ref) } else { branch_name };
         local_environment_setup::create_worktree_prepared(operation, &source_cwd, &starting_mode, branch_name, owner_thread_id, &roots[0], config_path, shell)
-    }).await.map_err(|error| error.to_string())?
+    }).await.map_err(|error| error.to_string()).and_then(|result| result);
+    if let Ok(worktree) = &result { cleanup.protect_worktree(&worktree.path); }
+    drop(source_protection);
+    request_worktree_cleanup(window.app_handle());
+    result
 }
 
 #[tauri::command]
 fn git_worktree_create_cancel(window: tauri::WebviewWindow, setup: State<'_, local_environment_setup::SetupState>, operation_id: String) {
     setup.cancel(window.label(), &operation_id);
+}
+
+#[tauri::command]
+fn git_worktree_refresh_skip(window: tauri::WebviewWindow, setup: State<'_, local_environment_setup::SetupState>, operation_id: String) {
+    setup.skip_upstream_refresh(window.label(), &operation_id);
+}
+
+#[tauri::command]
+fn worktree_preferences_read(state: State<'_, AppState>, host_id: String) -> Result<worktree_preferences::WorktreePreferencesSnapshot, String> {
+    worktree_preferences::read(&state.desktop_state, &host_id)
+}
+
+#[tauri::command]
+fn worktree_preferences_write(state: State<'_, AppState>, host_id: String, preferences: worktree_preferences::WorktreePreferences, expected: Value) -> Result<worktree_preferences::WorktreePreferencesSnapshot, String> {
+    worktree_preferences::update(&state.desktop_state, &host_id, preferences, expected)
+}
+
+#[tauri::command]
+async fn worktree_policy_inventory(state: State<'_, AppState>) -> Result<worktree_inventory::Inventory, String> {
+    let roots = git::managed_worktree_roots(&state.desktop_state.get_value(git::WORKTREE_ROOT_KEY))?;
+    tokio::task::spawn_blocking(move || worktree_inventory::collect(&roots)).await.map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn worktree_cleanup_prepare(state: State<'_, AppState>, cleanup: State<'_, worktree_cleanup_runtime::WorktreeCleanupRuntime>, window: tauri::WebviewWindow) -> Result<Option<worktree_cleanup_runtime::CleanupPreparation>, String> {
+    window.is_visible().map_err(|error| format!("工作树清理窗口已关闭：{error}"))?;
+    cleanup.reopen_window(window.label());
+    cleanup.prepare(&state, window.label()).await
+}
+
+#[tauri::command]
+async fn worktree_cleanup_execute(state: State<'_, AppState>, cleanup: State<'_, worktree_cleanup_runtime::WorktreeCleanupRuntime>, setup: State<'_, local_environment_setup::SetupState>, window: tauri::WebviewWindow, token: String, candidate_paths: Vec<String>) -> Result<worktree_cleanup_runtime::CleanupReport, String> {
+    window.is_visible().map_err(|error| format!("工作树清理窗口已关闭：{error}"))?;
+    let result = cleanup.execute(&state, &setup, window.label(), &token, candidate_paths).await?;
+    if !result.deleted.is_empty() { let _ = window.app_handle().emit("worktrees-reload-requested", ()); }
+    Ok(result)
+}
+
+#[tauri::command]
+fn worktree_cleanup_cancel(state: State<'_, AppState>, cleanup: State<'_, worktree_cleanup_runtime::WorktreeCleanupRuntime>, setup: State<'_, local_environment_setup::SetupState>, window: tauri::WebviewWindow, token: String) -> Result<(), String> {
+    cleanup.cancel_token(&state.desktop_state, &setup, window.label(), &token)
 }
 
 #[tauri::command]
@@ -1264,9 +1374,13 @@ async fn git_worktree_delete(state: State<'_, AppState>, setup: State<'_, local_
     let operation = setup.prepare_operation(&owner, &id)?;
     if let Err(error) = window.is_visible() { setup.cancel(&owner, &id); return Err(format!("删除窗口已关闭：{error}")); }
     let shell = Some(desktop_open::preferences(&state.desktop_state).preferred_shell);
-    tokio::task::spawn_blocking(move || git::delete_worktree_with_cleanup_context(&worktree_path, git_dir, operation, shell))
+    let result = tokio::task::spawn_blocking(move || git::delete_worktree_with_cleanup_context(&worktree_path, git_dir, operation, shell))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())??;
+    window.app_handle().state::<worktree_cleanup_runtime::WorktreeCleanupRuntime>()
+        .release_worktree(&result.worktree_path);
+    request_worktree_cleanup(window.app_handle());
+    Ok(result)
 }
 
 #[tauri::command]
@@ -1308,8 +1422,11 @@ async fn git_worktree_repair(cwd: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn git_worktree_set_owner(worktree_path: String, thread_id: String) -> Result<(), String> {
-    git::set_worktree_owner_thread(&worktree_path, &thread_id)
+fn git_worktree_set_owner(app: AppHandle, worktree_path: String, thread_id: String) -> Result<(), String> {
+    git::set_worktree_owner_thread(&worktree_path, &thread_id)?;
+    app.state::<worktree_cleanup_runtime::WorktreeCleanupRuntime>().release_worktree(&worktree_path);
+    request_worktree_cleanup(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1783,6 +1900,27 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .setup(move |app| {
             use tauri::Manager;
+            let cleanup_app = app.handle().clone();
+            app.listen("app-server:status", move |event| {
+                let Ok(status) = serde_json::from_str::<AppServerStatus>(event.payload()) else { return; };
+                if status.connected {
+                    request_worktree_cleanup(&cleanup_app);
+                } else {
+                    let state = cleanup_app.state::<AppState>();
+                    let setup = cleanup_app.state::<local_environment_setup::SetupState>();
+                    cleanup_app.state::<worktree_cleanup_runtime::WorktreeCleanupRuntime>()
+                        .invalidate(&state.desktop_state, &setup);
+                }
+            });
+            let attachment_app = app.handle().clone();
+            app.listen("app-server:notification", move |event| {
+                let Ok(value) = serde_json::from_str::<Value>(event.payload()) else { return; };
+                if value["method"] != "thread/attachment/updated" || value["params"]["attachmentType"] != "worktree" { return; }
+                if let Some(path) = value["params"]["identityKey"].as_str() {
+                    attachment_app.state::<worktree_cleanup_runtime::WorktreeCleanupRuntime>().attachment_changed(path);
+                    request_worktree_cleanup(&attachment_app);
+                }
+            });
             #[cfg(windows)]
             if let Some(mut receiver) = instance_receiver.take() {
                 let handle = app.handle().clone();
@@ -1841,8 +1979,13 @@ pub fn run() {
         .manage(plugin_operations::PluginOperationState::default())
         .manage(git_message_generation::GenerationState::default())
         .manage(local_environment_setup::SetupState::default())
+        .manage(worktree_cleanup_runtime::WorktreeCleanupRuntime::default())
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
+                let state = window.app_handle().state::<AppState>();
+                let setup = window.app_handle().state::<local_environment_setup::SetupState>();
+                window.app_handle().state::<worktree_cleanup_runtime::WorktreeCleanupRuntime>()
+                    .cancel_window(&state.desktop_state, &setup, window.label());
                 if let Err(error) = window.app_handle().state::<AppState>().terminal.close_owner(window.label()) {
                     eprintln!("Cannot close window action terminals: {error}");
                 }
@@ -1969,7 +2112,14 @@ pub fn run() {
             git_worktrees_list,
             git_worktree_create,
             git_worktree_create_cancel,
+            git_worktree_refresh_skip,
             git_worktree_delete,
+            worktree_preferences_read,
+            worktree_preferences_write,
+            worktree_policy_inventory,
+            worktree_cleanup_prepare,
+            worktree_cleanup_execute,
+            worktree_cleanup_cancel,
             git_worktree_delete_cancel,
             git_worktree_delete_prepare,
             git_worktree_restore_snapshot,

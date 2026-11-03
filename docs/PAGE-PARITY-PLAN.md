@@ -152,8 +152,8 @@ asar 作为前端静态实现的主要参照，与官方文档、官方运行时
 | 16.12 | hooks-settings | [16.12B来源审阅待验](antigravity/acceptance/16-12B.md)：真实多根、来源索引/详情、审阅/信任/启停已实施；指定插件详情、运行历史、原生/官方像素及用户验收未完成 |
 | 16.13 | git-settings | [16.13B真实生成待验](antigravity/acceptance/16-13B.md)：指令保存/消费、tracked上下文、隔离生成与草稿/取消保护已实施；原生/官方像素/真实模型及用户验收未完成 |
 | 16.14 | local-environments | [16.14C阶段待验](antigravity/acceptance/16-14C.md)：环境发现/结构编辑/选择、真实setup、专用动作终端和删除前cleanup已接，完整标准/全Rust390项及原生包通过；原生GUI/官方像素及用户验收待完成 |
-| 16.15 | worktrees | [16.15B只读合同](antigravity/specs/16-15B-next-closure.md)：固定偏好/eligible保留算法/保护重验已调研，尚未开发新自主清理调度 |
-| 16.16 | code-review | 审查设置与运行时行为 |
+| 16.15 | worktrees | [16.15B阶段待验](antigravity/acceptance/16-15B.md)：本地偏好/eligible排序、持久automatic队列、最终受锁保护、上游刷新及分支起点已接，限定阶段自验与原生包完成；thread/attached恢复、远程、原生GUI/官方像素和用户验收未完成 |
+| 16.16 | code-review | [16.16B修改前合同](antigravity/specs/16-16B-next-closure.md)：实际设置路由、链接默认/分流、指令draft保存与provider权限已固定取证；尚未开发，cloud/远程私人PR审查另有缺口 |
 | 16.17 | import | 导入来源、预览、结果与失败恢复 |
 | 16.18 | storage | 云端Library/Space配额、文件/图像管理入口；认证缺失时阻塞 |
 | 16.19 | archived-chats | 与 Archive 页数据和操作一致 |

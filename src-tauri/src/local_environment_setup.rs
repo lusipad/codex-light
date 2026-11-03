@@ -24,11 +24,22 @@ pub(crate) type EnvironmentDelta = BTreeMap<String, Option<String>>;
 #[derive(Default)]
 struct Operations {
     tokens: HashMap<(String, String), (Arc<AtomicBool>, Instant)>,
+    refresh_skips: HashMap<(String, String), (Arc<AtomicBool>, Instant)>,
     running: HashMap<String, String>,
     closed: HashMap<String, Instant>,
 }
 impl Operations {
     fn prune(&mut self) {
+        let mut skips = self.refresh_skips.iter()
+            .filter(|((owner, id), _)| self.running.get(owner) != Some(id))
+            .map(|(key, (_, time))| (key.clone(), *time)).collect::<Vec<_>>();
+        skips.sort_by_key(|(_, time)| *time);
+        let excess = skips.len().saturating_sub(256);
+        for (index, (key, time)) in skips.into_iter().enumerate() {
+            if index < excess || time.elapsed() > Duration::from_secs(600) {
+                self.refresh_skips.remove(&key);
+            }
+        }
         let mut inactive = self
             .tokens
             .iter()
@@ -60,6 +71,14 @@ pub struct SetupState {
     operations: Arc<Mutex<Operations>>,
 }
 impl SetupState {
+    pub fn skip_upstream_refresh(&self, owner: &str, id: &str) {
+        if let Ok(mut state) = self.operations.lock() {
+            state.refresh_skips.entry((owner.into(), id.into()))
+                .or_insert_with(|| (Arc::new(AtomicBool::new(false)), Instant::now()))
+                .0.store(true, Ordering::SeqCst);
+            state.prune();
+        }
+    }
     pub fn cancel(&self, owner: &str, id: &str) {
         if let Ok(mut state) = self.operations.lock() {
             state
@@ -99,11 +118,16 @@ impl SetupState {
         }
     }
     pub fn prepare_operation(&self, owner: &str, id: &str) -> Result<SetupOperation, String> {
+        let token = self.begin(owner, id)?;
+        let skip_refresh = self.operations.lock().map_err(|error| error.to_string())?
+            .refresh_skips.entry((owner.into(), id.into()))
+            .or_insert_with(|| (Arc::new(AtomicBool::new(false)), Instant::now())).0.clone();
         Ok(SetupOperation {
             state: self.clone(),
             owner: owner.into(),
             id: id.into(),
-            token: self.begin(owner, id)?,
+            token,
+            skip_refresh,
         })
     }
     fn begin(&self, owner: &str, id: &str) -> Result<Arc<AtomicBool>, String> {
@@ -131,11 +155,13 @@ pub struct SetupOperation {
     owner: String,
     id: String,
     token: Arc<AtomicBool>,
+    skip_refresh: Arc<AtomicBool>,
 }
 impl Drop for SetupOperation {
     fn drop(&mut self) {
         self.token.store(true, Ordering::SeqCst);
         if let Ok(mut state) = self.state.operations.lock() {
+            state.refresh_skips.remove(&(self.owner.clone(), self.id.clone()));
             if state.running.get(&self.owner) == Some(&self.id) {
                 state.running.remove(&self.owner);
             }
@@ -144,6 +170,9 @@ impl Drop for SetupOperation {
     }
 }
 impl SetupOperation {
+    pub(crate) fn upstream_skip_signal(&self) -> &AtomicBool {
+        &self.skip_refresh
+    }
     pub(crate) fn check(&self) -> Result<(), String> {
         if self.token.load(Ordering::SeqCst) {
             Err("环境设置已取消。".into())
@@ -988,6 +1017,27 @@ mod tests {
         }
         assert!(state.operations.lock().unwrap().tokens.len() <= 258);
     }
+    #[test]
+    fn upstream_skip_is_scoped_and_never_cancels_creation() {
+        let state = SetupState::default();
+        state.skip_upstream_refresh("first", "early");
+        let early = state.prepare_operation("first", "early").unwrap();
+        assert!(early.upstream_skip_signal().load(Ordering::SeqCst));
+        assert!(early.check().is_ok());
+        let other = state.prepare_operation("second", "early").unwrap();
+        assert!(!other.upstream_skip_signal().load(Ordering::SeqCst));
+        state.skip_upstream_refresh("second", "early");
+        assert!(other.upstream_skip_signal().load(Ordering::SeqCst));
+        assert!(other.check().is_ok());
+        state.cancel("second", "early");
+        assert!(other.check().is_err());
+        drop(early);
+        let next = state.prepare_operation("first", "next").unwrap();
+        assert!(!next.upstream_skip_signal().load(Ordering::SeqCst));
+        state.cancel_owner("first");
+        assert!(next.check().is_err());
+    }
+
     #[test]
     fn environment_delta_preserves_unset_and_excludes_wrapper_values() {
         let before = BTreeMap::from([

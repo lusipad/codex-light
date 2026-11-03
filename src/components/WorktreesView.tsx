@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { tauriInvoke } from "../bridge";
 import { GitWorktreeInfo } from "../types";
-import { createEnvironmentWorktree } from "../worktreeCreation";
+import { createEnvironmentWorktree, type WorktreeCreationProgress } from "../worktreeCreation";
 import { cwdInWorktree, loadWorktreeConversations, removeWorktreeWithConversations, type WorktreeConversation } from "../worktreeRemoval";
 
 interface WorktreesViewProps {
@@ -46,6 +46,9 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
   }
   const [conversations, setConversations] = useState<WorktreeConversation[] | null>(null);
   const [conversationError, setConversationError] = useState<string | null>(null);
+  const [creationProgress, setCreationProgress] = useState<WorktreeCreationProgress | null>(null);
+  const [refreshSkipped, setRefreshSkipped] = useState(false);
+  const refreshControllerRef = useRef<AbortController | null>(null);
 
   const notify = (msg: string) => {
     setToast(msg);
@@ -89,11 +92,13 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
   useEffect(() => {
     mountedRef.current = true;
     setCreating(false);
+    setCreationProgress(null); setRefreshSkipped(false);
     refresh();
     return () => {
       mountedRef.current = false;
       creationControllerRef.current?.abort();
       creationControllerRef.current = null;
+      refreshControllerRef.current = null;
       deletionControllerRef.current?.abort();
       deletionControllerRef.current = null;
       ++requestRef.current;
@@ -103,8 +108,11 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
   const handleCreateWorktree = async () => {
     if (creationControllerRef.current || actionPendingRef.current) return;
     const controller = new AbortController(), context = contextRef.current;
+    const refreshController = new AbortController();
     creationControllerRef.current = controller;
+    refreshControllerRef.current = refreshController;
     setCreating(true);
+    setCreationProgress(null); setRefreshSkipped(false);
     setError(null);
     try {
       await createEnvironmentWorktree({
@@ -112,7 +120,10 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
         startingMode,
         branchName: startingMode === "branch" ? selectedBranch : null,
         ownerThreadId: null,
-      }, controller.signal);
+      }, controller.signal, { signal: refreshController.signal, onProgress: progress => {
+        if (!mountedRef.current || controller.signal.aborted || context !== contextRef.current || creationControllerRef.current !== controller) return;
+        setCreationProgress(progress);
+      } });
       if (controller.signal.aborted || context !== contextRef.current) return;
       await refresh();
     } catch (err: any) {
@@ -122,14 +133,14 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
       }
     } finally {
       if (creationControllerRef.current === controller) creationControllerRef.current = null;
-      if (mountedRef.current && context === contextRef.current) setCreating(false);
+      if (refreshControllerRef.current === refreshController) refreshControllerRef.current = null;
+      if (mountedRef.current && context === contextRef.current) { setCreating(false); setCreationProgress(null); setRefreshSkipped(false); }
     }
   };
 
   const handleDeleteWorktree = async (wt: GitWorktreeInfo) => {
     if (creationControllerRef.current || actionPendingRef.current || actionBusyPath || conversations === null) return;
     if (conversations.some(thread => thread.isPinned && cwdInWorktree(thread.cwd, wt.path))) return;
-    if (!confirm(`确定要移除 Worktree "${wt.path}" 吗？`)) return;
     actionPendingRef.current = true;
     const controller = new AbortController();
     deletionControllerRef.current = controller;
@@ -137,6 +148,11 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
     const isCurrent = () => mountedRef.current && contextRef.current.revision === revision;
     setActionBusyPath(wt.path);
     try {
+      const preferences = await tauriInvoke<{ hostId: string; preferences: { confirmBeforeDelete: boolean } }>("worktree_preferences_read", { hostId: "local" });
+      if (!isCurrent() || controller.signal.aborted) return;
+      if (preferences.hostId !== "local" || typeof preferences.preferences?.confirmBeforeDelete !== "boolean") throw Error("无法确认本地主机的工作树删除偏好，未执行删除。");
+      if (preferences.preferences.confirmBeforeDelete && !confirm(`确定要移除 Worktree "${wt.path}" 吗？`)) return;
+      if (!isCurrent() || controller.signal.aborted) return;
       const result = await removeWorktreeWithConversations(wt, controller.signal);
       if (!isCurrent()) return;
       await refresh();
@@ -243,8 +259,14 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
               <span>{creating ? "正在创建 Worktree..." : "创建隔离 Worktree"}</span>
             </button>
             {creating && <button type="button" className="secondary-btn" onClick={() => creationControllerRef.current?.abort()}>取消创建 / 设置</button>}
+            {creating && creationProgress?.phase === "upstream-refresh" && <button type="button" className="secondary-btn"
+              title="停止获取，并使用本地已有的更改创建工作树" disabled={refreshSkipped} onClick={() => {
+                if (!refreshControllerRef.current || refreshControllerRef.current.signal.aborted) return;
+                refreshControllerRef.current.abort(); setRefreshSkipped(true);
+              }}>跳过更新</button>}
           </div>
         </div>
+        {creating && creationProgress?.phase === "upstream-refresh" && <p role="status">{creationProgress.text || "正在获取最新更改"}</p>}
         {error && <div className="error-banner">{error}</div>}
       </div>
 

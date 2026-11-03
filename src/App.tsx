@@ -1,6 +1,7 @@
 import { usePetPreferences } from "./petPreferences";
 import { mergeHookRoots } from "./hooksSettingsModel";
 import { createEnvironmentWorktree, type WorktreeCreationOptions } from "./worktreeCreation";
+import { installWorktreeCleanup } from "./worktreeCleanup";
 import { threadHasActivity, threadNeedsAttention } from "./threadActivity";
 import { useExternalImports } from "./externalImport";
 import { useCodeReviewPreferences } from "./reviewPreferences";
@@ -315,6 +316,7 @@ function normalizeTurnsFromList(page: any, reverse = true): TurnData[] {
 }
 
 export const App: React.FC = () => {
+  useEffect(() => installWorktreeCleanup(), []);
   const isQuickChatWindow = new URLSearchParams(window.location.search).get("utility") === "quick-chat";
   const threadWindowId = new URLSearchParams(window.location.search).get("threadWindow");
   const isThreadWindow = Boolean(threadWindowId);

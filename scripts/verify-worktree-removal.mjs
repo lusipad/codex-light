@@ -124,6 +124,11 @@ function deletionHandler() {
     exports: {}, AbortController, deletionControllerRef: { current: null }, actionPendingRef: { current: false }, actionBusyPath: null, creationControllerRef: { current: null },
     conversations: [], confirm: () => true, contextRef: { current: { revision: 1 } },
     mountedRef: { current: true }, setActionBusyPath() {},
+    tauriInvoke: async (method, args) => {
+      assert.equal(method, "worktree_preferences_read");
+      assert.equal(args.hostId, "local");
+      return { hostId: "local", preferences: { confirmBeforeDelete: true } };
+    },
     removeWorktreeWithConversations: () => { removes++; return pending; },
     refresh: async () => { refreshes++; }, notify: text => notices.push(text),
     setError: text => errors.push(text), cwdInWorktree: () => false,
