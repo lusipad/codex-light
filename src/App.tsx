@@ -7,6 +7,7 @@ import { createReviewResults, type ReviewRun } from "./reviewResults";
 import { useGitPreferences } from "./gitPreferences";
 import { useWorkspaceOpenTargets } from "./workspaceOpenTargets";
 import { loadModelCatalog } from "./modelCatalog";
+import { useModelSelection } from "./modelSelection";
 import { createNotificationDispatcher, notificationRequestCategory, shouldNotifyTurn, useNotificationPreferences, type NotificationEvent } from "./notificationPreferences";
 import { useAppearancePreferences } from "./appearancePreferences";
 import { notificationApprovalActions, notificationApprovalResponse } from "./notificationActions";
@@ -73,7 +74,7 @@ import { createShortcutMatcher, shortcutEventAllowed, SHORTCUTS, effectiveBindin
 import { useKeyboardPreferences } from "./keyboardPreferences";
 import { installNativeMenuHandler, installTrayHandler } from "./nativeShell";
 import { playNotificationChime } from "./sound";
-import { findModel, getDefaultModel, getPickerModels, getSupportedEfforts, modelRequestName, modelSupportsFast } from "./modelCapabilities";
+import { getPickerModels, modelRequestName, type ModelConfiguration } from "./modelCapabilities";
 import {
   AppServerStatus,
   ArchiveDeleteResult,
@@ -554,13 +555,8 @@ export const App: React.FC = () => {
       return next;
     });
   }, []);
-  const [selectedModelId, setSelectedModelId] = useState<string>("");
-  const selectedModelName = modelRequestName(models, selectedModelId);
-  const [defaultModelSelected, setDefaultModelSelected] = useState<boolean>(true);
-  const [reasoningEffort, setReasoningEffort] = useState<string>("");
   const [permissionMode, setPermissionMode] = useState<"ask" | "auto" | "full">("ask");
   const [useWorktree, setUseWorktree] = useState<boolean>(false);
-  const [fastMode, setFastMode] = useState<boolean>(false);
   const [planMode, setPlanMode] = useState<boolean>(false);
   const planModeRef = useRef<boolean>(false);
   planModeRef.current = planMode;
@@ -771,6 +767,24 @@ export const App: React.FC = () => {
   const activeWorkspace = useMemo(() => {
     return workspaces.find((w) => w.active) || workspaces[0] || null;
   }, [workspaces]);
+  const modelAccountIdentity = JSON.stringify(accountInfo);
+  const modelSelection = useModelSelection({
+    models, modelsLoading, connected: appServerStatus.connected,
+    threadId: activeThreadId, cwd: activeWorkspace?.path,
+    authMethod: accountInfo?.account?.type ?? null,
+    accountIdentity: modelAccountIdentity,
+  });
+  const {
+    selectedModelId, defaultModelSelected, reasoningEffort, fastMode,
+    selectModel: handleSelectComposerModel, selectEffort: setReasoningEffort,
+    toggleFast: toggleFastMode, getConfiguration: getModelConfiguration,
+    hydrateThread: hydrateThreadModel, trackTurn: trackModelTurn,
+    beginThreadHydration: beginThreadModelHydration,
+    applyThreadSettings: applyModelThreadSettings,
+    onUserMessageCompleted: recordModelUserMessage,
+  } = modelSelection;
+  const selectedModelName = modelRequestName(models, selectedModelId);
+
   const workspaceReviewRuns = reviewRuns.filter(run => activeWorkspace?.path &&
     attachmentIdentityKey(run.cwd) === attachmentIdentityKey(activeWorkspace.path));
   const latestReview = workspaceReviewRuns.reduce<ReviewRun | null>((latest, run) =>
@@ -993,9 +1007,6 @@ export const App: React.FC = () => {
       const list = await loadModelCatalog();
       if (revision !== modelCatalogRevisionRef.current) return;
       setModels(list);
-      const visible = getPickerModels(list);
-      const defaultModel = getDefaultModel(list);
-      setSelectedModelId(current => findModel(visible, current)?.id || defaultModel?.id || "");
     } catch (error) {
       if (revision === modelCatalogRevisionRef.current) setModelsError(`读取模型失败：${String(error)}`);
     } finally {
@@ -1022,11 +1033,6 @@ export const App: React.FC = () => {
       const overview = await tauriInvoke<CodexConfigOverview>("config_read");
       if (overview) {
         setConfigOverview(overview);
-        setDefaultModelSelected(!overview.model);
-        if (overview.model) setSelectedModelId(overview.model);
-        if (overview.modelReasoningEffort) {
-          setReasoningEffort(overview.modelReasoningEffort);
-        }
         if (overview.temperature !== undefined && overview.temperature !== null) {
           setSessionTemperature(overview.temperature);
         }
@@ -1053,39 +1059,6 @@ export const App: React.FC = () => {
       console.warn("config_read failed:", e);
     }
   }, []);
-
-  const handleSelectComposerModel = useCallback((modelId: string, useDefault: boolean) => {
-    const fallbackModel = getDefaultModel(models);
-    const targetId = useDefault ? fallbackModel?.id || "" : modelId;
-    const targetModel = models.find((model) => model.id === targetId) || fallbackModel;
-    setDefaultModelSelected(useDefault);
-    setSelectedModelId(targetId);
-    setReasoningEffort(
-      targetModel?.defaultReasoningEffort
-      || getSupportedEfforts(targetModel)[0]?.reasoningEffort
-      || ""
-    );
-    if (!modelSupportsFast(targetModel)) setFastMode(false);
-  }, [models]);
-
-  useEffect(() => {
-    const activeModel = findModel(models, selectedModelId);
-    if (!activeModel) {
-      setReasoningEffort("");
-      setFastMode(false);
-      return;
-    }
-    const supported = getSupportedEfforts(activeModel).map((effort) => effort.reasoningEffort);
-    if (supported.length === 0 && reasoningEffort) {
-      setReasoningEffort("");
-    } else if (supported.length > 0 && !supported.includes(reasoningEffort)) {
-      const fallback = supported.includes(activeModel.defaultReasoningEffort || "")
-        ? activeModel.defaultReasoningEffort
-        : supported[0];
-      setReasoningEffort(fallback || "");
-    }
-    if (fastMode && !modelSupportsFast(activeModel)) setFastMode(false);
-  }, [models, selectedModelId, reasoningEffort, fastMode]);
 
   const refreshAccount = useCallback(async () => {
     const request = ++accountReadRequestRef.current;
@@ -1331,6 +1304,14 @@ export const App: React.FC = () => {
 
         const eventThreadId = params?.threadId ?? params?.thread_id;
         const eventTurnId = params?.turnId ?? params?.turn?.id ?? params?.turn_id;
+        if (!replay && method === "thread/settings/updated" && typeof eventThreadId === "string" && params?.threadSettings) {
+          applyModelThreadSettings(eventThreadId, params.threadSettings);
+        }
+        if (!replay && method === "item/completed" && params?.item?.type === "userMessage") {
+          void recordModelUserMessage(eventThreadId, eventTurnId, params.item.id).catch(error => {
+            console.warn("最近模型记录未保存", error);
+          });
+        }
         const scopedEvent = method.startsWith("item/") || method.startsWith("turn/") ||
           method === "codex/event/agent_message_delta" ||
           method === NOTIFICATION.THREAD_COMPACTED || method === NOTIFICATION.THREAD_TOKEN_USAGE;
@@ -2247,6 +2228,7 @@ export const App: React.FC = () => {
   );
 
   const selectThread = useCallback(async (threadId: string) => {
+    const modelHydration = beginThreadModelHydration(threadId);
     const reviewHistorySnapshot = reviewResultsRef.current!.getRuns().filter(run => run.threadId === threadId);
     pendingNewThreadProjectRef.current = null;
     pendingProjectlessRef.current = false;
@@ -2285,6 +2267,15 @@ export const App: React.FC = () => {
         includeTurns: false,
       });
       if (!isCurrent()) return;
+      hydrateThreadModel(threadId, fullRes, modelHydration);
+      try {
+        const settings = await callAppServer<any>("thread/resume", { threadId });
+        if (!isCurrent()) return;
+        hydrateThreadModel(threadId, settings, modelHydration);
+      } catch (error) {
+        // A newly created thread has no rollout yet. Its thread/start settings remain authoritative.
+        console.warn("会话速度档恢复未确认", error);
+      }
       const threadStatus = fullRes?.thread?.status;
       if (threadStatus) {
         setActiveThreadStatus({
@@ -2376,7 +2367,15 @@ export const App: React.FC = () => {
     } catch {
       // ignore goal read failures
     }
-  }, [handleSelectWorkspace]);
+  }, [handleSelectWorkspace, hydrateThreadModel, beginThreadModelHydration]);
+
+  const modelAccountIdentityRef = useRef(modelAccountIdentity);
+  useEffect(() => {
+    if (modelAccountIdentityRef.current === modelAccountIdentity) return;
+    modelAccountIdentityRef.current = modelAccountIdentity;
+    const threadId = activeThreadIdRef.current;
+    if (appServerStatus.connected && threadId) void selectThread(threadId);
+  }, [modelAccountIdentity, appServerStatus.connected, selectThread]);
 
   useEffect(() => {
     if (!appServerStatus.connected || !threadEventsReady || !initialWindowThreadRef.current) return;
@@ -2507,20 +2506,20 @@ export const App: React.FC = () => {
 
   /** 官方 Plan 模式：thread/settings/update 的 collaborationMode（plan/default） */
   const applyCollaborationMode = useCallback(
-    async (threadId: string, enabled: boolean) => {
+    async (threadId: string, enabled: boolean, configuration: ModelConfiguration = getModelConfiguration()) => {
       await callAppServer("thread/settings/update", {
         threadId,
         collaborationMode: {
           mode: enabled ? "plan" : "default",
           settings: {
-            model: selectedModelName,
-            reasoning_effort: reasoningEffort || null,
+            model: configuration.model,
+            reasoning_effort: configuration.reasoningEffort,
             developer_instructions: null,
           },
         },
       });
     },
-    [selectedModelName, reasoningEffort]
+    [getModelConfiguration]
   );
 
   const handleTogglePlanMode = useCallback(
@@ -2575,6 +2574,7 @@ export const App: React.FC = () => {
       reviewStartPendingRef.current = true;
       setReviewBusy(true);
       try {
+        const configuration = getModelConfiguration();
         const approvalPolicy = permissionMode === "full" ? "never" : "on-request";
         const approvalsReviewer = permissionMode === "auto" ? "auto_review" : "user";
         const sandboxPolicy = permissionMode === "full"
@@ -2598,7 +2598,7 @@ export const App: React.FC = () => {
         if (!threadId) {
           const threadRes = await callAppServer<any>("thread/start", {
             cwd,
-            model: selectedModelName,
+            model: configuration.model,
             approvalPolicy,
             approvalsReviewer,
             sandbox: permissionMode === "full" ? "danger-full-access" : "workspace-write",
@@ -2607,6 +2607,7 @@ export const App: React.FC = () => {
           threadId = threadRes?.threadId || threadRes?.thread?.id;
           if (!threadId) throw new Error("无法为审查创建会话");
           if (!isCurrent()) return;
+          hydrateThreadModel(threadId, { ...threadRes, ...configuration });
           setSidebarCreatedThread({ id: threadId, cwd, projectId: threadRes?.thread?.projectId });
         }
         if (!isCurrent()) return;
@@ -2626,7 +2627,9 @@ export const App: React.FC = () => {
               input: [{ type: "text", text: prompt, text_elements: [] }],
               approvalPolicy, approvalsReviewer, sandboxPolicy,
               collaborationMode: null,
-              serviceTier: fastMode && modelSupportsFast(findModel(models, selectedModelId)) ? "priority" : null,
+              model: configuration.model,
+              effort: configuration.reasoningEffort,
+              serviceTier: configuration.serviceTier,
             });
             const turnId = started?.turn?.id;
             if (typeof turnId !== "string" || !turnId) throw new Error("审查已提交，但服务未确认执行身份");
@@ -2693,7 +2696,8 @@ export const App: React.FC = () => {
     [
       activeWorkspace?.path,
       appServerStatus.connected,
-      selectedModelId,
+      getModelConfiguration,
+      hydrateThreadModel,
       selectedModelName,
       gitCommits,
       gitContextCwd,
@@ -2791,6 +2795,9 @@ export const App: React.FC = () => {
       }
     }
 
+    let configuration;
+    try { configuration = getModelConfiguration(); }
+    catch (error) { showAppToast(`无法发送：${String(error)}`, "error"); return; }
     const sendRequest = threadRequestRef.current;
     sendStartPendingRef.current.add(sendRequest);
     const tempTurnId = `pending-${Date.now()}`;
@@ -2840,7 +2847,7 @@ export const App: React.FC = () => {
         const startRes = await callAppServer<any>("thread/start", {
           cwd: targetCwd || undefined,
           ...projectStartParams,
-          model: selectedModelName,
+          model: configuration.model,
           approvalPolicy,
           approvalsReviewer,
           sandbox: sandboxMode,
@@ -2851,6 +2858,7 @@ export const App: React.FC = () => {
           startRes?.conversationId;
         if (typeof createdThreadId !== "string" || !createdThreadId) throw new Error("thread/start 未返回会话 ID");
         currentThreadId = createdThreadId;
+        hydrateThreadModel(createdThreadId, { ...startRes, ...configuration });
         pendingNewThreadProjectRef.current = null;
         pendingProjectlessRef.current = false;
         setSidebarCreatedThread({ id: createdThreadId, cwd: targetCwd || undefined, projectId: startRes?.thread?.projectId });
@@ -2869,11 +2877,7 @@ export const App: React.FC = () => {
 
       // 计划模式：走真实 thread/settings/update（新会话也在首个 turn 前应用）
       if (planMode && currentThreadId) {
-        try {
-          await applyCollaborationMode(currentThreadId, true);
-        } catch (planErr) {
-          console.warn("apply plan collaboration mode failed:", planErr);
-        }
+        await applyCollaborationMode(currentThreadId, true, configuration);
       }
 
       if (attachedFiles.length > 0) {
@@ -2884,19 +2888,19 @@ export const App: React.FC = () => {
           files: attachedFiles,
         };
       }
-      const turnRes = await callAppServer<any>("turn/start", {
+      const turnRes = await trackModelTurn(currentThreadId!, configuration, () => callAppServer<any>("turn/start", {
         threadId: currentThreadId,
         cwd: targetCwd || undefined,
         runtimeWorkspaceRoots: turnWorkspaceRoots,
         input: nativeInputs,
-        model: selectedModelName,
-        effort: reasoningEffort || undefined,
+        model: configuration.model,
+        effort: configuration.reasoningEffort,
         summary: reasoningSummary || "auto",
         approvalPolicy,
         approvalsReviewer,
         sandboxPolicy,
-        serviceTier: fastMode && modelSupportsFast(findModel(models, selectedModelId)) ? "priority" : null,
-      });
+        serviceTier: configuration.serviceTier,
+      }));
       if (sendRequest !== threadRequestRef.current) return;
       const startedTurnId =
         turnRes?.turn?.id || turnRes?.turnId || turnRes?.id || null;
@@ -2950,7 +2954,9 @@ export const App: React.FC = () => {
     sidebarProjectMembership,
     useWorktree,
     permissionMode,
-    selectedModelId,
+    getModelConfiguration,
+    hydrateThreadModel,
+    trackModelTurn,
     selectedModelName,
     reasoningEffort,
     models,
@@ -2996,10 +3002,11 @@ export const App: React.FC = () => {
             pendingNewThreadProjectRef.current, sidebarProjectMembership, activeWorkspace?.path,
           );
           const targetCwd = projectless ? "" : pendingProject?.rootPaths[0] || activeWorkspace?.path || "";
+          const configuration = getModelConfiguration();
           const startRes = await callAppServer<any>("thread/start", {
             cwd: targetCwd || undefined,
             ...(projectless ? { projectId: null } : threadStartProjectParams(pendingProject, targetCwd || undefined)),
-            model: selectedModelName,
+            model: configuration.model,
             approvalPolicy: permissionMode === "full" ? "never" : "on-request",
             approvalsReviewer: permissionMode === "auto" ? "auto_review" : "user",
             sandbox:
@@ -3007,6 +3014,7 @@ export const App: React.FC = () => {
           });
           threadId = startRes?.threadId || startRes?.thread?.id || null;
           if (!threadId) throw new Error("无法为目标创建会话");
+          hydrateThreadModel(threadId, { ...startRes, ...configuration });
           pendingNewThreadProjectRef.current = null;
           pendingProjectlessRef.current = false;
           moveHomePromptToThread(threadId);
@@ -3029,7 +3037,8 @@ export const App: React.FC = () => {
     [
       activeWorkspace?.path,
       sidebarProjectMembership,
-      selectedModelId,
+      getModelConfiguration,
+      hydrateThreadModel,
       selectedModelName,
       permissionMode,
       refreshThreads,
@@ -3256,10 +3265,14 @@ export const App: React.FC = () => {
     queueMutationThreadsRef.current.add(tid);
     setQueueMutationVersion(v => v + 1);
     try {
-      await callAppServer("thread/queue/start", {
+      const configuration = getModelConfiguration();
+      await callAppServer("thread/settings/update", { threadId: tid, model: configuration.model,
+        effort: configuration.reasoningEffort, serviceTier: configuration.serviceTier });
+      if (!isCurrentThreadRequest(request, threadRequestRef.current, tid, activeThreadIdRef.current)) return;
+      await trackModelTurn(tid, configuration, () => callAppServer("thread/queue/start", {
         threadId: tid,
         queuedSubmissionId: first.id,
-      });
+      }));
       if (isCurrentThreadRequest(request, threadRequestRef.current, tid, activeThreadIdRef.current)) {
         setFollowupQueue(prev => prev.filter(item => item.id !== first.id));
         await refreshThreadQueue(tid);
@@ -3270,7 +3283,7 @@ export const App: React.FC = () => {
       queueMutationThreadsRef.current.delete(tid);
       setQueueMutationVersion(v => v + 1);
     }
-  }, [followupQueue, isStreaming, handleSteerTurn, refreshThreadQueue, showAppToast]);
+  }, [followupQueue, isStreaming, handleSteerTurn, refreshThreadQueue, showAppToast, getModelConfiguration, trackModelTurn]);
 
   const handleEnqueueFollowup = useCallback(async () => {
     const tid = activeThreadIdRef.current;
@@ -3984,7 +3997,7 @@ export const App: React.FC = () => {
     } else if (action === "toggle_plan") {
       setPlanMode((v) => !v);
     } else if (action === "toggle_fast") {
-      setFastMode((v) => !v);
+      void toggleFastMode();
     } else if (action === "toggle_worktree") {
       setUseWorktree((v) => !v);
     } else if (action === "open_terminal") {
@@ -4414,7 +4427,7 @@ export const App: React.FC = () => {
       dictationSessionKey={promptDraftKey}
       composerEnterBehavior={composerEnterBehavior}
       keyBindings={keyboardState.bindings}
-      submissionDisabled={queueBusy || sendStartPendingRef.current.has(threadRequestRef.current)}
+      submissionDisabled={queueBusy || modelSelection.selectionPending || !!modelSelection.selectionDisabledReason || sendStartPendingRef.current.has(threadRequestRef.current)}
       variant="thread"
       promptInput={promptInput}
       onPromptInputChange={setPromptInput}
@@ -4444,7 +4457,16 @@ export const App: React.FC = () => {
       reasoningEffort={reasoningEffort}
       onSelectReasoningEffort={setReasoningEffort}
       fastMode={fastMode}
-      onToggleFastMode={() => setFastMode((v) => !v)}
+      serviceTier={modelSelection.serviceTier}
+      serviceTierAccess={modelSelection.serviceTierAccess}
+      modelEligibilityContext={modelSelection.eligibilityContext}
+      selectionPending={modelSelection.selectionPending}
+      selectionError={modelSelection.selectionError}
+      selectionDisabledReason={modelSelection.selectionDisabledReason}
+      recentModelConfigurations={modelSelection.recentModelConfigurations}
+      onSelectServiceTier={modelSelection.selectTier}
+      onSelectConfiguration={modelSelection.selectConfiguration}
+      onToggleFastMode={toggleFastMode}
       planMode={planMode}
       onTogglePlanMode={handleTogglePlanMode}
       attachedFiles={attachedFiles}
@@ -5212,7 +5234,7 @@ export const App: React.FC = () => {
                   customCliPath: cliPath || null,
                 })
               }
-              onConfigUpdated={async () => { await refreshConfigOverview(); await refreshModels(); }}
+              onConfigUpdated={async () => { await refreshConfigOverview(); await modelSelection.refreshPreferences(); await refreshModels(); }}
               onNavigateRoute={(r) => {
                 if (r === "plugins" || r === "skills") setPluginDirectoryMode("browse");
                 setActiveRoute(r);
@@ -5290,7 +5312,7 @@ export const App: React.FC = () => {
                   dictationSessionKey={promptDraftKey}
                 composerEnterBehavior={composerEnterBehavior}
                 keyBindings={keyboardState.bindings}
-                submissionDisabled={queueBusy || sendStartPendingRef.current.has(threadRequestRef.current)}
+                submissionDisabled={queueBusy || modelSelection.selectionPending || !!modelSelection.selectionDisabledReason || sendStartPendingRef.current.has(threadRequestRef.current)}
               variant="home"
               promptInput={promptInput}
               onPromptInputChange={setPromptInput}
@@ -5320,7 +5342,16 @@ export const App: React.FC = () => {
               reasoningEffort={reasoningEffort}
               onSelectReasoningEffort={setReasoningEffort}
               fastMode={fastMode}
-              onToggleFastMode={() => setFastMode((v) => !v)}
+              serviceTier={modelSelection.serviceTier}
+              serviceTierAccess={modelSelection.serviceTierAccess}
+              modelEligibilityContext={modelSelection.eligibilityContext}
+              selectionPending={modelSelection.selectionPending}
+              selectionError={modelSelection.selectionError}
+              selectionDisabledReason={modelSelection.selectionDisabledReason}
+              recentModelConfigurations={modelSelection.recentModelConfigurations}
+              onSelectServiceTier={modelSelection.selectTier}
+              onSelectConfiguration={modelSelection.selectConfiguration}
+              onToggleFastMode={toggleFastMode}
               planMode={planMode}
               onTogglePlanMode={handleTogglePlanMode}
               attachedFiles={attachedFiles}

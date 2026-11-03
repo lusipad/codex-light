@@ -16,6 +16,7 @@ pub mod notification_broker;
 pub mod desktop_notifications;
 pub mod notification_audio;
 pub mod notification_preferences;
+mod model_preferences;
 mod image_save;
 mod chatgpt_service;
 mod share_assets;
@@ -1580,6 +1581,7 @@ pub fn run() {
         .manage(thread_window::ThreadWindowState::default())
         .manage(notification_broker::NotificationBroker::default())
         .manage(notification_preferences::NotificationPreferencesState::default())
+        .manage(model_preferences::ModelPreferencesState::default())
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 if let Err(error) = menu::remove_shortcut_window(window.app_handle(), window.label()) {
@@ -1596,6 +1598,9 @@ pub fn run() {
             notification_broker::notification_claim,
             notification_preferences::notification_preferences_read,
             notification_preferences::notification_preference_write,
+            model_preferences::model_preferences_read,
+            model_preferences::model_preferences_write_default,
+            model_preferences::model_recent_record,
             desktop_notifications::desktop_notification_show,
             desktop_notifications::desktop_notification_hide,
             desktop_notifications::desktop_notification_hide_conversation,

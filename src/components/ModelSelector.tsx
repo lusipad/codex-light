@@ -1,6 +1,6 @@
 import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, SparklesIcon } from "./Icons";
-import { findModel, getDefaultModel, getPickerModels, getSupportedEfforts, modelSupportsFast } from "../modelCapabilities";
+import { findModel, getDefaultModel, getPickerModels, getSupportedEfforts, getModelServiceTiers, getModelEligibility, resolveServiceTier, resolveModelSelection, type ModelConfiguration, type ModelEligibilityContext, type ServiceTierAccess } from "../modelCapabilities";
 import { ModelInfo } from "../types";
 import "./ModelSelector.css";
 
@@ -36,6 +36,16 @@ export interface ModelSelectorProps {
   onSelectModel: (modelId: string, useDefault: boolean) => void;
   onSelectReasoningEffort: (effort: string) => void;
   onToggleFastMode: () => void;
+  serviceTier?: string | null;
+  serviceTierAccess?: ServiceTierAccess | null;
+  modelEligibilityContext?: ModelEligibilityContext;
+  selectionPending?: boolean;
+  selectionError?: string | null;
+  selectionDisabledReason?: string | null;
+  recentModelConfigurations?: ModelConfiguration[];
+  recentOpen?: boolean;
+  onSelectServiceTier?: (tier: string | null) => void;
+  onSelectConfiguration?: (configuration: ModelConfiguration, useDefault?: boolean) => void;
 }
 
 export const ModelSelector: React.FC<ModelSelectorProps> = ({
@@ -52,24 +62,85 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   onSelectModel,
   onSelectReasoningEffort,
   onToggleFastMode,
+  serviceTier = null,
+  serviceTierAccess,
+  modelEligibilityContext,
+  selectionPending = false,
+  selectionError,
+  selectionDisabledReason,
+  recentModelConfigurations = [],
+  recentOpen = false,
+  onSelectServiceTier,
+  onSelectConfiguration,
 }) => {
   const [view, setView] = useState<"compact" | "models">("compact");
+  const [query, setQuery] = useState("");
   const menuId = useId();
   const containerRef = useRef<HTMLDivElement>(null);
   const initialFocusRef = useRef<"first" | "last">("first");
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const defaultModel = getDefaultModel(models);
-  const visibleModels = useMemo(() => getPickerModels(models), [models]);
+  const defaultModel = getDefaultModel(models, modelEligibilityContext);
+  const visibleModels = useMemo(() => getPickerModels(models, modelEligibilityContext), [models, modelEligibilityContext]);
   const activeModel = findModel(models, selectedModelId)
-    || defaultModel
+    || (!selectedModelId ? defaultModel : undefined)
     || (selectedModelId ? { id: selectedModelId, displayName: selectedModelId } : undefined);
-  const supportedEfforts = useMemo(() => getSupportedEfforts(activeModel), [activeModel]);
+  const supportedEfforts = useMemo(() => getSupportedEfforts(activeModel, modelEligibilityContext), [activeModel, modelEligibilityContext]);
   const activeEffort = supportedEfforts.find((effort) => effort.reasoningEffort === reasoningEffort)
     || supportedEfforts.find((effort) => effort.reasoningEffort === activeModel?.defaultReasoningEffort)
     || supportedEfforts[0];
   const activeEffortIndex = Math.max(0, supportedEfforts.indexOf(activeEffort));
-  const fastSupported = modelSupportsFast(activeModel);
+  const unavailable = selectionPending || modelsLoading;
+  const activeDisabledReason = selectionDisabledReason || getModelEligibility(activeModel, modelEligibilityContext).reason;
+  const tierOptions = activeModel ? [{ id: null, name: "标准" }, ...getModelServiceTiers(activeModel)
+    .filter(tier => tier.id !== "default").map(tier => ({ id: tier.id, name: tier.name || tier.id }))] : [];
+  const currentConfiguration: ModelConfiguration = {
+    model: activeModel?.model || activeModel?.id || selectedModelId,
+    reasoningEffort: activeEffort?.reasoningEffort || null,
+    serviceTier,
+  };
+  const resolveChoice = (model: ModelInfo) => {
+    const requested = { model: model.model || model.id, reasoningEffort, serviceTier };
+    const resolved = resolveModelSelection(models, requested, modelEligibilityContext, serviceTierAccess);
+    return resolved.available ? resolved
+      : resolveModelSelection(models, { ...requested, serviceTier: null }, modelEligibilityContext, serviceTierAccess);
+  };
+  const recentCandidates = useMemo(() => {
+    const candidates = [...recentModelConfigurations, currentConfiguration, ...visibleModels.map(model => ({
+      model: model.model || model.id,
+      reasoningEffort: model.defaultReasoningEffort || getSupportedEfforts(model, modelEligibilityContext)[0]?.reasoningEffort || null,
+      serviceTier: null,
+    }))];
+    const seen = new Set<string>();
+    return candidates.flatMap(configuration => {
+      const resolved = resolveModelSelection(models, configuration, modelEligibilityContext, serviceTierAccess);
+      if (!resolved.available || !resolved.configuration ||
+          resolved.configuration.reasoningEffort !== configuration.reasoningEffort) return [];
+      const key = JSON.stringify(resolved.configuration);
+      if (seen.has(key)) return [];
+      seen.add(key);
+      return [resolved.configuration];
+    }).slice(0, 3);
+  }, [models, recentModelConfigurations, selectedModelId, reasoningEffort, serviceTier, serviceTierAccess, modelEligibilityContext]);
+  const search = query.trim().toLowerCase();
+  const matchingRecent = recentCandidates.filter(configuration => {
+    const model = findModel(models, configuration.model);
+    return !search || `${formatModelName(model)} ${configuration.model} ${configuration.reasoningEffort || ""}`.toLowerCase().includes(search);
+  });
+  const matchingModels = search ? visibleModels.filter(model =>
+    `${formatModelName(model)} ${model.model || model.id}`.toLowerCase().includes(search)) : [];
+  const selectConfiguration = (configuration: ModelConfiguration, useDefault = false) => {
+    if (unavailable) return;
+    if (onSelectConfiguration) onSelectConfiguration(configuration, useDefault);
+    else {
+      const model = findModel(models, configuration.model);
+      if (!model) return;
+      onSelectModel(model.id, useDefault);
+      if (configuration.reasoningEffort) onSelectReasoningEffort(configuration.reasoningEffort);
+      onSelectServiceTier?.(configuration.serviceTier);
+    }
+    closeMenu();
+  };
   const progress = supportedEfforts.length > 1
     ? `${(activeEffortIndex / (supportedEfforts.length - 1)) * 100}%`
     : "0%";
@@ -77,6 +148,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   useEffect(() => {
     if (!open) {
       setView("compact");
+      setQuery("");
       return;
     }
     const frame = requestAnimationFrame(() => {
@@ -93,7 +165,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
       cancelAnimationFrame(frame);
       document.removeEventListener("pointerdown", dismiss);
     };
-  }, [open]);
+  }, [open, recentOpen]);
 
   const closeMenu = () => {
     onOpenChange(false);
@@ -119,6 +191,8 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
       closeMenu();
       return;
     }
+    if ((event.target as HTMLElement).matches('input[type="range"], input[type="search"]') &&
+        ["Home", "End"].includes(event.key)) return;
     if ((event.target as HTMLElement).matches('input[type="range"]')) return;
     if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
     const buttons = Array.from(menuRef.current?.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled)") || []);
@@ -144,12 +218,15 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
+        aria-busy={selectionPending}
         onClick={() => (open ? closeMenu() : onOpenChange(true))}
-        title="选择模型、推理强度与生成速度"
+        title={activeDisabledReason || "选择模型、推理强度与生成速度"}
       >
         <span>{formatModelName(activeModel)}{activeEffort ? ` ${EFFORT_LABELS[activeEffort.reasoningEffort] || activeEffort.reasoningEffort}` : ""}</span>
         <ChevronDownIcon size={11} />
       </button>
+      {!open && selectionError && <span role="alert">{selectionError}</span>}
+      {!open && selectionPending && <span className="sr-only" role="status">正在更新模型配置…</span>}
 
       {open && (
         <div
@@ -157,15 +234,42 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
           id={menuId}
           className={`composer-popover-menu bottom-right model-selector-popover ${view === "models" ? "model-list-view" : ""}`}
           role="menu"
-          aria-label={view === "models" ? "选择模型" : "模型与推理强度"}
+          aria-label={recentOpen ? "最近模型" : view === "models" ? "选择模型" : "模型与推理强度"}
+          aria-busy={selectionPending}
+          data-model-picker-view={recentOpen ? "recent" : view}
         >
+          {selectionPending && <div role="status">正在更新模型配置…</div>}
+          {selectionError && <div role="alert">{selectionError}</div>}
+          {activeDisabledReason && <div role="status">{activeDisabledReason}</div>}
           {modelsLoading && <div role="status">正在加载模型…</div>}
           {modelsError && <div role="alert">
             {modelsError}
             <button type="button" disabled={modelsLoading} onClick={onRefreshModels}>重新读取</button>
           </div>}
           {!modelsLoading && !modelsError && visibleModels.length === 0 && <div role="status">暂无可用模型</div>}
-          {view === "compact" ? (
+          {recentOpen ? (
+            <>
+              <input type="search" className="model-search" aria-label="搜索模型" placeholder="搜索模型" value={query}
+                onChange={event => setQuery(event.target.value)} />
+              <div className="model-list-heading">最近模型</div>
+              {matchingRecent.map(configuration => {
+                const model = findModel(models, configuration.model);
+                return <button key={JSON.stringify(configuration)} type="button" role="menuitem"
+                  disabled={unavailable} className="popover-menu-item model-choice" onClick={() => selectConfiguration(configuration)}>
+                  <span className="popover-item-title">{formatModelName(model)}</span>
+                  <span className="popover-item-desc">{EFFORT_LABELS[configuration.reasoningEffort || ""] || configuration.reasoningEffort}{configuration.serviceTier ? ` · ${getModelServiceTiers(model).find(tier => tier.id === configuration.serviceTier)?.name || configuration.serviceTier}` : ""}</span>
+                </button>;
+              })}
+              {search && <div className="model-list-heading">匹配的模型</div>}
+              {matchingModels.map(model => {
+                const resolved = resolveChoice(model);
+                return <button key={model.id} type="button" role="menuitem" disabled={unavailable || !resolved.available}
+                  title={resolved.reason} className="popover-menu-item model-choice"
+                  onClick={() => resolved.configuration && selectConfiguration(resolved.configuration)}>{formatModelName(model)}</button>;
+              })}
+              {!matchingRecent.length && !matchingModels.length && <div role="status">没有匹配的模型</div>}
+            </>
+          ) : view === "compact" ? (
             <>
               <button
                 type="button"
@@ -180,18 +284,6 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                 <ChevronRightIcon size={13} />
               </button>
               <div className="model-compact-controls">
-                <button
-                  type="button"
-                  role="menuitemcheckbox"
-                  aria-checked={fastMode && fastSupported}
-                  className={`model-fast-toggle ${fastMode && fastSupported ? "active" : ""}`}
-                  disabled={!fastSupported}
-                  aria-label={fastSupported ? (fastMode ? "启用标准模式" : "启用快速模式，用量更多") : "当前模型不支持快速模式"}
-                  title={fastSupported ? (fastMode ? "启用标准模式" : "启用快速模式 · 用量更多") : "当前模型不支持快速模式"}
-                  onClick={onToggleFastMode}
-                >
-                  <SparklesIcon size={15} />
-                </button>
                 <label className="model-effort-slider-label">
                   <span className="sr-only">推理强度</span>
                   <input
@@ -200,17 +292,36 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                     max={Math.max(0, supportedEfforts.length - 1)}
                     step={1}
                     value={activeEffortIndex}
-                    disabled={supportedEfforts.length < 2}
+                    disabled={unavailable || !!activeDisabledReason || supportedEfforts.length < 2}
                     aria-valuetext={activeEffort
                       ? `${EFFORT_LABELS[activeEffort.reasoningEffort] || activeEffort.reasoningEffort}，第 ${activeEffortIndex + 1} 项，共 ${supportedEfforts.length} 项。${activeEffort.description || ""}`
                       : "当前模型没有可用推理档位"}
                     style={{ "--slider-progress": progress } as React.CSSProperties}
                     onChange={(event) => {
                       const effort = supportedEfforts[Number(event.target.value)];
-                      if (effort) onSelectReasoningEffort(effort.reasoningEffort);
+                      if (effort) {
+                        if (onSelectConfiguration) onSelectConfiguration({ ...currentConfiguration, reasoningEffort: effort.reasoningEffort });
+                        else onSelectReasoningEffort(effort.reasoningEffort);
+                      }
                     }}
                   />
                 </label>
+              </div>
+              <div className="model-tier-options" role="group" aria-label="生成速度">
+                {tierOptions.map(tier => {
+                  const resolved = resolveServiceTier(activeModel, tier.id, serviceTierAccess);
+                  return <button key={tier.id || "standard"} type="button" role="menuitemradio"
+                    aria-checked={(serviceTier || null) === tier.id} disabled={unavailable || !!activeDisabledReason || !resolved.available}
+                    title={resolved.reason} className="popover-menu-item model-choice"
+                    onClick={() => {
+                      if (onSelectConfiguration) onSelectConfiguration({ ...currentConfiguration, serviceTier: resolved.serviceTier });
+                      else if (onSelectServiceTier) onSelectServiceTier(resolved.serviceTier);
+                      else if (!!tier.id !== fastMode) onToggleFastMode();
+                    }}>
+                    <span>{tier.id && <SparklesIcon size={13} />}{tier.name}</span>
+                    {(serviceTier || null) === tier.id && <CheckIcon size={13} />}
+                  </button>;
+                })}
               </div>
             </>
           ) : (
@@ -221,10 +332,13 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                   type="button"
                   role="menuitemradio"
                   aria-checked={defaultModelSelected}
+                  disabled={unavailable}
                   className={`popover-menu-item model-choice model-default-choice ${defaultModelSelected ? "selected" : ""}`}
                   onClick={() => {
-                    onSelectModel(defaultModel.id, true);
-                    closeMenu();
+                    if (onSelectConfiguration) {
+                      const resolved = resolveChoice(defaultModel);
+                      if (resolved.configuration) selectConfiguration(resolved.configuration, true);
+                    } else { onSelectModel(defaultModel.id, true); closeMenu(); }
                   }}
                 >
                   <div className="popover-item-body">
@@ -237,16 +351,19 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
               <div className="model-choice-list">
                 {visibleModels.map((model) => {
                   const selected = !defaultModelSelected && (model.id === selectedModelId || model.model === selectedModelId);
+                  const resolved = resolveChoice(model);
                   return (
                     <button
                       key={model.id}
                       type="button"
                       role="menuitemradio"
                       aria-checked={selected}
+                      disabled={unavailable || !resolved.available}
+                      title={resolved.reason}
                       className={`popover-menu-item model-choice ${selected ? "selected" : ""}`}
                       onClick={() => {
-                        onSelectModel(model.id, false);
-                        closeMenu();
+                        if (onSelectConfiguration && resolved.configuration) selectConfiguration(resolved.configuration);
+                        else { onSelectModel(model.id, false); closeMenu(); }
                       }}
                     >
                       <span className="popover-item-title">{formatModelName(model)}</span>

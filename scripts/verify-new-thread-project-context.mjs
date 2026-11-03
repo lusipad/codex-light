@@ -23,7 +23,7 @@ const root = "D:/projects/shared", second = "D:/projects/second";
 const multi = { id: "multi", name: "Multi", rootPaths: [root, second], serverProjectId: "server-multi", createdAt: 1 };
 const same = { id: "same", name: "Same", rootPaths: [root], serverProjectId: "server-same", createdAt: 2 };
 const metadata = { selectedProjectId: "multi", localProjects: [multi, same], threadProjectAssignments: {}, projectlessThreadIds: [], workspaceProjectAssignments: {} };
-export function mountProjectContext({ pending = null, membership = metadata, workspace = root, threadId = null, start, turn, worktree = false, projectless = false } = {}) {
+export function mountProjectContext({ pending = null, membership = metadata, workspace = root, threadId = null, start, turn, worktree = false, projectless = false, configuration, selectionPending = false } = {}) {
   const calls = [], state = { promptInput: "hello", turns: [] };
   const context = {
     ...module.exports, promptInput: "hello", attachedFiles: [], isStreaming: false,
@@ -36,6 +36,22 @@ export function mountProjectContext({ pending = null, membership = metadata, wor
     tauriInvoke: async (method, params) => { calls.push([method, plain(params)]); return { path: "D:/worktree" }; },
     permissionMode: "default", selectedModelId: undefined, selectedModelName: undefined, reasoningEffort: null, reasoningSummary: "auto",
     sessionAllowNetwork: false, fastMode: false, models: [], console: { error() {}, warn() {} },
+    selectionPending,
+    getModelConfiguration: () => {
+      if (context.selectionPending) throw new Error("模型配置更新中");
+      if (context.selectionInvalid) throw new Error("模型已不可用");
+      return configuration || { model: context.selectedModelName || context.selectedModelId || "fixture-model", reasoningEffort: context.reasoningEffort, serviceTier: null };
+    },
+    hydrateThreadModel: (id, configuration) => calls.push(["hydrateThreadModel", id, plain(configuration)]),
+    trackModelTurn: async (id, configuration, run) => {
+      calls.push(["trackModelTurn", id, plain(configuration)]);
+      const result = await run();
+      calls.push(["trackedTurn", id, plain(result)]);
+      return result;
+    },
+    isCurrentThreadRequest: (request, currentRequest, id, currentId) => request === currentRequest && id === currentId,
+    persistThreadAttachments: async () => ({ errors: [] }),
+    crypto: { randomUUID: () => "fixture-message-id" },
     callAppServer: async (method, params) => {
       calls.push([method, plain(params)]);
       if (method === "thread/start") return start ? start(params) : { thread: { id: "created", projectId: params.projectId } };

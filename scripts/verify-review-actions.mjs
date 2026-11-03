@@ -42,6 +42,17 @@ function mount(overrides = {}) {
     isStreaming: false,
     permissionMode: "ask", sessionAllowNetwork: false, fastMode: false, models: [],
     modelSupportsFast: () => false, reasoningEffort: "medium", reasoningSummary: "auto",
+    getModelConfiguration: () => {
+      if (context.selectionPending) throw new Error("模型配置更新中");
+      if (context.selectionInvalid) throw new Error("模型已不可用");
+      return context.configuration || { model: context.selectedModelName, reasoningEffort: context.reasoningEffort, serviceTier: null };
+    },
+    hydrateThreadModel() {},
+    trackModelTurn: async (id, configuration, run) => {
+      context.trackedConfigurations ??= [];
+      context.trackedConfigurations.push({ id, configuration });
+      return run();
+    },
     reviewBusy: false, reviewLastResult: null, sidebarCreatedThread: null,
     setReviewBusy: value => { context.reviewBusy = value; },
     setReviewLastResult: value => { context.reviewLastResult = value; },
@@ -60,6 +71,7 @@ function mount(overrides = {}) {
   };
   return { context, calls, notices, selected, tracker, start: vm.runInNewContext(js, context) };
 }
+export { mount as mountReviewContext };
 {
   const calls = [], updates = [], context = {
     useCallback: f => f, activeWorkspace: { path: "A" }, gitRefreshRequestRef: { current: 0 },

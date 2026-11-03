@@ -1741,3 +1741,12 @@ SettingsView不再读本地旧archivedThreads列表，直接复用ArchiveView和
 先按新Store独立合同补证五项desktop物理配置、Windows生命周期/权限及固定48000Hz离线解码，再复用broker的全窗焦点/去重仲裁，接WinRT Tag/Group/事件/精确撤回与App账号/请求复核；正文点击仅导航，明确审批动作才回复。MSVC/Windows SDK通过限定JSON C ABI，无新依赖。声音导入真实PCM/RIFF、内容SHA命名、持久副本与读回，选择确认后单次试听、离页失效；未复制分发官方音资源，默认音依赖本机固定包且许可未解决。真实config版本写入/读回、跨窗、取消/失败保护与官方中文控件专项接通。
 
 PS5中文脚本首败已兼容修复；正文open误当审批与同连接复用请求ID均先红后绿，增加宿主nonce并在写入前重查。初次权限unknown修为真实只读Setting，禁用则suppressed不播声。最终全Rust290（4线程）、完整标准与EXE/MSI/NSIS退出0，244产品输入和原生构建helper指纹稳定；默认并发首次握手超时、三旧夹具、搜索探针完成先于最终结果的失败及修正均保留，见[16.04B](antigravity/acceptance/16-04B.md)。浏览器WAV真实重采样通过，其他宿主桥注入，不冒充原生声音/OS操作。OS中心实测、审批先导航差异、COM冷启动、only-QuickChat/身份清理、reply、Dot/远程服务和像素仍未完成。下一[16.05B](antigravity/specs/16-05-next-closure.md)修改前合同已准备，不把阶段提交当整页验收。
+
+
+## 2026-11-03：16.05B 模型三元组、会话作用域与真实提交
+
+按新Store修改前合同，先补目录/资格/effort/tier、持久默认与最近记录物理映射，再实现共享模型状态。复用分页目录和统一JSON锁，删除App重复全局模型收敛逻辑。普通/目标/Plan/重试/Review/queue请求共享实际model与effort、真实tier id；steer保留正在运行上下文。默认三键CAS与读回，显式标准写已实测支持的default标记；当前会话走真实thread/settings/update，权威settings通知修正服务归一化及跨窗更新。最近三元组只在实际匹配的userMessage完成时写入，/model与Windows Alt+M为独立最近菜单，点击不记使用。
+
+复核修复多会话pending提前释放、旧resume覆盖保存和忽略目录默认tier；补同认证方式换账号、ABA旧读写/旧turn隔离。两版CLI真实隔离零轮次配置/CAS、离线样本后的model与effort重启恢复通过；tier返回与持久化存在实际差异，保留不匹配观察，不报全部恢复通过。旧profile不受当前app-server支持，明确失败不改根默认；Work远程链未用本地配置替代。
+
+最终完整标准、全Rust293项（4线程）与EXE/MSI/NSIS构建退出0；246项产品输入与原生构建helper指纹一致。首轮QuickChat旧夹具缺新增状态已保留断言修复，失败日志独立保存。生产浏览器受控验证swift、/model搜索、effort保留、点击不记最近与Escape焦点，不冒充原生或官方像素。见[16.05B待验](antigravity/acceptance/16-05B.md)。原生IME/多窗、完整Work/gates、速度全循环/标签、官方配对像素与用户验收保留未完。按用户授权，大阶段验证完成后提交，远程无分叉时推送；该授权不降低验收标准。

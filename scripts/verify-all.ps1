@@ -117,6 +117,11 @@ try {
     cargo test --manifest-path src-tauri/Cargo.toml notification_broker
   }
   Invoke-Step "Model discovery, selection and settings route regression" { node scripts/verify-model-catalog.mjs }
+  Invoke-Step "Model capability, eligibility and real tier regression" { node scripts/verify-model-capabilities-b.mjs }
+  Invoke-Step "Model scope, persistence and confirmed use regression" { node scripts/verify-model-selection-state-b.mjs }
+  Invoke-Step "Model picker and recent configuration UI regression" { node scripts/verify-model-selection-ui-b.mjs }
+  Invoke-Step "Model parameters across actual submission paths" { node scripts/verify-model-requests-b.mjs }
+  Invoke-Step "Rust model defaults and recent persistence regression" { cargo test --locked --manifest-path src-tauri/Cargo.toml --lib model_preferences }
   Invoke-Step "Archived settings shared lifecycle regression" { node scripts/verify-archived-settings.mjs }
   Invoke-Step "Storage cloud capability and destructive entry regression" { node scripts/verify-storage-settings.mjs }
   Invoke-Step "Agent user config version, readback and lifecycle regression" { node scripts/verify-agent-settings.mjs }
@@ -250,6 +255,7 @@ Invoke-Step "TypeScript typecheck (tsc --noEmit)" { npx tsc --noEmit }
       "scripts/protocol-verify/verify-plugin-preparation.mjs"
       "scripts/protocol-verify/verify-recommended-skills.mjs"
       "scripts/protocol-verify/verify-model-catalog.mjs"
+      "scripts/protocol-verify/verify-model-preferences.mjs"
       "scripts/protocol-verify/verify-agent-settings.mjs"
       "scripts/protocol-verify/verify-appearance-preferences.mjs"
       "scripts/protocol-verify/verify-keyboard-number-target.mjs"

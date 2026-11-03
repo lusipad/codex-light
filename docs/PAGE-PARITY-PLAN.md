@@ -2,7 +2,7 @@
 
 制定日期：2026-10-25。目标：以用户实际安装的 Windows Codex App 为基准，逐页达到功能、交互和像素布局一致。
 
-最新增量（16.03A）：快捷键设置已接真实keybindings.json、实际动作、托管原生菜单和帮助窗口，补搜索/录入/清除/恢复默认；见[待验表](antigravity/acceptance/16-03A.md)。原生操作、官方和像素仍未验收，完整命令/OS-global等缺口保留。下一队列16.04通知已开始[原包取证](antigravity/specs/16-04-notifications.md)。
+最新增量（16.05B）：模型组合、会话作用域与真实发送参数主要链已通过完整自验与原生构建，待用户验收，见[待验表](antigravity/acceptance/16-05B.md)。16.03B/16.04B 已阶段提交，均保留原生交互、官方与像素缺口；阶段提交不等于用户已验收。完整 Work 偏好与受限 gate 不以本地配置替代。
 
 执行更新（2026-11-01，用户最新指令）：持续开发全部页面，避免单一交互细节阻塞整体推进。按 01C→01D→01E→01F→后续页面顺序逐单元开发；前序原生/官方/像素与用户验收缺口单独保留，不以进入下一单元表示已验收。此推进授权覆盖下文及 Antigravity 旧计划“前序未验收不得进入下一页”的开发门槛，不降低最终验收标准。当前 01C 首页标题状态与项目入口进入自验；01B 保留未验收。
 
@@ -142,7 +142,7 @@ asar 作为前端静态实现的主要参照，与官方文档、官方运行时
 | 16.02 | appearance | [模式/双字号/动态效果增量](antigravity/runs/20261101-codex-appearance.md)自动自验通过；完整主题与原生/像素未验收 |
 | 16.03 | keyboard-shortcuts | [文件/执行/菜单增量](antigravity/runs/20261101-codex-shortcuts.md)完整标准检查通过；完整目录、OS-global、原生/像素未验收 |
 | 16.04 | notifications | [分类／独立偏好增量](antigravity/runs/20261101-codex-notifications.md)完整标准检查通过；系统交互、官方音频、远程设置与像素未验收 |
-| 16.05 | providers-models（旧别名） | [模型目录/入口纠偏](antigravity/runs/20261101-codex-model-catalog.md)自动自验通过；无依据独立页撤下，模型偏好归属Composer/agent；远程gate、原生/像素未验 |
+| 16.05 | providers-models（旧别名） | [16.05B 模型组合与真实提交](antigravity/acceptance/16-05B.md)完整标准、全Rust与原生构建通过，待用户验收；归属Composer/agent，无独立Provider页；Work/gates、原生交互与像素未验 |
 | 16.06 | agent | 审批、沙箱、联网、推理配置与真正生效值 |
 | 16.07 | personalization | 偏好读写与实际对话配置的关系 |
 | 16.08 | account | 账号、登录/退出、额度、错误与失效恢复 |

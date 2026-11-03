@@ -66,6 +66,7 @@ visit(ast);
 let sends = 0, interrupts = 0, responses = 0;
 const context = { React, ComposerBox: "ComposerBox", ApprovalCenter: "ApprovalCenter", handleSendMessage: () => sends++, handleInterruptTurn: () => interrupts++, handleRespondServerRequest: () => responses++,
   keyboardState: { bindings: [{ command: "composer.submit", key: "Ctrl+Enter" }] }, queueBusy: false,
+  modelSelection: { selectionPending: false, selectionDisabledReason: "", serviceTier: "swift", recentModelConfigurations: [] },
   sendStartPendingRef: { current: new Set() }, threadRequestRef: { current: "t1" } };
 for (const helper of helpers.values()) for (const match of helper.matchAll(/=\{([a-zA-Z][a-zA-Z0-9]*)\}/g)) context[match[1]] ??= `shared:${match[1]}`;
 const sharedComposer = vm.runInNewContext(compile(`(${helpers.get("renderThreadComposer")})`), context)();
@@ -77,6 +78,11 @@ assert.equal(sharedApprovals.props.requests, "shared:activePendingRequests");
 assert.equal(sharedApprovals.props.responseStates, "shared:requestResponses");
 assert.equal(sharedComposer.props.keyBindings, context.keyboardState.bindings, "quick chat shares the production keyboard bindings");
 assert.equal(sharedComposer.props.submissionDisabled, false);
+assert.equal(sharedComposer.props.serviceTier, context.modelSelection.serviceTier);
+assert.equal(sharedComposer.props.recentModelConfigurations, context.modelSelection.recentModelConfigurations);
+context.modelSelection.selectionPending = true;
+assert.equal(vm.runInNewContext(compile(`(${helpers.get("renderThreadComposer")})`), context)().props.submissionDisabled, true, "model save disables the shared composer");
+context.modelSelection.selectionPending = false;
 context.queueBusy = true;
 assert.equal(vm.runInNewContext(compile(`(${helpers.get("renderThreadComposer")})`), context)().props.submissionDisabled, true, "queue work disables the shared composer");
 context.queueBusy = false; context.sendStartPendingRef.current.add("t1");

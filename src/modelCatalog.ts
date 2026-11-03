@@ -10,8 +10,15 @@ export async function loadModelCatalog(): Promise<ModelInfo[]> {
       cursor, includeHidden: true, limit: 100,
     });
     if (!Array.isArray(page?.data)) throw Error("模型目录返回格式无效");
-    for (const model of page.data) models.set(model.id, model);
+    for (const model of page.data) {
+      if (!model || typeof model.id !== "string" || !model.id.trim()
+        || model.model !== undefined && (typeof model.model !== "string" || !model.model.trim())) {
+        throw Error("模型目录条目格式无效");
+      }
+      models.set(model.id, model);
+    }
     cursor = page.nextCursor ?? null;
+    if (cursor !== null && (typeof cursor !== "string" || !cursor)) throw Error("模型目录分页格式无效");
     if (cursor !== null) {
       if (cursors.has(cursor)) throw Error("模型目录分页重复，请重新读取");
       cursors.add(cursor);

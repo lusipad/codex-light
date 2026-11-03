@@ -34,7 +34,7 @@ import { baseNameFsPath } from "../fsClient";
 
 import type { ComposerEnterBehavior } from "../composerPreferences";
 import { acceleratorFromEvent, commandId, normalizeAccelerator, type KeyBinding } from "../shortcuts";
-import { findModel, getDefaultModel, getSupportedEfforts, modelSupportsFast } from "../modelCapabilities";
+import { findModel, getDefaultModel, getSupportedEfforts, getFastServiceTier, resolveServiceTier, getModelEligibility, type ModelConfiguration, type ModelEligibilityContext, type ServiceTierAccess } from "../modelCapabilities";
 
 export interface ComposerBoxProps {
   dictationSessionKey: string;
@@ -74,6 +74,15 @@ export interface ComposerBoxProps {
   onSelectReasoningEffort: (effort: string) => void;
   fastMode: boolean;
   onToggleFastMode: () => void;
+  serviceTier?: string | null;
+  serviceTierAccess?: ServiceTierAccess | null;
+  modelEligibilityContext?: ModelEligibilityContext;
+  selectionPending?: boolean;
+  selectionError?: string | null;
+  selectionDisabledReason?: string | null;
+  recentModelConfigurations?: ModelConfiguration[];
+  onSelectServiceTier?: (tier: string | null) => void;
+  onSelectConfiguration?: (configuration: ModelConfiguration, useDefault?: boolean) => void;
   planMode: boolean;
   onTogglePlanMode: () => void;
   // Attachments & Autocomplete
@@ -150,6 +159,15 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
   onSelectReasoningEffort,
   fastMode,
   onToggleFastMode,
+  serviceTier,
+  serviceTierAccess,
+  modelEligibilityContext,
+  selectionPending,
+  selectionError,
+  selectionDisabledReason,
+  recentModelConfigurations,
+  onSelectServiceTier,
+  onSelectConfiguration,
   planMode,
   onTogglePlanMode,
   attachedFiles,
@@ -192,7 +210,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
   }, [promptInput, variant, actualTextareaRef]);
 
   const [openMenu, setOpenMenu] = useState<
-    "project" | "env" | "branch" | "plus" | "permission" | "model" | null
+    "project" | "env" | "branch" | "plus" | "permission" | "model" | "model-recent" | null
   >(null);
   const [newBranchInput, setNewBranchInput] = useState("");
   const [projectQuery, setProjectQuery] = useState("");
@@ -254,7 +272,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
 
   useEffect(() => {
     if (openMenu !== "project") setProjectQuery("");
-    if (!openMenu || openMenu === "model") return;
+    if (!openMenu || openMenu === "model" || openMenu === "model-recent") return;
     const updateBounds = () => {
       const menu = menuRef.current;
       const trigger = menuTriggersRef.current[openMenu];
@@ -452,6 +470,13 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
   };
 
   const handleAutocompleteSelect = (item: AutocompleteItem) => {
+    if (item.action === "open_model_picker") {
+      if (modelsLoading || selectionPending || selectionDisabledReason) return;
+      onPromptInputChange("");
+      setAutocompleteMode(null);
+      setOpenMenu("model-recent");
+      return;
+    }
     if (item.action && onSlashAction) {
       onSlashAction(item.action);
       if (!item.insertText) {
@@ -481,8 +506,8 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
           !boxRef.current?.contains(document.activeElement) ||
           document.activeElement?.closest("[role='dialog'], [role='menu']")) return;
       const id = (event as CustomEvent<{ id: string }>).detail?.id;
-      const activeModel = findModel(models, selectedModelId) || getDefaultModel(models);
-      const efforts = getSupportedEfforts(activeModel);
+      const activeModel = findModel(models, selectedModelId) || (!selectedModelId ? getDefaultModel(models, modelEligibilityContext) : undefined);
+      const efforts = getSupportedEfforts(activeModel, modelEligibilityContext);
       const submit = (queue: boolean) => {
         const pending = commandPendingRef.current;
         if (submissionDisabled || pending.pending ||
@@ -503,24 +528,33 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
       };
       let handled = true;
       switch (id) {
+        case "composer-open-recent-models":
+          if (modelsLoading || selectionPending || selectionDisabledReason) handled = false;
+          else { setAutocompleteMode(null); setOpenMenu("model-recent"); }
+          break;
         case "composer-submit": handled = submit(false); break;
         case "composer-steer": handled = isStreaming && submit(false); break;
         case "composer-queue": handled = isStreaming && submit(true); break;
         case "composer-clear": onPromptInputChange(""); break;
         case "composer-add-files": onAttachFiles(); break;
         case "composer-toggle-fast-mode":
-          if (!modelSupportsFast(activeModel)) handled = false;
+          if (selectionPending || selectionDisabledReason || !getModelEligibility(activeModel, modelEligibilityContext).available ||
+              !getFastServiceTier(activeModel) || (!fastMode && !resolveServiceTier(activeModel, getFastServiceTier(activeModel)?.id, serviceTierAccess).available)) handled = false;
+          else if (onSelectConfiguration && activeModel) onSelectConfiguration({ model: activeModel.model || activeModel.id,
+            reasoningEffort, serviceTier: fastMode ? null : getFastServiceTier(activeModel)!.id });
           else onToggleFastMode();
           break;
         case "composer-toggle-plan-mode": onTogglePlanMode(); break;
         case "composer-increase-reasoning-effort":
         case "composer-decrease-reasoning-effort":
         case "composer-cycle-reasoning-effort": {
-          if (efforts.length < 2) { handled = false; break; }
+          if (selectionPending || selectionDisabledReason || efforts.length < 2) { handled = false; break; }
           const index = Math.max(0, efforts.findIndex(effort => effort.reasoningEffort === reasoningEffort));
           const next = id === "composer-cycle-reasoning-effort" ? (index + 1) % efforts.length
             : Math.max(0, Math.min(efforts.length - 1, index + (id === "composer-increase-reasoning-effort" ? 1 : -1)));
           if (next === index) handled = false;
+          else if (onSelectConfiguration && activeModel) onSelectConfiguration({ model: activeModel.model || activeModel.id,
+            reasoningEffort: efforts[next].reasoningEffort, serviceTier: serviceTier || null });
           else onSelectReasoningEffort(efforts[next].reasoningEffort);
           break;
         }
@@ -532,7 +566,8 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
     return () => window.removeEventListener("codex:keyboard-command", handleCommand);
   }, [models, selectedModelId, reasoningEffort, submissionDisabled, promptInput, attachedFiles,
     autocompleteMode, autocompleteItems, isStreaming, onSendMessage, onQueueMessage, onPromptInputChange,
-    onAttachFiles, onToggleFastMode, onTogglePlanMode, onSelectReasoningEffort]);
+    onAttachFiles, onToggleFastMode, onTogglePlanMode, onSelectReasoningEffort, modelsLoading,
+    selectionPending, selectionDisabledReason, modelEligibilityContext, serviceTierAccess, fastMode, serviceTier, onSelectConfiguration]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
@@ -1065,7 +1100,17 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
               defaultModelSelected={defaultModelSelected}
               reasoningEffort={reasoningEffort}
               fastMode={fastMode}
-              open={openMenu === "model"}
+              serviceTier={serviceTier}
+              serviceTierAccess={serviceTierAccess}
+              modelEligibilityContext={modelEligibilityContext}
+              selectionPending={selectionPending}
+              selectionError={selectionError}
+              selectionDisabledReason={selectionDisabledReason}
+              recentModelConfigurations={recentModelConfigurations}
+              onSelectServiceTier={onSelectServiceTier}
+              onSelectConfiguration={onSelectConfiguration}
+              recentOpen={openMenu === "model-recent"}
+              open={openMenu === "model" || openMenu === "model-recent"}
               onOpenChange={(open) => setOpenMenu(open ? "model" : null)}
               onSelectModel={onSelectModel}
               onSelectReasoningEffort={onSelectReasoningEffort}

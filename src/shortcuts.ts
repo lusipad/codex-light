@@ -30,6 +30,7 @@ const COMMAND_ROWS: CommandRow[] = [
   ["open-side-chat","openSideChat","打开侧边聊天","在侧边聊天中打开当前聊天","thread","webview",["CmdOrCtrl+Alt+S"]],
   ["copy-working-dir","copyWorkingDirectory","复制工作目录","复制当前聊天的工作目录","global","electron-only",["CmdOrCtrl+Shift+C"]],
   ["open-model-picker","composer.openModelPicker","选择推理强度","打开输入框中的模型推理强度设置","composer","webview",["Ctrl+Shift+M"]],
+  ["composer-open-recent-models","composer.openRecentModels","打开最近使用的模型","打开最近使用的模型、强度和速度配置组合","composer","webview",["Alt+M"]],
   ["open-thread-new-window","openThreadInNewWindow","在新窗口中打开","在新窗口中打开当前聊天","thread","webview",[]],
   ["mark-thread-unread","markThreadUnread","标记为未读","将当前聊天标记为未读","thread","webview",["CmdOrCtrl+Shift+U"]],
   ["delete-chat","deleteChat","删除聊天","确认是否要删除当前聊天","thread","webview",[]],

@@ -76,8 +76,8 @@ request = () => new Promise(resolve => { releaseNew = resolve; });
 const newer = refresh();
 releaseNew([sample("new", { isDefault: true })]); await newer;
 releaseOld([sample("old")]); await old;
-assert.equal(state.models[0].id, "new"); assert.equal(state.selected, "new");
-request = async () => []; await refresh(); assert.equal(state.models.length, 0); assert.equal(state.selected, "");
+assert.equal(state.models[0].id, "new");
+request = async () => []; await refresh(); assert.equal(state.models.length, 0);
 request = async () => [visible]; await refresh();
 request = async () => { throw Error("offline"); }; await refresh();
 assert.equal(state.models[0], visible); assert.match(state.error, /offline/); assert.equal(state.loading, false);
@@ -94,7 +94,7 @@ findCleanup(appAst); assert.ok(cleanupExpression);
 const cleanup = vm.runInNewContext(transpile(`(${cleanupExpression.getText(appAst)})()`), context);
 cleanup(); releaseLate([sample("unmounted")]); await late;
 assert.equal(state.models[0], visible);
-console.log("PASS MC02/MC05: production App refresh rejects stale/unmounted results, clears successful empty results, preserves failures and reconciles selection");
+console.log("PASS MC02/MC05: production App catalog refresh rejects stale/unmounted results, clears successful empty results and preserves failures; selection reconciliation is verified in the production modelSelection hook suite");
 
 const sendView = mountProjectContext({});
 sendView.context.selectedModelId = visible.id;
@@ -107,7 +107,7 @@ for (const method of ["thread/start", "turn/start"]) {
 }
 console.log("PASS MC04: actual App send callback uses backend model in thread/start and turn/start");
 
-let configUpdated, settingsModels, configRefreshes = 0, modelRefreshes = 0;
+let configUpdated, settingsModels, configRefreshes = 0, modelRefreshes = 0, preferenceRefreshes = 0;
 function findConfigCallback(node) {
   if (ts.isJsxSelfClosingElement(node) && node.tagName.getText(appAst) === "SettingsView") {
     configUpdated = node.attributes.properties.find(attr => attr.name?.getText(appAst) === "onConfigUpdated")?.initializer?.expression;
@@ -119,8 +119,9 @@ findConfigCallback(appAst); assert.ok(configUpdated);
 const update = vm.runInNewContext(transpile(`(${configUpdated.getText(appAst)})`), {
   refreshConfigOverview: async () => { configRefreshes++; },
   refreshModels: async () => { assert.equal(configRefreshes, 1); modelRefreshes++; },
+  modelSelection: { refreshPreferences: async () => { assert.equal(configRefreshes, 1); preferenceRefreshes++; } },
 });
-await update(); assert.equal(modelRefreshes, 1);
+await update(); assert.equal(modelRefreshes, 1); assert.equal(preferenceRefreshes, 1);
 const settingsChoices = vm.runInNewContext(transpile(`(${settingsModels.getText(appAst)})`), { ...caps, models: [hidden, review, visible] });
 assert.deepEqual(Array.from(settingsChoices, model => model.id), ["menu-id"]);
 console.log("PASS MC05: actual settings save callback refreshes config before discovering the new model catalog");

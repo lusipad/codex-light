@@ -111,6 +111,18 @@ export interface ModelReasoningOption {
   description?: string;
 }
 
+export interface ModelConfiguration {
+  model: string;
+  reasoningEffort: string | null;
+  serviceTier: string | null;
+}
+
+export interface ModelServiceTier {
+  id: string;
+  name?: string;
+  description?: string;
+}
+
 export interface ModelInfo {
   id: string;
   model?: string;
@@ -122,7 +134,9 @@ export interface ModelInfo {
   defaultReasoningEffort?: string;
   supportedReasoningEfforts?: Array<ModelReasoningOption | string>;
   additionalSpeedTiers?: string[];
-  serviceTiers?: Array<{ id: string; name?: string; description?: string }>;
+  serviceTiers?: ModelServiceTier[];
+  defaultServiceTier?: string | null;
+  availableAccessPrograms?: { cyber?: string[] } | null;
   isDefault?: boolean;
 }
 

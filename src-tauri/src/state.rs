@@ -1700,6 +1700,17 @@ impl DesktopStateManager {
         self.set_value_persisted_at_path(key, value, &desktop_global_state_path())
     }
 
+    pub fn update_value_persisted<F>(&self, key: &str, update: F) -> Result<Value, String>
+    where F: FnOnce(Value) -> Result<Value, String> {
+        let mut guard = self.state_map.lock().unwrap();
+        let value = update(guard.get(key).cloned().unwrap_or(Value::Null))?;
+        let mut next = guard.clone();
+        next.insert(key.to_string(), value.clone());
+        persist_state_map(&next, &desktop_global_state_path())?;
+        *guard = next;
+        Ok(value)
+    }
+
     fn set_value_persisted_at_path(
         &self, key: &str, value: Value, state_path: &Path,
     ) -> Result<(), String> {
