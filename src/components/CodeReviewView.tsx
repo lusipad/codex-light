@@ -550,9 +550,10 @@ export const CodeReviewView: React.FC<CodeReviewViewProps> = ({
                       type="button"
                       className="primary-btn-sm"
                       disabled={prActionBusy || busy}
+                      title="尚未接入选定账号与固定远程提交比较，不会回退到本地同名分支"
                       onClick={() => void runPrAction(isCurrent => runPullRequestReview(pr, onStartReview, isCurrent))}
                     >
-                      使用 Codex 审查
+                      私人 PR 审查（未接入）
                     </button>
                   </div>
                 </div>

@@ -2,6 +2,18 @@ import { tauriInvoke } from "./bridge";
 
 export interface ServiceIdentity { accountId: string; userId: string; generation: number }
 export interface CloudAccess { identity: ServiceIdentity; gateEvidence: "personal-plan-branch" | "incomplete" }
+export interface ReviewProviderAccess {
+  identity: ServiceIdentity;
+  preferences: ReviewProviderPreferences;
+  capabilities: { githubInstances: boolean | null; gitlab: boolean | null; reviewTabDefault: boolean | null };
+  githubConnections: { hostname: string; name?: string | null; connection: { connectorId: string; accountLinkId: string } }[] | null;
+  githubConnectionsError: string | null;
+}
+export interface ReviewProviderPreferences {
+  gitHostingProvider: string;
+  githubConnection: { hostname: string; connectorId: string; accountLinkId: string } | null;
+  gitlabConnectorId: string | null;
+}
 export type ServiceOperation = "library_favorites" | "library_nodes" | "images_init" | "images_styles" |
   "images_recent" | "gpts_discovery" | "gpts_category" | "gpts_search" | "gpts_detail" | "gpts_about" |
   "sites_access" | "sites_list" | "sites_shared" | "sites_detail" | "sites_environment" | "sites_domains" | "sites_share_access" | "github_repository" |
@@ -166,6 +178,50 @@ export function shareAccessBootstrap(identity: ServiceIdentity, signal: AbortSig
   return invokeService("share_thread_access", requestId, {
     request: { requestId, expectedIdentity: identity, profile: browserProfile() },
   }, signal);
+}
+
+function reviewProviderResponse(result: { requestId: string; identity: ServiceIdentity; body: unknown }, requestId: string, identity: ServiceIdentity): ReviewProviderAccess {
+  const body = responseBody(result, requestId, identity) as Omit<ReviewProviderAccess, "identity">;
+  if (!body || !body.capabilities ||
+    ![body.capabilities.githubInstances, body.capabilities.gitlab, body.capabilities.reviewTabDefault].every(value => value === null || typeof value === "boolean") ||
+    (body.githubConnectionsError !== null && typeof body.githubConnectionsError !== "string") ||
+    (body.capabilities.githubInstances === true
+      ? !(Array.isArray(body.githubConnections) && body.githubConnectionsError === null) && !(body.githubConnections === null && typeof body.githubConnectionsError === "string" && body.githubConnectionsError.length > 0)
+      : body.githubConnections !== null || body.githubConnectionsError !== null) ||
+    !body.preferences || typeof body.preferences.gitHostingProvider !== "string" ||
+    (body.preferences.gitlabConnectorId !== null && typeof body.preferences.gitlabConnectorId !== "string") ||
+    (body.preferences.githubConnection !== null && (!body.preferences.githubConnection ||
+      ![body.preferences.githubConnection.hostname, body.preferences.githubConnection.connectorId, body.preferences.githubConnection.accountLinkId].every(value => typeof value === "string" && value.length > 0)))) {
+    throw Error("代码审查提供商响应格式无效。");
+  }
+  return { ...body, identity };
+}
+
+export async function readReviewProviderAccess(identity: ServiceIdentity, signal: AbortSignal): Promise<ReviewProviderAccess> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; body: unknown }>(
+    "code_review_provider_read", requestId,
+    { request: { requestId, expectedIdentity: identity, profile: browserProfile() } }, signal,
+  );
+  return reviewProviderResponse(result, requestId, identity);
+}
+
+export async function updateReviewProviderPreference<K extends keyof ReviewProviderPreferences>(
+  field: K, value: ReviewProviderPreferences[K], identity: ServiceIdentity, signal: AbortSignal, expectedValue: ReviewProviderPreferences[K],
+): Promise<ReviewProviderAccess> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; body: unknown }>(
+    "code_review_provider_update", requestId,
+    { request: { requestId, expectedIdentity: identity, profile: browserProfile() }, field, value, expectedValue }, signal,
+  );
+  const access = reviewProviderResponse(result, requestId, identity);
+  const actualConnection = access.preferences.githubConnection;
+  const matches = field === "githubConnection"
+    ? value === null ? actualConnection === null : actualConnection !== null &&
+      (["hostname", "connectorId", "accountLinkId"] as const).every(key => actualConnection[key] === (value as NonNullable<ReviewProviderPreferences["githubConnection"]>)[key])
+    : access.preferences[field] === (field === "gitlabConnectorId" && typeof value === "string" ? value.trim() : value);
+  if (!matches) throw Error("提供商设置保存后读回不一致。");
+  return access;
 }
 
 export async function prepareSharedThread(

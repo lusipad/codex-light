@@ -1014,7 +1014,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         {activeSection === "profile" && <ProfileSettings accountIdentity={accountIdentity} connectionIdentity={connectionIdentity} onNavigationGuardChange={registerProfileNavigationGuard} />}
 
         {/* ── SECTION: CODE REVIEW (代码审查) ── */}
-        {activeSection === "code-review" && <CodeReviewSettings state={codeReviewPreferencesState} />}
+        {activeSection === "code-review" && <CodeReviewSettings state={codeReviewPreferencesState} providerScope={JSON.stringify([connectionIdentity, accountIdentity])} />}
 
         {activeSection === "computer-use" && <ComputerUseSettings onManagePlugins={() => setActiveSection("plugins-settings")} />}
         {activeSection === "appshots" && <AppshotsSettings />}

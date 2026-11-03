@@ -46,6 +46,7 @@ pub enum ServiceOperation {
     SitesDomains,
     SitesShareAccess,
     GithubRepository,
+    GithubConnections,
     ShareAccounts,
     ShareUsers,
     ShareGroups,
@@ -1211,7 +1212,12 @@ impl ChatgptService {
                     let mut http_request = build_http_request(&route, credentials, sent_integrity.as_deref(), &request.profile)?;
                     let usage = matches!(request.operation, ServiceOperation::WhamUsage);
                     let profile_read = matches!(request.operation, ServiceOperation::AccountMe | ServiceOperation::ProfileIdentity | ServiceOperation::ProfilePage);
-                    if profile_read {
+                    let review_connections = matches!(request.operation, ServiceOperation::GithubConnections);
+                    if review_connections {
+                        http_request.headers.insert("X-Codex-Expected-User-Id".into(), request.expected_identity.user_id.clone());
+                        http_request.headers.insert("X-Codex-Expected-Account-Id".into(), request.expected_identity.account_id.clone());
+                    }
+                    if profile_read || review_connections {
                         share_network_allowed(&call, &http_request.url).await?;
                         self.check_share_current(&request.expected_identity, &registration)?;
                     }
@@ -1222,12 +1228,12 @@ impl ChatgptService {
                         share_network_allowed(&call, &http_request.url).await?;
                         self.check_share_current(&request.expected_identity, &registration)?;
                     }
-                    let response = send_bounded(transport, http_request, registration.cancelled.clone(), Duration::from_secs(if usage { 10 } else { 50 })).await?;
+                    let response = send_bounded(transport, http_request, registration.cancelled.clone(), Duration::from_secs(if usage { 10 } else if review_connections { 15 } else { 50 })).await?;
                     if self.generation() != generation {
                         return Err(failure("account_changed", "Authenticated identity changed"));
                     }
                     apply_integrity(&mut session.integrity, sent_integrity.as_deref(), response.headers.get("x-oai-is-update"));
-                    if response.status == 401 && attempt == 0 && !((usage || profile_read) && account_instructions_ip_denied(&response)) {
+                    if response.status == 401 && attempt == 0 && !((usage || profile_read || review_connections) && account_instructions_ip_denied(&response)) {
                         self.prepare(&mut session, generation, &call, true).await?;
                         continue;
                     }
@@ -1961,6 +1967,7 @@ fn resolve_route(operation: &ServiceOperation, params: &Value) -> ServiceResult<
                 .ok_or_else(|| failure("invalid_request", "Repository identifier required"))?;
             (format!("/backend-api/wham/github/repositories/{}", encode_segment(id)?), &["id"])
         }
+        ServiceOperation::GithubConnections => ("/backend-api/wham/github/connections".into(), &[]),
         ServiceOperation::SitesList => (
             "/backend-api/websites".into(),
             &["limit", "include_editable", "after"],
@@ -4320,6 +4327,44 @@ mod tests {
         json!({"user_id":"user-fixture","account_id":"account-fixture","plan_type":"pro",
             "rate_limit":{"primary_window":{"used_percent":null,"reset_at":1800000000}},
             "credits":{"balance":"0","unit":"credits"},"extra":null})
+    }
+
+    #[tokio::test]
+    async fn review_connections_use_fixed_identity_headers_and_reject_route_overrides() {
+        let service = ChatgptService::default();
+        let body = json!([{"hostname":"github.example.test","name":"Work","connection":{"connectorId":"c","accountLinkId":"l"}}]);
+        let transport = instructions_transport(&[200], &[body.clone()]);
+        let mut request = request("review-connections");
+        request.operation = ServiceOperation::GithubConnections;
+        let result = service.read_with(request, share_rpc, &transport).await.unwrap();
+        assert_eq!(result.body, body);
+        assert!(!serde_json::to_string(&result).unwrap().contains(&fixture_token()));
+        let requests = transport.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].method, HttpMethod::Get);
+        assert_eq!(requests[0].url, "https://chatgpt.com/backend-api/wham/github/connections");
+        assert_eq!(requests[0].headers["X-Codex-Expected-User-Id"], "user-fixture");
+        assert_eq!(requests[0].headers["X-Codex-Expected-Account-Id"], "account-fixture");
+        assert!(resolve_route(&ServiceOperation::GithubConnections, &json!({"url":"https://other.invalid"})).is_err());
+        assert!(resolve_route(&ServiceOperation::GithubConnections, &json!({"accountId":"other"})).is_err());
+    }
+
+    #[tokio::test]
+    async fn review_connections_phase_reuses_cancellation_and_rejections_are_not_retried() {
+        let service = ChatgptService::default();
+        let registration = service.register("review-phase").unwrap();
+        drop(registration);
+        assert!(service.cancel("review-phase"));
+        let transport = instructions_transport(&[200], &[json!([])]);
+        let mut cancelled_request = request("review-phase");
+        cancelled_request.operation = ServiceOperation::GithubConnections;
+        assert_eq!(service.read_with(cancelled_request, share_rpc, &transport).await.err().unwrap().code, "cancelled");
+        assert!(transport.requests.lock().unwrap().is_empty());
+        let mut forbidden_request = request("review-forbidden");
+        forbidden_request.operation = ServiceOperation::GithubConnections;
+        let transport = instructions_transport(&[403], &[json!({})]);
+        assert!(service.read_with(forbidden_request, share_rpc, &transport).await.is_err());
+        assert_eq!(transport.requests.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]

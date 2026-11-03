@@ -43,6 +43,14 @@
 
 注册表还含 sidebar sections/layout 等代码审查工作面设置，**本设置分区没有对应控件，本阶段不顺带新增**。host 设置写路径有 optimistic cache 与逐 key 回滚及 subscribe 更新（`optimistic-revision-write-rollback`、`host-settings-write`）；我们的持久写读回可以更严，但不能失败后丢草稿、跨窗覆盖新值或宣称已保存。
 
+### 2026-11-03 实例入口补证
+
+补证见 `.ref/parity/16.16/actual/16-16B-research/provider-connections-supplement.json`（两份固定资源SHA与UTF-16锚点）。GitHub实例与管理入口还受 **223049465** 控制：`settings → yr → br/ur`，gate未启用时整个实例/管理区域返回null，不应凭默认github.com补一套常驻选择器。
+
+GitHub连接查询为 `app-initial → mk`：GET `/wham/github/connections`，query key含 userId/accountId，需gate及两项身份就绪，15秒限时、5分钟缓存、refetchOnMount、无自动retry。附加 `X-Codex-Expected-User-Id / X-Codex-Expected-Account-Id`；`ck`在请求前/响应使用前核当前会话与连接身份版本。**现有普通GitHub仓库API成功不等于此服务或gate可用**。
+
+GitLab实例为 `wXr`：按CODEX产品读取 `/ps/connectors/by-template`，与当前身份的连接授权记录交叉核对；逐项查询 `/aip/connectors/{connector_id}`，排除管理员禁用、模板不符、无真实授权与403/404，最后解析hostname并排序。不能将原始connector列表直接当可用实例。GitLab gate、GitHub企业实例gate均未取得当前账号运行时证据，后续实现需保留能力未证边界，不能以固定布尔值或伪列表放行。
+
 ### 链接打开不是固定外部浏览器
 
 `github` 选项的 defaultMessage 是 **Follow Browser Settings**。`link-preference` 先取 configured，缺失才按 gate/default resolve；`link-click-bridge`、`open-task-tab` 区分普通 task link、显式 context-menu 打开 Code Review、task PR 入口及账户/连接能力。普通链接尊重偏好；显式“Code review”菜单带 respectLinkPreference=false；不支持/无可用连接有不同 fallback/unavailable 结果。非 review-tab 分支委托通用链接路由，不等于无条件 ShellExecute 外部浏览器。
@@ -109,3 +117,13 @@
 开发前先落 CRB01–CRB05、CRB09 的回归及明确的服务不可用边界；随后最小实现、跑既有review偏好/本地review工作面回归、私有state Rust测试、类型检查与标准检查。涉及共享自动保存模式需回归GitSettings。代码外部链接/任务启动须核当前scope，不用旧设置异步结果发起新任务。
 
 cloud个人/仓库/安全审查与真实远程私人审查可分后续合同执行，未完成部分留明确差距。交付口径只能是“本单元自验/待用户验收”；未有官方运行时、当前源码原生构建及像素对照，**整页16.16仍不能标为1:1完成**。
+
+## 9. GitLab企业实例后续开发合同（只读取证，未实现）
+
+固定 `app-initial-4267e52fe5b0.js`，SHA-256 `ba06de8c5418586b49ca7d639ea5ad2af531c1037454ec69b10b9ea11e00992e`。下列范围均为0-based UTF-16、end exclusive：wXr 4894675–4895816，TXr 4895816–4895974，EXr 4895974–4896712，Ek 3584749–3585226，LVn 3584568–3584604，kjn 3434570–3434687。
+
+- gate明确true后，并行GET `/ps/connectors/by-template?template_id=templated_apps_GitLab`（取connectors）和POST `/aip/connectors/links/list_accessible`（取links）；后者body为 `{"principals":[],"link_refresh_strategy":"BLOCKING"}`，是读取而非修改。使用 `X-Codex-Surface: other`、`OAI-Product-Sku: CODEX`，links请求带真实 `ChatGPT-Account-Id`。不得复用固定CONNECTOR_SETTING SKU的插件POST变更分支。
+- 候选须匹配template且未被管理员禁用；授权link须connector_id匹配、id非空、auth_status非REAUTH_REQUIRED、unavailable_reason为空、connector_status非DISABLED_BY_ADMIN。再GET `/aip/connectors/{connector_id}?include_actions=false`；403/404只忽略该候选，其他错误使本次实例查询失败，不能伪造空列表。
+- 详情id须匹配；默认connector为 `connector_0c9786b2f41f41558056126bdb46c9bd`。service为gitlab，企业项也允许 `templated_apps_GitLab:{自身id}`，非默认项须匹配template；拒绝管理员禁用/admin_only_connector="true"。
+- base_url须HTTPS、无端口/凭据/query/hash，路径仅/api/v4或末尾/；原始串须严格等于 `https://{hostname}/api/v4` 或加/，不接受URL规范化绕过。hostname≤253、至少两段，每段符合DNS小写字母数字及内部连字符规则；拒绝纯数字分段主机与.localhost。默认仅gitlab.com，企业拒绝gitlab.com及其子域。
+- 输出connectorId/hostname/name，按官方hostname.localeCompare排序。复用真实服务身份/网络策略/取消，返回前重核身份；独立gitlabInstancesError不覆盖偏好。非null写入时宿主重新枚举授权成员后再CAS/落盘，不信任UI成员资格。真实服务schema与官方运行时仍待实测。

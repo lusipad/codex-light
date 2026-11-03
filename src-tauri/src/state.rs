@@ -390,15 +390,17 @@ mod workspace_transition_tests {
     fn review_preferences_roundtrip_merges_atoms_rejects_invalid_writes_and_preserves_on_failure() {
         let (manager, directory) = fixture();
         let path = directory.join("review.json");
-        assert_eq!(manager.review_preferences().unwrap()["githubLinkTarget"], "code-review-tab");
+        assert_eq!(manager.review_preferences().unwrap()["githubLinkTarget"], "github");
+        assert_eq!(manager.review_preferences().unwrap()["configuredGithubLinkTarget"], Value::Null);
         manager.update_review_preferences_at_path(json!({"localReviewInstructions":"关注并发"}), &path).unwrap();
-        let readback = manager.update_review_preferences_at_path(json!({"githubLinkTarget":"external-browser"}), &path).unwrap();
+        let readback = manager.update_review_preferences_at_path(json!({"githubLinkTarget":"github"}), &path).unwrap();
+        assert_eq!(readback["configuredGithubLinkTarget"], "github");
         assert_eq!(readback["localReviewInstructions"], "关注并发");
         let bytes = fs::read(&path).unwrap();
         let disk: Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(disk["unrelated"], "keep");
         assert_eq!(disk[PERSISTED_ATOM_STATE_KEY]["thread-workspace-state-v1:t"]["revision"], "r1");
-        for invalid in [json!({"githubLinkTarget":"in-app-browser"}), json!({"githubLinkTarget":true}), json!({"unknown":"value"})] {
+        for invalid in [json!({"githubLinkTarget":"external-browser"}), json!({"githubLinkTarget":"in-app-browser"}), json!({"githubLinkTarget":true}), json!({"unknown":"value"})] {
             assert!(manager.update_review_preferences_at_path(invalid, &path).is_err());
             assert_eq!(fs::read(&path).unwrap(), bytes);
             assert_eq!(manager.review_preferences().unwrap(), readback);
@@ -414,7 +416,43 @@ mod workspace_transition_tests {
         assert_eq!(merged["githubLinkTarget"], "code-review-tab");
         manager.update_review_preferences_at_path(json!({"localReviewInstructions":""}), &path).unwrap();
         assert_eq!(manager.review_preferences().unwrap()["localReviewInstructions"], "");
+        manager.state_map.lock().unwrap().get_mut(PERSISTED_ATOM_STATE_KEY).unwrap().as_object_mut().unwrap()
+            .insert("code-review-github-link-target".into(), json!("legacy-target"));
+        let preserved = manager.update_review_preferences_at_path(json!({"localReviewInstructions":"  原样\n"}), &path).unwrap();
+        assert_eq!(preserved["githubLinkTarget"], "legacy-target");
+        assert_eq!(preserved["configuredGithubLinkTarget"], "legacy-target");
+        let reopened: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(DesktopStateManager::read_review_preferences(reopened.as_object().unwrap()).unwrap(), preserved);
+        assert_eq!(preserved["localReviewInstructions"], "  原样\n");
         fs::remove_file(path).unwrap(); fs::remove_dir(directory).unwrap();
+    }
+
+    #[test]
+    fn review_provider_preferences_persist_only_selected_atom_and_preserve_failed_writes() {
+        let (manager, directory) = fixture(); let path=directory.join("providers.json");
+        assert_eq!(manager.review_provider_preferences().unwrap(),json!({"gitHostingProvider":"github","githubConnection":null,"gitlabConnectorId":null}));
+        manager.update_review_provider_preference_at_path("gitHostingProvider",&json!("gitlab"),&json!("github"),&path).unwrap();
+        let connection=json!({"hostname":"github.example.test","connectorId":"connector","accountLinkId":"link"});
+        let readback=manager.update_review_provider_preference_at_path("githubConnection",&connection,&Value::Null,&path).unwrap();
+        assert_eq!(readback["gitHostingProvider"],"gitlab");assert_eq!(readback["githubConnection"],connection);
+        let bytes=fs::read(&path).unwrap();let disk:Value=serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(disk["unrelated"],"keep");
+        assert_eq!(disk[PERSISTED_ATOM_STATE_KEY]["thread-workspace-state-v1:t"]["revision"],"r1");
+        assert_eq!(DesktopStateManager::read_review_provider_preferences(disk.as_object().unwrap()).unwrap(),readback);
+        for (field,value) in [("unknown",Value::Null),("gitHostingProvider",json!("other")),("githubConnection",json!({"hostname":"x"})),("gitlabConnectorId",json!(" "))] {
+            assert!(manager.update_review_provider_preference_at_path(field,&value,&Value::Null,&path).is_err());
+            assert_eq!(fs::read(&path).unwrap(),bytes);assert_eq!(manager.review_provider_preferences().unwrap(),readback);
+        }
+        assert!(manager.update_review_provider_preference_at_path("githubConnection",&Value::Null,&connection,&directory).is_err());
+        assert_eq!(manager.review_provider_preferences().unwrap(),readback);
+        assert!(manager.update_review_provider_preference_at_path("gitHostingProvider",&json!("github"),&json!("github"),&path).is_err());
+        assert_eq!(fs::read(&path).unwrap(),bytes,"stale field expectation must not overwrite another window");
+        let normalized=manager.update_review_provider_preference_at_path("gitlabConnectorId",&json!(" connector "),&Value::Null,&path).unwrap();
+        assert_eq!(normalized["gitlabConnectorId"],"connector");
+        manager.state_map.lock().unwrap().get_mut(PERSISTED_ATOM_STATE_KEY).unwrap().as_object_mut().unwrap().insert("code-review-git-hosting-provider".into(),json!("legacy-provider"));
+        assert_eq!(manager.review_provider_preferences().unwrap()["gitHostingProvider"],"legacy-provider");
+        assert_eq!(manager.update_review_provider_preference_at_path("githubConnection",&Value::Null,&connection,&path).unwrap()["gitHostingProvider"],"legacy-provider");
+        fs::remove_file(path).unwrap();fs::remove_dir(directory).unwrap();
     }
 
     #[test]
@@ -1646,6 +1684,40 @@ impl DesktopStateManager {
         Self::read_review_preferences(&self.state_map.lock().unwrap())
     }
 
+    pub(crate) fn review_provider_preferences(&self) -> Result<Value, String> {
+        Self::read_review_provider_preferences(&self.state_map.lock().unwrap())
+    }
+
+    fn read_review_provider_preferences(state: &Map<String, Value>) -> Result<Value, String> {
+        let atoms = state.get(PERSISTED_ATOM_STATE_KEY).filter(|value| !value.is_null());
+        if atoms.is_some_and(|value| !value.is_object()) { return Err("偏好存储格式无效。".into()); }
+        let provider = atoms.and_then(|atoms| atoms.get("code-review-git-hosting-provider")).cloned().unwrap_or(json!("github"));
+        if !provider.is_string() { return Err("代码审查提供商格式无效。".into()); }
+        let connection = atoms.and_then(|atoms| atoms.get("code-review-github-connection")).cloned().unwrap_or(Value::Null);
+        let gitlab = atoms.and_then(|atoms| atoms.get("code-review-gitlab-connector-id")).cloned().unwrap_or(Value::Null);
+        let (_, connection) = crate::review_provider::validated_preference("githubConnection", &connection)?;
+        let (_, gitlab) = crate::review_provider::validated_preference("gitlabConnectorId", &gitlab)?;
+        Ok(json!({"gitHostingProvider":provider,"githubConnection":connection,"gitlabConnectorId":gitlab}))
+    }
+
+    pub(crate) fn update_review_provider_preference(&self, field: &str, value: &Value, expected: &Value) -> Result<Value, String> {
+        self.update_review_provider_preference_at_path(field, value, expected, &desktop_global_state_path())
+    }
+
+    fn update_review_provider_preference_at_path(&self, field: &str, value: &Value, expected: &Value, path: &Path) -> Result<Value, String> {
+        let (key, value) = crate::review_provider::validated_preference(field, value)?;
+        let mut guard = self.state_map.lock().unwrap();
+        if Self::read_review_provider_preferences(&guard)?[field] != *expected { return Err("提供商设置已在其他窗口更改，请重新读取。".into()); }
+        let mut next = guard.clone();
+        let atoms = next.entry(PERSISTED_ATOM_STATE_KEY).or_insert_with(|| json!({}));
+        if atoms.is_null() { *atoms = json!({}); }
+        atoms.as_object_mut().ok_or("偏好存储格式无效。")?.insert(key.into(), value);
+        let readback = Self::read_review_provider_preferences(&next)?;
+        persist_state_map(&next, path)?;
+        *guard = next;
+        Ok(readback)
+    }
+
     fn read_review_preferences(state: &Map<String, Value>) -> Result<Value, String> {
         let atoms = state.get(PERSISTED_ATOM_STATE_KEY).filter(|value| !value.is_null());
         if atoms.is_some_and(|value| !value.is_object()) { return Err("偏好存储格式无效。".to_string()); }
@@ -1657,7 +1729,8 @@ impl DesktopStateManager {
             }
         };
         Ok(json!({
-            "githubLinkTarget": read("code-review-github-link-target", "code-review-tab")?,
+            "githubLinkTarget": read("code-review-github-link-target", "github")?,
+            "configuredGithubLinkTarget": atoms.and_then(|value| value.get("code-review-github-link-target")).cloned().unwrap_or(Value::Null),
             "localReviewInstructions": read("code-review-local-instructions", "")?,
         }))
     }
@@ -1672,7 +1745,7 @@ impl DesktopStateManager {
         for (field, value) in patch {
             let value = value.as_str().ok_or("审查偏好必须为字符串。")?;
             let key = match field.as_str() {
-                "githubLinkTarget" if matches!(value, "code-review-tab" | "external-browser") => "code-review-github-link-target",
+                "githubLinkTarget" if matches!(value, "code-review-tab" | "github") => "code-review-github-link-target",
                 "localReviewInstructions" => "code-review-local-instructions",
                 _ => return Err(format!("不支持的审查偏好：{}", field)),
             };

@@ -23,6 +23,7 @@ pub mod desktop_notifications;
 pub mod notification_audio;
 pub mod notification_preferences;
 mod model_preferences;
+mod review_provider;
 mod memory_preferences;
 mod agent_configuration;
 mod image_save;
@@ -783,8 +784,12 @@ fn code_review_preferences_get(state: State<'_, AppState>) -> Result<Value, Stri
 }
 
 #[tauri::command]
-fn code_review_preferences_update(state: State<'_, AppState>, patch: Value) -> Result<Value, String> {
-    state.desktop_state.update_review_preferences(patch)
+fn code_review_preferences_update(app: AppHandle, window: tauri::WebviewWindow, state: State<'_, AppState>, patch: Value) -> Result<Value, String> {
+    let readback = state.desktop_state.update_review_preferences(patch)?;
+    for label in app.webview_windows().keys().filter(|label| label.as_str() != window.label()) {
+        let _ = app.emit_to(label.as_str(), "code-review-preferences-changed", ());
+    }
+    Ok(readback)
 }
 
 #[tauri::command]
@@ -2079,6 +2084,8 @@ pub fn run() {
             fs_write_file,
             fs_search_files,
             code_review_preferences_get,
+            review_provider::code_review_provider_read,
+            review_provider::code_review_provider_update,
             code_review_preferences_update,
             desktop_state_get,
             desktop_state_set,
