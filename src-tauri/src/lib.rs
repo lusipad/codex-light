@@ -144,7 +144,13 @@ async fn app_server_call(
         }
         result
     } else {
-        state.app_server.call(&app, &method, params.clone()).await?
+        let result = state.app_server.call(&app, &method, params.clone()).await;
+        if is_mcp_config_write(&method, params.as_ref()) {
+            // An unsuccessful response can still follow a delivered write. Ask
+            // other windows to reread; never broadcast config values or secrets.
+            let _ = app.emit("mcp-settings-changed", json!({}));
+        }
+        result?
     };
     if method == "thread/start" {
         let tid = res
@@ -166,6 +172,35 @@ async fn app_server_call(
         }
     }
     Ok(res)
+}
+
+fn is_mcp_config_write(method: &str, params: Option<&Value>) -> bool {
+    let Some(params) = params else { return false; };
+    let mcp_key = |value: &Value| value.get("keyPath").and_then(Value::as_str)
+        .is_some_and(|key| key == "mcp_servers" || key.starts_with("mcp_servers.")
+            || key == "\"mcp_servers\"" || key.starts_with("\"mcp_servers\"."));
+    match method {
+        "config/value/write" => mcp_key(params),
+        "config/batchWrite" => params.get("edits").and_then(Value::as_array)
+            .is_some_and(|edits| edits.iter().any(mcp_key)),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod mcp_config_event_tests {
+    use super::*;
+
+    #[test]
+    fn writes_invalidate_other_windows_without_matching_values_or_other_config() {
+        assert!(is_mcp_config_write("config/value/write", Some(&json!({"keyPath":"mcp_servers.\"a.b\".enabled","value":false}))));
+        assert!(is_mcp_config_write("config/batchWrite", Some(&json!({"edits":[{"keyPath":"\"mcp_servers\".\"a.b\".\"enabled\"","value":false}]}))));
+        assert!(is_mcp_config_write("config/batchWrite", Some(&json!({"edits":[{"keyPath":"model","value":"x"},{"keyPath":"mcp_servers.\"a.b\".http_headers.\"X.Secret\"","value":"fixture-only"}]}))));
+        assert!(!is_mcp_config_write("config/read", Some(&json!({"keyPath":"mcp_servers"}))));
+        assert!(!is_mcp_config_write("config/value/write", Some(&json!({"keyPath":"mcp_servers_other","value":"mcp_servers.foo"}))));
+        assert!(!is_mcp_config_write("config/batchWrite", Some(&json!({"edits":[{"keyPath":"model","value":"mcp_servers.foo"}]}))));
+        assert!(!is_mcp_config_write("config/batchWrite", None));
+    }
 }
 
 #[tauri::command]

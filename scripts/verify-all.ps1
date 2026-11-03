@@ -144,6 +144,9 @@ try {
   Invoke-Step "Public profile real read/write and draft lifecycle regression" { node scripts/verify-profile-settings.mjs }
   Invoke-Step "Rust account and public profile service contracts" { cargo test --locked --manifest-path src-tauri/Cargo.toml chatgpt_service::tests::profile_ }
   Invoke-Step "MCP runtime status discovery regression" { node scripts/verify-mcp-status.mjs }
+  Invoke-Step "MCP scoped configuration and preserved-field regression" { node scripts/verify-mcp-settings-b.mjs }
+  Invoke-Step "MCP settings component and lifecycle regression" { node scripts/verify-mcp-settings-ui-b.mjs }
+  Invoke-Step "Rust MCP cross-window invalidation boundary" { cargo test --locked --manifest-path src-tauri/Cargo.toml mcp_config_event_tests }
   Invoke-Step "General open target and shell regression" { node scripts/verify-general-open.mjs }
   Invoke-Step "Workspace explicit open target and lifecycle regression" { node scripts/verify-workspace-open-targets.mjs }
   Invoke-Step "Native open target and isolated PTY regression" { cargo test --manifest-path src-tauri/Cargo.toml desktop_open }
@@ -280,6 +283,7 @@ Invoke-Step "TypeScript typecheck (tsc --noEmit)" { npx tsc --noEmit }
       "scripts/protocol-verify/verify-account-snapshot.mjs"
       "scripts/protocol-verify/verify-service-auth-support.mjs"
       "scripts/protocol-verify/verify-mcp-status.mjs"
+      "scripts/protocol-verify/verify-mcp-settings-b.mjs"
       "scripts/protocol-verify/verify-hook-state.mjs"
       "scripts/protocol-verify/verify-external-import.mjs"
       "scripts/protocol-verify/verify-experimental-features.mjs"

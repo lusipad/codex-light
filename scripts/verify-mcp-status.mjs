@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
+import { createMcpSettingsHarness, mcpFixture, mcpEntry } from "./verify-mcp-settings-ui-b.mjs";
 
 const transpile = text => ts.transpileModule(text, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
 let request;
@@ -31,32 +32,19 @@ assert.match(describeMcpStatus({ ...status, runtimeStatus: "connected", toolsErr
 assert.match(describeMcpStatus({ ...status, authStatus: "notLoggedIn" }), /未登录/);
 console.log("PASS MCN01/MCN02: real status RPC pagination, invalid/empty responses and no false connected status from discovery/auth/tool failure");
 
-const source = fs.readFileSync("src/components/SettingsView.tsx", "utf8");
-const ast = ts.createSourceFile("SettingsView.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-let handler, effect;
-function visit(node) {
-  if (ts.isVariableDeclaration(node) && node.name.getText(ast) === "handleTestMcpServer") handler = node.initializer;
-  if (ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect" &&
-    node.arguments[0]?.getText(ast).includes("mcpStatusGeneration.current += 1")) effect = node.arguments[0];
-  ts.forEachChild(node, visit);
-}
-visit(ast); assert.ok(handler); assert.ok(effect);
-let values = {}, release;
-const context = {
-  mcpTestRequests: { current: new Set() }, mcpStatusGeneration: { current: 0 },
-  setMcpTestStatus: value => { values = typeof value === "function" ? value(values) : value; },
-  readMcpServerStatus: () => request(), describeMcpStatus, toErrorMessage: String,
-};
-const click = vm.runInNewContext(transpile(`(${handler.getText(ast)})`), context);
-const cleanup = vm.runInNewContext(transpile(`(${effect.getText(ast)})()`), context);
-let count = 0;
-request = () => { count++; return new Promise(resolve => { release = resolve; }); };
-const first = click({ id: "fixture" }); await click({ id: "fixture" }); assert.equal(count, 1);
-release({ ...status, runtimeStatus: "connected" }); await first; assert.match(values.fixture, /^已连接/);
-request = async () => { throw Error("offline"); }; await click({ id: "fixture" }); assert.match(values.fixture, /状态读取失败.*offline/);
-request = () => new Promise(resolve => { release = resolve; });
-const late = click({ id: "fixture" }); cleanup(); const previous = values;
-release({ ...status, runtimeStatus: "connected" }); await late;
-assert.equal(values, previous); assert.equal(context.mcpTestRequests.current.size, 0);
-assert.ok(!handler.getText(ast).includes("fetch(") && !handler.getText(ast).includes("exec_shell_command"));
+const view = createMcpSettingsHarness({ snapshot: mcpFixture([mcpEntry("fixture")]) });
+view.render(); await view.tick();
+let count = 0, release;
+view.setProtocol(() => { count++; return new Promise(resolve => { release = resolve; }); });
+const first = view.state.checkStatus("fixture"); await view.state.checkStatus("fixture"); assert.equal(count, 1);
+release({ data: [{ ...status, runtimeStatus: "connected" }], nextCursor: null }); await first; view.render();
+assert.match(view.state.statusMessages.fixture, /^已连接/);
+view.setProtocol(async () => { throw Error("offline"); }); await view.state.checkStatus("fixture"); view.render();
+assert.match(view.state.statusMessages.fixture, /状态读取失败.*offline/);
+view.setProtocol(() => new Promise(resolve => { release = resolve; }));
+const late = view.state.checkStatus("fixture"); view.render(); view.unmount(); const previousUpdates = view.updateCount;
+release({ data: [{ ...status, runtimeStatus: "connected" }], nextCursor: null }); await late;
+assert.equal(view.updateCount, previousUpdates); assert.equal(view.listenerCount, 0);
+const productionState = fs.readFileSync("src/mcpSettingsState.ts", "utf8");
+assert.ok(!productionState.includes("fetch(") && !productionState.includes("exec_shell_command"));
 console.log("PASS MCN03/MCN04: actual callback single-flight, visible errors, leave/unmount stale protection and no HEAD/shell test");

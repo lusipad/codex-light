@@ -1793,3 +1793,13 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 - 账户/资料整页、真实账号、原生交互、官方像素和用户验收均未完成，不以阶段提交放行这些缺口。
 
 16.09B最终交付：完整标准、全量Rust331项与EXE/MSI/NSIS均退出0，266项产品指纹/helper及许可五文件稳定。构建与未测原生/官方/像素边界见阶段待验表；按用户大阶段策略提交并在无分叉时推送。
+
+## 2026-11-03 — 16.10B MCP 列表、详情与定点配置
+
+- 先核固定Store MCP薄壳/组合管理、中文、所有字段/序列化、user/project/plugin来源与显式重启链，再替换自创预设和常驻表单。见[阶段待验](antigravity/acceptance/16-10B.md)及[修改前合同](antigravity/specs/16-10B-next-closure.md)。
+- 切断设置页legacy全表投影写，复用真实layer读取、单server/单field/map-key写、版本CAS与实际读回；保留codex_app/未知/兄弟字段。STDIO数组逐项、HTTP标头/env分开，existing不改名称/类型，项目/插件来源只读。
+- 删除旧页约490行，复用导航/主题/服务restart，无新依赖。pending只核验不重放，保存不自动重启/冒充连接；宿主空payload跨窗重读，不广播秘密。
+- 独立复核三项P1/P2均补生产红绿并修：dirty重启丢稿、名称前缀来源串扰、未知卸载被project覆盖误确认；缺用户层/异常结构/不同filePath均不能证明删除。生产专项、当前与Store隔离协议、受控Chrome主要链通过；全Rust332通过，完整标准/原生构建结果以阶段最终记录为准。
+- OAuth、远程host、真实外部MCP/原生GUI与官方像素/用户验收未完成；下一[16.11B插件管理合同](antigravity/specs/16-11B-next-closure.md)已准备，不把旧自验声明当整页通过。
+
+16.10B最终交付：完整标准（含真实协议）、全Rust332与EXE/MSI/NSIS退出0；270项产品指纹/helper及许可五文件稳定。最终构建和全部未验收边界见16.10B待验表，进入下一阶段不改变本页未验收状态。

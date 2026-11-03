@@ -16,7 +16,7 @@ import { GitSettings } from "./GitSettings";
 import type { GitPreferencesState } from "../gitPreferences";
 import { HooksSettings } from "./HooksSettings";
 import { SkillsMcpView } from "./SkillsMcpView";
-import { readMcpServerStatus, describeMcpStatus } from "../mcpStatus";
+import { McpSettings } from "./McpSettings";
 import { ProfileSettings } from "./ProfileSettings";
 import { PersonalizationSettings } from "./PersonalizationSettings";
 import { AgentSettings } from "./AgentSettings";
@@ -32,11 +32,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   Check,
   FileCode,
-  Plus,
   RefreshCw,
   Save,
   Search,
-  Trash2,
 } from "lucide-react";
 import { isTauriRuntime, tauriInvoke, tauriListen } from "../bridge";
 import { AccountSettings } from "./AccountSettings";
@@ -46,7 +44,6 @@ import {
   VALID_CONFIG_KEYS,
   configRead,
   getConfigValue,
-  mcpServerReload,
   setConfigKeys,
   type ConfigEdit,
 } from "../config";
@@ -55,7 +52,6 @@ import {
   CodexConfigOverview,
   ModelInfo,
   ModelProviderConfig,
-  McpServerConfigItem,
   MainViewRoute,
   SettingsSectionSlug,
 } from "../types";
@@ -98,63 +94,6 @@ export const OFFICIAL_COLOR_THEMES: ThemePalette[] = [
 ];
 
 export { PET_SPECIES_LIST } from "../types";
-
-export const MCP_PRESETS = [
-  {
-    id: "filesystem",
-    name: "本地文件系统 (Filesystem)",
-    command: "npx",
-    args: ["-y", "@modelcontextprotocol/server-filesystem", "D:\\Repos"],
-    env: {} as Record<string, string>,
-    desc: "安全访问指定的本地磁盘目录与项目文件",
-  },
-  {
-    id: "github",
-    name: "GitHub 官方集成 (GitHub MCP)",
-    command: "npx",
-    args: ["-y", "@modelcontextprotocol/server-github"],
-    env: { GITHUB_PERSONAL_ACCESS_TOKEN: "ghp_your_token_here" },
-    desc: "搜索仓库、提 PR、审查代码与查阅 Issue",
-  },
-  {
-    id: "memory",
-    name: "长期知识图谱记忆 (Memory)",
-    command: "npx",
-    args: ["-y", "@modelcontextprotocol/server-memory"],
-    env: {} as Record<string, string>,
-    desc: "基于实体与关系的跨会话长期持久化知识图谱",
-  },
-  {
-    id: "fetch",
-    name: "网页数据提取 (Fetch MCP)",
-    command: "uvx",
-    args: ["mcp-server-fetch"],
-    env: {} as Record<string, string>,
-    desc: "高效提取网页 HTML、Markdown 与 API 数据",
-  },
-  {
-    id: "postgres",
-    name: "PostgreSQL 数据库",
-    command: "npx",
-    args: ["-y", "@modelcontextprotocol/server-postgres", "postgresql://localhost/mydb"],
-    env: {} as Record<string, string>,
-    desc: "直接内省表结构并执行只读查询与数据分析",
-  },
-  {
-    id: "sqlite",
-    name: "SQLite 数据库",
-    command: "uvx",
-    args: ["mcp-server-sqlite", "--db-path", "data.db"],
-    env: {} as Record<string, string>,
-    desc: "本地嵌入式 SQLite 数据库读写探查",
-  },
-];
-
-
-
-
-
-
 
 const SETTINGS_NAV_GROUPS: Array<{
   groupTitle: string;
@@ -250,7 +189,7 @@ interface SettingsViewProps {
   initialSection?: SettingsSectionSlug;
   petVisible?: boolean;
   onTogglePetVisible: (visible: boolean) => void;
-  onRestartAppServer: (customCliPath?: string) => void;
+  onRestartAppServer: (customCliPath?: string) => void | Promise<unknown>;
   onConfigUpdated: () => void;
   onNavigateRoute?: (route: MainViewRoute) => void;
   onRunEnvironmentCommand: (cwd: string, command: string) => void;
@@ -285,7 +224,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const activeSectionRef = useRef(activeSection);
   activeSectionRef.current = activeSection;
   const personalizationNavigationGuardRef = useRef<((action: () => void) => boolean) | null>(null);
-  const settingsGuardsRef = useRef<Record<"personalization" | "account" | "profile", ((action: () => void) => boolean) | null>>({ personalization: null, account: null, profile: null });
+  const settingsGuardsRef = useRef<Record<"personalization" | "account" | "profile" | "mcp", ((action: () => void) => boolean) | null>>({ personalization: null, account: null, profile: null, mcp: null });
   const publishSettingsGuard = useCallback(() => {
     const guards = Object.values(settingsGuardsRef.current).filter((guard): guard is (action: () => void) => boolean => guard !== null);
     const combined = guards.length === 1 ? guards[0] : guards.length ? (action: () => void) => guards.every(guard => guard(action)) : null;
@@ -300,6 +239,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   }, [publishSettingsGuard]);
   const registerProfileNavigationGuard = useCallback((guard: ((action: () => void) => boolean) | null) => {
     settingsGuardsRef.current.profile = guard; publishSettingsGuard();
+  }, [publishSettingsGuard]);
+  const registerMcpNavigationGuard = useCallback((guard: ((action: () => void) => boolean) | null) => {
+    settingsGuardsRef.current.mcp = guard; publishSettingsGuard();
   }, [publishSettingsGuard]);
   const setActiveSection = useCallback((section: SettingsSectionSlug) => {
     if (section === activeSectionRef.current) return;
@@ -329,7 +271,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [approvalsReviewer, setApprovalsReviewer] = useState<string>("user");
   const [protocolConfig, setProtocolConfig] = useState<Record<string, unknown> | null>(null);
   const [protocolConfigAvailable, setProtocolConfigAvailable] = useState<boolean>(false);
-  const [mcpServersSnapshot, setMcpServersSnapshot] = useState<string>("[]");
 
   // Appearance & Personalization state
   const [activeThemeId, setActiveThemeId] = useState<string>("codex");
@@ -347,20 +288,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [worktreeRetentionDays, setWorktreeRetentionDays] = useState<number>(14);
   const [worktreeShareCache, setWorktreeShareCache] = useState<boolean>(true);
   const [worktreeAutoCommit, setWorktreeAutoCommit] = useState<boolean>(true);
-
-  // MCP Connections State
-  const [mcpServers, setMcpServers] = useState<McpServerConfigItem[]>([]);
-  const [newMcpId, setNewMcpId] = useState<string>("");
-  const [newMcpTransport, setNewMcpTransport] = useState<"stdio" | "sse">("stdio");
-  const [newMcpCommand, setNewMcpCommand] = useState<string>("npx");
-  const [newMcpArgs, setNewMcpArgs] = useState<string>("");
-  const [newMcpUrl, setNewMcpUrl] = useState<string>("");
-  const [newMcpEnvKey, setNewMcpEnvKey] = useState<string>("");
-  const [newMcpEnvVal, setNewMcpEnvVal] = useState<string>("");
-  const [newMcpEnvMap, setNewMcpEnvMap] = useState<Record<string, string>>({});
-  const [mcpTestStatus, setMcpTestStatus] = useState<Record<string, string>>({});
-  const mcpTestRequests = useRef(new Set<string>());
-  const mcpStatusGeneration = useRef(0);
 
   // Plugins Settings State (Real protocol & directory backed)
   const [pluginMarketplaceUrl, setPluginMarketplaceUrl] = useState<string>("https://plugins.codex.sh/registry");
@@ -460,8 +387,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           if (cfg.instructions) setCustomPersonaPrompt(cfg.instructions);
         }
         setProviders(cfg.providers || []);
-        setMcpServers(cfg.mcpServers || []);
-        setMcpServersSnapshot(JSON.stringify(cfg.mcpServers || []));
       } catch (legacyErr) {
         if (!loadedViaProtocol) throw legacyErr;
         console.warn("Tauri config_read 不可用:", legacyErr);
@@ -652,41 +577,30 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       );
     }
 
-    // MCP lists are still persisted through the legacy TOML writer,
-    // and only when they actually changed (avoids rewriting unrelated tables).
-    const mcpDirty = JSON.stringify(mcpServers) !== mcpServersSnapshot;
-
     try {
-      if (!protocolWritten || mcpDirty) {
+      if (!protocolWritten) {
         const payload: Record<string, unknown> = {};
-        if (mcpDirty) payload.mcpServers = mcpServers;
-        if (!protocolWritten) {
-          // Legacy fallback supports only these valid scalar keys.
-          payload.model = model.trim() || undefined;
-          payload.modelProvider = modelProvider.trim() || undefined;
-          payload.modelReasoningEffort = reasoningEffort || undefined;
-          payload.approvalPolicy =
-            approvalPolicy === "granular" || approvalPolicy === "untrusted"
-              ? "on-request"
-              : approvalPolicy || undefined;
-          payload.sandboxMode = sandboxMode || undefined;
-          payload.modelCatalogJson = modelCatalogJson.trim() || undefined;
-          payload.instructions = customPersonaPrompt.trim() || undefined;
-        }
+        // Legacy fallback supports only these valid scalar keys.
+        payload.model = model.trim() || undefined;
+        payload.modelProvider = modelProvider.trim() || undefined;
+        payload.modelReasoningEffort = reasoningEffort || undefined;
+        payload.approvalPolicy =
+          approvalPolicy === "granular" || approvalPolicy === "untrusted"
+            ? "on-request"
+            : approvalPolicy || undefined;
+        payload.sandboxMode = sandboxMode || undefined;
+        payload.modelCatalogJson = modelCatalogJson.trim() || undefined;
+        payload.instructions = customPersonaPrompt.trim() || undefined;
         const updated = await tauriInvoke<CodexConfigOverview>("config_update", {
           payload,
         });
         setConfig(updated);
         setProviders(updated.providers || []);
-        setMcpServers(updated.mcpServers || []);
-        setMcpServersSnapshot(JSON.stringify(updated.mcpServers || []));
       } else {
         // Everything was already persisted by config/batchWrite — refresh raw TOML view.
         const cfg = await tauriInvoke<CodexConfigOverview>("config_read");
         setConfig(cfg);
         setProviders(cfg.providers || providers);
-        setMcpServers(cfg.mcpServers || mcpServers);
-        setMcpServersSnapshot(JSON.stringify(cfg.mcpServers || mcpServers));
       }
 
       await saveDesktopPreferences();
@@ -701,106 +615,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     } catch (err) {
       if (protocolWritten) {
         setErrorBanner(
-          `配置键已写入，但同步 Providers / MCP 列表失败: ${toErrorMessage(err)}`
+          `配置键已写入，但同步 Providers 列表失败: ${toErrorMessage(err)}`
         );
         await saveDesktopPreferences();
         onConfigUpdated();
       } else {
         setErrorBanner(toErrorMessage(err));
       }
-    }
-  };
-
-  useEffect(() => {
-    setMcpTestStatus({});
-    return () => { mcpStatusGeneration.current += 1; mcpTestRequests.current.clear(); };
-  }, [activeSection, activeWorkspaceRoot]);
-
-  const handleTestMcpServer = async (srv: McpServerConfigItem) => {
-    if (mcpTestRequests.current.has(srv.id)) return;
-    mcpTestRequests.current.add(srv.id);
-    const version = mcpStatusGeneration.current;
-    setMcpTestStatus(previous => ({ ...previous, [srv.id]: "正在读取状态…" }));
-    try {
-      const status = await readMcpServerStatus(srv.id);
-      if (version !== mcpStatusGeneration.current) return;
-      setMcpTestStatus(previous => ({ ...previous, [srv.id]: describeMcpStatus(status) }));
-    } catch (error) {
-      if (version === mcpStatusGeneration.current) {
-        setMcpTestStatus(previous => ({ ...previous, [srv.id]: `状态读取失败：${toErrorMessage(error)}` }));
-      }
-    } finally {
-      if (version === mcpStatusGeneration.current) mcpTestRequests.current.delete(srv.id);
-    }
-  };
-
-  const handleAddMcpServer = async () => {
-    if (!newMcpId.trim()) return;
-    const item: McpServerConfigItem = {
-      id: newMcpId.trim(),
-      command: newMcpTransport === "stdio" ? newMcpCommand.trim() || "npx" : null,
-      args:
-        newMcpTransport === "stdio" && newMcpArgs.trim()
-          ? newMcpArgs.trim().split(/\s+/)
-          : [],
-      url: newMcpTransport === "sse" ? newMcpUrl.trim() : null,
-      env: newMcpEnvMap,
-      enabled: true,
-    };
-    const nextServers = [...mcpServers.filter((s) => s.id !== item.id), item];
-    setMcpServers(nextServers);
-    setNewMcpId("");
-    setNewMcpArgs("");
-    setNewMcpUrl("");
-    setNewMcpEnvMap({});
-    try {
-      const updated = await tauriInvoke<CodexConfigOverview>("config_update", {
-        payload: { mcpServers: nextServers },
-      });
-      setConfig(updated);
-      setMcpServersSnapshot(JSON.stringify(updated.mcpServers || nextServers));
-      // app-server must re-read the MCP definitions written to config.toml.
-      void mcpServerReload().catch(() => {});
-      flashSaved(`✓ 已添加并保存 MCP 服务器: ${item.id}`);
-      onConfigUpdated();
-    } catch (e: any) {
-      setErrorBanner(`保存 MCP 失败: ${String(e)}`);
-    }
-  };
-
-  const handleToggleMcpServer = async (srv: McpServerConfigItem) => {
-    const nextServers = mcpServers.map((s) =>
-      s.id === srv.id ? { ...s, enabled: !s.enabled } : s
-    );
-    setMcpServers(nextServers);
-    try {
-      const updated = await tauriInvoke<CodexConfigOverview>("config_update", {
-        payload: { mcpServers: nextServers },
-      });
-      setConfig(updated);
-      setMcpServersSnapshot(JSON.stringify(updated.mcpServers || nextServers));
-      void mcpServerReload().catch(() => {});
-      flashSaved(`✓ 已${!srv.enabled ? "启用" : "停用"} MCP: ${srv.id}`);
-      onConfigUpdated();
-    } catch (e: any) {
-      setErrorBanner(`更新 MCP 状态失败: ${String(e)}`);
-    }
-  };
-
-  const handleDeleteMcpServer = async (srv: McpServerConfigItem) => {
-    const nextServers = mcpServers.filter((s) => s.id !== srv.id);
-    setMcpServers(nextServers);
-    try {
-      const updated = await tauriInvoke<CodexConfigOverview>("config_update", {
-        payload: { mcpServers: nextServers },
-      });
-      setConfig(updated);
-      setMcpServersSnapshot(JSON.stringify(updated.mcpServers || nextServers));
-      void mcpServerReload().catch(() => {});
-      flashSaved(`✓ 已移除 MCP 服务器: ${srv.id}`);
-      onConfigUpdated();
-    } catch (e: any) {
-      setErrorBanner(`移除 MCP 失败: ${String(e)}`);
     }
   };
 
@@ -884,7 +705,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </p>}
             {activeSection === "agent" && errorBanner && <p role="alert" className="error-banner">{errorBanner}</p>}
           </div>
-          {activeSection !== "cloud-settings" && activeSection !== "pets" && activeSection !== "computer-use" && activeSection !== "appshots" && activeSection !== "browser-use" && activeSection !== "voice" && activeSection !== "archived-chats" && activeSection !== "agent" && activeSection !== "personalization" && activeSection !== "account" && activeSection !== "usage" && activeSection !== "profile" && activeSection !== "plugins-settings" && activeSection !== "hooks-settings" && activeSection !== "git-settings" && activeSection !== "local-environments" && activeSection !== "worktrees" && activeSection !== "code-review" && activeSection !== "import" && activeSection !== "storage" && <div className="header-right-btns">
+          {activeSection !== "cloud-settings" && activeSection !== "pets" && activeSection !== "computer-use" && activeSection !== "appshots" && activeSection !== "browser-use" && activeSection !== "voice" && activeSection !== "archived-chats" && activeSection !== "agent" && activeSection !== "personalization" && activeSection !== "account" && activeSection !== "usage" && activeSection !== "profile" && activeSection !== "plugins-settings" && activeSection !== "connections" && activeSection !== "hooks-settings" && activeSection !== "git-settings" && activeSection !== "local-environments" && activeSection !== "worktrees" && activeSection !== "code-review" && activeSection !== "import" && activeSection !== "storage" && <div className="header-right-btns">
             <button type="button" className="secondary-btn" onClick={loadConfig}>
               <RefreshCw size={14} /> 刷新配置
             </button>
@@ -898,12 +719,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>}
         </div>
 
-        {activeSection !== "cloud-settings" && activeSection !== "pets" && activeSection !== "computer-use" && activeSection !== "appshots" && activeSection !== "browser-use" && activeSection !== "voice" && activeSection !== "archived-chats" && activeSection !== "agent" && activeSection !== "personalization" && activeSection !== "account" && activeSection !== "usage" && activeSection !== "profile" && activeSection !== "plugins-settings" && activeSection !== "hooks-settings" && activeSection !== "git-settings" && activeSection !== "local-environments" && activeSection !== "worktrees" && activeSection !== "code-review" && activeSection !== "import" && activeSection !== "storage" && saveBanner && (
+        {activeSection !== "cloud-settings" && activeSection !== "pets" && activeSection !== "computer-use" && activeSection !== "appshots" && activeSection !== "browser-use" && activeSection !== "voice" && activeSection !== "archived-chats" && activeSection !== "agent" && activeSection !== "personalization" && activeSection !== "account" && activeSection !== "usage" && activeSection !== "profile" && activeSection !== "plugins-settings" && activeSection !== "connections" && activeSection !== "hooks-settings" && activeSection !== "git-settings" && activeSection !== "local-environments" && activeSection !== "worktrees" && activeSection !== "code-review" && activeSection !== "import" && activeSection !== "storage" && saveBanner && (
           <div className="success-banner">
             <Check size={14} /> {saveBanner}
           </div>
         )}
-        {activeSection !== "cloud-settings" && activeSection !== "pets" && activeSection !== "computer-use" && activeSection !== "appshots" && activeSection !== "browser-use" && activeSection !== "voice" && activeSection !== "archived-chats" && activeSection !== "agent" && activeSection !== "personalization" && activeSection !== "account" && activeSection !== "usage" && activeSection !== "profile" && activeSection !== "plugins-settings" && activeSection !== "hooks-settings" && activeSection !== "git-settings" && activeSection !== "local-environments" && activeSection !== "worktrees" && activeSection !== "code-review" && activeSection !== "import" && activeSection !== "storage" && errorBanner && <div className="error-banner">{errorBanner}</div>}
+        {activeSection !== "cloud-settings" && activeSection !== "pets" && activeSection !== "computer-use" && activeSection !== "appshots" && activeSection !== "browser-use" && activeSection !== "voice" && activeSection !== "archived-chats" && activeSection !== "agent" && activeSection !== "personalization" && activeSection !== "account" && activeSection !== "usage" && activeSection !== "profile" && activeSection !== "plugins-settings" && activeSection !== "connections" && activeSection !== "hooks-settings" && activeSection !== "git-settings" && activeSection !== "local-environments" && activeSection !== "worktrees" && activeSection !== "code-review" && activeSection !== "import" && activeSection !== "storage" && errorBanner && <div className="error-banner">{errorBanner}</div>}
 
         {/* SECTION: GENERAL SETTINGS */}
         {LOCAL_ONLY_SETTINGS_SECTIONS.includes(activeSection) && (
@@ -1126,295 +947,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         )}
 
-        {/* ── SECTION 10: MCP CONNECTIONS ── */}
-        {activeSection === "connections" && (
-          <div className="settings-scroll-container">
-            {/* Quick MCP Presets */}
-            <div className="card-section">
-              <h3>常用 MCP 服务器快速预设 (一键填入)</h3>
-              <p className="card-subtitle-desc">
-                基于 Model Context Protocol 标准协议扩展外部工具、资源与数据源。点击预设可自动填入下方配置表单。
-              </p>
-              <div className="mcp-presets-grid">
-                {MCP_PRESETS.map((preset) => (
-                  <div
-                    key={preset.id}
-                    className="mcp-preset-card"
-                    onClick={() => {
-                      setNewMcpId(preset.id);
-                      setNewMcpTransport("stdio");
-                      setNewMcpCommand(preset.command);
-                      setNewMcpArgs(preset.args.join(" "));
-                      setNewMcpUrl("");
-                      setNewMcpEnvMap(preset.env || {});
-                      flashSaved(`已填入预设: ${preset.name}`);
-                    }}
-                  >
-                    <div className="mcp-preset-title">
-                      <span>{preset.name}</span>
-                      <span className="tag-badge accent">{preset.id}</span>
-                    </div>
-                    <div className="mcp-preset-desc">{preset.desc}</div>
-                    <div className="mcp-preset-cmd">
-                      $ {preset.command} {preset.args.join(" ")}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Configured MCP Servers List */}
-            <div className="card-section">
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div>
-                  <h3>已配置的 MCP 服务器 ({mcpServers.length})</h3>
-                  <p className="card-subtitle-desc">
-                    以下是配置记录，是否可用请读取实际运行状态。
-                  </p>
-                </div>
-              </div>
-
-              {mcpServers.length === 0 ? (
-                <div style={{ textAlign: "center", padding: "24px 0", color: "var(--text-tertiary)", fontSize: "var(--text-sm)" }}>
-                  暂未添加外部 MCP 服务器，可从上方选择预设或在下方手动添加。
-                </div>
-              ) : (
-                <div className="item-cards-list" style={{ marginTop: 10 }}>
-                  {mcpServers.map((srv) => (
-                    <div key={srv.id} className="item-card">
-                      <div className="item-card-main">
-                        <div className="item-card-title-row">
-                          <strong>{srv.id}</strong>
-                          <span className={`tag-badge ${srv.enabled ? "accent" : ""}`}>
-                            {srv.enabled ? "已启用" : "已停用"}
-                          </span>
-                          {srv.url ? (
-                            <span className="tag-badge">SSE / HTTP</span>
-                          ) : (
-                            <span className="tag-badge">stdio</span>
-                          )}
-                          {mcpTestStatus[srv.id] && (
-                            <span
-                              className="tag-badge"
-                              style={{
-                                color: mcpTestStatus[srv.id].startsWith("已连接")
-                                  ? "#10b981"
-                                  : "#ef4444",
-                              }}
-                            >
-                              {mcpTestStatus[srv.id]}
-                            </span>
-                          )}
-                        </div>
-                        <div className="item-card-meta">
-                          {srv.url ? (
-                            <span className="mono-text">{srv.url}</span>
-                          ) : (
-                            <span className="mono-text">
-                              {srv.command} {srv.args.join(" ")}
-                            </span>
-                          )}
-                          {Object.keys(srv.env).length > 0 && (
-                            <span>{Object.keys(srv.env).length} 个环境变量</span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="item-card-actions">
-                        <button
-                          type="button"
-                          className="secondary-btn-sm"
-                          onClick={() => handleTestMcpServer(srv)}
-                          disabled={mcpTestStatus[srv.id] === "正在读取状态…"}
-                          title="读取实际 MCP 运行状态"
-                        >
-                          读取状态
-                        </button>
-                        <button
-                          type="button"
-                          className="secondary-btn-sm"
-                          onClick={() => handleToggleMcpServer(srv)}
-                        >
-                          {srv.enabled ? "停用" : "启用"}
-                        </button>
-                        <button
-                          type="button"
-                          className="danger-btn-sm"
-                          onClick={() => handleDeleteMcpServer(srv)}
-                        >
-                          <Trash2 size={12} />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Add Custom MCP Server Form */}
-            <div className="card-section">
-              <h3>添加自定义 MCP 服务器</h3>
-              <div className="form-grid-row">
-                <div className="form-field">
-                  <label>服务器唯一标识 (ID)</label>
-                  <input
-                    type="text"
-                    placeholder="例如: sqlite 或 brave-search"
-                    value={newMcpId}
-                    onChange={(e) => setNewMcpId(e.target.value)}
-                  />
-                </div>
-                <div className="form-field">
-                  <label>连接协议模式 (Transport)</label>
-                  <select
-                    value={newMcpTransport}
-                    onChange={(e) => setNewMcpTransport(e.target.value as any)}
-                  >
-                    <option value="stdio">stdio (本地命令执行)</option>
-                    <option value="sse">sse / http (远程服务 URL)</option>
-                  </select>
-                </div>
-
-                {newMcpTransport === "stdio" ? (
-                  <>
-                    <div className="form-field">
-                      <label>可执行程序 (Command)</label>
-                      <input
-                        type="text"
-                        placeholder="npx / uvx / node / python"
-                        value={newMcpCommand}
-                        onChange={(e) => setNewMcpCommand(e.target.value)}
-                      />
-                    </div>
-                    <div className="form-field">
-                      <label>命令行参数 (Args, 空格分隔)</label>
-                      <input
-                        type="text"
-                        placeholder="-y @modelcontextprotocol/server-xxx"
-                        value={newMcpArgs}
-                        onChange={(e) => setNewMcpArgs(e.target.value)}
-                      />
-                    </div>
-                  </>
-                ) : (
-                  <div className="form-field" style={{ gridColumn: "span 2" }}>
-                    <label>远程服务 URL (SSE Endpoint)</label>
-                    <input
-                      type="text"
-                      placeholder="http://localhost:8000/sse"
-                      value={newMcpUrl}
-                      onChange={(e) => setNewMcpUrl(e.target.value)}
-                    />
-                  </div>
-                )}
-              </div>
-
-              {/* Environment Variables for this MCP */}
-              <div style={{ marginTop: 12 }}>
-                <label style={{ fontSize: "var(--text-xs)", fontWeight: 500, color: "var(--text-secondary)" }}>
-                  环境变量配置 (Environment Variables)
-                </label>
-                <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
-                  <input
-                    type="text"
-                    placeholder="变量名 (如 API_KEY)"
-                    style={{
-                      flex: 1,
-                      height: 32,
-                      padding: "0 10px",
-                      fontSize: "var(--text-xs)",
-                      borderRadius: 6,
-                      background: "var(--bg-input)",
-                      border: "1px solid var(--border-default)",
-                      color: "var(--text-primary)",
-                    }}
-                    value={newMcpEnvKey}
-                    onChange={(e) => setNewMcpEnvKey(e.target.value)}
-                  />
-                  <input
-                    type="text"
-                    placeholder="变量值"
-                    style={{
-                      flex: 1.5,
-                      height: 32,
-                      padding: "0 10px",
-                      fontSize: "var(--text-xs)",
-                      borderRadius: 6,
-                      background: "var(--bg-input)",
-                      border: "1px solid var(--border-default)",
-                      color: "var(--text-primary)",
-                    }}
-                    value={newMcpEnvVal}
-                    onChange={(e) => setNewMcpEnvVal(e.target.value)}
-                  />
-                  <button
-                    type="button"
-                    className="secondary-btn"
-                    style={{ padding: "0 12px", height: 32 }}
-                    onClick={() => {
-                      if (newMcpEnvKey.trim()) {
-                        setNewMcpEnvMap((prev) => ({
-                          ...prev,
-                          [newMcpEnvKey.trim()]: newMcpEnvVal,
-                        }));
-                        setNewMcpEnvKey("");
-                        setNewMcpEnvVal("");
-                      }
-                    }}
-                  >
-                    添加变量
-                  </button>
-                </div>
-                {Object.keys(newMcpEnvMap).length > 0 && (
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
-                    {Object.entries(newMcpEnvMap).map(([k, v]) => (
-                      <span
-                        key={k}
-                        className="tag-badge"
-                        style={{
-                          padding: "3px 8px",
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: 6,
-                        }}
-                      >
-                        <code>{k}={v.slice(0, 8)}...</code>
-                        <span
-                          style={{ cursor: "pointer", color: "#ef4444" }}
-                          onClick={() => {
-                            setNewMcpEnvMap((prev) => {
-                              const copy = { ...prev };
-                              delete copy[k];
-                              return copy;
-                            });
-                          }}
-                        >
-                          ✕
-                        </span>
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div style={{ marginTop: 16 }}>
-                <button
-                  type="button"
-                  className="primary-btn"
-                  onClick={handleAddMcpServer}
-                  disabled={
-                    !newMcpId.trim() ||
-                    (newMcpTransport === "stdio" && !newMcpCommand.trim()) ||
-                    (newMcpTransport === "sse" && !newMcpUrl.trim())
-                  }
-                >
-                  <Plus size={14} /> 保存并添加到 MCP 列表
-                </button>
-              </div>
-            </div>
-
-            {renderBottomBar()}
-          </div>
-        )}
+        {/* MCP settings use scoped protocol writes, independent from scalar settings. */}
+        {activeSection === "connections" && <div className="settings-scroll-container">
+          <McpSettings cwd={activeWorkspaceRoot || undefined} connectionIdentity={connectionIdentity}
+            onConfigUpdated={onConfigUpdated} onRestartAppServer={() => onRestartAppServer()}
+            onNavigationGuardChange={registerMcpNavigationGuard} />
+        </div>}
 
         {/* ── SECTION 11: PLUGINS SETTINGS ── */}
         {activeSection === "plugins-settings" && (
