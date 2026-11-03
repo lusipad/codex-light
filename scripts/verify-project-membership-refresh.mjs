@@ -2,6 +2,15 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
+function createResultsTracker() {
+  const findings = {}, results = {};
+  const options = { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } };
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/reviewFindings.ts", "utf8"), options).outputText, { exports: findings });
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/reviewResults.ts", "utf8"), options).outputText, {
+    exports: results, require: () => findings,
+  });
+  return results.createReviewResults(() => {});
+}
 
 // Run the actual production callbacks with controlled RPC promises and React state.
 // This is L2 notification/list concurrency evidence, not native UI verification.
@@ -29,6 +38,7 @@ export function mountMembershipRefresh(rpc, initial = [{ id: "a", projectId: "A"
   let threads = initial, projectRefreshes = 0, workspaceRefreshes = 0;
   const calls = [], warnings = [], refreshes = [];
   const context = vm.createContext({
+    reviewResultsRef: { current: createResultsTracker() },
     NOTIFICATION, activeThreadIdRef: { current: "a" }, refreshThreadsGenerationRef: { current: 0 },
     callAppServer: async (method, params) => { calls.push({ method, params }); return rpc(method, params, calls.length); },
     setThreads: update => { threads = typeof update === "function" ? update(threads) : update; },

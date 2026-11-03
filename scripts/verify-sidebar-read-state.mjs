@@ -2,6 +2,15 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
+function createResultsTracker() {
+  const findings = {}, results = {};
+  const options = { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } };
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/reviewFindings.ts", "utf8"), options).outputText, { exports: findings });
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/reviewResults.ts", "utf8"), options).outputText, {
+    exports: results, require: () => findings,
+  });
+  return results.createReviewResults(() => {});
+}
 import { mount } from "./verify-sidebar-projects.mjs";
 
 const app = ts.createSourceFile("App.tsx", fs.readFileSync("src/App.tsx", "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -65,6 +74,7 @@ function context(rpc) {
   const calls = [], toasts = [], refreshes = [], writes = new Set();
   let threads = [{ id: "a1", readState: read }];
   const scope = vm.createContext({
+    reviewResultsRef: { current: createResultsTracker() },
     ...protocol.exports, readStateWritesRef: { current: writes },
     callAppServer: async (...args) => { calls.push(args); return rpc(...args); },
     refreshThreads: async () => { refreshes.push(true); },

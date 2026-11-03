@@ -1,6 +1,9 @@
 import { openReviewLink, runPullRequestReview } from "../reviewPreferences";
 import React, { useEffect, useMemo, useState } from "react";
 import { tauriInvoke } from "../bridge";
+import type { ReviewRun } from "../reviewResults";
+import type { ModelReviewComment, UnresolvedReviewFinding } from "../reviewFindings";
+import { MarkdownView } from "./MarkdownView";
 import "./CodeReviewView.css";
 
 export interface ReviewCommitOption {
@@ -31,6 +34,10 @@ export interface CodeReviewViewProps {
   onStartReview: (req: ReviewRequest) => Promise<void> | void;
   onBack?: () => void;
   lastResult?: string | null;
+  reviewResult?: ReviewRun | null;
+  reviewFindings?: ModelReviewComment[];
+  unresolvedFindings?: UnresolvedReviewFinding[];
+  onOpenReviewFinding?: (finding: ModelReviewComment) => void;
 }
 
 interface GhStatus {
@@ -95,6 +102,10 @@ export const CodeReviewView: React.FC<CodeReviewViewProps> = ({
   onStartReview,
   onBack,
   lastResult,
+  reviewResult,
+  reviewFindings = [],
+  unresolvedFindings = [],
+  onOpenReviewFinding,
 }) => {
   const [subTab, setSubTab] = useState<"local" | "pr">("local");
   const [kind, setKind] = useState<ReviewKind>("uncommitted");
@@ -659,7 +670,24 @@ export const CodeReviewView: React.FC<CodeReviewViewProps> = ({
         </div>
       )}
 
-      {lastResult && (
+      {reviewResult ? (
+        <section className="review-last-result" aria-label="最近一次审查">
+          <div className="review-last-result-title" role="status">最近一次审查 · {{ starting: "正在启动", running: "审查中", completed: "已完成", failed: "失败", interrupted: "已中断", unknown: "状态未确认" }[reviewResult.status]}</div>
+          {reviewResult.error && <div className="error-banner">{reviewResult.error}</div>}
+          {reviewResult.text ? <MarkdownView content={reviewResult.text} /> : <div className="review-actions-hint">{reviewResult.status === "completed" ? "未返回审查文本" : "尚未收到审查文本"}</div>}
+          {reviewFindings.map(finding => <article className="review-finding" key={finding.id}>
+            <strong>{finding.title}</strong>
+            <button type="button" className="mini-link-btn" disabled={!onOpenReviewFinding} onClick={() => onOpenReviewFinding?.(finding)}>{finding.file}:{finding.startLine}{finding.endLine !== finding.startLine ? `–${finding.endLine}` : ""}</button>
+            <MarkdownView content={finding.body} />
+          </article>)}
+          {unresolvedFindings.map(finding => <article className="review-finding" key={finding.id}>
+            <strong>{finding.title}</strong>
+            <div>{finding.file}:{finding.startLine}–{finding.endLine}</div>
+            <MarkdownView content={finding.body} />
+            <span className="review-actions-hint">{finding.reason}</span>
+          </article>)}
+        </section>
+      ) : lastResult && (
         <div className="review-last-result" style={{ marginTop: 16 }}>
           <div className="review-last-result-title">最近一次审查</div>
           <div className="review-last-result-body">{lastResult}</div>

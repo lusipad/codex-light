@@ -2,6 +2,15 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
+function createResultsTracker() {
+  const findings = {}, results = {};
+  const options = { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } };
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/reviewFindings.ts", "utf8"), options).outputText, { exports: findings });
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/reviewResults.ts", "utf8"), options).outputText, {
+    exports: results, require: () => findings,
+  });
+  return results.createReviewResults(() => {});
+}
 
 // Execute the production component/handlers. Browser popover defaults and native
 // focus movement are intentionally verified separately in the built application.
@@ -155,6 +164,7 @@ visit(ast);
 assert.ok(refresh && updated, "test must execute the real account refresh and notification handlers");
 const reads = [], accountWrites = [], limitsWrites = [];
 const context = vm.createContext({
+  reviewReconnectRevision: 0, reviewResultsRef: { current: createResultsTracker() },
   accountReadRequestRef: { current: 0 },
   pendingRequestRevisionRef: { current: 0 }, setPendingRequests() {}, setRequestResponses() {},
   setAccountInfo: value => accountWrites.push(value),

@@ -3,6 +3,18 @@ import fs from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
 
+const modules = new Map();
+function loadModule(name) {
+  if (modules.has(name)) return modules.get(name);
+  const exports = {};
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync(`src/${name}.ts`, "utf8"), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText, { exports, require: path => loadModule(path.replace(/^\.\//, "")) });
+  modules.set(name, exports);
+  return exports;
+}
+const { buildQuickReviewPrompt, isQuickReviewPrompt } = loadModule("reviewFindings");
+const { createReviewResults } = loadModule("reviewResults");
 const source = fs.readFileSync("src/App.tsx", "utf8");
 const ast = ts.createSourceFile("App.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 let callback, commitEffect, refreshGit;
@@ -19,7 +31,9 @@ const defer = () => { let resolve, reject; const promise = new Promise((a, b) =>
 const flush = async () => { for (let i = 0; i < 15; i++) await Promise.resolve(); };
 function mount(overrides = {}) {
   const calls = [], notices = [], selected = [];
+  const tracker = createReviewResults(() => {});
   const context = {
+    buildQuickReviewPrompt, reviewResultsRef: { current: tracker },
     useCallback: f => f, activeWorkspace: { path: "D:/repo" }, appServerStatus: { connected: true },
     selectedModelId: "model", selectedModelName: "model", gitCommits: [{ hash: "abc", subject: "Fix" }], gitContextCwd: "D:/repo",
     reviewStartPendingRef: { current: false }, reviewContextRef: { current: { cwd: "D:/repo", route: "review", generation: 0 } },
@@ -42,9 +56,9 @@ function mount(overrides = {}) {
     ...overrides,
   };
   for (const method of ["callAppServer", "tauriInvoke"]) context[method] = (name, params) => {
-    const pending = defer(); calls.push({ method, name, params, ...pending }); return pending.promise;
+    const pending = defer(); calls.push({ method, name, params, runsAtRequest: tracker.getRuns(), ...pending }); return pending.promise;
   };
-  return { context, calls, notices, selected, start: vm.runInNewContext(js, context) };
+  return { context, calls, notices, selected, tracker, start: vm.runInNewContext(js, context) };
 }
 {
   const calls = [], updates = [], context = {
@@ -89,6 +103,9 @@ function mount(overrides = {}) {
   assert.equal(p.approvalsReviewer, "user");
   assert.equal(p.sandboxPolicy.networkAccess, false);
   assert.ok(p.input[0].text.includes("0123456789abcdef") && p.input[0].text.includes("base") && p.input[0].text.includes("Check races"));
+  assert.ok(isQuickReviewPrompt(p.input[0].text), "RA10: quick review sends the actual review guidelines");
+  assert.equal(v.calls[2].runsAtRequest.length, 1, "RA10: result tracking begins before the model RPC");
+  assert.equal(v.calls[2].runsAtRequest[0].status, "starting");
   v.calls[2].resolve({ turn: { id: "turn" } }); await start;
   assert.deepEqual(v.selected, ["new"]);
 }
@@ -114,6 +131,7 @@ function mount(overrides = {}) {
   assert.equal(v.calls.length, 1, "RA05: context changed before thread creation returns cannot start a turn");
   assert.deepEqual(v.selected, []);
   assert.equal(v.context.reviewLastResult, null);
+  assert.equal(v.tracker.getRuns().length, 0, "RA05: a turn never submitted must not create a result");
 }
 {
   const v = mount(), start = v.start({ kind: "uncommitted" });
@@ -123,6 +141,32 @@ function mount(overrides = {}) {
   v.calls[1].resolve({ turn: { id: "turn" } }); await start;
   assert.deepEqual(v.selected, ["new"], "RA06: late completion must not override newer navigation");
   assert.equal(v.context.reviewLastResult, null);
+  assert.equal(v.tracker.getRuns()[0].turnId, "turn", "RA11: navigating away must still bind the submitted turn");
+}
+{
+  const v = mount(), start = v.start({ kind: "uncommitted" });
+  v.calls[0].resolve({ thread: { id: "early" } }); await flush();
+  v.tracker.ingest({ method: "turn/completed", params: { threadId: "early", turn: {
+    id: "fast", status: "completed", items: [{ id: "answer", type: "agentMessage", text: "No actionable issues." }],
+  } } });
+  v.calls[1].resolve({ turn: { id: "fast" } }); await start;
+  const [run] = v.tracker.getRuns();
+  assert.equal(run.status, "completed", "RA12: fast completion before RPC response remains terminal");
+  assert.equal(run.text, "No actionable issues.");
+}
+for (const failure of ["missing-id", "rejected"]) {
+  const v = mount(), start = v.start({ kind: "uncommitted" });
+  v.calls[0].resolve({ thread: { id: failure } }); await flush();
+  if (failure === "missing-id") v.calls[1].resolve({ turn: {} });
+  else v.calls[1].reject(Error("transport disconnected"));
+  await start;
+  const [run] = v.tracker.getRuns();
+  assert.equal(run.status, "unknown", "RA13: unconfirmed start cannot become completed or definitely failed");
+  assert.equal(run.turnId, null);
+  assert.ok(run.error);
+  assert.equal(v.context.reviewLastResult, null);
+  assert.equal(v.context.reviewBusy, false);
+  assert.ok(v.notices.some(([, level]) => level === "error"));
 }
 for (const request of [{ kind: "commit", sha: "abc" }, { kind: "custom", instructions: "Look here" }]) {
   const v = mount(), start = v.start(request);
@@ -130,6 +174,7 @@ for (const request of [{ kind: "commit", sha: "abc" }, { kind: "custom", instruc
   assert.equal(v.calls[1].name, "review/start", "RA07: existing commit/custom protocol paths remain available");
   assert.equal(v.calls[1].params.target.type, request.kind);
   v.calls[1].resolve({ reviewThreadId: "legacy" }); await start;
+  assert.equal(v.tracker.getRuns().length, 0, "RA14: commit/custom legacy review cannot create quick-review records");
 }
 {
   const pending = defer(), updates = [], context = {
@@ -192,4 +237,4 @@ for (const request of [{ kind: "commit", sha: "abc" }, { kind: "custom", instruc
   assert.equal(context.baseBranch, "");
   assert.equal(vm.runInNewContext(compile(`(${baseExpression})`), context), null, "RA09: old review target cannot leak to another repository");
 }
-console.log("PASS RA01-RA09: production review callbacks/effects, targets, permissions, merge base, single-flight, stale navigation and diff scope");
+console.log("PASS RA01-RA14: production review callbacks/effects, real results controller, early completion, unconfirmed start, targets, permissions, single-flight, stale navigation and diff scope");

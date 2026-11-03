@@ -48,3 +48,8 @@
    - 原生 Release 编译完成（退出码 0）；
    - 产物归档于 `dist-artifacts/14-review-archive-20261027/CodexNative.exe`；
    - SHA-256：`E5276064234414EA0ECF0F44D3FBC448907329228D433EFC2B75C96CAC0C2687`（记录于 `.ref/parity/14/build-code-review.json`）。
+
+
+## 2026-11-03 纠偏：14B
+
+以上2026-10-27记录仅历史证据，不代表当前整页验收。当前快捷branch/uncommitted已由14A接普通turn，14B补完整审查提示、真实终态和模型行评论，commit/custom仍保留review/start。详见[14B合同](../../antigravity/specs/14-next-closure.md)和[14B待验表](../../antigravity/acceptance/14B.md)。官方运行时、原生UI、配对像素及用户验收仍未完成。

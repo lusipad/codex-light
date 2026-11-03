@@ -2,6 +2,15 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
+function createResultsTracker() {
+  const findings = {}, results = {};
+  const options = { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } };
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/reviewFindings.ts", "utf8"), options).outputText, { exports: findings });
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/reviewResults.ts", "utf8"), options).outputText, {
+    exports: results, require: () => findings,
+  });
+  return results.createReviewResults(() => {});
+}
 
 const source = fs.readFileSync("src/App.tsx", "utf8");
 const ast = ts.createSourceFile("App.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -74,6 +83,7 @@ function streamWindow() {
   let turns = [];
   const active = { current: "thread-123" }, buffer = new timeline.ThreadHistoryBuffer();
   const handler = vm.runInNewContext(compile(declarations.get("handleNotification").getText(ast)), {
+    reviewResultsRef: { current: createResultsTracker() },
     activeThreadIdRef: active, threadRequestRef: { current: 1 }, threadHistoryBufferRef: { current: buffer },
     mergeTimelineItem: timeline.mergeTimelineItem, setTurns: update => { turns = update(turns); },
   });

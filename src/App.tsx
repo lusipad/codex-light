@@ -2,6 +2,8 @@ import { usePetPreferences } from "./petPreferences";
 import { threadHasActivity, threadNeedsAttention } from "./threadActivity";
 import { useExternalImports } from "./externalImport";
 import { useCodeReviewPreferences } from "./reviewPreferences";
+import { buildQuickReviewPrompt, parseReviewFindings, type ModelReviewComment } from "./reviewFindings";
+import { createReviewResults, type ReviewRun } from "./reviewResults";
 import { useGitPreferences } from "./gitPreferences";
 import { loadModelCatalog } from "./modelCatalog";
 import { createNotificationDispatcher, notificationRequestCategory, notificationSoundTheme, shouldNotifyTurn, useNotificationPreferences } from "./notificationPreferences";
@@ -267,7 +269,8 @@ function describeThreadStatus(status: { type: string; activeFlags?: string[] } |
 function mapTurnObject(t: any, idx: number): TurnData {
   return {
     id: t?.id || `turn-${idx}`,
-    status: t?.status || "completed",
+    status: t?.status || "unknown",
+    error: t?.error,
     startedAt: t?.startedAt || t?.firstTurnWorkItemStartedAtMs || null,
     completedAt: t?.completedAt || null,
     durationMs: t?.durationMs || null,
@@ -419,6 +422,10 @@ export const App: React.FC = () => {
   const composerEnterRevisionRef = useRef(0);
   const composerEnterPendingRef = useRef(true);
   const [reviewLastResult, setReviewLastResult] = useState<string | null>(null);
+  const [reviewRuns, setReviewRuns] = useState<ReviewRun[]>([]);
+  const [selectedReviewFinding, setSelectedReviewFinding] = useState<ModelReviewComment | null>(null);
+  const reviewResultsRef = useRef<ReturnType<typeof createReviewResults> | null>(null);
+  if (!reviewResultsRef.current) reviewResultsRef.current = createReviewResults(setReviewRuns);
   const reviewStartPendingRef = useRef(false);
   const [reviewDiffTarget, setReviewDiffTarget] = useState<{ cwd: string; baseBranch: string | null; mergeBase: string | null } | null>(null);
   const [archiveRefreshTick, setArchiveRefreshTick] = useState<number>(0);
@@ -756,6 +763,24 @@ export const App: React.FC = () => {
   const activeWorkspace = useMemo(() => {
     return workspaces.find((w) => w.active) || workspaces[0] || null;
   }, [workspaces]);
+  const workspaceReviewRuns = reviewRuns.filter(run => activeWorkspace?.path &&
+    attachmentIdentityKey(run.cwd) === attachmentIdentityKey(activeWorkspace.path));
+  const latestReview = workspaceReviewRuns.reduce<ReviewRun | null>((latest, run) =>
+    !latest || (run.startedAt ?? 0) > (latest.startedAt ?? 0) ||
+      run.startedAt === latest.startedAt && run.sequence > latest.sequence ? run : latest, null);
+  const reviewFindings = useMemo(() => {
+    const comments = new Map<string, ReturnType<typeof parseReviewFindings>["comments"][number]>();
+    const unresolved = new Map<string, ReturnType<typeof parseReviewFindings>["unresolved"][number]>();
+    for (const run of reviewRuns) {
+      if (run.threadId !== (activeRoute === "review" ? latestReview?.threadId : activeThreadId) || !run.turnId ||
+        !["completed", "failed", "interrupted"].includes(run.status)) continue;
+      const parsed = parseReviewFindings(run.text, { threadId: run.threadId, turnId: run.turnId,
+        cwd: run.cwd, workspaceRoots: run.workspaceRoots });
+      for (const comment of parsed.comments) comments.set(comment.id, comment);
+      for (const finding of parsed.unresolved) unresolved.set(finding.id, finding);
+    }
+    return { comments: [...comments.values()], unresolved: [...unresolved.values()] };
+  }, [reviewRuns, activeThreadId, activeRoute, latestReview?.threadId]);
   const reviewContextRef = useRef({ cwd: activeWorkspace?.path, route: activeRoute, generation: 0 });
   if (reviewContextRef.current.cwd !== activeWorkspace?.path || reviewContextRef.current.route !== activeRoute) {
     reviewContextRef.current = { cwd: activeWorkspace?.path, route: activeRoute, generation: reviewContextRef.current.generation + 1 };
@@ -1172,12 +1197,44 @@ export const App: React.FC = () => {
   // 旧的挂载副作用（确保只执行一次）
   useEffect(() => {
     let disposed = false;
+    let reviewReconnectRevision = 0;
+    const restoreReviewResults = async () => {
+      const revision = ++reviewReconnectRevision;
+      const pending = reviewResultsRef.current!.getRuns().filter(run => run.status === "unknown");
+      await Promise.allSettled([...new Set(pending.map(run => run.threadId))].map(async threadId => {
+        try {
+          const before = JSON.stringify(reviewResultsRef.current!.getRuns().filter(run => run.threadId === threadId));
+          const metadata = await callAppServer<any>("thread/read", { threadId, includeTurns: false });
+          const turns: TurnData[] = [];
+          const cursors = new Set<string>();
+          let cursor: string | undefined;
+          do {
+            const page = await callAppServer<any>("thread/turns/list", {
+              threadId, limit: 20, sortDirection: "desc", itemsView: "full", ...(cursor ? { cursor } : {}),
+            });
+            turns.unshift(...normalizeTurnsFromList(page, true));
+            const known = pending.filter(run => run.threadId === threadId && run.turnId);
+            if (known.length && known.every(run => turns.some(turn => turn.id === run.turnId))) break;
+            cursor = page?.nextCursor || undefined;
+            if (cursor && cursors.has(cursor)) throw new Error("审查历史分页游标重复");
+            if (cursor) cursors.add(cursor);
+          } while (cursor && !disposed && revision === reviewReconnectRevision);
+          if (disposed || revision !== reviewReconnectRevision || before !==
+            JSON.stringify(reviewResultsRef.current!.getRuns().filter(run => run.threadId === threadId))) return;
+          const cwd = metadata?.thread?.cwd || pending.find(run => run.threadId === threadId)!.cwd;
+          reviewResultsRef.current!.hydrate(threadId, cwd, [cwd], turns);
+        } catch (error) {
+          if (!disposed && revision === reviewReconnectRevision) console.warn("审查结果历史读回失败", error);
+        }
+      }));
+    };
     setThreadEventsReady(false);
     // Ensure app-server is connected
     tauriInvoke<AppServerStatus>("app_server_connect")
       .then((st) => {
         setAppServerStatus(st);
         if (st.connected) {
+          void restoreReviewResults();
           refreshModels();
           refreshThreads();
           refreshPendingRequests();
@@ -1199,6 +1256,8 @@ export const App: React.FC = () => {
       (status) => {
         setAppServerStatus(status);
         if (!status.connected) {
+          reviewReconnectRevision += 1;
+          reviewResultsRef.current!.disconnected();
           accountReadRequestRef.current += 1;
           setAccountInfo(null);
           pendingRequestRevisionRef.current += 1;
@@ -1206,6 +1265,7 @@ export const App: React.FC = () => {
           setRequestResponses({});
         }
         if (status.connected) {
+          void restoreReviewResults();
           refreshModels();
           refreshThreads();
           refreshPendingRequests();
@@ -1214,9 +1274,10 @@ export const App: React.FC = () => {
       }
     );
 
-    const handleNotification = (payload: any) => {
+    const handleNotification = (payload: any, replay = false) => {
         const { method, params } = payload || {};
         if (!method) return;
+        if (!replay) reviewResultsRef.current!.ingest(payload);
 
         const eventThreadId = params?.threadId ?? params?.thread_id;
         const eventTurnId = params?.turnId ?? params?.turn?.id ?? params?.turn_id;
@@ -1636,7 +1697,7 @@ export const App: React.FC = () => {
           showAppToast(`❌ ${msg}`, "error");
         }
       };
-    replayThreadNotificationRef.current = handleNotification;
+    replayThreadNotificationRef.current = payload => handleNotification(payload, true);
     const unlistenNotification = tauriListen<any>("app-server:notification", handleNotification);
     const unlistenWorkspaceWarning = tauriListen<{ threadId?: string; message: string }>(
       "thread-workspace:sync-warning",
@@ -2111,6 +2172,7 @@ export const App: React.FC = () => {
   );
 
   const selectThread = useCallback(async (threadId: string) => {
+    const reviewHistorySnapshot = reviewResultsRef.current!.getRuns().filter(run => run.threadId === threadId);
     pendingNewThreadProjectRef.current = null;
     pendingProjectlessRef.current = false;
     const navigation = ++navigationRequestRef.current;
@@ -2195,6 +2257,13 @@ export const App: React.FC = () => {
         fullRes?.thread?.cwd ||
         threadsRef.current.find((t) => t.id === threadId)?.cwd ||
         workspaceHintsRef.current[threadId];
+      const currentReviews = reviewResultsRef.current!.getRuns();
+      const reviewHistory = loadedTurns.filter(turn => {
+        const current = currentReviews.find(run => run.threadId === threadId && run.turnId === turn.id);
+        const before = reviewHistorySnapshot.find(run => run.turnId === turn.id);
+        return !current || JSON.stringify(current) === JSON.stringify(before);
+      });
+      reviewResultsRef.current!.hydrate(threadId, candidateCwd || "", candidateCwd ? [candidateCwd] : [], reviewHistory);
       if (candidateCwd) {
         const normCand = candidateCwd.replace(/\\/g, "/").toLowerCase();
         const matchedWs = workspacesRef.current.find((w) => {
@@ -2449,7 +2518,7 @@ export const App: React.FC = () => {
         } else if (req.kind === "uncommitted") {
           prompt = "Review the current code changes (staged, unstaged, and untracked files) and provide concise, actionable feedback in a normal Markdown response.";
         }
-        if (quickReview && req.instructions?.trim()) prompt += `\n\n${req.instructions.trim()}`;
+        if (quickReview) prompt = buildQuickReviewPrompt(prompt, req.instructions?.trim());
         let threadId = inline ? currentId : null;
         if (!threadId) {
           const threadRes = await callAppServer<any>("thread/start", {
@@ -2475,13 +2544,22 @@ export const App: React.FC = () => {
           reviewContextRef.current.cwd !== cwd || reviewContextRef.current.route !== "thread") return;
         context = reviewContextRef.current;
         if (quickReview) {
-          await callAppServer<any>("turn/start", {
-            threadId, cwd, turnTrigger: "code_review",
-            input: [{ type: "text", text: prompt, text_elements: [] }],
-            approvalPolicy, approvalsReviewer, sandboxPolicy,
-            collaborationMode: null,
-            serviceTier: fastMode && modelSupportsFast(findModel(models, selectedModelId)) ? "priority" : null,
-          });
+          const attempt = reviewResultsRef.current!.begin(threadId, cwd, [cwd]);
+          try {
+            const started = await callAppServer<any>("turn/start", {
+              threadId, cwd, turnTrigger: "code_review",
+              input: [{ type: "text", text: prompt, text_elements: [] }],
+              approvalPolicy, approvalsReviewer, sandboxPolicy,
+              collaborationMode: null,
+              serviceTier: fastMode && modelSupportsFast(findModel(models, selectedModelId)) ? "priority" : null,
+            });
+            const turnId = started?.turn?.id;
+            if (typeof turnId !== "string" || !turnId) throw new Error("审查已提交，但服务未确认执行身份");
+            reviewResultsRef.current!.bind(threadId, attempt, turnId);
+          } catch (error) {
+            reviewResultsRef.current!.startUnconfirmed(threadId, attempt, error);
+            throw error;
+          }
         } else {
           let target: any;
           if (req.kind === "commit") {
@@ -4736,6 +4814,15 @@ export const App: React.FC = () => {
                 commits={gitCommits}
                 busy={reviewBusy}
                 lastResult={reviewLastResult}
+                reviewResult={latestReview}
+                reviewFindings={reviewFindings.comments.filter(comment => comment.threadId === latestReview?.threadId)}
+                unresolvedFindings={reviewFindings.unresolved.filter(comment => comment.threadId === latestReview?.threadId)}
+                onOpenReviewFinding={(finding) => {
+                  setSelectedReviewFinding(finding);
+                  setSelectedPreviewFile(finding.absolutePath);
+                  setInitialWorkbenchTab("files");
+                  setShowRightDrawer(true);
+                }}
                 onStartReview={handleStartCodeReview}
                 onBack={() => setActiveRoute(turns.length > 0 ? "thread" : "home")}
               />
@@ -5729,6 +5816,8 @@ export const App: React.FC = () => {
         onSelectPreviewFile={setSelectedPreviewFile}
         onSendReviewComment={(comment) => handleSendMessage(comment)}
         reviewTarget={reviewDiffTarget}
+        modelReviewComments={reviewFindings.comments}
+        selectedReviewFinding={reviewFindings.comments.find(comment => comment.id === selectedReviewFinding?.id) ?? null}
         initialTab={initialWorkbenchTab}
         initialSidePrompt={sideChatPrompt}
         onOpenTerminal={() => setShowTerminal((v) => !v)}

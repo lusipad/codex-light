@@ -174,6 +174,10 @@ try {
   Invoke-Step "Skill content, identity and mutation regression" { node scripts/verify-skill-actions.mjs }
   Invoke-Step "Code review targets parity" { node scripts/verify-code-review.mjs }
   Invoke-Step "Review start, delivery and navigation regression" { node scripts/verify-review-actions.mjs }
+  Invoke-Step "Model review prompt and findings regression" { node scripts/verify-review-findings.mjs }
+  Invoke-Step "Review execution result lifecycle regression" { node scripts/verify-review-results.mjs }
+  Invoke-Step "Review reconnect and offscreen notification regression" { node scripts/verify-review-reconnect.mjs }
+  Invoke-Step "Model review file and line rendering regression" { node scripts/verify-review-findings-ui.mjs }
   Invoke-Step "Archive lifecycle parity" { node scripts/verify-archive.mjs }
   Invoke-Step "Archive pagination and real mutation regression" { node scripts/verify-archive-actions.mjs }
   Invoke-Step "Settings center 26 partitions parity" { node scripts/verify-settings-partitions.mjs }

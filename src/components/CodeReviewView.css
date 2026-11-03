@@ -242,3 +242,13 @@
   padding: 16px;
   text-align: center;
 }
+
+.review-finding {
+  border-top: 1px solid var(--border-default);
+  padding-top: 12px;
+  overflow-wrap: anywhere;
+}
+
+.review-finding > strong {
+  display: block;
+}

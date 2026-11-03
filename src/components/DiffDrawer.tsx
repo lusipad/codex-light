@@ -1,4 +1,6 @@
 import { GIT_DEFAULTS, type GitPreferences } from "../gitPreferences";
+import type { ModelReviewComment } from "../reviewFindings";
+import { MarkdownView } from "./MarkdownView";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { copyTextToClipboard } from "../clipboard";
@@ -51,6 +53,7 @@ import { NewTabPage } from "./NewTabPage";
 import { BrowserToolbar } from "./BrowserToolbar";
 import { SideChatPanel } from "./SideChatPanel";
 import "./FileExplorer.css";
+import "./DiffDrawer.css";
 
 export interface WorkbenchTabItem {
   id: string;
@@ -78,6 +81,8 @@ export interface DiffDrawerProps {
   selectedPreviewFile?: string | null;
   onSelectPreviewFile?: (file: string | null) => void;
   onSendReviewComment?: (commentPrompt: string) => void;
+  modelReviewComments?: ModelReviewComment[];
+  selectedReviewFinding?: ModelReviewComment | null;
   initialTab?: "newTab" | "changes" | "files" | "summary" | "browser" | "sideChat";
   initialSidePrompt?: string;
   reviewTarget?: { cwd: string; baseBranch: string | null; mergeBase: string | null } | null;
@@ -88,10 +93,34 @@ export interface DiffDrawerProps {
 }
 
 interface ParsedDiffLine {
+  file: string | null;
   type: "add" | "del" | "hunk" | "meta" | "ctx";
   raw: string;
   oldLine: number | null;
   newLine: number | null;
+}
+
+function decodeGitDiffPath(path: string): string {
+  if (!path.startsWith('"')) return path;
+  if (!path.endsWith('"')) return "";
+  const bytes: number[] = [];
+  const encoder = new TextEncoder();
+  const escapes: Record<string, string> = { a: "\x07", b: "\b", f: "\f", n: "\n", r: "\r", t: "\t", v: "\v", "\\": "\\", '"': '"' };
+  for (let i = 1; i < path.length - 1; i++) {
+    if (path[i] === "\\") {
+      const octal = /^[0-7]{1,3}/.exec(path.slice(i + 1, -1));
+      if (octal) { bytes.push(parseInt(octal[0], 8)); i += octal[0].length; continue; }
+      const value = escapes[path[++i]];
+      if (value === undefined) return "";
+      bytes.push(...encoder.encode(value));
+    } else {
+      const value = String.fromCodePoint(path.codePointAt(i)!);
+      bytes.push(...encoder.encode(value));
+      i += value.length - 1;
+    }
+  }
+  try { return new TextDecoder("utf-8", { fatal: true }).decode(new Uint8Array(bytes)); }
+  catch { return ""; }
 }
 
 function parseUnifiedDiff(diffText: string): ParsedDiffLine[] {
@@ -100,36 +129,53 @@ function parseUnifiedDiff(diffText: string): ParsedDiffLine[] {
   const out: ParsedDiffLine[] = [];
   let oldLn = 0;
   let newLn = 0;
+  let file: string | null = null;
+  let oldRemaining = 0;
+  let newRemaining = 0;
 
   for (const raw of lines) {
-    if (
+    if (raw.startsWith("diff --git")) { file = null; oldLn = 0; newLn = 0; oldRemaining = 0; newRemaining = 0; }
+    const inHunk = oldRemaining > 0 || newRemaining > 0;
+    if (!inHunk && raw.startsWith("+++ ")) {
+      let path = raw.slice(4).split("\t")[0];
+      path = decodeGitDiffPath(path);
+      file = path.startsWith("b/") ? path.slice(2) : path === "/dev/null" ? null : path || null;
+    }
+    if (!inHunk && (
       raw.startsWith("diff --git") ||
       raw.startsWith("index ") ||
       raw.startsWith("--- ") ||
       raw.startsWith("+++ ") ||
       raw.startsWith("new file mode") ||
       raw.startsWith("deleted file mode")
-    ) {
-      out.push({ type: "meta", raw, oldLine: null, newLine: null });
+    )) {
+      out.push({ file, type: "meta", raw, oldLine: null, newLine: null });
       continue;
     }
     if (raw.startsWith("@@")) {
-      const m = raw.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+      const m = raw.match(/@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
       if (m) {
         oldLn = parseInt(m[1], 10);
-        newLn = parseInt(m[2], 10);
+        newLn = parseInt(m[3], 10);
+        oldRemaining = m[2] === undefined ? 1 : parseInt(m[2], 10);
+        newRemaining = m[4] === undefined ? 1 : parseInt(m[4], 10);
       }
-      out.push({ type: "hunk", raw, oldLine: null, newLine: null });
+      out.push({ file, type: "hunk", raw, oldLine: null, newLine: null });
       continue;
     }
-    if (raw.startsWith("+")) {
-      out.push({ type: "add", raw, oldLine: null, newLine: newLn });
+    if (!inHunk || (!raw.startsWith("+") && !raw.startsWith("-") && !raw.startsWith(" "))) {
+      out.push({ file, type: "meta", raw, oldLine: null, newLine: null });
+    } else if (raw.startsWith("+")) {
+      out.push({ file, type: "add", raw, oldLine: null, newLine: newLn });
       newLn++;
+      newRemaining--;
     } else if (raw.startsWith("-")) {
-      out.push({ type: "del", raw, oldLine: oldLn, newLine: null });
+      out.push({ file, type: "del", raw, oldLine: oldLn, newLine: null });
       oldLn++;
+      oldRemaining--;
     } else {
       out.push({
+        file,
         type: "ctx",
         raw,
         oldLine: oldLn > 0 ? oldLn : null,
@@ -137,9 +183,40 @@ function parseUnifiedDiff(diffText: string): ParsedDiffLine[] {
       });
       if (oldLn > 0) oldLn++;
       if (newLn > 0) newLn++;
+      oldRemaining--;
+      newRemaining--;
     }
   }
   return out;
+}
+
+function reviewPathKey(path: string): string {
+  const normalized = path.replace(/\\/g, "/").replace(/\/$/, "");
+  return /^(?:[a-z]:|\/\/)/i.test(normalized) ? normalized.toLowerCase() : normalized;
+}
+
+function findingMatchesLine(comment: ModelReviewComment, line: ParsedDiffLine, cwd: string): boolean {
+  return reviewPathKey(comment.rootPath) === reviewPathKey(cwd)
+    && line.file !== null && reviewPathKey(`${cwd}/${line.file}`) === reviewPathKey(comment.absolutePath)
+    && line.newLine === comment.endLine && comment.side === "right";
+}
+
+function reviewSelectionRange(content: string, startLine: number, endLine: number): [number, number] | null {
+  if (!content) return null;
+  const lines = content.split("\n");
+  if (content.endsWith("\n")) lines.pop();
+  if (startLine < 1 || endLine < startLine || endLine > lines.length) return null;
+  const start = lines.slice(0, startLine - 1).reduce((offset, line) => offset + line.length + 1, 0);
+  const end = start + lines.slice(startLine - 1, endLine).join("\n").length;
+  return [start, end];
+}
+
+function ModelFinding({ comment }: { comment: ModelReviewComment }) {
+  return <article className="diff-model-finding" data-review-finding={comment.id}>
+    <strong>{comment.title}</strong>
+    <span className="diff-model-finding-location">{comment.file}:{comment.startLine}{comment.endLine !== comment.startLine ? `–${comment.endLine}` : ""}</span>
+    <MarkdownView content={comment.body} />
+  </article>;
 }
 
 /* ------------------------------------------------------------------ */
@@ -355,6 +432,8 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   selectedPreviewFile,
   onSelectPreviewFile,
   onSendReviewComment,
+  modelReviewComments = [],
+  selectedReviewFinding,
   initialTab = "changes",
   reviewTarget,
   initialSidePrompt,
@@ -598,6 +677,8 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   const [fileFilterQuery, setFileFilterQuery] = useState("");
   const [fileSearchHits, setFileSearchHits] = useState<WorkspaceFileHit[]>([]);
   const [filePreview, setFilePreview] = useState<FilePreviewResult | null>(null);
+  const [activeReviewFinding, setActiveReviewFinding] = useState<ModelReviewComment | null>(null);
+  const fileEditorRef = useRef<HTMLTextAreaElement | null>(null);
   const [editedContent, setEditedContent] = useState<string>("");
   const [inFileSearch, setInFileSearch] = useState("");
   const [isDirty, setIsDirty] = useState(false);
@@ -1240,6 +1321,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
       if (!selectedPreviewFile) lastExternalPreviewRef.current = null;
       return;
     }
+    if (selectedReviewFinding && selectedReviewFinding.absolutePath === selectedPreviewFile) return;
     if (lastExternalPreviewRef.current === selectedPreviewFile) return;
     if (filePreview?.path === selectedPreviewFile) {
       lastExternalPreviewRef.current = selectedPreviewFile;
@@ -1249,7 +1331,34 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     if (isDirty) return;
     lastExternalPreviewRef.current = selectedPreviewFile;
     void openFilePreview(selectedPreviewFile, { silent: true });
-  }, [open, selectedPreviewFile, filePreview?.path, isDirty]);
+  }, [open, selectedPreviewFile, filePreview?.path, isDirty, selectedReviewFinding]);
+
+  useEffect(() => {
+    if (!selectedReviewFinding) { setActiveReviewFinding(null); return; }
+    if (!open || reviewPathKey(selectedReviewFinding.rootPath) !== reviewPathKey(cwd)
+      || !modelReviewComments.some(comment => comment.id === selectedReviewFinding.id)) return;
+    setActiveReviewFinding(selectedReviewFinding);
+    setActiveTab("files");
+    void openFilePreview(selectedReviewFinding.absolutePath);
+  }, [open, cwd, selectedReviewFinding]);
+
+  const visibleReviewFinding = activeReviewFinding
+    && reviewPathKey(activeReviewFinding.rootPath) === reviewPathKey(cwd)
+    && modelReviewComments.some(comment => comment.id === activeReviewFinding.id) ? activeReviewFinding : null;
+  useEffect(() => {
+    if (activeReviewFinding && !visibleReviewFinding) setActiveReviewFinding(null);
+  }, [activeReviewFinding, visibleReviewFinding]);
+
+  useEffect(() => {
+    if (!visibleReviewFinding || !filePreview || reviewPathKey(filePreview.path) !== reviewPathKey(visibleReviewFinding.absolutePath)) return;
+    const range = reviewSelectionRange(filePreview.content ?? "", visibleReviewFinding.startLine, visibleReviewFinding.endLine);
+    const editor = fileEditorRef.current;
+    if (!range || !editor || filePreview.isBinary || filePreview.isImage) return;
+    editor.focus();
+    editor.setSelectionRange(range[0], range[1]);
+    const lineHeight = parseFloat(window.getComputedStyle(editor).lineHeight);
+    if (Number.isFinite(lineHeight)) editor.scrollTop = Math.max(0, (visibleReviewFinding.startLine - 2) * lineHeight);
+  }, [filePreview, visibleReviewFinding]);
 
   const handleCopyPath = async (path: string) => {
     const ok = await copyTextToClipboard(path);
@@ -1392,6 +1501,17 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     : "";
 
   const parsedLines = useMemo(() => parseUnifiedDiff(diffContent), [diffContent]);
+  const unanchoredFindings = modelReviewComments.filter(comment => loadingDiff || !parsedLines.some(line => findingMatchesLine(comment, line, cwd)));
+  const renderLineFindings = (line: ParsedDiffLine) => modelReviewComments
+    .filter(comment => findingMatchesLine(comment, line, cwd))
+    .map(comment => <ModelFinding key={comment.id} comment={comment} />);
+  const openFinding = (comment: ModelReviewComment) => {
+    if (reviewPathKey(comment.rootPath) !== reviewPathKey(cwd)) return;
+    const entry = displayedEntries.find(item => reviewPathKey(`${cwd}/${item.path}`) === reviewPathKey(comment.absolutePath));
+    const fileInDiff = parsedLines.some(line => line.file !== null && reviewPathKey(`${cwd}/${line.file}`) === reviewPathKey(comment.absolutePath));
+    if (entry && !fileInDiff) { setSelectedFile(entry.path); setActiveTab("changes"); }
+    else { setActiveReviewFinding(comment); setActiveTab("files"); void openFilePreview(comment.absolutePath); }
+  };
 
   // Compute Summary & Artifacts from active thread turns
   const threadSummaryData = useMemo(() => {
@@ -1740,7 +1860,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                   )}
                 </div>
               </div>
-            ) : displayedEntries.length === 0 ? (
+            ) : displayedEntries.length === 0 && modelReviewComments.length === 0 ? (
               /* Official Codex App 1:1 Empty State Card */
               <div className="diff-empty-state-card">
                 <div className="diff-empty-icon-circle">
@@ -1886,6 +2006,13 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
 
                 {/* Diff Code Viewer (Unified or Split + Inline Line Comments) */}
                 <div className="diff-code-container">
+                  {unanchoredFindings.length > 0 && <section className="diff-unanchored-findings" aria-label="未定位到当前差异行的审查发现">
+                    {unanchoredFindings.map(comment => <div key={comment.id}>
+                      <ModelFinding comment={comment} />
+                      <span className="diff-model-finding-location">{reviewPathKey(comment.rootPath) !== reviewPathKey(cwd) ? "该发现属于另一工作区" : loadingDiff ? "正在读取差异" : "该文件或行范围不在当前差异中"}</span>
+                      <button type="button" className="mini-link-btn" disabled={reviewPathKey(comment.rootPath) !== reviewPathKey(cwd)} onClick={() => openFinding(comment)}>查看文件</button>
+                    </div>)}
+                  </section>}
                   {loadingDiff ? (
                     <div className="empty-hint-small">正在加载 Diff...</div>
                   ) : !diffContent.trim() ? (
@@ -1912,14 +2039,16 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                         {parsedLines
                           .filter((l) => l.type !== "del")
                           .map((line, i) => (
+                            <React.Fragment key={i}>
                             <div
-                              key={i}
                               className={`diff-line diff-line-${line.type}`}
                               onClick={() => setCommentLineIdx(i)}
                             >
                               <span className="diff-ln">{line.newLine ?? ""}</span>
                               <span className="diff-tx">{line.raw}</span>
                             </div>
+                            {renderLineFindings(line)}
+                            </React.Fragment>
                           ))}
                       </div>
                     </div>
@@ -1937,6 +2066,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                             <span className="diff-ln">{line.newLine ?? ""}</span>
                             <span className="diff-tx">{line.raw || " "}</span>
                           </div>
+                          {renderLineFindings(line)}
                           {commentLineIdx === i && (
                             <div className="diff-inline-comment-box">
                               <input
@@ -2377,7 +2507,13 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
               ) : filePreview.isBinary ? (
                 <div className="empty-hint-small">二进制文件无法直接编辑</div>
               ) : (
+                <>
+                {visibleReviewFinding && reviewPathKey(filePreview.path) === reviewPathKey(visibleReviewFinding.absolutePath) && <div>
+                  <ModelFinding comment={visibleReviewFinding} />
+                  {!reviewSelectionRange(filePreview.content ?? "", visibleReviewFinding.startLine, visibleReviewFinding.endLine) && <div className="diff-model-finding-location" role="status">发现所指行范围超出当前文件，未定位到该行</div>}
+                </div>}
                 <textarea
+                  ref={fileEditorRef}
                   className="file-editor-textarea"
                   value={editedContent}
                   onChange={(e) => {
@@ -2412,6 +2548,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                   }}
                   spellCheck={false}
                 />
+                </>
               )}
             </div>
           )}

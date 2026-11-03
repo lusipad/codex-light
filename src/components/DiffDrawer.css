@@ -1,0 +1,24 @@
+.diff-model-finding {
+  margin: 8px 12px;
+  padding: 12px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.diff-model-finding-location {
+  display: block;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  margin: 4px 12px;
+}
+
+.diff-unanchored-findings {
+  border-bottom: 1px solid var(--border-default);
+  padding-bottom: 8px;
+}
