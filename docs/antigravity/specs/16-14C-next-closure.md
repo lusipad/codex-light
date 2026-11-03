@@ -51,7 +51,7 @@ _E runner支持AbortSignal、取消kill进程，但已追公开删除链 `yv →
 
 固定宿主491 managed-worktree服务 `deleteWorktree` 发真实worker请求，reason包括settings-delete-targeted、archive-cleanup、startup-cleanup、new-branch-cleanup、remove-workspace-root-cleanup。删除成功广播reload；失败针对settings抛具体错误，其他返回failed/unsupported，不能改成成功。
 
-默认自动清理只在真实autoCleanupEnabled和keepCount策略满足时运行；先排除已登记workspace根、置顶会话、活跃/待创建/新生worktree和未知/读取失败的owner，再逐候选重新检查attachment generation、置顶、owner活动/其他attachment。使用reason=startup-cleanup且**未传skipCleanupScript**，所以也经相同cleanup。删除失败保留目标、汇总错误，不为凑保留数强删。
+默认自动清理只在真实autoCleanupEnabled和keepCount策略满足时运行；先排除已登记workspace根、置顶会话及活跃/待创建/新生worktree，再逐候选重新检查attachment generation、置顶、owner活动/其他attachment。16.15B进一步追到纯planner后修正证据边界：owner元数据读取异常仅记readFailed并降为ownerless，不能宣称官方planner始终保护未知owner；本项目未来如采用失败保留须登记为保护增强。使用reason=startup-cleanup且**未传skipCleanupScript**，所以也经相同cleanup。删除失败保留目标、汇总错误，不为凑保留数强删。
 
 本仓库当前确定的删除链：WorktreesView.confirm → `removeWorktreeWithConversations` → delete_prepare身份校验 → 真实分页关联会话（置顶阻断）→ thread/archive并读回 → git_worktree_delete → git::delete_worktree。后端持锁校验注册身份、保存快照、再force remove与读回，尚无cleanup步骤。若cleanup失败，此前关联会话可能已归档，必须像现有错误一样明确部分结果，不擅自自动恢复。
 
@@ -79,3 +79,6 @@ runner须有scriptType/mode边界：cleanup不注入setup变量、不保存env�
 | EC10 | 当前源码对应原生构建，顶部菜单宽窄窗/焦点/Escape/键位、终端输出、cleanup失败UI同环境视觉证据；官方原生/像素与用户验收仍独立。 |
 
 本次仅静态证据和产品入口地图，无真实动作/cleanup/删除测试结果，所有运行时结论保持待验。
+
+
+默认键位补证：[固定版宿主注册表与归一化片段](../../../.ref/parity/16.14/actual/16-14C-research/environment-command-defaults.json)。槽位1的 `Command+Shift+D` 在非mac分支也保持literal Command，归一化为Meta；2–9无默认。独立旧版fixture未修改，不能以Windows常见习惯改成Ctrl。此为静态键位合同，不表示Windows系统层实体组合已验。

@@ -171,6 +171,7 @@ pub async fn open_thread_window(
 ) -> Result<String, String> {
     let (label, url) = window_target(&thread_id)?;
     app.state::<ThreadWindowState>().register(&label)?;
+    app.state::<crate::AppState>().terminal.reopen_owner(&label);
     let window = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(url.into()))
         .title("Codex")
         .inner_size(1440.0, 920.0)

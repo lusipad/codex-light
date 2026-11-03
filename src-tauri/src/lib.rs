@@ -1257,10 +1257,21 @@ fn git_worktree_create_cancel(window: tauri::WebviewWindow, setup: State<'_, loc
 }
 
 #[tauri::command]
-async fn git_worktree_delete(worktree_path: String, git_dir: Option<String>) -> Result<git::WorktreeRemovalResult, String> {
-    tokio::task::spawn_blocking(move || git::delete_worktree(&worktree_path, git_dir))
+async fn git_worktree_delete(state: State<'_, AppState>, setup: State<'_, local_environment_setup::SetupState>, window: tauri::WebviewWindow, worktree_path: String, git_dir: Option<String>, operation_id: Option<String>) -> Result<git::WorktreeRemovalResult, String> {
+    let owner = window.label().to_owned();
+    let id = operation_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    setup.reopen_owner(&owner);
+    let operation = setup.prepare_operation(&owner, &id)?;
+    if let Err(error) = window.is_visible() { setup.cancel(&owner, &id); return Err(format!("删除窗口已关闭：{error}")); }
+    let shell = Some(desktop_open::preferences(&state.desktop_state).preferred_shell);
+    tokio::task::spawn_blocking(move || git::delete_worktree_with_cleanup_context(&worktree_path, git_dir, operation, shell))
         .await
         .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn git_worktree_delete_cancel(window: tauri::WebviewWindow, setup: State<'_, local_environment_setup::SetupState>, operation_id: String) {
+    setup.cancel(window.label(), &operation_id);
 }
 
 #[tauri::command]
@@ -1369,12 +1380,12 @@ fn local_environments_list(cwd: String) -> Result<Value, String> {
 
 #[tauri::command]
 fn local_environment_read_config(cwd: String, config_path: String) -> Result<Value, String> {
-    serde_json::to_value(local_environment::read_config(&cwd, &config_path)?).map_err(|error| error.to_string())
+    serde_json::to_value(local_environment::runtime_read_config(&cwd, &config_path)?).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 fn local_environment_save_config(cwd: String, config_path: Option<String>, environment: local_environment::Environment, expected_content: Option<String>) -> Result<Value, String> {
-    serde_json::to_value(local_environment::save_config(&cwd, config_path.as_deref(), environment, expected_content.as_deref())?).map_err(|error| error.to_string())
+    serde_json::to_value(local_environment::runtime_save_config(&cwd, config_path.as_deref(), environment, expected_content.as_deref())?).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1393,8 +1404,36 @@ fn local_environment_action_config(cwd: String, config_path: String, expected_co
 }
 
 #[tauri::command]
+fn local_environment_runtime(state: State<'_, AppState>, cwd: String) -> Result<Value, String> {
+    serde_json::to_value(local_environment::runtime(&state.desktop_state, &cwd)?).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn local_environment_runtime_select(state: State<'_, AppState>, cwd: String, config_path: Option<String>) -> Result<Value, String> {
+    serde_json::to_value(local_environment::runtime_select(&state.desktop_state, &cwd, config_path.as_deref())?).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn local_environment_recent_actions_get(state: State<'_, AppState>, cwd: String, config_path: String) -> Result<Vec<String>, String> {
+    local_environment::recent_actions_get(&state.desktop_state, &cwd, &config_path)
+}
+
+#[tauri::command]
+fn local_environment_record_action(state: State<'_, AppState>, cwd: String, config_path: String, expected_content: String, index: usize) -> Result<Vec<String>, String> {
+    local_environment::record_action(&state.desktop_state, &cwd, &config_path, &expected_content, index)
+}
+
+#[tauri::command]
+fn terminal_run_environment_action(app: AppHandle, window: tauri::WebviewWindow, state: State<'_, AppState>, session_id: String, cwd: String, config_path: String, expected_content: String, index: usize, cols: Option<u16>, rows: Option<u16>, shell: Option<String>) -> Result<TerminalSessionInfo, String> {
+    let (execution_cwd, command, _) = local_environment::selected_action(&state.desktop_state, &cwd, &config_path, &expected_content, index)?;
+    let shell = Some(shell.filter(|value| !value.is_empty()).unwrap_or_else(|| desktop_open::preferences(&state.desktop_state).preferred_shell));
+    state.terminal.run_action(&app, window.label(), &session_id, &execution_cwd, &command, cols.unwrap_or(100), rows.unwrap_or(28), shell)
+}
+
+#[tauri::command]
 fn terminal_create_or_attach(
     app: AppHandle,
+    window: tauri::WebviewWindow,
     state: State<'_, AppState>,
     session_id: String,
     cwd: String,
@@ -1402,6 +1441,7 @@ fn terminal_create_or_attach(
     rows: Option<u16>,
     shell: Option<String>,
 ) -> Result<TerminalSessionInfo, String> {
+    let _access = state.terminal.authorize(window.label(), &session_id)?;
     #[cfg(target_os = "windows")]
     let shell = Some(shell.filter(|value| !value.is_empty()).unwrap_or_else(|| {
         desktop_open::preferences(&state.desktop_state).preferred_shell
@@ -1419,19 +1459,23 @@ fn terminal_create_or_attach(
 #[tauri::command]
 fn terminal_write(
     state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
     session_id: String,
     data: String,
 ) -> Result<(), String> {
+    let _access = state.terminal.authorize(window.label(), &session_id)?;
     state.terminal.write(&session_id, &data)
 }
 
 #[tauri::command]
 fn terminal_resize(
     state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
     session_id: String,
     cols: u16,
     rows: u16,
 ) -> Result<(), String> {
+    let _access = state.terminal.authorize(window.label(), &session_id)?;
     state.terminal.resize(&session_id, cols, rows)
 }
 
@@ -1473,7 +1517,8 @@ async fn exec_shell_command(cwd: String, command: String) -> Result<ShellExecRes
 }
 
 #[tauri::command]
-fn terminal_close(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
+fn terminal_close(state: State<'_, AppState>, window: tauri::WebviewWindow, session_id: String) -> Result<(), String> {
+    let _access = state.terminal.authorize(window.label(), &session_id)?;
     state.terminal.close(&session_id)
 }
 
@@ -1798,6 +1843,9 @@ pub fn run() {
         .manage(local_environment_setup::SetupState::default())
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
+                if let Err(error) = window.app_handle().state::<AppState>().terminal.close_owner(window.label()) {
+                    eprintln!("Cannot close window action terminals: {error}");
+                }
                 window.app_handle().state::<git_message_generation::GenerationState>().cancel_owner(window.label());
                 window.app_handle().state::<local_environment_setup::SetupState>().cancel_owner(window.label());
                 if let Err(error) = menu::remove_shortcut_window(window.app_handle(), window.label()) {
@@ -1922,6 +1970,7 @@ pub fn run() {
             git_worktree_create,
             git_worktree_create_cancel,
             git_worktree_delete,
+            git_worktree_delete_cancel,
             git_worktree_delete_prepare,
             git_worktree_restore_snapshot,
             git_worktree_bring_changes_back,
@@ -1943,6 +1992,11 @@ pub fn run() {
             local_environment_save_config,
             local_environment_selection_get,
             local_environment_select,
+            local_environment_runtime,
+            local_environment_runtime_select,
+            local_environment_recent_actions_get,
+            local_environment_record_action,
+            terminal_run_environment_action,
             local_environment_action_config,
             terminal_create_or_attach,
             terminal_write,

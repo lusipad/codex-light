@@ -39,6 +39,7 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
   const requestRef = useRef(0);
   const actionPendingRef = useRef(false);
   const creationControllerRef = useRef<AbortController | null>(null);
+  const deletionControllerRef = useRef<AbortController | null>(null);
   const contextRef = useRef({ root: activeWorkspaceRoot, revision: 0 });
   if (contextRef.current.root !== activeWorkspaceRoot) {
     contextRef.current = { root: activeWorkspaceRoot, revision: contextRef.current.revision + 1 };
@@ -93,6 +94,8 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
       mountedRef.current = false;
       creationControllerRef.current?.abort();
       creationControllerRef.current = null;
+      deletionControllerRef.current?.abort();
+      deletionControllerRef.current = null;
       ++requestRef.current;
     };
   }, [activeWorkspaceRoot]);
@@ -128,11 +131,13 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
     if (conversations.some(thread => thread.isPinned && cwdInWorktree(thread.cwd, wt.path))) return;
     if (!confirm(`确定要移除 Worktree "${wt.path}" 吗？`)) return;
     actionPendingRef.current = true;
+    const controller = new AbortController();
+    deletionControllerRef.current = controller;
     const revision = contextRef.current.revision;
     const isCurrent = () => mountedRef.current && contextRef.current.revision === revision;
     setActionBusyPath(wt.path);
     try {
-      const result = await removeWorktreeWithConversations(wt);
+      const result = await removeWorktreeWithConversations(wt, controller.signal);
       if (!isCurrent()) return;
       await refresh();
       if (isCurrent()) notify(`已移除工作树: ${wt.path}${result.warnings.length ? `；${result.warnings.join("；")}` : ""}`);
@@ -143,6 +148,7 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
         if (isCurrent()) setError(`删除失败或结果未确认：${err?.message || String(err)}`);
       }
     } finally {
+      if (deletionControllerRef.current === controller) deletionControllerRef.current = null;
       actionPendingRef.current = false;
       if (mountedRef.current) setActionBusyPath(null);
     }
@@ -246,6 +252,7 @@ export const WorktreesView: React.FC<WorktreesViewProps> = ({
       <div className="card-section">
         <h3>已存在的 Worktrees ({worktrees.length})</h3>
         {conversationError && <div className="error-banner">{conversationError}</div>}
+        {actionBusyPath && deletionControllerRef.current && <button type="button" className="secondary-btn" onClick={() => deletionControllerRef.current?.abort()}>取消移除 / 清理</button>}
         {worktrees.length === 0 ? (
           <div className="empty-hint">暂无 Worktree</div>
         ) : (

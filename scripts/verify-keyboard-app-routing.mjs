@@ -17,6 +17,7 @@ assert.ok(handlers&&effect);
 const events=[],windowListeners=new Map();let now=1000,renderedCollapsed=false,modal=false,componentHandles=true;
 const rows=[['b',true],['hidden',false],['a',true],['b',true]].map(([id,visible])=>({dataset:{threadId:id},isConnected:true,getClientRects:()=>visible?[{}]:[],closest:()=>null}));
 const context={...registry.exports,Date:{now:()=>now},
+ environmentActionRunner:{current:null},
  shortcutHandlersRef:{current:{}},shortcutTimestampsRef:{current:{}},keyboardBindingsRef:{current:[]},keyboardNumberTargetRef:{current:'tabs'},
  keyboardState:{capturing:{current:false}},keyboardContextRef:{current:{activeThreadId:'a',activeRoute:'thread',hasWorkspace:true}},
  isQuickChatWindow:false,activeThreadId:'a',activeThreadObj:{id:'a',readState:{revision:'r',firstUnread:null}},activeRoute:'thread',activeWorkspace:{path:'A'},

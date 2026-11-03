@@ -1,0 +1,25 @@
+.environment-actions { display: flex; align-items: center; position: relative; gap: 2px; }
+.environment-actions-trigger { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 4px; border: 0; border-radius: 6px; color: var(--text-secondary); background: transparent; cursor: pointer; }
+.environment-actions-trigger:hover { background: var(--bg-hover); }
+.environment-actions button:disabled { opacity: .45; cursor: default; }
+.environment-actions-menu { position: absolute; z-index: 90; top: calc(100% + 6px); right: 0; width: min(300px, calc(100vw - 24px)); padding: 5px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--bg-primary); color: var(--text-primary); box-shadow: 0 8px 28px #0004; }
+.environment-actions-menu button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 8px; border: 0; border-radius: 5px; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; }
+.environment-actions-menu button:hover, .environment-actions-menu button:focus-visible { background: var(--bg-hover); }
+.environment-actions-title { padding: 6px 8px; font-size: 12px; color: var(--text-secondary); }
+.environment-actions-list { max-height: 160px; overflow-y: auto; }
+.environment-actions-list span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.environment-actions-menu kbd, .environment-actions-menu small { color: var(--text-secondary); font-size: 11px; }
+.environment-actions-environments { padding-left: 8px; border-left: 1px solid var(--border-color); }
+.environment-actions-environments button { flex-wrap: wrap; }
+.environment-actions-environments small { width: 100%; overflow-wrap: anywhere; }
+.environment-actions-menu p { padding: 4px 8px; overflow-wrap: anywhere; }
+.environment-actions-feedback { position: absolute; right: 0; top: calc(100% + 8px); width: max-content; max-width: min(360px, 80vw); padding: 6px 9px; background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 6px; font-size: 12px; z-index: 80; overflow-wrap: anywhere; }
+.environment-action-dialog { box-sizing: border-box; width: 379px; max-width: calc(100vw - 32px); max-height: calc(100vh - 64px); padding: 20px; color: var(--text-primary); background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 12px; }
+.environment-action-dialog::backdrop { background: #0006; }
+.environment-action-dialog h3 { margin-top: 0; }
+.environment-action-dialog p { color: var(--text-secondary); }
+.environment-action-dialog label { display: grid; gap: 6px; margin-top: 14px; }
+.environment-action-dialog input, .environment-action-dialog select, .environment-action-dialog textarea { box-sizing: border-box; width: 100%; padding: 8px; color: inherit; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 6px; font: inherit; }
+.environment-action-dialog textarea { resize: vertical; font-family: var(--font-mono); }
+.environment-action-dialog footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+.environment-actions button:focus-visible, .environment-action-dialog :focus-visible { outline: 2px solid var(--text-primary); outline-offset: 1px; }

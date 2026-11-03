@@ -333,7 +333,7 @@ fn workspace_key(cwd: &str) -> Result<String, String> {
     if cfg!(windows) { root.make_ascii_lowercase(); }
     Ok(format!("local:{root}"))
 }
-fn selected_value(cwd: &str, values: &serde_json::Value) -> Result<EnvironmentSelection, String> {
+fn selection_reference(cwd: &str, values: &serde_json::Value) -> Result<EnvironmentSelection, String> {
     if values.is_null() { return Ok(EnvironmentSelection { config_path: None, explicit: false }); }
     let map = values.as_object().ok_or("环境选择记录损坏，请先检查保存数据。")?;
     let key = workspace_key(cwd)?;
@@ -350,8 +350,15 @@ fn selected_value(cwd: &str, values: &serde_json::Value) -> Result<EnvironmentSe
     if value.is_null() { return Ok(EnvironmentSelection { config_path: None, explicit: true }); }
     let path = value.as_str().ok_or("环境选择记录不是有效路径。")?;
     let snapshot = read_config(cwd, path)?;
-    if !snapshot.exists || snapshot.schema_error.is_some() { return Err("选中的环境配置已失效，请修复文件或明确重新选择。".into()); }
     Ok(EnvironmentSelection { config_path: Some(snapshot.path), explicit: true })
+}
+fn selected_value(cwd: &str, values: &serde_json::Value) -> Result<EnvironmentSelection, String> {
+    let selection = selection_reference(cwd, values)?;
+    if let Some(path) = &selection.config_path {
+        let snapshot = read_config(cwd, path)?;
+        if !snapshot.exists || snapshot.schema_error.is_some() { return Err("选中的环境配置已失效，请修复文件或明确重新选择。".into()); }
+    }
+    Ok(selection)
 }
 pub fn selection_get(state: &crate::state::DesktopStateManager, cwd: &str) -> Result<EnvironmentSelection, String> {
     workspace(cwd)?;
@@ -385,6 +392,165 @@ pub fn action_config(cwd: &str, path: &str, expected: &str, index: usize) -> Res
     Ok(action.command.clone())
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentRuntime {
+    pub list: EnvironmentList,
+    pub selection: EnvironmentSelection,
+    pub selected: Option<EnvironmentSnapshot>,
+    pub is_worktree: bool,
+    pub platform: &'static str,
+}
+const WORKTREE_SELECTION: &str = "codex.localEnvironmentConfigPath";
+const RECENT_ACTIONS_KEY: &str = "local-env-recent-actions-by-key";
+fn current_platform() -> &'static str {
+    if cfg!(windows) { "win32" } else if cfg!(target_os = "macos") { "darwin" } else { "linux" }
+}
+fn environment_git(cwd: &Path, args: &[&str]) -> Result<std::process::Output, String> {
+    let mut command = std::process::Command::new("git");
+    command.arg("-C").arg(cwd).args(args);
+    #[cfg(windows)] { use std::os::windows::process::CommandExt; command.creation_flags(0x08000000); }
+    command.output().map_err(|error| error.to_string())
+}
+fn git_text(cwd: &Path, args: &[&str]) -> Result<String, String> {
+    let output = environment_git(cwd, args)?;
+    if !output.status.success() { return Err(format!("无法读取环境 Git 作用域：{}", String::from_utf8_lossy(&output.stderr).trim())); }
+    String::from_utf8(output.stdout).map(|text| text.trim().to_owned()).map_err(|error| error.to_string())
+}
+fn git_matches(cwd: &Path, args: &[&str]) -> Result<bool, String> {
+    let result = environment_git(cwd, args)?;
+    match result.status.code() { Some(0) => Ok(true), Some(1) => Ok(false), _ => Err("无法核验源环境配置的 Git 身份。".into()) }
+}
+struct EnvironmentWorktree { root: PathBuf, git_dir: PathBuf, primary: PathBuf }
+fn environment_worktree(cwd: &str) -> Result<Option<EnvironmentWorktree>, String> {
+    let workspace = workspace(cwd)?;
+    if !discovery_roots(cwd)?.iter().any(|root| root.join(".git").exists()) { return Ok(None); }
+    let git_dir = fs::canonicalize(git_text(&workspace, &["rev-parse", "--absolute-git-dir"])?).map_err(|error| error.to_string())?;
+    let common = fs::canonicalize(git_text(&workspace, &["rev-parse", "--path-format=absolute", "--git-common-dir"])?).map_err(|error| error.to_string())?;
+    if git_dir == common { return Ok(None); }
+    let root = fs::canonicalize(git_text(&workspace, &["rev-parse", "--show-toplevel"])?).map_err(|error| error.to_string())?;
+    let primary = common.parent().ok_or("Git 公共目录无效。")?.to_path_buf();
+    Ok(Some(EnvironmentWorktree { root, git_dir, primary }))
+}
+fn worktree_selection(scope: &EnvironmentWorktree) -> Result<EnvironmentSelection, String> {
+    let file = scope.git_dir.join("config.worktree");
+    if !file.exists() { return Ok(EnvironmentSelection { config_path: None, explicit: false }); }
+    if fs::symlink_metadata(&file).map_err(|error| error.to_string())?.file_type().is_symlink() { return Err("工作树选择文件不能是符号链接。".into()); }
+    let file = normalized(&file);
+    let result = environment_git(&scope.root, &["config", "--no-includes", "--file", &file, "--get", WORKTREE_SELECTION])?;
+    if result.status.code() == Some(1) { return Ok(EnvironmentSelection { config_path: None, explicit: false }); }
+    if !result.status.success() { return Err("无法读取工作树环境选择。".into()); }
+    let selected = String::from_utf8(result.stdout).map_err(|error| error.to_string())?.trim().to_owned();
+    if selected.is_empty() { return Err("工作树环境选择路径为空。".into()); }
+    Ok(EnvironmentSelection { config_path: (selected != "__none__").then_some(selected), explicit: true })
+}
+fn runtime_snapshot(cwd: &str, path: &str, scope: Option<&EnvironmentWorktree>) -> Result<EnvironmentSnapshot, String> {
+    if let Ok(snapshot) = read_config(cwd, path) { return Ok(snapshot); }
+    let scope = scope.ok_or("选中的环境不属于当前工作区。")?;
+    let requested = Path::new(path);
+    if requested.components().any(|part| matches!(part, std::path::Component::ParentDir)) { return Err("环境路径不能包含上级目录。".into()); }
+    let definition = requested.parent().and_then(Path::parent).and_then(Path::parent).ok_or("环境路径无效。")?;
+    let definition = fs::canonicalize(definition).map_err(|error| error.to_string())?;
+    let primary = fs::canonicalize(&scope.primary).map_err(|error| error.to_string())?;
+    let relative = definition.strip_prefix(&primary).map_err(|_| "环境不属于工作树或源仓库。")?;
+    let mut snapshot = read_config(&normalized(&definition), path)?;
+    let normalized_primary = normalized(&primary);
+    let config_relative = Path::new(&snapshot.path).strip_prefix(&normalized_primary).map_err(|_| "环境不属于源仓库。")?.to_string_lossy().into_owned();
+    let ignored = git_matches(&primary, &["check-ignore", "--quiet", "--", &config_relative])?;
+    let tracked = git_matches(&primary, &["ls-files", "--error-unmatch", "--", &config_relative])?;
+    let target_ignored = git_matches(&scope.root, &["check-ignore", "--quiet", "--", &config_relative])?;
+    if !ignored || tracked || target_ignored { return Err("源环境不是有效的忽略配置回退。".into()); }
+    let execution = fs::canonicalize(scope.root.join(relative)).map_err(|error| error.to_string())?;
+    if !execution.starts_with(&scope.root) || !execution.is_dir() { return Err("环境动作目录不属于目标工作树。".into()); }
+    snapshot.cwd = normalized(&execution);
+    snapshot.workspace_root = normalized(&workspace(cwd)?);
+    snapshot.inherited = !same_path(&snapshot.cwd, &snapshot.workspace_root);
+    Ok(snapshot)
+}
+pub fn runtime_read_config(cwd: &str, path: &str) -> Result<EnvironmentSnapshot, String> {
+    let scope = environment_worktree(cwd)?;
+    runtime_snapshot(cwd, path, scope.as_ref())
+}
+pub fn runtime_save_config(cwd: &str, path: Option<&str>, environment: Environment, expected: Option<&str>) -> Result<EnvironmentSnapshot, String> {
+    let saved = if let Some(path) = path {
+        let checked = runtime_read_config(cwd, path)?;
+        let definition = Path::new(&checked.path).parent().and_then(Path::parent).and_then(Path::parent).ok_or("环境定义根无效。")?;
+        save_config(&normalized(definition), Some(&checked.path), environment, expected)?
+    } else { save_config(cwd, None, environment, expected)? };
+    runtime_read_config(cwd, &saved.path)
+}
+pub fn runtime(state: &crate::state::DesktopStateManager, cwd: &str) -> Result<EnvironmentRuntime, String> {
+    let mut list = list(cwd)?;
+    let scope = environment_worktree(cwd)?;
+    let selection = if let Some(scope) = &scope { worktree_selection(scope)? } else { selection_reference(cwd, &state.get_value(SELECTIONS_KEY))? };
+    let path = if selection.explicit { selection.config_path.as_deref() } else { list.default_path.as_deref() };
+    let selected = path.map(|path| runtime_snapshot(cwd, path, scope.as_ref())).transpose()?;
+    if let Some(snapshot) = &selected {
+        if !list.environments.iter().any(|entry| same_path(&entry.path, &snapshot.path)) { list.environments.push(snapshot.clone()); }
+    }
+    Ok(EnvironmentRuntime { list, selection, selected, is_worktree: scope.is_some(), platform: current_platform() })
+}
+pub fn runtime_select(state: &crate::state::DesktopStateManager, cwd: &str, path: Option<&str>) -> Result<EnvironmentRuntime, String> {
+    if let Some(scope) = environment_worktree(cwd)? {
+        let path = path.map(|path| runtime_snapshot(cwd, path, Some(&scope))).transpose()?;
+        if path.as_ref().is_some_and(|snapshot| !snapshot.exists || snapshot.schema_error.is_some()) { return Err("只能选择已保存且结构有效的环境。".into()); }
+        if fs::symlink_metadata(scope.git_dir.join("config.worktree")).is_ok_and(|metadata| metadata.file_type().is_symlink() || !metadata.is_file()) { return Err("工作树选择文件必须是普通文件。".into()); }
+        if !git_text(&scope.root, &["config", "--get", "core.worktree"]).unwrap_or_default().is_empty() { return Err("特殊 core.worktree 配置不能安全启用独立环境设置。".into()); }
+        git_text(&scope.root, &["config", "extensions.worktreeConfig", "true"])?;
+        let selected = path.as_ref().map(|snapshot| snapshot.path.as_str()).unwrap_or("__none__");
+        git_text(&scope.root, &["config", "--worktree", WORKTREE_SELECTION, selected])?;
+        let readback = worktree_selection(&scope)?;
+        if !readback.explicit || readback.config_path.as_deref() != path.as_ref().map(|snapshot| snapshot.path.as_str()) { return Err("工作树环境选择已写入，但读回不一致。".into()); }
+    } else { select(state, cwd, path)?; }
+    runtime(state, cwd)
+}
+fn recent_key(snapshot: &EnvironmentSnapshot) -> String {
+    // Official RE prefers the environment definition cwd; configPath is only a fallback.
+    let mut key = snapshot.cwd.clone();
+    if cfg!(windows) { key.make_ascii_lowercase(); }
+    key
+}
+fn recent_value(values: &serde_json::Value, key: &str) -> Result<Vec<String>, String> {
+    if values.is_null() { return Ok(Vec::new()); }
+    let map = values.as_object().ok_or("最近操作记录损坏，未覆盖原记录。")?;
+    let Some(value) = map.get(key) else { return Ok(Vec::new()); };
+    serde_json::from_value(value.clone()).map_err(|_| "最近操作记录不是名称列表。".into())
+}
+pub fn recent_actions_get(state: &crate::state::DesktopStateManager, cwd: &str, path: &str) -> Result<Vec<String>, String> {
+    let scope = environment_worktree(cwd)?;
+    let snapshot = runtime_snapshot(cwd, path, scope.as_ref())?;
+    recent_value(&state.get_value(RECENT_ACTIONS_KEY), &recent_key(&snapshot))
+}
+fn selected_snapshot(state: &crate::state::DesktopStateManager, cwd: &str, path: &str, expected: &str, index: usize) -> Result<(EnvironmentSnapshot, Action), String> {
+    let snapshot = runtime(state, cwd)?.selected.ok_or("当前未选择环境。")?;
+    if !Path::new(path).is_absolute() || !same_path(&snapshot.path, &normalized(Path::new(path))) { return Err("环境选择已变化，请重新读取后再运行。".into()); }
+    if !snapshot.exists || snapshot.schema_error.is_some() { return Err("选中的环境配置已丢失或损坏，不能运行。".into()); }
+    if snapshot.expected_content.as_deref() != Some(expected) { return Err("环境文件已变化，请重新读取后再运行。".into()); }
+    let environment = snapshot.environment.as_ref().ok_or("环境结构无效，不能运行。")?;
+    let action = environment.actions.get(index).ok_or("环境动作不存在。")?.clone();
+    if action.platform.as_deref().is_some_and(|platform| platform != current_platform()) { return Err("此动作不适用于当前平台。".into()); }
+    Ok((snapshot, action))
+}
+pub fn selected_action(state: &crate::state::DesktopStateManager, cwd: &str, path: &str, expected: &str, index: usize) -> Result<(String, String, String), String> {
+    let (snapshot, action) = selected_snapshot(state, cwd, path, expected, index)?;
+    Ok((snapshot.cwd, action.command, action.name))
+}
+pub fn record_action(state: &crate::state::DesktopStateManager, cwd: &str, path: &str, expected: &str, index: usize) -> Result<Vec<String>, String> {
+    let (snapshot, action) = selected_snapshot(state, cwd, path, expected, index)?;
+    let key = recent_key(&snapshot);
+    let written = state.update_value_persisted(RECENT_ACTIONS_KEY, |previous| {
+        let mut names = recent_value(&previous, &key)?;
+        names.retain(|name| name != &action.name);
+        names.insert(0, action.name.clone());
+        let mut map = if previous.is_null() { serde_json::Map::new() } else { previous.as_object().cloned().ok_or("最近操作记录损坏。")? };
+        map.insert(key.clone(), serde_json::json!(names));
+        Ok(serde_json::Value::Object(map))
+    })?;
+    let readback = recent_actions_get(state, cwd, path)?;
+    if readback != recent_value(&written, &key)? { return Err("最近操作已写入，但读回不一致。".into()); }
+    Ok(readback)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -402,6 +568,106 @@ mod tests {
         }
     }
     impl Drop for Fixture { fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); } }
+
+    #[test]
+    fn local_environment_runtime_scopes_actions_and_recents_in_private_process() {
+        const MARKER: &str = "CODEX_ENV_RUNTIME_PRIVATE_FIXTURE";
+        if let Some(path) = std::env::var_os(MARKER) {
+            let root = PathBuf::from(path).join("repo");
+            let child = root.join("project");
+            let cwd = child.to_str().unwrap();
+            let state = crate::state::DesktopStateManager::new();
+            let initial = runtime(&state, cwd).unwrap();
+            assert!(!initial.is_worktree); assert!(!initial.selection.explicit);
+            let snapshot = initial.selected.unwrap();
+            assert_eq!(snapshot.cwd, normalized(&root));
+            let raw = snapshot.expected_content.as_deref().unwrap();
+            let (execution, command, title) = selected_action(&state, cwd, &snapshot.path, raw, 0).unwrap();
+            assert_eq!(execution, normalized(&root)); assert_eq!(command, "echo first"); assert_eq!(title, "First");
+            assert!(selected_action(&state, cwd, &snapshot.path, "stale", 0).is_err());
+            assert!(selected_action(&state, cwd, &snapshot.path, raw, 2).is_err());
+            record_action(&state, cwd, &snapshot.path, raw, 0).unwrap();
+            record_action(&state, cwd, &snapshot.path, raw, 1).unwrap();
+            assert_eq!(record_action(&state, cwd, &snapshot.path, raw, 0).unwrap(), ["First", "Second"]);
+            let reloaded = crate::state::DesktopStateManager::new();
+            assert_eq!(recent_actions_get(&reloaded, cwd, &snapshot.path).unwrap(), ["First", "Second"]);
+            runtime_select(&state, cwd, None).unwrap();
+            assert!(runtime(&state, cwd).unwrap().selected.is_none());
+            assert!(selected_action(&state, cwd, &snapshot.path, raw, 0).is_err());
+            runtime_select(&state, cwd, Some(&snapshot.path)).unwrap();
+            let worktree = root.parent().unwrap().join("checkout");
+            git_text(&root, &["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "add", "."]).unwrap();
+            git_text(&root, &["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--quiet", "-m", "fixture"]).unwrap();
+            git_text(&root, &["worktree", "add", "--quiet", "--detach", worktree.to_str().unwrap()]).unwrap();
+            let work_cwd = worktree.join("project"); let work_cwd = work_cwd.to_str().unwrap();
+            let work_snapshot = runtime(&state, work_cwd).unwrap().selected.unwrap();
+            assert!(runtime(&state, work_cwd).unwrap().is_worktree);
+            runtime_select(&state, work_cwd, None).unwrap();
+            assert!(runtime(&state, work_cwd).unwrap().selected.is_none());
+            assert!(runtime(&state, cwd).unwrap().selected.is_some(), "worktree selection must not change primary workspace");
+            runtime_select(&state, work_cwd, Some(&work_snapshot.path)).unwrap();
+            let work_selected = selected_action(&state, work_cwd, &work_snapshot.path, work_snapshot.expected_content.as_deref().unwrap(), 0).unwrap();
+            assert_eq!(work_selected.0, normalized(&worktree));
+            assert!(recent_actions_get(&state, work_cwd, &work_snapshot.path).unwrap().is_empty());
+            fs::write(root.join(".gitignore"), ".codex/environments/fallback.toml\n").unwrap();
+            let fallback = root.join(".codex/environments/fallback.toml");
+            fs::write(&fallback, raw).unwrap();
+            let fallback_read = runtime_read_config(work_cwd, fallback.to_str().unwrap()).unwrap();
+            assert_eq!(fallback_read.cwd, normalized(&worktree));
+            let mut edited = fallback_read.environment.clone().unwrap(); edited.name = "Edited source fallback".into();
+            let fallback_saved = runtime_save_config(work_cwd, Some(fallback.to_str().unwrap()), edited.clone(), fallback_read.expected_content.as_deref()).unwrap();
+            assert_eq!(fallback_saved.cwd, normalized(&worktree));
+            assert_eq!(fallback_saved.environment.as_ref().unwrap().name, "Edited source fallback");
+            assert!(!worktree.join(".codex/environments/fallback.toml").exists(), "editing source fallback must not create an unselected target copy");
+            edited.name = "Conflicting edit".into();
+            assert!(runtime_save_config(work_cwd, Some(fallback.to_str().unwrap()), edited, Some(raw)).is_err());
+            assert_eq!(fs::read_to_string(&fallback).unwrap(), fallback_saved.content);
+            let outside = root.parent().unwrap().join("outside/.codex/environments/environment.toml");
+            fs::create_dir_all(outside.parent().unwrap()).unwrap(); fs::write(&outside, raw).unwrap();
+            assert!(runtime_read_config(work_cwd, outside.to_str().unwrap()).is_err());
+            assert!(runtime_save_config(work_cwd, Some(outside.to_str().unwrap()), parse(TEMPLATE).unwrap(), Some(raw)).is_err());
+            assert_eq!(fs::read_to_string(outside).unwrap(), raw);
+            runtime_select(&state, work_cwd, Some(fallback.to_str().unwrap())).unwrap();
+            let fallback_raw = fallback_saved.expected_content.as_deref().unwrap();
+            let fallback_action = selected_action(&state, work_cwd, fallback.to_str().unwrap(), fallback_raw, 0).unwrap();
+            assert_eq!(fallback_action.0, normalized(&worktree), "source fallback runs in target definition directory");
+            record_action(&state, work_cwd, fallback.to_str().unwrap(), fallback_raw, 0).unwrap();
+            runtime_select(&state, work_cwd, Some(&work_snapshot.path)).unwrap();
+            assert_eq!(recent_actions_get(&state, work_cwd, &work_snapshot.path).unwrap(), ["First"], "official recent key is definition cwd, shared by its configurations");
+            assert!(runtime_select(&state, work_cwd, Some(&snapshot.path)).is_err(), "tracked source configuration must not bypass target copy");
+            fs::write(&work_snapshot.path, "invalid = [").unwrap();
+            let broken = runtime(&state, work_cwd).unwrap();
+            assert!(broken.selected.unwrap().schema_error.is_some(), "invalid selection must remain visible, never fallback");
+            assert!(selected_action(&state, work_cwd, &work_snapshot.path, "invalid = [", 0).is_err());
+            fs::remove_file(&work_snapshot.path).unwrap();
+            let missing = runtime(&state, work_cwd).unwrap();
+            assert_eq!(missing.selection.config_path.as_deref(), Some(work_snapshot.path.as_str()));
+            let missing = missing.selected.unwrap();
+            assert_eq!(missing.path, work_snapshot.path); assert!(!missing.exists); assert!(missing.expected_content.is_none());
+            assert!(selected_action(&state, work_cwd, &work_snapshot.path, &missing.content, 0).is_err());
+            runtime_select(&state, work_cwd, None).unwrap();
+            assert!(runtime(&state, work_cwd).unwrap().selected.is_none());
+            fs::remove_file(&snapshot.path).unwrap();
+            let missing = runtime(&state, cwd).unwrap();
+            assert_eq!(missing.selection.config_path.as_deref(), Some(snapshot.path.as_str()));
+            assert!(!missing.selected.unwrap().exists);
+            assert!(selected_action(&state, cwd, &snapshot.path, raw, 0).is_err());
+            assert!(selection_get(&state, cwd).is_err(), "B strict selection reader must retain its validation contract");
+            return;
+        }
+        let fixture = Fixture::new(); let root = fixture.repository("repo");
+        fs::create_dir(root.join("project")).unwrap(); fs::write(root.join("project/keep"), "fixture").unwrap();
+        let other = if cfg!(windows) { "linux" } else { "win32" };
+        let raw = format!("{TEMPLATE}\n[[actions]]\nname='First'\ncommand='echo first'\n[[actions]]\nname='Second'\ncommand='echo second'\n[[actions]]\nname='Other'\ncommand='echo forbidden'\nplatform='{other}'\n");
+        fixture.config(&root, "environment.toml", &raw);
+        let home = fixture.0.join("home"); fs::create_dir(&home).unwrap();
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command.args(["--exact", "local_environment::tests::local_environment_runtime_scopes_actions_and_recents_in_private_process", "--nocapture"])
+            .env("CODEX_HOME", &home).env(MARKER, &fixture.0);
+        #[cfg(windows)] { use std::os::windows::process::CommandExt; command.creation_flags(0x08000000); }
+        let result = command.output().unwrap();
+        assert!(result.status.success(), "{}\n{}", String::from_utf8_lossy(&result.stdout), String::from_utf8_lossy(&result.stderr));
+    }
 
     #[test]
     fn local_environment_discovery_has_git_boundary_order_errors_and_precise_inheritance() {

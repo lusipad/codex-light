@@ -59,6 +59,7 @@ pub async fn quick_chat_toggle(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("quick-chat") {
         return toggle_existing(&window);
     }
+    app.state::<crate::AppState>().terminal.reopen_owner("quick-chat");
     let window = WebviewWindowBuilder::new(
         &app,
         "quick-chat",

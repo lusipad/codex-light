@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Play, Wrench, Bug, FlaskConical } from "lucide-react";
 import { environmentDraft, environmentDraftError, environmentFromDraft, environmentPlatforms, lifecyclePreview, listLocalEnvironments, readLocalEnvironment, saveLocalEnvironment, getLocalEnvironmentSelection, selectLocalEnvironment, localEnvironmentAction,
   type EnvironmentDraft, type EnvironmentSnapshot, type EnvironmentList, type EnvironmentSelection, type EnvironmentPlatform, type EnvironmentIcon } from "../localEnvironments";
+import { getEnvironmentRuntime, selectEnvironmentRuntime, environmentActionItems, environmentActionRequest, type EnvironmentActionRunRequest } from "../environmentActions";
 import "./LocalEnvironmentSettings.css";
 
 type Project = { path: string; name: string };
@@ -11,11 +12,14 @@ type View = { project: Project; snapshot: EnvironmentSnapshot | null; requestedP
 const platformLabels = { default: "默认", darwin: "macOS", linux: "Linux", win32: "Windows" };
 const actionIcons = { tool: Wrench, run: Play, debug: Bug, test: FlaskConical };
 
-export function LocalEnvironmentSettings({ cwd, projects, connectionIdentity = "local", onRunCommand, onNavigationGuardChange, onAddProject }: {
+export function LocalEnvironmentSettings({ cwd, projects, connectionIdentity = "local", onRunCommand, onRunEnvironmentAction, environmentTarget, onNavigationGuardChange, onAddProject }: {
   cwd: string; projects?: Project[]; connectionIdentity?: string; onRunCommand: (cwd: string, command: string) => void | Promise<void>;
   onNavigationGuardChange?: (guard: Guard | null) => void; onAddProject?: () => void;
+  environmentTarget?: { id: string; cwd: string; configPath: string | null; edit?: boolean };
+  onRunEnvironmentAction?: (request: EnvironmentActionRunRequest) => Promise<void>;
 }) {
-  const projectList = [...new Map((projects ?? (cwd ? [{ path: cwd, name: cwd.split(/[\\/]/).filter(Boolean).at(-1) || cwd }] : [])).map(project => [project.path, project])).values()];
+  const targetProject = environmentTarget?.cwd ? { path: environmentTarget.cwd, name: environmentTarget.cwd.split(/[\\/]/).filter(Boolean).at(-1) || environmentTarget.cwd } : null;
+  const projectList = [...new Map([...(projects ?? (cwd ? [{ path: cwd, name: cwd.split(/[\\/]/).filter(Boolean).at(-1) || cwd }] : [])), ...(targetProject ? [targetProject] : [])].map(project => [project.path, project])).values()];
   const projectKey = JSON.stringify(projectList), context = JSON.stringify([projectKey, connectionIdentity]);
   const [catalogs, setCatalogs] = useState<Record<string, Catalog>>({}), [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({}), [inherited, setInherited] = useState<Record<string, boolean>>({});
   const [view, setView] = useState<View | null>(null), [busy, setBusy] = useState(false), [loadingDetail, setLoadingDetail] = useState(false);
@@ -41,15 +45,16 @@ export function LocalEnvironmentSettings({ cwd, projects, connectionIdentity = "
   const loadProject = async (project: Project) => {
     const ticket = generation.current, key = currentContext.current, request = (requests.current.get(project.path) ?? 0) + 1; requests.current.set(project.path, request);
     setCatalogs(previous => ({ ...previous, [project.path]: { ...previous[project.path], loading: true, error: undefined, selectionError: undefined } }));
-    const [list, selection] = await Promise.allSettled([listLocalEnvironments(project.path), getLocalEnvironmentSelection(project.path)]);
+    const runtime = onRunEnvironmentAction ? getEnvironmentRuntime(project.path) : null;
+    const [list, selection] = await Promise.allSettled([runtime ? runtime.then(value => value.list) : listLocalEnvironments(project.path), runtime ? runtime.then(value => value.selection) : getLocalEnvironmentSelection(project.path)]);
     if (!valid(ticket, key) || requests.current.get(project.path) !== request) return;
     setCatalogs(previous => ({ ...previous, [project.path]: { ...previous[project.path], loading: false,
       ...(list.status === "fulfilled" ? { list: list.value } : { error: String(list.reason) }), ...(selection.status === "fulfilled" ? { selection: selection.value } : { selectionError: String(selection.reason) }) } }));
   };
-  const loadDetail = async (project: Project, configPath: string) => {
+  const loadDetail = async (project: Project, configPath: string, editing = false) => {
     const ticket = generation.current, key = context, request = ++detailRequest.current;
     updateView({ project, snapshot: null, requestedPath: configPath, editing: false, draft: null, initial: null }); setError(null); setMessage(null); setSelectionFailed(false); setLoadingDetail(true); setOpenCommands({});
-    try { const snapshot = await readLocalEnvironment(project.path, configPath); if (valid(ticket, key) && request === detailRequest.current) updateView({ project, snapshot, editing: false, draft: null, initial: null }); }
+    try { const snapshot = await readLocalEnvironment(project.path, configPath); if (valid(ticket, key) && request === detailRequest.current) { const draft = editing ? environmentDraft(snapshot.environment) : null; updateView({ project, snapshot, editing, draft, initial: draft }); if (editing) focusEditor(); } }
     catch (cause) { if (valid(ticket, key) && request === detailRequest.current) setError(`无法加载此环境文件：${String(cause)}`); }
     finally { if (valid(ticket, key) && request === detailRequest.current) setLoadingDetail(false); }
   };
@@ -71,14 +76,31 @@ export function LocalEnvironmentSettings({ cwd, projects, connectionIdentity = "
     focusEditor();
   };
   const create = (project: Project) => navigate(() => {
-    detailRequest.current++; const draft = environmentDraft(); updateView({ project, snapshot: null, editing: true, draft, initial: null }); setError(null); setMessage(null); setSelectionFailed(false); setSetupPlatform("default"); setCleanupPlatform("default");
+    detailRequest.current++; const draft = environmentDraft(); updateView({ project, snapshot: null, editing: true, draft, initial: null }); setLoadingDetail(false); setError(null); setMessage(null); setSelectionFailed(false); setSetupPlatform("default"); setCleanupPlatform("default");
     focusEditor();
   });
+  const appliedTarget = useRef<string | null>(null);
+  useEffect(() => {
+    const targetKey = environmentTarget ? JSON.stringify([context, environmentTarget.id]) : null;
+    if (!environmentTarget || operation.current || appliedTarget.current === targetKey) return;
+    appliedTarget.current = targetKey; detailRequest.current++;
+    const project = projectList.find(project => project.path === environmentTarget.cwd);
+    if (!project) return;
+    if (environmentTarget.configPath === null) create(project);
+    else navigate(() => { void loadDetail(project, environmentTarget.configPath!, !!environmentTarget.edit); });
+  }, [environmentTarget?.id, context, busy]);
+  const selectForProject = async (project: Project, configPath: string | null) => {
+    if (!onRunEnvironmentAction) return selectLocalEnvironment(project.path, configPath);
+    await selectEnvironmentRuntime(project.path, configPath);
+    const runtime = await getEnvironmentRuntime(project.path);
+    if (!runtime.selection.explicit || runtime.selection.configPath !== configPath) throw Error("环境选择读回不一致，请重试");
+    return runtime.selection;
+  };
   const change = (draft: EnvironmentDraft) => { if (!operation.current && current.current) { updateView({ ...current.current, draft }); setError(null); setMessage(null); } };
   const select = async (project: Project, configPath: string | null) => {
     if (operation.current) return false;
     const ticket = generation.current, key = context; operation.current = true; setBusy(true); setError(null);
-    try { const selection = await selectLocalEnvironment(project.path, configPath); if (!valid(ticket, key)) return false; setCatalogs(previous => ({ ...previous, [project.path]: { ...previous[project.path], selection, loading: false, selectionError: undefined } })); setSelectionFailed(false); setMessage(configPath ? "已选择本地环境" : "已选择不使用环境"); return true; }
+    try { const selection = await selectForProject(project, configPath); if (!valid(ticket, key)) return false; setCatalogs(previous => ({ ...previous, [project.path]: { ...previous[project.path], selection, loading: false, selectionError: undefined } })); setSelectionFailed(false); setMessage(configPath ? "已选择本地环境" : "已选择不使用环境"); return true; }
     catch (cause) { if (valid(ticket, key)) setError(`无法选择环境：${String(cause)}`); return false; }
     finally { if (valid(ticket, key)) { operation.current = false; setBusy(false); } }
   };
@@ -92,7 +114,7 @@ export function LocalEnvironmentSettings({ cwd, projects, connectionIdentity = "
       if (!valid(ticket, key)) return false;
       if (!saved.exists || saved.schemaError || !saved.environment) throw Error(saved.schemaError || "保存读回未返回有效环境");
       updateView({ project: editor.project, snapshot: saved, editing: false, draft: null, initial: null }); setMessage("已保存本地环境");
-      try { const selection = await selectLocalEnvironment(editor.project.path, saved.path); if (!valid(ticket, key)) return false; setCatalogs(previous => ({ ...previous, [editor.project.path]: { ...previous[editor.project.path], selection, loading: false } })); setSelectionFailed(false); }
+      try { const selection = await selectForProject(editor.project, saved.path); if (!valid(ticket, key)) return false; setCatalogs(previous => ({ ...previous, [editor.project.path]: { ...previous[editor.project.path], selection, loading: false } })); setSelectionFailed(false); }
       catch (cause) { if (valid(ticket, key)) { setSelectionFailed(true); setError(`已保存环境文件，但无法选中它：${String(cause)}`); void loadProject(editor.project); } return false; }
       if (valid(ticket, key)) void loadProject(editor.project);
       return true;
@@ -102,7 +124,20 @@ export function LocalEnvironmentSettings({ cwd, projects, connectionIdentity = "
   const run = async (index: number) => {
     const detail = current.current; if (operation.current || !detail?.snapshot?.exists || detail.snapshot.schemaError || dirty()) return;
     const ticket = generation.current, key = context; operation.current = true; setBusy(true); setError(null); setMessage(null);
-    try { const command = await localEnvironmentAction(detail.project.path, detail.snapshot.path, detail.snapshot.content, index); if (!valid(ticket, key)) return; await onRunCommand(detail.snapshot.cwd, command); if (valid(ticket, key)) setMessage("操作已发送到终端，请查看执行输出。"); }
+    try {
+      if (onRunEnvironmentAction) {
+        const runtime = await getEnvironmentRuntime(detail.project.path); if (!valid(ticket, key)) return;
+        if (!runtime.selected || runtime.selected.path !== detail.snapshot.path) throw Error("请先选择此环境，再运行动作");
+        if (runtime.selected.content !== detail.snapshot.content) throw Error("环境文件已变化，请重新读取后再运行");
+        const item = environmentActionItems(runtime.selected, runtime.platform).find(item => item.index === index);
+        if (!item) throw Error("此动作不适用于当前平台或已不存在");
+        await onRunEnvironmentAction(environmentActionRequest(`settings:${detail.project.path}`, detail.project.path, runtime.selected, item));
+      } else {
+        const command = await localEnvironmentAction(detail.project.path, detail.snapshot.path, detail.snapshot.content, index); if (!valid(ticket, key)) return;
+        await onRunCommand(detail.snapshot.cwd, command);
+      }
+      if (valid(ticket, key)) setMessage("操作已发送到终端，请查看执行输出。");
+    }
     catch (cause) { if (valid(ticket, key)) setError(`无法运行动作：${String(cause)}`); }
     finally { if (valid(ticket, key)) { operation.current = false; setBusy(false); } }
   };
@@ -110,7 +145,7 @@ export function LocalEnvironmentSettings({ cwd, projects, connectionIdentity = "
   const scriptSection = (kind: "setup" | "cleanup", title: string, platform: "default" | EnvironmentPlatform, setPlatform: (value: "default" | EnvironmentPlatform) => void) => {
     const lifecycle = draft ? draft[kind] : view?.snapshot?.environment?.[kind] ?? null;
     const value = draft ? platform === "default" ? lifecycle?.script ?? "" : lifecycle?.[platform]?.script ?? "" : lifecyclePreview(lifecycle, platform);
-    return <section className="local-environment-section"><div className="local-environment-section-header"><div><h4>{title}</h4><p>{kind === "setup" ? "此脚本会在创建工作树时运行" : "保存清理脚本；目前尚未在删除工作树时自动运行"}</p></div>
+    return <section className="local-environment-section"><div className="local-environment-section-header"><div><h4>{title}</h4><p>{kind === "setup" ? "此脚本会在创建工作树时运行" : "删除工作树前运行；清理失败或取消会阻止删除"}</p></div>
       <select aria-label={`${title}平台`} value={platform} onChange={event => setPlatform(event.target.value as typeof platform)}>{Object.entries(platformLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div>
       {draft ? <textarea aria-label={title} rows={6} value={value} disabled={busy} onChange={event => change({ ...draft, [kind]: platform === "default" ? { ...draft[kind], script: event.target.value } : { ...draft[kind], [platform]: { script: event.target.value } } })} /> : value ? <pre><code>{value}</code></pre> : <p className="card-subtitle-desc">未配置脚本</p>}
       {platform !== "default" && !lifecycle?.[platform]?.script && lifecycle?.script && <p className="card-subtitle-desc">无平台覆盖。使用默认脚本</p>}

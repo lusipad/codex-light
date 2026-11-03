@@ -3,16 +3,122 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
 const REPLAY_BUFFER_LIMIT: usize = 128 * 1024;
 type EventSink = Arc<dyn Fn(&str, Value) + Send + Sync>;
+type ExitResult = Arc<(Mutex<Option<Result<u32, String>>>, Condvar)>;
+
+fn action_command(
+    shell: Option<String>,
+    cwd: &str,
+    command: &str,
+) -> Result<(String, Vec<String>, String), String> {
+    #[cfg(windows)]
+    {
+        let selected = shell
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("powershell");
+        let (executable, _) = crate::desktop_open::resolve_shell(selected)?;
+        let filename = std::path::Path::new(&executable)
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_ascii_lowercase();
+        let command = command
+            .replace("\r\n", "\n")
+            .replace('\r', "\n")
+            .replace('\n', "\r\n");
+        match filename.as_str() {
+            "pwsh.exe" | "powershell.exe" => Ok((
+                executable,
+                vec!["-NoLogo".into(), "-NoProfile".into()],
+                format!(
+                    "Set-Location -LiteralPath '{}'; if ($?) {{\r\n{command}\r\n}}\r\n\r\n",
+                    cwd.replace('\'', "''")
+                ),
+            )),
+            "cmd.exe" if !cwd.contains(['"', '\r', '\n']) => Ok((
+                executable,
+                vec!["/d".into(), "/q".into()],
+                format!("cd /d \"{cwd}\" && {command}\r\n"),
+            )),
+            _ => Err("此 Shell 尚不支持受控环境操作终端，请选择 PowerShell 或命令提示符。".into()),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let executable = shell
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(TerminalManager::default_shell);
+        Ok((
+            executable,
+            vec![],
+            format!("cd '{}' && {command}\n", cwd.replace('\'', "'\\''")),
+        ))
+    }
+}
 
 struct TerminalProcess {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     killer: Box<dyn ChildKiller + Send + Sync>,
+    tree: Option<Arc<ProcessTree>>,
+}
+
+struct ProcessTree {
+    #[cfg(windows)]
+    job: Mutex<Option<crate::recommended_skills::git_job::Job>>,
+    #[cfg(unix)]
+    pid: u32,
+}
+impl ProcessTree {
+    fn stop(&self) -> Result<(), String> {
+        #[cfg(windows)]
+        {
+            let mut job = self.job.lock().map_err(|e| e.to_string())?;
+            if let Some(handle) = job.as_ref() {
+                handle.stop()?;
+            }
+            job.take();
+        }
+        #[cfg(unix)]
+        {
+            let result = std::process::Command::new("kill")
+                .args(["-KILL", "--", &format!("-{}", self.pid)])
+                .output()
+                .map_err(|e| e.to_string())?;
+            if !result.status.success()
+                && !String::from_utf8_lossy(&result.stderr).contains("No such process")
+            {
+                return Err("终端操作进程组未能终止。".into());
+            }
+        }
+        Ok(())
+    }
+}
+impl TerminalProcess {
+    fn stop(&mut self) -> Result<(), String> {
+        if let Some(tree) = &self.tree {
+            tree.stop()?;
+        }
+        // Ordinary terminal close historically tolerates an already exited shell.
+        // Actions require the confirmed tree stop above, not this redundant kill.
+        let _ = self.killer.kill();
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct ActionOwners {
+    sessions: HashMap<String, String>,
+    closed: HashMap<String, Instant>,
+}
+pub struct TerminalAuthorization<'a> {
+    _guard: MutexGuard<'a, ActionOwners>,
 }
 
 struct OutputLog {
@@ -131,13 +237,150 @@ pub struct TerminalSessionInfo {
 #[derive(Clone)]
 pub struct TerminalManager {
     sessions: Arc<Mutex<HashMap<String, TerminalSession>>>,
+    action_owners: Arc<Mutex<ActionOwners>>,
 }
 
 impl TerminalManager {
     pub fn new() -> Self {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            action_owners: Arc::new(Mutex::new(ActionOwners::default())),
         }
+    }
+
+    pub fn authorize(
+        &self,
+        owner: &str,
+        session_id: &str,
+    ) -> Result<TerminalAuthorization<'_>, String> {
+        let guard = self.action_owners.lock().map_err(|e| e.to_string())?;
+        if guard.closed.contains_key(owner)
+            || guard
+                .sessions
+                .get(session_id)
+                .is_some_and(|actual| actual != owner)
+        {
+            return Err("此操作终端不属于当前窗口。".into());
+        }
+        Ok(TerminalAuthorization { _guard: guard })
+    }
+    pub fn reopen_owner(&self, owner: &str) {
+        if let Ok(mut owners) = self.action_owners.lock() {
+            owners.closed.remove(owner);
+        }
+    }
+    pub fn close_owner(&self, owner: &str) -> Result<(), String> {
+        let mut owners = self.action_owners.lock().map_err(|e| e.to_string())?;
+        owners.closed.insert(owner.into(), Instant::now());
+        let sessions = owners
+            .sessions
+            .iter()
+            .filter_map(|(id, actual)| (actual == owner).then_some(id.clone()))
+            .collect::<Vec<_>>();
+        let mut errors = Vec::new();
+        for id in &sessions {
+            if let Err(error) = self.close(id) {
+                errors.push(error);
+            }
+        }
+        owners.sessions.retain(|_, actual| actual != owner);
+        if owners.closed.len() > 256 {
+            let mut closed = owners
+                .closed
+                .iter()
+                .map(|(owner, time)| (owner.clone(), *time))
+                .collect::<Vec<_>>();
+            closed.sort_by_key(|(_, time)| *time);
+            for (owner, _) in closed.into_iter().take(owners.closed.len() - 256) {
+                owners.closed.remove(&owner);
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("；"))
+        }
+    }
+
+    pub fn run_action(
+        &self,
+        app: &AppHandle,
+        owner: &str,
+        session_id: &str,
+        cwd: &str,
+        command: &str,
+        cols: u16,
+        rows: u16,
+        shell: Option<String>,
+    ) -> Result<TerminalSessionInfo, String> {
+        let app = app.clone();
+        self.run_action_with(
+            owner,
+            session_id,
+            cwd,
+            command,
+            cols,
+            rows,
+            shell,
+            Arc::new(move |event, payload| {
+                let _ = app.emit(event, payload);
+            }),
+        )
+    }
+    fn run_action_with(
+        &self,
+        owner: &str,
+        session_id: &str,
+        cwd: &str,
+        command: &str,
+        cols: u16,
+        rows: u16,
+        shell: Option<String>,
+        emit: EventSink,
+    ) -> Result<TerminalSessionInfo, String> {
+        if owner.is_empty()
+            || session_id.is_empty()
+            || command.trim().is_empty()
+            || !std::path::Path::new(cwd).is_dir()
+        {
+            return Err("操作终端的窗口、目录或命令无效。".into());
+        }
+        let mut owners = self.action_owners.lock().map_err(|e| e.to_string())?;
+        if owners.closed.contains_key(owner)
+            || owners
+                .sessions
+                .get(session_id)
+                .is_some_and(|actual| actual != owner)
+        {
+            return Err("此操作终端不属于当前窗口。".into());
+        }
+        if !owners.sessions.contains_key(session_id)
+            && self
+                .sessions
+                .lock()
+                .map_err(|e| e.to_string())?
+                .contains_key(session_id)
+        {
+            return Err("不能使用普通终端会话运行环境操作，请创建专用操作终端。".into());
+        }
+        owners.sessions.insert(session_id.into(), owner.into());
+        self.close(session_id)?;
+        let (shell, args, text) = action_command(shell, cwd, command)?;
+        let info = self.create_backend_with(
+            session_id,
+            cwd,
+            cols,
+            rows,
+            None,
+            Some((shell, args)),
+            true,
+            emit,
+        )?;
+        if let Err(error) = self.write(session_id, &text) {
+            let _ = self.close(session_id);
+            return Err(error);
+        }
+        Ok(info)
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -179,6 +422,29 @@ impl TerminalManager {
         rows: u16,
         shell_override: Option<String>,
         command: Option<(String, Vec<String>)>,
+        emit: EventSink,
+    ) -> Result<TerminalSessionInfo, String> {
+        self.create_backend_with(
+            session_id,
+            cwd,
+            cols,
+            rows,
+            shell_override,
+            command,
+            false,
+            emit,
+        )
+    }
+
+    fn create_backend_with(
+        &self,
+        session_id: &str,
+        cwd: &str,
+        cols: u16,
+        rows: u16,
+        shell_override: Option<String>,
+        command: Option<(String, Vec<String>)>,
+        action: bool,
         emit: EventSink,
     ) -> Result<TerminalSessionInfo, String> {
         // Keep creation and attach for the same id serialized. Register before
@@ -226,8 +492,11 @@ impl TerminalManager {
         cmd.env("COLORTERM", "truecolor");
         if crate::git::find_git_root(cwd).is_some() {
             for (key, value) in crate::local_environment_setup::shell_environment(cwd)? {
-                if let Some(value) = value { cmd.env(key, value); }
-                else { cmd.env_remove(key); }
+                if let Some(value) = value {
+                    cmd.env(key, value);
+                } else {
+                    cmd.env_remove(key);
+                }
             }
         }
         let mut reader = pair
@@ -242,7 +511,32 @@ impl TerminalManager {
             .slave
             .spawn_command(cmd)
             .map_err(|e| format!("Failed to spawn shell `{shell}`: {e}"))?;
+        let tree = if action {
+            #[cfg(windows)]
+            let tree = child
+                .as_raw_handle()
+                .ok_or_else(|| "无法取得操作终端进程句柄。".to_string())
+                .and_then(crate::recommended_skills::git_job::Job::attach_running)
+                .map(|job| ProcessTree {
+                    job: Mutex::new(Some(job)),
+                });
+            #[cfg(unix)]
+            let tree = child
+                .process_id()
+                .map(|pid| ProcessTree { pid })
+                .ok_or_else(|| "无法取得操作终端进程组。".to_string());
+            match tree {
+                Ok(tree) => Some(Arc::new(tree)),
+                Err(error) => {
+                    let _ = child.kill();
+                    return Err(error);
+                }
+            }
+        } else {
+            None
+        };
         drop(pair.slave);
+        let completion: ExitResult = Arc::new((Mutex::new(None), Condvar::new()));
         let output = Arc::new(Mutex::new(OutputLog::new()));
         let generation = uuid::Uuid::new_v4().to_string();
         let session = TerminalSession {
@@ -254,6 +548,7 @@ impl TerminalManager {
                 master: pair.master,
                 writer,
                 killer: child.clone_killer(),
+                tree: tree.clone(),
             }),
             output: output.clone(),
         };
@@ -264,6 +559,7 @@ impl TerminalManager {
         let manager = self.clone();
         let sid = session_id.to_string();
         let reader_generation = generation.clone();
+        let reader_completion = completion.clone();
         std::thread::spawn(move || {
             let mut decoder = Utf8Stream::default();
             let mut chunk = [0u8; 4096];
@@ -294,17 +590,37 @@ impl TerminalManager {
                 log.end_offset
             };
             if let Some(mut process) = manager.take_process(&sid, &reader_generation) {
-                let _ = process.killer.kill();
+                let _ = process.stop();
             }
+            let (result, ready) = &*reader_completion;
+            let result = result.lock().unwrap();
+            let (result, _) = ready
+                .wait_timeout_while(result, Duration::from_secs(5), |result| result.is_none())
+                .unwrap();
+            let (exit_code, error) = match result.as_ref() {
+                Some(Ok(code)) => (Some(*code), None),
+                Some(Err(error)) => (None, Some(error.clone())),
+                None => (None, Some("终端进程退出状态未在时限内返回。".into())),
+            };
             emit(
                 "terminal:exit",
-                json!({ "sessionId": sid, "generation": reader_generation, "endOffset": end_offset }),
+                json!({ "sessionId": sid, "generation": reader_generation, "endOffset": end_offset, "exitCode": exit_code, "error": error }),
             );
         });
         let manager = self.clone();
         let sid = session_id.to_string();
         std::thread::spawn(move || {
-            let _ = child.wait();
+            let mut result = child
+                .wait()
+                .map(|status| status.exit_code())
+                .map_err(|error| error.to_string());
+            if let Some(tree) = tree {
+                if let Err(error) = tree.stop() {
+                    result = Err(error);
+                }
+            }
+            *completion.0.lock().unwrap() = Some(result);
+            completion.1.notify_all();
             // ConPTY retains its output pipe until the pseudo-console closes.
             // Drop its master on this waiter while the reader drains final bytes.
             drop(manager.take_process(&sid, &generation));
@@ -378,8 +694,16 @@ impl TerminalManager {
 
     pub fn close(&self, session_id: &str) -> Result<(), String> {
         let session = self.sessions.lock().unwrap().remove(session_id);
-        if let Some(mut process) = session.and_then(|session| session.process) {
-            let _ = process.killer.kill();
+        if let Some(mut session) = session {
+            if let Some(process) = session.process.as_mut() {
+                if let Err(error) = process.stop() {
+                    self.sessions
+                        .lock()
+                        .unwrap()
+                        .insert(session_id.into(), session);
+                    return Err(error);
+                }
+            }
         }
         Ok(())
     }
@@ -390,6 +714,293 @@ mod tests {
     use super::*;
     use std::sync::mpsc::{self, Receiver};
     use std::time::{Duration, Instant};
+
+    fn action_root() -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("codex-action-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    #[test]
+    fn real_action_cwd_one_write_and_true_exit() {
+        let root = action_root();
+        let manager = TerminalManager::new();
+        let (sink, receiver) = events();
+        #[cfg(windows)]
+        let command = "[IO.File]::AppendAllText('count.txt', 'once'); [IO.File]::WriteAllText('cwd.txt', (Get-Location).Path); [Console]::WriteLine('ACTION_OUTPUT'); exit 7";
+        #[cfg(not(windows))]
+        let command = "printf once >> count.txt; pwd > cwd.txt; printf 'ACTION_OUTPUT\\n'; exit 7";
+        let info = manager
+            .run_action_with(
+                "window-a",
+                "action",
+                &root.to_string_lossy(),
+                command,
+                120,
+                30,
+                None,
+                sink,
+            )
+            .unwrap();
+        let observed = until_exit(&receiver, &info.generation);
+        assert!(joined(&observed, &info.generation).contains("ACTION_OUTPUT"));
+        assert_eq!(observed.last().unwrap().1["exitCode"], 7);
+        assert!(observed.last().unwrap().1["error"].is_null());
+        assert_eq!(
+            std::fs::read_to_string(root.join("count.txt")).unwrap(),
+            "once"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("cwd.txt"))
+                .unwrap()
+                .trim(),
+            root.to_string_lossy()
+        );
+        assert!(manager.authorize("window-b", "action").is_err());
+        manager.close_owner("window-a").unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn action_owner_lifecycle_and_ordinary_session_cannot_be_claimed() {
+        let root = action_root();
+        let manager = TerminalManager::new();
+        let (sink, _) = events();
+        // A real, already exited ordinary backend still retains its session identity.
+        create(&manager, "ordinary", "exit 0", sink.clone());
+        assert!(manager
+            .run_action_with(
+                "a",
+                "ordinary",
+                &root.to_string_lossy(),
+                "exit 0",
+                80,
+                24,
+                None,
+                sink.clone()
+            )
+            .is_err());
+        manager.close_owner("a").unwrap();
+        assert!(manager.authorize("a", "new").is_err());
+        assert!(manager
+            .run_action_with(
+                "a",
+                "new",
+                &root.to_string_lossy(),
+                "exit 0",
+                80,
+                24,
+                None,
+                sink.clone()
+            )
+            .is_err());
+        manager.reopen_owner("a");
+        let info = manager
+            .run_action_with(
+                "a",
+                "new",
+                &root.to_string_lossy(),
+                "exit 0",
+                80,
+                24,
+                None,
+                sink,
+            )
+            .unwrap();
+        assert!(!info.generation.is_empty());
+        manager.close_owner("a").unwrap();
+        manager.close("ordinary").unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn action_authorization_guard_serializes_ownership_changes() {
+        let manager = TerminalManager::new();
+        let access = manager.authorize("a", "guard").unwrap();
+        let manager_clone = manager.clone();
+        let (sender, receiver) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            manager_clone.close_owner("a").unwrap();
+            sender.send(()).unwrap();
+        });
+        assert!(receiver.recv_timeout(Duration::from_millis(100)).is_err());
+        drop(access);
+        receiver.recv_timeout(Duration::from_secs(2)).unwrap();
+        worker.join().unwrap();
+        assert!(manager.authorize("a", "guard").is_err());
+    }
+
+    #[test]
+    fn real_action_concurrent_restart_leaves_one_current_generation() {
+        let root = action_root();
+        let manager = TerminalManager::new();
+        let (sink, _) = events();
+        let barrier = Arc::new(std::sync::Barrier::new(3));
+        let workers: Vec<_> = (0..2)
+            .map(|_| {
+                let manager = manager.clone();
+                let root = root.clone();
+                let sink = sink.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    #[cfg(windows)]
+                    let command = "Start-Sleep -Seconds 20";
+                    #[cfg(not(windows))]
+                    let command = "sleep 20";
+                    manager
+                        .run_action_with(
+                            "a",
+                            "action",
+                            &root.to_string_lossy(),
+                            command,
+                            80,
+                            24,
+                            None,
+                            sink,
+                        )
+                        .unwrap()
+                })
+            })
+            .collect();
+        barrier.wait();
+        let infos: Vec<_> = workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .collect();
+        assert_ne!(infos[0].generation, infos[1].generation);
+        let sessions = manager.sessions.lock().unwrap();
+        assert_eq!(sessions.len(), 1);
+        let current = &sessions["action"];
+        assert!(infos
+            .iter()
+            .any(|info| info.generation == current.generation));
+        assert!(current.process.is_some());
+        drop(sessions);
+        manager.close_owner("a").unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn real_action_command_prompt_uses_cwd_and_exit_code() {
+        let root = action_root();
+        let manager = TerminalManager::new();
+        let (sink, receiver) = events();
+        let info = manager
+            .run_action_with(
+                "a",
+                "cmd-action",
+                &root.to_string_lossy(),
+                "echo once>cmd.txt\r\nexit 9",
+                80,
+                24,
+                Some("commandPrompt".into()),
+                sink,
+            )
+            .unwrap();
+        let observed = until_exit(&receiver, &info.generation);
+        assert_eq!(observed.last().unwrap().1["exitCode"], 9);
+        assert_eq!(
+            std::fs::read_to_string(root.join("cmd.txt"))
+                .unwrap()
+                .trim(),
+            "once"
+        );
+        manager.close_owner("a").unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn real_action_restart_kills_descendants_before_replacement() {
+        let root = action_root();
+        let manager = TerminalManager::new();
+        let (sink, receiver) = events();
+        // Child inherits the Job. It would leave a delayed file after the old shell is gone.
+        let child_script = root.join("child.ps1");
+        let marker = root.join("orphan.txt");
+        std::fs::write(
+            &child_script,
+            format!(
+                "Start-Sleep -Seconds 2; [IO.File]::WriteAllText('{}','orphan')",
+                marker.to_string_lossy().replace('\'', "''")
+            ),
+        )
+        .unwrap();
+        let command = format!("$p = Start-Process powershell.exe -ArgumentList '-NoProfile','-File','{}' -PassThru; [IO.File]::WriteAllText('ready.txt', [string]$p.Id); Start-Sleep -Seconds 30", child_script.to_string_lossy());
+        let old = manager
+            .run_action_with(
+                "a",
+                "action",
+                &root.to_string_lossy(),
+                &command,
+                120,
+                30,
+                None,
+                sink.clone(),
+            )
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while !root.join("ready.txt").exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(30));
+        }
+        assert!(
+            root.join("ready.txt").exists(),
+            "old action did not launch child"
+        );
+        assert!(manager
+            .run_action_with(
+                "b",
+                "action",
+                &root.to_string_lossy(),
+                "exit 0",
+                120,
+                30,
+                None,
+                sink.clone()
+            )
+            .is_err());
+        let next = manager
+            .run_action_with(
+                "a",
+                "action",
+                &root.to_string_lossy(),
+                "[IO.File]::WriteAllText('new.txt','new'); exit 3",
+                120,
+                30,
+                None,
+                sink,
+            )
+            .unwrap();
+        assert_ne!(old.generation, next.generation);
+        assert!(manager.take_process("action", &old.generation).is_none());
+        let observed = until_exit(&receiver, &next.generation);
+        assert_eq!(observed.last().unwrap().1["exitCode"], 3);
+        std::thread::sleep(Duration::from_millis(2300));
+        assert!(!marker.exists(), "old descendant survived action restart");
+        assert_eq!(
+            std::fs::read_to_string(root.join("new.txt")).unwrap(),
+            "new"
+        );
+        manager.close_owner("a").unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn real_action_shell_exit_cleans_background_pipe_owner() {
+        let root = action_root();
+        let manager = TerminalManager::new();
+        let (sink, receiver) = events();
+        let info = manager.run_action_with("a", "action", &root.to_string_lossy(), "Start-Process powershell.exe -ArgumentList '-NoProfile','-Command','Start-Sleep -Seconds 30' -NoNewWindow; exit 5", 120, 30, None, sink).unwrap();
+        let began = Instant::now();
+        let observed = until_exit(&receiver, &info.generation);
+        assert_eq!(observed.last().unwrap().1["exitCode"], 5);
+        assert!(began.elapsed() < Duration::from_secs(15));
+        manager.close_owner("a").unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn utf8_stream_preserves_every_boundary_and_eof() {
@@ -579,14 +1190,22 @@ mod tests {
 
     #[test]
     fn real_pty_consumes_worktree_setup_environment_and_unset_values() {
-        let root = std::env::temp_dir().join(format!("codex-terminal-setup-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("codex-terminal-setup-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let mut git = std::process::Command::new("git");
         git.arg("-C").arg(&root).args(["init", "--quiet"]);
         #[cfg(windows)]
-        { use std::os::windows::process::CommandExt; git.creation_flags(0x08000000); }
+        {
+            use std::os::windows::process::CommandExt;
+            git.creation_flags(0x08000000);
+        }
         assert!(git.status().unwrap().success());
-        std::fs::write(root.join(".git/codex-setup-environment.json"), r#"{"CODEX_PARITY_SETUP":"saved value 中文","COLORTERM":null}"#).unwrap();
+        std::fs::write(
+            root.join(".git/codex-setup-environment.json"),
+            r#"{"CODEX_PARITY_SETUP":"saved value 中文","COLORTERM":null}"#,
+        )
+        .unwrap();
         let manager = TerminalManager::new();
         let id = format!("terminal-setup-{}", uuid::Uuid::new_v4());
         let (sink, receiver) = events();
@@ -594,7 +1213,17 @@ mod tests {
         let script = "[Console]::WriteLine('ENV=' + $env:CODEX_PARITY_SETUP); if ($null -eq $env:COLORTERM) { [Console]::WriteLine('UNSET') }";
         #[cfg(not(windows))]
         let script = "printf 'ENV=%s\\n' \"$CODEX_PARITY_SETUP\"; test -z \"${COLORTERM+x}\" && printf 'UNSET\\n'";
-        let info = manager.create_or_attach_with(&id, &root.to_string_lossy(), 200, 40, None, Some(test_command(script)), sink).unwrap();
+        let info = manager
+            .create_or_attach_with(
+                &id,
+                &root.to_string_lossy(),
+                200,
+                40,
+                None,
+                Some(test_command(script)),
+                sink,
+            )
+            .unwrap();
         let output = joined(&until_exit(&receiver, &info.generation), &info.generation);
         assert!(output.contains("ENV=saved value 中文"), "{output:?}");
         assert!(output.contains("UNSET"), "{output:?}");

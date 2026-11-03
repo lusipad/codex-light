@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
+import { randomUUID } from "node:crypto";
 import ts from "typescript";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -31,9 +32,10 @@ export function createEnvironmentHarness() {
   };
   const window = { addEventListener: (name, callback) => windows.set(name, callback), removeEventListener: name => windows.delete(name) };
   const load = (file, imports) => { const exports = {}; vm.runInNewContext(ts.transpileModule(fs.readFileSync(file, "utf8"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React, esModuleInterop: true } }).outputText,
-    { exports, require: name => name === "react" ? react : name === "lucide-react" ? new Proxy({}, { get: (_, key) => String(key) }) : name.endsWith(".css") ? {} : imports[name], window, requestAnimationFrame: callback => frames.push(callback) }); return exports; };
+    { exports, require: name => name === "react" ? react : name === "lucide-react" ? new Proxy({}, { get: (_, key) => String(key) }) : name.endsWith(".css") ? {} : imports[name], window, crypto: { randomUUID }, requestAnimationFrame: callback => frames.push(callback) }); return exports; };
   const client = load("src/localEnvironments.ts", { "./bridge": { tauriInvoke: invoke } });
-  const { LocalEnvironmentSettings } = load("src/components/LocalEnvironmentSettings.tsx", { "../localEnvironments": client, "../bridge": { tauriInvoke: invoke } });
+  const actions = load("src/environmentActions.ts", { "./bridge": { tauriInvoke: invoke } });
+  const { LocalEnvironmentSettings } = load("src/components/LocalEnvironmentSettings.tsx", { "../environmentActions": actions, "../localEnvironments": client, "../bridge": { tauriInvoke: invoke } });
   const nodes = node => node && typeof node === "object" ? [node, ...(node.children || []).flatMap(nodes)] : [];
   const text = node => typeof node === "string" || typeof node === "number" ? String(node) : (node?.children || []).map(text).join("");
   const modal = { open: false, showModal() { this.open = true; }, close() { this.open = false; } };

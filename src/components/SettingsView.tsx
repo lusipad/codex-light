@@ -12,6 +12,7 @@ import { CodeReviewSettings } from "./CodeReviewSettings";
 import type { CodeReviewPreferencesState } from "../reviewPreferences";
 import { WorktreeSettings } from "./WorktreeSettings";
 import { LocalEnvironmentSettings } from "./LocalEnvironmentSettings";
+import type { EnvironmentActionRunRequest } from "../environmentActions";
 import { GitSettings } from "./GitSettings";
 import type { GitPreferencesState } from "../gitPreferences";
 import { HooksSettings } from "./HooksSettings";
@@ -196,12 +197,14 @@ interface SettingsViewProps {
   onConfigUpdated: () => void;
   onNavigateRoute?: (route: MainViewRoute) => void;
   onRunEnvironmentCommand: (cwd: string, command: string) => void;
+  environmentTarget?: { id: string; cwd: string; configPath: string | null; edit?: boolean };
+  onRunEnvironmentAction?: (request: EnvironmentActionRunRequest) => Promise<void>;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
   petPreferencesState,
   archiveViewProps,
-  onRunEnvironmentCommand,
+  onRunEnvironmentCommand, environmentTarget, onRunEnvironmentAction,
   notificationState,
   gitPreferencesState,
   codeReviewPreferencesState,
@@ -942,7 +945,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
         {/* SECTION: LOCAL ENVIRONMENTS */}
         {activeSection === "local-environments" && (
-          <LocalEnvironmentSettings cwd={activeWorkspaceRoot} projects={environmentProjects} connectionIdentity={JSON.stringify([connectionIdentity, accountIdentity])} onNavigationGuardChange={registerEnvironmentNavigationGuard} onAddProject={onAddEnvironmentProject} onRunCommand={onRunEnvironmentCommand} />
+          <LocalEnvironmentSettings environmentTarget={environmentTarget} onRunEnvironmentAction={onRunEnvironmentAction} cwd={activeWorkspaceRoot} projects={environmentProjects} connectionIdentity={JSON.stringify([connectionIdentity, accountIdentity])} onNavigationGuardChange={registerEnvironmentNavigationGuard} onAddProject={onAddEnvironmentProject} onRunCommand={onRunEnvironmentCommand} />
         )}
 
         {/* SECTION: NOTIFICATIONS */}

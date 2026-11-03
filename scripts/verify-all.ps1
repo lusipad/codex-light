@@ -33,7 +33,13 @@ function Invoke-Step {
 }
 
 try {
+  Invoke-Step "Environment action App scope and native dispatch contracts" { node scripts/verify-environment-app-c.mjs }
   Invoke-Step "Local environment structured settings and selection contracts" { node scripts/verify-local-environments-ui-b.mjs }
+  Invoke-Step "Local environment toolbar actions and selection scope" { node scripts/verify-environment-actions-c-ui.mjs }
+  Invoke-Step "Worktree cleanup cancellation and partial removal results" { node scripts/verify-environment-actions-c-removal.mjs }
+  Invoke-Step "Environment terminal action generation and owner contracts" { node scripts/verify-environment-terminal-c.mjs }
+  Invoke-Step "Environment settings target and runtime action contracts" { node scripts/verify-environment-settings-c.mjs }
+  Invoke-Step "Rust worktree snapshot cleanup and deletion regression" { cargo test --locked --manifest-path src-tauri/Cargo.toml --lib worktree_removal_tests }
   Invoke-Step "Worktree creation cancellation and result contracts" { node scripts/verify-worktree-creation-b.mjs }
   Invoke-Step "Rust environment discovery, persistence and real setup" { cargo test --locked --manifest-path src-tauri/Cargo.toml local_environment }
   Invoke-Step "Rust terminal consumes worktree setup environment" { cargo test --locked --manifest-path src-tauri/Cargo.toml real_pty_consumes_worktree_setup_environment }
@@ -194,7 +200,7 @@ try {
     Invoke-Step "Git diff and commit lifecycle regression" { node scripts/verify-git-lifecycle.mjs }
     Invoke-Step "Terminal view lifecycle regression" { node scripts/verify-terminal-lifecycle.mjs }
     Invoke-Step "Terminal output ordering and replay regression" { node scripts/verify-terminal-output.mjs }
-    Invoke-Step "Rust terminal UTF-8 and real PTY regression" { cargo test --locked --manifest-path src-tauri/Cargo.toml --lib terminal::tests }
+    Invoke-Step "Rust terminal UTF-8, real PTY and environment action lifecycle regression" { cargo test --locked --manifest-path src-tauri/Cargo.toml --lib terminal::tests }
     Invoke-Step "Terminal command dispatch regression" { node scripts/verify-terminal-command.mjs }
   Invoke-Step "Tool cards & execution item parity" { node scripts/verify-tool-cards.mjs }
   Invoke-Step "Plan & Goal lifecycle parity" { node scripts/verify-plan-goal.mjs }

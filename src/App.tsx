@@ -108,6 +108,8 @@ import { MarkdownView } from "./components/MarkdownView";
 import { UserMessageBubble } from "./components/UserMessageBubble";
 import { DiffDrawer } from "./components/DiffDrawer";
 import { TerminalDock } from "./components/TerminalDock";
+import { EnvironmentActions } from "./components/EnvironmentActions";
+import type { EnvironmentActionRunRequest } from "./environmentActions";
 import { WorktreesView } from "./components/WorktreesView";
 import { AutomationsView } from "./components/AutomationsView";
 import { SkillsMcpView } from "./components/SkillsMcpView";
@@ -399,6 +401,30 @@ export const App: React.FC = () => {
   const [showRightDrawer, setShowRightDrawer] = useState<boolean>(false);
   const [showTerminal, setShowTerminal] = useState<boolean>(false);
   const [terminalTargetCwd, setTerminalTargetCwd] = useState<string | null>(null);
+  const [pendingEnvironmentAction, setPendingEnvironmentAction] = useState<EnvironmentActionRunRequest | null>(null);
+  const environmentActionScopeRef = useRef("");
+  const environmentActionWaiter = useRef<{ id: string; sessionId: string; scope: string; resolve: () => void; reject: (error: Error) => void } | null>(null);
+  const environmentActionRunner = useRef<((index: number) => boolean) | null>(null);
+  const [environmentTarget, setEnvironmentTarget] = useState<{ id: string; cwd: string; configPath: string | null; edit?: boolean }>();
+  const runEnvironmentAction = useCallback((request: EnvironmentActionRunRequest): Promise<void> => {
+    if (environmentActionWaiter.current) return Promise.reject(Error("已有操作正在连接终端，请稍候。"));
+    return new Promise((resolve, reject) => {
+      environmentActionWaiter.current = { id: request.id, sessionId: request.sessionId, scope: environmentActionScopeRef.current, resolve, reject };
+      setTerminalTargetCwd(request.cwd);
+      setPendingEnvironmentAction(request);
+      setShowTerminal(true);
+    });
+  }, []);
+  const handleEnvironmentActionResult = useCallback((id: string, error?: string) => {
+    const waiter = environmentActionWaiter.current;
+    if (waiter?.id !== id) return;
+    environmentActionWaiter.current = null;
+    setPendingEnvironmentAction(current => current?.id === id ? null : current);
+    if (waiter.scope !== environmentActionScopeRef.current) {
+      void tauriInvoke("terminal_close", { sessionId: waiter.sessionId }).catch(() => {});
+      waiter.reject(Error("操作上下文已变化，已取消等待中的终端操作。"));
+    } else if (error) waiter.reject(Error(error)); else waiter.resolve();
+  }, []);
   const terminalWasOpened = useRef(false);
   if (showTerminal) terminalWasOpened.current = true;
   const [pendingTermCommand, setPendingTermCommand] = useState<{
@@ -2035,6 +2061,18 @@ export const App: React.FC = () => {
   // Global keyboard shortcuts（注册表见 src/shortcuts.ts，与原生菜单 accelerator 对齐）
   // 实际动作绑定在下方 shortcutHandlersRef，避免闭包/声明顺序问题。
   const shortcutHandlersRef = useRef<Partial<Record<string, (arg?: any) => unknown>>>({});
+  const environmentActionScope = JSON.stringify([activeRoute, activeThreadId, activeWorkspace?.path, modelAccountIdentity, appServerStatus.connected, appServerStatus.binaryPath, appServerStatus.appServerVersion]);
+  environmentActionScopeRef.current = environmentActionScope;
+  useEffect(() => {
+    return () => {
+      const waiter = environmentActionWaiter.current;
+      if (!waiter) return;
+      environmentActionWaiter.current = null;
+      void tauriInvoke("terminal_close", { sessionId: waiter.sessionId }).catch(() => {});
+      setPendingEnvironmentAction(current => current?.id === waiter.id ? null : current);
+      waiter.reject(Error("操作上下文已变化，已取消等待中的终端操作。"));
+    };
+  }, [environmentActionScope]);
   const shortcutTimestampsRef = useRef<Record<string, number>>({});
   const threadsRef = useRef<ThreadSummary[]>([]);
   threadsRef.current = threads;
@@ -2067,6 +2105,7 @@ export const App: React.FC = () => {
       if (id.startsWith("composer-")) return !!focusedElement?.closest(".codex-two-tier-composer");
       if (id.startsWith("approval-")) return !!focusedElement?.closest("[data-keyboard-approval]");
       if (localCommandsOnly) return false;
+      if (id.startsWith("environment-action-") && (!keyboardContextRef.current.hasWorkspace || !["thread", "home"].includes(keyboardContextRef.current.activeRoute) || !environmentActionRunner.current)) return false;
       if (id === "next-tab" || id === "previous-tab" || id.startsWith("focus-tab-")) return !!document.querySelector(".diff-drawer");
       if (["rename-thread", "pin-thread", "archive-thread", "fork-thread", "copy-last-code-block", "find-in-chat", "open-thread-new-window", "mark-thread-unread", "delete-chat", "copy-conversation-markdown"].includes(id)
         && (!keyboardContextRef.current.activeThreadId || keyboardContextRef.current.activeRoute !== "thread")) return false;
@@ -3713,6 +3752,7 @@ export const App: React.FC = () => {
     return true;
   };
   shortcutHandlersRef.current = {
+    ...Object.fromEntries(Array.from({ length: 9 }, (_, index) => [`environment-action-${index + 1}`, () => environmentActionRunner.current?.(index) ?? false])),
     ...Object.fromEntries(SHORTCUTS.filter(shortcut => shortcut.id.startsWith("composer-") || shortcut.id.startsWith("approval-"))
       .map(shortcut => [shortcut.id, () => dispatchComponentShortcut(shortcut.id)])),
     ...Object.fromEntries(["toggle-file-tree", "git-commit", "git-create-pull-request", "git-create-draft-pull-request", "next-tab", "previous-tab",
@@ -4970,6 +5010,19 @@ export const App: React.FC = () => {
           {/* Top Right Panel Toggle Icons & Environment Actions */}
           <div className="top-nav-right">
             <div className={`thread-header-actions-group ${activeRoute === "home" || turns.length === 0 ? "home-active" : ""}`}>
+              {(activeRoute === "thread" || activeRoute === "home") && <EnvironmentActions
+                cwd={(activeThreadId ? activeThreadObj?.cwd || workspaceHintsRef.current[activeThreadId] : null) || activeWorkspace?.path || ""}
+                conversationId={activeThreadId || `draft:${activeWorkspace?.path || ""}`}
+                connectionIdentity={JSON.stringify([modelAccountIdentity, appServerStatus.connected, appServerStatus.binaryPath, appServerStatus.appServerVersion])}
+                keyBindings={keyboardState.bindings}
+                onRun={runEnvironmentAction}
+                onRegisterRun={runner => { environmentActionRunner.current = runner; }}
+                onOpenSettings={target => {
+                  setEnvironmentTarget({ ...target, id: crypto.randomUUID() });
+                  setSettingsInitialSection("local-environments");
+                  setActiveRoute("settings");
+                }}
+              />}
               {/* Context & Token Usage Meter Indicator */}
               <div style={{ position: "relative" }}>
                 <button
@@ -5336,6 +5389,8 @@ export const App: React.FC = () => {
         ) : activeRoute === "settings" ? (
           <div className="settings-full-route-view">
             <SettingsView
+              environmentTarget={environmentTarget}
+              onRunEnvironmentAction={runEnvironmentAction}
               environmentProjects={mergeHookRoots(workspaces.map(workspace => workspace.path), sidebarProjectMembership.localProjects?.flatMap(project => project.rootPaths) ?? []).map(path => ({ path, name: sidebarProjectMembership.localProjects?.find(project => project.rootPaths.includes(path))?.name || workspaces.find(workspace => workspace.path === path)?.label || baseNameFsPath(path) || path }))}
               onAddEnvironmentProject={() => void handlePickNewFolder()}
               workspaceRoots={mergeHookRoots(workspaces.map(workspace => workspace.path), sidebarProjectMembership.localProjects?.find(project => project.id === sidebarProjectMembership.selectedProjectId)?.rootPaths ?? [])}
@@ -6164,6 +6219,8 @@ export const App: React.FC = () => {
             cwd={terminalTargetCwd ?? activeWorkspace?.path ?? ""}
             onClose={() => setShowTerminal(false)}
             pendingCommand={pendingTermCommand}
+            pendingAction={environmentActionWaiter.current?.scope === environmentActionScope ? pendingEnvironmentAction : null}
+            onActionResult={handleEnvironmentActionResult}
             onCommandHandled={handleTerminalCommandHandled}
           />
         )}

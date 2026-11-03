@@ -1775,6 +1775,26 @@ fn snapshot_worktree(target: &Path) -> Result<String, String> {
 }
 
 pub fn delete_worktree(worktree_path: &str, git_dir: Option<String>) -> Result<WorktreeRemovalResult, String> {
+    let state = crate::local_environment_setup::SetupState::default();
+    let operation = state.prepare_operation("worktree-delete", &uuid::Uuid::new_v4().to_string())?;
+    delete_worktree_with_cleanup_context(worktree_path, git_dir, operation, None)
+}
+
+fn removal_identity(target: &Path) -> Result<(PathBuf, Vec<u8>, Option<std::time::SystemTime>), String> {
+    let marker = target.join(".git");
+    let metadata = fs::symlink_metadata(&marker).map_err(|error| error.to_string())?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() { return Err("工作树身份标记已改变。".into()); }
+    Ok((worktree_checked_path(run_git(&worktree_path_string(target), &["rev-parse", "--absolute-git-dir"])?.trim())?,
+        fs::read(marker).map_err(|error| error.to_string())?, metadata.created().ok()))
+}
+
+pub fn delete_worktree_with_cleanup_context(
+    worktree_path: &str,
+    git_dir: Option<String>,
+    operation: crate::local_environment_setup::SetupOperation,
+    shell: Option<String>,
+) -> Result<WorktreeRemovalResult, String> {
+    operation.check()?;
     let target = worktree_checked_path(worktree_path)?;
     let _operation = WorktreeOperation::acquire(&target)?;
     let repo = worktree_checked_path(git_dir.as_deref().filter(|s| !s.trim().is_empty())
@@ -1787,6 +1807,7 @@ pub fn delete_worktree(worktree_path: &str, git_dir: Option<String>) -> Result<W
         .ok_or("仓库未登记主工作树，无法确定稳定的删除上下文。")?;
     let repo = worktree_path_string(&worktree_checked_path(&primary)?);
     validate_registered_worktree(&repo, &target)?;
+    let identity = removal_identity(&target)?;
     let mut warnings = Vec::new();
     // Official settings-delete-targeted proceeds after a snapshot failure. Surface
     // that exception explicitly rather than implying the deleted checkout is recoverable.
@@ -1797,7 +1818,18 @@ pub fn delete_worktree(worktree_path: &str, git_dir: Option<String>) -> Result<W
             None
         }
     };
-    validate_registered_worktree(&repo, &target)?;
+    let retained_error = |error: String| format!("工作树保留在 {}（已保存快照：{}）：{error}",
+        worktree_path_string(&target), snapshot_ref.as_deref().unwrap_or("无"));
+    operation.check().map_err(&retained_error)?;
+    if let Some(warning) = crate::local_environment_setup::cleanup_worktree(&operation, &target, Path::new(&repo), shell).map_err(&retained_error)? {
+        warnings.push(warning);
+    }
+    operation.check().map_err(&retained_error)?;
+    validate_registered_worktree(&repo, &target).map_err(&retained_error)?;
+    if removal_identity(&target).map_err(&retained_error)? != identity {
+        return Err(retained_error("cleanup 后工作树身份已变化，未执行删除。".into()));
+    }
+    operation.check().map_err(&retained_error)?;
     run_git(&repo, &["worktree", "remove", "--force", &worktree_path_string(&target)])
         .map_err(|error| format!("删除工作树失败（已保存快照：{}）：{error}",
             snapshot_ref.as_deref().unwrap_or("无")))?;
@@ -1911,6 +1943,123 @@ mod worktree_removal_tests {
             assert!(root.is_absolute() && root.starts_with(temp));
             assert!(root.file_name().unwrap().to_string_lossy().starts_with("codex-worktree-removal-"));
             fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    fn cleanup_config(fixture: &Fixture, script: &str) -> PathBuf {
+        let directory = Path::new(&fixture.checkout).join(".codex/environments");
+        fs::create_dir_all(&directory).unwrap();
+        let config = directory.join("environment.toml");
+        fs::write(&config, format!("version = 1\nname = 'Cleanup fixture'\n[setup]\nscript = ''\n[cleanup]\nscript = {}\n", serde_json::to_string(script).unwrap())).unwrap();
+        run_git(&fixture.checkout, &["config", "extensions.worktreeConfig", "true"]).unwrap();
+        run_git(&fixture.checkout, &["config", "--worktree", "codex.localEnvironmentConfigPath", &config.to_string_lossy()]).unwrap();
+        config
+    }
+
+    #[test]
+    fn cleanup_runs_after_snapshot_in_target_and_force_does_not_skip_it() {
+        let fixture = Fixture::new();
+        let marker = fixture.root.join("cleanup-observed.txt");
+        let script = if cfg!(windows) {
+            format!("$refs = @(git for-each-ref --format='%(refname)' refs/codex/snapshots); if ($refs.Count -lt 1) {{ exit 9 }}; [IO.File]::WriteAllText('{}', ((Get-Location).Path + [Environment]::NewLine + [string]$env:CODEX_SOURCE_TREE_PATH + [Environment]::NewLine + [string]$env:CODEX_WORKTREE_PATH)); [IO.File]::WriteAllText('tracked.bin', 'cleanup changed')", marker.to_string_lossy().replace('\'', "''"))
+        } else {
+            format!("test -n \"$(git for-each-ref refs/codex/snapshots)\"; printf '%s\\n%s\\n%s' \"$PWD\" \"$CODEX_SOURCE_TREE_PATH\" \"$CODEX_WORKTREE_PATH\" > '{}'; printf cleanup > tracked.bin", marker.to_string_lossy())
+        };
+        cleanup_config(&fixture, &script);
+        let result = fixture.delete().unwrap();
+        let observed = fs::read_to_string(marker).unwrap();
+        assert_eq!(fs::canonicalize(observed.lines().next().unwrap()).err().is_some(), true, "observed target must have been removed");
+        assert_eq!(worktree_path_key(Path::new(observed.lines().next().unwrap())), worktree_path_key(Path::new(&fixture.checkout)));
+        assert_eq!(observed.lines().nth(1).unwrap_or(""), std::env::var("CODEX_SOURCE_TREE_PATH").unwrap_or_default());
+        assert_eq!(observed.lines().nth(2).unwrap_or(""), std::env::var("CODEX_WORKTREE_PATH").unwrap_or_default());
+        let reference = result.snapshot_ref.unwrap();
+        assert!(!run_git(&fixture.repo, &["show", &format!("{reference}:tracked.bin")]).unwrap().contains("cleanup"));
+        assert!(result.warnings.is_empty()); assert!(!Path::new(&fixture.checkout).exists());
+    }
+
+    #[test]
+    fn cleanup_failure_preserves_directory_snapshot_and_environment_delta() {
+        let fixture = Fixture::new(); cleanup_config(&fixture, "exit 7");
+        let git_dir = run_git(&fixture.checkout, &["rev-parse", "--absolute-git-dir"]).unwrap();
+        let delta = Path::new(git_dir.trim()).join("codex-setup-environment.json");
+        fs::write(&delta, b"{\"KEEP\":\"original\"}").unwrap();
+        let error = fixture.delete().unwrap_err();
+        assert!(error.contains("cleanup") && error.contains("refs/codex/snapshots/") && error.contains(&fixture.checkout), "{error}");
+        assert!(Path::new(&fixture.checkout).is_dir());
+        assert_eq!(fs::read(delta).unwrap(), b"{\"KEEP\":\"original\"}");
+        assert!(Path::new(git_dir.trim()).join("codex-cleanup.log").is_file());
+        assert!(!run_git(&fixture.repo, &["for-each-ref", "refs/codex/snapshots"]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn cleanup_cancel_and_concurrent_delete_retain_target() {
+        let fixture = Fixture::new(); let ready = fixture.root.join("cleanup-ready");
+        let script = if cfg!(windows) {
+            format!("[IO.File]::WriteAllText('{}', 'ready'); Start-Sleep -Seconds 30", ready.to_string_lossy().replace('\'', "''"))
+        } else { format!("touch '{}'; sleep 30", ready.to_string_lossy()) };
+        cleanup_config(&fixture, &script);
+        let state = crate::local_environment_setup::SetupState::default();
+        let operation = state.prepare_operation("cleanup-test", "cancel").unwrap();
+        std::thread::scope(|scope| {
+            let task = scope.spawn(|| delete_worktree_with_cleanup_context(&fixture.checkout, Some(fixture.repo.clone()), operation, None));
+            // The snapshot and Git checks precede shell startup. Synchronize with
+            // the real script rather than imposing a startup performance limit.
+            while !ready.exists() && !task.is_finished() { std::thread::sleep(std::time::Duration::from_millis(20)); }
+            if !ready.exists() { panic!("cleanup ended before readiness: {:?}", task.join().unwrap()); }
+            assert!(fixture.delete().is_err(), "concurrent delete must not enter cleanup");
+            state.cancel_owner("cleanup-test");
+            let error = task.join().unwrap().unwrap_err();
+            assert!(error.contains("取消") && error.contains("refs/codex/snapshots/"), "{error}");
+        });
+        assert!(Path::new(&fixture.checkout).is_dir());
+    }
+
+    #[test]
+    fn cleanup_identity_change_blocks_late_remove() {
+        let fixture = Fixture::new();
+        let script = if cfg!(windows) { "[IO.File]::AppendAllText((Join-Path (Get-Location).Path '.git'), [Environment]::NewLine)" } else { "printf '\\n' >> .git" };
+        cleanup_config(&fixture, script);
+        let error = fixture.delete().unwrap_err();
+        assert!(error.contains("身份") && error.contains("refs/codex/snapshots/"), "{error}");
+        assert!(Path::new(&fixture.checkout).is_dir());
+    }
+
+    #[test]
+    fn cleanup_ignored_source_fallback_uses_target_cwd_and_platform_script() {
+        let fixture = Fixture::new();
+        let marker = fixture.root.join("source-fallback-marker");
+        let script = if cfg!(windows) {
+            format!("[IO.File]::WriteAllText('{}', (Get-Location).Path)", marker.to_string_lossy().replace('\'', "''"))
+        } else { format!("printf '%s' \"$PWD\" > '{}'", marker.to_string_lossy()) };
+        let target_config = cleanup_config(&fixture, "exit 99");
+        let platform = if cfg!(windows) { "win32" } else if cfg!(target_os = "macos") { "darwin" } else { "linux" };
+        let directory = Path::new(&fixture.repo).join(".codex/environments"); fs::create_dir_all(&directory).unwrap();
+        let source_config = directory.join("environment.toml");
+        fs::write(&source_config, format!("version = 1\nname = 'Source fallback'\n[setup]\nscript = ''\n[cleanup]\nscript = 'exit 99'\n[cleanup.{platform}]\nscript = {}\n", serde_json::to_string(&script).unwrap())).unwrap();
+        fs::write(Path::new(&fixture.repo).join(".gitignore"), ".codex/\n").unwrap();
+        fs::remove_file(target_config).unwrap();
+        run_git(&fixture.checkout, &["config", "--worktree", "codex.localEnvironmentConfigPath", &source_config.to_string_lossy()]).unwrap();
+        let result = fixture.delete().unwrap();
+        assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+        assert_eq!(worktree_path_key(Path::new(&fs::read_to_string(marker).unwrap())), worktree_path_key(Path::new(&fixture.checkout)));
+        assert!(source_config.is_file(), "cleanup must not remove source configuration");
+    }
+
+    #[test]
+    fn cleanup_missing_none_empty_and_unavailable_are_distinct() {
+        for scenario in ["missing-key", "none", "no-cleanup", "empty-script", "unavailable"] {
+            let fixture = Fixture::new();
+            let config = cleanup_config(&fixture, "");
+            match scenario {
+                "missing-key" => { run_git(&fixture.checkout, &["config", "--worktree", "--unset", "codex.localEnvironmentConfigPath"]).unwrap(); },
+                "none" => { run_git(&fixture.checkout, &["config", "--worktree", "codex.localEnvironmentConfigPath", "__none__"]).unwrap(); },
+                "no-cleanup" => fs::write(&config, "version = 1\nname = 'No cleanup'\n[setup]\nscript = ''\n").unwrap(),
+                "unavailable" => fs::write(&config, "broken = [").unwrap(),
+                _ => {},
+            }
+            let result = fixture.delete().unwrap();
+            assert_eq!(result.warnings.len(), usize::from(scenario == "unavailable"), "{scenario}");
+            if scenario == "unavailable" { assert!(result.warnings[0].contains("cleanup-config-unavailable")); }
         }
     }
 

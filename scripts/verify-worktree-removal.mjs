@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
+import { webcrypto } from "node:crypto";
 import ts from "typescript";
 
 const source = fs.readFileSync("src/worktreeRemoval.ts", "utf8");
@@ -12,7 +13,7 @@ function fixture(options = {}) {
   const calls = [];
   const threads = options.threads ?? [{ id: "a", cwd: `${wt.path}/src` }];
   const exports = {};
-  vm.runInNewContext(compiled, { exports, require() {
+  vm.runInNewContext(compiled, { exports, crypto: webcrypto, AbortController, require() {
     return {
       async tauriInvoke(method, args) {
         calls.push([method, args]);
@@ -120,7 +121,7 @@ function deletionHandler() {
   const notices = [], errors = [];
   let removes = 0, refreshes = 0;
   const context = {
-    exports: {}, actionPendingRef: { current: false }, actionBusyPath: null, creationControllerRef: { current: null },
+    exports: {}, AbortController, deletionControllerRef: { current: null }, actionPendingRef: { current: false }, actionBusyPath: null, creationControllerRef: { current: null },
     conversations: [], confirm: () => true, contextRef: { current: { revision: 1 } },
     mountedRef: { current: true }, setActionBusyPath() {},
     removeWorktreeWithConversations: () => { removes++; return pending; },

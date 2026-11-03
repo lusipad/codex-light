@@ -144,7 +144,7 @@ impl Drop for SetupOperation {
     }
 }
 impl SetupOperation {
-    fn check(&self) -> Result<(), String> {
+    pub(crate) fn check(&self) -> Result<(), String> {
         if self.token.load(Ordering::SeqCst) {
             Err("环境设置已取消。".into())
         } else {
@@ -420,6 +420,16 @@ fn run_setup(
     script: &str,
     shell: Option<String>,
 ) -> Result<EnvironmentDelta, String> {
+    run_script(op, cwd, worktree, script, shell, Some(source_cwd))
+}
+fn run_script(
+    op: &SetupOperation,
+    cwd: &Path,
+    worktree: &str,
+    script: &str,
+    shell: Option<String>,
+    source_cwd: Option<&str>,
+) -> Result<EnvironmentDelta, String> {
     op.check()?;
     let temporary =
         Temporary(std::env::temp_dir().join(format!("codex-setup-{}", uuid::Uuid::new_v4())));
@@ -462,7 +472,21 @@ fn run_setup(
     let capture = |path: &Path| {
         format!("$snapshot = @{{}}; Get-ChildItem Env: | ForEach-Object {{ $snapshot[$_.Name] = $_.Value }}; [System.IO.File]::WriteAllText('{}', (ConvertTo-Json -InputObject $snapshot -Compress), (New-Object System.Text.UTF8Encoding($false)))", escaped(path))
     };
-    let body = if powershell {
+    let body = if source_cwd.is_none() {
+        if powershell {
+            format!("$ErrorActionPreference = 'Stop'\n$PSNativeCommandUseErrorActionPreference = $true\n$global:LASTEXITCODE = 0\ntry {{ & '{}'; if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }} }} catch {{ [Console]::Error.WriteLine($_); exit 1 }}\nexit 0\n", escaped(&input))
+        } else if cmd {
+            format!(
+                "@echo off\r\ncall \"{}\"\r\nexit /b %ERRORLEVEL%\r\n",
+                input.to_string_lossy()
+            )
+        } else {
+            format!(
+                "set -e -o pipefail\n. '{}'\n",
+                input.to_string_lossy().replace('\'', "'\\''")
+            )
+        }
+    } else if powershell {
         format!("$ErrorActionPreference = 'Stop'\n$PSNativeCommandUseErrorActionPreference = $true\n$global:LASTEXITCODE = 0\n{}\ntry {{\n & '{}'\n if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}\n {}\n}} catch {{ [Console]::Error.WriteLine($_); exit 1 }}\nexit 0\n", capture(&before), escaped(&input), capture(&after))
     } else if cmd {
         let quote = |path: &Path| format!("\"{}\"", path.to_string_lossy());
@@ -493,10 +517,13 @@ fn run_setup(
     process
         .arg(&wrapper)
         .current_dir(cwd)
-        .env("CODEX_SOURCE_TREE_PATH", source_cwd)
-        .env("CODEX_WORKTREE_PATH", worktree)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    if let Some(source_cwd) = source_cwd {
+        process
+            .env("CODEX_SOURCE_TREE_PATH", source_cwd)
+            .env("CODEX_WORKTREE_PATH", worktree);
+    }
     #[cfg(windows)]
     process.creation_flags(0x08000000 | 0x00000004);
     #[cfg(unix)]
@@ -577,7 +604,15 @@ fn run_setup(
         String::from_utf8_lossy(&stdout),
         String::from_utf8_lossy(&stderr)
     );
-    write_private(Path::new(worktree), "codex-setup.log", log.as_bytes())?;
+    write_private(
+        Path::new(worktree),
+        if source_cwd.is_some() {
+            "codex-setup.log"
+        } else {
+            "codex-cleanup.log"
+        },
+        log.as_bytes(),
+    )?;
     let status = status?;
     if !status.success() {
         return Err(format!(
@@ -586,10 +621,154 @@ fn run_setup(
         ));
     }
     op.check()?;
+    if source_cwd.is_none() {
+        return Ok(BTreeMap::new());
+    }
     Ok(delta(
         read_env(&before, powershell)?,
         read_env(&after, powershell)?,
     ))
+}
+
+/// Configuration failures are warnings; actual lifecycle failures must retain the worktree.
+pub(crate) fn cleanup_worktree(
+    op: &SetupOperation,
+    target: &Path,
+    primary: &Path,
+    shell: Option<String>,
+) -> Result<Option<String>, String> {
+    op.check()?;
+    let loaded = (|| {
+        let config_file = private_path(target)?.join("config.worktree");
+        if !config_file.exists() {
+            return Ok(None);
+        }
+        regular(&config_file)?;
+        let output = command("git")
+            .args(["config", "--file"])
+            .arg(crate::state::normalize_fs_path(
+                &config_file.to_string_lossy(),
+            ))
+            .args(["--get", "codex.localEnvironmentConfigPath"])
+            .output()
+            .map_err(|e| e.to_string())?;
+        if output.status.code() == Some(1) {
+            return Ok(None);
+        }
+        if !output.status.success() {
+            return Err("无法读取目标工作树环境选择。".to_string());
+        }
+        let selected = String::from_utf8(output.stdout).map_err(|e| e.to_string())?;
+        let selected = selected.trim();
+        if selected.is_empty() || selected == "__none__" {
+            return Ok(None);
+        }
+        let config = Path::new(selected);
+        if !config.is_absolute()
+            || config
+                .components()
+                .any(|part| matches!(part, Component::ParentDir))
+        {
+            return Err("环境配置路径无效。".into());
+        }
+        let directory = config.parent().ok_or("环境目录无效。")?;
+        let codex = directory.parent().ok_or("环境目录无效。")?;
+        if directory.file_name().and_then(|name| name.to_str()) != Some("environments")
+            || codex.file_name().and_then(|name| name.to_str()) != Some(".codex")
+        {
+            return Err("环境配置必须位于 .codex/environments。".into());
+        }
+        let definition = fs::canonicalize(codex.parent().ok_or("环境定义根无效。")?)
+            .map_err(|e| e.to_string())?;
+        let target = fs::canonicalize(target).map_err(|e| e.to_string())?;
+        let primary = fs::canonicalize(primary).map_err(|e| e.to_string())?;
+        let relative = if let Ok(relative) = definition.strip_prefix(&target) {
+            relative
+        } else {
+            let relative = definition
+                .strip_prefix(&primary)
+                .map_err(|_| "环境配置不属于目标或源仓库。")?;
+            let config_relative = config
+                .strip_prefix(codex.parent().unwrap())
+                .map_err(|_| "环境配置路径无效。")?;
+            let source_config = inside(&primary, &relative.join(config_relative), false)?;
+            // B only keeps a source fallback when the definition is ignored in source but not target.
+            let repository_relative = source_config
+                .strip_prefix(&primary)
+                .map_err(|_| "源环境路径无效。")?;
+            if !git_matches(
+                &primary,
+                &[
+                    "check-ignore",
+                    "--quiet",
+                    "--",
+                    &repository_relative.to_string_lossy(),
+                ],
+            )? || git_matches(
+                &target,
+                &[
+                    "check-ignore",
+                    "--quiet",
+                    "--",
+                    &repository_relative.to_string_lossy(),
+                ],
+            )? || git_matches(
+                &primary,
+                &[
+                    "ls-files",
+                    "--error-unmatch",
+                    "--",
+                    &repository_relative.to_string_lossy(),
+                ],
+            )? {
+                return Err("源环境配置不是有效的忽略文件回退。".into());
+            }
+            relative
+        };
+        let execution = inside(&target, relative, false)?;
+        if !execution.is_dir() {
+            return Err("cleanup 工作目录不存在。".into());
+        }
+        let snapshot = local_environment::read_config(&definition.to_string_lossy(), selected)?;
+        if !snapshot.exists {
+            return Err("选中环境文件不存在。".into());
+        }
+        let environment = snapshot.environment.ok_or_else(|| {
+            snapshot
+                .schema_error
+                .unwrap_or_else(|| "环境配置无效。".into())
+        })?;
+        let Some(cleanup) = environment.cleanup else {
+            return Ok(None);
+        };
+        let platform = if cfg!(windows) {
+            cleanup.win32
+        } else if cfg!(target_os = "macos") {
+            cleanup.darwin
+        } else {
+            cleanup.linux
+        };
+        let script = platform
+            .map(|script| script.script)
+            .filter(|script| !script.trim().is_empty())
+            .unwrap_or(cleanup.script);
+        if script.trim().is_empty() {
+            return Ok(None);
+        }
+        Ok(Some((execution, script)))
+    })();
+    let (cwd, script) = match loaded {
+        Ok(Some(value)) => value,
+        Ok(None) => return Ok(None),
+        Err(error) => {
+            return Ok(Some(format!(
+                "cleanup-config-unavailable：环境配置不可用，继续删除：{error}"
+            )))
+        }
+    };
+    run_script(op, &cwd, &target.to_string_lossy(), &script, shell, None)
+        .map_err(|error| format!("cleanup 失败，工作树已保留：{error}"))?;
+    Ok(None)
 }
 
 #[cfg(test)]

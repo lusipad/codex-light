@@ -90,6 +90,8 @@ pub(crate) mod git_job {
     }
 
     pub(crate) struct Job(Handle);
+    // A Job owns a kernel handle; Windows permits using/closing it on another thread.
+    unsafe impl Send for Job {}
     struct ProcessHandles(Vec<Handle>);
     impl Drop for ProcessHandles {
         fn drop(&mut self) {
@@ -108,7 +110,7 @@ pub(crate) mod git_job {
         }
     }
     impl Job {
-        pub(crate) fn attach_and_resume(child: &Child) -> Result<Self, String> {
+        pub(crate) fn attach_running(process: Handle) -> Result<Self, String> {
             unsafe {
                 let handle = CreateJobObjectW(std::ptr::null(), std::ptr::null());
                 if handle.is_null() {
@@ -123,10 +125,17 @@ pub(crate) mod git_job {
                     &limits as *const _ as *const c_void,
                     size_of::<ExtendedLimits>() as u32,
                 ) == 0
-                    || AssignProcessToJobObject(handle, child.as_raw_handle()) == 0
+                    || AssignProcessToJobObject(handle, process) == 0
                 {
                     return Err(std::io::Error::last_os_error().to_string());
                 }
+                Ok(job)
+            }
+        }
+
+        pub(crate) fn attach_and_resume(child: &Child) -> Result<Self, String> {
+            let job = Self::attach_running(child.as_raw_handle())?;
+            unsafe {
                 // The process is still suspended, so no helper can escape before job assignment.
                 let snapshot = CreateToolhelp32Snapshot(4, 0);
                 if snapshot as isize == -1 {

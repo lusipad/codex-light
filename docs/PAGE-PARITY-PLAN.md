@@ -2,7 +2,7 @@
 
 制定日期：2026-10-25。目标：以用户实际安装的 Windows Codex App 为基准，逐页达到功能、交互和像素布局一致。
 
-最新增量（16.14B）：全部已登记项目的环境索引/结构化编辑/选择、真实工作树 setup 与新 PTY 环境差量消费已实施；生产专项、私有进程持久化、真实临时脚本/取消、宽窄受控浏览器、最终完整标准、全 Rust 376 项及 EXE/MSI/NSIS 通过，283 项产品输入稳定。见[阶段待验](antigravity/acceptance/16-14B.md)。原生/官方像素和用户验收未完成；下一[16.14C](antigravity/specs/16-14C-next-closure.md)闭合顶部动作和删除前 cleanup，调研完成尚未开发。
+最新增量（16.14C）：顶部/设置专用环境动作、真实工作树选择作用域、最近动作与原索引快捷入口、删除前cleanup已实施，完整标准（非Fast）、全Rust390项、EXE/MSI/NSIS已通过，286项构建输入稳定；见[阶段待验](antigravity/acceptance/16-14C.md)。失败与未验均保留；原生GUI/官方配对像素和用户验收未完成。下一16.15工作树保留清理语义先只读调研。
 
 执行更新（2026-11-01，用户最新指令）：持续开发全部页面，避免单一交互细节阻塞整体推进。按 01C→01D→01E→01F→后续页面顺序逐单元开发；前序原生/官方/像素与用户验收缺口单独保留，不以进入下一单元表示已验收。此推进授权覆盖下文及 Antigravity 旧计划“前序未验收不得进入下一页”的开发门槛，不降低最终验收标准。当前 01C 首页标题状态与项目入口进入自验；01B 保留未验收。
 
@@ -151,8 +151,8 @@ asar 作为前端静态实现的主要参照，与官方文档、官方运行时
 | 16.11 | plugins-settings | [16.11C远程管理待验](antigravity/acceptance/16-11C.md)：本地/市场及固定远程库存、启禁/卸载与未知恢复已实施；真实远程资格、完整详情、官方原生像素和用户验收未完成 |
 | 16.12 | hooks-settings | [16.12B来源审阅待验](antigravity/acceptance/16-12B.md)：真实多根、来源索引/详情、审阅/信任/启停已实施；指定插件详情、运行历史、原生/官方像素及用户验收未完成 |
 | 16.13 | git-settings | [16.13B真实生成待验](antigravity/acceptance/16-13B.md)：指令保存/消费、tracked上下文、隔离生成与草稿/取消保护已实施；原生/官方像素/真实模型及用户验收未完成 |
-| 16.14 | local-environments | [16.14B阶段待验](antigravity/acceptance/16-14B.md)：环境发现/结构编辑/选择、真实worktree setup与PTY环境消费已接；cleanup/顶部栏动作/原生像素及用户验收待完成 |
-| 16.15 | worktrees | Worktree 偏好、保留与清理语义 |
+| 16.14 | local-environments | [16.14C阶段待验](antigravity/acceptance/16-14C.md)：环境发现/结构编辑/选择、真实setup、专用动作终端和删除前cleanup已接，完整标准/全Rust390项及原生包通过；原生GUI/官方像素及用户验收待完成 |
+| 16.15 | worktrees | [16.15B只读合同](antigravity/specs/16-15B-next-closure.md)：固定偏好/eligible保留算法/保护重验已调研，尚未开发新自主清理调度 |
 | 16.16 | code-review | 审查设置与运行时行为 |
 | 16.17 | import | 导入来源、预览、结果与失败恢复 |
 | 16.18 | storage | 云端Library/Space配额、文件/图像管理入口；认证缺失时阻塞 |
