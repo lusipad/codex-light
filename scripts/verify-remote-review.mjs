@@ -72,14 +72,14 @@ function surface(url = target.url) {
     if (key === "../chatgptService") return { serviceIdentity: async () => identity,
       readRemotePullRequest: (...args) => { reads.push(args); return control.read(...args); } };
     if (key === "../webLinks") return { openWebLink: async (url, valid) => { if (valid()) opened.push(url); } };
-    return { MarkdownView: "MarkdownView" };
+    return { MarkdownView: "MarkdownView", PinnedReviewChanges: "PinnedReviewChanges" };
   }, { url, scope: "account-a", onOpenUrl: next => h.render({ url: next }), onBack() {} });
   return Object.assign(h, { events, reads, control, opened });
 }
 let h = surface(""); await h.start(); assert.equal(h.reads.length, 0); assert.match(h.text(), /打开 Pull Request 后/); h.unmount();
 h = surface(); await h.start(); assert.match(h.text(), /Real PR title/);
 assert.equal(h.nodes().find(node => node.type === "MarkdownView").props.remoteContent, true);
-assert.equal(h.nodes().find(node => node.type === "pre").children[0], result().diff.unifiedDiff);
+assert.equal(h.nodes().find(node => node.type === "PinnedReviewChanges").props.url, target.url);
 assert.equal(h.reads[0][1], identity); h.unmount();
 h = surface(); const first = deferred(); h.control.read = () => first.promise; await h.start();
 const oldSignal = h.reads[0][2]; const second = deferred(); h.control.read = () => second.promise;
@@ -94,9 +94,78 @@ h = surface(); h.control.read = async () => { throw Error("repository SSO unavai
 assert.match(h.text(), /repository SSO unavailable/); assert.equal(h.nodes().some(node => node.type === "pre"), false);
 assert.doesNotMatch(h.text(), /没有差异/);
 h.control.read = async () => empty; h.button("重新读取").props.onClick(); h.render(); h.effects(); await flush(); h.render();
-assert.match(h.text(), /此提交没有差异/); h.unmount();
+assert.ok(h.nodes().some(node => node.type === "PinnedReviewChanges")); h.unmount();
 h = surface(); const late = deferred(); h.control.listen = () => late.promise; h.render(); h.effects(); h.unmount();
 let lateStops = 0; late.resolve(() => lateStops++); await flush(); assert.equal(lateStops, 3); assert.equal(h.reads.length, 0);
+
+const sha = letter => letter.repeat(40);
+const pinned = () => ({ pullRequest: { ...target }, account: result().account, metadata: { ...result().metadata, headRevision: sha("b") },
+  snapshotId: "snapshot-1", snapshot: { baseRevision: sha("a"), headRevision: sha("b"), mergeBaseRevision: sha("c"), commits: [
+    { sha: sha("b"), parentSha: sha("d"), title: "Current commit" }, { sha: sha("d"), parentSha: null, title: "Root commit" }] },
+  comparison: { baseRevision: sha("c"), headRevision: sha("b") }, diff: { headRevision: sha("b"), unifiedDiff: "fixed comparison" } });
+assert.equal(remote.parsePinnedReviewComparison(pinned(), target.url, null, null).comparison.baseRevision, sha("c"));
+for (const mutate of [data => { data.snapshotId = ""; }, data => { data.snapshot.commits = {}; },
+  data => { data.snapshot.mergeBaseRevision = "invalid"; }, data => { data.comparison.baseRevision = sha("a"); },
+  data => { data.diff.headRevision = sha("e"); }, data => { data.metadata.headRevision = sha("e"); },
+  data => { data.account.hostname = "other.test"; }, data => { data.snapshot.commits.push(data.snapshot.commits[0]); }]) {
+  const data = pinned(); mutate(data); assert.throws(() => remote.parsePinnedReviewComparison(data, target.url, null, null));
+}
+assert.throws(() => remote.parsePinnedReviewComparison(pinned(), target.url, "old-snapshot", null));
+assert.throws(() => remote.parsePinnedReviewComparison(pinned(), target.url, "snapshot-1", sha("d")), /固定提交/);
+const file = { ...pinned(), file: { status: "unavailable" } };
+assert.equal(remote.parsePinnedReviewFile(file, target.url, "snapshot-1", null).file.status, "unavailable");
+assert.throws(() => remote.parsePinnedReviewFile({ ...file, file: { status: "success", headContent: "" } }, target.url, "snapshot-1", null));
+const pinnedFixtureIndex = process.argv.indexOf("--pinned-fixtures");
+if (pinnedFixtureIndex >= 0) {
+  const directory = process.argv[pinnedFixtureIndex + 1];
+  const actual = JSON.parse(fs.readFileSync(`${directory}/comparison-readback.json`, "utf8"));
+  remote.parsePinnedReviewComparison(actual, actual.pullRequest.url, null, null);
+  const actualFile = JSON.parse(fs.readFileSync(`${directory}/file-readback.json`, "utf8"));
+  remote.parsePinnedReviewFile(actualFile, actualFile.pullRequest.url, actual.snapshotId, null);
+  console.log("PASS actual Rust pinned comparison and file outputs cross production TypeScript boundary");
+}
+function pinnedSurface() {
+  const reads = [], control = { read: async () => pinned() };
+  const source = process.argv.includes("--network-invalidation-baseline")
+    ? fs.readFileSync("src/components/PinnedReviewChanges.tsx", "utf8").replace(".test(code)", ".test(String(cause))") : undefined;
+  const view = component("src/components/PinnedReviewChanges.tsx", "PinnedReviewChanges", key => {
+    assert.equal(key, "../chatgptService"); return { serviceIdentity: async () => identity,
+      readPinnedReviewComparison: (...args) => { reads.push(args); return control.read(...args); } };
+  }, { url: target.url, scope: "account-a" }, source);
+  return Object.assign(view, { reads, control });
+}
+h = pinnedSurface(); await h.start(); assert.match(h.text(), /fixed comparison/);
+assert.equal(h.nodes().find(node => node.type === "option" && node.props.value === sha("d")).props.disabled, true);
+assert.equal(h.reads[0][3], null, "initial reads acquire a fresh host snapshot");
+h.control.read = async () => { throw "network_error: temporary connection failure"; };
+h.button("刷新").props.onClick(); await flush(); h.render(); assert.match(h.text(), /fixed comparison/); assert.match(h.text(), /temporary connection failure/);
+h.control.read = async (...args) => { const next = pinned(); next.comparison.baseRevision = sha("d"); next.diff.unifiedDiff = "single commit"; return next; };
+h.nodes().find(node => node.type === "select").props.onChange({ target: { value: sha("b") } }); await flush(); h.render();
+assert.equal(h.reads.at(-1)[3], "snapshot-1"); assert.equal(h.reads.at(-1)[4], sha("b")); assert.match(h.text(), /single commit/);
+assert.equal(h.nodes().find(node => node.type === "select").props.value, sha("b"));
+const refreshed = pinned(); refreshed.snapshotId = "snapshot-2"; refreshed.diff.unifiedDiff = "new snapshot";
+h.control.read = async () => refreshed; h.button("刷新").props.onClick(); await flush(); h.render();
+assert.equal(h.nodes().find(node => node.type === "select").props.value, ""); assert.match(h.text(), /new snapshot/);
+h.control.read = async () => { throw "github_account_unavailable: selected account changed"; };
+h.button("刷新").props.onClick(); await flush(); h.render(); assert.doesNotMatch(h.text(), /new snapshot/); h.unmount();
+let providerErrors = ["unauthorized: ChatGPT authentication rejected", "forbidden: ChatGPT service access denied"];
+if (pinnedFixtureIndex >= 0 && fs.existsSync(`${process.argv[pinnedFixtureIndex + 1]}/provider-error-readback.json`))
+  providerErrors = JSON.parse(fs.readFileSync(`${process.argv[pinnedFixtureIndex + 1]}/provider-error-readback.json`, "utf8")).map(item => item.error);
+assert.ok(providerErrors.some(message => message.startsWith("unauthorized:")) && providerErrors.some(message => message.startsWith("forbidden:")));
+for (const denied of [...providerErrors.filter(message => /^(unauthorized|forbidden):/.test(message)), "此 Pull Request 与当前选择的 GitHub 实例不符。", "GitHub 连接数据无效。"]) {
+  h = pinnedSurface(); await h.start(); assert.match(h.text(), /fixed comparison/);
+  h.control.read = async () => { throw process.argv.includes("--provider-error-baseline") ? denied.replace(/^[^:]+: /, "") : denied; };
+  h.button("刷新").props.onClick(); await flush(); h.render();
+  assert.doesNotMatch(h.text(), /fixed comparison/, "bootstrap access denial must clear the old comparison"); h.unmount();
+}
+for (const message of providerErrors.filter(message => message.startsWith("network_error:"))) {
+  h = pinnedSurface(); await h.start(); h.control.read = async () => { throw message; };
+  h.button("刷新").props.onClick(); await flush(); h.render(); assert.match(h.text(), /fixed comparison/); h.unmount();
+}
+h = pinnedSurface(); const pendingComparison = deferred(); h.control.read = () => pendingComparison.promise; await h.start();
+const pendingSignal = h.reads[0][2]; h.render({ scope: "account-b" }); h.effects(); assert.equal(pendingSignal.aborted, true);
+h.unmount(); pendingComparison.resolve(pinned()); await flush(); h.render(); assert.doesNotMatch(h.text(), /fixed comparison/);
+console.log("PASS pinned comparison: merge-base/head identity, root disabled, refresh failure keeps snapshot, commit binding and scope/late-response isolation");
 
 // A remote description must not open local paths, run code or load local images, including nested Markdown.
 let localActions = 0;

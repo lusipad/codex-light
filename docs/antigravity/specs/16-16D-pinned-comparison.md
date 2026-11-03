@@ -1,6 +1,6 @@
 # 16.16D 固定提交比较与私人审查前置
 
-状态：只读调研合同，尚未实施；接续[16.16C真实阅读工作面](16-16C-remote-review-surface.md)，不将当前PR diff当作固定提交比较。
+状态：调研合同已固定，开发中；接续[16.16C真实阅读工作面](16-16C-remote-review-surface.md)，不将当前PR diff当作固定提交比较。
 
 ## 证据与边界
 
@@ -27,7 +27,7 @@ revision两个chunk由固定asar只读提取并核内容SHA/integrity；worker�
 3. POST `gh-pr-revision-diff`，body `{account,pullRequest,comparison:{baseRevision,headRevision}}`，60秒，额外预期422/503；成功 `{status:"success",headRevision,unifiedDiff}`，head必须等于请求。全PR比较必须把snapshot.mergeBaseRevision作为comparison.baseRevision，不能用snapshot.baseRevision代替。
 4. POST `gh-pr-revision-file`，上述请求加basePath/headPath（repo相对path或null），30秒，额外预期422/503；成功 `{status:"success",baseContent,headContent}`，unavailable与error分别呈现，不把缺文件当空。/dev/null侧是null，对应空内容。
 5. worker校验SHA为40位hex，path非空、POSIX非绝对、normalize后不变且不穿越；超过1MiB、非base64、NUL或非UTF8不可用。上述属于同包worker边界，HTTP实现需独立校验实际消费字段，不能伪称已实测全部限制。
-6. 若完整commits可用，选择单commit时parentSha→sha；parentSha=null回退snapshot.mergeBaseRevision。刷新成功才替换快照并清commit选择，失败保旧快照并显示失败，不换成混合head。
+6. 若完整commits可用，选择单commit时parentSha→sha。2026-11-04直接复读revision-tab确认：下拉项 `disabled:e.parentSha==null`，因此root提交不可从UI选择；内部函数虽有null parent回退merge-base分支，不能以此把root选项开放。刷新成功才替换快照并清commit选择，失败保旧快照并显示失败，不换成混合head。
 
 ## GitLab单独处理
 
@@ -39,13 +39,15 @@ POST `/wham/gitlab/operations/read-snapshot`，body `{account:{provider:"gitlab-
 
 fixed initial Mun约2958000处存在readDynamicTools→动态namespace/function或desktop MCP工具注入；可证的是create_worktree/read_thread等桌面能力，不能据此断言远程源码工具已注入。当前生成ThreadStartParams未列dynamicTools，官方内部实现却使用它，这是实验/稳定schema范围差异。先用当前binary的隔离只读探针确认，再决定是否使用；不擅自加未知参数或强开features/apps。
 
+2026-11-04已完成[16.16E隔离能力取证合同](16-16E-source-tools.md)：当前CLI实验schema及真实只读临时thread/start接受dynamicTools，稳定schema仍不含此字段。只证明定义可注册；空白账号环境的MCP/apps目录为空，不证明真实工具可调用或指定GitHub login已核验。旧“需先探针”事项已有上述有限证据，不能扩大为私人审查已可用。
+
 复用当前thread的mcpServerStatus/list与真实app/installed/app/read核可调用性，保留disabledPluginIds。工具目录或OAuth状态仍不证明指定GitHub login已核验。私人thread创建/复用须绑定账号和PR，归档不绕过、网络失败不解除旧关联，真实turn/失败/取消由既有结果控制器承载；完整执行另留证。
 
 ## 修改前验收合同
 
 - 账号/实例/PR切换、旧响应、取消及双击不能混用比较或启动旧thread。
 - metadata/snapshot head不一致、无merge-base、不完整snapshot、revision返回不同head均失败，不制造成功空diff。
-- all使用merge-base；commit root/null parent与刷新失败保旧快照分别回归。
+- all使用merge-base；commit root/null parent禁选、固定旧快照直到显式刷新、刷新失败保旧快照分别回归。
 - 远程删除/改名/相对path不得打开本机同名文件；binary/大文件/不可读不伪造成空内容。
 - 真工具缺失、指定账号无法核验或分页/patch不全时只报告未完成，不输出假“无问题”。
 - Node/Rust契约、跨层真实测试返回、现有读取回归、完整标准与原生构建；官方运行时、账号HTTP、原生/像素仍独立待验。

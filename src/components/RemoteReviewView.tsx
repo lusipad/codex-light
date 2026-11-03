@@ -4,6 +4,7 @@ import { readRemotePullRequest, serviceIdentity } from "../chatgptService";
 import { parseRemotePullRequestUrl, type RemotePullRequest } from "../remoteReview";
 import { openWebLink } from "../webLinks";
 import { MarkdownView } from "./MarkdownView";
+import { PinnedReviewChanges } from "./PinnedReviewChanges";
 import "./CodeReviewView.css";
 import "./RemoteReviewView.css";
 
@@ -108,11 +109,7 @@ export function RemoteReviewView({ url, scope, onOpenUrl, onBack }: {
       <section className="card-section" aria-label="Pull Request 描述">
         <MarkdownView content={value.description} remoteContent />
       </section>
-      <section className="card-section" aria-label="Pull Request 差异">
-        <h3>Changes</h3><p className="remote-review-revision">{value.diff.headRevision}</p>
-        {value.diff.unifiedDiff ? <pre className="remote-review-diff" tabIndex={0}>{value.diff.unifiedDiff}</pre>
-          : <p role="status">此提交没有差异。</p>}
-      </section>
+      <PinnedReviewChanges url={url} scope={scope} />
     </>}
   </section>;
 }

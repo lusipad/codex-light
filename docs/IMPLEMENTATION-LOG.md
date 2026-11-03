@@ -1899,3 +1899,11 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 - 复用账号服务、CAS、form-field和Markdown；remoteContent分支隔离远程内容的本机文件/命令能力，旧聊天默认不变，无新依赖。浏览器夹具已验证正文/差异、失权清除与重读，实际修复URL input白底；不是官方/原生像素通过。
 - 定向共享Rust最终95项、provider5项、cargo check、Node行为/分享/账号/旧审查和TypeScript通过。300项产品输入冻结后运行非Fast完整标准，随后新原生构建；终态见[验收记录](antigravity/acceptance/16-16C.md)。fixed比较/私人review turn、侧面tab、inbox/search、GitLab MR/cloud、真实账号/原生GUI/配对像素均未完成，整个复刻目标继续active。
 - 最终归档：非Fast完整标准退出0后，仅默认账号connection兼容修复继续修改共享服务；先复现失败，修后共享服务96项/provider5项及Rust返回→生产TS贯通通过。标准/最终原生300项快照分别保留，差异仅该Rust文件。最终EXE/MSI/NSIS退出0、300项输入稳定、8项产物含5许可归档。构建警告及真实账号/原生GUI/官方配对像素限制见验收记录；本阶段待用户验收，不关闭全App目标。
+
+## 2026-11-04 — 16.16D 固定快照与精确提交比较
+
+- 按固定asar合同实现宿主opaque快照：fresh metadata/snapshot并行核head，all使用merge-base→head；切提交/读文件绑定同一账号/PR/三SHA，不跟随最新head，不接受渲染层任意账号或比较。
+- 前端新增固定比较与提交选择，root禁选、成功刷新回all，失败/取消/身份变化按真实状态处理。完整文件接口已接，但完整文件呈现、私人review turn和专用侧面tab/inbox仍未完成。
+- 生产浏览器发现connection文案误清旧快照，独立复核发现bootstrap 401/403丢码误保旧内容；先留失败变体，再修分类与真实错误传递，并补Rust返回→生产TS/组件回放。限定增量见[待验记录](antigravity/acceptance/16-16D.md)；完整标准及最终原生包终态随后登记。
+- 下一源码工具能力已隔离取证：实验dynamicTools定义被真实只读临时thread接受，item/tool/call schema、apps/MCP/协作查询有据；空目录不证明真实账号工具可用。见[16.16E合同](antigravity/specs/16-16E-source-tools.md)。无真实模型任务、账号HTTP或新依赖。
+- 最终归档：完整标准非Fast退出0；运行中网络失效分类与bootstrap丢码两处修复保留前后快照，最终provider6项/共享服务99项/check及实际错误字符串→生产组件回归通过。最终EXE/MSI/NSIS退出0、301项输入构建前后稳定、8项产物归档；独立复核确认P2修复。阶段待用户验收，官方/真实账号/原生GUI/像素和其他审查工作面未完成。

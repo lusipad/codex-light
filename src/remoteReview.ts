@@ -34,20 +34,24 @@ export function parseRemotePullRequestUrl(value: string): RemotePullRequestTarge
   return { hostname, owner, repository, number, url: `https://${hostname}/${owner}/${repository}/pull/${number}` };
 }
 
-export function parseRemotePullRequest(value: unknown, requestedUrl: string): RemotePullRequest {
-  const data = value as RemotePullRequest | null;
+function validRemoteBinding(data: Pick<RemotePullRequest, "pullRequest" | "account" | "metadata"> | null, requestedUrl: string): boolean {
   const target = parseRemotePullRequestUrl(requestedUrl);
   const nonempty = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0;
-  const nullableString = (value: unknown) => value === null || typeof value === "string";
   const count = (value: unknown) => value === null || (typeof value === "number" && Number.isSafeInteger(value) && value >= 0);
-  if (!data?.pullRequest || !data.account || !data.metadata || !data.summary || !data.diff ||
+  return !(!data?.pullRequest || !data.account || !data.metadata ||
     !Object.entries(target).every(([key, expected]) => data.pullRequest[key as keyof RemotePullRequestTarget] === expected) ||
     data.account.hostname !== target.hostname || data.account.hostId !== "local" || !nonempty(data.account.login) ||
     (data.account.connection !== undefined && data.account.connection !== null &&
       (!nonempty(data.account.connection.connectorId) || !nonempty(data.account.connection.accountLinkId))) ||
     data.metadata.status !== "success" || !nonempty(data.metadata.headRevision) ||
     ![data.metadata.additions, data.metadata.deletions, data.metadata.changedFiles].every(count) ||
-    !nonempty(data.metadata.createdAt) || !nullableString(data.metadata.authorLogin) ||
+    !nonempty(data.metadata.createdAt) || (data.metadata.authorLogin !== null && typeof data.metadata.authorLogin !== "string"));
+}
+
+export function parseRemotePullRequest(value: unknown, requestedUrl: string): RemotePullRequest {
+  const data = value as RemotePullRequest | null;
+  const nullableString = (value: unknown) => value === null || typeof value === "string";
+  if (!validRemoteBinding(data, requestedUrl) || !data?.summary || !data.diff ||
     data.summary.status !== "success" || !["open", "closed", "merged"].includes(data.summary.state) ||
     ![data.summary.title, data.summary.baseBranch, data.summary.headBranch].every(nullableString) ||
     (data.summary.isDraft !== undefined && typeof data.summary.isDraft !== "boolean") ||
@@ -55,5 +59,66 @@ export function parseRemotePullRequest(value: unknown, requestedUrl: string): Re
     data.metadata.headRevision !== data.diff.headRevision || data.metadata.headRevision !== data.summary.headRevision) {
     throw Error("Pull Request 数据不完整、身份不符或提交已变化，请重新读取。");
   }
+  return data;
+}
+
+export interface PinnedReviewSnapshot {
+  baseRevision: string;
+  headRevision: string;
+  mergeBaseRevision: string;
+  commits?: { sha: string; parentSha: string | null; title: string }[];
+}
+
+export interface PinnedReviewBinding {
+  snapshotId: string;
+  pullRequest: RemotePullRequestTarget;
+  account: RemotePullRequest["account"];
+  metadata: RemotePullRequest["metadata"];
+  snapshot: PinnedReviewSnapshot;
+  comparison: { baseRevision: string; headRevision: string };
+}
+
+export interface PinnedReviewComparison extends PinnedReviewBinding {
+  diff: { headRevision: string; unifiedDiff: string };
+}
+
+export interface PinnedReviewFile extends PinnedReviewBinding {
+  file: { status: "success"; baseContent: string; headContent: string } | { status: "unavailable"; reason?: string };
+}
+
+function parsePinnedBinding(value: unknown, requestedUrl: string, snapshotId: string | null, commitSha: string | null): PinnedReviewBinding {
+  const data = value as PinnedReviewBinding | null;
+  const sha = (value: unknown): value is string => typeof value === "string" && /^[a-fA-F0-9]{40}$/.test(value);
+  const snapshot = data?.snapshot;
+  const commits = snapshot?.commits;
+  if (commits !== undefined && !Array.isArray(commits)) throw Error("固定提交列表格式无效。");
+  const commit = commits?.find(item => item?.sha === commitSha);
+  if (!data || typeof data.snapshotId !== "string" || !data.snapshotId.trim() || (snapshotId !== null && data.snapshotId !== snapshotId) ||
+    !snapshot || ![snapshot.baseRevision, snapshot.headRevision, snapshot.mergeBaseRevision].every(sha) ||
+    (commits !== undefined && (!Array.isArray(commits) || commits.some(item => !item || !sha(item.sha) ||
+      (item.parentSha !== null && !sha(item.parentSha)) || typeof item.title !== "string") || new Set(commits.map(item => item.sha)).size !== commits.length)) ||
+    (commitSha !== null && (!commit || commit.parentSha === null)) || !data.comparison ||
+    data.comparison.baseRevision !== (commit?.parentSha ?? snapshot.mergeBaseRevision) ||
+    data.comparison.headRevision !== (commit?.sha ?? snapshot.headRevision)) throw Error("固定提交比较不完整或不属于所选快照。");
+  if (!validRemoteBinding(data, requestedUrl) || data.metadata.headRevision !== snapshot.headRevision)
+    throw Error("固定提交比较的账号或元数据不匹配。");
+  return data;
+}
+
+export function parsePinnedReviewComparison(value: unknown, requestedUrl: string, snapshotId: string | null, commitSha: string | null): PinnedReviewComparison {
+  const binding = parsePinnedBinding(value, requestedUrl, snapshotId, commitSha);
+  const data = value as PinnedReviewComparison;
+  if (!data.diff || data.diff.headRevision !== binding.comparison.headRevision || typeof data.diff.unifiedDiff !== "string")
+    throw Error("固定提交差异不完整或提交不一致。");
+  return data;
+}
+
+export function parsePinnedReviewFile(value: unknown, requestedUrl: string, snapshotId: string, commitSha: string | null): PinnedReviewFile {
+  parsePinnedBinding(value, requestedUrl, snapshotId, commitSha);
+  const data = value as PinnedReviewFile;
+  if (!data.file || (data.file.status !== "unavailable" && data.file.status !== "success") ||
+    (data.file.status === "success" && (typeof data.file.baseContent !== "string" || typeof data.file.headContent !== "string")) ||
+    (data.file.status === "unavailable" && data.file.reason !== undefined && typeof data.file.reason !== "string"))
+    throw Error("固定提交文件内容不可用或响应不完整。");
   return data;
 }

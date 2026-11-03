@@ -314,6 +314,13 @@ struct PreparedShare {
     audience: Option<ShareAudience>,
 }
 
+#[derive(Clone)]
+struct PinnedReview {
+    identity: ServiceIdentity,
+    preferences: Value,
+    body: Value,
+}
+
 #[derive(PartialEq, Eq)]
 struct ShareAudience {
     access: ShareAccess,
@@ -407,6 +414,7 @@ pub struct ChatgptService {
     // Retain a bounded set of one-shot IDs when cancel IPC beats read registration.
     cancelled_before_start: Mutex<VecDeque<String>>,
     shares: Mutex<HashMap<String, PreparedShare>>,
+    pinned_reviews: Mutex<VecDeque<(String, PinnedReview)>>,
 }
 
 struct Registration<'a> {
@@ -900,6 +908,7 @@ impl ChatgptService {
         if let Ok(mut shares) = self.shares.lock() {
             shares.clear();
         }
+        if let Ok(mut reviews) = self.pinned_reviews.lock() { reviews.clear(); }
         // Pending credential-bearing futures are dropped by cancellation. Cached
         // credentials are dropped synchronously whenever the session is unlocked.
         if let Ok(mut session) = self.session.try_lock() {
@@ -1213,9 +1222,80 @@ impl ChatgptService {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub async fn review_comparison<F,Fut>(&self,request_id:&str,identity:&ServiceIdentity,profile:&ServiceProfile,pull_request:&Value,connection:&Value,preferences:&Value,snapshot_id:Option<&str>,commit_sha:Option<&str>,file:Option<(Option<String>,Option<String>)>,call:F)->ServiceResult<Value>
+    where F:Fn(&'static str,Value)->Fut,Fut:Future<Output=Result<Value,String>> {
+        self.review_comparison_with(request_id,identity,profile,pull_request,connection,preferences,snapshot_id,commit_sha,file,call,&CurlTransport).await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn review_comparison_with<F,Fut,T>(&self,request_id:&str,identity:&ServiceIdentity,profile:&ServiceProfile,pull_request:&Value,connection:&Value,preferences:&Value,snapshot_id:Option<&str>,commit_sha:Option<&str>,file:Option<(Option<String>,Option<String>)>,call:F,transport:&T)->ServiceResult<Value>
+    where F:Fn(&'static str,Value)->Fut,Fut:Future<Output=Result<Value,String>>,T:Transport {
+        if file.is_some() && snapshot_id.is_none() { return Err(failure("invalid_request","A pinned comparison is required")); }
+        if let Some((base,head))=&file { validate_revision_paths(base.as_deref(),head.as_deref())?; }
+        let registration=self.register(request_id)?;
+        let result=tokio::select! {
+            _=cancelled(&registration.cancelled)=>Err(failure("cancelled","Pinned comparison read cancelled")),
+            result=async {
+                let cached=if let Some(id)=snapshot_id {
+                    let reviews=self.pinned_reviews.lock().map_err(|_|failure("internal_error","Comparison registry unavailable"))?;
+                    let pinned=&reviews.iter().find(|(key,_)|key==id).ok_or_else(||failure("snapshot_unavailable","Pinned comparison expired; refresh it"))?.1;
+                    if pinned.identity!=*identity || pinned.preferences!=*preferences || pinned.body["pullRequest"]!=*pull_request {
+                        return Err(failure("snapshot_unavailable","Pinned comparison does not match the current account, instance or pull request"));
+                    }
+                    Some(pinned.body.clone())
+                }else{None};
+                let mut account_request=json!({"hostname":pull_request["hostname"]});
+                if !connection.is_null(){account_request["connection"]=connection.clone();}
+                let current=self.review_github_http("account",&account_request,identity,profile,&registration,&call,transport).await?;
+                let account=review_github_account(&current,pull_request,connection)?;
+                let mut pr=pull_request.clone();pr.as_object_mut().ok_or_else(||failure("invalid_request","Invalid pull request identity"))?.remove("url");
+                let payload=json!({"account":account,"pullRequest":pr});
+                let mut body=if let Some(body)=cached {
+                    if body["account"]!=account { return Err(failure("github_account_unavailable","Pinned comparison belongs to a different GitHub account")); }
+                    body
+                }else{
+                    let (metadata,snapshot)=tokio::try_join!(
+                        self.review_github_http("gh-pr-metadata",&payload,identity,profile,&registration,&call,transport),
+                        self.review_github_http("gh-pr-review-snapshot",&payload,identity,profile,&registration,&call,transport),
+                    )?;
+                    let snapshot=validate_revision_snapshot(&metadata,&snapshot)?;
+                    json!({"pullRequest":pull_request,"account":account,"metadata":metadata,"snapshot":snapshot})
+                };
+                let comparison=revision_comparison(&body["snapshot"],commit_sha)?;
+                let mut payload=payload;payload["comparison"]=comparison.clone();
+                if let Some((base,head))=file {
+                    payload["basePath"]=json!(base);payload["headPath"]=json!(head);
+                    let response=self.review_github_http("gh-pr-revision-file",&payload,identity,profile,&registration,&call,transport).await?;
+                    validate_revision_file(&response,base.as_deref(),head.as_deref())?;
+                    body.as_object_mut().unwrap().remove("diff");
+                    body["file"]=response;
+                }else{
+                    let response=self.review_github_http("gh-pr-revision-diff",&payload,identity,profile,&registration,&call,transport).await?;
+                    if response["status"]!="success" || !response["unifiedDiff"].is_string() {return Err(failure("invalid_response","Revision diff is unavailable or incomplete"));}
+                    if response["headRevision"]!=comparison["headRevision"] {return Err(failure("github_head_changed","Revision diff does not match the pinned comparison"));}
+                    body["diff"]=json!({"headRevision":response["headRevision"],"unifiedDiff":response["unifiedDiff"]});
+                }
+                body["comparison"]=comparison;
+                self.check_share_current(identity,&registration)?;
+                let id=snapshot_id.map(str::to_owned).unwrap_or_else(||uuid::Uuid::new_v4().to_string());
+                body["snapshotId"]=json!(id);
+                if snapshot_id.is_none() {
+                    let mut reviews=self.pinned_reviews.lock().map_err(|_|failure("internal_error","Comparison registry unavailable"))?;
+                    self.check_share_current(identity,&registration)?;
+                    if reviews.len()>=32 {reviews.pop_front();}
+                    reviews.push_back((id,PinnedReview{identity:identity.clone(),preferences:preferences.clone(),body:body.clone()}));
+                }
+                Ok(body)
+            }=>result,
+        };
+        self.check_share_current(identity,&registration)?;
+        result
+    }
+
+    #[allow(clippy::too_many_arguments)]
     async fn review_github_http<F,Fut,T>(&self,operation:&str,body:&Value,identity:&ServiceIdentity,profile:&ServiceProfile,registration:&Registration<'_>,call:&F,transport:&T)->ServiceResult<Value>
     where F:Fn(&'static str,Value)->Fut,Fut:Future<Output=Result<Value,String>>,T:Transport {
-        if !["account","gh-pr-metadata-v2","gh-pr-metadata","summaries","gh-pr-body","gh-pr-diff"].contains(&operation) {
+        if !["account","gh-pr-metadata-v2","gh-pr-metadata","summaries","gh-pr-body","gh-pr-diff","gh-pr-review-snapshot","gh-pr-revision-diff","gh-pr-revision-file"].contains(&operation) {
             return Err(failure("invalid_request","Unsupported pull request operation"));
         }
         let mut session=self.session.lock().await;
@@ -1232,9 +1312,15 @@ impl ChatgptService {
             outgoing.headers.insert("X-Codex-Expected-User-Id".into(),identity.user_id.clone());
             outgoing.headers.insert("X-Codex-Expected-Account-Id".into(),identity.account_id.clone());
             outgoing.body=serde_json::to_vec(body).map_err(|_|failure("invalid_request","Invalid pull request payload"))?;
+            // Independent snapshot and metadata reads must not hold the session
+            // mutex across their network requests.
+            drop(session);
             share_network_allowed(call,&outgoing.url).await?;
             self.check_share_current(identity,registration)?;
-            let response=send_bounded(transport,outgoing,registration.cancelled.clone(),Duration::from_secs(if operation=="gh-pr-diff" {60}else{15})).await?;
+            let timeout=match operation {"gh-pr-diff"|"gh-pr-review-snapshot"|"gh-pr-revision-diff"=>60,"gh-pr-revision-file"=>30,_=>15};
+            let response=send_bounded(transport,outgoing,registration.cancelled.clone(),Duration::from_secs(timeout)).await?;
+            self.check_share_current(identity,registration)?;
+            session=self.session.lock().await;
             self.check_share_current(identity,registration)?;
             apply_integrity(&mut session.integrity,integrity.as_deref(),response.headers.get("x-oai-is-update"));
             if account_instructions_ip_denied(&response){return Err(ServiceError{code:"ip_not_authorized",message:"Current IP address is not authorized for this workspace",status:Some(401)});}
@@ -2818,6 +2904,56 @@ fn account_instructions_ip_denied(response: &HttpResponse) -> bool {
     body.pointer("/error/type").and_then(Value::as_str) == Some("ip_not_authorized") ||
         matches!(body.pointer("/error/code").and_then(Value::as_str),
             Some("ip_not_authorized" | "validate_whitelist_failed" | "workspace_ip_not_authorized"))
+}
+
+fn revision_sha(value:&Value)->bool {
+    value.as_str().is_some_and(|sha|sha.len()==40 && sha.bytes().all(|byte|byte.is_ascii_hexdigit()))
+}
+
+fn validate_revision_snapshot(metadata:&Value,response:&Value)->ServiceResult<Value> {
+    let snapshot=&response["snapshot"];
+    if metadata["status"]!="success" || response["status"]!="success"
+        || !revision_sha(&metadata["headRevision"]) || !["baseRevision","headRevision","mergeBaseRevision"].iter().all(|key|revision_sha(&snapshot[key])) {
+        return Err(failure("invalid_response","Pinned snapshot is unavailable or incomplete"));
+    }
+    if metadata["headRevision"]!=snapshot["headRevision"] {return Err(failure("github_head_changed","Pull request changed while pinning; refresh it"));}
+    let mut result=json!({"baseRevision":snapshot["baseRevision"],"headRevision":snapshot["headRevision"],"mergeBaseRevision":snapshot["mergeBaseRevision"]});
+    if let Some(commits)=snapshot.get("commits") {
+        let commits=commits.as_array().ok_or_else(||failure("invalid_response","Invalid snapshot commits"))?;
+        let mut seen=std::collections::HashSet::new();
+        if commits.iter().any(|commit|!revision_sha(&commit["sha"]) || !commit.get("parentSha").is_some_and(|parent|parent.is_null() || revision_sha(parent))
+            || !commit["title"].is_string() || !seen.insert(commit["sha"].as_str().unwrap().to_lowercase())) {
+            return Err(failure("invalid_response","Invalid snapshot commits"));
+        }
+        result["commits"]=json!(commits);
+    }
+    Ok(result)
+}
+
+fn revision_comparison(snapshot:&Value,commit_sha:Option<&str>)->ServiceResult<Value> {
+    if let Some(sha)=commit_sha {
+        let commit=snapshot["commits"].as_array().and_then(|commits|commits.iter().find(|commit|commit["sha"].as_str()==Some(sha)))
+            .filter(|commit|!commit["parentSha"].is_null()).ok_or_else(||failure("invalid_request","Selected commit is unavailable in the pinned snapshot"))?;
+        Ok(json!({"baseRevision":commit["parentSha"],"headRevision":commit["sha"]}))
+    }else{Ok(json!({"baseRevision":snapshot["mergeBaseRevision"],"headRevision":snapshot["headRevision"]}))}
+}
+
+fn validate_revision_paths(base:Option<&str>,head:Option<&str>)->ServiceResult<()> {
+    let valid=|path:&str| !path.is_empty() && !path.contains(['\\',':']) && !path.chars().any(char::is_control)
+        && path.split('/').all(|segment|!segment.is_empty() && segment!="." && segment!="..");
+    if (base.is_none() && head.is_none()) || base.is_some_and(|path|!valid(path)) || head.is_some_and(|path|!valid(path)) {
+        return Err(failure("invalid_request","Expected normalized repository-relative revision paths"));
+    }
+    Ok(())
+}
+
+fn validate_revision_file(response:&Value,base:Option<&str>,head:Option<&str>)->ServiceResult<()> {
+    if response["status"]=="unavailable" {return Ok(());}
+    if response["status"]!="success" || !["baseContent","headContent"].iter().all(|key|response[key].as_str().is_some_and(|text|text.len()<=1_048_576 && !text.contains('\0')))
+        || (base.is_none() && response["baseContent"]!="") || (head.is_none() && response["headContent"]!="") {
+        return Err(failure("invalid_response","Revision file is unavailable or incomplete"));
+    }
+    Ok(())
 }
 
 fn review_error_code(error:&Value)->Option<&str> {
@@ -4516,6 +4652,108 @@ mod tests {
         json!({"user_id":"user-fixture","account_id":"account-fixture","plan_type":"pro",
             "rate_limit":{"primary_window":{"used_percent":null,"reset_at":1800000000}},
             "credits":{"balance":"0","unit":"credits"},"extra":null})
+    }
+
+    #[test]
+    fn pinned_snapshot_validation_and_path_boundaries() {
+        let a="a".repeat(40);let b="b".repeat(40);let c="c".repeat(40);
+        let metadata=json!({"status":"success","headRevision":b});
+        let good=json!({"status":"success","snapshot":{"baseRevision":a,"headRevision":b,"mergeBaseRevision":c}});
+        let parsed=validate_revision_snapshot(&metadata,&good).unwrap();assert!(parsed.get("commits").is_none());
+        assert_eq!(revision_comparison(&parsed,None).unwrap()["baseRevision"],c);
+        assert!(revision_comparison(&parsed,Some(&a)).is_err());
+        let mut changed=good.clone();changed["snapshot"]["headRevision"]=json!(a);
+        assert_eq!(validate_revision_snapshot(&metadata,&changed).unwrap_err().code,"github_head_changed");
+        for key in ["baseRevision","headRevision","mergeBaseRevision"] {let mut bad=good.clone();bad["snapshot"][key]=json!("branch");assert!(validate_revision_snapshot(&metadata,&bad).is_err());}
+        for commits in [json!(null),json!({}),json!([{"sha":a,"parentSha":null}]),json!([{"sha":a,"parentSha":null,"title":"root"},{"sha":a,"parentSha":null,"title":"duplicate"}])] {
+            let mut bad=good.clone();bad["snapshot"]["commits"]=commits;assert!(validate_revision_snapshot(&metadata,&bad).is_err());
+        }
+        let mut root=parsed.clone();root["commits"]=json!([{"sha":a,"parentSha":null,"title":"root"}]);assert!(revision_comparison(&root,Some(&a)).is_err());
+        for path in ["","/absolute","../escape","a/../b","a/./b","a//b","a/","C:/file","a\\b","/dev/null","a\0b"] {assert!(validate_revision_paths(Some(path),None).is_err(),"{path}");}
+        assert!(validate_revision_paths(Some("src/你好.rs"),None).is_ok());assert!(validate_revision_paths(None,None).is_err());
+        assert!(validate_revision_file(&json!({"status":"success","baseContent":"","headContent":"new"}),None,Some("new.rs")).is_ok());
+        for body in [json!({"status":"error"}),json!({"status":"success","baseContent":"wrong","headContent":"new"}),json!({"status":"success","baseContent":"","headContent":"nul\0"})] {assert!(validate_revision_file(&body,None,Some("new.rs")).is_err());}
+    }
+
+    struct RevisionTransport { requests:Mutex<Vec<HttpRequest>>, concurrent:tokio::sync::Barrier }
+    impl Transport for RevisionTransport {
+        fn send(&self,request:HttpRequest,_cancel:Arc<AtomicBool>)->TransportFuture<'_> {
+            Box::pin(async move {
+                let operation=request.url.rsplit('/').next().unwrap().to_owned();
+                let payload:Value=serde_json::from_slice(&request.body).unwrap();
+                self.requests.lock().unwrap().push(request);
+                let a="a".repeat(40);let b="b".repeat(40);let c="c".repeat(40);let d="d".repeat(40);
+                let body=match operation.as_str() {
+                    "account"=>json!({"currentUser":{"status":"success","account":{"hostname":"github.com","login":"Viewer"}}}),
+                    "gh-pr-metadata"=>{self.concurrent.wait().await;let mut metadata=remote_review_metadata();metadata["headRevision"]=json!(b);metadata},
+                    "gh-pr-review-snapshot"=>{self.concurrent.wait().await;json!({"status":"success","snapshot":{"baseRevision":a,"headRevision":b,"mergeBaseRevision":c,"commits":[{"sha":b,"parentSha":d,"title":"Current commit"},{"sha":d,"parentSha":null,"title":"Root commit"}]}})},
+                    "gh-pr-revision-diff"=>json!({"status":"success","headRevision":payload["comparison"]["headRevision"],"unifiedDiff":"diff --git a/new.rs b/new.rs\nnew file mode 100644\n--- /dev/null\n+++ b/new.rs\n@@ -0,0 +1 @@\n+new\n"}),
+                    "gh-pr-revision-file"=>json!({"status":"success","baseContent":"","headContent":"new\n"}),
+                    _=>panic!("Unexpected revision operation {operation}"),
+                };
+                Ok(HttpResponse{status:200,headers:BTreeMap::new(),body:serde_json::to_vec(&body).unwrap()})
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn pinned_comparison_keeps_exact_snapshot_and_uses_host_account_and_commit_membership() {
+        let service=ChatgptService::default();let profile=request("unused").profile;let identity=identity();
+        let pr=crate::review_provider::parse_pull_request_url("https://github.com/o/r/pull/1").unwrap();
+        let transport=RevisionTransport{requests:Mutex::new(Vec::new()),concurrent:tokio::sync::Barrier::new(2)};let preferences=json!({"githubConnection":null});
+        let read=tokio::time::timeout(Duration::from_secs(5),service.review_comparison_with("pin",&identity,&profile,&pr,&Value::Null,&preferences,None,None,None,share_rpc,&transport)).await.unwrap().unwrap();
+        let id=read["snapshotId"].as_str().unwrap();let head="b".repeat(40);
+        assert_eq!(read["comparison"],json!({"baseRevision":"c".repeat(40),"headRevision":head}));
+        let selected=service.review_comparison_with("commit",&identity,&profile,&pr,&Value::Null,&preferences,Some(id),Some(&head),None,share_rpc,&transport).await.unwrap();
+        assert_eq!(selected["comparison"],json!({"baseRevision":"d".repeat(40),"headRevision":head}));
+        let file=service.review_comparison_with("file",&identity,&profile,&pr,&Value::Null,&preferences,Some(id),None,Some((None,Some("new.rs".into()))),share_rpc,&transport).await.unwrap();
+        assert_eq!(file["file"]["headContent"],"new\n");assert!(file.get("diff").is_none());
+        if let Some(directory)=std::env::var_os("CODEX_PINNED_REVIEW_FIXTURE_DIRECTORY") {
+            let directory=std::path::PathBuf::from(directory);std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(directory.join("comparison-readback.json"),serde_json::to_vec_pretty(&read).unwrap()).unwrap();
+            std::fs::write(directory.join("file-readback.json"),serde_json::to_vec_pretty(&file).unwrap()).unwrap();
+        }
+        let requests=transport.requests.lock().unwrap();
+        assert_eq!(requests.iter().filter(|r|r.url.ends_with("/gh-pr-review-snapshot")).count(),1);
+        assert_eq!(requests.iter().filter(|r|r.url.ends_with("/gh-pr-metadata")).count(),1);
+        for outgoing in requests.iter() {assert_eq!(outgoing.method,HttpMethod::Post);assert_eq!(outgoing.headers["X-Codex-Expected-User-Id"],identity.user_id);}
+        let body:Value=serde_json::from_slice(&requests.last().unwrap().body).unwrap();
+        assert_eq!(body["basePath"],Value::Null);assert_eq!(body["headPath"],"new.rs");assert_eq!(body["account"],read["account"]);assert_eq!(body["comparison"],read["comparison"]);
+        drop(requests);
+        for sha in ["e".repeat(40),"d".repeat(40)] {assert_eq!(service.review_comparison_with("bad-commit",&identity,&profile,&pr,&Value::Null,&preferences,Some(id),Some(&sha),None,share_rpc,&transport).await.unwrap_err().code,"invalid_request");}
+        assert_eq!(service.review_comparison_with("bad-prefs",&identity,&profile,&pr,&Value::Null,&json!({}),Some(id),None,None,share_rpc,&transport).await.unwrap_err().code,"snapshot_unavailable");
+        let mut other=pr.clone();other["number"]=json!(2);assert!(service.review_comparison_with("bad-pr",&identity,&profile,&other,&Value::Null,&preferences,Some(id),None,None,share_rpc,&transport).await.is_err());
+        service.invalidate();assert!(service.pinned_reviews.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn pinned_comparison_rejects_changed_or_incomplete_service_results_without_caching() {
+        let profile=request("unused").profile;let identity=identity();let a="a".repeat(40);let b="b".repeat(40);let c="c".repeat(40);
+        let pr=crate::review_provider::parse_pull_request_url("https://github.com/o/r/pull/1").unwrap();
+        let account=json!({"currentUser":{"status":"success","account":{"hostname":"github.com","login":"viewer"}}});
+        let metadata=json!({"status":"success","headRevision":b});
+        let snapshot=json!({"status":"success","snapshot":{"baseRevision":a,"headRevision":b,"mergeBaseRevision":c}});
+        for scenario in 0..4 {
+            let service=ChatgptService::default();let mut metadata=metadata.clone();let mut snapshot=snapshot.clone();
+            let mut diff=json!({"status":"success","headRevision":b,"unifiedDiff":""});
+            match scenario {
+                0=>metadata["headRevision"]=json!(a),
+                1=>snapshot["snapshot"].as_object_mut().unwrap().remove("mergeBaseRevision").map(|_|()).unwrap(),
+                2=>diff["headRevision"]=json!(a),
+                _=>diff=json!({"status":"error","error":"No diff"}),
+            }
+            let mut transport=instructions_transport(&[200,200,200,200],&[account.clone(),metadata,snapshot,diff]);transport.reserve_response_on_send=true;
+            let error=service.review_comparison_with("bad-pin",&identity,&profile,&pr,&Value::Null,&json!({}),None,None,None,share_rpc,&transport).await.unwrap_err();
+            assert_eq!(error.code,if scenario==0 || scenario==2 {"github_head_changed"}else{"invalid_response"});
+            assert!(service.pinned_reviews.lock().unwrap().is_empty());
+        }
+        for invalidate in [false,true] {
+            let service=ChatgptService::default();let mut transport=instructions_transport(&[200,200,200],&[account.clone(),metadata.clone(),snapshot.clone()]);
+            transport.delay_ms=100;transport.reserve_response_on_send=true;
+            let reading=service.review_comparison_with("cancel-pin",&identity,&profile,&pr,&Value::Null,&Value::Null,None,None,None,share_rpc,&transport);
+            let interrupt=async {while transport.requests.lock().unwrap().len()<3 {tokio::task::yield_now().await;}if invalidate{service.invalidate();}else{service.cancel("cancel-pin");}};
+            let(result,())=tokio::join!(reading,interrupt);assert_eq!(result.unwrap_err().code,if invalidate{"account_changed"}else{"cancelled"});assert!(service.pinned_reviews.lock().unwrap().is_empty());
+        }
     }
 
     #[tokio::test]

@@ -1,4 +1,4 @@
-use crate::chatgpt_service::{ServiceIdentity, ServiceOperation, ServiceRequest, ShareAccessRequest};
+use crate::chatgpt_service::{ServiceError, ServiceIdentity, ServiceOperation, ServiceRequest, ShareAccessRequest};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 
@@ -133,13 +133,17 @@ pub(crate) fn gitlab_instance(detail: &Value, expected_id: &str) -> Option<Value
     Some(json!({"connectorId":expected_id,"hostname":hostname,"name":detail["name"]}))
 }
 
+fn provider_service_error(error: ServiceError) -> String {
+    format!("{}: {}",error.code,error.message)
+}
+
 #[tauri::command]
 pub async fn code_review_provider_read(app: AppHandle, window: WebviewWindow, state: State<'_, crate::AppState>, request: ShareAccessRequest) -> Result<Value, String> {
     let identity = request.expected_identity.clone();
     let profile = request.profile.clone();
     let request_id = request.request_id.clone();
     let bootstrap = crate::share_thread_access(app.clone(), window, state.clone(), request).await
-        .map_err(|error| error.message.to_string())?;
+        .map_err(provider_service_error)?;
     let capabilities = decode_capabilities(&bootstrap, &identity)?;
     let (connections, connections_error) = if capabilities["githubInstances"] == true {
         let response = state.chatgpt_service.read(ServiceRequest {
@@ -183,7 +187,7 @@ pub async fn code_review_pull_request_read(app: AppHandle, window: WebviewWindow
     let body=state.chatgpt_service.review_pull_request(&request_id,&identity,&profile,&pull_request,&connection,|method,params| {
         let app=&app;let state=&state;
         async move { state.app_server.call(app,method,Some(params)).await }
-    }).await.map_err(|error| format!("{}: {}",error.code,error.message))?;
+    }).await.map_err(provider_service_error)?;
     if state.chatgpt_service.generation()!=identity.generation || state.desktop_state.review_provider_preferences()?!=preferences {
         return Err("代码审查账号或实例设置已改变，请重新读取。".into());
     }
@@ -207,6 +211,34 @@ pub(crate) fn parse_pull_request_url(raw: &str) -> Result<Value,String> {
     let hostname=url.host_str().ok_or_else(invalid)?.trim_end_matches('.').to_lowercase();
     let owner=parts[1].to_lowercase();let repository=parts[2].to_lowercase();
     Ok(json!({"hostname":hostname,"owner":owner,"repository":repository,"number":number,"url":format!("https://{hostname}/{owner}/{repository}/pull/{number}")}))
+}
+
+#[tauri::command]
+pub async fn code_review_comparison_read(app: AppHandle, window: WebviewWindow, state: State<'_, crate::AppState>, request: ShareAccessRequest, url: String, snapshot_id: Option<String>, commit_sha: Option<String>) -> Result<Value,String> {
+    pinned_comparison_read(app,window,state,request,url,snapshot_id,commit_sha,None).await
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn code_review_revision_file_read(app: AppHandle, window: WebviewWindow, state: State<'_, crate::AppState>, request: ShareAccessRequest, url: String, snapshot_id: String, commit_sha: Option<String>, base_path: Option<String>, head_path: Option<String>) -> Result<Value,String> {
+    pinned_comparison_read(app,window,state,request,url,Some(snapshot_id),commit_sha,Some((base_path,head_path))).await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn pinned_comparison_read(app: AppHandle, window: WebviewWindow, state: State<'_, crate::AppState>, request: ShareAccessRequest, url: String, snapshot_id: Option<String>, commit_sha: Option<String>, file: Option<(Option<String>,Option<String>)>) -> Result<Value,String> {
+    let pull_request=parse_pull_request_url(&url)?;
+    let identity=request.expected_identity.clone();let profile=request.profile.clone();let request_id=request.request_id.clone();
+    let provider=code_review_provider_read(app.clone(),window,state.clone(),request).await?;
+    let preferences=provider["body"]["preferences"].clone();
+    let connection=authorized_pull_request_connection(&provider["body"],&pull_request)?;
+    let body=state.chatgpt_service.review_comparison(&request_id,&identity,&profile,&pull_request,&connection,&preferences,snapshot_id.as_deref(),commit_sha.as_deref(),file,|method,params| {
+        let app=&app;let state=&state;
+        async move {state.app_server.call(app,method,Some(params)).await}
+    }).await.map_err(provider_service_error)?;
+    if state.chatgpt_service.generation()!=identity.generation || state.desktop_state.review_provider_preferences()?!=preferences {
+        return Err("代码审查账号或实例设置已改变，请重新读取。".into());
+    }
+    Ok(json!({"requestId":request_id,"identity":identity,"body":body}))
 }
 
 fn authorized_pull_request_connection(body:&Value,pull_request:&Value)->Result<Value,String> {
@@ -238,6 +270,23 @@ pub async fn code_review_provider_update(app: AppHandle, window: WebviewWindow, 
 mod tests {
     use super::*;
     fn identity() -> ServiceIdentity { ServiceIdentity { account_id:"account".into(), user_id:"user".into(), generation:1 } }
+    #[test]
+    fn provider_errors_preserve_access_codes_without_reclassifying_network_failures() {
+        let mut readback=Vec::new();
+        for (code,message,status,expected) in [
+            ("unauthorized","ChatGPT authentication rejected",Some(401),"unauthorized: ChatGPT authentication rejected"),
+            ("forbidden","ChatGPT service access denied",Some(403),"forbidden: ChatGPT service access denied"),
+            ("network_error","ChatGPT service connection failed",None,"network_error: ChatGPT service connection failed"),
+        ] {
+            let actual=provider_service_error(ServiceError{code,message,status});
+            assert_eq!(actual,expected);
+            readback.push(json!({"code":code,"status":status,"error":actual}));
+        }
+        if let Some(directory)=std::env::var_os("CODEX_PINNED_REVIEW_FIXTURE_DIRECTORY") {
+            let directory=std::path::PathBuf::from(directory);std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(directory.join("provider-error-readback.json"),serde_json::to_vec_pretty(&readback).unwrap()).unwrap();
+        }
+    }
     #[test]
     fn remote_pull_request_urls_and_enterprise_membership_are_independently_validated() {
         let pr=parse_pull_request_url("https://GitHub.com/Owner/Repo/pull/00012/?tab=files#discussion").unwrap();

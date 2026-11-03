@@ -118,3 +118,28 @@ control.abort(); assert.equal(calls.at(-1)[1].requestId, readingPrId);
 pending.resolve({ requestId: readingPrId, identity, body: responseBody });
 await assert.rejects(readingPr, /取消/); pending = null;
 console.log("PASS remote PR client: canonical URL, host-owned source account, bound request/identity, rejected invalid targets and inflight cancellation");
+
+const revision = letter => letter.repeat(40);
+responseBody = { ...responseBody, snapshotId: "host-snapshot", metadata: { ...responseBody.metadata, headRevision: revision("b") },
+  snapshot: { baseRevision: revision("a"), headRevision: revision("b"), mergeBaseRevision: revision("c") },
+  comparison: { baseRevision: revision("c"), headRevision: revision("b") }, diff: { headRevision: revision("b"), unifiedDiff: "" } };
+await exports.readPinnedReviewComparison(prUrl, identity, signal().signal);
+assert.equal(calls.at(-1)[0], "code_review_comparison_read");
+assert.equal(calls.at(-1)[1].snapshotId, null);
+assert.equal("account" in calls.at(-1)[1], false);
+assert.equal("comparison" in calls.at(-1)[1], false, "renderer cannot submit arbitrary trusted revisions");
+await exports.readPinnedReviewComparison(prUrl, identity, signal().signal, "host-snapshot");
+assert.equal(calls.at(-1)[1].snapshotId, "host-snapshot");
+responseBody = { ...responseBody, file: { status: "success", baseContent: "", headContent: "new" } };
+await exports.readPinnedReviewFile(prUrl, identity, signal().signal, "host-snapshot", null, null, "new.rs");
+assert.equal(calls.at(-1)[0], "code_review_revision_file_read");
+assert.equal(calls.at(-1)[1].basePath, null); assert.equal(calls.at(-1)[1].headPath, "new.rs");
+mismatch = true;
+await assert.rejects(exports.readPinnedReviewComparison(prUrl, identity, signal().signal), /账号发生变化/); mismatch = false;
+control = signal(); pending = {};
+const readingPinned = exports.readPinnedReviewComparison(prUrl, identity, control.signal, "host-snapshot");
+const pinnedRequestId = calls.at(-1)[1].request.requestId;
+control.abort(); assert.equal(calls.at(-1)[1].requestId, pinnedRequestId);
+pending.resolve({ requestId: pinnedRequestId, identity, body: responseBody });
+await assert.rejects(readingPinned, /取消/); pending = null;
+console.log("PASS pinned PR clients: opaque snapshot binding, no renderer-supplied account/revisions, file paths, identity and cancellation");

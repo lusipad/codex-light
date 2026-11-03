@@ -1,5 +1,6 @@
 import { tauriInvoke } from "./bridge";
-import { parseRemotePullRequest, parseRemotePullRequestUrl, type RemotePullRequest } from "./remoteReview";
+import { parsePinnedReviewComparison, parsePinnedReviewFile, parseRemotePullRequest, parseRemotePullRequestUrl,
+  type PinnedReviewComparison, type PinnedReviewFile, type RemotePullRequest } from "./remoteReview";
 
 export interface ServiceIdentity { accountId: string; userId: string; generation: number }
 export interface CloudAccess { identity: ServiceIdentity; gateEvidence: "personal-plan-branch" | "incomplete" }
@@ -224,6 +225,28 @@ export async function readRemotePullRequest(url: string, identity: ServiceIdenti
     { request: { requestId, expectedIdentity: identity, profile: browserProfile() }, url: target.url }, signal,
   );
   return parseRemotePullRequest(responseBody(result, requestId, identity), target.url);
+}
+
+export async function readPinnedReviewComparison(url: string, identity: ServiceIdentity, signal: AbortSignal,
+  snapshotId: string | null = null, commitSha: string | null = null): Promise<PinnedReviewComparison> {
+  const target = parseRemotePullRequestUrl(url);
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; body: unknown }>(
+    "code_review_comparison_read", requestId,
+    { request: { requestId, expectedIdentity: identity, profile: browserProfile() }, url: target.url, snapshotId, commitSha }, signal,
+  );
+  return parsePinnedReviewComparison(responseBody(result, requestId, identity), target.url, snapshotId, commitSha);
+}
+
+export async function readPinnedReviewFile(url: string, identity: ServiceIdentity, signal: AbortSignal,
+  snapshotId: string, commitSha: string | null, basePath: string | null, headPath: string | null): Promise<PinnedReviewFile> {
+  const target = parseRemotePullRequestUrl(url);
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; body: unknown }>(
+    "code_review_revision_file_read", requestId,
+    { request: { requestId, expectedIdentity: identity, profile: browserProfile() }, url: target.url, snapshotId, commitSha, basePath, headPath }, signal,
+  );
+  return parsePinnedReviewFile(responseBody(result, requestId, identity), target.url, snapshotId, commitSha);
 }
 
 export async function updateReviewProviderPreference<K extends keyof ReviewProviderPreferences>(
