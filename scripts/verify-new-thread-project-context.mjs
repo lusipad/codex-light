@@ -23,10 +23,14 @@ const root = "D:/projects/shared", second = "D:/projects/second";
 const multi = { id: "multi", name: "Multi", rootPaths: [root, second], serverProjectId: "server-multi", createdAt: 1 };
 const same = { id: "same", name: "Same", rootPaths: [root], serverProjectId: "server-same", createdAt: 2 };
 const metadata = { selectedProjectId: "multi", localProjects: [multi, same], threadProjectAssignments: {}, projectlessThreadIds: [], workspaceProjectAssignments: {} };
+const executionModule = { exports: {} };
+vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/executionPolicy.ts", "utf8"), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText, { exports: executionModule.exports });
 export function mountProjectContext({ pending = null, membership = metadata, workspace = root, threadId = null, start, turn, worktree = false, projectless = false, configuration, selectionPending = false } = {}) {
   const calls = [], state = { promptInput: "hello", turns: [] };
   const context = {
-    ...module.exports, promptInput: "hello", attachedFiles: [], isStreaming: false,
+    ...module.exports, ...executionModule.exports, promptInput: "hello", attachedFiles: [], isStreaming: false,
     activeThreadId: threadId, activeThreadIdRef: { current: threadId }, activeTurnIdRef: { current: null },
     pendingNewThreadProjectRef: { current: pending }, pendingProjectlessRef: { current: projectless }, sidebarProjectMembership: membership,
     activeWorkspace: { path: workspace }, handleSaveGoalRef: { current: null },
@@ -34,9 +38,16 @@ export function mountProjectContext({ pending = null, membership = metadata, wor
     attachmentScopeRef: { current: threadId ? `thread:${threadId}` : "home" },
     steerSendPendingRef: { current: new Set() }, sendStartPendingRef: { current: new Set() }, useWorktree: worktree, planMode: false,
     tauriInvoke: async (method, params) => { calls.push([method, plain(params)]); return { path: "D:/worktree" }; },
-    permissionMode: "default", selectedModelId: undefined, selectedModelName: undefined, reasoningEffort: null, reasoningSummary: "auto",
+    permissionMode: "custom", selectedModelId: undefined, selectedModelName: undefined, reasoningEffort: null, reasoningSummary: "auto",
     sessionAllowNetwork: false, fastMode: false, models: [], console: { error() {}, warn() {} },
     selectionPending,
+    executionIdentityRef: { current: "fixture-account" },
+    navigationRequestRef: { current: 0 },
+    threadExecutionPoliciesRef: { current: new Map() },
+    threadExecutionRevisionsRef: { current: new Map() },
+    threadsRef: { current: threadId ? [{ id: threadId, cwd: workspace }] : [] },
+    workspaceHintsRef: { current: {} },
+    configRead: async () => ({ config: {} }),
     getModelConfiguration: () => {
       if (context.selectionPending) throw new Error("模型配置更新中");
       if (context.selectionInvalid) throw new Error("模型已不可用");
@@ -54,7 +65,12 @@ export function mountProjectContext({ pending = null, membership = metadata, wor
     crypto: { randomUUID: () => "fixture-message-id" },
     callAppServer: async (method, params) => {
       calls.push([method, plain(params)]);
-      if (method === "thread/start") return start ? start(params) : { thread: { id: "created", projectId: params.projectId } };
+      if (method === "thread/start") {
+        const response = start ? await start(params) : { thread: { id: "created", projectId: params.projectId } };
+        return { approvalPolicy: params.approvalPolicy, approvalsReviewer: params.approvalsReviewer,
+          sandbox: context.resolveConfiguredExecutionPolicy({ sandbox_mode: params.sandbox, approval_policy: params.approvalPolicy, approvals_reviewer: params.approvalsReviewer, ...params.config }, params.runtimeWorkspaceRoots ?? []).sandboxPolicy, ...response };
+      }
+      if (method === "thread/resume") return { approvalPolicy: "on-request", approvalsReviewer: "user", sandbox: { type: "readOnly", networkAccess: false } };
       assert.equal(method, "turn/start", "this harness only crosses declared send boundaries");
       return turn ? turn(params) : { turn: { id: "turn-created" } };
     },
@@ -71,6 +87,8 @@ export function mountProjectContext({ pending = null, membership = metadata, wor
     context[`set${name}`] = value => { state[key] = typeof value === "function" ? value(state[key] ?? {}) : value; };
   }
   const sandbox = vm.createContext(context);
+  context.captureThreadExecutionPolicy = vm.runInContext(callback("captureThreadExecutionPolicy"), sandbox);
+  context.resolveExecutionContext = vm.runInContext(callback("resolveExecutionContext"), sandbox);
   const send = vm.runInContext(callback("handleSendMessage"), sandbox);
   context.handleSendMessage = send;
   const goal = vm.runInContext(callback("handleSaveGoal"), sandbox);

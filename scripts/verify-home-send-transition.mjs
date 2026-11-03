@@ -12,12 +12,17 @@ function mount(options) {
   return view;
 }
 const count = (view, method) => view.calls.filter(call => call[0] === method).length;
+async function waitForCall(view, method) {
+  for (let tick = 0; tick < 30 && count(view, method) === 0; tick++) await Promise.resolve();
+  assert.ok(count(view, method) > 0, `production callback must reach ${method} after resolving effective permissions`);
+}
 
 {
   const start = deferred();
   const view = mount({ start: () => start.promise });
   const first = view.send();
   const duplicate = view.send();
+  await waitForCall(view, "thread/start");
   assert.equal(count(view, "thread/start"), 1, "FT01: first-send reentry must not create another thread");
   assert.equal(view.state.turns.length, 1, "FT01: only one optimistic user turn");
   start.resolve({ thread: { id: "created" } });
@@ -70,6 +75,7 @@ for (const result of ["reject", "missing-path"]) {
   const old = deferred(), next = deferred(), entered = deferred();
   const view = mount({ start: () => old.promise, turn: () => { entered.resolve(); return next.promise; } });
   const first = view.send();
+  await waitForCall(view, "thread/start");
   view.context.threadRequestRef.current++;
   view.context.activeThreadIdRef.current = "other";
   view.context.activeThreadId = "other";
@@ -92,6 +98,7 @@ for (const result of ["reject", "missing-path"]) {
   const turn = deferred();
   const view = mount({ threadId: "existing", turn: () => turn.promise });
   const first = view.send(), duplicate = view.send();
+  await waitForCall(view, "turn/start");
   assert.equal(count(view, "turn/start"), 1, "FT06: existing idle thread sends once before React commits");
   turn.resolve({ turn: { id: "accepted" } });
   await Promise.all([first, duplicate]);

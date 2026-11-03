@@ -157,6 +157,7 @@ for (const scenario of ["added", "left", "failure", "unchanged"]) {
     },
   });
   const pendingSend = view.send();
+  for (let tick = 0; tick < 30 && typeof finishTurn !== "function"; tick++) await Promise.resolve();
   assert.equal(typeof finishTurn, "function", "the production callback must reach turn/start");
   const added = file("after-send");
   if (scenario !== "unchanged") add("thread:a", added);

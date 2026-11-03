@@ -17,6 +17,7 @@ pub mod desktop_notifications;
 pub mod notification_audio;
 pub mod notification_preferences;
 mod model_preferences;
+mod agent_configuration;
 mod image_save;
 mod chatgpt_service;
 mod share_assets;
@@ -794,6 +795,7 @@ fn help_link_command(target: &str) -> Result<std::process::Command, String> {
     let url = match target {
         "guide" => "https://learn.chatgpt.com/docs/quickstart",
         "changelog" => "https://developers.openai.com/codex/changelog",
+        "configuration" => "https://developers.openai.com/codex/config-basic",
         _ => return Err("未知帮助链接".to_string()),
     };
     #[cfg(target_os = "windows")]
@@ -1582,6 +1584,7 @@ pub fn run() {
         .manage(notification_broker::NotificationBroker::default())
         .manage(notification_preferences::NotificationPreferencesState::default())
         .manage(model_preferences::ModelPreferencesState::default())
+        .manage(agent_configuration::AgentConfigurationState::default())
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 if let Err(error) = menu::remove_shortcut_window(window.app_handle(), window.label()) {
@@ -1601,6 +1604,9 @@ pub fn run() {
             model_preferences::model_preferences_read,
             model_preferences::model_preferences_write_default,
             model_preferences::model_recent_record,
+            agent_configuration::agent_configuration_read,
+            agent_configuration::agent_configuration_write,
+            agent_configuration::agent_configuration_open,
             desktop_notifications::desktop_notification_show,
             desktop_notifications::desktop_notification_hide,
             desktop_notifications::desktop_notification_hide_conversation,

@@ -143,7 +143,7 @@ asar 作为前端静态实现的主要参照，与官方文档、官方运行时
 | 16.03 | keyboard-shortcuts | [文件/执行/菜单增量](antigravity/runs/20261101-codex-shortcuts.md)完整标准检查通过；完整目录、OS-global、原生/像素未验收 |
 | 16.04 | notifications | [分类／独立偏好增量](antigravity/runs/20261101-codex-notifications.md)完整标准检查通过；系统交互、官方音频、远程设置与像素未验收 |
 | 16.05 | providers-models（旧别名） | [16.05B 模型组合与真实提交](antigravity/acceptance/16-05B.md)完整标准、全Rust与原生构建通过，待用户验收；归属Composer/agent，无独立Provider页；Work/gates、原生交互与像素未验 |
-| 16.06 | agent | 审批、沙箱、联网、推理配置与真正生效值 |
+| 16.06 | agent（配置） | [16.06B本地六项即时配置与执行权限](antigravity/acceptance/16-06B.md)完整标准、全Rust299项及EXE/MSI/NSIS通过，待用户验收；官方/原生交互/像素未完，Work独立远程 |
 | 16.07 | personalization | 偏好读写与实际对话配置的关系 |
 | 16.08 | account | 账号、登录/退出、额度、错误与失效恢复 |
 | 16.09 | profile | 资料来源、编辑权限与保存结果 |

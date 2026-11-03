@@ -25,3 +25,7 @@
 协议依据：.ref/protocol/v2/ConfigReadResponse.json 的 ConfigLayer/ConfigLayerSource，ConfigBatchWriteParams.json 的 expectedVersion/filePath/reloadUserConfig；真实隔离探针已确认0.159.2支持user层、版本变化、旧版本拒绝和null移除。原始响应见 .ref/parity/16.06/runs/20261101-codex-agent-settings/actual/protocol-agent-settings.json。静态Work证据复用16.05原包trace；基准包可信度限制保留。
 
 修改前用例：AS01 用户层与effective分离、profile/disabled拒绝；AS02 只写变化，复杂审批对象不被归一化；AS03 锁定版本、读回与覆盖提示；AS04 失败不fallback且草稿保留；AS05 重复点击单飞、卸载晚响应失效；AS06 推理候选仅采用当前模型能力、旧值可见；AS07 真实隔离配置往返/旧版本冲突。视觉和原生操作无配对证据，不记通过。
+
+## 2026-11-03 路由归属纠正
+
+上述“agent panel是Work偏好分支”是旧取证的错误归属，不能继续用作当前本地页面合同。新固定Store逐层路由证明agent→ConfigurationPanel，本地六项即时保存；work-settings另走远程面板。见[16.06B修改前合同](16-06B-next-closure.md)、[本地路由研究](16-06B-local-research.md)与[Work独立研究](16-06B-work-research.md)。保留旧记录供追溯，不将远程能力冒充本地配置。

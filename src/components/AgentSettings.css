@@ -1,0 +1,32 @@
+.agent-configuration { gap: 16px; }
+.agent-configuration-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.agent-configuration-row { display: flex; align-items: center; justify-content: space-between; gap: 24px; min-height: 76px; padding: 16px 0; border-bottom: 1px solid var(--border-subtle); }
+.agent-configuration-copy { min-width: 0; }
+.agent-configuration-copy > label { font-size: var(--text-sm); font-weight: 500; }
+.agent-configuration-description, .agent-configuration-choice-description { color: var(--text-secondary); font-size: var(--text-sm); line-height: 1.5; }
+.agent-configuration-description { margin-top: 4px; }
+.agent-configuration-lock { color: var(--text-warning, var(--text-secondary)); font-size: var(--text-sm); margin-top: 4px; }
+.agent-configuration-error { color: var(--accent-red); font-size: var(--text-sm); margin-top: 4px; }
+.agent-configuration-menu { position: relative; flex-shrink: 0; max-width: 100%; }
+.agent-configuration-trigger, .agent-configuration-open { display: inline-flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 32px; border: 0; border-radius: 6px; padding: 4px 8px; color: var(--text-primary); background: transparent; font: inherit; font-size: var(--text-sm); cursor: pointer; }
+.agent-configuration-trigger { max-width: 240px; }
+.agent-configuration-trigger > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-configuration-trigger:hover, .agent-configuration-open:hover { background: var(--bg-hover); }
+.agent-configuration button:disabled { cursor: default; opacity: .5; }
+.agent-configuration button:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 2px; }
+.agent-configuration-options { position: absolute; z-index: 30; right: 0; top: calc(100% + 4px); width: 300px; max-width: calc(100vw - 48px); max-height: 360px; overflow-y: auto; padding: 4px; border: 1px solid var(--border-default); border-radius: 10px; background: var(--bg-primary); box-shadow: 0 8px 24px #0003; }
+.agent-configuration-toolbar .agent-configuration-options { left: 0; right: auto; }
+.agent-configuration-options button { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 8px; border: 0; border-radius: 6px; background: transparent; color: var(--text-primary); font: inherit; font-size: var(--text-sm); text-align: left; cursor: pointer; }
+.agent-configuration-options button:hover, .agent-configuration-options button:focus { background: var(--bg-hover); outline: none; }
+.agent-configuration-choice { display: flex; flex-direction: column; gap: 4px; }
+.agent-configuration-group { padding: 8px; font-size: var(--text-xs); color: var(--text-secondary); }
+.agent-configuration-group:not(:first-child) { border-top: 1px solid var(--border-subtle); }
+.agent-configuration-switch { width: 32px; height: 20px; border: 0; border-radius: 999px; background: var(--text-tertiary); padding: 2px; flex-shrink: 0; cursor: pointer; }
+.agent-configuration-switch > span { display: block; width: 16px; height: 16px; border-radius: 50%; background: var(--bg-primary); }
+.agent-configuration-switch[aria-checked="true"] { background: var(--text-primary); }
+.agent-configuration-switch[aria-checked="true"] > span { transform: translateX(12px); }
+@media (max-width: 640px) {
+  .agent-configuration-toolbar { gap: 8px; flex-wrap: wrap; }
+  .agent-configuration-row { gap: 12px; }
+  .agent-configuration-row .agent-configuration-trigger { max-width: 150px; }
+}

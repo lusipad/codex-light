@@ -25,10 +25,12 @@ function deferred() {
 }
 function mount({ select = async () => snapshot, persist = async () => ({ errors: [] }) } = {}) {
   const calls = [], state = {
+    permissionModes: { "account:draft:D:/one": "full", "account:old": "ask" },
     attachmentDrafts: { "thread:old": [{ id: "draft", persisted: false }] },
     attachedFiles: [{ id: "draft", persisted: false }], activeRoute: "thread", activeThreadId: "old",
   };
   const context = {
+    setPermissionModes: update => { state.permissionModes = update(state.permissionModes ?? {}); },
     navigationRequestRef: { current: 0 }, activeThreadIdRef: { current: "old" },
     attachmentScopeRef: { current: "thread:old" },
     setComposerAttachmentDrafts: update => { state.attachmentDrafts = update(state.attachmentDrafts); },
@@ -70,6 +72,7 @@ async function waitForSelection(view, count = 1) {
   assert.equal(view.context.pendingNewThreadProjectRef.current, project, "all roots remain attached to the new draft");
   assert.equal(view.state.activeRoute, "home");
   assert.equal(view.state.activeThreadId, null);
+  assert.deepEqual(plain(view.state.permissionModes), { "account:old": "ask" }, "a fresh draft resets only draft permission presets");
   assert.deepEqual(plain(view.state.attachmentDrafts["thread:old"]), [{ id: "draft", persisted: false }],
     "leaving a thread keeps its unsent attachment draft scoped to that thread");
   assert.equal(view.context.attachmentScopeRef.current, "home");

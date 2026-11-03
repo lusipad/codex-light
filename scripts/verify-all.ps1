@@ -125,6 +125,10 @@ try {
   Invoke-Step "Archived settings shared lifecycle regression" { node scripts/verify-archived-settings.mjs }
   Invoke-Step "Storage cloud capability and destructive entry regression" { node scripts/verify-storage-settings.mjs }
   Invoke-Step "Agent user config version, readback and lifecycle regression" { node scripts/verify-agent-settings.mjs }
+  Invoke-Step "Agent scoped configuration, requirements and persistence regression" { node scripts/verify-agent-configuration-b.mjs }
+  Invoke-Step "Configured and thread execution policy regression" { node scripts/verify-execution-policy-b.mjs }
+  Invoke-Step "Agent defaults across actual App submission paths" { node scripts/verify-agent-execution-b.mjs }
+  Invoke-Step "Rust scoped config and comment-preserving writes" { cargo test --locked --manifest-path src-tauri/Cargo.toml --lib agent_configuration }
   Invoke-Step "Personal Codex instructions editor and draft lifecycle regression" { node scripts/verify-personalization.mjs }
   Invoke-Step "Personal Codex instructions isolated file regression" { cargo test --manifest-path src-tauri/Cargo.toml personal_instructions }
   Invoke-Step "Account identity, partial failure and lifecycle regression" { node scripts/verify-account-snapshot.mjs }
@@ -257,6 +261,7 @@ Invoke-Step "TypeScript typecheck (tsc --noEmit)" { npx tsc --noEmit }
       "scripts/protocol-verify/verify-model-catalog.mjs"
       "scripts/protocol-verify/verify-model-preferences.mjs"
       "scripts/protocol-verify/verify-agent-settings.mjs"
+      "scripts/protocol-verify/verify-agent-scopes.mjs"
       "scripts/protocol-verify/verify-appearance-preferences.mjs"
       "scripts/protocol-verify/verify-keyboard-number-target.mjs"
       "scripts/protocol-verify/verify-notification-preferences.mjs"

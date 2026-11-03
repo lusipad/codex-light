@@ -60,7 +60,7 @@ export interface ComposerBoxProps {
   // Execution mode & permissions
   useWorktree: boolean;
   onSetUseWorktree: (val: boolean) => void;
-  permissionMode: "ask" | "auto" | "full";
+  permissionMode: "custom" | "ask" | "auto" | "full";
   onSelectPermissionMode: (mode: "ask" | "auto" | "full") => void;
   // Model, effort, speed, plan mode
   models: ModelInfo[];
@@ -447,7 +447,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
   }, []);
 
   const activePermission =
-    PERMISSION_OPTIONS.find((p) => p.id === permissionMode) || PERMISSION_OPTIONS[0];
+    PERMISSION_OPTIONS.find((p) => p.id === permissionMode) || { shortLabel: "自定义", title: "自定义 (config.toml)", desc: "使用 config.toml 中定义的权限" };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;

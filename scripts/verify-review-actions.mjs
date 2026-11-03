@@ -32,7 +32,13 @@ const flush = async () => { for (let i = 0; i < 15; i++) await Promise.resolve()
 function mount(overrides = {}) {
   const calls = [], notices = [], selected = [];
   const tracker = createReviewResults(() => {});
+  const execution = loadModule("executionPolicy");
   const context = {
+    ...execution,
+    executionIdentityRef: { current: "fixture-account" },
+    threadExecutionPoliciesRef: { current: new Map() },
+    threadExecutionRevisionsRef: { current: new Map() },
+    configRead: async () => ({ config: {} }),
     buildQuickReviewPrompt, reviewResultsRef: { current: tracker },
     useCallback: f => f, activeWorkspace: { path: "D:/repo" }, appServerStatus: { connected: true },
     selectedModelId: "model", selectedModelName: "model", gitCommits: [{ hash: "abc", subject: "Fix" }], gitContextCwd: "D:/repo",
@@ -66,8 +72,24 @@ function mount(overrides = {}) {
     },
     ...overrides,
   };
+  const compileCallback = name => {
+    let found;
+    function find(node) {
+      if (ts.isVariableDeclaration(node) && node.name.getText(ast) === name) found = node.initializer.arguments[0];
+      ts.forEachChild(node, find);
+    }
+    find(ast); return ts.transpileModule(`(${found.getText(ast)})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  };
+  context.captureThreadExecutionPolicy = vm.runInNewContext(compileCallback("captureThreadExecutionPolicy"), context);
+  context.resolveExecutionContext = vm.runInNewContext(compileCallback("resolveExecutionContext"), context);
+  if (context.activeThreadIdRef.current) context.threadExecutionPoliciesRef.current.set(context.activeThreadIdRef.current, execution.resolvePresetExecutionPolicy("ask", ["D:/repo"]));
   for (const method of ["callAppServer", "tauriInvoke"]) context[method] = (name, params) => {
-    const pending = defer(); calls.push({ method, name, params, runsAtRequest: tracker.getRuns(), ...pending }); return pending.promise;
+    const pending = defer();
+    const resolve = response => pending.resolve(name === "thread/start" ? {
+      approvalPolicy: params.approvalPolicy, approvalsReviewer: params.approvalsReviewer,
+      sandbox: execution.resolveConfiguredExecutionPolicy({ sandbox_mode: params.sandbox, approval_policy: params.approvalPolicy, approvals_reviewer: params.approvalsReviewer, ...params.config }, [params.cwd]).sandboxPolicy, ...response,
+    } : response);
+    calls.push({ method, name, params, runsAtRequest: tracker.getRuns(), ...pending, resolve }); return pending.promise;
   };
   return { context, calls, notices, selected, tracker, start: vm.runInNewContext(js, context) };
 }
@@ -89,17 +111,20 @@ export { mount as mountReviewContext };
 {
   const v = mount(), first = v.start({ kind: "uncommitted" });
   const duplicate = v.start({ kind: "uncommitted" });
+  await flush();
   assert.equal(v.calls.length, 1, "RA01: rapid repeated starts create one request chain");
   await duplicate;
   v.calls[0].reject(Error("offline")); await first;
   assert.equal(v.context.reviewBusy, false);
   const retry = v.start({ kind: "uncommitted" });
+  await flush();
   assert.equal(v.calls.length, 2);
   v.calls[1].reject(Error("offline")); await retry;
   assert.ok(v.notices.some(([text]) => text.includes("offline")));
 }
 {
   const v = mount(), start = v.start({ kind: "branch", branch: "base", instructions: "Check races" });
+  await flush();
   assert.equal(v.calls[0].name, "git_merge_base", "RA02: branch resolves real merge base before creating a thread");
   assert.equal(v.calls[0].params.baseBranch, "base");
   v.calls[0].resolve("0123456789abcdef"); await flush();
@@ -123,12 +148,14 @@ export { mount as mountReviewContext };
 }
 {
   const v = mount(), start = v.start({ kind: "branch", branch: "missing" });
+  await flush();
   v.calls[0].reject(Error("no merge base")); await start;
   assert.equal(v.calls.length, 1, "RA03: merge-base failure cannot create a thread or start a model");
 }
 {
   const v = mount({ activeThreadIdRef: { current: "existing" }, threadsRef: { current: [{ id: "existing", cwd: "D:/repo" }] } });
   const start = v.start({ kind: "uncommitted" });
+  await flush();
   await flush();
   assert.equal(v.calls[0].name, "turn/start", "RA04: inline uses current conversation");
   assert.equal(v.calls[0].params.threadId, "existing");
@@ -138,6 +165,7 @@ export { mount as mountReviewContext };
 }
 {
   const v = mount(), start = v.start({ kind: "uncommitted" });
+  await flush();
   v.context.reviewContextRef.current = { cwd: "D:/other", route: "review", generation: 1 };
   v.calls[0].resolve({ thread: { id: "orphan" } }); await start;
   assert.equal(v.calls.length, 1, "RA05: context changed before thread creation returns cannot start a turn");
@@ -147,6 +175,7 @@ export { mount as mountReviewContext };
 }
 {
   const v = mount(), start = v.start({ kind: "uncommitted" });
+  await flush();
   v.calls[0].resolve({ thread: { id: "new" } }); await flush();
   assert.equal(v.calls[1].name, "turn/start");
   v.context.navigationRequestRef.current++;
@@ -157,6 +186,7 @@ export { mount as mountReviewContext };
 }
 {
   const v = mount(), start = v.start({ kind: "uncommitted" });
+  await flush();
   v.calls[0].resolve({ thread: { id: "early" } }); await flush();
   v.tracker.ingest({ method: "turn/completed", params: { threadId: "early", turn: {
     id: "fast", status: "completed", items: [{ id: "answer", type: "agentMessage", text: "No actionable issues." }],
@@ -168,6 +198,7 @@ export { mount as mountReviewContext };
 }
 for (const failure of ["missing-id", "rejected"]) {
   const v = mount(), start = v.start({ kind: "uncommitted" });
+  await flush();
   v.calls[0].resolve({ thread: { id: failure } }); await flush();
   if (failure === "missing-id") v.calls[1].resolve({ turn: {} });
   else v.calls[1].reject(Error("transport disconnected"));
@@ -182,6 +213,7 @@ for (const failure of ["missing-id", "rejected"]) {
 }
 for (const request of [{ kind: "commit", sha: "abc" }, { kind: "custom", instructions: "Look here" }]) {
   const v = mount(), start = v.start(request);
+  await flush();
   v.calls[0].resolve({ thread: { id: "legacy" } }); await flush();
   assert.equal(v.calls[1].name, "review/start", "RA07: existing commit/custom protocol paths remain available");
   assert.equal(v.calls[1].params.target.type, request.kind);

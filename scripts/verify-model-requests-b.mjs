@@ -15,6 +15,7 @@ function load(file, require = () => ({})) {
   return exports;
 }
 const capabilities = load("src/modelCapabilities.ts");
+const execution = load("src/executionPolicy.ts");
 const { ModelTurnLedger } = load("src/modelSelection.ts", id => id === "./modelCapabilities" ? capabilities : {});
 const model = { id: "menu-identity", model: "wire-identity", isDefault: true,
   defaultReasoningEffort: "low", supportedReasoningEfforts: ["low", "high"],
@@ -98,6 +99,11 @@ function queueFixture({ invalid = null, settingsFailure = false, response = { tu
   let finishSettings;
   const settings = new Promise(resolve => { finishSettings = resolve; });
   const context = {
+    executionIdentityRef: { current: "fixture-account" },
+    threadExecutionRevisionsRef: { current: new Map() },
+    threadsRef: { current: [{ id: "queue-thread", cwd: "D:/repo" }] }, workspaceHintsRef: { current: {} },
+    resolveExecutionContext: async () => ({ policy: execution.resolvePresetExecutionPolicy("ask", ["D:/repo"]) }),
+    captureThreadExecutionPolicy: (_id, response) => execution.readThreadExecutionPolicy(response),
     activeThreadIdRef: { current: "queue-thread" }, followupQueue: [{ id: "queued-item", text: "queued text" }],
     queueMutationThreadsRef: { current: new Set() }, steeredQueueItemsRef: { current: new Set() },
     isStreaming: false, threadRequestRef: { current: 1 },
@@ -110,6 +116,10 @@ function queueFixture({ invalid = null, settingsFailure = false, response = { tu
     callAppServer: async (method, params) => {
       calls.push([method, plain(params)]);
       if (method === "thread/settings/update") { await settings; if (settingsFailure) throw Error("settings rejected"); return {}; }
+      if (method === "thread/resume") {
+        const policy = execution.resolvePresetExecutionPolicy("ask", ["D:/repo"]);
+        return { approvalPolicy: policy.approvalPolicy, approvalsReviewer: policy.approvalsReviewer, sandbox: policy.sandboxPolicy };
+      }
       assert.equal(method, "thread/queue/start"); return response;
     },
   };
@@ -117,11 +127,12 @@ function queueFixture({ invalid = null, settingsFailure = false, response = { tu
 }
 {
   const view = queueFixture(); const pending = view.start();
+  await flush();
   assert.deepEqual(view.calls.map(([method]) => method), ["thread/settings/update"]);
   assertTriple(view.calls[0][1]);
   view.finishSettings(); await pending;
-  assert.deepEqual(view.calls.slice(0, 3).map(([method]) => method), ["thread/settings/update", "track", "thread/queue/start"]);
-  assert.deepEqual(view.calls[2][1], { threadId: "queue-thread", queuedSubmissionId: "queued-item" });
+  assert.deepEqual(view.calls.slice(0, 4).map(([method]) => method), ["thread/settings/update", "thread/resume", "track", "thread/queue/start"]);
+  assert.deepEqual(view.calls[3][1], { threadId: "queue-thread", queuedSubmissionId: "queued-item" });
   assert.equal(view.recorded.length, 0);
   await view.ledger.complete("queue-thread", "unrelated-turn", "wrong-user-item"); assert.equal(view.recorded.length, 0);
   await view.ledger.complete("queue-thread", "actual-queue-turn", "actual-user-item"); assert.deepEqual(view.recorded, [configuration]);
@@ -138,6 +149,7 @@ console.log("PASS MC-B05/09 actual queue callback: await real settings RPC befor
 
 {
   const view = mountReviewContext({ configuration }); const pending = view.start({ kind: "uncommitted" });
+  await flush();
   assert.equal(view.calls[0].name, "thread/start"); assert.equal(view.calls[0].params.model, configuration.model);
   view.calls[0].resolve({ thread: { id: "review-thread" } }); await flush();
   assert.equal(view.calls[1].name, "turn/start"); assertTriple(view.calls[1].params);

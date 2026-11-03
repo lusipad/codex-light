@@ -129,7 +129,7 @@ assert.ok(extracted.includes("勾股定理几何证明"), "Summary must be extra
 assert.ok(extracted.includes("正方形"), "Content must be extracted");
 console.log("PASS 2: Real streaming reasoning is fully preserved and rendered after completion");
 
-// CASE 3: 检查 App.tsx 源代码断言，确保致命清空语句已被根除且开启了 summary: auto 请求
+// CASE 3: 保留推理渲染保护，并执行生产发送回归，确认摘要尊重真实配置。
 console.log("\n--- Scenario 3: Static check on App.tsx ---");
 const appSrc = fs.readFileSync("src/App.tsx", "utf8");
 assert.ok(
@@ -140,10 +140,7 @@ assert.ok(
   appSrc.includes("meaningfulThoughts = thoughts.filter"),
   "App.tsx must filter for meaningful thoughts"
 );
-assert.ok(
-  appSrc.includes('summary: reasoningSummary || "auto"'),
-  "App.tsx turn/start must request reasoning summary"
-);
-console.log("PASS 3: App.tsx codebase is clean of reasoning wipeout and requests reasoning summary");
+await import("./verify-agent-execution-b.mjs");
+console.log("PASS 3: no reasoning wipeout; actual App requests preserve configured none/concise and existing-thread summary");
 
 console.log("\nALL REASONING PARITY CHECKS PASSED!");

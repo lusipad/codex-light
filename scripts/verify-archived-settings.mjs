@@ -47,8 +47,18 @@ for (const [key, value] of Object.entries(shared)) {
 }
 const header = view.match(/\{([^{}]+)<div className="header-right-btns">/)?.[1];
 assert.ok(header?.includes('activeSection !== "archived-chats"'), "ARS05: archive manages its own refresh and actions");
-for (const marker of ["saveBanner &&", "errorBanner &&"]) {
-  const offset = view.indexOf(marker);
-  assert.ok(view.slice(view.lastIndexOf("{", offset), offset).includes('activeSection !== "archived-chats"'), "ARS05: generic configuration banners excluded");
+const bannerConditions = [];
+function findBannerConditions(node) {
+  if (ts.isJsxExpression(node) && node.expression && ts.isBinaryExpression(node.expression)) {
+    const source = node.expression.getText(ast);
+    if (/\b(saveBanner|errorBanner) &&/.test(source)) bannerConditions.push(node.expression.left.getText(ast));
+  }
+  ts.forEachChild(node, findBannerConditions);
+}
+findBannerConditions(ast);
+assert.ok(bannerConditions.length >= 2, "ARS05: banner conditions exist");
+for (const condition of bannerConditions) {
+  assert.equal(vm.runInNewContext(condition, { activeSection: "archived-chats", saveBanner: "saved", errorBanner: "error" }), false,
+    "ARS05: both generic and section-specific banners excluded from archive");
 }
 console.log("PASS ARS01-05: production settings JSX forwards shared archive callbacks and refresh identity; no legacy metadata list or duplicate write paths");

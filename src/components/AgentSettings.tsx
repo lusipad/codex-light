@@ -1,171 +1,130 @@
 import React, { useEffect, useRef, useState } from "react";
-import { configBatchWrite, configRead, configRequirementsRead, getConfigValue, type ConfigEdit, type ConfigReadResult } from "../config";
-import { findModel, getSupportedEfforts } from "../modelCapabilities";
+import { useAgentConfiguration, type AgentConfigurationFieldKey } from "../agentConfiguration";
 import type { ModelInfo } from "../types";
+import { CheckIcon, ChevronDownIcon, ExternalWindowIcon } from "./Icons";
+import "./AgentSettings.css";
 
-const FIELDS = [
-  ["model", "默认模型", null],
-  ["model_reasoning_effort", "推理强度", null],
-  ["model_verbosity", "输出详实度", ["low", "medium", "high"]],
-  ["web_search", "联网搜索", ["disabled", "cached", "indexed", "live"]],
-  ["approval_policy", "审批策略", ["on-request", "never"]],
-  ["approvals_reviewer", "审批审查方", ["user", "auto_review"]],
-  ["sandbox_mode", "沙盒模式", ["read-only", "workspace-write", "danger-full-access"]],
-] as const;
+type Choice = { value: string | null; label: string; description?: string; group?: string };
+// Fixed zh-CN-88ebb426d686.js: settings.agent.configuration.{webSearch,modelVerbosity,reasoningSummary}.option.*.description.
+const OPTION_DESCRIPTIONS: Record<string, Record<string, string>> = {
+  web_search: { disabled: "不允许网页搜索", cached: "使用 OpenAI 维护的搜索索引", indexed: "允许访问已索引的外部网页", live: "允许不受限制地访问当前网页" },
+  model_verbosity: { low: "保持回复简洁", medium: "兼顾细节与简洁", high: "在回复中包含更多细节" },
+  model_reasoning_summary: { auto: "让模型选择摘要详细程度", concise: "显示简要推理摘要", detailed: "显示更详细的推理摘要", none: "不显示推理摘要" },
+};
+const LEGACY_LABELS: Record<string, string> = { "on-failure": "失败时", untrusted: "不可信" };
 
-export function userConfigLayer(snapshot: ConfigReadResult) {
-  const layer = snapshot.layers?.find((entry: any) =>
-    entry?.name?.type === "user" && !entry.name.profile && !entry.disabledReason
-  ) as { name: { file: string }; version: string; config: Record<string, unknown> } | undefined;
-  if (!layer?.name.file || !layer.version || !layer.config) {
-    throw Error("无法确定可写的用户配置层，请重新加载配置。");
-  }
-  return layer;
-}
-
-function draftFrom(snapshot: ConfigReadResult) {
-  const raw = userConfigLayer(snapshot).config;
-  return Object.fromEntries(FIELDS.map(([key]) => [
-    key, typeof raw[key] === "string" ? raw[key] : "",
-  ]));
-}
-
-export function agentConfigEdits(snapshot: ConfigReadResult, draft: Record<string, string>): ConfigEdit[] {
-  const initial = draftFrom(snapshot);
-  return FIELDS.filter(([key]) => draft[key] !== initial[key]).map(([key]) => ({
-    keyPath: key, value: draft[key].trim() || null, mergeStrategy: "replace",
-  }));
-}
-
-export async function saveAgentConfig(snapshot: ConfigReadResult, draft: Record<string, string>) {
-  const layer = userConfigLayer(snapshot);
-  const edits = agentConfigEdits(snapshot, draft);
-  if (!edits.length) return { snapshot, message: "没有未保存的修改。" };
-  const result = await configBatchWrite(edits, {
-    filePath: layer.name.file, expectedVersion: layer.version, reloadUserConfig: true,
-  });
-  let updated: ConfigReadResult;
-  try {
-    updated = await configRead(undefined, true);
-    const saved = userConfigLayer(updated);
-    for (const edit of edits) {
-      if ((getConfigValue(saved.config, edit.keyPath) ?? null) !== edit.value) {
-        throw Error(`${edit.keyPath} 的落盘值与提交值不同`);
-      }
-    }
-  } catch (error) {
-    throw Error(`写入已返回成功，但读回核验失败；草稿已保留，请重新加载后核对：${String(error)}`);
-  }
-  const overridden = edits.some(edit =>
-    (getConfigValue(updated.config, edit.keyPath) ?? null) !== edit.value && edit.value !== null
-  );
-  return {
-    snapshot: updated,
-    message: result.status === "okOverridden" || overridden
-      ? `已写入用户配置，但部分值被其他配置层覆盖。${result.overriddenMetadata?.message || ""}`
-      : "已保存并读回核验。模型与推理默认值用于后续会话。",
-  };
-}
-
-export function AgentSettings({ models, onConfigUpdated }: {
-  models: ModelInfo[]; onConfigUpdated: () => void | Promise<void>;
+function ConfigurationMenu({ id, label, value, options, disabled, describedBy, emptyLabel = "模型默认", onSelect }: {
+  id: string; label: string; value: unknown; options: Choice[]; disabled: boolean;
+  describedBy?: string; emptyLabel?: string; onSelect: (value: string | null) => void;
 }) {
-  const [snapshot, setSnapshot] = useState<ConfigReadResult | null>(null);
-  const [draft, setDraft] = useState<Record<string, string>>({});
-  const [requirements, setRequirements] = useState<Record<string, unknown> | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
-  const operation = useRef(false);
-  const generation = useRef(0);
-
-  const load = async () => {
-    if (operation.current) return;
-    operation.current = true;
-    const version = generation.current;
-    setBusy(true); setError(null); setMessage(null);
-    try {
-      const config = await configRead(undefined, true);
-      const managed = await configRequirementsRead();
-      const values = draftFrom(config);
-      if (version !== generation.current) return;
-      setSnapshot(config); setDraft(values); setRequirements(managed.requirements);
-    } catch (error) {
-      if (version === generation.current) setError(`读取失败：${String(error)}`);
-    } finally {
-      if (version === generation.current) { operation.current = false; setBusy(false); }
-    }
-  };
-
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const selected = options.find(option => option.value === value);
+  const text = selected?.label ?? (typeof value === "string" ? LEGACY_LABELS[value] ?? value : value == null ? emptyLabel : "自定义");
+  const close = (restoreFocus: boolean) => { setOpen(false); if (restoreFocus) trigger.current?.focus(); };
   useEffect(() => {
-    void load();
-    return () => { generation.current += 1; operation.current = false; };
-  }, []);
+    if (!open) return;
+    if (disabled) { setOpen(false); return; }
+    const items = menu.current?.querySelectorAll<HTMLButtonElement>("[role=menuitemradio]");
+    const selectedIndex = options.findIndex(option => option.value === value);
+    items?.[Math.max(selectedIndex, 0)]?.focus();
+    const outside = (event: PointerEvent) => {
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", outside);
+    return () => document.removeEventListener("pointerdown", outside);
+  }, [open, disabled]);
+  return <div className="agent-configuration-menu" ref={root}>
+    <button type="button" id={id} ref={trigger} className="agent-configuration-trigger"
+      aria-label={label} aria-describedby={describedBy} aria-haspopup="menu" aria-expanded={open}
+      aria-controls={`${id}-menu`} disabled={disabled} onClick={() => setOpen(!open)}
+      onKeyDown={event => {
+        if (!event.nativeEvent.isComposing && !disabled && ["ArrowDown", "ArrowUp"].includes(event.key)) {
+          event.preventDefault(); setOpen(true);
+        }
+      }}><span>{text}</span><span aria-hidden="true"><ChevronDownIcon /></span></button>
+    {open && !disabled && <div id={`${id}-menu`} className="agent-configuration-options" role="menu" aria-label={label} ref={menu}
+      onKeyDown={event => {
+        if (event.nativeEvent.isComposing) return;
+        if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(true); return; }
+        if (event.key === "Tab") { close(true); return; }
+        if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+        event.preventDefault();
+        const items = Array.from(menu.current?.querySelectorAll<HTMLButtonElement>("[role=menuitemradio]") ?? []);
+        const index = items.indexOf(document.activeElement as HTMLButtonElement);
+        const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1
+          : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+        items[next]?.focus();
+      }}>
+      {options.map((option, index) => <React.Fragment key={option.value ?? "model-default"}>
+        {option.group && option.group !== options[index - 1]?.group && <div className="agent-configuration-group" role="presentation">{option.group}</div>}
+        <button type="button" role="menuitemradio" aria-checked={option.value === value}
+          onClick={() => { close(true); onSelect(option.value); }}>
+          <span className="agent-configuration-choice"><span>{option.label}</span>
+            {option.description && <span className="agent-configuration-choice-description">{option.description}</span>}</span>
+          <span aria-hidden="true">{option.value === value && <CheckIcon />}</span>
+        </button>
+      </React.Fragment>)}
+    </div>}
+  </div>;
+}
 
-  const save = async () => {
-    if (operation.current || !snapshot) return;
-    operation.current = true;
-    const version = generation.current;
-    setBusy(true); setError(null); setMessage(null);
-    try {
-      const result = await saveAgentConfig(snapshot, draft);
-      if (version !== generation.current) return;
-      setSnapshot(result.snapshot); setDraft(draftFrom(result.snapshot)); setMessage(result.message);
-      try { await onConfigUpdated(); } catch (error) {
-        if (version === generation.current) setError(`配置已核验，但刷新应用失败：${String(error)}`);
-      }
-    } catch (error) {
-      if (version === generation.current) setError(String(error));
-    } finally {
-      if (version === generation.current) { operation.current = false; setBusy(false); }
+export function AgentSettings({ cwd, accountIdentity, onConfigUpdated }: {
+  models?: ModelInfo[]; cwd?: string; accountIdentity?: string;
+  onConfigUpdated?: () => void | Promise<void>;
+}) {
+  const state = useAgentConfiguration({ cwd, accountIdentity });
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const alive = useRef(0);
+  useEffect(() => { alive.current++; return () => { alive.current++; }; }, [cwd, accountIdentity]);
+  const change = async (key: AgentConfigurationFieldKey, value: unknown) => {
+    const generation = alive.current;
+    setRefreshError(null);
+    if (await state.change(key, value) && generation === alive.current) {
+      try { await onConfigUpdated?.(); }
+      catch { if (generation === alive.current) setRefreshError("设置已更新，但无法刷新应用。请重新加载。"); }
     }
   };
-
-  const currentModel = findModel(models, draft.model || String(snapshot?.config.model || ""));
-  const efforts = getSupportedEfforts(currentModel).map(entry => entry.reasoningEffort);
-  return (
-    <div className="settings-scroll-container">
-      <div className="card-section">
-        <h3>本地智能体默认设置</h3>
-        <p className="card-subtitle-desc">保存到用户配置，项目设置可能覆盖这些默认值。留空表示恢复默认。</p>
-        {requirements && <p role="status">部分设置受到组织策略约束，保存时会校验。</p>}
-        {error && <div role="alert" className="error-banner">{error}</div>}
-        {message && <div role="status" className="success-banner">{message}</div>}
-        <fieldset disabled={busy || !snapshot} style={{ border: 0, padding: 0 }}>
-          <div className="form-grid-row">
-            {FIELDS.map(([key, label, choices]) => {
-              const options: readonly string[] | null = key === "model_reasoning_effort" ? efforts : choices;
-              const raw = snapshot ? userConfigLayer(snapshot).config[key] : undefined;
-              const complex = raw != null && typeof raw !== "string";
-              const effective = getConfigValue(snapshot?.config, key);
-              const value = draft[key] || "";
-              return (
-                <div className="form-field" key={key}>
-                  <label htmlFor={`agent-${key}`}>{label}</label>
-                  {options ? (
-                    <select id={`agent-${key}`} value={value} disabled={complex}
-                      onChange={event => setDraft(previous => ({ ...previous, [key]: event.target.value }))}>
-                      <option value="">使用默认值</option>
-                      {value && !options.includes(value) && <option value={value}>{value}（当前配置值）</option>}
-                      {options.map(option => <option key={option} value={option}>{option}</option>)}
-                    </select>
-                  ) : (
-                    <input id={`agent-${key}`} value={value} list="agent-models"
-                      onChange={event => setDraft(previous => ({ ...previous, [key]: event.target.value }))} />
-                  )}
-                  <span>当前生效：{effective == null ? "默认" : typeof effective === "string" ? effective : JSON.stringify(effective)}</span>
-                  {complex && <span>当前为自定义对象，请在配置文件中编辑。</span>}
-                </div>
-              );
-            })}
-          </div>
-        </fieldset>
-        <datalist id="agent-models">{models.map(model => <option key={model.id} value={model.model || model.id}>{model.displayName}</option>)}</datalist>
-      </div>
-      <div className="settings-section-bottom-bar">
-        <button type="button" className="primary-btn" disabled={busy || !snapshot} onClick={save}>{busy ? "处理中…" : "保存更改"}</button>
-        <button type="button" className="secondary-btn" disabled={busy} onClick={load}>重新加载</button>
-      </div>
+  return <div className="settings-scroll-container agent-configuration" aria-busy={state.loading}>
+    <div className="agent-configuration-toolbar">
+      <ConfigurationMenu id="agent-config-scope" label="配置范围" value={state.selectedScopeId}
+        emptyLabel={state.loading ? "正在加载..." : "配置范围不可用。"}
+        options={state.scopes.map(scope => ({ value: scope.id, label: scope.label, group: scope.kind === "project" ? "项目配置" : "全局配置" }))}
+        disabled={state.loading || !state.scopes.length || state.pendingKey != null}
+        onSelect={id => { if (id) { setRefreshError(null); state.selectScope(id); } }} />
+      <button type="button" className="agent-configuration-open" disabled={state.loading || !state.scope?.filePath}
+        onClick={() => void state.openConfig()}>打开 config.toml <span aria-hidden="true"><ExternalWindowIcon /></span></button>
     </div>
-  );
+    {state.loading && !state.data && <p role="status" className="card-subtitle-desc">正在加载...</p>}
+    {state.errors._load && <div role="alert" className="agent-configuration-error">{state.errors._load}
+      <button type="button" className="agent-configuration-open" disabled={state.loading} onClick={() => void state.reload()}>重新加载</button>
+    </div>}
+    {state.errors._open && <p role="alert" className="agent-configuration-error">{state.errors._open}</p>}
+    {refreshError && <p role="alert" className="agent-configuration-error">{refreshError}</p>}
+    {state.scope?.disabledReason && <p role="alert" className="agent-configuration-lock">{state.scope.disabledReason}</p>}
+    <div className="agent-configuration-rows">
+      {state.fields.filter(field => field.visible).map(field => {
+        const id = `agent-${field.key}`;
+        const disabled = state.loading || field.disabled || state.pendingKey === field.key;
+        return <div className="agent-configuration-row" key={field.key} aria-busy={state.pendingKey === field.key}>
+          <div className="agent-configuration-copy">
+            <label htmlFor={id}>{field.label}</label>
+            <div id={`${id}-description`} className="agent-configuration-description">{field.description}</div>
+            {field.lockedReason && <div className="agent-configuration-lock">{field.lockedReason}</div>}
+            {state.errors[field.key] && <div role="alert" id={`${id}-error`} className="agent-configuration-error">{state.errors[field.key]}</div>}
+          </div>
+          {field.key === "sandbox_workspace_write.network_access"
+            ? <button type="button" role="switch" id={id} aria-label={field.label} aria-checked={field.value === true}
+              aria-describedby={`${id}-description${state.errors[field.key] ? ` ${id}-error` : ""}`}
+              className="agent-configuration-switch" disabled={disabled} onClick={() => void change(field.key, field.value !== true)}><span /></button>
+            : <ConfigurationMenu id={id} label={field.label} value={field.value} disabled={disabled}
+              describedBy={`${id}-description${state.errors[field.key] ? ` ${id}-error` : ""}`}
+              options={field.options.map(option => ({ ...option, description: OPTION_DESCRIPTIONS[field.key]?.[option.value ?? ""] }))}
+              onSelect={value => void change(field.key, value)} />}
+        </div>;
+      })}
+    </div>
+  </div>;
 }

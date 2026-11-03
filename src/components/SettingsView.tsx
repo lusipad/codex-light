@@ -38,7 +38,7 @@ import {
   Search,
   Trash2,
 } from "lucide-react";
-import { tauriInvoke, tauriListen } from "../bridge";
+import { isTauriRuntime, tauriInvoke, tauriListen } from "../bridge";
 import { loadAccountSnapshot } from "../accountSnapshot";
 import {
   GRANULAR_APPROVAL_POLICY,
@@ -182,7 +182,7 @@ const SETTINGS_NAV_GROUPS: Array<{
   {
     groupTitle: "编码 (Coding)",
     items: [
-      { slug: "agent", label: "智能体与模型参数", keywords: "agent model provider reasoning approval sandbox verbosity web_search instructions 模型 推理 审批 沙盒 指令" },
+      { slug: "agent", label: "配置", keywords: "agent model provider reasoning approval sandbox verbosity web_search instructions 模型 推理 审批 沙盒 指令" },
       { slug: "code-review", label: "代码审查 (Review)", keywords: "code review pr mr diff severity 审查 评审" },
       { slug: "git-settings", label: "Git 偏好", keywords: "git branch prefix force lease pr" },
       { slug: "worktrees", label: "工作树策略", keywords: "worktrees cleanup retention 隔离 工作树" },
@@ -245,6 +245,7 @@ interface SettingsViewProps {
   appServerStatus: AppServerStatus;
   models: ModelInfo[];
   activeWorkspaceRoot?: string;
+  accountIdentity?: string;
   initialSection?: SettingsSectionSlug;
   petVisible?: boolean;
   onTogglePetVisible: (visible: boolean) => void;
@@ -268,6 +269,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   appServerStatus,
   models,
   activeWorkspaceRoot = "",
+  accountIdentity,
   initialSection = "general-settings",
   petVisible = false,
   onTogglePetVisible,
@@ -971,6 +973,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 (i) => i.slug === activeSection
               )?.label || "设置"}
             </h2>
+            {activeSection === "agent" && <p className="card-subtitle-desc">
+              配置新聊天的权限、网页访问和智能体回复{" "}
+              <a href="https://developers.openai.com/codex/config-basic" target="_blank" rel="noreferrer"
+                onClick={event => {
+                  if (isTauriRuntime()) {
+                    event.preventDefault();
+                    void tauriInvoke("open_help_link", { target: "configuration" }).catch(error => setErrorBanner(`无法打开文档：${String(error)}`));
+                  }
+                }}>了解更多</a>
+            </p>}
+            {activeSection === "agent" && errorBanner && <p role="alert" className="error-banner">{errorBanner}</p>}
           </div>
           {activeSection !== "cloud-settings" && activeSection !== "pets" && activeSection !== "computer-use" && activeSection !== "appshots" && activeSection !== "browser-use" && activeSection !== "voice" && activeSection !== "archived-chats" && activeSection !== "agent" && activeSection !== "personalization" && activeSection !== "account" && activeSection !== "profile" && activeSection !== "plugins-settings" && activeSection !== "hooks-settings" && activeSection !== "git-settings" && activeSection !== "local-environments" && activeSection !== "worktrees" && activeSection !== "code-review" && activeSection !== "import" && activeSection !== "storage" && <div className="header-right-btns">
             <button type="button" className="secondary-btn" onClick={loadConfig}>
@@ -1180,7 +1193,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
         {/* Local config compatibility surface; Work preferences require their own account API. */}
         {activeSection === "agent" && (
-          <AgentSettings models={models} onConfigUpdated={onConfigUpdated} />
+          <AgentSettings cwd={activeWorkspaceRoot || undefined} accountIdentity={accountIdentity} onConfigUpdated={onConfigUpdated} />
         )}
 
         {activeSection === "pets" && <PetsSettings state={petPreferencesState} visible={petVisible} onSetVisible={onTogglePetVisible} />}

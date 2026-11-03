@@ -8,6 +8,8 @@ import { useGitPreferences } from "./gitPreferences";
 import { useWorkspaceOpenTargets } from "./workspaceOpenTargets";
 import { loadModelCatalog } from "./modelCatalog";
 import { useModelSelection } from "./modelSelection";
+import { executionThreadConfig, readThreadExecutionPolicy, resolveConfiguredExecutionPolicy, resolvePresetExecutionPolicy, type ExecutionPolicy } from "./executionPolicy";
+import { configRead } from "./config";
 import { createNotificationDispatcher, notificationRequestCategory, shouldNotifyTurn, useNotificationPreferences, type NotificationEvent } from "./notificationPreferences";
 import { useAppearancePreferences } from "./appearancePreferences";
 import { notificationApprovalActions, notificationApprovalResponse } from "./notificationActions";
@@ -555,7 +557,9 @@ export const App: React.FC = () => {
       return next;
     });
   }, []);
-  const [permissionMode, setPermissionMode] = useState<"ask" | "auto" | "full">("ask");
+  const [permissionModes, setPermissionModes] = useState<Record<string, "custom" | "ask" | "auto" | "full">>({});
+  const threadExecutionPoliciesRef = useRef(new Map<string, ExecutionPolicy>());
+  const threadExecutionRevisionsRef = useRef(new Map<string, number>());
   const [useWorktree, setUseWorktree] = useState<boolean>(false);
   const [planMode, setPlanMode] = useState<boolean>(false);
   const planModeRef = useRef<boolean>(false);
@@ -649,7 +653,6 @@ export const App: React.FC = () => {
   const [sessionWebSearch, setSessionWebSearch] = useState<"disabled" | "cached" | "live">("cached");
   const [sessionAllowNetwork, setSessionAllowNetwork] = useState<boolean>(true);
   const [sessionVerbosity, setSessionVerbosity] = useState<"low" | "medium" | "high">("medium");
-  const [reasoningSummary, setReasoningSummary] = useState<string>("auto");
 
   const [petVisible, setPetVisible] = useState<boolean>(false);
   const petPreferencesState = usePetPreferences();
@@ -768,6 +771,45 @@ export const App: React.FC = () => {
     return workspaces.find((w) => w.active) || workspaces[0] || null;
   }, [workspaces]);
   const modelAccountIdentity = JSON.stringify(accountInfo);
+  const executionIdentityRef = useRef(modelAccountIdentity);
+  if (executionIdentityRef.current !== modelAccountIdentity) {
+    executionIdentityRef.current = modelAccountIdentity;
+    threadExecutionPoliciesRef.current.clear();
+    for (const [threadId, revision] of threadExecutionRevisionsRef.current) threadExecutionRevisionsRef.current.set(threadId, revision + 1);
+  }
+  const permissionScope = `${modelAccountIdentity}:${activeThreadId ?? `draft:${activeWorkspace?.path ?? ""}`}`;
+  const permissionMode = permissionModes[permissionScope] ?? "custom";
+  const setPermissionMode = useCallback((mode: "ask" | "auto" | "full") => {
+    setPermissionModes(previous => ({ ...previous, [permissionScope]: mode }));
+  }, [permissionScope]);
+  const captureThreadExecutionPolicy = useCallback((threadId: string, response: unknown, expectedRevision?: number) => {
+    const revision = threadExecutionRevisionsRef.current.get(threadId) ?? 0;
+    if (expectedRevision !== undefined && expectedRevision !== revision) return threadExecutionPoliciesRef.current.get(threadId);
+    threadExecutionRevisionsRef.current.set(threadId, revision + 1);
+    const resolved = readThreadExecutionPolicy(response);
+    if (resolved) threadExecutionPoliciesRef.current.set(threadId, resolved);
+    else threadExecutionPoliciesRef.current.delete(threadId);
+    return resolved;
+  }, []);
+  const resolveExecutionContext = useCallback(async (threadId: string | null, cwd: string | undefined, workspaceRoots: string[]) => {
+    const identity = executionIdentityRef.current;
+    if (threadId) {
+      let resolved = threadExecutionPoliciesRef.current.get(threadId);
+      if (!resolved) {
+        const revision = threadExecutionRevisionsRef.current.get(threadId) ?? 0;
+        const response = await callAppServer<any>("thread/resume", { threadId });
+        if (identity !== executionIdentityRef.current) throw new Error("账号已变化，请重新发送");
+        resolved = captureThreadExecutionPolicy(threadId, response, revision);
+      }
+      if (!resolved) throw new Error("尚未确认当前聊天的权限，输入已保留");
+      return { policy: permissionMode === "custom" ? resolved : resolvePresetExecutionPolicy(permissionMode, workspaceRoots, sessionAllowNetwork), summary: undefined as string | undefined, config: undefined as Record<string, unknown> | undefined };
+    }
+    const { config } = await configRead(cwd, true);
+    if (identity !== executionIdentityRef.current) throw new Error("账号已变化，请重新发送");
+    const summary = config.model_reasoning_summary;
+    if (summary != null && !["auto", "concise", "detailed", "none"].includes(String(summary))) throw new Error("无法识别推理摘要配置");
+    return { policy: permissionMode === "custom" ? resolveConfiguredExecutionPolicy(config, workspaceRoots) : resolvePresetExecutionPolicy(permissionMode, workspaceRoots, sessionAllowNetwork), summary: typeof summary === "string" ? summary : undefined, config };
+  }, [permissionMode, sessionAllowNetwork, captureThreadExecutionPolicy]);
   const modelSelection = useModelSelection({
     models, modelsLoading, connected: appServerStatus.connected,
     threadId: activeThreadId, cwd: activeWorkspace?.path,
@@ -1150,12 +1192,6 @@ export const App: React.FC = () => {
     return dispatchNotification({ ...event, accountKey, createdAt: event.createdAt ?? Date.now(),
       valid: () => notificationAccountRef.current === accountKey && event.valid?.() !== false });
   }, [dispatchNotification]);
-  const applyNotifyPrefs = useCallback((prefs: any) => {
-    if (typeof prefs?.reasoningSummary === "string" && prefs.reasoningSummary) {
-      setReasoningSummary(prefs.reasoningSummary);
-    }
-  }, []);
-
   useEffect(() => {
     let cancelled = false;
     const revision = composerEnterRevisionRef.current;
@@ -1210,12 +1246,11 @@ export const App: React.FC = () => {
         if (prefs && typeof prefs === "object") {
           if (prefs.customPersonaPrompt) setCustomInstructions(prefs.customPersonaPrompt);
           if (prefs.toneStyle) setToneStyle(prefs.toneStyle);
-          applyNotifyPrefs(prefs);
         }
       })
       .catch(() => {});
 
-  }, [applyNotifyPrefs]);
+  }, []);
 
   // 旧的挂载副作用（确保只执行一次）
   useEffect(() => {
@@ -1306,6 +1341,7 @@ export const App: React.FC = () => {
         const eventTurnId = params?.turnId ?? params?.turn?.id ?? params?.turn_id;
         if (!replay && method === "thread/settings/updated" && typeof eventThreadId === "string" && params?.threadSettings) {
           applyModelThreadSettings(eventThreadId, params.threadSettings);
+          captureThreadExecutionPolicy(eventThreadId, params);
         }
         if (!replay && method === "item/completed" && params?.item?.type === "userMessage") {
           void recordModelUserMessage(eventThreadId, eventTurnId, params.item.id).catch(error => {
@@ -2201,6 +2237,7 @@ export const App: React.FC = () => {
       }
       pendingNewThreadProjectRef.current = project ?? null;
       pendingProjectlessRef.current = projectless;
+      setPermissionModes(previous => Object.fromEntries(Object.entries(previous).filter(([key]) => !key.includes(":draft:"))));
       threadRequestRef.current += 1;
       threadHistoryBufferRef.current.discard();
       finishedTurnIdsRef.current.clear();
@@ -2228,6 +2265,7 @@ export const App: React.FC = () => {
   );
 
   const selectThread = useCallback(async (threadId: string) => {
+    const executionIdentity = executionIdentityRef.current;
     const modelHydration = beginThreadModelHydration(threadId);
     const reviewHistorySnapshot = reviewResultsRef.current!.getRuns().filter(run => run.threadId === threadId);
     pendingNewThreadProjectRef.current = null;
@@ -2236,7 +2274,7 @@ export const App: React.FC = () => {
     if (navigation !== navigationRequestRef.current) return;
     const request = ++threadRequestRef.current;
     const lifecycle = turnLifecycleRef.current;
-    const isCurrent = () => isCurrentThreadRequest(request, threadRequestRef.current, threadId, activeThreadIdRef.current);
+    const isCurrent = () => executionIdentity === executionIdentityRef.current && isCurrentThreadRequest(request, threadRequestRef.current, threadId, activeThreadIdRef.current);
     activeThreadIdRef.current = threadId;
     attachmentScopeRef.current = `thread:${threadId}`;
     threadHistoryBufferRef.current.begin(request, threadId);
@@ -2269,9 +2307,11 @@ export const App: React.FC = () => {
       if (!isCurrent()) return;
       hydrateThreadModel(threadId, fullRes, modelHydration);
       try {
+        const revision = threadExecutionRevisionsRef.current.get(threadId) ?? 0;
         const settings = await callAppServer<any>("thread/resume", { threadId });
         if (!isCurrent()) return;
         hydrateThreadModel(threadId, settings, modelHydration);
+        captureThreadExecutionPolicy(threadId, settings, revision);
       } catch (error) {
         // A newly created thread has no rollout yet. Its thread/start settings remain authoritative.
         console.warn("会话速度档恢复未确认", error);
@@ -2302,8 +2342,10 @@ export const App: React.FC = () => {
         }
       } catch {
         if (!isCurrent()) return;
+        const revision = threadExecutionRevisionsRef.current.get(threadId) ?? 0;
         const resumeRes = await callAppServer<any>("thread/resume", { threadId });
         if (!isCurrent()) return;
+        captureThreadExecutionPolicy(threadId, resumeRes, revision);
         loadedTurns = normalizeTurnsFromThread(resumeRes);
       }
       if (!isCurrent()) return;
@@ -2367,7 +2409,7 @@ export const App: React.FC = () => {
     } catch {
       // ignore goal read failures
     }
-  }, [handleSelectWorkspace, hydrateThreadModel, beginThreadModelHydration]);
+  }, [handleSelectWorkspace, hydrateThreadModel, beginThreadModelHydration, captureThreadExecutionPolicy]);
 
   const modelAccountIdentityRef = useRef(modelAccountIdentity);
   useEffect(() => {
@@ -2570,16 +2612,15 @@ export const App: React.FC = () => {
       }
       let context = reviewContextRef.current;
       let navigation = navigationRequestRef.current;
-      const isCurrent = () => context === reviewContextRef.current && navigation === navigationRequestRef.current;
+      const identity = executionIdentityRef.current;
+      const isCurrent = () => identity === executionIdentityRef.current && context === reviewContextRef.current && navigation === navigationRequestRef.current;
       reviewStartPendingRef.current = true;
       setReviewBusy(true);
       try {
         const configuration = getModelConfiguration();
-        const approvalPolicy = permissionMode === "full" ? "never" : "on-request";
-        const approvalsReviewer = permissionMode === "auto" ? "auto_review" : "user";
-        const sandboxPolicy = permissionMode === "full"
-          ? { type: "dangerFullAccess" }
-          : { type: "workspaceWrite", networkAccess: sessionAllowNetwork };
+        const execution = await resolveExecutionContext(inline ? currentId : null, cwd, [cwd]);
+        if (!isCurrent()) return;
+        let { approvalPolicy, approvalsReviewer, sandboxPolicy, sandbox } = execution.policy;
         let prompt = "";
         let resolvedMergeBase: string | null = null;
         if (req.kind === "branch") {
@@ -2601,24 +2642,33 @@ export const App: React.FC = () => {
             model: configuration.model,
             approvalPolicy,
             approvalsReviewer,
-            sandbox: permissionMode === "full" ? "danger-full-access" : "workspace-write",
+            sandbox,
+            config: executionThreadConfig(execution.policy, execution.config, [cwd]),
             ...(quickReview ? { threadSource: "code_review" } : {}),
           });
           threadId = threadRes?.threadId || threadRes?.thread?.id;
           if (!threadId) throw new Error("无法为审查创建会话");
           if (!isCurrent()) return;
           hydrateThreadModel(threadId, { ...threadRes, ...configuration });
+          const actualPolicy = captureThreadExecutionPolicy(threadId, threadRes);
+          if (!actualPolicy) throw new Error("服务未确认新聊天的权限，未启动审查");
+          ({ approvalPolicy, approvalsReviewer, sandboxPolicy, sandbox } = actualPolicy);
           setSidebarCreatedThread({ id: threadId, cwd, projectId: threadRes?.thread?.projectId });
         }
         if (!isCurrent()) return;
         // Select and finish history loading before sending, so fast turn events
         // enter the existing visible-thread notification merger.
+        const permissionsBeforeSelect = JSON.stringify(threadExecutionPoliciesRef.current.get(threadId));
         const selecting = selectThread(threadId);
         navigation = navigationRequestRef.current;
         await selecting;
         if (navigation !== navigationRequestRef.current || activeThreadIdRef.current !== threadId ||
           reviewContextRef.current.cwd !== cwd || reviewContextRef.current.route !== "thread") return;
         context = reviewContextRef.current;
+        const currentPolicy = threadExecutionPoliciesRef.current.get(threadId);
+        if (!currentPolicy) throw new Error("聊天权限尚未确认，未启动审查");
+        if (permissionMode === "custom") ({ approvalPolicy, approvalsReviewer, sandboxPolicy } = currentPolicy);
+        else if (JSON.stringify(currentPolicy) !== permissionsBeforeSelect) throw new Error("聊天权限已变化，请重新启动审查");
         if (quickReview) {
           const attempt = reviewResultsRef.current!.begin(threadId, cwd, [cwd]);
           try {
@@ -2626,6 +2676,7 @@ export const App: React.FC = () => {
               threadId, cwd, turnTrigger: "code_review",
               input: [{ type: "text", text: prompt, text_elements: [] }],
               approvalPolicy, approvalsReviewer, sandboxPolicy,
+              summary: execution.summary,
               collaborationMode: null,
               model: configuration.model,
               effort: configuration.reasoningEffort,
@@ -2698,6 +2749,8 @@ export const App: React.FC = () => {
       appServerStatus.connected,
       getModelConfiguration,
       hydrateThreadModel,
+      resolveExecutionContext,
+      captureThreadExecutionPolicy,
       selectedModelName,
       gitCommits,
       gitContextCwd,
@@ -2799,6 +2852,8 @@ export const App: React.FC = () => {
     try { configuration = getModelConfiguration(); }
     catch (error) { showAppToast(`无法发送：${String(error)}`, "error"); return; }
     const sendRequest = threadRequestRef.current;
+    const sendIdentity = executionIdentityRef.current;
+    const sendNavigation = navigationRequestRef.current;
     sendStartPendingRef.current.add(sendRequest);
     const tempTurnId = `pending-${Date.now()}`;
     pendingTurnIdRef.current = tempTurnId;
@@ -2828,20 +2883,11 @@ export const App: React.FC = () => {
       const projectStartParams = currentThreadId ? {} : projectless ? { projectId: null, runtimeWorkspaceRoots: undefined } : threadStartProjectParams(pendingProject, targetCwd || undefined);
       const turnWorkspaceRoots = projectStartParams.runtimeWorkspaceRoots;
 
-      const sandboxMode =
-        permissionMode === "full"
-          ? "danger-full-access"
-          : "workspace-write";
-      // AskForApproval: untrusted | on-request | granular | never
-      const approvalPolicy =
-        permissionMode === "full" ? "never" : "on-request";
-      // ApprovalsReviewer: user | auto_review | guardian_subagent
-      const approvalsReviewer =
-        permissionMode === "auto" ? "auto_review" : "user";
-      const sandboxPolicy =
-        permissionMode === "full"
-          ? { type: "dangerFullAccess" }
-          : { type: "workspaceWrite", networkAccess: sessionAllowNetwork };
+      if (sendRequest !== threadRequestRef.current || sendIdentity !== executionIdentityRef.current || sendNavigation !== navigationRequestRef.current) return;
+      const threadCwd = currentThreadId ? threadsRef.current.find(thread => thread.id === currentThreadId)?.cwd || workspaceHintsRef.current[currentThreadId] : undefined;
+      const execution = await resolveExecutionContext(currentThreadId, targetCwd || threadCwd, turnWorkspaceRoots ?? (threadCwd ? [threadCwd] : targetCwd ? [targetCwd] : []));
+      if (sendRequest !== threadRequestRef.current || sendIdentity !== executionIdentityRef.current || sendNavigation !== navigationRequestRef.current) return;
+      let { approvalPolicy, approvalsReviewer, sandboxPolicy, sandbox: sandboxMode } = execution.policy;
 
       if (!currentThreadId) {
         const startRes = await callAppServer<any>("thread/start", {
@@ -2851,6 +2897,7 @@ export const App: React.FC = () => {
           approvalPolicy,
           approvalsReviewer,
           sandbox: sandboxMode,
+          config: executionThreadConfig(execution.policy, execution.config, turnWorkspaceRoots ?? (targetCwd ? [targetCwd] : [])),
         });
         const createdThreadId =
           startRes?.threadId ||
@@ -2858,6 +2905,10 @@ export const App: React.FC = () => {
           startRes?.conversationId;
         if (typeof createdThreadId !== "string" || !createdThreadId) throw new Error("thread/start 未返回会话 ID");
         currentThreadId = createdThreadId;
+        if (sendRequest !== threadRequestRef.current || sendIdentity !== executionIdentityRef.current || sendNavigation !== navigationRequestRef.current) return;
+        const actualPolicy = captureThreadExecutionPolicy(createdThreadId, startRes);
+        if (!actualPolicy) throw new Error("服务未确认新聊天的权限，输入已保留");
+        ({ approvalPolicy, approvalsReviewer, sandboxPolicy } = actualPolicy);
         hydrateThreadModel(createdThreadId, { ...startRes, ...configuration });
         pendingNewThreadProjectRef.current = null;
         pendingProjectlessRef.current = false;
@@ -2875,11 +2926,16 @@ export const App: React.FC = () => {
         refreshThreads();
       }
 
+      const permissionRevision = threadExecutionRevisionsRef.current.get(currentThreadId!) ?? 0;
+      const observedPermissions = JSON.stringify(threadExecutionPoliciesRef.current.get(currentThreadId!));
       // 计划模式：走真实 thread/settings/update（新会话也在首个 turn 前应用）
       if (planMode && currentThreadId) {
         await applyCollaborationMode(currentThreadId, true, configuration);
       }
 
+      if (sendRequest !== threadRequestRef.current || sendIdentity !== executionIdentityRef.current || sendNavigation !== navigationRequestRef.current) return;
+      if (permissionRevision !== (threadExecutionRevisionsRef.current.get(currentThreadId!) ?? 0) &&
+        JSON.stringify(threadExecutionPoliciesRef.current.get(currentThreadId!)) !== observedPermissions) throw new Error("聊天权限已变化，输入已保留，请重新发送");
       if (attachedFiles.length > 0) {
         pendingAttachmentSaveRef.current = {
           threadId: currentThreadId!,
@@ -2895,7 +2951,7 @@ export const App: React.FC = () => {
         input: nativeInputs,
         model: configuration.model,
         effort: configuration.reasoningEffort,
-        summary: reasoningSummary || "auto",
+        summary: execution.summary,
         approvalPolicy,
         approvalsReviewer,
         sandboxPolicy,
@@ -2956,6 +3012,8 @@ export const App: React.FC = () => {
     permissionMode,
     getModelConfiguration,
     hydrateThreadModel,
+    resolveExecutionContext,
+    captureThreadExecutionPolicy,
     trackModelTurn,
     selectedModelName,
     reasoningEffort,
@@ -2994,6 +3052,10 @@ export const App: React.FC = () => {
     async (objective: string) => {
       const trimmed = objective.trim();
       if (!trimmed) return;
+      const request = threadRequestRef.current;
+      const identity = executionIdentityRef.current;
+      const navigation = navigationRequestRef.current;
+      const isCurrent = () => request === threadRequestRef.current && identity === executionIdentityRef.current && navigation === navigationRequestRef.current;
       try {
         let threadId = activeThreadIdRef.current;
         if (!threadId) {
@@ -3001,30 +3063,44 @@ export const App: React.FC = () => {
           const pendingProject = projectless ? null : resolveNewThreadProject(
             pendingNewThreadProjectRef.current, sidebarProjectMembership, activeWorkspace?.path,
           );
-          const targetCwd = projectless ? "" : pendingProject?.rootPaths[0] || activeWorkspace?.path || "";
+          let targetCwd = projectless ? "" : pendingProject?.rootPaths[0] || activeWorkspace?.path || "";
           const configuration = getModelConfiguration();
+          if (pendingProject && (!pendingProject.serverProjectId || pendingProject.rootPaths.length === 0)) throw new Error("暂时无法在此项目中新建聊天，请重试。");
+          if (useWorktree && targetCwd) {
+            const worktree = await tauriInvoke<{ path: string }>("git_worktree_create", { sourceCwd: targetCwd, startingMode: "HEAD", branchName: null, ownerThreadId: null });
+            if (!isCurrent()) return;
+            if (!worktree?.path) throw new Error("Worktree 创建未返回目录，目标已保留");
+            targetCwd = worktree.path;
+          }
+          const projectStartParams = projectless ? { projectId: null, runtimeWorkspaceRoots: undefined } : threadStartProjectParams(pendingProject, targetCwd || undefined);
+          const execution = await resolveExecutionContext(null, targetCwd || undefined, projectStartParams.runtimeWorkspaceRoots ?? (targetCwd ? [targetCwd] : []));
+          if (!isCurrent()) return;
           const startRes = await callAppServer<any>("thread/start", {
             cwd: targetCwd || undefined,
-            ...(projectless ? { projectId: null } : threadStartProjectParams(pendingProject, targetCwd || undefined)),
+            ...projectStartParams,
             model: configuration.model,
-            approvalPolicy: permissionMode === "full" ? "never" : "on-request",
-            approvalsReviewer: permissionMode === "auto" ? "auto_review" : "user",
-            sandbox:
-              permissionMode === "full" ? "danger-full-access" : "workspace-write",
+            approvalPolicy: execution.policy.approvalPolicy,
+            approvalsReviewer: execution.policy.approvalsReviewer,
+            sandbox: execution.policy.sandbox,
+            config: executionThreadConfig(execution.policy, execution.config, projectStartParams.runtimeWorkspaceRoots ?? (targetCwd ? [targetCwd] : [])),
           });
           threadId = startRes?.threadId || startRes?.thread?.id || null;
           if (!threadId) throw new Error("无法为目标创建会话");
+          if (!isCurrent()) return;
+          if (!captureThreadExecutionPolicy(threadId, startRes)) throw new Error("服务未确认新聊天的权限，目标已保留");
           hydrateThreadModel(threadId, { ...startRes, ...configuration });
           pendingNewThreadProjectRef.current = null;
           pendingProjectlessRef.current = false;
           moveHomePromptToThread(threadId);
           activeThreadIdRef.current = threadId;
+          if (targetCwd) setWorkspaceHints(previous => ({ ...previous, [threadId!]: targetCwd }));
           setSidebarCreatedThread({ id: threadId, cwd: targetCwd || undefined, projectId: startRes?.thread?.projectId });
           setActiveThreadId(threadId);
           setActiveRoute("thread");
           refreshThreads();
         }
         const goal = await goalSet(threadId, { objective: trimmed, status: "active" });
+        if (!isCurrent() || activeThreadIdRef.current !== threadId) return;
         setServerGoal(goal);
         setShowGoalModal(false);
         // 官方协议：设定目标后发送 `/goal <objective>` 触发服务端自主推进
@@ -3039,6 +3115,9 @@ export const App: React.FC = () => {
       sidebarProjectMembership,
       getModelConfiguration,
       hydrateThreadModel,
+      resolveExecutionContext,
+      captureThreadExecutionPolicy,
+      useWorktree,
       selectedModelName,
       permissionMode,
       refreshThreads,
@@ -3266,9 +3345,19 @@ export const App: React.FC = () => {
     setQueueMutationVersion(v => v + 1);
     try {
       const configuration = getModelConfiguration();
+      const identity = executionIdentityRef.current;
+      const cwd = threadsRef.current.find(thread => thread.id === tid)?.cwd || workspaceHintsRef.current[tid];
+      const execution = await resolveExecutionContext(tid, cwd, cwd ? [cwd] : []);
+      if (identity !== executionIdentityRef.current || !isCurrentThreadRequest(request, threadRequestRef.current, tid, activeThreadIdRef.current)) return;
       await callAppServer("thread/settings/update", { threadId: tid, model: configuration.model,
-        effort: configuration.reasoningEffort, serviceTier: configuration.serviceTier });
-      if (!isCurrentThreadRequest(request, threadRequestRef.current, tid, activeThreadIdRef.current)) return;
+        effort: configuration.reasoningEffort, serviceTier: configuration.serviceTier,
+        approvalPolicy: execution.policy.approvalPolicy, approvalsReviewer: execution.policy.approvalsReviewer, sandboxPolicy: execution.policy.sandboxPolicy });
+      if (identity !== executionIdentityRef.current || !isCurrentThreadRequest(request, threadRequestRef.current, tid, activeThreadIdRef.current)) return;
+      const revision = threadExecutionRevisionsRef.current.get(tid) ?? 0;
+      const confirmed = await callAppServer<any>("thread/resume", { threadId: tid });
+      if (identity !== executionIdentityRef.current || !isCurrentThreadRequest(request, threadRequestRef.current, tid, activeThreadIdRef.current)) return;
+      const confirmedPolicy = captureThreadExecutionPolicy(tid, confirmed, revision);
+      if (!confirmedPolicy || JSON.stringify(confirmedPolicy) !== JSON.stringify(execution.policy)) throw new Error("队列权限更新未得到服务确认");
       await trackModelTurn(tid, configuration, () => callAppServer("thread/queue/start", {
         threadId: tid,
         queuedSubmissionId: first.id,
@@ -3283,7 +3372,7 @@ export const App: React.FC = () => {
       queueMutationThreadsRef.current.delete(tid);
       setQueueMutationVersion(v => v + 1);
     }
-  }, [followupQueue, isStreaming, handleSteerTurn, refreshThreadQueue, showAppToast, getModelConfiguration, trackModelTurn]);
+  }, [followupQueue, isStreaming, handleSteerTurn, refreshThreadQueue, showAppToast, getModelConfiguration, trackModelTurn, resolveExecutionContext, captureThreadExecutionPolicy]);
 
   const handleEnqueueFollowup = useCallback(async () => {
     const tid = activeThreadIdRef.current;
@@ -5198,6 +5287,7 @@ export const App: React.FC = () => {
         ) : activeRoute === "settings" ? (
           <div className="settings-full-route-view">
             <SettingsView
+              accountIdentity={modelAccountIdentity}
               archiveViewProps={{
                 refreshToken: `${archiveRefreshTick}:${appServerStatus.connected}`,
                 onSelectThread: selectThread,

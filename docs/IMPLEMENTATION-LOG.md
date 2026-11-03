@@ -1750,3 +1750,11 @@ PS5中文脚本首败已兼容修复；正文open误当审批与同连接复用�
 复核修复多会话pending提前释放、旧resume覆盖保存和忽略目录默认tier；补同认证方式换账号、ABA旧读写/旧turn隔离。两版CLI真实隔离零轮次配置/CAS、离线样本后的model与effort重启恢复通过；tier返回与持久化存在实际差异，保留不匹配观察，不报全部恢复通过。旧profile不受当前app-server支持，明确失败不改根默认；Work远程链未用本地配置替代。
 
 最终完整标准、全Rust293项（4线程）与EXE/MSI/NSIS构建退出0；246项产品输入与原生构建helper指纹一致。首轮QuickChat旧夹具缺新增状态已保留断言修复，失败日志独立保存。生产浏览器受控验证swift、/model搜索、effort保留、点击不记最近与Escape焦点，不冒充原生或官方像素。见[16.05B待验](antigravity/acceptance/16-05B.md)。原生IME/多窗、完整Work/gates、速度全循环/标签、官方配对像素与用户验收保留未完。按用户授权，大阶段验证完成后提交，远程无分叉时推送；该授权不降低验收标准。
+
+## 2026-11-03：16.06B 本地配置范围与真实执行权限
+
+先按新Store真实路由/中文/六项逐控件合同纠正Work错配，再实现项目/用户/管理员scope、即时保存、真实来源锁定、版本/requirements选项与行错误。用户CAS RPC，项目RPC已双CLI证实拒写，因此采用官方独立文本路径：白名单、保注释、原文/version、Windows独占与路径身份、持久化读回。复用现有依赖；移除模型/推理/reviewer旧表单、整表保存与App旧全局摘要状态。
+
+custom由有效config和服务真实会话权限驱动，显式preset独立，send/goal/review/queue/steer共用解析。审查P1旧resume覆盖新只读权限已先复现后修复，按thread revision/账号保护，补selectThread两处/fallback/Plan/review/queue竞态回归。首次Cargo类型错误和项目注释回归首败留证，原断言保留后专项六项通过。浏览器验证生产组件/真实hook，宿主与数据受控注入，不改真实配置/不发模型turn；宽窄仅容器，不声称原生断点或官方像素。最终标准与构建结果见[16.06B待验表](antigravity/acceptance/16-06B.md)，尚在执行时不提前记通过。项目持久写非断电事务，Work/gates、完整旧preset、原生/IME/多窗/官方像素与用户验收仍未完成。
+
+16.06B最终完整标准（非Fast）、全Rust299项（4线程）和EXE/MSI/NSIS均退出0，250项产品输入及原生helper指纹稳定；五项许可sidecar哈希匹配。首轮六项旧夹具失败保留并适配真实状态/异步和摘要配置，最终完整重跑通过；不删除原行为断言。官方/原生交互/像素与用户验收未完。下一[16.07B](antigravity/specs/16-07-next-closure.md)仅完成固定新包只读取证，分别处理本机AGENTS.md、账号同步指令与Memory，不混写或强开gate。

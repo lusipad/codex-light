@@ -132,3 +132,9 @@ Profile真实写服务尚未桥接，撤下示例表单，以真实账号只读�
 先补[Windows原生合同](../../antigravity/specs/16-04B-native.md)、[真实配置补证](../../antigravity/specs/16-04B-storage.md)及[固定48kHz音频合同](../../antigravity/specs/16-04B-audio.md)，再接稳定ID/账号epoch/请求身份、WinRT回调与精确撤回。复用既有broker与真实desktop配置版本/读回；MSVC+Windows SDK局部适配无新依赖。导入真实解码→PCM/RIFF→SHA命名副本，未复制分发官方声音；默认/经典依赖本机固定Store资源，许可及独立安装可用性未解决。
 
 [16.04B待验记录](../../antigravity/acceptance/16-04B.md)保留PS5/并发Rust握手/旧夹具和搜索探针首败。补请求实例nonce，实际写入前拒绝旧通知；最终全Rust290（4线程）、完整标准、EXE/MSI/NSIS退出0，244产品输入及构建helper指纹稳定。搜索仅修探针对完成/最终结果顺序的误判，严格文件断言保留，两CLI实测通过。浏览器WAV真实48k重采样通过，其他宿主桥注入，非原生音响或OS验收。真实中心交互、审批先导航差异、COM冷启动、only-QuickChat/安装标识、reply、Dot/远程服务及像素仍有缺口；整分区未验收。下一[16.05B合同](../../antigravity/specs/16-05-next-closure.md)已准备。
+
+## 2026-11-03 — 16.06B 本地配置与发送权限阶段
+
+[16.06B合同](../../antigravity/specs/16-06B-next-closure.md)纠正旧Work路由归属；真实本地ConfigurationPanel六项、项目/用户/管理员、即时CAS写读与条件网络接通，未知/管理来源锁定。用户RPC与项目保注释文本独立，后者按双CLI真实项目拒写证据适配，无新依赖。新聊天有效config、已有thread权威权限与显式preset分开；旧resume权限覆盖P1加入真实生产回归后以revision/identity修复。见[待验表](../../antigravity/acceptance/16-06B.md)，最终结果单独登记，不以浏览器夹具或构建代替官方、原生交互与像素验收。
+
+16.06B最终完整标准、全Rust299、原生EXE/MSI/NSIS退出0，250产品输入/helper稳定；首轮旧夹具失败与修正保留。阶段自验完成，原生交互、官方配对像素和用户验收未完成，整分区不记已验收。
