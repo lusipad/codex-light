@@ -14,13 +14,15 @@ $library = Join-Path $output 'desktop_notifications.lib'
 # needed for MSVC's vcvars environment, never accept application/user content here.
 if (($source + $object + $library + $vcvars).Contains('"')) { throw 'Build paths cannot contain double quotes' }
 $batch = Join-Path $output 'build-desktop-notifications.cmd'
+# C++/WinRT needs the standard C++20 coroutine path: MSVC 14.51 rejects
+# its C++17 fallback to experimental/coroutine. Keep both compiles aligned.
 $testCommands = ''
 if ($Test) {
     $testSource = Join-Path $repository 'src-tauri/native/desktop_notifications_test.cpp'
     $testObject = Join-Path $output 'desktop_notifications_test.obj'
     $testExe = Join-Path $output 'desktop_notifications_test.exe'
     $testCommands = @"
-cl.exe /nologo /std:c++17 /EHsc /O2 /MD /utf-8 "$testSource" /Fo"$testObject" /Fe"$testExe" /link windowsapp.lib ole32.lib propsys.lib shell32.lib uuid.lib
+cl.exe /nologo /std:c++20 /EHsc /O2 /MD /utf-8 "$testSource" /Fo"$testObject" /Fe"$testExe" /link windowsapp.lib ole32.lib propsys.lib shell32.lib uuid.lib
 if errorlevel 1 exit /b %errorlevel%
 "$testExe"
 if errorlevel 1 exit /b %errorlevel%
@@ -30,7 +32,7 @@ if errorlevel 1 exit /b %errorlevel%
 @echo off
 call "$vcvars" >nul
 if errorlevel 1 exit /b %errorlevel%
-cl.exe /nologo /std:c++17 /EHsc /O2 /MD /utf-8 /c "$source" /Fo"$object"
+cl.exe /nologo /std:c++20 /EHsc /O2 /MD /utf-8 /c "$source" /Fo"$object"
 if errorlevel 1 exit /b %errorlevel%
 lib.exe /nologo /OUT:"$library" "$object"
 if errorlevel 1 exit /b %errorlevel%

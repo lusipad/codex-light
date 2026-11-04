@@ -60,6 +60,10 @@ jobs:
       - name: Frontend Type-Check & Build
         run: npm run build
 
+      - name: Verify Native Notification Adapter
+        shell: pwsh
+        run: powershell.exe -NoProfile -File scripts/build-desktop-notifications.ps1 -OutDir "$env:RUNNER_TEMP/native-notifications" -Test
+
       - name: Run Backend Unit Tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --verbose
 
