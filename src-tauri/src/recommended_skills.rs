@@ -985,6 +985,8 @@ mod recommended_skills_tests {
         fn new() -> Self {
             let root = std::env::temp_dir()
                 .join(format!("codex-recommended-skills-{}", uuid::Uuid::new_v4()));
+            fs::create_dir_all(&root).unwrap();
+            let root = PathBuf::from(path_text(&fs::canonicalize(&root).unwrap()));
             let source = root.join("remote");
             fs::create_dir_all(&source).unwrap();
             git(Some(&source), &["init", "-b", "main"]).unwrap();
@@ -1020,6 +1022,10 @@ mod recommended_skills_tests {
     }
     impl Drop for Fixture {
         fn drop(&mut self) {
+            let root = fs::canonicalize(&self.root).unwrap();
+            let temp = fs::canonicalize(std::env::temp_dir()).unwrap();
+            assert!(root.is_absolute() && root.starts_with(temp));
+            assert!(root.file_name().unwrap().to_string_lossy().starts_with("codex-recommended-skills-"));
             let _ = fs::remove_dir_all(&self.root);
         }
     }

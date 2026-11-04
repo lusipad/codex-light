@@ -45,3 +45,5 @@ CI镜像windows-2025-vs2026，MSVC路径14.51.36231；最新日志2026-11-03T23:
 - `cargo test --manifest-path src-tauri/Cargo.toml --verbose`退出0；463单测通过，0失败/忽略/过滤，二进制及doc-tests均0用例通过。使用既有隔离target与RUST_TEST_THREADS=4；并未将局部分组测试当作此次全量测试。
 - git diff --check通过。无新增依赖，无通知功能或协议改动；没有以弃用静音宏隐藏错误。
 - 提交时GitHub MSVC14.51与云端安装包尚待新run验证；本地14.50通过不表示CI已绿，最终远端状态应以对应提交的Actions页面为准。未重复未改动的前端专项和原生GUI验收。
+
+后续实际追踪run41747410523：新通知SDK编译/执行成功，解除原编译阻断；完整Rust测试暴露了11项路径/编码失败，说明整轮尚未通过，详见[第二层诊断与修复](ci-runner-paths-20261104.md)。

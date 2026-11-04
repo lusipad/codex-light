@@ -750,11 +750,11 @@ mod tests {
             std::fs::read_to_string(root.join("count.txt")).unwrap(),
             "once"
         );
+        // Windows TEMP can use an 8.3 alias while PowerShell reports its long path.
+        let observed_cwd = std::fs::read_to_string(root.join("cwd.txt")).unwrap();
         assert_eq!(
-            std::fs::read_to_string(root.join("cwd.txt"))
-                .unwrap()
-                .trim(),
-            root.to_string_lossy()
+            std::fs::canonicalize(observed_cwd.trim()).unwrap(),
+            std::fs::canonicalize(&root).unwrap()
         );
         assert!(manager.authorize("window-b", "action").is_err());
         manager.close_owner("window-a").unwrap();
@@ -1210,7 +1210,9 @@ mod tests {
         let id = format!("terminal-setup-{}", uuid::Uuid::new_v4());
         let (sink, receiver) = events();
         #[cfg(windows)]
-        let script = "[Console]::WriteLine('ENV=' + $env:CODEX_PARITY_SETUP); if ($null -eq $env:COLORTERM) { [Console]::WriteLine('UNSET') }";
+        // Exercise the English runner's OEM baseline, then make this Unicode
+        // output fixture deterministic without changing the user's shell settings.
+        let script = "[Console]::OutputEncoding = [Text.Encoding]::GetEncoding(437); [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); [Console]::WriteLine('ENV=' + $env:CODEX_PARITY_SETUP); if ($null -eq $env:COLORTERM) { [Console]::WriteLine('UNSET') }";
         #[cfg(not(windows))]
         let script = "printf 'ENV=%s\\n' \"$CODEX_PARITY_SETUP\"; test -z \"${COLORTERM+x}\" && printf 'UNSET\\n'";
         let info = manager

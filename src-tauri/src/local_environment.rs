@@ -254,16 +254,26 @@ pub fn list(cwd: &str) -> Result<EnvironmentList, String> {
     Ok(EnvironmentList { environments, next_file_name: next_name(&roots[0])?, default_path: default })
 }
 fn locate(cwd: &str, requested: &str) -> Result<(PathBuf, PathBuf, String), String> {
-    if !Path::new(requested).is_absolute() { return Err("环境配置必须使用完整路径。".into()); }
-    let file = Path::new(requested).file_name().and_then(|file| file.to_str()).ok_or("环境文件名无效。")?.to_owned();
+    let requested = Path::new(requested);
+    if !requested.is_absolute() { return Err("环境配置必须使用完整路径。".into()); }
+    let invalid = "环境文件必须位于工作区或仓库边界内祖先的环境目录，且不能是符号链接。";
+    if requested.components().any(|part| matches!(part, std::path::Component::ParentDir)) { return Err(invalid.into()); }
+    let file = requested.file_name().and_then(|file| file.to_str()).ok_or("环境文件名无效。")?.to_owned();
+    let environment_dir = requested.parent().ok_or(invalid)?;
+    let codex_dir = environment_dir.parent().ok_or(invalid)?;
+    if !same_path(environment_dir.file_name().and_then(|name| name.to_str()).unwrap_or(""), "environments")
+        || !same_path(codex_dir.file_name().and_then(|name| name.to_str()).unwrap_or(""), ".codex") { return Err(invalid.into()); }
+    // The config and its directories may not exist yet. Resolve only the existing
+    // workspace prefix so Windows 8.3 aliases retain the same allowed identity.
+    let definition = workspace(&codex_dir.parent().ok_or(invalid)?.to_string_lossy())?;
+    let requested = normalized(&definition.join(".codex").join("environments").join(&file));
     let roots = discovery_roots(cwd)?;
-    let requested = normalized(Path::new(requested));
     for definition in &roots {
         if let Ok(candidate) = config_path(&normalized(definition), &file) {
             if same_path(&normalized(&candidate), &requested) { return Ok((roots[0].clone(), definition.clone(), file)); }
         }
     }
-    Err("环境文件必须位于工作区或仓库边界内祖先的环境目录，且不能是符号链接。".into())
+    Err(invalid.into())
 }
 pub fn read_config(cwd: &str, path: &str) -> Result<EnvironmentSnapshot, String> {
     let (root, definition, file) = locate(cwd, path)?;
@@ -695,6 +705,40 @@ mod tests {
         assert!(!missing.exists); assert!(missing.expected_content.is_none()); assert!(!root.join(".codex").exists());
         let mut deep = root.clone(); for _ in 0..51 { deep = deep.join("d"); } fs::create_dir_all(&deep).unwrap();
         assert_eq!(discovery_roots(deep.to_str().unwrap()).unwrap().len(), 50);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn local_environment_short_path_missing_read_and_first_save_preserve_boundaries() {
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+        #[link(name = "kernel32")]
+        extern "system" { fn GetShortPathNameW(long: *const u16, short: *mut u16, size: u32) -> u32; }
+        let fixture = Fixture::new();
+        let root = fixture.repository("long-workspace-name");
+        let long = fs::canonicalize(&root).unwrap();
+        let input: Vec<u16> = long.as_os_str().encode_wide().chain(Some(0)).collect();
+        let size = unsafe { GetShortPathNameW(input.as_ptr(), std::ptr::null_mut(), 0) };
+        assert!(size > 0);
+        let mut buffer = vec![0; size as usize];
+        let written = unsafe { GetShortPathNameW(input.as_ptr(), buffer.as_mut_ptr(), size) };
+        assert!(written > 0 && written < size);
+        let short = PathBuf::from(std::ffi::OsString::from_wide(&buffer[..written as usize]));
+        // A real 8.3 alias is required to exercise the runner's differing spelling.
+        assert!(!same_path(&long.to_string_lossy(), &short.to_string_lossy()), "fixture volume must provide an 8.3 alias");
+        assert_eq!(fs::canonicalize(&short).unwrap(), long);
+        let long_config = long.join(".codex/environments/environment.toml");
+        let short_config = short.join(".codex/environments/environment.toml");
+        for cwd in [&long, &short] { for requested in [&long_config, &short_config] {
+            let result = read_config(cwd.to_str().unwrap(), requested.to_str().unwrap()).unwrap();
+            assert!(!result.exists); assert!(result.expected_content.is_none());
+        } }
+        assert!(!long.join(".codex").exists(), "missing reads must not create directories");
+        let saved = save_config(short.to_str().unwrap(), Some(short_config.to_str().unwrap()), parse(TEMPLATE).unwrap(), None).unwrap();
+        assert!(saved.exists);
+        assert_eq!(read_config(long.to_str().unwrap(), short_config.to_str().unwrap()).unwrap().expected_content, saved.expected_content);
+        let outside = fixture.repository("outside-workspace");
+        assert!(read_config(long.to_str().unwrap(), outside.join(".codex/environments/environment.toml").to_str().unwrap()).is_err());
+        assert!(read_config(long.to_str().unwrap(), long.join(".codex/environments/../environment.toml").to_str().unwrap()).is_err());
     }
 
     #[test]

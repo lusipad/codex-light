@@ -1955,6 +1955,8 @@ mod worktree_removal_tests {
         fn new() -> Self {
             let root = std::env::temp_dir()
                 .join(format!("codex-worktree-removal-{}", uuid::Uuid::new_v4()));
+            fs::create_dir_all(&root).unwrap();
+            let root = PathBuf::from(worktree_path_string(&fs::canonicalize(&root).unwrap()));
             let repo = root.join("repo");
             fs::create_dir_all(&repo).unwrap();
             let repo = repo.to_string_lossy().to_string();
@@ -2023,10 +2025,11 @@ mod worktree_removal_tests {
             format!("test -n \"$(git for-each-ref refs/codex/snapshots)\"; printf '%s\\n%s\\n%s' \"$PWD\" \"$CODEX_SOURCE_TREE_PATH\" \"$CODEX_WORKTREE_PATH\" > '{}'; printf cleanup > tracked.bin", marker.to_string_lossy())
         };
         cleanup_config(&fixture, &script);
+        let expected_checkout = worktree_path_string(&fs::canonicalize(&fixture.checkout).unwrap());
         let result = fixture.delete().unwrap();
         let observed = fs::read_to_string(marker).unwrap();
-        assert_eq!(fs::canonicalize(observed.lines().next().unwrap()).err().is_some(), true, "observed target must have been removed");
-        assert_eq!(worktree_path_key(Path::new(observed.lines().next().unwrap())), worktree_path_key(Path::new(&fixture.checkout)));
+        assert!(!Path::new(observed.lines().next().unwrap()).exists(), "observed target must have been removed");
+        assert_eq!(worktree_path_string(Path::new(observed.lines().next().unwrap())), expected_checkout);
         assert_eq!(observed.lines().nth(1).unwrap_or(""), std::env::var("CODEX_SOURCE_TREE_PATH").unwrap_or_default());
         assert_eq!(observed.lines().nth(2).unwrap_or(""), std::env::var("CODEX_WORKTREE_PATH").unwrap_or_default());
         let reference = result.snapshot_ref.unwrap();
@@ -2096,9 +2099,10 @@ mod worktree_removal_tests {
         fs::write(Path::new(&fixture.repo).join(".gitignore"), ".codex/\n").unwrap();
         fs::remove_file(target_config).unwrap();
         run_git(&fixture.checkout, &["config", "--worktree", "codex.localEnvironmentConfigPath", &source_config.to_string_lossy()]).unwrap();
+        let expected_checkout = worktree_path_string(&fs::canonicalize(&fixture.checkout).unwrap());
         let result = fixture.delete().unwrap();
         assert!(result.warnings.is_empty(), "{:?}", result.warnings);
-        assert_eq!(worktree_path_key(Path::new(&fs::read_to_string(marker).unwrap())), worktree_path_key(Path::new(&fixture.checkout)));
+        assert_eq!(worktree_path_string(Path::new(&fs::read_to_string(marker).unwrap())), expected_checkout);
         assert!(source_config.is_file(), "cleanup must not remove source configuration");
     }
 

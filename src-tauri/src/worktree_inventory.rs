@@ -363,6 +363,8 @@ mod tests {
         fn new() -> Self {
             let root =
                 std::env::temp_dir().join(format!("codex-inventory-{}", uuid::Uuid::new_v4()));
+            fs::create_dir_all(&root).unwrap();
+            let root = PathBuf::from(path_string(&fs::canonicalize(&root).unwrap()));
             let repo = root.join("repo");
             let managed = root.join("managed");
             let worktree = managed.join("group/project");
@@ -408,7 +410,9 @@ mod tests {
     }
     impl Drop for Fixture {
         fn drop(&mut self) {
-            assert!(self.root.starts_with(std::env::temp_dir()));
+            let root = fs::canonicalize(&self.root).unwrap();
+            let temp = fs::canonicalize(std::env::temp_dir()).unwrap();
+            assert!(root.is_absolute() && root.starts_with(temp));
             assert!(self
                 .root
                 .file_name()
