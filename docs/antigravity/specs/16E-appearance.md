@@ -27,6 +27,8 @@
 
 ## 边界与未证
 
+以下保留16E交付时的缺口。颜色与导入的后续范围及当前进展见[16F合同](16F-appearance-controls.md)和[阶段记录](../acceptance/16F-appearance-controls.md)，不因此放行外观整页。
+
 Mode 的图形使用本项目 CSS 绘制同结构示意，不整段复制官方 SVG；它仍需与官方图形逐像素对照。导入仍沿用已有 modal，官方 `ko` 实际弹层细节尚未完整恢复；字体仍为手动家族输入，没有官方安装字体搜索与字形目录；颜色仍使用系统颜色选择器，官方popover与账户强调色选项尚未完成。Windows backdrop支持能力未接入本控件，不能凭本地字段造透明开关。Pointer cursors、Pages专属字号等需要偏好/权限链，当前不扩后端。
 
 允许复用常规页正在实现的 `GeneralPreferenceSelect` 作为真实设置菜单；不新增依赖、不改共享主题引擎或存储协议。官方截图、原生IME和用户验收仍须单独记录。

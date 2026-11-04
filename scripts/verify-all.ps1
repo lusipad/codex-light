@@ -33,6 +33,7 @@ function Invoke-Step {
 }
 
 try {
+  Invoke-Step "Appearance color official HSV samples and slider contracts" { node scripts/verify-appearance-color.mjs }
   Invoke-Step "All-page workflow UI correction" { node scripts/verify-workflow-ui-d.mjs }
   Invoke-Step "Workspace file tree and actual file selection" { node scripts/verify-workspace-file-tree.mjs }
   Invoke-Step "General preference menu positioning and keyboard" { node scripts/verify-general-preference-select.mjs }

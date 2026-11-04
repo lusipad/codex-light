@@ -5,6 +5,7 @@ import { copyTextToClipboard } from "../clipboard";
 import { loadThemePreset, parseTheme, resetAdvancedTheme, serializeTheme, themePresets,
   type ChromeTheme, type ThemeVariant } from "../appearanceTheme";
 import { GeneralPreferenceSelect } from "./GeneralPreferenceSelect";
+import { AppearanceColorPicker } from "./AppearanceColorPicker";
 import "./AppearanceSettings.css";
 
 function FontSizeField({ setting, state, label }: {
@@ -37,43 +38,54 @@ function FontSizeField({ setting, state, label }: {
   </div>;
 }
 
-function ThemeTextField({ label, value, disabled, color = false, onSave }: {
-  label: string; value: string; disabled: boolean; color?: boolean; onSave: (value: string) => void;
+function ThemeTextField({ label, value, disabled, color = false, colorPending = false, onSave }: {
+  label: string; value: string; disabled: boolean; color?: boolean; colorPending?: boolean; onSave: (value: string) => void;
 }) {
   const [draft, setDraft] = useState(value);
-  const [invalid, setInvalid] = useState(false);
   const composing = useRef(false);
-  useEffect(() => { setDraft(value); setInvalid(false); }, [value]);
+  useEffect(() => { setDraft(value); }, [value]);
   const persist = () => {
     if (composing.current || disabled) return;
     const next = draft.trim();
-    if (color && !/^#[\da-f]{6}$/i.test(next)) { setInvalid(true); return; }
-    setInvalid(false);
     if (next !== value) onSave(next);
   };
+  const editColor = (text: string) => {
+    const hex = text.toUpperCase().replace(/[^0-9A-F]/g, "").slice(0, 6);
+    setDraft(`#${hex}`);
+    if (!disabled && hex.length === 6 && (colorPending || `#${hex}`.toLowerCase() !== value.toLowerCase())) onSave(`#${hex.toLowerCase()}`);
+  };
   return <div className={`appearance-value-control${color ? " appearance-color-control" : ""}`}>
-    {color && <input type="color" aria-label={`${label}选择器`} value={/^#[\da-f]{6}$/i.test(draft) ? draft : value} disabled={disabled}
-      onChange={event => { setDraft(event.target.value); setInvalid(false); }} onBlur={persist} />}
-    <input type="text" aria-label={label} aria-invalid={invalid || undefined} value={draft}
+    {color && <AppearanceColorPicker label={`${label}选择器`} value={value} disabled={disabled} pending={colorPending} onChange={onSave} />}
+    <input type="text" aria-label={label} value={color && !composing.current ? draft.toUpperCase() : draft}
       placeholder={color ? "#RRGGBB" : "系统"} disabled={disabled}
-      onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }}
-      onChange={event => { setDraft(event.target.value); setInvalid(false); }} onBlur={persist}
+      spellCheck={false}
+      onCompositionStart={() => { composing.current = true; }} onCompositionEnd={event => {
+        composing.current = false; if (color) editColor(event.currentTarget.value);
+      }}
+      onChange={event => {
+        if (color && !composing.current) editColor(event.target.value);
+        else { setDraft(event.target.value); }
+      }} onBlur={() => { if (color) setDraft(value); else persist(); }}
       onKeyDown={event => {
         if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
-        if (event.key === "Enter") { event.preventDefault(); persist(); }
-        if (event.key === "Escape") { setDraft(value); setInvalid(false); }
+        if (event.key === "Enter") { event.preventDefault(); if (!color) persist(); }
+        if (event.key === "Escape") { event.stopPropagation(); setDraft(value); }
       }} />
-    {invalid && <span role="alert">请输入完整的 #RRGGBB 颜色</span>}
   </div>;
 }
 
-function ThemeImportDialog({ variant, busy, onClose, onImport }: {
-  variant: ThemeVariant; busy: boolean; onClose: () => void; onImport: (text: string) => Promise<boolean>;
+function ThemeImportDialog({ variant, busy, exampleValue, isValid, onClose, onImport }: {
+  variant: ThemeVariant; busy: boolean; exampleValue: string; isValid: (text: string) => boolean;
+  onClose: () => void; onImport: (text: string) => Promise<boolean>;
 }) {
   const [value, setValue] = useState("");
   const [error, setError] = useState(false);
   const dialog = useRef<HTMLDivElement>(null);
-  const field = useRef<HTMLTextAreaElement>(null);
+  const field = useRef<HTMLInputElement>(null);
+  const submitting = useRef(false);
+  const composing = useRef(false);
+  const [saving, setSaving] = useState(false);
+  const locked = busy || saving;
   const restoreFocus = useRef<HTMLElement | null>(null);
   const name = variant === "light" ? "浅色" : "深色";
   useEffect(() => {
@@ -82,25 +94,38 @@ function ThemeImportDialog({ variant, busy, onClose, onImport }: {
     return () => { restoreFocus.current?.focus(); };
   }, []);
   return createPortal(<div className="appearance-dialog-backdrop" onMouseDown={event => {
-    if (event.target === event.currentTarget && !busy) onClose();
+    if (event.target === event.currentTarget && !locked) onClose();
   }}><div ref={dialog} role="dialog" aria-modal="true" aria-labelledby="appearance-import-title"
     className="appearance-import-dialog" tabIndex={-1} onKeyDown={event => {
-      if (event.key === "Escape" && !event.nativeEvent.isComposing) { event.preventDefault(); event.stopPropagation(); if (!busy) onClose(); }
+      if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229 || composing.current) {
+        if (event.key === "Enter") event.preventDefault();
+        return;
+      }
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); if (!locked) onClose(); }
       if (event.key !== "Tab") return;
-      const controls = [...(dialog.current?.querySelectorAll<HTMLElement>('textarea:not(:disabled), button:not(:disabled)') ?? [])];
+      const controls = [...(dialog.current?.querySelectorAll<HTMLElement>('input:not(:disabled), button:not(:disabled)') ?? [])];
       const first = controls[0], last = controls[controls.length - 1];
       if (!first) { event.preventDefault(); dialog.current?.focus(); }
       if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
       if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
     }}>
-    <h3 id="appearance-import-title">导入主题</h3>
-    <textarea ref={field} aria-label={`${name} 主题分享字符串`} value={value} disabled={busy}
-      placeholder="codex-theme-v1:" onChange={event => { setValue(event.target.value); setError(false); }} />
+    <form onSubmit={async event => {
+      event.preventDefault();
+      if (locked || submitting.current || composing.current || !isValid(value)) return;
+      submitting.current = true; setSaving(true); setError(false); dialog.current?.focus({ preventScroll: true });
+      try { if (!await onImport(value)) setError(true); }
+      catch { setError(true); }
+      finally { submitting.current = false; setSaving(false); }
+    }}>
+    <div className="appearance-import-heading"><h3 id="appearance-import-title">导入主题</h3>
+      {!locked && <button type="button" aria-label="关闭" className="appearance-import-close" onClick={onClose}>×</button>}</div>
+    <input ref={field} type="text" spellCheck={false} aria-label={`${name} 主题分享字符串`} value={value} disabled={locked}
+      onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }}
+      placeholder={exampleValue} onChange={event => { setValue(event.target.value); setError(false); }} />
     {error && <p role="alert">无法导入 {name} 主题</p>}
-    <div className="appearance-dialog-actions"><button type="button" disabled={busy} onClick={onClose}>取消</button>
-      <button type="button" disabled={busy || !value.trim()} onClick={async () => {
-        const saved = await onImport(value); if (!saved) setError(true);
-      }}>导入主题</button></div>
+    <div className="appearance-dialog-actions"><button type="button" disabled={locked} onClick={onClose}>取消</button>
+      <button type="submit" disabled={locked || !isValid(value)} aria-busy={saving || undefined}>导入主题</button></div>
+    </form>
   </div></div>, document.body);
 }
 
@@ -127,6 +152,9 @@ function ThemeCard({ state, variant, advanced = false, showTitle, editRevision }
   const [failure, setFailure] = useState("");
   const [importing, setImporting] = useState(false);
   const [loadingPreset, setLoadingPreset] = useState(false);
+  const [colorDraft, setColorDraft] = useState<ChromeTheme | null>(null);
+  const colorSaving = colorDraft !== null;
+  const colorWrites = useRef(0), desiredColorTheme = useRef<ChromeTheme | null>(null);
   const presetRequest = useRef(0);
   const pending = useRef(false);
   const alive = useRef(true);
@@ -134,7 +162,7 @@ function ThemeCard({ state, variant, advanced = false, showTitle, editRevision }
   const presets = themePresets(variant);
   useEffect(() => { alive.current = true; return () => { alive.current = false; editRevision.current++; }; }, [editRevision]);
   const persistTheme = async (next: ChromeTheme, nextId = codeThemeId) => {
-    if (pending.current || state.busy) return false;
+    if (pending.current || colorWrites.current || state.busy) return false;
     editRevision.current++;
     pending.current = true;
     setFailure(""); setNotice("");
@@ -147,6 +175,18 @@ function ThemeCard({ state, variant, advanced = false, showTitle, editRevision }
     } finally { pending.current = false; }
   };
   const patch = (value: Partial<ChromeTheme>) => { void persistTheme({ ...theme, ...value }); };
+  const patchColor = (key: "accent" | "surface" | "ink", value: string) => {
+    if (pending.current || (state.busy && !colorWrites.current)) return;
+    const next = { ...(desiredColorTheme.current ?? latestTheme.current), [key]: value,
+      ...(key === "accent" ? { accentSource: "custom" as const } : {}) };
+    desiredColorTheme.current = next; colorWrites.current++; editRevision.current++; setColorDraft(next);
+    setNotice(""); setFailure("");
+    void state.saveTheme(variant, next, codeThemeId).catch(() => {
+      if (alive.current) setFailure("无法应用主题");
+    }).finally(() => {
+      if (--colorWrites.current === 0) { desiredColorTheme.current = null; if (alive.current) setColorDraft(null); }
+    });
+  };
   const fontField = (key: "ui" | "content" | "code", label: string) => <div className="appearance-setting-row" key={key}>
     <span>{label}</span><ThemeTextField label={`${name} ${label}`} value={theme.fonts[key] ?? ""} disabled={state.busy}
       onSave={value => {
@@ -192,7 +232,7 @@ function ThemeCard({ state, variant, advanced = false, showTitle, editRevision }
       {!presets.some(preset => preset.id === codeThemeId) && <p role="status">当前代码主题暂不可用，已保留原选择。请选择其他主题以应用配色。</p>}
       {([["accent", "强调色"], ["surface", "背景"], ["ink", "前景"]] as const).map(([key, label]) =>
         <div className="appearance-setting-row" key={key}><span>{label}</span><ThemeTextField label={`${name} ${label}`}
-          color value={theme[key]} disabled={state.busy} onSave={value => patch({ [key]: value, ...(key === "accent" ? { accentSource: "custom" as const } : {}) })} /></div>)}
+          color value={(colorDraft ?? theme)[key]} colorPending={colorSaving} disabled={state.busy && !colorSaving} onSave={value => patchColor(key, value)} /></div>)}
       {fontField("ui", "字体")}
     </>}
     {advanced && <>
@@ -203,7 +243,10 @@ function ThemeCard({ state, variant, advanced = false, showTitle, editRevision }
         value={theme.contrast} disabled={state.busy} onSave={contrast => patch({ contrast })} /></div>
     </>}
     {loadingPreset && <p role="status">正在加载主题…</p>}{notice && <p role="status">{notice}</p>}{failure && <p role="alert">{failure}</p>}
-    {importing && <ThemeImportDialog variant={variant} busy={state.busy} onClose={() => setImporting(false)} onImport={async text => {
+    {importing && <ThemeImportDialog variant={variant} busy={state.busy}
+      exampleValue={serializeTheme({ variant, theme, codeThemeId })}
+      isValid={text => { try { parseTheme(text, variant, presets.map(preset => preset.id)); return true; } catch { return false; } }}
+      onClose={() => setImporting(false)} onImport={async text => {
       try {
         const value = parseTheme(text, variant, presets.map(preset => preset.id));
         if (!await persistTheme(value.theme, value.codeThemeId)) return false;
