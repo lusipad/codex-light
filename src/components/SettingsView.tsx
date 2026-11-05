@@ -52,8 +52,8 @@ const SETTINGS_NAV_GROUPS: Array<{
   {
     groupTitle: "个人",
     items: [
-      { slug: "general-settings", label: "常规", keywords: "general editor notification sleep" },
-      { slug: "notifications", label: "通知", keywords: "notifications desktop toast sound do not disturb 通知 免打扰 提示音" },
+      { slug: "general-settings", label: "常规", keywords: "general editor notification sleep desktop toast sound 本地通知 轮次完成 权限 问题 Dot 提示音" },
+      { slug: "notifications", label: "通知", keywords: "notifications account ChatGPT 账户通知" },
       { slug: "import", label: "导入", keywords: "import cursor vscode windsurf claude 导入" },
       { slug: "profile", label: "个人资料", keywords: "profile avatar username bio 个人 资料" },
       { slug: "appearance", label: "外观", keywords: "appearance theme font color" },
@@ -334,6 +334,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </div>
             </section>
             <ExperimentalFeatures connected={appServerStatus.connected} />
+            <NotificationSettings state={notificationState} />
           </div>
         )}
 
@@ -368,7 +369,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         {/* SECTION: NOTIFICATIONS */}
         {activeSection === "notifications" && (
           <div className="settings-scroll-container">
-            <NotificationSettings state={notificationState} />
+            <p className="card-subtitle-desc" role="status">ChatGPT 账户通知设置尚不可用。本地任务通知可在“常规”中设置。</p>
           </div>
         )}
 

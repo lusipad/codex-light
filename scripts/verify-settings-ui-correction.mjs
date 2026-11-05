@@ -57,6 +57,8 @@ test('Appearance is one dedicated instant-save surface', () => {
 });
 test('General keeps real external-open and Enter consumers without debug/reset cards', () => {
   const page = mount('general-settings'); assert.ok(page.child('GeneralOpenPreferences'));
+  assert.equal(page.child('NotificationSettings')?.props.state, page.props.notificationState, 'local notification group belongs in General');
+  assert.equal(mount('notifications').child('NotificationSettings'), undefined, 'account notification route cannot reuse local preferences');
   assert.doesNotMatch(content(page.render()), /App-Server|恢复出厂|自定义 Codex CLI/);
   const enter = page.by(n => n.props.id === 'composer-enter-behavior');
   assert.equal(enter.type.name, 'GeneralPreferenceSelect');
@@ -79,6 +81,8 @@ test('Search has official semantics, scoped find, clear and empty-result feedbac
   assert.ok(page.by(n => n.props.role === 'status' && content(n) === '未找到结果'));
   page.by(n => n.props['aria-label'] === '清除设置搜索').props.onClick(); page.render();
   assert.equal(page.by(n => n.props.role === 'searchbox').props.value, ''); assert.equal(focused, 2);
+  search.props.onChange({ target: { value: '提示音' } }); page.render();
+  assert.deepEqual(page.all().filter(n => n.props['data-settings-panel-slug']).map(n => n.props['data-settings-panel-slug']), ['general-settings'], 'local sound search leads to its actual General group');
 });
 test('Navigation uses current official Chinese and preserves all routes plus aliases', () => {
   const page = mount('appearance');
@@ -109,8 +113,8 @@ test('Grouped navigation arrows activate adjacent visible buttons without wrappi
   const activated = []; const buttons = sequence.map((node, index) => ({ focus: () => activated.push(['focus', index]), click: () => node.props.onClick() }));
   let prevented = 0;
   const event = (key, index) => ({ key, nativeEvent: {}, preventDefault: () => prevented++, target: { closest: () => buttons[index] }, currentTarget: { querySelectorAll: () => buttons } });
-  nav.props.onKeyDown(event('ArrowDown', 0)); page.render(); assert.ok(page.child('NotificationSettings')); assert.deepEqual(activated, [['focus', 1]]);
-  nav.props.onKeyDown(event('ArrowUp', 0)); page.render(); assert.ok(page.child('NotificationSettings')); assert.equal(activated.length, 1);
+  nav.props.onKeyDown(event('ArrowDown', 0)); page.render(); assert.ok(page.by(n => n.props.role === 'status' && /ChatGPT 账户通知/.test(content(n)))); assert.deepEqual(activated, [['focus', 1]]);
+  nav.props.onKeyDown(event('ArrowUp', 0)); page.render(); assert.equal(page.child('NotificationSettings'), undefined); assert.equal(activated.length, 1);
   nav.props.onKeyDown(event('Tab', 0)); assert.equal(prevented, 2);
 });
 let failed = 0;

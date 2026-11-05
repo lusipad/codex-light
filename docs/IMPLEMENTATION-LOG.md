@@ -1997,3 +1997,10 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 - 六项外观/字体前端回归、真实目录测试和宽窄浏览器验证通过；249族/620字形/19全等宽族是本机样本。浏览器Arial Bold与Consolas Italic真实local加载成功，fallback输入、Escape归焦与640宽无溢出留证。
 - 标准检查遇两次磁盘空间故障，原失败保留；首轮前段、原样尾段及唯一失败worktree_root的4项单独复验组成完整覆盖，不能称单次完整脚本退出0。清理增量缓存被自动审批阻止，未删除；后续仅私有进程关闭增量并限制编译并发。
 - 构建与原生GUI结果见[16G阶段验收](antigravity/acceptance/16G-appearance-fonts.md)。官方运行时目录排序/分组、同环境配对像素与物理IME仍待验证；不声明字体或外观整页1:1，用户未验收。
+
+## 2026-11-05 — 16H 常规页本地通知组
+
+- 先核固定Store整包及12资源，追到常规Dc→通知组→va/lt、独立ct→ChatGPT账户组两个不同挂载与gate。真实本地五项移到常规末尾，提示音搜索同向；独立账户页缺服务明确说明，未借本地偏好冒充。
+- 保留真实逐字段保存/读回及音频导入，复用通用菜单，恢复240px菜单、左右行/32×20 switch/主题边框卡、首次权限loading及not-determined禁控、消失banner归焦。声音试听与保存并发、同值和现custom可重选。
+- 独立复核两个P2先复现后修复：停止旧音失败阻断保存、旧finally提前解除新导入锁；同步排他锁及真实播放替换，故障/取消/外部变更晚到回归通过。宽窄/权限样本/菜单/Escape和生产回放留证。
+- 标准检查、最终原生构建和私有配置重启读回以[16H阶段记录](antigravity/acceptance/16H-general-notifications.md)为准。官方账户gate、额外ExperimentalFeatures、导入decode试听时点、inline错误替代toast、物理IME/实际音色/多窗/配对像素仍为缺口，不称常规或独立通知整页1:1。

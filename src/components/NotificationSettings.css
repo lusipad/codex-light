@@ -1,0 +1,25 @@
+.notification-settings { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.notification-settings > h3 { margin: 0; font-size: 14px; font-weight: 500; }
+.notification-settings-card { container-type: inline-size; overflow: hidden; border: 1px solid var(--border-default); border-radius: 16px; }
+.notification-setting-row { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 24px; min-width: 0; padding: 12px 16px; }
+.notification-setting-row + .notification-setting-row::before { content: ""; position: absolute; top: 0; inset-inline: 16px; height: 1px; background: var(--border-default); }
+.notification-setting-row > div:first-child { min-width: 0; }
+.notification-setting-row label { color: var(--text-primary); font-size: 13px; font-weight: 500; }
+.notification-setting-row p, .notification-permission-banner p { margin: 2px 0 0; color: var(--text-secondary); font-size: 12px; line-height: 16px; }
+.notification-setting-control { display: flex; justify-content: flex-end; min-width: min(160px, 40cqw); flex-shrink: 0; max-width: 50%; }
+.general-preference-select.notification-preference-select { max-width: 100%; }
+.notification-preference-select .general-preference-trigger { max-width: 100%; border-radius: 999px; }
+.general-preference-menu.notification-preference-select { width: 240px; max-width: calc(100vw - 16px); }
+.notification-setting-row input[role="switch"] { appearance: none; position: relative; flex: 0 0 32px; width: 32px; height: 20px; margin: 0; padding: 0; border: 0; border-radius: 999px; background: var(--text-tertiary); cursor: pointer; }
+.notification-setting-row input[role="switch"]::after { content: ""; position: absolute; width: 16px; height: 16px; top: 2px; left: 2px; border-radius: 50%; background: var(--bg-primary); }
+.notification-setting-row input[role="switch"]:checked { background: var(--accent-blue); }
+.notification-setting-row input[role="switch"]:checked::after { left: 14px; }
+.notification-setting-row input[role="switch"]:disabled { opacity: .6; cursor: default; }
+.notification-setting-row input[role="switch"]:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 3px; }
+.notification-permission-banner { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 12px; border: 1px solid var(--border-default); border-radius: 8px; }
+.notification-permission-banner button { flex-shrink: 0; }
+@media (max-width: 640px) {
+  .notification-setting-row { gap: 16px; }
+  .notification-setting-row:has(.notification-preference-select), .notification-permission-banner { flex-wrap: wrap; }
+  .notification-setting-control { max-width: 100%; margin-inline-start: auto; }
+}

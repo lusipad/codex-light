@@ -8,16 +8,18 @@ const source = ts.transpileModule(fs.readFileSync("src/components/NotificationSe
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React, esModuleInterop: true },
 }).outputText;
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
-const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
+const flush = async () => { for (let i = 0; i < 32; i++) await Promise.resolve(); };
 const custom = { fileName: `codex-custom-${"a".repeat(64)}.wav`, name: "中文提示音.mp3" };
 function mount() {
   const hooks = [], effects = [], listeners = new Map();
-  let cursor = 0, tree, focuses = 0, stops = 0;
-  const calls = [], writes = [], plays = [];
+  let cursor = 0, tree, focuses = 0, stops = 0, focusedId = null;
+  const document = { activeElement: null };
+  const calls = [], writes = [], plays = [], sequence = [];
   let permission = async () => ({ status: "enabled" });
   let imported = async () => custom;
   let play = async () => {};
   let openSettings = async () => {};
+  let stop = async () => {};
   let save = async (key, value) => { state.preferences[key] = value; return true; };
   const react = {
     createElement: (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat(Infinity) }),
@@ -27,20 +29,21 @@ function mount() {
   };
   const state = { preferences: { "notifications-turn-mode": "unfocused", "notifications-permissions-enabled": true,
     "notifications-questions-enabled": true, "notifications-dot-enabled": true, "notifications-sound": "default" }, busy: false, error: null,
-    async save(key, value) { writes.push({ key, value }); return save(key, value); }, reload() {},
+    async save(key, value) { sequence.push('save'); writes.push({ key, value }); return save(key, value); }, reload() {},
   };
   const module = { exports: {} };
   vm.runInNewContext(source, { exports: module.exports, require(name) {
     if (name === "react") return react;
     if (name === "../bridge") return { tauriInvoke: async command => { calls.push(command); if (command === "notification_permission_read") return permission(); if (command === "notification_settings_open") return openSettings(); throw Error(command); } };
-    if (name === "../sound") return { importNotificationSound: () => imported(), playNotificationChime: (...args) => { plays.push(args); return play(); }, stopNotificationSound: async () => { stops++; } };
+    if (name === "../sound") return { importNotificationSound: () => imported(), playNotificationChime: (...args) => { sequence.push('preview'); plays.push(args); return play(); }, stopNotificationSound: async () => { stops++; return stop(); } };
+    if (name === "./GeneralPreferenceSelect") return { GeneralPreferenceSelect: function GeneralPreferenceSelect() {} };
     return {};
-  }, window: { addEventListener: (name, fn) => listeners.set(name, fn), removeEventListener: name => listeners.delete(name) } });
+  }, document, window: { addEventListener: (name, fn) => listeners.set(name, fn), removeEventListener: name => listeners.delete(name) } });
   const walk = node => node && typeof node === "object" ? [node, ...node.children.flatMap(walk)] : [];
   const text = node => typeof node === "string" ? node : node && typeof node === "object" ? node.children.map(text).join("") : "";
   const render = () => {
     cursor = 0; tree = module.exports.NotificationSettings({ state });
-    for (const node of walk(tree)) if (node.props.ref) node.props.ref.current = { focus() { assert.equal(!!node.props.disabled, false, "restore focus only after the control is enabled"); focuses++; } };
+    for (const node of walk(tree)) if (node.props.ref || node.props.triggerRef) (node.props.ref ?? node.props.triggerRef).current = { focus() { assert.equal(!!node.props.disabled, false, "restore focus only after the control is enabled"); focuses++; focusedId = node.props.id; } };
     for (const effect of effects.splice(0)) effect();
     return tree;
   };
@@ -49,15 +52,16 @@ function mount() {
   const button = label => find(node => node.type === "button" && text(node) === label);
   const alerts = () => walk(render()).filter(node => node.props.role === "alert").map(text).join(" ");
   render();
-  return { state, render, find, select, button, alerts, calls, writes, plays, listeners,
+  return { state, render, find, select, button, alerts, calls, writes, plays, sequence, listeners, document,
+    get focusedId() { return focusedId; },
     get stops() { return stops; }, get focuses() { return focuses; },
-    openSettings: fn => openSettings = fn, permission: fn => permission = fn, imported: fn => imported = fn, play: fn => play = fn, save: fn => save = fn,
+    openSettings: fn => openSettings = fn, permission: fn => permission = fn, imported: fn => imported = fn, play: fn => play = fn, save: fn => save = fn, stop: fn => stop = fn,
     unmount() { for (const hook of hooks) hook?.cleanup?.(); },
   };
 }
-const controls = mount(); await flush(); controls.render();
+const controls = mount(); assert.equal(controls.select().props.disabled, true, 'initial permission query disables controls'); await flush(); controls.render();
 const turnMode = () => controls.find(node => node.props.id === "notification-turn-mode");
-turnMode().props.onChange({ target: { value: "off" } }); await flush();
+turnMode().props.onChange("off"); await flush();
 assert.deepEqual(controls.writes.at(-1), { key: "notifications-turn-mode", value: "off" }, "actual turn-mode callback saves selected mode");
 assert.equal(turnMode().props.value, "off", "turn-mode control reflects confirmed preference");
 for (const key of ["notifications-questions-enabled", "notifications-dot-enabled"]) {
@@ -75,7 +79,7 @@ controls.unmount();
 const page = mount(); await flush(); page.render();
 assert.deepEqual(page.calls, ["notification_permission_read"], "mount queries real OS status without opening settings");
 assert.equal(page.button("发送测试通知"), undefined, "no unsupported test-notification action");
-assert.ok(page.select().children.some(option => option.props?.value === "import"));
+assert.ok(page.select().props.options.some(option => option.value === "import"));
 const denied = deferred(), enabled = deferred();
 page.permission(() => denied.promise); const oldQuery = page.listeners.get("focus")();
 page.permission(() => enabled.promise); const newQuery = page.listeners.get("focus")();
@@ -85,9 +89,10 @@ assert.equal(page.select().props.disabled, false, "late permission result cannot
 page.permission(async () => ({ status: "disabled" })); await page.listeners.get("focus")();
 assert.equal(page.select().props.disabled, true);
 page.permission(async () => ({ status: "unknown" })); await page.listeners.get("focus")();
-assert.ok(page.find(node => node.type === "p" && node.children.includes("无法确认 Windows 通知权限状态")), "unknown is not reported as enabled");
+assert.equal(page.find(node => node.type === "p" && node.children.includes("无法确认 Windows 通知权限状态")), undefined, "unknown has no invented warning card");
 assert.equal(page.button("打开 Windows 设置"), undefined, "unknown does not invent a system-settings entry");
 page.permission(async () => ({ status: "not-determined" })); await page.listeners.get("focus")();
+assert.equal(page.select().props.disabled, true, 'not-determined is blocked like disabled');
 await page.button("打开 Windows 设置").props.onClick();
 assert.equal(page.calls.filter(call => call === "notification_settings_open").length, 1);
 page.openSettings(async () => { throw Error("denied"); });
@@ -98,11 +103,11 @@ assert.equal(page.select().props.disabled, false, "permission failure remains un
 assert.equal(page.button("打开 Windows 设置"), undefined);
 assert.ok(page.find(node => node.props.id === "notifications-dot-enabled"), "official Dot preference is retained without inventing events");
 page.imported(async () => null);
-await page.select().props.onChange({ target: { value: "import" } }); await flush(); page.render();
+await page.select().props.onChange("import"); await flush(); page.render();
 assert.equal(page.writes.length, 0, "cancelled native picker cannot change preference");
 assert.equal(page.state.preferences["notifications-sound"], "default");
 const imported = deferred(); page.imported(() => imported.promise);
-page.select().props.onChange({ target: { value: "import" } }); await flush(); page.render();
+page.select().props.onChange("import"); await flush(); page.render();
 assert.equal(page.select().props.disabled, true, "pending import blocks duplicate selection");
 imported.resolve(custom); await flush(); page.render();
 assert.equal(page.state.preferences["notifications-sound"], custom);
@@ -115,15 +120,15 @@ assert.equal(page.plays[0][1], custom);
 assert.equal(page.button("试听声音"), undefined, "no unofficial preview button");
 page.save(async () => false);
 page.imported(async () => ({ ...custom, name: "another.wav" }));
-await page.select().props.onChange({ target: { value: "import" } }); await flush(); page.render();
+await page.select().props.onChange("import"); await flush(); page.render();
 assert.equal(page.state.preferences["notifications-sound"], custom, "unconfirmed save cannot select the imported sound");
 assert.match(page.alerts(), /无法更改通知提示音/);
 page.imported(async () => { throw Error("invalid audio"); });
-await page.select().props.onChange({ target: { value: "import" } }); await flush();
+await page.select().props.onChange("import"); await flush();
 assert.match(page.alerts(), /无法导入此提示音.*invalid audio/);
 const preview = deferred(); page.play(() => preview.promise);
 page.save(async (key, value) => { page.state.preferences[key] = value; return true; });
-await page.select().props.onChange({ target: { value: "classic" } }); await flush(); page.render(); await flush();
+await page.select().props.onChange("classic"); await flush(); page.render(); await flush();
 assert.equal(page.plays.at(-1)[1], "classic", "ordinary sound selection previews after successful save");
 page.state.preferences["notifications-sound"] = "none"; const stoppedBefore = page.stops; page.render();
 assert.ok(page.stops > stoppedBefore, "changing selection cancels active audio");
@@ -133,8 +138,54 @@ assert.equal(page.button("试听声音"), undefined);
 page.unmount(); assert.equal(page.listeners.size, 0, "focus listener released on unmount");
 const gone = mount(); await flush(); gone.render();
 const lateImport = deferred(); gone.imported(() => lateImport.promise);
-gone.select().props.onChange({ target: { value: "import" } }); await flush();
+gone.select().props.onChange("import"); await flush();
 gone.unmount(); lateImport.resolve(custom); await flush();
 assert.equal(gone.writes.length, 0, "picker completion after leaving page cannot save");
 assert.ok(gone.stops >= 2, "unmount stops playback");
 console.log("Notification settings UI: permission/focus races, true save/cancel/failure, async preview and unmount replay passed");
+const concurrent = mount(); await flush(); concurrent.render();
+const commit = deferred();
+concurrent.save(async (key, value) => { await commit.promise; concurrent.state.preferences[key] = value; return true; });
+concurrent.play(async () => { throw Error('preview unavailable'); });
+concurrent.select().props.onChange('classic'); await flush(); concurrent.render();
+assert.deepEqual(concurrent.sequence, ['preview', 'save'], 'preview starts before save without waiting for playback');
+assert.equal(concurrent.state.preferences['notifications-sound'], 'default');
+assert.match(concurrent.alerts(), /无法试听提示音.*preview unavailable/);
+commit.resolve(); await flush(); concurrent.render();
+assert.equal(concurrent.state.preferences['notifications-sound'], 'classic', 'preview failure does not prevent confirmed save');
+const previousWrites = concurrent.writes.length, previousPlays = concurrent.plays.length;
+concurrent.select().props.onReselect(); await flush(); concurrent.render();
+assert.equal(concurrent.writes.length, previousWrites + 1, 'same selected sound still persists');
+assert.equal(concurrent.plays.length, previousPlays + 1, 'same selected sound still previews');
+concurrent.state.preferences['notifications-sound'] = custom; concurrent.render();
+concurrent.imported(async () => { throw Error('must not open picker for current custom sound'); });
+concurrent.select().props.onReselect(); await flush(); concurrent.render();
+assert.equal(concurrent.plays.at(-1)[1], custom, 'current custom item previews existing sound without importing');
+concurrent.unmount();
+console.log('Notification sound concurrency: preview failure independent of save, same-value and custom reselect passed');
+const stopFailure = mount(); await flush(); stopFailure.render();
+stopFailure.stop(async () => { throw Error('stop audio unavailable'); });
+stopFailure.select().props.onChange('classic'); await flush(); stopFailure.render();
+assert.equal(stopFailure.state.preferences['notifications-sound'], 'classic', 'stopping old audio is not a prerequisite for saving a new sound');
+stopFailure.unmount();
+const locked = mount(); await flush(); locked.render();
+const stopping = deferred(), importing = deferred(), committing = deferred(); let pickerCount = 0;
+locked.save(async (key, value) => { await committing.promise; locked.state.preferences[key] = value; return true; });
+locked.stop(() => stopping.promise); locked.imported(() => { pickerCount++; return importing.promise; });
+locked.select().props.onChange('classic'); locked.select().props.onChange('import'); await flush(); locked.render();
+assert.equal(locked.select().props.disabled, true, 'sound selection owns its busy lock before awaiting IPC');
+stopping.resolve(); await flush(); locked.render();
+assert.equal(pickerCount, 0, 'a second selection cannot start an import while first selection owns the operation');
+committing.resolve(); await flush(); locked.render();
+locked.select().props.onChange('import'); await flush(); locked.render();
+locked.select().props.onChange('import'); await flush(); locked.render();
+assert.equal(pickerCount, 1, 'only one native picker may be pending');
+importing.resolve(null); await flush(); locked.render();
+assert.equal(locked.select().props.disabled, false, 'picker cancellation releases only its own busy operation');
+locked.unmount();
+const permissionFocus = mount(); await flush(); permissionFocus.render();
+permissionFocus.permission(async () => ({status:'disabled'})); await permissionFocus.listeners.get('focus')(); permissionFocus.render();
+permissionFocus.document.activeElement = permissionFocus.button('打开 Windows 设置').props.ref.current;
+permissionFocus.permission(async () => ({status:'enabled'})); await permissionFocus.listeners.get('focus')(); permissionFocus.render();
+assert.equal(permissionFocus.focusedId, 'notification-turn-mode', 'when permission banner disappears, focus moves to the turn trigger');
+permissionFocus.unmount();

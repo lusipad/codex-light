@@ -13,14 +13,16 @@ interface GeneralPreferenceSelectProps {
   className?: string;
   onChange: (value: string) => void;
   onReselect?: () => void;
+  triggerRef?: React.RefObject<HTMLButtonElement | null>;
 }
 
 export const GeneralPreferenceSelect: React.FC<GeneralPreferenceSelectProps> = ({
-  id, label, value, options, disabled = false, placeholder = "未找到目标", className = "", onChange, onReselect,
+  id, label, value, options, disabled = false, placeholder = "未找到目标", className = "", onChange, onReselect, triggerRef: externalTriggerRef,
 }) => {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState({ top: 0, left: 0, maxHeight: 320 });
-  const triggerRef = useRef<HTMLButtonElement>(null);
+  const internalTriggerRef = useRef<HTMLButtonElement>(null);
+  const triggerRef = externalTriggerRef ?? internalTriggerRef;
   const menuRef = useRef<HTMLDivElement>(null);
   const initialFocus = useRef(0);
   const unavailable = disabled || options.length === 0;

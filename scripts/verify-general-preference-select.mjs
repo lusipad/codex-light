@@ -53,6 +53,12 @@ const trigger = view => view.all().find(n => n.props.id === 'fixture');
 const menu = view => view.all().find(n => n.props.role === 'menu');
 const key = key => ({ key, nativeEvent: {}, preventDefault() {}, stopPropagation() {} });
 {
+  const external = { current: null }, view = mount({ triggerRef: external });
+  assert.equal(trigger(view).props.ref, external);
+  trigger(view).props.onClick(); view.render(); menu(view).props.onKeyDown(key('Escape'));
+  assert.equal(view.focus(), 'trigger', 'shared menu restores the supplied trigger ref');
+}
+{
   const view = mount(); assert.equal(trigger(view).props['aria-expanded'], false);
   trigger(view).props.onClick(); view.render(); assert.ok(menu(view));
   const items = view.all().filter(n => n.props.role === 'menuitemradio');
