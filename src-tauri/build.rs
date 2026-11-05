@@ -1,5 +1,6 @@
 fn main() {
     println!("cargo:rerun-if-changed=native/desktop_notifications.cpp");
+    println!("cargo:rerun-if-changed=native/system_fonts.cpp");
     println!("cargo:rerun-if-changed=../scripts/build-desktop-notifications.ps1");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         let output = std::env::var("OUT_DIR").expect("Cargo OUT_DIR");
@@ -9,7 +10,8 @@ fn main() {
         assert!(status.success(), "Windows notification adapter compilation failed");
         println!("cargo:rustc-link-search=native={output}");
         println!("cargo:rustc-link-lib=static=desktop_notifications");
-        for library in ["windowsapp", "ole32", "propsys", "shell32", "uuid", "advapi32"] {
+        println!("cargo:rustc-link-lib=static=system_fonts");
+        for library in ["windowsapp", "ole32", "propsys", "shell32", "uuid", "advapi32", "dwrite"] {
             println!("cargo:rustc-link-lib=dylib={library}");
         }
     }

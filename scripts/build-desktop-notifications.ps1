@@ -10,9 +10,12 @@ $output = [IO.Path]::GetFullPath($OutDir)
 New-Item -ItemType Directory -Force -Path $output | Out-Null
 $object = Join-Path $output 'desktop_notifications.obj'
 $library = Join-Path $output 'desktop_notifications.lib'
+$fontSource = Join-Path $repository 'src-tauri/native/system_fonts.cpp'
+$fontObject = Join-Path $output 'system_fonts.obj'
+$fontLibrary = Join-Path $output 'system_fonts.lib'
 # Paths originate from this checked-out repository and OUT_DIR; cmd quoting is
 # needed for MSVC's vcvars environment, never accept application/user content here.
-if (($source + $object + $library + $vcvars).Contains('"')) { throw 'Build paths cannot contain double quotes' }
+if (($source + $object + $library + $fontSource + $fontObject + $fontLibrary + $vcvars).Contains('"')) { throw 'Build paths cannot contain double quotes' }
 $batch = Join-Path $output 'build-desktop-notifications.cmd'
 # C++/WinRT needs the standard C++20 coroutine path: MSVC 14.51 rejects
 # its C++17 fallback to experimental/coroutine. Keep both compiles aligned.
@@ -35,6 +38,10 @@ if errorlevel 1 exit /b %errorlevel%
 cl.exe /nologo /std:c++20 /EHsc /O2 /MD /utf-8 /c "$source" /Fo"$object"
 if errorlevel 1 exit /b %errorlevel%
 lib.exe /nologo /OUT:"$library" "$object"
+if errorlevel 1 exit /b %errorlevel%
+cl.exe /nologo /std:c++20 /EHsc /O2 /MD /utf-8 /c "$fontSource" /Fo"$fontObject"
+if errorlevel 1 exit /b %errorlevel%
+lib.exe /nologo /OUT:"$fontLibrary" "$fontObject"
 if errorlevel 1 exit /b %errorlevel%
 $testCommands
 exit /b %errorlevel%

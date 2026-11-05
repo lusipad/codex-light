@@ -36,6 +36,7 @@ pub mod terminal;
 mod thread_workspace;
 mod archive_delete;
 mod appearance_preferences;
+mod system_fonts;
 mod plugin_operations;
 mod git_message_generation;
 mod remote_review;
@@ -2098,6 +2099,7 @@ pub fn run() {
             desktop_state_get,
             desktop_state_set,
             appearance_preferences::appearance_preferences_read,
+            system_fonts::system_font_families,
             appearance_preferences::appearance_preference_write,
             thread_record_workspace,
             threads_meta_get,

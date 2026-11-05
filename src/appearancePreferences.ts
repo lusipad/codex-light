@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { tauriInvoke, tauriListen } from "./bridge";
-import { defaultChromeTheme, normalizeChromeTheme, validChromeTheme, themeVariables, themePresets, codeThemeVariables,
+import { defaultChromeTheme, normalizeChromeTheme, validChromeTheme, themeVariables, themePresets, codeThemeVariables, loadThemeFonts,
   type ChromeTheme, type ThemeVariant } from "./appearanceTheme";
 
 export interface AppearancePreferences {
@@ -50,6 +50,7 @@ export function applyAppearance(preferences: AppearancePreferences): () => void 
     const variant = root.dataset.theme as ThemeVariant;
     const chrome = variant === "light" ? preferences.appearanceLightChromeTheme : preferences.appearanceDarkChromeTheme;
     for (const [key, value] of Object.entries(themeVariables(chrome, variant))) root.style.setProperty(key, value);
+    void loadThemeFonts([chrome]);
     const codeId = variant === "light" ? preferences.appearanceLightCodeThemeId : preferences.appearanceDarkCodeThemeId;
     const renderId = themePresets(variant).some(preset => preset.id === codeId) ? codeId : "codex";
     for (const [key, value] of Object.entries(codeThemeVariables(renderId, variant))) root.style.setProperty(key, value);

@@ -80,6 +80,15 @@ for (const props of [{ disabled: true }, { options: [] }]) {
   view.all().find(n => n.props.role === 'menuitemradio').props.onClick(); assert.deepEqual(view.calls, []);
 }
 console.log('PASS general preference production menu: checked state, one-shot selection, same-value no write, keyboard opening/navigation, Escape focus return, outside blur, disabled/empty');
+{
+  let reselected = 0;
+  const view = mount({ onReselect: () => { reselected++; } });
+  trigger(view).props.onClick(); view.render();
+  view.all().find(n => n.props.role === 'menuitemradio').props.onClick();
+  assert.equal(reselected, 1); assert.deepEqual(view.calls, []);
+  view.props.disabled = true; view.render(); trigger(view).props.onClick(); view.render();
+  assert.equal(menu(view), undefined); assert.equal(reselected, 1);
+}
 
 {
   const view = mount(); trigger(view).props.onKeyDown({ ...key('ArrowDown'), nativeEvent: { isComposing: true } });

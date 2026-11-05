@@ -5,6 +5,7 @@ import { copyTextToClipboard } from "../clipboard";
 import { loadThemePreset, parseTheme, resetAdvancedTheme, serializeTheme, themePresets,
   type ChromeTheme, type ThemeVariant } from "../appearanceTheme";
 import { GeneralPreferenceSelect } from "./GeneralPreferenceSelect";
+import { AppearanceFontPicker } from "./AppearanceFontPicker";
 import { AppearanceColorPicker } from "./AppearanceColorPicker";
 import "./AppearanceSettings.css";
 
@@ -38,37 +39,32 @@ function FontSizeField({ setting, state, label }: {
   </div>;
 }
 
-function ThemeTextField({ label, value, disabled, color = false, colorPending = false, onSave }: {
-  label: string; value: string; disabled: boolean; color?: boolean; colorPending?: boolean; onSave: (value: string) => void;
+function ThemeTextField({ label, value, disabled, colorPending = false, onSave }: {
+  label: string; value: string; disabled: boolean; colorPending?: boolean; onSave: (value: string) => void;
 }) {
   const [draft, setDraft] = useState(value);
   const composing = useRef(false);
   useEffect(() => { setDraft(value); }, [value]);
-  const persist = () => {
-    if (composing.current || disabled) return;
-    const next = draft.trim();
-    if (next !== value) onSave(next);
-  };
   const editColor = (text: string) => {
     const hex = text.toUpperCase().replace(/[^0-9A-F]/g, "").slice(0, 6);
     setDraft(`#${hex}`);
     if (!disabled && hex.length === 6 && (colorPending || `#${hex}`.toLowerCase() !== value.toLowerCase())) onSave(`#${hex.toLowerCase()}`);
   };
-  return <div className={`appearance-value-control${color ? " appearance-color-control" : ""}`}>
-    {color && <AppearanceColorPicker label={`${label}选择器`} value={value} disabled={disabled} pending={colorPending} onChange={onSave} />}
-    <input type="text" aria-label={label} value={color && !composing.current ? draft.toUpperCase() : draft}
-      placeholder={color ? "#RRGGBB" : "系统"} disabled={disabled}
+  return <div className="appearance-value-control appearance-color-control">
+    {<AppearanceColorPicker label={`${label}选择器`} value={value} disabled={disabled} pending={colorPending} onChange={onSave} />}
+    <input type="text" aria-label={label} value={!composing.current ? draft.toUpperCase() : draft}
+      placeholder="#RRGGBB" disabled={disabled}
       spellCheck={false}
       onCompositionStart={() => { composing.current = true; }} onCompositionEnd={event => {
-        composing.current = false; if (color) editColor(event.currentTarget.value);
+        composing.current = false; editColor(event.currentTarget.value);
       }}
       onChange={event => {
-        if (color && !composing.current) editColor(event.target.value);
+        if (!composing.current) editColor(event.target.value);
         else { setDraft(event.target.value); }
-      }} onBlur={() => { if (color) setDraft(value); else persist(); }}
+      }} onBlur={() => setDraft(value)}
       onKeyDown={event => {
         if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
-        if (event.key === "Enter") { event.preventDefault(); if (!color) persist(); }
+        if (event.key === "Enter") event.preventDefault();
         if (event.key === "Escape") { event.stopPropagation(); setDraft(value); }
       }} />
   </div>;
@@ -187,19 +183,16 @@ function ThemeCard({ state, variant, advanced = false, showTitle, editRevision }
       if (--colorWrites.current === 0) { desiredColorTheme.current = null; if (alive.current) setColorDraft(null); }
     });
   };
-  const fontField = (key: "ui" | "content" | "code", label: string) => <div className="appearance-setting-row" key={key}>
-    <span>{label}</span><ThemeTextField label={`${name} ${label}`} value={theme.fonts[key] ?? ""} disabled={state.busy}
-      onSave={value => {
-        const fonts = { ...theme.fonts, [key]: value || null }; delete fonts[`${key}Face`]; patch({ fonts });
-      }} />
-  </div>;
-  const fontStyle = (key: "ui" | "content" | "code", label: string) => {
-    const face = theme.fonts[`${key}Face`];
-    return <div className="appearance-setting-row" key={`${key}Style`}><span>{label}</span>
-      <GeneralPreferenceSelect id={`appearance-${variant}-${key}-style`} label={`${name} ${label}`} value={face ? "selected" : "regular"} disabled={state.busy || !face}
-        options={[...(face ? [{ value: "selected", label: face.fullName }] : []), { value: "regular", label: "常规" }]}
-        onChange={() => { const fonts = { ...theme.fonts }; delete fonts[`${key}Face`]; patch({ fonts }); }} /></div>;
-  };
+  const fontControl = (key: "ui" | "content" | "code", label: string, controls: "family" | "style" | "both" = "both") =>
+    <div className="appearance-setting-row" key={key}><span>{label}</span>
+      <AppearanceFontPicker id={`appearance-${variant}-${key}-font`} label={`${name} ${label}`}
+        styleLabel={`${name} ${key === "ui" ? "界面字体样式" : `${label}样式`}`} controls={controls}
+        value={theme.fonts[key] ?? null} face={theme.fonts[`${key}Face`]} disabled={state.busy} content={key === "content"} monospace={key === "code"}
+        onChange={(value, face) => {
+          const fonts = { ...theme.fonts, [key]: value };
+          if (face) fonts[`${key}Face`] = face; else delete fonts[`${key}Face`];
+          patch({ fonts });
+        }} /></div>;
   return <section className="appearance-theme-card" aria-label={`${name}${advanced ? "高级" : ""}主题`}>
     {(showTitle || !advanced) && <div className="appearance-theme-heading"><h4>{showTitle ? `${name}主题` : "主题"}</h4>
       {!advanced && <div className="appearance-theme-actions">
@@ -232,13 +225,13 @@ function ThemeCard({ state, variant, advanced = false, showTitle, editRevision }
       {!presets.some(preset => preset.id === codeThemeId) && <p role="status">当前代码主题暂不可用，已保留原选择。请选择其他主题以应用配色。</p>}
       {([["accent", "强调色"], ["surface", "背景"], ["ink", "前景"]] as const).map(([key, label]) =>
         <div className="appearance-setting-row" key={key}><span>{label}</span><ThemeTextField label={`${name} ${label}`}
-          color value={(colorDraft ?? theme)[key]} colorPending={colorSaving} disabled={state.busy && !colorSaving} onSave={value => patchColor(key, value)} /></div>)}
-      {fontField("ui", "字体")}
+          value={(colorDraft ?? theme)[key]} colorPending={colorSaving} disabled={state.busy && !colorSaving} onSave={value => patchColor(key, value)} /></div>)}
+      {fontControl("ui", "字体", "family")}
     </>}
     {advanced && <>
-      {fontStyle("ui", "界面字体样式")}
-      {fontField("content", "内容字体")}{fontStyle("content", "内容字体样式")}
-      {fontField("code", "代码字体")}{fontStyle("code", "代码字体样式")}
+      {fontControl("ui", "界面字体样式", "style")}
+      {fontControl("content", "内容字体")}
+      {fontControl("code", "代码字体")}
       <div className="appearance-setting-row"><span>对比度</span><ThemeContrast label={`${name} 对比度`}
         value={theme.contrast} disabled={state.busy} onSave={contrast => patch({ contrast })} /></div>
     </>}

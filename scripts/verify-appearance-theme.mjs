@@ -35,7 +35,7 @@ for (const variant of ["light", "dark"]) {
   const variables = api.themeVariables(custom, variant);
   assert.equal(variables["--bg-main"], custom.surface); assert.equal(variables["--bg-sidebar"], variables["--app-color-background-surface-under"]);
   assert.equal(variables["--accent-green"], custom.semanticColors.diffAdded);
-  assert.equal(variables["--font-sans"], '"Keep Bold", sans-serif');
+  assert.equal(variables["--font-sans"], '"Codex selected Keep-Bold", Keep, sans-serif');
   assert.equal(variables["--app-color-text-on-accent"], "rgb(0, 0, 0)");
   for (const { id } of api.themePresets(variant)) {
     const theme = await api.loadThemePreset(id, variant), code = api.codeThemeVariables(id, variant);

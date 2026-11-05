@@ -36,6 +36,7 @@ function mount(component, props, { document = { activeElement: null, body: {} } 
   vm.runInNewContext(code, { exports: module.exports, document, console, require: name => {
     if (name === "react") return react;
     if (name === "react-dom") return { createPortal: value => value };
+    if (name.endsWith("AppearanceFontPicker")) return { AppearanceFontPicker: function AppearanceFontPicker() {} };
     if (name.endsWith("AppearanceColorPicker")) return { AppearanceColorPicker: function AppearanceColorPicker() {} };
     if (name.endsWith("GeneralPreferenceSelect")) return { GeneralPreferenceSelect: function GeneralPreferenceSelect() {} };
     if (name.endsWith("appearanceTheme")) return { ...engine, themePresets: () => presets, loadThemePreset: (...args) => loadPreset(...args) };
@@ -140,7 +141,7 @@ assert.equal(cardData.calls.length, 1, "late preset cannot overwrite subsequent 
 assert.equal(cardData.calls[0][1].accent, "#123456"); assert.equal(cardData.calls[0][1].accentSource, "custom");
 const advancedCard = mount("ThemeCard", { state: cardData.state, variant: "dark", advanced: true, showTitle: true, editRevision: revision });
 const loading = card.by(node => typeof node.type === "function" && node.type.name === "GeneralPreferenceSelect").props.onChange("dracula");
-await advancedCard.by(node => typeof node.type === "function" && node.props.label === "深色 代码字体").props.onSave("Consolas");
+await advancedCard.by(node => typeof node.type === "function" && node.props.label === "深色 代码字体").props.onChange("Consolas");
 release(engine.defaultChromeTheme("dark")); await loading;
 assert.equal(cardData.calls.length, 2, "advanced font edit also invalidates pending visual-card preset");
 loadPreset = async () => { throw Error("offline"); };

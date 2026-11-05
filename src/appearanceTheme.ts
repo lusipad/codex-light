@@ -24,6 +24,42 @@ import tokyoNight from "./themes/tokyo-night.json";
 
 export type ThemeVariant = "light" | "dark";
 export interface ThemeFontFace { family: string; fullName: string; postscriptName: string }
+export const escapeThemeFont = (value: string) => value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+export function firstThemeFontFamily(value: string | null | undefined): string | undefined {
+  if (!value) return undefined;
+  let quote = "", end = value.length;
+  for (let i = 0; i < value.length; i++) {
+    const char = value[i];
+    if (char === "\\") i++;
+    else if (quote) { if (char === quote) quote = ""; }
+    else if (char === '"' || char === "'") quote = char;
+    else if (char === ",") { end = i; break; }
+  }
+  return value.slice(0, end).trim().replace(/^["']|["']$/g, "").replace(/\\(.)/gsu, "$1") || undefined;
+}
+export function themeFontFamily(value: string, face?: ThemeFontFace): string {
+  return face && firstThemeFontFamily(value)?.toLowerCase() === face.family.toLowerCase()
+    ? `"${escapeThemeFont(`Codex selected ${face.postscriptName}`)}", ${value}` : value;
+}
+const fontLoads = new WeakMap<FontFaceSet, Map<string, Promise<boolean>>>();
+export async function loadThemeFonts(themes: Pick<ChromeTheme, "fonts">[]): Promise<void> {
+  if (typeof FontFace === "undefined" || typeof document === "undefined" || !document.fonts) return;
+  const fonts = document.fonts;
+  let loads = fontLoads.get(fonts);
+  if (!loads) { loads = new Map(); fontLoads.set(fonts, loads); }
+  const requested = new Map<string, ThemeFontFace>();
+  for (const theme of themes) for (const key of ["ui", "content", "code"] as const) {
+    const face = theme.fonts[`${key}Face`];
+    if (face && firstThemeFontFamily(theme.fonts[key])?.toLowerCase() === face.family.toLowerCase()) requested.set(`Codex selected ${face.postscriptName}`, face);
+  }
+  await Promise.all([...requested].map(([alias, face]) => {
+    if (loads!.has(alias)) return loads!.get(alias);
+    const load = Promise.resolve().then(() => new FontFace(alias,
+      `local("${escapeThemeFont(face.postscriptName)}"), local("${escapeThemeFont(face.fullName)}")`).load())
+      .then(font => { fonts.add(font); return true; }).catch(() => { loads!.delete(alias); return false; });
+    loads!.set(alias, load); return load;
+  }));
+}
 export interface ChromeTheme {
   accent: string;
   accentSource?: "chatgpt" | "custom";
@@ -300,9 +336,8 @@ export function themeVariables(input: ChromeTheme, variant: ThemeVariant): Recor
   variables["--color-text"] = theme.ink;
   variables["--color-background-text-selection"] = variables["--selection-bg"];
   variables["--color-background-attribution-highlight"] = variables["--selection-bg"];
-  const quoteFamily = (family: string) => JSON.stringify(family);
-  variables["--font-sans"] = theme.fonts.ui ? `${quoteFamily(theme.fonts.uiFace?.fullName ?? theme.fonts.ui)}, sans-serif` : '"OpenAI Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-  variables["--font-mono"] = theme.fonts.code ? `${quoteFamily(theme.fonts.codeFace?.fullName ?? theme.fonts.code)}, monospace` : '"Cascadia Code", Consolas, Menlo, monospace';
-  variables["--font-content"] = theme.fonts.content ? `${quoteFamily(theme.fonts.contentFace?.fullName ?? theme.fonts.content)}, sans-serif` : "var(--font-sans)";
+  variables["--font-sans"] = theme.fonts.ui ? `${themeFontFamily(theme.fonts.ui, theme.fonts.uiFace)}, sans-serif` : '"OpenAI Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  variables["--font-mono"] = theme.fonts.code ? `${themeFontFamily(theme.fonts.code, theme.fonts.codeFace)}, monospace` : '"Cascadia Code", Consolas, Menlo, monospace';
+  variables["--font-content"] = theme.fonts.content ? `${themeFontFamily(theme.fonts.content, theme.fonts.contentFace)}, sans-serif` : "var(--font-sans)";
   return variables;
 }

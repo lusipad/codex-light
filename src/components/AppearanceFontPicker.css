@@ -1,0 +1,11 @@
+.appearance-font-controls { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: 8px; }
+.general-preference-select.appearance-font-select { width: 144px; min-width: 0; }
+.appearance-font-select .general-preference-trigger { width: 100%; border-radius: 999px; }
+.appearance-font-custom-menu input { box-sizing: border-box; width: 100%; min-width: 0; border: 1px solid var(--border-default); border-radius: 5px; padding: 6px 8px; background: transparent; color: var(--text-primary); font: inherit; }
+.appearance-font-custom-menu hr { margin: 4px; border: 0; border-top: 1px solid var(--border-default); }
+.appearance-font-loading { display: inline-flex; color: var(--text-secondary); }
+@media (max-width: 640px) {
+  .appearance-settings .appearance-setting-row:has(.appearance-font-controls) { flex-wrap: wrap; }
+  .appearance-font-controls { width: 100%; }
+  .appearance-font-controls .appearance-font-select { flex: 1; width: auto; }
+}

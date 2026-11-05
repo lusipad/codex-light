@@ -12,10 +12,11 @@ interface GeneralPreferenceSelectProps {
   placeholder?: string;
   className?: string;
   onChange: (value: string) => void;
+  onReselect?: () => void;
 }
 
 export const GeneralPreferenceSelect: React.FC<GeneralPreferenceSelectProps> = ({
-  id, label, value, options, disabled = false, placeholder = "未找到目标", className = "", onChange,
+  id, label, value, options, disabled = false, placeholder = "未找到目标", className = "", onChange, onReselect,
 }) => {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState({ top: 0, left: 0, maxHeight: 320 });
@@ -112,7 +113,10 @@ export const GeneralPreferenceSelect: React.FC<GeneralPreferenceSelectProps> = (
       {options.map(option => <button type="button" key={option.value} role="menuitemradio"
         aria-checked={value === option.value} onClick={() => {
           close();
-          if (!unavailable && option.value !== value) onChange(option.value);
+          if (!unavailable) {
+            if (option.value !== value) onChange(option.value);
+            else onReselect?.();
+          }
         }}>
         <span>{option.label}</span>{value === option.value && <Check size={14} aria-hidden="true" />}
       </button>)}
