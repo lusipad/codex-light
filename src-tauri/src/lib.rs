@@ -339,6 +339,28 @@ async fn remote_plugin_mutation(
 }
 
 #[tauri::command]
+async fn account_notifications_read(
+    app: AppHandle, state: State<'_, AppState>, request: chatgpt_service::AccountNotificationsRequest,
+) -> Result<chatgpt_service::AccountNotificationsResponse, chatgpt_service::ServiceError> {
+    state.chatgpt_service.account_notifications_read(request, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
+async fn account_notifications_write(
+    app: AppHandle, state: State<'_, AppState>, request: chatgpt_service::AccountNotificationsWriteRequest,
+) -> Result<chatgpt_service::ProfileMutationResponse, chatgpt_service::ServiceError> {
+    state.chatgpt_service.account_notifications_write(request, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
 async fn profile_mutation(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -2044,6 +2066,8 @@ pub fn run() {
             remote_plugin_inventory,
             remote_plugin_mutation,
             profile_mutation,
+            account_notifications_read,
+            account_notifications_write,
             account_instructions_read,
             account_instructions_write,
             share_thread_prepare,

@@ -59,6 +59,7 @@ test('General keeps real external-open and Enter consumers without debug/reset c
   const page = mount('general-settings'); assert.ok(page.child('GeneralOpenPreferences'));
   assert.equal(page.child('NotificationSettings')?.props.state, page.props.notificationState, 'local notification group belongs in General');
   assert.equal(mount('notifications').child('NotificationSettings'), undefined, 'account notification route cannot reuse local preferences');
+  assert.ok(mount('notifications').child('AccountNotificationSettings'), 'account notification route delegates its own remote settings');
   assert.doesNotMatch(content(page.render()), /App-Server|恢复出厂|自定义 Codex CLI/);
   const enter = page.by(n => n.props.id === 'composer-enter-behavior');
   assert.equal(enter.type.name, 'GeneralPreferenceSelect');
@@ -113,7 +114,7 @@ test('Grouped navigation arrows activate adjacent visible buttons without wrappi
   const activated = []; const buttons = sequence.map((node, index) => ({ focus: () => activated.push(['focus', index]), click: () => node.props.onClick() }));
   let prevented = 0;
   const event = (key, index) => ({ key, nativeEvent: {}, preventDefault: () => prevented++, target: { closest: () => buttons[index] }, currentTarget: { querySelectorAll: () => buttons } });
-  nav.props.onKeyDown(event('ArrowDown', 0)); page.render(); assert.ok(page.by(n => n.props.role === 'status' && /ChatGPT 账户通知/.test(content(n)))); assert.deepEqual(activated, [['focus', 1]]);
+  nav.props.onKeyDown(event('ArrowDown', 0)); page.render(); assert.ok(page.child('AccountNotificationSettings')); assert.deepEqual(activated, [['focus', 1]]);
   nav.props.onKeyDown(event('ArrowUp', 0)); page.render(); assert.equal(page.child('NotificationSettings'), undefined); assert.equal(activated.length, 1);
   nav.props.onKeyDown(event('Tab', 0)); assert.equal(prevented, 2);
 });

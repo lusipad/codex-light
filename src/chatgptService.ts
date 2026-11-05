@@ -112,6 +112,27 @@ export interface ProfileMutationResult {
   readback: unknown;
 }
 
+export async function readAccountNotifications(identity: ServiceIdentity, signal: AbortSignal): Promise<unknown> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; body: unknown }>(
+    "account_notifications_read", requestId,
+    { request: { requestId, expectedIdentity: identity, profile: browserProfile() } }, signal,
+  );
+  return responseBody(result, requestId, identity);
+}
+
+export async function writeAccountNotification(category: string, channel: string, enabled: boolean,
+  identity: ServiceIdentity, signal: AbortSignal): Promise<ProfileMutationResult> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<ProfileMutationResult & { requestId: string; identity: ServiceIdentity }>(
+    "account_notifications_write", requestId,
+    { request: { requestId, expectedIdentity: identity, profile: browserProfile(), category, channel, enabled } }, signal,
+  );
+  responseBody(result, requestId, identity);
+  if (!["confirmed", "pending"].includes(result.verification)) throw Error("无法确认通知设置保存状态，请重新读取。");
+  return result;
+}
+
 export type RemotePluginOperation = "enable" | "disable" | "uninstall";
 export interface RemotePluginMutationResult {
   pluginId: string; operation: RemotePluginOperation; body: unknown;
@@ -332,6 +353,9 @@ export function serviceErrorMessage(error: unknown): string {
     desktop_context_unavailable: "应用服务尚未连接，请连接后重试。",
     publish_unknown: "无法确认分享是否已发布。为避免重复发布，请先检查已有分享。",
     profile_write_unknown: "无法确认资料是否已保存。请先重新读取核验，避免重复提交。",
+    notifications_account_unavailable: "无法加载你的账户信息。",
+    notifications_write_unknown: "无法确认通知设置是否已保存。请先重新读取核验，避免重复提交。",
+    notifications_readback_failed: "通知设置已提交，但读取失败。请重新读取核验。",
     profile_name_rejected: "显示名称未通过审核。请换一个名称重试。",
     profile_bio_rejected: "简介未通过审核。请修改后重试。",
     profile_photo_rejected: "头像未通过审核。请换一张图片重试。",

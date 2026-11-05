@@ -1,0 +1,3 @@
+.general-preference-menu.account-notification-menu { width: 240px; }
+.account-notification-menu [role="menuitemcheckbox"] > span { overflow-wrap: anywhere; }
+.account-notification-menu .general-preference-trigger { max-width: 240px; }

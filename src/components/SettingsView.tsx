@@ -22,6 +22,7 @@ import { ProfileSettings } from "./ProfileSettings";
 import { PersonalizationSettings } from "./PersonalizationSettings";
 import { AgentSettings } from "./AgentSettings";
 import { NotificationSettings } from "./NotificationSettings";
+import { AccountNotificationSettings } from "./AccountNotificationSettings";
 import type { NotificationState } from "../notificationPreferences";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { KeyboardShortcutsSettings } from "./KeyboardShortcutsSettings";
@@ -369,7 +370,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         {/* SECTION: NOTIFICATIONS */}
         {activeSection === "notifications" && (
           <div className="settings-scroll-container">
-            <p className="card-subtitle-desc" role="status">ChatGPT 账户通知设置尚不可用。本地任务通知可在“常规”中设置。</p>
+            <AccountNotificationSettings scope={JSON.stringify([connectionIdentity, accountIdentity])} onManageTasks={() => onNavigateRoute?.("scheduled")} />
           </div>
         )}
 

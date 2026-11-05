@@ -1,0 +1,17 @@
+.account-notification-settings { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.account-notification-settings > h3 { margin: 0; font-size: 14px; font-weight: 500; }
+.account-notification-card { border: 1px solid var(--border-default); border-radius: 16px; overflow: hidden; }
+.account-notification-card:empty { display: none; }
+.account-notification-row { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 12px 16px; min-width: 0; }
+.account-notification-row + .account-notification-row::before { content: ""; position: absolute; top: 0; inset-inline: 16px; height: 1px; background: var(--border-default); }
+.account-notification-description { min-width: 0; overflow-wrap: anywhere; }
+.account-notification-description > span { color: var(--text-primary); font-size: 13px; font-weight: 500; }
+.account-notification-description p { margin: 2px 0 0; color: var(--text-secondary); font-size: 12px; line-height: 16px; }
+.account-notification-control { display: flex; justify-content: flex-end; flex-shrink: 0; max-width: 50%; min-width: 0; }
+.account-notification-tasks { display: block; padding: 0; margin-top: 4px; border: 0; background: transparent; color: var(--text-primary); text-decoration: underline; font-size: 12px; cursor: pointer; }
+.account-notification-settings > [role="alert"] { margin: 0; color: var(--text-secondary); overflow-wrap: anywhere; }
+.account-notification-settings > button { align-self: flex-start; }
+@media (max-width: 640px) {
+  .account-notification-row { gap: 16px; flex-wrap: wrap; }
+  .account-notification-control { margin-inline-start: auto; max-width: 100%; }
+}

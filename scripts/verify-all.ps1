@@ -77,6 +77,8 @@ try {
   Invoke-Step "Sites authenticated catalog and readonly settings regression" { node scripts/verify-sites-service.mjs }
   Invoke-Step "Codex Cloud authenticated configuration regression" { node scripts/verify-cloud-environments.mjs }
   Invoke-Step "Authenticated service renderer contracts" { node scripts/verify-chatgpt-service.mjs }
+  Invoke-Step "Account notification data contracts" { node scripts/verify-account-notifications.mjs }
+  Invoke-Step "Account notification concurrency and lifecycle" { node scripts/verify-account-notifications-ui.mjs }
   Invoke-Step "Rust authenticated read service contracts" { cargo test --manifest-path src-tauri/Cargo.toml chatgpt_service }
   Invoke-Step "Generated image real byte save regression" { node scripts/verify-image-save.mjs }
   Invoke-Step "Rust generated image save contracts" { cargo test --manifest-path src-tauri/Cargo.toml image_save }
