@@ -69,6 +69,8 @@ try {
   Invoke-Step "Remote plugin component state and source isolation" { node scripts/verify-remote-plugin-ui-c.mjs }
   Invoke-Step "Recommended skills native client and discovery contracts" { node scripts/verify-recommended-skills.mjs }
   Invoke-Step "Recommended skills component scope and lifecycle contracts" { node scripts/verify-recommended-skills-ui.mjs }
+  Invoke-Step "Recommended skill preview and installation state" { node scripts/verify-recommended-preview.mjs }
+  Invoke-Step "Recommended skill real parent readback feedback" { node scripts/verify-recommended-parent.mjs }
   Invoke-Step "Rust recommended skill repository and complete installation" { cargo test --locked --manifest-path src-tauri/Cargo.toml --lib recommended_skills_tests }
   Invoke-Step "Plugin preparation protocol and pagination contracts" { node scripts/verify-plugin-preparation-protocol.mjs }
   Invoke-Step "Plugin preparation component lifecycle contracts" { node scripts/verify-plugin-preparation-ui.mjs }

@@ -107,3 +107,30 @@ for (const path of [`${destination}-other/SKILL.md`, `${destination}/nested/SKIL
 }
 await assert.rejects(fixture({ invokeError: true }).api.installRecommendedSkill(item, null), /native unavailable/);
 console.log("Recommended skills: cache/error, response validation, install identity, exact discovery and read failures passed");
+
+{
+  const { api } = fixture();
+  assert.equal(api.recommendedSkillFilePath("C:/cache/", item), "C:/cache/skills/.curated/demo.skill/SKILL.md");
+  assert.throws(() => api.recommendedSkillFilePath("relative", item));
+  assert.throws(() => api.recommendedSkillFilePath("C:/cache", { ...item, repoPath: "../outside" }));
+  for (const [name, expected] of [["openai-developerdocs", "OpenAI Developerdocs"], ["openaideveloperdocs", "OpenAI Developer Docs"], ["github:pdf_and_apis", "GitHub: PDF and APIs"], ["imagegen", "Imagegen"], ["constructor", "Constructor"]]) {
+    assert.equal(api.recommendedSkillDisplayName(name), expected);
+  }
+  const found = { key: "real", path: "D:/skills/DEMO.SKILL/SKILL.md", name: "different", displayName: "Custom" };
+  assert.equal(api.matchRecommendedSkill(item, [found]), found);
+  assert.equal(api.matchRecommendedSkill({ ...item, id: "another", name: "Custom" }, [found]), found);
+  assert.equal(api.matchRecommendedSkill({ ...item, id: "another", name: "unrelated" }, [found]), undefined);
+}
+console.log("PASS recommendation source paths, official title formatting and display-only matching keys; exact install/discovery boundaries retained");
+
+{
+  const {api}=fixture();
+  const user={key:"user",name:"demo",path:"C:/user/demo/SKILL.md",scope:"user"};
+  const repo={...user,key:"repo",path:"C:/project/demo/SKILL.md",scope:"repo"};
+  const recommendation={...item,id:"demo",name:"demo"};
+  assert.equal(api.matchRecommendedSkill(recommendation,[user,repo]),repo,"RP06 same-name metadata uses official repo-before-user priority");
+  const smaller={...repo,key:"first-path",path:"C:/a/demo/SKILL.md"};
+  assert.equal(api.matchRecommendedSkill(recommendation,[repo,smaller]),smaller,"RP06 same scope resolves by locale path ordering");
+  assert.equal(api.matchRecommendedSkill(recommendation,[{...repo,path:repo.path+"/"}]).key,"repo");
+}
+console.log("PASS same-name scope/path precedence and trailing separators use official installed classification");

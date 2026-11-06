@@ -38,6 +38,7 @@ import {
 import "./PluginsMarket.css";
 import { PluginPreparationPanel } from "./PluginPreparationPanel";
 import { RecommendedSkillsPanel } from "./RecommendedSkillsPanel";
+import { recommendedSkillDisplayName } from "../recommendedSkills";
 import { SkillPreviewDialog } from "./SkillPreviewDialog";
 import {
   AppInfo,
@@ -150,7 +151,7 @@ function buildSkillRows(
       if (match) usedLocalPaths.add(match.path);
       rows.push({
         key: remote.path || remote.name,
-        name: remote.interface?.displayName?.trim() || remote.name,
+        name: remote.interface?.displayName?.trim() || recommendedSkillDisplayName(remote.name),
         description: remote.description,
         scope: remote.scope,
         enabled: remote.enabled,
@@ -254,6 +255,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   const localSkillsRequestRef = useRef(0);
   const skillWritePendingRef = useRef(false);
   const [skillWriteBusy, setSkillWriteBusy] = useState(false);
+  const [recommendedInstalledKeys, setRecommendedInstalledKeys] = useState<string[]>([]);
   const [skillPreview, setSkillPreview] = useState<{ row: SkillRow; identity: string } | null>(null);
   const skillPreviewSequence = useRef(0);
 
@@ -400,6 +402,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     skillSelectionRef.current = null;
     remoteSkillsLoadingRef.current = false;
     setSkills([]);
+    setRecommendedInstalledKeys([]);
     setRemoteSkills(null);
     setRemoteSkillsError(null);
     setRemoteSkillsLoading(false);
@@ -517,9 +520,11 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     try {
       const res = await listSkills(workspaceCwds(), forceReload);
       if (isCurrent()) setRemoteSkills(flattenSkills(res).skills);
+      return null;
     } catch (err) {
       if (isCurrent()) {
         setRemoteSkillsError(toViewError(err));
+        return errorSummary(err);
       }
     } finally {
       if (isCurrent()) {
@@ -580,10 +585,8 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     setManagementLoading(false);
   };
 
-  const refreshAll = async () => {
+  const loadLocalSkills = async () => {
     const context = pluginContextRef.current;
-    const serviceLoad = loadServicePlugins();
-    const installedLoad = loadInstalledPlugins({ confirmInstallResult: true });
     const request = ++localSkillsRequestRef.current;
     try {
       const localSkills = await tauriInvoke<SkillInfoItem[]>(
@@ -594,11 +597,26 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
         setSkills(localSkills);
         setLocalSkillsError(null);
       }
+      return null;
     } catch (error) {
       if (isPluginContextCurrent(context) && request === localSkillsRequestRef.current) {
         setLocalSkillsError(errorSummary(error));
+        return errorSummary(error);
       }
     }
+  };
+
+  const refreshRecommendedSkills = async () => {
+    const context = pluginContextRef.current;
+    const errors = await Promise.all([loadLocalSkills(), loadRemoteSkills(true)]);
+    if (isPluginContextCurrent(context) && errors.some(Boolean)) throw new Error(errors.filter(Boolean).join("；"));
+  };
+
+  const refreshAll = async () => {
+    const context = pluginContextRef.current;
+    const serviceLoad = loadServicePlugins();
+    const installedLoad = loadInstalledPlugins({ confirmInstallResult: true });
+    await loadLocalSkills();
     if (!isPluginContextCurrent(context)) return;
     await Promise.allSettled([installedLoad, serviceLoad, loadRemoteSkills(), loadManagement()]);
     if (manageOnly || subTab === "apps") {
@@ -1203,6 +1221,55 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   };
   const filteredSkillRows = skillRows.filter(
     (row) => matchesSearch(row.name) || matchesSearch(row.description)
+  );
+  const renderSkillRow = (row: SkillRow) => (
+    <div
+      key={row.key}
+      className={`skill-list-row ${
+        selectedSkillKey === row.key ? "active" : ""
+      }`}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          openSkillRow(row);
+        }
+      }}
+      onClick={() => openSkillRow(row)}
+    >
+      <div className="skill-row-top">
+        <strong>{row.name}</strong>
+        <div className="pm-skill-row-right">
+          {row.pluginId && <span className="tag-badge">插件</span>}
+          <span className="tag-badge">
+            {skillScopeLabel(row.scope)}
+          </span>
+          {!manageOnly && row.enabled !== undefined && <CheckCircle2 size={16} aria-label={row.enabled ? "技能已启用" : "技能已禁用"} className={row.enabled ? "pm-skill-check" : "pm-skill-check disabled"} />}
+          {manageOnly && row.enabled !== undefined && (
+            <button
+              type="button"
+              className={`pm-skill-toggle ${row.enabled ? "on" : ""}`}
+              title={
+                row.enabled
+                  ? "禁用技能"
+                  : "启用技能"
+              }
+              role="switch"
+              aria-checked={row.enabled}
+              aria-label={row.enabled ? "禁用技能" : "启用技能"}
+              disabled={skillWriteBusy || skillToggleBusy === row.key}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleToggleSkill(row);
+              }}
+            />
+          )}
+        </div>
+      </div>
+      <p className="skill-row-desc">{row.description}</p>
+    </div>
   );
   const tabCounts: Record<SubTab, number> = { plugins: installedCount, apps: appsData ? appsData.filter(app => app.isAccessible === true).length : (appsInstalled?.filter(app => app.callable).length ?? 0),
     mcp: mcpCount, skills: skillRows.length, marketplaces: manageableMarkets.length };
@@ -1925,55 +1992,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
               </div>
             )}
             <div className="scrollable-items pm-installed-skills-grid">
-              {filteredSkillRows.map((row) => (
-                <div
-                  key={row.key}
-                  className={`skill-list-row ${
-                    selectedSkillKey === row.key ? "active" : ""
-                  }`}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(event) => {
-                    if (event.target !== event.currentTarget) return;
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      openSkillRow(row);
-                    }
-                  }}
-                  onClick={() => openSkillRow(row)}
-                >
-                  <div className="skill-row-top">
-                    <strong>{row.name}</strong>
-                    <div className="pm-skill-row-right">
-                      {row.pluginId && <span className="tag-badge">插件</span>}
-                      <span className="tag-badge">
-                        {skillScopeLabel(row.scope)}
-                      </span>
-                      {!manageOnly && row.enabled !== undefined && <CheckCircle2 size={16} aria-label={row.enabled ? "技能已启用" : "技能已禁用"} className={row.enabled ? "pm-skill-check" : "pm-skill-check disabled"} />}
-                      {manageOnly && row.enabled !== undefined && (
-                        <button
-                          type="button"
-                          className={`pm-skill-toggle ${row.enabled ? "on" : ""}`}
-                          title={
-                            row.enabled
-                              ? "禁用技能"
-                              : "启用技能"
-                          }
-                          role="switch"
-                          aria-checked={row.enabled}
-                          aria-label={row.enabled ? "禁用技能" : "启用技能"}
-                          disabled={skillWriteBusy || skillToggleBusy === row.key}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleToggleSkill(row);
-                          }}
-                        />
-                      )}
-                    </div>
-                  </div>
-                  <p className="skill-row-desc">{row.description}</p>
-                </div>
-              ))}
+              {filteredSkillRows.filter(row => manageOnly || !recommendedInstalledKeys.includes(row.key)).map(renderSkillRow)}
               {filteredSkillRows.length === 0 && (
                 <div className="empty-hint">没有匹配的技能。</div>
               )}
@@ -2107,8 +2126,14 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
         } : undefined}
       />}
 
-      {subTab === "skills" && !manageOnly && <RecommendedSkillsPanel key={activeWorkspaceRoot}
-        workspaceRoot={activeWorkspaceRoot} onInstalled={refreshAll} writeBusy={skillWriteBusy}
+      {subTab === "skills" && !manageOnly && <RecommendedSkillsPanel key={JSON.stringify([activeWorkspaceRoot, connectionIdentity])}
+        workspaceRoot={activeWorkspaceRoot} onInstalled={refreshRecommendedSkills} writeBusy={skillWriteBusy}
+        searchQuery={searchQuery} onInstalledCardKeysChange={setRecommendedInstalledKeys}
+        installedSkills={skillRows.filter(row => row.remote !== null).map(row => ({
+          key: row.key, name: row.remote?.name ?? row.local?.name ?? row.name,
+          path: row.remote?.path || row.local?.path || "", displayName: row.remote?.interface?.displayName?.trim() || undefined, scope: row.scope,
+        }))}
+        renderInstalledSkill={key => { const row = skillRows.find(item => item.key === key); return row ? renderSkillRow(row) : null; }}
         beginInstall={() => {
           if (skillWritePendingRef.current) return false;
           skillWritePendingRef.current = true;

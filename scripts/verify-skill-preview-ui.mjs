@@ -28,8 +28,9 @@ function previewHarness() {
     loadContents:()=>{const d=defer();reads.push(d);return d.promise;}, onClose:()=>close++, onToggle:()=>{}, onOpen:()=>{opened++;return false;}, onTry:()=>{tried++;return false;}, onUninstall:()=>{},
   };
   const dialog={open:false,showModal(){this.open=true;},close(){this.open=false;}, contains:()=>true, querySelector:()=>null};
+  class FocusElement { isConnected=true; focus(){returnFocus++;} }
   const exports={};
-  vm.runInNewContext(compile(fs.readFileSync("src/components/SkillPreviewDialog.tsx","utf8")),{exports,require:name=>name==="react"?react:name==="lucide-react"?new Proxy({}, {get:(_,key)=>String(key)}):name.endsWith(".css")?{}:name==="../skillPreview"?helper:name==="./MarkdownView"?{MarkdownView:"MarkdownView"}:name==="../clipboard"?{copyTextToClipboard:async value=>{copies.push(value);return true;}}:name==="../bridge"?{tauriInvoke:async(method,args)=>revealed.push([method,args])}:undefined,HTMLElement: class {}, document:{activeElement:{isConnected:true,focus(){returnFocus++;}}},console});
+  vm.runInNewContext(compile(fs.readFileSync("src/components/SkillPreviewDialog.tsx","utf8")),{exports,require:name=>name==="react"?react:name==="lucide-react"?new Proxy({}, {get:(_,key)=>String(key)}):name.endsWith(".css")?{}:name==="../skillPreview"?helper:name==="./MarkdownView"?{MarkdownView:"MarkdownView"}:name==="../clipboard"?{copyTextToClipboard:async value=>{copies.push(value);return true;}}:name==="../bridge"?{tauriInvoke:async(method,args)=>revealed.push([method,args])}:undefined,HTMLElement: FocusElement, document:{activeElement:new FocusElement()},console});
   function render(){let loops=0;do{assert.ok(loops++<15);cursor=0;changed=false;tree=exports.SkillPreviewDialog(props);for(const n of nodes(tree))if(n.props.ref)n.props.ref.current=n.type==="dialog"?dialog:{focus(){},contains:()=>false};pending.splice(0).forEach(fn=>fn());}while(changed);return tree;}
   const h={props,reads,copies,revealed,nodes,text,render,get tree(){return tree;},get close(){return close;},get opened(){return opened;},get tried(){return tried;},get updates(){return updates;},get returnFocus(){return returnFocus;},dialog,
     async tick(){for(let i=0;i<20;i++)await Promise.resolve();render();},button(label){const n=nodes(tree).find(n=>n.type==="button"&&(text(n).trim()===label||n.props["aria-label"]===label));assert.ok(n,`button ${label}`);return n;},unmount(){effects.forEach(e=>e?.cleanup?.());}};
@@ -57,7 +58,7 @@ console.log("PASS SD03/04/05/07/09: preview states, original clipboard including
 const existing=fs.readFileSync("scripts/verify-plugin-management-ui-b.mjs","utf8");
 const ast=ts.createSourceFile("fixture.mjs",existing,ts.ScriptTarget.Latest,true);
 let fixture=ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==="harness").getText(ast).replace("export function","function");
-fixture=fixture.replace('"./RecommendedSkillsPanel": {}','"./RecommendedSkillsPanel": {}, "./SkillPreviewDialog": { SkillPreviewDialog: "SkillPreviewDialog" }');
+fixture=fixture.replace('"./RecommendedSkillsPanel": {}','"./RecommendedSkillsPanel": { RecommendedSkillsPanel: "RecommendedSkillsPanel" }');
 const make=new Function("assert","fs","vm","ts","market","plugin","deferred",`${fixture};return harness;`)(assert,fs,vm,ts,{name:"m",path:"C:/isolated/market.json",plugins:[]},{},defer);
 const h=make();h.props.manageOnly=false;h.props.initialTab="skills";h.render();await h.tick();
 let row=h.nodes(h.tree).find(n=>n.props.className?.includes("skill-list-row"));assert.ok(row);assert.equal(h.nodes(row).filter(n=>n.props.role==="switch").length,0,"default directory check cannot become a toggle card");
@@ -90,3 +91,26 @@ prevented=false;documentFixture.activeElement=middle;keyboard.tree.props.onKeyDo
 prevented=false;keyboard.tree.props.onKeyDown(keyEvent("Escape",{nativeEvent:{isComposing:true}}));assert.equal(prevented,true);assert.equal(keyboard.close,0);keyboard.unmount();
 const feedbackRevision=previewHarness();feedbackRevision.props.actionFeedback={kind:"success",text:"old toggle success"};feedbackRevision.render();await feedbackRevision.button("立即试用").props.onClick();await feedbackRevision.tick();assert.match(feedbackRevision.text(feedbackRevision.tree),/未保存修改/);feedbackRevision.props.actionFeedback={kind:"error",text:"new write failed"};feedbackRevision.render();assert.match(feedbackRevision.text(feedbackRevision.tree),/new write failed/);assert.doesNotMatch(feedbackRevision.text(feedbackRevision.tree),/未保存修改/);feedbackRevision.unmount();
 console.log("PASS SD11 browser revision: boundary Tab wraps visible controls, middle Tab stays native, composition Escape blocked, newest feedback wins");
+// 13G reuses the reading shell, while its caller supplies installation only.
+const recommendedShell=previewHarness();let installClicks=0;
+Object.assign(recommendedShell.props,{enabled:undefined,onToggle:undefined,onUninstall:undefined,onTry:undefined,showMoreActions:false,
+  footer:{type:"button",props:{type:"button",className:"primary-btn-sm",onClick(){installClicks++;}},children:["安装技能"]}});
+recommendedShell.render();
+assert.equal(recommendedShell.nodes(recommendedShell.tree).filter(n=>n.props["aria-label"]==="更多操作").length,0,"RP04: recommended preview has no installed More menu");
+assert.equal(recommendedShell.nodes(recommendedShell.tree).filter(n=>n.props.role==="switch").length,0);
+assert.doesNotMatch(recommendedShell.text(recommendedShell.tree),/卸载|立即试用|复制 Markdown|在文件资源管理器中显示/);
+assert.ok(recommendedShell.text(recommendedShell.tree).includes("正在加载技能内容…"));
+recommendedShell.button("安装技能").props.onClick();assert.equal(installClicks,1);assert.equal(recommendedShell.close,0,"custom installation cannot implicitly close the reading shell");
+recommendedShell.reads[0].reject(Error("source unavailable"));await recommendedShell.tick();assert.match(recommendedShell.text(recommendedShell.tree),/无法加载技能内容。/);recommendedShell.button("重试").props.onClick();recommendedShell.render();recommendedShell.reads[1].resolve("");await recommendedShell.tick();assert.match(recommendedShell.text(recommendedShell.tree),/暂无说明/);assert.ok(recommendedShell.button("安装技能"));
+recommendedShell.tree.props.onCancel({preventDefault(){}});assert.equal(recommendedShell.close,1);recommendedShell.unmount();assert.equal(recommendedShell.dialog.open,false);assert.equal(recommendedShell.returnFocus,1,"recommended close restores the original connected focus");
+const defaultShell=previewHarness();assert.ok(defaultShell.button("更多操作"));assert.ok(defaultShell.button("卸载"));assert.ok(defaultShell.button("立即试用"));defaultShell.unmount();assert.equal(defaultShell.returnFocus,1,"default close focus is unchanged");
+console.log("PASS RP04 shared shell: custom install footer, no More or installed actions, shared loading/error/retry/empty states, default actions and close focus preserved");
+
+export { make as mountSkillsDirectory };
+
+const changingSource=previewHarness();changingSource.props.path="C:/updated/SKILL.md";changingSource.render();
+assert.equal(changingSource.reads.length,2,"RP02 source path changes must start the current source read");
+changingSource.reads[1].resolve("# Current\n\ncurrent body");await changingSource.tick();
+changingSource.reads[0].resolve("# Old\n\nold body");await changingSource.tick();
+assert.equal(changingSource.nodes(changingSource.tree).find(n=>n.type==="MarkdownView").props.content,"current body","RP02 late old source cannot overwrite the current body");changingSource.unmount();
+console.log("PASS RP02 shared preview follows current source and rejects an old source read");

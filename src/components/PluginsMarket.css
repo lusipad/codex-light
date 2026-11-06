@@ -950,6 +950,17 @@
   margin: 0;
 }
 
+.pm-recommended-skills-grid > [tabindex]:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 3px;
+}
+
+.pm-recommended-preview-footer {
+  display: flex;
+  justify-content: flex-end;
+  width: 100%;
+}
+
 @container (min-width: 581px) {
   .pm-directory-page .pm-market-group > .item-cards-list,
   .pm-directory-page .pm-recommended-skills-grid,

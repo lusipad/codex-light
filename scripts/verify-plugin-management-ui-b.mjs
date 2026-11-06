@@ -60,10 +60,11 @@ export function harness(options = {}) {
   const remote = { loadRemotePlugins: async () => ({ identity: null, marketplace: null, error: null, unsupported: true }),
     mergePluginInventories: cli => cli ?? { marketplaces: [] }, ...options.remote };
   const McpSettings = () => null;
+  const recommended = load("src/recommendedSkills.ts", { "./bridge": bridge, "./plugins": plugins });
   const { SkillsMcpView } = load("src/components/SkillsMcpView.tsx", { "lucide-react": new Proxy({}, { get: (_, name) => String(name) }), "../bridge": bridge, "../fsClient": options.fs ?? {},
     "../config": { experimentalFeatureListAll: () => featureRead() }, "../mcpSettings": { readMcpSettings: async () => ({ entries: [{ name: "MCP" }] }) },
     "../pluginManagement": client, "../pluginManagementState": { ...core, useMarketplaceRemoval: (...args) => (removal = core.useMarketplaceRemoval(...args)) },
-    "../plugins": plugins, "../remotePlugins": remote, "./McpSettings": { McpSettings }, "./PluginPreparationPanel": {}, "./RecommendedSkillsPanel": {}, "./SkillPreviewDialog": { SkillPreviewDialog: "SkillPreviewDialog" } });
+    "../plugins": plugins, "../recommendedSkills": recommended, "../remotePlugins": remote, "./McpSettings": { McpSettings }, "./PluginPreparationPanel": {}, "./RecommendedSkillsPanel": {}, "./SkillPreviewDialog": { SkillPreviewDialog: "SkillPreviewDialog" } });
   const nodes = node => node && typeof node === "object" ? [node, ...(node.children || []).flatMap(nodes)] : [];
   const text = node => typeof node === "string" || typeof node === "number" ? String(node) : (node?.children || []).map(text).join("");
   const modal = { open: false, showModal() { this.open = true; }, close() { this.open = false; } };

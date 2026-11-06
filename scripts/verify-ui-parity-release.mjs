@@ -18,6 +18,7 @@ const scripts = [
   'verify-file-editor-lifecycle.mjs', 'verify-file-editor-save.mjs',
   'verify-skill-preview-ui.mjs', 'verify-skill-selector.mjs', 'verify-skill-trial.mjs',
   'verify-skill-trial-host.mjs', 'verify-skill-trial-prefill.mjs', 'verify-skill-file-host.mjs',
+  'verify-recommended-skills.mjs', 'verify-recommended-preview.mjs', 'verify-recommended-parent.mjs', 'verify-skill-actions.mjs',
   'verify-terminal-ui.mjs', 'verify-terminal-lifecycle.mjs', 'verify-terminal-output.mjs',
   'verify-terminal-command.mjs', 'verify-terminal-layout.mjs', 'verify-environment-terminal-c.mjs',
 ];

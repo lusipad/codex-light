@@ -6,7 +6,7 @@ import ts from "typescript";
 const source = fs.readFileSync("src/components/SkillsMcpView.tsx", "utf8");
 const ast = ts.createSourceFile("SkillsMcpView.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const callbacks = {};
-const names = ["isPluginContextCurrent", "loadRemoteSkills", "refreshAll", "handleSelectSkillRow", "handleStartNewSkill", "handleSaveSkill", "handleDeleteSkill", "handleInstallSeedSkill", "handleToggleSkill"];
+const names = ["isPluginContextCurrent", "loadLocalSkills", "loadRemoteSkills", "refreshAll", "handleSelectSkillRow", "handleStartNewSkill", "handleSaveSkill", "handleDeleteSkill", "handleInstallSeedSkill", "handleToggleSkill"];
 function visit(node) {
   if (ts.isVariableDeclaration(node) && names.includes(node.name.getText(ast))) callbacks[node.name.getText(ast)] = node.initializer.getText(ast);
   if (ts.isFunctionDeclaration(node) && ["normalizePathKey", "buildSkillRows"].includes(node.name?.text)) callbacks[node.name.text] = node.getText(ast);
@@ -14,6 +14,10 @@ function visit(node) {
 }
 visit(ast);
 const compile = text => ts.transpileModule(text, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+const recommended = {};
+vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/recommendedSkills.ts", "utf8"), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+}).outputText, { exports: recommended, require: () => ({}) });
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
 const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
 const local = { id: "tool", name: "Tool", path: "C:/home/skills/tool/SKILL.md", dirPath: "C:/home/skills/tool", installed: true, content: "original" };
@@ -26,7 +30,7 @@ function mount() {
     skillSelectionRequestRef: { current: 0 }, skillEditorRevisionRef: { current: 0 }, skillSelectionRef: { current: null },
     skillWritePendingRef: { current: false }, selectedSkill: null, selectedSkillKey: null, readOnlyRemoteSkill: null,
     newSkillId: "tool", skillContent: "draft", activeWorkspaceRoot: "A", subTab: "skills", manageOnly: false,
-    appsLoadedRef: { current: false }, skillScopeLabel: value => value,
+    appsLoadedRef: { current: false }, skillScopeLabel: value => value, recommendedSkillDisplayName: recommended.recommendedSkillDisplayName,
     notify: (...args) => notices.push(args), confirm: () => true,
     workspaceCwds: () => ["A"], toViewError: error => ({ message: error.message }), errorSummary: error => error.message,
     flattenSkills: result => ({ skills: result.data }), loadInstalledPlugins: async () => {}, loadServicePlugins: async () => {}, loadManagement: async () => {}, loadApps: async () => {},

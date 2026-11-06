@@ -22,6 +22,64 @@ export interface RecommendedSkillInstallResult {
   skill: SkillInfoItem;
 }
 
+export function recommendedSkillFilePath(repoRoot: string, skill: RecommendedSkill): string {
+  if (!absolutePath(repoRoot) || !skillItem(skill)) throw new Error("推荐技能来源路径无效");
+  return `${repoRoot.replace(/[\\/]+$/, "")}/${skill.repoPath}/SKILL.md`;
+}
+
+export interface InstalledRecommendedSkill {
+  key: string;
+  name: string;
+  path: string;
+  displayName?: string;
+  scope?: string;
+}
+
+const skillAcronyms = new Set(["GH", "IA", "MCP", "API", "CI", "CLI", "LLM", "PDF", "PR", "RCS", "UI", "URL", "SQL", "TW", "GPU", "CPU"]);
+const skillBrands = new Map([
+  ["openai", "OpenAI"], ["openaideveloperdocs", "OpenAI Developer Docs"], ["openapi", "OpenAPI"], ["github", "GitHub"],
+  ["imessage", "iMessage"], ["pagerduty", "PagerDuty"], ["datadog", "DataDog"], ["sharepoint", "SharePoint"], ["sqlite", "SQLite"], ["fastapi", "FastAPI"],
+]);
+const skillSmallWords = new Set(["and", "or", "to", "up", "with"]);
+
+export function recommendedSkillDisplayName(name: string): string {
+  return name.split(":").map(segment => segment.replace(/[_-]+/g, " ").split(/\s+/).filter(Boolean).map((word, index) => {
+    const upper = word.toUpperCase(), lower = word.toLowerCase();
+    if (skillAcronyms.has(upper)) return upper;
+    if (lower.endsWith("s") && skillAcronyms.has(word.slice(0, -1).toUpperCase())) return `${word.slice(0, -1).toUpperCase()}s`;
+    return skillBrands.get(lower) ?? (index > 0 && skillSmallWords.has(lower) ? lower : lower.slice(0, 1).toUpperCase() + lower.slice(1));
+  }).join(" ")).join(": ");
+}
+
+function skillMatchKeys(values: (string | undefined)[]): Set<string> {
+  const keys = new Set<string>();
+  for (const value of values) {
+    const key = value?.trim().toLowerCase();
+    if (!key) continue;
+    keys.add(key);
+    keys.add(key.replace(/[^a-z0-9]+/g, ""));
+  }
+  return keys;
+}
+
+// Official display classification only; install/discovery still require exact paths.
+export function matchRecommendedSkill(skill: RecommendedSkill, installed: InstalledRecommendedSkill[]): InstalledRecommendedSkill | undefined {
+  const keys = skillMatchKeys([skill.id, skill.name, recommendedSkillDisplayName(skill.name)]);
+  const priority: Record<string, number | undefined> = { repo: 0, user: 1, system: 2, admin: 3 };
+  const byName = new Map<string, InstalledRecommendedSkill>();
+  for (const item of installed) {
+    const previous = byName.get(item.name), rank = priority[item.scope ?? ""], previousRank = priority[previous?.scope ?? ""];
+    if (!previous || (rank !== undefined && previousRank !== undefined && rank < previousRank)
+      || (rank === previousRank && item.path.localeCompare(previous.path) < 0)) byName.set(item.name, item);
+  }
+  const sorted = [...byName.values()].sort((a, b) => (a.displayName?.trim() || recommendedSkillDisplayName(a.name)).localeCompare(b.displayName?.trim() || recommendedSkillDisplayName(b.name)) || a.name.localeCompare(b.name));
+  return sorted.find(item => {
+    const parts = item.path.replace(/[\\/]+$/, "").split(/[\\/]/).filter(Boolean), last = parts.at(-1) ?? "";
+    const basename = last.toLowerCase() === "skill.md" ? parts.at(-2) : last.replace(/\.md$/i, "");
+    return [...skillMatchKeys([basename, item.name, recommendedSkillDisplayName(item.name), item.displayName])].some(key => keys.has(key));
+  });
+}
+
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

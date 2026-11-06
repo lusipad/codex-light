@@ -23,13 +23,18 @@ interface SkillPreviewDialogProps {
   onOpen?: () => boolean | Promise<boolean>;
   onTry?: () => boolean | Promise<boolean>;
   onUninstall?: () => void;
+  footer?: React.ReactNode;
+  showMoreActions?: boolean;
 }
 
-export function SkillPreviewDialog({ name, rawName, description, path, enabled, busy, localHost, canRetry = !!path, actionFeedback, loadContents, onClose, onToggle, onOpen, onTry, onUninstall }: SkillPreviewDialogProps) {
+export function SkillPreviewDialog({ name, rawName, description, path, enabled, busy, localHost, canRetry = !!path, actionFeedback, loadContents, onClose, onToggle, onOpen, onTry, onUninstall, footer, showMoreActions = true }: SkillPreviewDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
-  const [contents, setContents] = useState<string | undefined>(undefined);
-  const [error, setError] = useState<string | null>(null);
+  const [loadedContents, setContents] = useState<string | undefined>(undefined);
+  const [loadedError, setError] = useState<string | null>(null);
+  const [requestPath, setRequestPath] = useState(path);
+  const contents = requestPath === path ? loadedContents : undefined;
+  const error = requestPath === path ? loadedError : null;
   const [attempt, setAttempt] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -52,6 +57,7 @@ export function SkillPreviewDialog({ name, rawName, description, path, enabled, 
 
   useEffect(() => {
     let current = true;
+    setRequestPath(path);
     setContents(undefined);
     setError(null);
     void loadContents().then(value => {
@@ -60,7 +66,7 @@ export function SkillPreviewDialog({ name, rawName, description, path, enabled, 
       if (current) setError(failure instanceof Error ? failure.message : String(failure));
     });
     return () => { current = false; };
-  }, [attempt]);
+  }, [attempt, path]);
 
   useEffect(() => {
     if (menuOpen) dialogRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus();
@@ -107,7 +113,7 @@ export function SkillPreviewDialog({ name, rawName, description, path, enabled, 
     }}
     onCancel={event => {
       event.preventDefault();
-      if (menuOpen) { setMenuOpen(false); menuButtonRef.current?.focus(); }
+      if (menuOpen && showMoreActions) { setMenuOpen(false); menuButtonRef.current?.focus(); }
       else onClose();
     }}
     onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
@@ -122,7 +128,7 @@ export function SkillPreviewDialog({ name, rawName, description, path, enabled, 
           {enabled !== undefined && onToggle && <button type="button" role="switch" aria-checked={enabled}
             className={`pm-skill-toggle ${enabled ? "on" : ""}`} aria-label={enabled ? "禁用技能" : "启用技能"}
             disabled={busy} onClick={onToggle} />}
-          <div className="pm-skill-preview-more">
+          {showMoreActions && <div className="pm-skill-preview-more">
             <button type="button" ref={menuButtonRef} className="pm-skill-preview-icon-button" aria-label="更多操作"
               aria-haspopup="menu" aria-expanded={menuOpen} onClick={event => { event.stopPropagation(); setMenuOpen(!menuOpen); }}><MoreHorizontal size={18} /></button>
             {menuOpen && <div className="pm-skill-preview-menu" role="menu" aria-label="技能操作" onClick={event => event.stopPropagation()}
@@ -149,7 +155,7 @@ export function SkillPreviewDialog({ name, rawName, description, path, enabled, 
                 if (mounted.current) setFeedback(copied ? "已复制 SKILL.md" : "无法复制 SKILL.md");
               }}>复制 Markdown</button>
             </div>}
-          </div>
+          </div>}
           <button type="button" className="pm-skill-preview-icon-button" aria-label="关闭" onClick={onClose}><X size={18} /></button>
         </div>
       </header>
@@ -161,8 +167,10 @@ export function SkillPreviewDialog({ name, rawName, description, path, enabled, 
       </div>
       {(feedback || actionFeedback) && <div className="pm-skill-preview-feedback" role={!feedback && actionFeedback?.kind === "error" ? "alert" : "status"}>{feedback || actionFeedback?.text}</div>}
       <footer className="pm-skill-preview-footer">
-        <div>{onUninstall && <button type="button" className="secondary-btn-sm" disabled={busy} onClick={onUninstall}>卸载</button>}</div>
-        <button type="button" className="primary-btn-sm" disabled={enabled !== true || busy || hostBusy || !onTry} onClick={() => acceptHostAction(onTry)}>立即试用</button>
+        {footer !== undefined ? footer : <>
+          <div>{onUninstall && <button type="button" className="secondary-btn-sm" disabled={busy} onClick={onUninstall}>卸载</button>}</div>
+          <button type="button" className="primary-btn-sm" disabled={enabled !== true || busy || hostBusy || !onTry} onClick={() => acceptHostAction(onTry)}>立即试用</button>
+        </>}
       </footer>
     </div>
   </dialog>;
