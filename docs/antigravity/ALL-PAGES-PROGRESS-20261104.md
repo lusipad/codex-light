@@ -91,7 +91,8 @@
 
 ## 2026-11-06 后续增量
 
-- [13F草稿](acceptance/13F-skill-trial-drafts.md)与[13G推荐预览](acceptance/13G-recommended-preview.md)：13F已本地提交；13G接真实只读正文、默认安装、复制/发现状态与元数据换卡，复用既有预览和已装卡片。完整标准在末轮UI修正前exit0/32探针；最终47组前端、构建及私有原生真实安装/键盘/重启通过，622输入稳定。两阶段拟发布preview.4，发布终态另核；官方配对像素、物理IME、网络安装与用户验收未通过。[09C活动会话](specs/09C-activity-session.md)已完成下一单元合同，尚未开发。
+- [13F草稿](acceptance/13F-skill-trial-drafts.md)与[13G推荐预览](acceptance/13G-recommended-preview.md)：13G接真实只读正文、默认安装、复制/发现状态与元数据换卡，复用既有预览和已装卡片。完整标准在末轮UI修正前exit0/32探针；最终47组前端、构建及私有原生真实安装/键盘/重启通过，622输入稳定。后续已推送93c3b38并发布[preview.4](https://github.com/lusipad/codex-desktop-native/releases/tag/v0.2.0-preview.4)：run42187721866全部成功，最终47组前端/512 Rust通过，四个下载文件API digest/SHA256SUMS与实际hash匹配。官方配对像素、物理IME、网络安装与用户验收未通过。
+- [09C活动会话](acceptance/09C-activity-session.md)：后续已开发本地session保留、唯一priority行、10条显示分页与完整集合最新revision回执；归档无event入口、服务吞错、并发记录覆盖与旧目录晚回一并窄修。独立复核及52组前端通过；完整非Fast标准32探针、全库Rust515项及当前原生构建退出0，私有12会话分页/归档/批量已读和重启读回通过，未纳入preview.4。完整root/子会话、官方gate/分组/过滤、配对像素和用户验收未完成。
 
 - [15I云端删除](acceptance/15I-cloud-delete.md)：后续已接固定DELETE及来源差异的确认/404/Retry，阶段完整非Fast385项、32协议探针及全库512 Rust通过；原生仅未登录路径，真实账号删除/配对像素/物理IME与完整viewer/cache广播仍未验。本地阶段不包含于preview.2，拟随13E一并发布preview.3，发布结果另核。
 - [13E技能详情](acceptance/13E-skill-preview.md)：已实现独立预览、原文复制、真实启禁、文件打开确认与焦点、试用草稿；管理/模版及其草稿保留。完整标准exit0/32协议、最终42组前端回归与原生隔离读/打开/dirty/试用验证通过；最终619输入稳定。官方像素/物理IME、项目路径卸载和远端正文仍缺；不是整页已验收。[13F合同](specs/13F-skill-trial-drafts.md)已补追本地宿主首页导航和nonce草稿消费，纠正仅据startInSidebar猜侧聊，后续实现草稿作用域。

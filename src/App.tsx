@@ -2,7 +2,7 @@ import { usePetPreferences } from "./petPreferences";
 import { mergeHookRoots } from "./hooksSettingsModel";
 import { createEnvironmentWorktree, type WorktreeCreationOptions } from "./worktreeCreation";
 import { installWorktreeCleanup } from "./worktreeCleanup";
-import { threadHasActivity, threadNeedsAttention } from "./threadActivity";
+import { beginActivitySession, excludeActivityThreads, mergeActivitySession, threadNeedsAttention, type ActivitySession } from "./threadActivity";
 import { useExternalImports } from "./externalImport";
 import { useCodeReviewPreferences } from "./reviewPreferences";
 import { buildQuickReviewPrompt, parseReviewFindings, type ModelReviewComment } from "./reviewFindings";
@@ -416,7 +416,10 @@ export const App: React.FC = () => {
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, []);
-  const [activityOnly, setActivityOnly] = useState(false);
+  const [activitySession, setActivitySession] = useState<ActivitySession | null>(null);
+  const activitySessionRef = useRef<ActivitySession | null>(null);
+  const activityGenerationRef = useRef(0);
+  const activityScopeRef = useRef("");
   const [showRightDrawer, setShowRightDrawer] = useState<boolean>(false);
   const [showTerminal, setShowTerminal] = useState<boolean>(false);
   const [terminalTargetCwd, setTerminalTargetCwd] = useState<string | null>(null);
@@ -1853,6 +1856,8 @@ export const App: React.FC = () => {
         ) {
           const tid = params?.threadId ?? params?.thread_id ?? params?.thread?.id;
           if (tid) {
+            refreshThreadsGenerationRef.current += 1;
+            activitySessionRef.current = excludeActivityThreads(activitySessionRef.current, [tid]);
             setThreads((prev) => prev.filter((t) => t.id !== tid));
             if (activeThreadIdRef.current === tid) {
               threadRequestRef.current += 1;
@@ -3647,27 +3652,33 @@ export const App: React.FC = () => {
     [showAppToast]
   );
 
+  const archiveMutationPendingRef = useRef(false);
   const handleArchiveThread = useCallback(
-    async (thread: ThreadSummary, e: React.MouseEvent) => {
-      e.stopPropagation();
+    async (thread: ThreadSummary, e?: React.MouseEvent) => {
+      e?.stopPropagation();
+      if (archiveMutationPendingRef.current) return;
+      archiveMutationPendingRef.current = true;
       try {
         await tauriInvoke("thread_archive_toggle", {
           thread,
           archive: true,
         });
+        refreshThreadsGenerationRef.current += 1;
+        activitySessionRef.current = excludeActivityThreads(activitySessionRef.current, [thread.id]);
         setThreads((prev) => prev.filter((t) => t.id !== thread.id));
         setArchiveRefreshTick((v) => v + 1);
-        if (activeThreadId === thread.id) {
+        if (activeThreadIdRef.current === thread.id) {
           startNewThread();
         }
       } catch (err) {
-        console.warn("thread_archive_toggle failed:", err);
+        showAppToast(`归档会话失败：${String(err)}`, "error");
+      } finally {
+        archiveMutationPendingRef.current = false;
       }
     },
-    [activeThreadId, startNewThread]
+    [startNewThread, showAppToast]
   );
 
-  const archiveMutationPendingRef = useRef(false);
   // Both archive entry points share the same service mutation boundary.
   const handleUnarchiveThread = useCallback(
     async (thread: ThreadSummary) => {
@@ -3697,6 +3708,8 @@ export const App: React.FC = () => {
           throw new Error("删除结果未确认，请刷新归档列表后检查");
         }
         const deleted = new Set(result.deletedThreadIds);
+        if (deleted.size) refreshThreadsGenerationRef.current += 1;
+        activitySessionRef.current = excludeActivityThreads(activitySessionRef.current, [...deleted]);
         setThreads(current => current.filter(thread => !deleted.has(thread.id)));
         setPinnedThreadIds(current => current.filter(id => !deleted.has(id)));
         await refreshThreads();
@@ -3753,6 +3766,8 @@ export const App: React.FC = () => {
         await tauriInvoke("thread_delete", {
           threadId: thread.id,
         });
+        refreshThreadsGenerationRef.current += 1;
+        activitySessionRef.current = excludeActivityThreads(activitySessionRef.current, [thread.id]);
         setThreads((prev) => prev.filter((t) => t.id !== thread.id));
         setPinnedThreadIds((prev) => prev.filter((id) => id !== thread.id));
         showAppToast("✓ 聊天已彻底删除", "success");
@@ -3927,7 +3942,7 @@ export const App: React.FC = () => {
       if (activeThreadId) void handleTogglePinThread(activeThreadId, {} as any);
     },
     "archive-thread": () => {
-      if (activeThreadObj) void handleArchiveThread(activeThreadObj, {} as any);
+      if (activeThreadObj) void handleArchiveThread(activeThreadObj);
     },
     "fork-thread": () => void handleForkThread(),
     "open-review-tab": () => {
@@ -4269,7 +4284,7 @@ export const App: React.FC = () => {
       );
       setEditingThreadTitle(true);
     } else if (action === "archive_thread") {
-      if (activeThreadObj) handleArchiveThread(activeThreadObj, {} as any);
+      if (activeThreadObj) void handleArchiveThread(activeThreadObj);
     } else if (action === "toggle_thread_pin") {
       if (activeThreadId) handleTogglePinThread(activeThreadId, {} as any);
     } else if (action === "toggle_pet") {
@@ -4356,29 +4371,65 @@ export const App: React.FC = () => {
     () => threads.filter(threadNeedsAttention).length,
     [threads]
   );
-  const activityThreadIds = useMemo(
-    () => threads.filter(threadHasActivity)
-      .map(thread => thread.id),
-    [threads]
-  );
+  const activityScope = JSON.stringify([modelAccountIdentity, appServerStatus.connected,
+    appServerStatus.binaryPath, appServerStatus.appServerVersion, appServerStatus.userAgent]);
+  activityScopeRef.current = activityScope;
+  const activitySnapshot = useMemo(() => activitySession?.scope === activityScope
+    ? mergeActivitySession(activitySession, threads) : null, [activitySession, activityScope, threads]);
+  activitySessionRef.current = activitySnapshot;
+  const activityOnly = activitySnapshot !== null;
+  useEffect(() => {
+    if (activitySession !== activitySnapshot) setActivitySession(current => current === activitySession ? activitySnapshot : current);
+  }, [activitySession, activitySnapshot]);
+  const activityThreadIds = useMemo(() => activitySnapshot?.threadIds ?? [], [activitySnapshot]);
+  const toggleActivity = useCallback(() => {
+    const generation = ++activityGenerationRef.current;
+    if (activitySessionRef.current) {
+      activitySessionRef.current = null;
+      setActivitySession(null);
+      return;
+    }
+    const scope = activityScopeRef.current;
+    const apply = () => {
+      if (generation !== activityGenerationRef.current || scope !== activityScopeRef.current) return;
+      const session = beginActivitySession(threadsRef.current, scope, Date.now());
+      activitySessionRef.current = session;
+      setActivitySession(session);
+    };
+    if (personalizationNavigationGuardRef.current?.(apply) !== false) apply();
+  }, []);
+  const loadMoreActivity = useCallback(() => {
+    setActivitySession(current => current?.scope === activityScopeRef.current
+      ? { ...current, visibleCount: current.visibleCount + 10 } : current);
+  }, []);
   const markAllThreadsRead = useCallback(async () => {
-    const unread = threads.filter(thread => isThreadReadState(thread.readState) && thread.readState.firstUnread != null);
+    const session = activitySessionRef.current;
+    if (!session) return;
+    const generation = activityGenerationRef.current;
+    const ids = new Set(session.threadIds);
+    const unread = threadsRef.current.filter(thread => ids.has(thread.id) && isThreadReadState(thread.readState) && thread.readState.firstUnread != null);
+    const current = (id: string) => generation === activityGenerationRef.current && session.scope === activityScopeRef.current &&
+      activitySessionRef.current?.threadIds.includes(id);
+    let attempted = false;
     await Promise.all(unread.map(async thread => {
-      if (readStateWritesRef.current.has(thread.id)) return;
+      if (!current(thread.id) || readStateWritesRef.current.has(thread.id)) return;
       readStateWritesRef.current.add(thread.id);
+      attempted = true;
       try {
+        const latest = await callAppServer<any>("thread/read", { threadId: thread.id, includeTurns: false });
+        if (!current(thread.id) || !isThreadReadState(latest?.readState) || latest.readState.firstUnread == null) return;
         const result = await callAppServer<any>("thread/readState/update", {
-          threadId: thread.id, expectedRevision: thread.readState!.revision, operation: { type: "read" },
+          threadId: thread.id, expectedRevision: latest.readState.revision, operation: { type: "read" },
         });
         if (!isThreadReadState(result?.readState)) throw new Error("服务未返回有效会话已读状态");
       } catch (error) {
-        showAppToast(`更新会话已读状态失败：${String(error)}`, "error");
+        if (current(thread.id)) showAppToast(`更新会话已读状态失败：${String(error)}`, "error");
       } finally {
         readStateWritesRef.current.delete(thread.id);
       }
     }));
-    if (unread.length) await refreshThreads();
-  }, [threads, refreshThreads, showAppToast]);
+    if (attempted && session.scope === activityScopeRef.current) await refreshThreads();
+  }, [refreshThreads, showAppToast]);
 
   const moveThreadToProject = useCallback(async (threadId: string, targetProjectId: string | null) => {
     if (!threadId || projectMoveBusy) return;
@@ -4622,7 +4673,7 @@ export const App: React.FC = () => {
         } else if (id.startsWith("open_target:")) {
           await workspaceOpenTargets.openTarget(id.slice("open_target:".length));
         } else if (id === "archive_thread") {
-          if (activeThreadObj) await handleArchiveThread(activeThreadObj, {} as any);
+          if (activeThreadObj) await handleArchiveThread(activeThreadObj);
         }
       } catch (e: any) {
         showAppToast(`操作失败：${e?.message || e}`, "error");
@@ -4901,7 +4952,9 @@ export const App: React.FC = () => {
         activityAttentionCount={activityAttentionCount}
         activityOnly={activityOnly}
         activityThreadIds={activityThreadIds}
-        onToggleActivity={() => setActivityOnly((value) => !value)}
+        activityVisibleCount={activitySnapshot?.visibleCount ?? 10}
+        onLoadMoreActivity={loadMoreActivity}
+        onToggleActivity={toggleActivity}
         onMarkAllRead={markAllThreadsRead}
         hasAgentsMd={agentsMdInfo.found}
         onNavigate={(route) => { if (route === "library") setLibraryCleanupTab(null); setActiveRoute(route); }}

@@ -252,6 +252,9 @@ try {
   Invoke-Step "Fuzzy file session transport regression" { node scripts/verify-fuzzy-file-search.mjs }
   Invoke-Step "Activity & Inbox parity" { node scripts/verify-activity-inbox.mjs }
   Invoke-Step "Service-backed thread activity and menu regression" { node scripts/verify-thread-activity.mjs }
+  Invoke-Step "Activity session membership and retention" { node scripts/verify-activity-session.mjs }
+  Invoke-Step "Activity App receipt and archive lifecycle" { node scripts/verify-activity-session-app.mjs }
+  Invoke-Step "Activity Sidebar session projection" { node scripts/verify-activity-session-sidebar.mjs }
   Invoke-Step "Automation terminal status and event identity regression" { node scripts/verify-automation-completion.mjs }
   Invoke-Step "Inbox history and persistence regression" { node scripts/verify-inbox-lifecycle.mjs }
   Invoke-Step "Scheduled & Automations parity" { node scripts/verify-scheduled-automations.mjs }
@@ -281,6 +284,7 @@ try {
   Invoke-Step "Archive bulk confirmation and actual result regression" { node scripts/verify-archive-bulk.mjs }
   Invoke-Step "Archive shared service scope and partial result regression" { node scripts/verify-archive-service.mjs }
   Invoke-Step "Rust archived deletion enumeration and partial results" { cargo test --manifest-path src-tauri/Cargo.toml --lib archive_delete }
+  Invoke-Step "Rust archive failure propagation and atomic records" { cargo test --manifest-path src-tauri/Cargo.toml --lib thread_archive }
   Invoke-Step "Settings center 26 partitions parity" { node scripts/verify-settings-partitions.mjs }
   Invoke-Step "Extended worksurfaces & cross-page parity (17-23)" { node scripts/verify-extended-worksurfaces.mjs }
   Invoke-Step "Hooks source identity and trusted write boundaries" { node scripts/verify-hooks-settings-b.mjs }

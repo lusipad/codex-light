@@ -912,27 +912,89 @@ async fn thread_archive_toggle(
     thread: Value,
     archive: bool,
 ) -> Result<Vec<Value>, String> {
-    let tid = thread
-        .get("id")
-        .and_then(|v| v.as_str())
-        .ok_or("Missing thread.id")?
-        .to_string();
-    let mut archived = state.desktop_state.list_archived_threads();
-    archived.retain(|item| item.get("id").and_then(|v| v.as_str()) != Some(&tid));
-    if archive {
-        archived.insert(0, thread);
-        let _ = state
-            .app_server
-            .call(&app, "thread/archive", Some(json!({ "threadId": tid })))
-            .await;
-    } else {
-        let _ = state
-            .app_server
-            .call(&app, "thread/unarchive", Some(json!({ "threadId": tid })))
-            .await;
+    thread_archive_with(
+        thread,
+        archive,
+        |method, params| state.app_server.call(&app, method, Some(params)),
+        |thread, archive| state.desktop_state.update_archived_thread(thread, archive),
+    ).await
+}
+
+async fn thread_archive_with<Call, Rpc, Merge>(
+    thread: Value,
+    archive: bool,
+    call: Call,
+    merge: Merge,
+) -> Result<Vec<Value>, String>
+where
+    Call: FnOnce(&'static str, Value) -> Rpc,
+    Rpc: std::future::Future<Output = Result<Value, String>>,
+    Merge: FnOnce(Value, bool) -> Vec<Value>,
+{
+    let tid = thread.get("id").and_then(Value::as_str).ok_or("Missing thread.id")?.to_string();
+    let method = if archive { "thread/archive" } else { "thread/unarchive" };
+    call(method, json!({"threadId": tid})).await?;
+    Ok(merge(thread, archive))
+}
+
+#[cfg(test)]
+mod thread_archive_tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    #[tokio::test]
+    async fn service_failure_preserves_records_for_archive_and_unarchive() {
+        for archive in [true, false] {
+            let original = vec![json!({"id":"target","name":"original"}), json!({"id":"other"})];
+            let records = RefCell::new(original.clone());
+            let writes = RefCell::new(0);
+            let result = thread_archive_with(
+                json!({"id":"target","name":"new"}), archive,
+                |method, params| async move {
+                    assert_eq!(method, if archive { "thread/archive" } else { "thread/unarchive" });
+                    assert_eq!(params, json!({"threadId":"target"}));
+                    Err("fixture server rejected request".to_string())
+                },
+                |_, _| { *writes.borrow_mut() += 1; records.borrow().clone() },
+            ).await;
+            assert_eq!(result, Err("fixture server rejected request".to_string()));
+            assert_eq!(*records.borrow(), original);
+            assert_eq!(*writes.borrow(), 0);
+        }
     }
-    state.desktop_state.set_archived_threads(archived.clone());
-    Ok(archived)
+
+    #[tokio::test]
+    async fn success_merges_records_changed_while_rpc_was_pending() {
+        for archive in [true, false] {
+            let records = RefCell::new(vec![json!({"id":"target","name":"old"}), json!({"id":"removed"})]);
+            let (complete, reply) = tokio::sync::oneshot::channel();
+            let operation = thread_archive_with(
+                json!({"id":"target","name":"new"}), archive,
+                |method, params| async move {
+                    assert_eq!(method, if archive { "thread/archive" } else { "thread/unarchive" });
+                    assert_eq!(params, json!({"threadId":"target"}));
+                    reply.await.unwrap()
+                },
+                |thread, archive| {
+                    let mut latest = records.borrow_mut();
+                    latest.retain(|item| item["id"] != thread["id"]);
+                    if archive { latest.insert(0, thread); }
+                    latest.clone()
+                },
+            );
+            let concurrent_change = async {
+                tokio::task::yield_now().await;
+                *records.borrow_mut() = vec![json!({"id":"concurrent"}), json!({"id":"target","name":"old"})];
+                complete.send(Ok(Value::Null)).unwrap();
+            };
+            let (result, ()) = tokio::join!(operation, concurrent_change);
+            let expected = if archive {
+                vec![json!({"id":"target","name":"new"}), json!({"id":"concurrent"})]
+            } else { vec![json!({"id":"concurrent"})] };
+            assert_eq!(result.unwrap(), expected);
+            assert_eq!(*records.borrow(), expected);
+        }
+    }
 }
 
 #[tauri::command]

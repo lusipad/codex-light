@@ -13,11 +13,18 @@ function visit(node) {
 }
 visit(ast);
 const compile = source => ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+const compileModule = file => ts.transpileModule(fs.readFileSync(file, "utf8"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
+const protocol = { exports: {} }, activity = { exports: {} };
+vm.runInNewContext(compileModule("src/protocol.ts"), { exports: protocol.exports });
+vm.runInNewContext(compileModule("src/threadActivity.ts"), { exports: activity.exports, require: () => protocol.exports });
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
 function mount() {
   const calls = [], context = {
+    ...activity.exports,
     useCallback: callback => callback,
     archiveMutationPendingRef: { current: false },
+    refreshThreadsGenerationRef: { current: 0 },
+    activitySessionRef: { current: { scope: "local", threadIds: ["a", "b"] } },
     threads: [{ id: "a" }, { id: "b" }, { id: "active" }], pins: ["a", "b", "active"], tick: 0, refreshes: 0,
     refreshThreads: async () => { context.refreshes++; },
     setThreads: update => { context.threads = update(context.threads); },
@@ -45,6 +52,8 @@ function mount() {
   assert.equal(v.context.tick, 1);
   assert.equal(v.context.refreshes, 1);
   assert.equal(v.context.archiveMutationPendingRef.current, false, "AS03: partial results clean only actual successful IDs and release the lock");
+  assert.deepEqual(Array.from(v.context.activitySessionRef.current.threadIds), ["b"]);
+  assert.equal(v.context.refreshThreadsGenerationRef.current, 1, "confirmed removals invalidate earlier directory reads");
 }
 {
   const v = mount(), deleting = v.context.handleDeleteArchivedThread({ id: "a" });

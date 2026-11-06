@@ -27,12 +27,12 @@ const activity = { exports: {} };
 vm.runInNewContext(activitySource, {
   exports: activity.exports, require: () => protocol.exports,
 });
-const { threadHasActivity, threadNeedsAttention } = activity.exports;
+const { beginActivitySession, threadHasActivity, threadNeedsAttention } = activity.exports;
 const read = { revision: "r1", firstUnread: null };
 const unread = { revision: "r2", firstUnread: { type: "threadStart" } };
 const threads = [{ id: "unread", readState: unread }, { id: "read", readState: read }, { id: "unsupported" }];
 const ids = run("activityThreadIds", {
-  threads, isThreadReadState, threadHasActivity,
+  activitySnapshot: beginActivitySession(threads, "local", Date.now()),
   inboxItems: [{ id: "old-local", threadId: "read", read: false }],
 })();
 assert.deepEqual(Array.from(ids), ["unread"], "activity must follow service receipts rather than local notification history");
@@ -44,8 +44,8 @@ const activityCases = [
 const attention = run("activityAttentionCount", { threads: activityCases, threadNeedsAttention })();
 assert.equal(attention, 3, "unread and waiting need attention, running alone and old inbox history do not");
 assert.deepEqual(Array.from(run("activityThreadIds", {
-  threads: activityCases, threadHasActivity, isThreadReadState,
-})()), ["unread", "running", "approval", "input"]);
+  activitySnapshot: beginActivitySession(activityCases, "local", Date.now()),
+})()), ["approval", "input", "unread", "running"]);
 assert.equal(threadNeedsAttention({ id: "cleared", readState: read, status: "idle" }), false);
 for (const status of [
   "waitingOnUserInput", "waitingOnApproval",
@@ -76,7 +76,8 @@ findFilter(sidebar); assert.ok(filter);
 const visible = vm.runInNewContext(compile(filter), {
   threads: [...threads, { id: "running", status: { type: "active" } },
     { id: "waiting", status: { type: "active", activeFlags: ["waitingOnUserInput"] } }],
-  activityThreadIds: ["unread", "running", "waiting"], activityOnly: true, searchQuery: "",
+  activityThreads: [{id:"unread"},{id:"running"},{id:"waiting"}], activityVisibleCount: 10,
+  activityOnly: true, searchQuery: "",
 })();
 assert.deepEqual(Array.from(visible, thread => thread.id), ["unread", "running", "waiting"]);
 
@@ -119,18 +120,21 @@ assert.equal(menu().find(item => item.id === "mark_unread").label, "标记为未
 let finish, refreshes = 0;
 const bulkCalls = [], errors = [], locks = new Set();
 const bulkContext = {
-  threads, isThreadReadState, readStateWritesRef: { current: locks },
-  callAppServer: async (...args) => { bulkCalls.push(args); return new Promise(resolve => { finish = resolve; }); },
+  threadsRef: { current: threads }, isThreadReadState, readStateWritesRef: { current: locks },
+  activitySessionRef: { current: {scope:"local",threadIds:["unread"]} },
+  activityGenerationRef: { current: 1 }, activityScopeRef: { current: "local" },
+  callAppServer: async (...args) => { bulkCalls.push(args); return args[0] === "thread/read" ? {readState:unread} : new Promise(resolve => { finish = resolve; }); },
   refreshThreads: async () => refreshes++, showAppToast: (...args) => errors.push(args),
 };
 const markAll = run("markAllThreadsRead", bulkContext);
-const pending = markAll(); await Promise.resolve();
+const pending = markAll(); for(let i=0;i<5;i++) await Promise.resolve();
 await markAll();
-assert.equal(bulkCalls.length, 1, "bulk gestures share per-thread single-flight");
-assert.equal(bulkCalls[0][0], "thread/readState/update");
-assert.equal(bulkCalls[0][1].threadId, "unread");
-assert.equal(bulkCalls[0][1].expectedRevision, "r2");
-assert.equal(bulkCalls[0][1].operation.type, "read");
+assert.equal(bulkCalls.length, 2, "bulk gestures share per-thread single-flight for read and update");
+assert.equal(bulkCalls[0][0], "thread/read");
+assert.equal(bulkCalls[1][0], "thread/readState/update");
+assert.equal(bulkCalls[1][1].threadId, "unread");
+assert.equal(bulkCalls[1][1].expectedRevision, "r2");
+assert.equal(bulkCalls[1][1].operation.type, "read");
 finish({ readState: read }); await pending;
 assert.equal(locks.size, 0);
 const beforeFailure = bulkCalls.length;
@@ -140,13 +144,13 @@ assert.equal(bulkCalls.length, beforeFailure + 1, "conflict is never automatical
 assert.match(errors[0][0], /revision conflict/);
 assert.ok(refreshes >= 2, "partial failure still refreshes authoritative receipts");
 const nextUnread = { revision: "r3", firstUnread: { type: "turn", turnId: "new-turn" } };
-bulkContext.threads = [{ id: "unread", readState: nextUnread }];
+bulkContext.threadsRef.current = [{ id: "unread", readState: nextUnread }];
 bulkContext.callAppServer = async (...args) => {
   bulkCalls.push(args);
-  return { readState: read };
+  return { readState: args[0] === "thread/read" ? nextUnread : read };
 };
 await markAll();
 assert.equal(bulkCalls.at(-1)[1].expectedRevision, "r3", "next gesture uses the latest receipt, never an old revision");
-assert.equal(bulkContext.threads[0].readState, nextUnread, "write replies cannot optimistically overwrite authoritative unread data");
+assert.equal(bulkContext.threadsRef.current[0].readState, nextUnread, "write replies cannot optimistically overwrite authoritative unread data");
 assert.equal(locks.size, 0);
 console.log("PASS RD01-RD04 and Activity predicate/handler regressions: service activity/attention, status and flag waiting, running without dot, source wiring, bulk single-flight/conflict/latest revision; UI actions, native and snapshot retention not covered");

@@ -1,0 +1,90 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+import ts from 'typescript';
+const ast=ts.createSourceFile('App.tsx',fs.readFileSync('src/App.tsx','utf8'),ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
+const declarations=new Map(); let removal;
+function visit(n){
+  if(ts.isVariableDeclaration(n))declarations.set(n.name.getText(ast),n.initializer);
+  if(ts.isIfStatement(n)&&n.expression.getText(ast).includes('NOTIFICATION.THREAD_ARCHIVED')&&n.expression.getText(ast).includes('NOTIFICATION.THREAD_DELETED'))removal=n.thenStatement.getText(ast);
+  ts.forEachChild(n,visit);
+}
+visit(ast);
+const transpile=source=>ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
+const protocol={exports:{}}; vm.runInNewContext(transpile(fs.readFileSync('src/protocol.ts','utf8')),{exports:protocol.exports});
+const activity={exports:{}}; vm.runInNewContext(transpile(fs.readFileSync('src/threadActivity.ts','utf8')),{exports:activity.exports,require:()=>protocol.exports});
+const run=(name,context)=>vm.runInNewContext(transpile(`(${declarations.get(name).arguments[0].getText(ast)})`),context);
+const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};};
+const flush=async()=>{for(let i=0;i<10;i++)await Promise.resolve();};
+const read={revision:'read',firstUnread:null};
+const unread=revision=>({revision,firstUnread:{type:'threadStart'}});
+const rows=Array.from({length:13},(_,i)=>({id:`t${i}`,readState:unread('list-old')}));
+function mount(){
+  const writes=[],errors=[];let state=null,refreshes=0;
+  const context={...activity.exports,...protocol.exports,threadsRef:{current:rows},activitySessionRef:{current:null},activityGenerationRef:{current:0},activityScopeRef:{current:'local'},personalizationNavigationGuardRef:{current:null},readStateWritesRef:{current:new Set()},Date,
+    setActivitySession:value=>{state=typeof value==='function'?value(state):value;},refreshThreads:async()=>{refreshes++;},showAppToast:(...args)=>errors.push(args),callAppServer:async(method,args)=>{writes.push({method,args});return method==='thread/read'?{readState:unread('fresh-read')}:{readState:read};}};
+  return {context,writes,errors,get state(){return state;},get refreshes(){return refreshes;},toggle:()=>run('toggleActivity',context)(),bulk:()=>run('markAllThreadsRead',context)(),more:()=>run('loadMoreActivity',context)()};
+}
+{
+  const view=mount(); view.toggle();
+  assert.equal(view.state.threadIds.length,13); assert.equal(view.state.visibleCount,10);
+  view.more(); assert.equal(view.state.visibleCount,20);
+  view.toggle(); assert.equal(view.state,null); assert.equal(view.context.activitySessionRef.current,null);
+  view.context.threadsRef.current=[]; view.toggle(); assert.equal(view.state.threadIds.length,0,'reopen recalculates');
+}
+{
+  const view=mount();let continuation;
+  view.context.personalizationNavigationGuardRef.current=apply=>{continuation=apply;return false;};
+  view.toggle();assert.equal(view.state,null,'guard refusal creates no snapshot');
+  view.context.activityScopeRef.current='other';continuation();assert.equal(view.state,null,'old guard cannot open another identity');
+  view.context.activityScopeRef.current='local';view.toggle();const old=continuation;view.toggle();old();assert.equal(view.state,null,'superseded guard is single-generation');
+  continuation();assert.ok(view.state);
+}
+{
+  const view=mount();view.toggle();view.context.activitySessionRef.current.threadIds=rows.slice(0,12).map(t=>t.id);
+  await view.bulk();
+  assert.equal(view.writes.filter(x=>x.method==='thread/readState/update').length,12,'entire EP, including display page two');
+  assert.ok(view.writes.every(x=>x.args.threadId!=='t12'),'outside session never written');
+  assert.ok(view.writes.filter(x=>x.method==='thread/readState/update').every(x=>x.args.expectedRevision==='fresh-read'));
+  assert.ok(view.writes.filter(x=>x.method==='thread/read').every(x=>x.args.includeTurns===false));
+  assert.equal(rows[0].readState.revision,'list-old','no optimistic receipt overwrite');
+}
+for(const change of ['close','identity','remove','already-read','notification-before-render']){
+  const view=mount();view.context.threadsRef.current=[rows[0]];view.toggle();const pending=deferred();
+  view.context.callAppServer=async(method,args)=>{view.writes.push({method,args});return pending.promise;};
+  const first=view.bulk();await flush();await view.bulk();assert.equal(view.writes.length,1,'same-thread single flight');
+  if(change==='close')view.toggle();
+  if(change==='identity')view.context.activityScopeRef.current='other';
+  if(change==='remove')view.context.activitySessionRef.current.threadIds=[];
+  if(change==='notification-before-render')vm.runInNewContext(transpile(`(()=>${removal})()`),{...view.context,params:{threadId:'t0'},refreshThreadsGenerationRef:{current:0},activeThreadIdRef:{current:'other'},setThreads:()=>{}});
+  pending.resolve({readState:change==='already-read'?read:unread('late')});await first;
+  assert.equal(view.writes.length,1,`no late write after ${change}`);
+  assert.equal(view.context.readStateWritesRef.current.size,0);
+  assert.equal(view.errors.length,0);
+  if(change==='identity')assert.equal(view.refreshes,0,'old identity does not refresh new identity');
+}
+{
+  const view=mount();view.context.threadsRef.current=[rows[0]];view.toggle();
+  view.context.callAppServer=async(method,args)=>{view.writes.push({method,args});if(method==='thread/read')return {readState:unread('fresh')};throw Error('revision conflict');};
+  await view.bulk();assert.equal(view.writes.length,2,'conflict never automatically retried');assert.match(view.errors[0][0],/revision conflict/);assert.equal(view.refreshes,1);
+  view.context.callAppServer=async(method,args)=>{view.writes.push({method,args});return method==='thread/read'?{readState:unread('next')}:{readState:read};};
+  await view.bulk();assert.equal(view.writes.at(-1).args.expectedRevision,'next','new explicit gesture uses new authoritative revision');
+}
+{
+  let threads=[{id:'archived'},{id:'keep'}],started=0,ticks=0,rpc=0;const errors=[],pending=deferred();
+  const context={...activity.exports,activitySessionRef:{current:null},archiveMutationPendingRef:{current:false},activeThreadIdRef:{current:'archived'},refreshThreadsGenerationRef:{current:0},setThreads:update=>{threads=update(threads);},setArchiveRefreshTick:()=>ticks++,startNewThread:()=>started++,showAppToast:(...args)=>errors.push(args),tauriInvoke:async()=>{rpc++;return pending.promise;}};
+  const archive=run('handleArchiveThread',context);const first=archive({id:'archived'});await archive({id:'archived'});assert.equal(rpc,1,'no-event and duplicate gestures reach one real boundary');
+  context.activeThreadIdRef.current='new-thread';pending.resolve([]);await first;
+  assert.deepEqual(threads,[{id:'keep'}]);assert.equal(started,0,'late archive never leaves a newer thread');assert.equal(ticks,1);
+  context.tauriInvoke=async()=>{throw Error('service denied');};await archive({id:'keep'},{stopPropagation(){}});
+  assert.deepEqual(threads,[{id:'keep'}]);assert.equal(context.refreshThreadsGenerationRef.current,1);assert.equal(ticks,1);assert.match(errors[0][0],/service denied/);assert.equal(context.archiveMutationPendingRef.current,false);
+}
+{
+  const pending=deferred();const generation={current:0};let threads=[{id:'gone'},{id:'keep'}];
+  const context={...activity.exports,activitySessionRef:{current:null},refreshThreadsGenerationRef:generation,callAppServer:async()=>pending.promise,setThreads:update=>{threads=typeof update==='function'?update(threads):update;},console:{warn(){}}};
+  const refresh=run('refreshThreads',context)();await flush();
+  vm.runInNewContext(transpile(`(()=>${removal})()`),{...context,params:{threadId:'gone'},activeThreadIdRef:{current:'different'}});
+  pending.resolve({data:[{id:'gone'},{id:'keep'}],nextCursor:null});await refresh;
+  assert.deepEqual(threads,[{id:'keep'}],'archive/delete notification invalidates older directory read');
+}
+console.log('PASS 09C App production callbacks: guard, pagination, full-session latest-revision receipts, single-flight, late cancellation, archive errors and stale-list exclusion');

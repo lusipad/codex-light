@@ -2037,6 +2037,26 @@ impl DesktopStateManager {
             .unwrap_or_default()
     }
 
+    pub(crate) fn update_archived_thread(&self, thread: Value, archive: bool) -> Vec<Value> {
+        self.update_archived_thread_with(thread, archive, Self::save_locked)
+    }
+
+    fn update_archived_thread_with(
+        &self,
+        thread: Value,
+        archive: bool,
+        persist: impl FnOnce(&Map<String, Value>),
+    ) -> Vec<Value> {
+        let mut guard = self.state_map.lock().unwrap();
+        let mut archived = guard.get(ARCHIVED_THREADS_KEY).and_then(Value::as_array).cloned().unwrap_or_default();
+        let id = thread.get("id").and_then(Value::as_str);
+        archived.retain(|item| item.get("id").and_then(Value::as_str) != id);
+        if archive { archived.insert(0, thread); }
+        guard.insert(ARCHIVED_THREADS_KEY.into(), json!(archived));
+        persist(&guard);
+        archived
+    }
+
     pub fn set_archived_threads(&self, threads: Vec<Value>) {
         self.set_value(ARCHIVED_THREADS_KEY, Value::Array(threads));
     }
@@ -2064,9 +2084,7 @@ impl DesktopStateManager {
         pinned.retain(|id| id != thread_id);
         self.set_value(PINNED_THREAD_IDS_KEY, json!(pinned));
 
-        let mut archived = self.list_archived_threads();
-        archived.retain(|item| item.get("id").and_then(|v| v.as_str()) != Some(thread_id));
-        self.set_archived_threads(archived);
+        self.update_archived_thread(json!({"id":thread_id}), false);
 
         let mut guard = self.state_map.lock().unwrap();
         if let Some(hints) = guard
@@ -3246,5 +3264,56 @@ mod project_move_prepare_tests {
         ).await.unwrap_err();
         assert!(turn.contains("权限设置"), "{turn}");
         cleanup_test_state(&directory, &state_path);
+    }
+}
+
+#[cfg(test)]
+mod thread_archive_atomic_tests {
+    use super::*;
+
+    #[test]
+    fn concurrent_archive_updates_hold_the_state_lock_through_persistence() {
+        let manager = DesktopStateManager {
+            state_map: Arc::new(Mutex::new(json!({"unrelated":"keep"}).as_object().unwrap().clone())),
+            workspace_turn_owners: Arc::new(Mutex::new(HashMap::new())),
+        };
+        let directory = std::env::temp_dir().join(format!("codex-archive-atomic-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&directory).unwrap();
+        let path = directory.join("state.json");
+        let barrier = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| {
+            let workers: Vec<_> = ["first", "second"].into_iter().map(|id| {
+                let manager = &manager;
+                let path = &path;
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    barrier.wait();
+                    manager.update_archived_thread_with(json!({"id":id}), true, |map| {
+                        assert!(manager.state_map.try_lock().is_err(), "archive read/merge/persist must hold the same state lock");
+                        fs::write(path, serde_json::to_vec(map).unwrap()).unwrap();
+                    });
+                })
+            }).collect();
+            for worker in workers { worker.join().unwrap(); }
+        });
+        let mut ids: Vec<_> = manager.list_archived_threads().iter().map(|item| item["id"].as_str().unwrap().to_owned()).collect();
+        ids.sort();
+        assert_eq!(ids, vec!["first", "second"]);
+        let disk: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(disk["unrelated"], "keep");
+        assert_eq!(disk[ARCHIVED_THREADS_KEY], json!(manager.list_archived_threads()));
+        std::thread::scope(|scope| {
+            let remove = scope.spawn(|| manager.update_archived_thread_with(json!({"id":"first"}), false,
+                |map| fs::write(&path, serde_json::to_vec(map).unwrap()).unwrap()));
+            let add = scope.spawn(|| manager.update_archived_thread_with(json!({"id":"third"}), true,
+                |map| fs::write(&path, serde_json::to_vec(map).unwrap()).unwrap()));
+            remove.join().unwrap(); add.join().unwrap();
+        });
+        let mut ids: Vec<_> = manager.list_archived_threads().iter().map(|item| item["id"].as_str().unwrap().to_owned()).collect();
+        ids.sort();
+        assert_eq!(ids, vec!["second", "third"]);
+        let disk: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(disk[ARCHIVED_THREADS_KEY], json!(manager.list_archived_threads()));
+        fs::remove_file(path).unwrap(); fs::remove_dir(directory).unwrap();
     }
 }

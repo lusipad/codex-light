@@ -52,6 +52,8 @@ export interface CodexSidebarProps {
   activityAttentionCount: number;
   activityOnly: boolean;
   activityThreadIds: string[];
+  activityVisibleCount?: number;
+  onLoadMoreActivity?: () => void;
   onToggleActivity: () => void;
   onMarkAllRead: () => void;
   hasAgentsMd: boolean;
@@ -126,6 +128,8 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
   activityAttentionCount,
   activityOnly,
   activityThreadIds,
+  activityVisibleCount = 10,
+  onLoadMoreActivity,
   onToggleActivity,
   onMarkAllRead,
   onNavigate,
@@ -199,8 +203,8 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
   }, [chatSortMode, cancelThreadDrag]);
   useEffect(() => {
     const dragged = draggedThreadRef.current;
-    if (dragged && (collapsed || !threads.some((thread) => thread.id === dragged.id))) cancelThreadDrag();
-  }, [collapsed, threads, cancelThreadDrag]);
+    if (dragged && (collapsed || activityOnly || !threads.some((thread) => thread.id === dragged.id))) cancelThreadDrag();
+  }, [collapsed, activityOnly, threads, cancelThreadDrag]);
   useEffect(() => {
     localStorage.setItem("codex_sidebar_manual_orders_v1", JSON.stringify(manualOrders));
   }, [manualOrders]);
@@ -446,17 +450,22 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
     }
   }, [collapsed, threads, hoverCard, dragVisual, renamingThread, closeHoverCard]);
 
+  const activityThreads = useMemo(() => {
+    const byId = new Map(threads.map((thread) => [thread.id, thread]));
+    return [...new Set(activityThreadIds)].flatMap((id) => {
+      const thread = byId.get(id);
+      return thread ? [thread] : [];
+    });
+  }, [threads, activityThreadIds]);
+
   const filteredThreads = useMemo(() => {
-    const activityIds = new Set(activityThreadIds);
-    const visible = activityOnly
-      ? threads.filter((thread) => activityIds.has(thread.id))
-      : threads;
+    const visible = activityOnly ? activityThreads.slice(0, activityVisibleCount) : threads;
     if (!searchQuery.trim()) return visible;
     const query = searchQuery.toLowerCase();
     return visible.filter((thread) =>
       (thread.name || thread.preview || thread.id).toLowerCase().includes(query)
     );
-  }, [threads, searchQuery, activityOnly, activityThreadIds]);
+  }, [threads, searchQuery, activityOnly, activityThreads, activityVisibleCount]);
 
   const getThreadProjects = useCallback(
     (thread: ThreadSummary) => sidebarThreadProjects(thread, projectGroups, projectMembership, workspaceHints),
@@ -480,13 +489,14 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
 
   // 全局排序后的会话列表
   const sortedFilteredThreads = useMemo(() => {
+    if (activityOnly) return filteredThreads;
     const list = [...filteredThreads];
     return list.sort((a, b) => {
       const bTime = b.recencyAt ?? b.updatedAt ?? b.createdAt ?? 0;
       const aTime = a.recencyAt ?? a.updatedAt ?? a.createdAt ?? 0;
       return bTime - aTime;
     });
-  }, [filteredThreads, chatSortMode]);
+  }, [filteredThreads, activityOnly, chatSortMode]);
 
   const pinnedThreads = useMemo(
     () => {
@@ -516,13 +526,11 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
 
   // 主聊天/活动会话列表 (对标官方 smn / TasksSection 逻辑)
   const mainChatThreads = useMemo(() => {
-    // 排除置顶
-    const unpinned = sortedFilteredThreads.filter((t) => !pinnedThreadIds.includes(t.id));
-
-    // 1. 如果处于 Activity 视图，直接显示过滤好的活动/未读会话
     if (activityOnly) {
-      return unpinned;
+      return sortedFilteredThreads;
     }
+
+    const unpinned = sortedFilteredThreads.filter((t) => !pinnedThreadIds.includes(t.id));
 
     // 合并列表始终包含全部未置顶聊天；项目包含偏好仅控制分组模式的最近区域。
     if (organizeMode === "list" || showProjectsInRecents) {
@@ -560,7 +568,7 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
   }, [filteredThreads, sections, sectionIdOfThread]);
 
   useEffect(() => {
-    if (chatSortMode !== "manual") return;
+    if (activityOnly || chatSortMode !== "manual") return;
     setManualOrders((previous) => {
       let next = previous;
       const remember = (key: string, ids: string[], newItemsFirst: boolean) => {
@@ -576,9 +584,9 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
       remember("recent", mainChatThreads.map((thread) => thread.id), true);
       return next;
     });
-  }, [chatSortMode, threadsByProject, mainChatThreads, projectGroups]);
+  }, [activityOnly, chatSortMode, threadsByProject, mainChatThreads, projectGroups]);
 
-  const orderedMainThreads = chatSortMode === "manual"
+  const orderedMainThreads = !activityOnly && chatSortMode === "manual"
     ? applySidebarOrder(mainChatThreads, manualOrders.recent, true)
     : mainChatThreads;
   const recentOrderContext: ThreadOrderContext = {
@@ -1407,7 +1415,7 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
       {/* ── 3. Tree: 置顶 / 自定义分区 / 项目 / 最近 ── */}
       <div className="sidebar-threads-scroll">
         {/* Section A: 置顶 (Pinned) —— 仅在有置顶项时显示 */}
-        {pinnedThreads.length > 0 && (
+        {!activityOnly && pinnedThreads.length > 0 && (
           <>
             <div className="sidebar-section-header-row">
               <span className="sidebar-section-label">置顶</span>
@@ -1419,7 +1427,7 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
         )}
 
         {/* Section A2: 自定义分区 (threadSection/*) —— 协议不可用时整块隐藏 */}
-        {sectionsAvailable && (showSectionCreator || sections.some((section) =>
+        {!activityOnly && sectionsAvailable && (showSectionCreator || sections.some((section) =>
           !isBuiltinEmptySection(section, (threadsBySection[section.id] || []).length)
         )) && (
           <>
@@ -1615,6 +1623,7 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
         )}
 
         {/* Section B: 项目 (Projects Tree) */}
+        {!activityOnly && <>
         <div className="sidebar-section-header-row" style={{ marginTop: 10 }}>
           <span
             className="sidebar-section-label clickable"
@@ -1762,6 +1771,7 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
             })}
           </div>
         )}
+        </>}
 
         {/* Section C: 聊天列表 (Chats / Activity) —— 对标官方 TasksSection */}
         <div className="sidebar-section-header-row" style={{ marginTop: 12 }}>
@@ -1772,7 +1782,7 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
               ? "聊天"
               : "最近"}
           </span>
-          <div className="sidebar-section-tools">
+          {!activityOnly && <div className="sidebar-section-tools">
             <ThreadActionsMenu
               items={organizeItems}
               triggerAriaLabel="聊天侧边栏选项"
@@ -1795,7 +1805,7 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
                 }
               }}
             />
-          </div>
+          </div>}
         </div>
 
         <div className="sidebar-section-list">
@@ -1806,7 +1816,12 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
                 : "暂无聊天"}
             </div>
           ) : (
-            orderedMainThreads.map((t) => renderThreadRow(t, false, recentOrderContext))
+            orderedMainThreads.map((t) => renderThreadRow(t, false, activityOnly ? undefined : recentOrderContext))
+          )}
+          {activityOnly && activityThreads.length > activityVisibleCount && onLoadMoreActivity && (
+            <button type="button" className="sidebar-project-show-more" onClick={onLoadMoreActivity}>
+              展开显示
+            </button>
           )}
         </div>
       </div>
