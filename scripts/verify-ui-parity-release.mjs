@@ -8,6 +8,7 @@ const scripts = [
   'verify-library-preview.mjs', 'verify-library-preview-ui.mjs', 'verify-library-preview-media.mjs',
   'verify-library-search.mjs',
   'verify-library-browse.mjs', 'verify-library-browse-ui.mjs',
+  'verify-library-sticky-header.mjs', 'verify-library-pagination.mjs',
   'verify-appearance-color.mjs', 'verify-system-fonts.mjs', 'verify-general-preference-select.mjs',
   'verify-settings-ui-correction.mjs', 'verify-appearance-theme-state.mjs', 'verify-appearance-theme-ui.mjs',
   'verify-general-open.mjs', 'verify-notification-settings-ui.mjs',

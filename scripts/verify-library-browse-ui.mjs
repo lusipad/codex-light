@@ -52,8 +52,8 @@ checkbox("已上传").props.onClick(); await authenticate(h);
 checkbox("生成的文件").props.onClick(); await authenticate(h);
 assert.deepEqual([...h.reads.at(-1).sources], ["uploaded", "generated"]);
 assert.ok(find(h, "移除文档筛选条件"));
-const oldMore = find(h, "加载更多"); // No old page cursor is carried into a filter scope.
-assert.equal(oldMore, undefined);
+h.render(); // No old page cursor or observer is carried into a filter scope.
+assert.equal(h.triggerPagination(), 0);
 h.reads.at(-1).resolve(page(["filtered"])); await flush();
 find(h, "文件夹").props.onClick(); await authenticate(h);
 assert.equal(h.reads.at(-1).tab, "folders"); assert.deepEqual([...h.reads.at(-1).categories], []); assert.deepEqual([...h.reads.at(-1).sources], []);
@@ -155,11 +155,11 @@ h = await ready();
 const imageItem = extra => ({ node: { id: "same-image", name: "photo.png", kind: "file", library_file_category: "image", file_id: "underlying-one", file_upload_time: "2026-11-01T00:00:00Z", ...extra } });
 h.reads.at(-1).resolve({ items: [imageItem()], cursor: "more-images" }); await flush(); h.render();
 h.images[0].resolve("data:image/png;base64,AQ=="); await flush(); const oldImage = walk(h.render()).find(node => node.type === "img"); assert.ok(oldImage);
-find(h, "加载更多").props.onClick(); h.reads.at(-1).resolve({ items: [imageItem({ file_upload_time: "2026-11-02T00:00:00Z" })], cursor: "image-source" }); await flush(); h.render();
+assert.equal(h.triggerPagination(), 1); h.reads.at(-1).resolve({ items: [imageItem({ file_upload_time: "2026-11-02T00:00:00Z" })], cursor: "image-source" }); await flush(); h.render();
 assert.equal(h.images.length, 2, "same ID later page with no version/updated_at but new file_upload_time must refresh real image bytes");
 assert.equal(h.images[0].signal.aborted, true);
 assert.equal(walk(h.render()).find(node => node.type === "img"), undefined, "new image identity immediately hides the old URL");
-find(h, "加载更多").props.onClick(); h.reads.at(-1).resolve({ items: [imageItem({ file_upload_time: "2026-11-02T00:00:00Z", file_id: "underlying-two", gizmo_id: "other-source" })], cursor: null }); await flush(); h.render();
+assert.equal(h.triggerPagination(), 1); h.reads.at(-1).resolve({ items: [imageItem({ file_upload_time: "2026-11-02T00:00:00Z", file_id: "underlying-two", gizmo_id: "other-source" })], cursor: null }); await flush(); h.render();
 assert.equal(h.images.length, 3, "same mounted ID with changed underlying source must get its own read lifecycle");
 assert.equal(h.images[1].signal.aborted, true); assert.equal(h.images[2].item.node.file_id, "underlying-two");
 h.images[1].resolve("data:image/png;base64,Ag=="); await flush(); assert.equal(walk(h.render()).find(node => node.type === "img"), undefined, "late previous-source result cannot paint over the new source");

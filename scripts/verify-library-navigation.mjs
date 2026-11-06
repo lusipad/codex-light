@@ -29,12 +29,12 @@ h.reads.at(-1).resolve(page([folder("B")], "A-next"));
 h.paths.at(-1).resolve([{ id: "root-id", name: "Root", is_root: true }, { id: "A", name: "A" }]);
 await flush();
 assert.ok(walk(h.render()).some(node => node.props["aria-current"] === "page" && text(node) === "A"));
-const more = button(h, "加载更多"); more.props.onClick(); const late = h.reads.at(-1);
+h.render(); assert.equal(h.triggerPagination(), 1); const late = h.reads.at(-1);
 await open(h, "B"); assert.equal(late.signal.aborted, true);
 late.resolve(page([folder("late-A")], "bad")); await flush();
 h.paths.at(-1).reject(Error("path failed")); h.reads.at(-1).resolve(page([], "B-next")); await flush();
 assert.doesNotMatch(text(h.render()), /late-A/); assert.match(text(h.render()), /path failed/);
-assert.ok(button(h, "加载更多"), "empty nonterminal directory may load another page");
+h.render(); assert.ok(h.paginationObservers.some(observer => !observer.disconnected), "empty nonterminal directory observes another page");
 button(h, "重试路径").props.onClick(); assert.equal(h.paths.length, 3);
 h.paths.at(-1).resolve([{ id: "A", name: "A" }, { id: "B", name: "B" }]); await flush();
 assert.ok(button(h, "A"));
@@ -90,11 +90,12 @@ assert.equal(h.reads.at(-1).directoryId, null); assert.equal(h.navigation.canGoB
 
 h = await ready(); await open(h, "A");
 h.reads.at(-1).resolve(page([folder("B")], "A-cursor")); h.paths.at(-1).reject(Error("A path failed")); await flush();
-const oldRetry = button(h, "重试路径"), oldMore = button(h, "加载更多");
+const oldRetry = button(h, "重试路径"); h.render();
+const oldMore = h.paginationObservers.findLast(observer => !observer.disconnected); assert.ok(oldMore);
 await open(h, "B"); h.reads.at(-1).resolve(page([]));
 h.paths.at(-1).resolve([{ id: "A", name: "A" }, { id: "B", name: "B" }]); await flush(); h.render();
 const beforePaths = h.paths.length, beforePages = h.reads.length;
-oldRetry.props.onClick(); oldMore.props.onClick();
+oldRetry.props.onClick(); oldMore.callback([{ isIntersecting: true }], oldMore);
 assert.equal(h.paths.length, beforePaths, "old path retry must not borrow the new directory controller");
 assert.equal(h.reads.length, beforePages, "old pagination must not borrow the new directory controller and cursor"); h.unmount();
 

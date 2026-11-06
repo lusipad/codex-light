@@ -10,7 +10,12 @@ const nodes = node => node && typeof node === "object" ? [node, ...(node.childre
 const text = tree => nodes(tree).flatMap(node => node.children.filter(child => typeof child === "string")).join(" ");
 const button = (tree, label) => { const found = nodes(tree).find(node => node.type === "button" && text(node) === label); assert.ok(found, label); return found; };
 export function harness(listenerError = null, storage = new Map()) {
-  const contexts = new Map(), effects = [], accesses = [], reads = [], paths = [], images = [];
+  const contexts = new Map(), effects = [], accesses = [], reads = [], paths = [], images = [], paginationObservers = [];
+  class PaginationObserver {
+    constructor(callback) { this.callback = callback; paginationObservers.push(this); }
+    observe(target) { this.target = target; }
+    disconnect() { this.disconnected = true; }
+  }
   let listener, writes = 0, navigation = null, context, used;
   const componentContext = key => { if (!contexts.has(key)) contexts.set(key, { hooks: [], cursor: 0 }); return contexts.get(key); };
   const renderComponent = (type, props) => {
@@ -19,21 +24,27 @@ export function harness(listenerError = null, storage = new Map()) {
     const tree = type(props); context = before; return tree;
   };
   const React = { createElement: (type, props, ...children) => {
+      if (type === React.Fragment) return children.flat(Infinity);
       if (typeof type === "function") return renderComponent(type, { ...props, children: children.flat(Infinity) });
       if (type === "button" && props?.onClick) { const callback = props.onClick; props = { ...props, onClick: event => callback(event ?? { currentTarget: { isConnected: true, focus() {} }, preventDefault() {}, stopPropagation() {} }) }; }
-      return { type, props: props ?? {}, children: children.flat(Infinity) };
+      const node = { type, props: props ?? {}, children: children.flat(Infinity) };
+      // Only pagination receives a committed DOM ref in this shared hooks fixture.
+      // Image IO and real header geometry have their own dedicated fixtures.
+      if (props?.["data-library-pagination"] !== undefined && props.ref) props.ref.current = node;
+      return node;
     },
     useState: initial => { const owner = context, i = owner.cursor++; if (!(i in owner.hooks)) owner.hooks[i] = typeof initial === "function" ? initial() : initial;
       return [owner.hooks[i], value => { writes++; owner.hooks[i] = typeof value === "function" ? value(owner.hooks[i]) : value; }]; },
     useCallback: (fn, deps) => { const owner = context, i = owner.cursor++, old = owner.hooks[i]; if (!old || deps.some((value, j) => !Object.is(value, old.deps[j]))) owner.hooks[i] = { deps, fn }; return owner.hooks[i].fn; },
     useRef: initial => { const owner = context, i = owner.cursor++; if (!(i in owner.hooks)) owner.hooks[i] = { current: initial }; return owner.hooks[i]; },
-    useEffect: (effect, deps) => { const owner = context, i = owner.cursor++, old = owner.hooks[i]; if (!old || deps.some((v, j) => !Object.is(v, old.deps[j]))) { owner.hooks[i] = { deps, cleanup: old?.cleanup }; effects.push(() => { owner.hooks[i].cleanup?.(); owner.hooks[i].cleanup = effect(); }); } },
-  }; React.default = React; React.useLayoutEffect = React.useEffect;
+    useEffect: (effect, deps) => { const owner = context, i = owner.cursor++, old = owner.hooks[i]; if (!old || !deps || deps.some((v, j) => !Object.is(v, old.deps?.[j]))) { owner.hooks[i] = { deps, cleanup: old?.cleanup }; effects.push(() => { owner.hooks[i].cleanup?.(); owner.hooks[i].cleanup = effect(); }); } },
+  }; React.default = React; React.Fragment = Symbol("controlled React.Fragment"); React.useLayoutEffect = React.useEffect;
   const modules = new Map();
   const load = file => {
     if (modules.has(file)) return modules.get(file);
     const exports = {}; modules.set(file, exports);
     vm.runInNewContext(compile(file), { exports, AbortController, Date, Intl, Map, Set, Number, JSON,
+      ...(file.endsWith("/LibraryPagination.tsx") ? { IntersectionObserver: PaginationObserver } : {}),
       document: { body: {}, addEventListener() {}, removeEventListener() {} }, window: { innerWidth: 1280, innerHeight: 800, addEventListener() {}, removeEventListener() {} },
       localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
       require: name => {
@@ -42,6 +53,12 @@ export function harness(listenerError = null, storage = new Map()) {
       if (name === "lucide-react") return new Proxy({}, { get: (_, key) => String(key) });
       if (name.endsWith(".css")) return {};
       if (name === "./LibraryBrowseLayout") return load("src/components/LibraryBrowseLayout.tsx");
+      if (name === "./LibraryPagination") return load("src/components/LibraryPagination.tsx");
+      // Preserve title/actions/navigation JSX for existing interaction assertions.
+      // Sticky observation, measurement and scroll behavior are tested separately.
+      if (name === "./LibraryStickyHeader") return { LibraryStickyHeader: ({ title, actions, navigation }) => React.createElement("fixture-header", null,
+        React.createElement("div", { className: "library-view-header library-browse-header" }, React.createElement("h1", null, title),
+          actions && React.createElement("div", { className: "library-header-actions" }, actions)), navigation) };
       if (name === "./ThreadActionsMenu") return { ThreadActionsMenu: "ThreadActionsMenu" };
       if (name === "./LibraryPreviewPane") return { LibraryPreviewPane: "LibraryPreviewPane" };
       if (name === "../bridge") return { tauriListen: (_event, callback) => { listener = callback; return listenerError ? Promise.reject(listenerError) : Promise.resolve(() => {}); } };
@@ -60,7 +77,13 @@ export function harness(listenerError = null, storage = new Map()) {
   };
   const exports = load("src/components/LibraryView.tsx");
   const onNavigationChange = next => { navigation = next; };
-  return { accesses, reads, paths, images, storage, get navigation() { return navigation; }, setListenError(value) { listenerError = value; }, render() {
+  return { accesses, reads, paths, images, storage, paginationObservers,
+    triggerPagination(entries = [{ isIntersecting: true }]) {
+      const active = paginationObservers.filter(observer => !observer.disconnected && observer.target);
+      for (const observer of active) observer.callback(entries, observer);
+      return active.length;
+    },
+    get navigation() { return navigation; }, setListenError(value) { listenerError = value; }, render() {
     used = new Set(); const tree = renderComponent(exports.LibraryView, { onNavigationChange });
     for (const [key, owner] of contexts) if (!used.has(key)) { owner.hooks.forEach(hook => hook?.cleanup?.()); contexts.delete(key); }
     while (effects.length) effects.shift()(); return tree;
@@ -73,17 +96,23 @@ h.accesses[0].reject(Error("not authenticated")); await flush(); assert.match(te
 button(h.render(), "重试").props.onClick(); h.render(); await flush(); h.accesses.at(-1).resolve({ ...access, available: false }); await flush(); assert.equal(h.reads.length, 0); assert.match(text(h.render()), /暂不支持/);
 h = harness(); h.render(); await flush(); h.accesses[0].resolve(access); await flush(); assert.equal(h.reads[0].tab, "suggested"); assert.equal(h.reads[0].cursor, null);
 h.reads[0].resolve(page(["real.pdf"], "next")); await flush(); assert.match(text(h.render()), /real.pdf/);
-const more = button(h.render(), "加载更多"); more.props.onClick(); more.props.onClick(); assert.equal(h.reads.length, 2);
+h.render(); const firstObserver = h.paginationObservers.at(-1);
+assert.equal(h.triggerPagination(), 1); assert.equal(h.triggerPagination(), 0); assert.equal(h.reads.length, 2);
 h.reads.at(-1).reject(Error("page failed")); await flush(); assert.match(text(h.render()), /page failed/); assert.match(text(h.render()), /real.pdf/);
-button(h.render(), "重试加载").props.onClick(); h.reads.at(-1).resolve(page(["real.pdf", "second.pdf"], "last")); await flush(); assert.equal(nodes(h.render()).filter(node => node.props["data-library-item"]).length, 2);
-button(h.render(), "加载更多").props.onClick(); h.reads.at(-1).resolve(page(["third.pdf"], "last")); await flush(); assert.match(text(h.render()), /重复分页/); assert.doesNotMatch(text(h.render()), /third.pdf/);
+assert.equal(h.triggerPagination(), 0, "pagination error suspends automatic observation rather than retrying in a loop");
+firstObserver.callback([{ isIntersecting: true }]); assert.equal(h.reads.length, 2, "already queued intersection cannot bypass explicit error retry");
+const retry = button(h.render(), "重试加载"); retry.props.onClick(); retry.props.onClick(); assert.equal(h.reads.length, 3, "manual retry retains synchronous single-flight");
+h.reads.at(-1).resolve(page(["real.pdf", "second.pdf"], "last")); await flush(); assert.equal(nodes(h.render()).filter(node => node.props["data-library-item"]).length, 2);
+h.render(); assert.notEqual(h.paginationObservers.at(-1), firstObserver, "successful page-key remount observes the next cursor");
+assert.equal(h.triggerPagination(), 1); h.reads.at(-1).resolve(page(["third.pdf"], "last")); await flush(); assert.match(text(h.render()), /重复分页/); assert.doesNotMatch(text(h.render()), /third.pdf/);
+assert.equal(h.triggerPagination(), 0, "repeated cursor failure also suspends automatic paging");
 button(h.render(), "重试加载").props.onClick(); const oldRead = h.reads.at(-1); h.invalidate(); assert.equal(oldRead.signal.aborted, true); h.render(); oldRead.resolve(page(["old account"])); await flush(); assert.doesNotMatch(text(h.render()), /old account|real.pdf/);
 h.accesses.at(-1).resolve(access); await flush(); const last = h.reads.at(-1); h.unmount(); const writes = h.writes; last.resolve(page(["unmounted"])); await flush(); assert.equal(h.writes, writes);
 h = harness(); h.render(); await flush(); h.accesses[0].resolve(access); await flush(); h.reads[0].resolve(page([])); await flush(); assert.match(text(h.render()), /创建新内容/);
 h = harness(); h.render(); await flush(); h.accesses[0].resolve(access); await flush(); h.reads[0].resolve(page([], "page-2")); await flush();
 assert.doesNotMatch(text(h.render()), /创建新内容/, "empty nonterminal page must not claim entire library is empty");
-assert.ok(button(h.render(), "加载更多"));
-button(h.render(), "加载更多").props.onClick(); h.reads.at(-1).resolve(page(["after-empty.pdf"])); await flush();
+assert.ok(nodes(h.render()).some(node => node.props["data-library-pagination"] !== undefined));
+assert.equal(h.triggerPagination(), 1); h.reads.at(-1).resolve(page(["after-empty.pdf"])); await flush();
 assert.match(text(h.render()), /after-empty.pdf/);
 const source = fs.readFileSync("src/components/LibraryView.tsx", "utf8"); assert.doesNotMatch(source, /DEFAULT_LIBRARY_ITEMS|fakeUpload|localStorage|Date.now|setTimeout|文件已删除|已创建/);
 console.log("PASS 18D default Library production JSX: identity/availability-bound actual root reads, loading/error/retry/empty, pagination single-flight/deduplication/retained data/repeated cursor, invalidation and unmount cancellation; no upload/write/preview claims");

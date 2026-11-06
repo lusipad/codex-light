@@ -7,6 +7,8 @@ import { mergeLibraryPages, type LibraryDirectoryEntry, type LibraryNode, type L
 import { libraryBrowseCategories, nextLibraryBrowseSort, sortLibraryBrowseItems, type LibraryBrowseScope, type LibraryBrowseTab, type LibraryBrowseMode, type LibraryBrowseSort, type LibraryBrowseCategory, type LibraryBrowseSource } from "../libraryBrowse";
 import { readLibraryBrowsePreferences, writeLibraryBrowsePreferences } from "../libraryBrowsePreferences";
 import { LibraryBrowseFilters, LibraryBrowseLayout } from "./LibraryBrowseLayout";
+import { LibraryPagination } from "./LibraryPagination";
+import { LibraryStickyHeader } from "./LibraryStickyHeader";
 import { ThreadActionsMenu } from "./ThreadActionsMenu";
 import { LibraryPreviewPane, type LibraryPreviewRequest } from "./LibraryPreviewPane";
 import "./LibraryView.css";
@@ -53,6 +55,8 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onNavigationChange }) 
   const future = useRef<DirectoryLocation[]>([]);
   const returnLocations = useRef(new Map<string | null, DirectoryLocation>());
   const searchInput = useRef<HTMLInputElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
   const query = location.search.trim();
   const currentScopeKey = scopeKey(location);
   const [access, setAccess] = useState<LibraryAccess | null>(null);
@@ -275,9 +279,9 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onNavigationChange }) 
   const merged = mergeLibraryPages(pages);
   const items = sortLibraryBrowseItems(query ? [...merged.filter(item => item.node.kind === "directory"), ...merged.filter(item => item.node.kind !== "directory")] : merged, query ? null : sort, root && location.tab === "suggested");
   return <div className="library-workspace">
-    <div className="library-view-container">
-    <div className="library-view-header library-browse-header">
-    <h1>{location.directoryId === null ? (query ? "搜索" : "资料库") : <span className="library-directory-navigation">
+    <div className="library-view-container" ref={scrollContainerRef} data-new-slate-layout={access?.newLayout === true || undefined}>
+    <LibraryStickyHeader scrollContainerRef={scrollContainerRef} bodyRef={bodyRef} newLayout={access?.newLayout === true}
+    title={location.directoryId === null ? (query ? "搜索" : "资料库") : <span className="library-directory-navigation">
       <span className="library-breadcrumbs" ref={breadcrumbRef} role="navigation" aria-label="文件夹路径">
         <span className="library-breadcrumb-visible">{visible.map((entry, index) => <span className={`library-breadcrumb-entry${entry.id === location.directoryId && entry.id !== null ? " current" : ""}`} key={entry.id ?? "root"}>
           {index > 0 && <span className="library-breadcrumb-separator" aria-hidden="true">›</span>}
@@ -291,8 +295,8 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onNavigationChange }) 
           <span><span className="library-breadcrumb-separator">›</span>…</span>
         </span></span>
       </span>
-    </span>}</h1>
-    {access?.available && <div className="library-header-actions">
+    </span>}
+    actions={access?.available ? <>
     {showFilters && (location.categories.length > 0 || location.sources.length > 0) && <div className="library-browse-selected-filters"><div className="library-browse-selected-filter-content">
       {location.sources.map(value => <button key={value} type="button" aria-label={value === "uploaded" ? "清除“已上传”筛选条件" : "清除“已生成”筛选条件"} onClick={() => replaceFilters(location.categories, location.sources.filter(item => item !== value))}>{value === "uploaded" ? "已上传" : "生成的文件"}<X size={12} aria-hidden="true" /></button>)}
       {showCategories && location.categories.map(value => <button key={value} type="button" aria-label={value === "pdfs" ? "移除 PDF 筛选条件" : `移除${libraryBrowseCategories[value]}筛选条件`} onClick={() => replaceFilters(location.categories.filter(item => item !== value), location.sources)}>{libraryBrowseCategories[value]}<X size={12} aria-hidden="true" /></button>)}
@@ -309,15 +313,16 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onNavigationChange }) 
       <input id="library-search-input" ref={searchInput} type="text" autoComplete="off" value={location.search}
         placeholder={location.directoryId === null ? "搜索资料库" : "在当前文件夹中搜索"} onChange={event => replaceSearch(event.target.value)} />
       {location.search.length > 0 && <button type="button" aria-label="清空搜索" onClick={() => { searchInput.current?.focus(); replaceSearch(""); }}><X size={16} aria-hidden="true" /></button>}
-    </div></div>}</div>
-    {access?.available && root && <div className="library-browse-controls">
+    </div></> : undefined}
+    navigation={access?.available && root ? <div className="library-browse-controls">
       <div role="tablist" aria-label="资料库分区" className="library-browse-tabs" onKeyDown={event => {
         if (event.nativeEvent.isComposing || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
         const tabs = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
         const index = tabs.indexOf(event.target as HTMLButtonElement), next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
         event.preventDefault(); tabs[next]?.focus(); selectTab((Object.keys(tabNames) as LibraryBrowseTab[])[next]);
       }}>{(Object.keys(tabNames) as LibraryBrowseTab[]).map(tab => <button key={tab} type="button" role="tab" aria-selected={location.tab === tab} tabIndex={location.tab === tab ? 0 : -1} onClick={() => selectTab(tab)}>{tabNames[tab]}</button>)}</div>
-    </div>}
+    </div> : undefined} />
+    <div className="library-browse-body" ref={bodyRef}>
     {preferenceError && <p role="alert">{preferenceError}</p>}
     {pathLoading && <p role="status">正在读取文件夹路径…</p>}
     {pathError && <section aria-label="文件夹路径状态"><p role="alert">{pathError}</p><button type="button" onClick={retryPath}>重试路径</button></section>}
@@ -334,8 +339,9 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onNavigationChange }) 
       sort={query ? null : sort} onSort={key => { if (!loading && !query && scopeKey(locationRef.current) === currentScopeKey && renderedSource === source.current && !renderedSource?.signal.aborted) setSort(current => nextLibraryBrowseSort(current, key)); }}
       canOpen={node => nativeDirectory(node.id) && (node.kind === "directory" || node.kind === "file")}
       onOpen={(node, trigger) => node.kind === "directory" ? openDirectory(node) : openFile(node, trigger)} />}
-    {pageError && <p role="alert">{pageError}</p>}
-    {cursor && <button type="button" disabled={paging} onClick={() => void loadMore()}>{paging ? "正在加载…" : pageError ? "重试加载" : "加载更多"}</button>}
+    {pageError && <section aria-label="资料库分页状态"><p role="alert">{pageError}</p><button type="button" onClick={() => void loadMore()}>重试加载</button></section>}
+    {access?.available && <LibraryPagination key={pages.length} hasNextPage={Boolean(cursor) && !loading && !pageError} fetching={loading || paging} onLoadNextPage={() => void loadMore()} />}
+    </div>
     </div>
     {preview && !preview.controller.signal.aborted && <LibraryPreviewPane request={preview} onClose={() => closePreview(preview)} />}
   </div>;

@@ -59,6 +59,32 @@ for (const compact of [false, true]) for (const hashed of [false, true]) for (co
   const access = decodeLibraryAccess(bootstrap(payload({ compact, hashed, onedrive })), settings, account("plus"), identity);
   assert.equal(access.available, true); assert.equal(access.onedrive, onedrive); assert.equal(access.identity, identity);
 }
+for (const compact of [false, true]) for (const hashed of [false, true]) {
+  const key = hashed ? hash("3085093835") : "3085093835";
+  for (const expected of [true, false, undefined]) {
+    const p = payload({ compact, hashed });
+    if (expected !== undefined) p.feature_gates[key] = { [compact ? "v" : "value"]: expected };
+    const access = decodeLibraryAccess(bootstrap(p), settings, account("plus"), identity);
+    assert.equal(access.newLayout, expected);
+    assert.equal(Object.hasOwn(access, "newLayout"), expected !== undefined);
+    assert.equal(access.available, true);
+  }
+  for (const invalid of ["true", null, 1]) {
+    const p = payload({ compact, hashed });
+    p.feature_gates[key] = { [compact ? "v" : "value"]: invalid };
+    assert.throws(() => decodeLibraryAccess(bootstrap(p), settings, account("plus"), identity));
+  }
+  for (const change of [p => { p.user.userID = "other"; }, p => { p.user.customIDs.account_id = "other"; },
+    p => { p.response_format = "unknown"; }, p => { p.is_delta = true; }]) {
+    const p = payload({ compact, hashed });
+    p.feature_gates[key] = { [compact ? "v" : "value"]: true };
+    change(p);
+    assert.throws(() => decodeLibraryAccess(bootstrap(p), settings, account("plus"), identity));
+  }
+  const p = payload({ compact, hashed });
+  p.feature_gates[key] = { [compact ? "v" : "value"]: true };
+  assert.throws(() => decodeLibraryAccess(bootstrap(p), settings, { account: { type: "apiKey" } }, identity));
+}
 for (const [file, layer, expected] of [[true, false, true], [false, true, true], [true, true, true], [false, false, false]])
   assert.equal(decodeLibraryAccess(bootstrap(payload({ file, layer })), settings, account("plus"), identity).available, expected);
 for (const change of [p => { delete p.feature_gates["224248639"]; delete p.layer_configs; },

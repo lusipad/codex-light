@@ -108,3 +108,7 @@
 - 09C、18E及18F-A后续已随b45727a推送并发布[preview.5](https://github.com/lusipad/codex-desktop-native/releases/tag/v0.2.0-preview.5)：run42208606694最终success，61组前端/全库527 Rust、通知适配器、原生安装包与发布全通过；四个实际下载文件API digest/清单hash一致，ZIP五份许可对标签Git blob规范化后匹配。发布不改变真实账号/像素/原生认证预览与用户验收缺口。[18G搜索](specs/18G-library-search.md)为该标签之后的本地开发，不计入preview.5。
 - [18G普通资料库搜索](acceptance/18G-library-search.md)：已接根/目录真实q请求、分页与取消，搜索替换保留预览及首次返回位置，补标题/中文空态/窄窗结构。两项持续加载缺陷先红后绿；62组前端、完整非Fast319段/32探针、当前原生构建及私有未登录路径通过。原生组件夹具另验中文输入/清空焦点；真实账号、官方配对像素、物理IME、完整URL路由/GridList及用户验收仍未完成。阶段本地提交，不计入preview.5。
 - [18H普通浏览](acceptance/18H-library-browse.md)：已实现默认推荐、四标签、分类/来源、账号隔离显示偏好、grid/list与三态排序；宽窄及64前端、当前原生构建/未登录子路径通过。完整非Fast321段/32探针首轮ENOSPC退出1保留，20失败目标最终通过，不能称单次标准exit0。Header滚动、自动分页及图标细节仍有差异，真实HTTP/像素/物理IME/用户验收未完成；18I滚动/哨兵合同已取证待开发。阶段仅本地提交，不计入preview.5。[19E图像页](specs/19E-images.md)仅完成同版取证和开发前合同，主根页面尚未恢复；不得把旧19C整包合入或用Codex turn冒充ChatGPT图像生成。
+
+### 2026-11-06：18I阶段自验
+
+资料库Header/自动分页已完成限定功能自验：66前端、完整323段/32协议探针、当前原生构建及私有未登录入口通过。见[18I记录](acceptance/18I-library-header.md)。准备累计preview.6；官方配对像素、真实账号及用户验收仍缺。19E只有开发前合同和旧数据层红例，未写成开发完成。

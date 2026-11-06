@@ -40,7 +40,7 @@ search(h, "中文 term"); await flush();
 assert.equal(h.reads.length, count); assert.equal(source.aborted, false, "equivalent trimmed query retains current pages");
 staleInput.props.onChange({ target: { value: "stale" } }); h.render();
 assert.equal(input(h).props.value, "中文 term", "old search callback cannot replace newer location");
-button(h, "加载更多").props.onClick(); const oldPage = h.reads.at(-1);
+h.render(); assert.equal(h.triggerPagination(), 1); const oldPage = h.reads.at(-1);
 assert.equal(oldPage.search, "中文 term"); assert.equal(oldPage.cursor, "search-page-2");
 search(h, "other"); assert.ok(input(h), "query revalidation must retain the active input"); await authenticate(h);
 assert.equal(oldPage.signal.aborted, true); oldPage.resolve(page([file("late")])); await flush();

@@ -124,6 +124,12 @@ output_blocked不请求图。thumbnail严格`encodings.thumbnail.path ?? url`，
 
 迁移前须修：首recent参数；sidebar/布局配置分支；资源role碰撞；blocked in-flight与缓存撤销；JJ JSON刷新；原页只有普通grid、永远history tab、无底部composer壳的结构差距。既有测试源码不是本次运行通过证据。
 
+### 开发前动态复现（2026-11-06）
+
+`.ref/parity/19/actual/19E-images/verification/verify-19c-red.mjs`已实际执行未修改的旧19C `readImagesHistory→readImagesService→readChatgptService`链，显式离线bridge捕获首批确为`{limit:25,after:null}`；省略after合同失败，续页20/cursor对照通过。另执行实际`parseImagesHistory→mergeImagesHistory→imageThumbnail`：同ID**追加页**的blocked被first-id去重吞掉，archived先被parser过滤，均保留旧thumbnail；两项失败。
+
+完整刷新以`append=false`替换pages时，这两类状态均通过，不能泛称“完整刷新仍保留旧图”。总计3红/3绿、实际退出1，完整源hash和6个函数定位在`19c-predevelopment-red.json`，执行前后旧源码hash不变。这些只证明数据层和请求构造；宿主下载中的失效、GUI缓存及真实Rust路由拒参仍需独立回归，未以静态猜测伪造通过或失败。
+
 ## 7. 开发顺序与验收用例
 
 | 阶段/用例 | 开发目标与可检验预期 |

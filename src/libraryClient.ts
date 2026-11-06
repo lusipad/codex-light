@@ -5,7 +5,7 @@ import { LIBRARY_PREVIEW_MAX_BYTES, parseLibraryFile, type LibraryFile } from ".
 import type { LibraryBrowseScope } from "./libraryBrowse";
 
 export type LibraryTab = "all" | "images";
-export interface LibraryAccess { identity: ServiceIdentity; available: boolean; onedrive: boolean }
+export interface LibraryAccess { identity: ServiceIdentity; available: boolean; onedrive: boolean; newLayout?: boolean }
 
 const supportedPlans = new Set(["free", "go", "plus", "pro", "promax", "prolite", "free_workspace", "team",
   "self_serve_business_prolite", "sci", "rosalind_academic", "business", "enterprise_cbp_trial",
@@ -55,7 +55,9 @@ export function decodeLibraryAccess(bootstrap: unknown, settings: unknown, accou
   if (country === false) return { identity, available: false, onedrive: false };
   const onedrive = gate("3583034603");
   if (onedrive === undefined) throw Error("无法确认资料库来源权限，请重试。");
-  return { identity, available: true, onedrive };
+  // JD only excludes unsupported-auth; the ChatGPT identity above cannot produce that Cv reason.
+  const newLayout = gate("3085093835");
+  return { identity, available: true, onedrive, ...(newLayout === undefined ? {} : { newLayout }) };
 }
 
 export async function readLibraryAccess(signal: AbortSignal): Promise<LibraryAccess> {
