@@ -51,7 +51,7 @@ const render = () => { cursor = 0; return output.ArchiveView(props); };
 const nodes = (tree, predicate) => { const list = []; const walk = n => { if (!n || typeof n !== "object") return; if (predicate(n)) list.push(n); for (const child of n.props?.children || []) walk(child); }; walk(tree); return list; };
 const cls = value => node => node.props?.className?.split(" ").includes(value);
 const text = node => typeof node === "string" || typeof node === "number" ? String(node) : (node?.props?.children || []).map(text).join("");
-const ids = tree => nodes(tree, cls("archive-row")).map(node => node.props.key);
+const ids = tree => nodes(tree, cls("archive-row")).map(node => node.props.key?.replace(/^local:/, ""));
 const filter = tree => nodes(tree, node => node.type?.name === "ArchiveFilterMenu")[0];
 const project = tree => nodes(tree, node => node.props?.id === "archive-project-filter")[0];
 render(); for (const effect of effects) effect(); mounted = true;

@@ -5,6 +5,7 @@ import { ComputerUseSettings, AppshotsSettings, BrowserUseSettings } from "./Con
 import { VoiceSettings } from "./VoiceSettings";
 import { ExperimentalFeatures } from "./ExperimentalFeatures";
 import { ArchiveView, type ArchiveViewProps } from "./ArchiveView";
+import { useArchivedCloudTasks } from "../archiveCloudTasks";
 import { StorageSettings } from "./StorageSettings";
 import { ImportSettings } from "./ImportSettings";
 import type { ExternalImportsState } from "../externalImport";
@@ -201,6 +202,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     apply();
   }, []);
   const connectionIdentity = JSON.stringify([appServerStatus.connected, appServerStatus.binaryPath, appServerStatus.appServerVersion, appServerStatus.userAgent]);
+  const archivedCloudTasks = useArchivedCloudTasks({ enabled: activeSection === "archived-chats",
+    scope: JSON.stringify([connectionIdentity, accountIdentity]), connected: appServerStatus.connected });
   const [navSearch, setNavSearch] = useState("");
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
   useEffect(() => {
@@ -358,7 +361,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         {/* SECTION: ARCHIVED CHATS */}
         {activeSection === "archived-chats" && (
           <div className="settings-scroll-container">
-            <ArchiveView {...archiveViewProps} surface="settings" />
+            <ArchiveView {...archiveViewProps} surface="settings" cloudArchive={archivedCloudTasks} />
           </div>
         )}
 

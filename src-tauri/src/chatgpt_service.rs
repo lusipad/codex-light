@@ -58,6 +58,7 @@ pub enum ServiceOperation {
     ShareUsers,
     ShareGroups,
     WhamUsage,
+    ArchiveCloudTasks,
     AccountMe,
     ProfileIdentity,
     ProfilePage,
@@ -1430,6 +1431,7 @@ impl ChatgptService {
     {
         // Resolve before credential acquisition: unsupported parameters cannot invoke auth.
         let route = resolve_read_route(&request.operation, &request.params, &request.expected_identity)?;
+        let archive_tasks = matches!(request.operation, ServiceOperation::ArchiveCloudTasks);
         let registration = self.register(&request.request_id)?;
         let generation = request.expected_identity.generation;
         if self.generation() != generation {
@@ -1463,7 +1465,7 @@ impl ChatgptService {
                         http_request.headers.insert("X-Codex-Expected-User-Id".into(), request.expected_identity.user_id.clone());
                         http_request.headers.insert("X-Codex-Expected-Account-Id".into(), request.expected_identity.account_id.clone());
                     }
-                    if profile_read || review_connections || matches!(request.operation, ServiceOperation::StorageUsage | ServiceOperation::LibraryNodes | ServiceOperation::LibraryFavorites | ServiceOperation::LibraryImages | ServiceOperation::LibrarySettings | ServiceOperation::LibraryImage | ServiceOperation::ShareAccounts) {
+                    if archive_tasks || profile_read || review_connections || matches!(request.operation, ServiceOperation::StorageUsage | ServiceOperation::LibraryNodes | ServiceOperation::LibraryFavorites | ServiceOperation::LibraryImages | ServiceOperation::LibrarySettings | ServiceOperation::LibraryImage | ServiceOperation::ShareAccounts) {
                         share_network_allowed(&call, &http_request.url).await?;
                         self.check_share_current(&request.expected_identity, &registration)?;
                     }
@@ -1478,12 +1480,17 @@ impl ChatgptService {
                     if self.generation() != generation {
                         return Err(failure("account_changed", "Authenticated identity changed"));
                     }
+                    if archive_tasks { self.check_share_current(&request.expected_identity, &registration)?; }
                     apply_integrity(&mut session.integrity, sent_integrity.as_deref(), response.headers.get("x-oai-is-update"));
+                    if archive_tasks && account_instructions_ip_denied(&response) {
+                        // A workspace IP refusal is not NDn's unavailable/unsupported source.
+                        return Err(ServiceError { code:"ip_not_authorized", message:"Current IP address is not authorized for this workspace", status:Some(401) });
+                    }
                     if response.status == 401 && attempt == 0 && !((usage || profile_read || review_connections) && account_instructions_ip_denied(&response)) {
                         self.prepare(&mut session, generation, &call, true).await?;
                         continue;
                     }
-                    if (usage && matches!(response.status, 401 | 403 | 404)) ||
+                    if ((usage || archive_tasks) && matches!(response.status, 401 | 403 | 404)) ||
                         (matches!(request.operation, ServiceOperation::ProfileIdentity | ServiceOperation::ProfilePage) && matches!(response.status, 403 | 404)) {
                         return Ok(ServiceResponse { request_id:request.request_id.clone(), identity:request.expected_identity.clone(),
                             status:response.status, body:Value::Null, headers:BTreeMap::new() });
@@ -1539,6 +1546,7 @@ impl ChatgptService {
             }
             return Err(failure("account_changed", "Authenticated identity changed"));
         }
+        if archive_tasks { self.check_share_current(&request.expected_identity, &registration)?; }
         result
     }
 
@@ -2175,6 +2183,7 @@ fn resolve_read_route(operation: &ServiceOperation, params: &Value, identity: &S
 }
 
 fn resolve_route(operation: &ServiceOperation, params: &Value) -> ServiceResult<String> {
+    if matches!(operation, ServiceOperation::ArchiveCloudTasks) { return archive_cloud_tasks_route(params); }
     if matches!(operation, ServiceOperation::LibraryImage) { return library_image_route(params); }
     if matches!(operation, ServiceOperation::LibraryImages) {
         library_images_body(params)?;
@@ -2216,6 +2225,7 @@ fn resolve_route(operation: &ServiceOperation, params: &Value) -> ServiceResult<
         ServiceOperation::LibraryImages => unreachable!(),
         ServiceOperation::LibraryImage => unreachable!(),
         ServiceOperation::WhamUsage => ("/backend-api/wham/usage".into(), &[]),
+        ServiceOperation::ArchiveCloudTasks => unreachable!(),
         ServiceOperation::AccountMe => ("/backend-api/me".into(), &[]),
         ServiceOperation::ProfileIdentity => ("/backend-api/profiles/me".into(), &[]),
         ServiceOperation::ProfilePage => ("/backend-api/profiles/me/page".into(), &[]),
@@ -2356,6 +2366,23 @@ fn resolve_route(operation: &ServiceOperation, params: &Value) -> ServiceResult<
         url.path(),
         url.query().map(|q| format!("?{q}")).unwrap_or_default()
     ))
+}
+
+fn archive_cloud_tasks_route(params: &Value) -> ServiceResult<String> {
+    let params = params.as_object().ok_or_else(|| failure("invalid_request", "Archive task parameters must be an object"))?;
+    if params.keys().any(|key| key != "cursor") {
+        return Err(failure("invalid_request", "Archive tasks accept only cursor"));
+    }
+    let cursor = match params.get("cursor") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(cursor)) if cursor.len() <= 2048 && !cursor.chars().any(char::is_control) => Some(cursor.as_str()),
+        _ => return Err(failure("invalid_request", "Invalid archive task cursor")),
+    };
+    let mut url = tauri::Url::parse("https://chatgpt.com/backend-api/wham/tasks/list")
+        .map_err(|_| failure("invalid_request", "Invalid archive task route"))?;
+    url.query_pairs_mut().append_pair("limit", "20").append_pair("task_filter", "archived");
+    if let Some(cursor) = cursor { url.query_pairs_mut().append_pair("cursor", cursor); }
+    Ok(format!("{}?{}", url.path(), url.query().unwrap()))
 }
 
 fn library_images_body(params: &Value) -> ServiceResult<Value> {
@@ -5555,6 +5582,176 @@ mod tests {
                 assert!(transport.dropped.load(Ordering::SeqCst));
                 assert!(service.active.lock().unwrap().is_empty());
             }
+        }
+    }
+
+    fn archive_tasks_request(id: &str, params: Value) -> ServiceRequest {
+        let mut request = request(id);
+        request.operation = ServiceOperation::ArchiveCloudTasks;
+        request.params = params;
+        request
+    }
+
+    #[tokio::test]
+    async fn archive_cloud_tasks_rejects_parameters_before_auth_or_http() {
+        let invalid = [json!([]), json!(null), json!({"cursor":true}), json!({"cursor":42}),
+            json!({"cursor":["opaque"]}), json!({"cursor":"bad\nvalue"}), json!({"cursor":"x".repeat(2049)}),
+            json!({"limit":20}), json!({"task_filter":"all"}), json!({"includeWorkCloud":true}),
+            json!({"url":"https://example.test"}), json!({"method":"POST"})];
+        for params in invalid {
+            let service = ChatgptService::default();
+            let transport = FakeTransport::new(&[]);
+            let calls = AtomicUsize::new(0);
+            let rpc = |method,params| { calls.fetch_add(1,Ordering::SeqCst); share_rpc(method,params) };
+            assert_eq!(service.read_with(archive_tasks_request("archive-invalid",params),rpc,&transport).await.err().unwrap().code,"invalid_request");
+            assert_eq!(calls.load(Ordering::SeqCst),0);
+            assert!(transport.requests.lock().unwrap().is_empty());
+        }
+        assert!(serde_json::from_value::<ServiceOperation>(json!("archive_cloud_tasks")).is_ok());
+        assert!(serde_json::from_value::<ServiceOperation>(json!("archive_chatgpt_conversations")).is_err());
+    }
+
+    #[tokio::test]
+    async fn archive_cloud_tasks_fixed_get_encodes_opaque_cursor_and_preserves_service_identity() {
+        for cursor in [None,Some(""),Some("opaque &?#/中+=%"),Some(" ")] {
+            let service = ChatgptService::default();
+            let params = cursor.map(|cursor|json!({"cursor":cursor})).unwrap_or_else(||json!({"cursor":null}));
+            let body = json!({"items":[{"id":"cloud-task-fixture","title":"真实shape fixture"}],"cursor":"next opaque"});
+            let transport = instructions_transport(&[200],&[body.clone()]);
+            let policy_calls = AtomicUsize::new(0);
+            let rpc = |method,params| {
+                if method == "configRequirements/read" {
+                    policy_calls.fetch_add(1,Ordering::SeqCst);
+                    std::future::ready(Ok(json!({"requirements":{"application":{"network":{"enabled":true,"domains":{"chatgpt.com":"allow"}}}}})))
+                } else { share_rpc(method,params) }
+            };
+            let result = service.read_with(archive_tasks_request("archive-fixed",params),rpc,&transport).await.unwrap();
+            assert_eq!(result.body,body); assert_eq!(result.status,200); assert_eq!(result.identity,identity());
+            assert!(!serde_json::to_string(&result).unwrap().contains(&fixture_token()));
+            assert_eq!(policy_calls.load(Ordering::SeqCst),1);
+            let sent = transport.requests.lock().unwrap();
+            assert_eq!(sent.len(),1); assert_eq!(sent[0].method,HttpMethod::Get); assert!(sent[0].body.is_empty());
+            let url = tauri::Url::parse(&sent[0].url).unwrap();
+            assert_eq!(url.origin().ascii_serialization(),"https://chatgpt.com");
+            assert_eq!(url.path(),"/backend-api/wham/tasks/list");
+            let pairs = url.query_pairs().map(|(key,value)|(key.into_owned(),value.into_owned())).collect::<Vec<_>>();
+            let mut expected = vec![("limit".to_owned(),"20".to_owned()),("task_filter".to_owned(),"archived".to_owned())];
+            if let Some(cursor) = cursor { expected.push(("cursor".to_owned(),cursor.to_owned())); }
+            assert_eq!(pairs,expected);
+            assert_eq!(sent[0].headers["ChatGPT-Account-Id"],"account-fixture");
+            assert_eq!(sent[0].headers["oai-did"],"fixture-device");
+            assert_eq!(sent[0].headers["OAI-Language"],"zh-CN");
+            assert!(sent[0].headers["Authorization"] == format!("Bearer {}",fixture_token()));
+        }
+        assert_eq!(resolve_route(&ServiceOperation::ArchiveCloudTasks,&json!({})).unwrap(),
+            "/backend-api/wham/tasks/list?limit=20&task_filter=archived");
+    }
+
+    #[tokio::test]
+    async fn archive_cloud_tasks_terminal_http_empty_is_scoped_and_keeps_status_after_refresh() {
+        for status in [401,403,404] {
+            let service = ChatgptService::default();
+            let responses = if status == 401 { vec![401,401] } else { vec![status] };
+            let transport = FakeTransport::new(&responses);
+            let refreshes = AtomicUsize::new(0);
+            let rpc = |method,params:Value| {
+                if method == "getAuthStatus" && params["refreshToken"] == true { refreshes.fetch_add(1,Ordering::SeqCst); }
+                share_rpc(method,params)
+            };
+            let result = service.read_with(archive_tasks_request("archive-empty",json!({})),rpc,&transport).await.unwrap();
+            assert_eq!(result.status,status); assert!(result.body.is_null()); assert!(result.headers.is_empty());
+            assert_eq!(refreshes.load(Ordering::SeqCst),usize::from(status==401));
+            assert_eq!(transport.requests.lock().unwrap().len(),responses.len());
+            let legacy = FakeTransport::new(&responses);
+            let error = ChatgptService::default().read_with(request("legacy-http"),share_rpc,&legacy).await.err().unwrap();
+            assert_eq!(error.code,match status {401=>"unauthorized",403=>"forbidden",_=>"not_found"});
+        }
+        let transport = instructions_transport(&[401,200],&[Value::Null,json!({"items":[],"cursor":null})]);
+        let result = ChatgptService::default().read_with(archive_tasks_request("archive-refreshed",json!({})),share_rpc,&transport).await.unwrap();
+        assert_eq!(result.status,200); assert!(result.body["items"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn archive_cloud_tasks_policy_ip_rate_service_and_json_errors_never_become_empty() {
+        for code in ["ip_not_authorized","validate_whitelist_failed","workspace_ip_not_authorized"] {
+            let transport = instructions_transport(&[401],&[json!({"error":{"code":code}})]);
+            let refreshes = AtomicUsize::new(0);
+            let rpc = |method,params:Value| {
+                if method == "getAuthStatus" && params["refreshToken"] == true { refreshes.fetch_add(1,Ordering::SeqCst); }
+                share_rpc(method,params)
+            };
+            let error = ChatgptService::default().read_with(archive_tasks_request("archive-ip",json!({})),rpc,&transport).await.err().unwrap();
+            assert_eq!(error.code,"ip_not_authorized"); assert_eq!(refreshes.load(Ordering::SeqCst),0);
+            assert_eq!(transport.requests.lock().unwrap().len(),1);
+        }
+        for (status,code) in [(429,"rate_limited"),(500,"service_error")] {
+            let transport = FakeTransport::new(&[status]);
+            assert_eq!(ChatgptService::default().read_with(archive_tasks_request("archive-http-fail",json!({})),share_rpc,&transport).await.err().unwrap().code,code);
+        }
+        let transport = FakeTransport::new(&[200]); transport.responses.lock().unwrap()[0].body=b"not json".to_vec();
+        assert_eq!(ChatgptService::default().read_with(archive_tasks_request("archive-json",json!({})),share_rpc,&transport).await.err().unwrap().code,"invalid_response");
+        let transport = FakeTransport::new(&[]);
+        let denied = |method,params| {
+            if method=="configRequirements/read" { std::future::ready(Ok(json!({"requirements":{"application":{"network":{"enabled":true,"domains":{}}}}}))) }
+            else { share_rpc(method,params) }
+        };
+        assert_eq!(ChatgptService::default().read_with(archive_tasks_request("archive-policy",json!({})),denied,&transport).await.err().unwrap().code,"network_restricted");
+        assert!(transport.requests.lock().unwrap().is_empty());
+        let unavailable = |method,params| {
+            if method=="configRequirements/read" { std::future::ready(Err("fixture policy unavailable".into())) }
+            else { share_rpc(method,params) }
+        };
+        assert_eq!(ChatgptService::default().read_with(archive_tasks_request("archive-policy-error",json!({})),unavailable,&transport).await.err().unwrap().code,"network_policy_unavailable");
+        assert!(transport.requests.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn archive_cloud_tasks_cancel_and_identity_changes_drop_pending_or_queued_results() {
+        for invalidate in [false,true] {
+            let service = ChatgptService::default();
+            let mut transport = FakeTransport::new(&[403]); transport.delay_ms=2000;
+            let read = service.read_with(archive_tasks_request("archive-pending",json!({})),share_rpc,&transport);
+            let change = async {
+                while !transport.entered.load(Ordering::SeqCst) { tokio::task::yield_now().await; }
+                if invalidate { service.invalidate(); service.invalidate(); } else { service.cancel("archive-pending"); }
+            };
+            assert_eq!(tokio::join!(read,change).0.err().unwrap().code,if invalidate {"account_changed"} else {"cancelled"});
+            assert!(transport.dropped.load(Ordering::SeqCst));
+            assert!(service.active.lock().unwrap().is_empty());
+        }
+        let service = ChatgptService::default(); service.cancel("archive-pre-cancel");
+        let transport = FakeTransport::new(&[]);
+        assert_eq!(service.read_with(archive_tasks_request("archive-pre-cancel",json!({})),share_rpc,&transport).await.err().unwrap().code,"cancelled");
+        assert!(transport.requests.lock().unwrap().is_empty());
+        let service = ChatgptService::default();
+        let guard = service.session.lock().await;
+        let calls = AtomicUsize::new(0);
+        let rpc = |method,params| { calls.fetch_add(1,Ordering::SeqCst); share_rpc(method,params) };
+        let queued = service.read_with(archive_tasks_request("archive-queued",json!({})),rpc,&transport);
+        let cancel = async { tokio::task::yield_now().await; service.cancel("archive-queued"); };
+        assert_eq!(tokio::join!(queued,cancel).0.err().unwrap().code,"cancelled");
+        assert_eq!(calls.load(Ordering::SeqCst),0); drop(guard);
+        let mut wrong = archive_tasks_request("archive-mismatch",json!({})); wrong.expected_identity.user_id="other-user".into();
+        assert_eq!(ChatgptService::default().read_with(wrong,share_rpc,&transport).await.err().unwrap().code,"account_changed");
+        assert!(transport.requests.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn archive_cloud_tasks_cancellation_at_transport_completion_cannot_return_http_empty() {
+        struct CompletionChange<'a> { service:&'a ChatgptService, invalidate:bool }
+        impl Transport for CompletionChange<'_> {
+            fn send(&self, _:HttpRequest, _:Arc<AtomicBool>) -> TransportFuture<'_> {
+                Box::pin(async move {
+                    if self.invalidate { self.service.invalidate(); } else { self.service.cancel("archive-completion"); }
+                    Ok(HttpResponse { status:403,headers:BTreeMap::new(),body:b"{}".to_vec() })
+                })
+            }
+        }
+        for invalidate in [false,true] {
+            let service=ChatgptService::default();
+            let transport=CompletionChange {service:&service,invalidate};
+            assert_eq!(service.read_with(archive_tasks_request("archive-completion",json!({})),share_rpc,&transport).await.err().unwrap().code,
+                if invalidate {"account_changed"} else {"cancelled"});
         }
     }
 

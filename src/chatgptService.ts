@@ -106,6 +106,24 @@ export async function readChatgptService(
   return responseBody(result, requestId, identity);
 }
 
+// Archive task HTTP-empty responses carry source semantics; the body-only reader loses them.
+export async function readArchiveCloudTasksPage(
+  cursor: string | null, identity: ServiceIdentity, signal: AbortSignal,
+): Promise<{ status: number; body: unknown }> {
+  if (signal.aborted) throw Error("请求已取消");
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; status: number; body: unknown }>(
+    "chatgpt_service_read", requestId,
+    { request: { requestId, operation: "archive_cloud_tasks", params: { cursor }, expectedIdentity: identity, profile: browserProfile() } }, signal,
+  );
+  let body: unknown;
+  try { body = responseBody(result, requestId, identity); }
+  catch { throw Object.assign(Error("读取期间账号发生变化，请重新刷新。"), { code: "account_changed" }); }
+  if (!Number.isInteger(result.status) || !((result.status >= 200 && result.status < 300)
+    || ([401, 403, 404].includes(result.status) && body === null))) throw Error("云端归档响应状态无效，请重试。");
+  return { status: result.status, body };
+}
+
 export interface ProfileMutationResult {
   verification: "confirmed" | "pending" | "not_applicable";
   body: unknown;

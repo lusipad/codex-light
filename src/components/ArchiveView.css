@@ -276,3 +276,6 @@
 .archive-filter-menu [role=menuitemradio]:hover,
 .archive-filter-menu [role=menuitemradio]:focus-visible { background: var(--bg-hover); outline: none; }
 .archive-filter-menu [role=menuitemradio] > svg { flex-shrink: 0; }
+.archive-cloud-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--text-secondary); font-size: var(--text-xs); line-height: 1.5; }
+.archive-cloud-icon { flex: none; color: var(--text-secondary); }
+.archive-cloud-row .archive-row-actions { flex-wrap: wrap; justify-content: flex-end; }
