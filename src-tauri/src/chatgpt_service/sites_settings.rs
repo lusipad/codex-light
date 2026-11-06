@@ -5,6 +5,16 @@ use super::*;
 #[serde(deny_unknown_fields)]
 pub struct SiteEnvironmentValue { pub is_secret:bool, pub key:String, pub r#type:String, pub value:String }
 #[derive(Clone, Deserialize)]
+#[serde(rename_all="snake_case")]
+pub enum SiteShareRecipientType { User, Group }
+#[derive(Clone, Deserialize)]
+#[serde(rename_all="snake_case")]
+pub enum SiteShareRole { Viewer, Editor }
+// An explicit null is removal. A missing role must fail deserialization, not become removal.
+#[derive(Clone, Deserialize)]
+#[serde(untagged)]
+pub enum SiteShareRecipientRole { Role(SiteShareRole), Remove(()) }
+#[derive(Clone, Deserialize)]
 #[serde(tag="operation",rename_all="snake_case",deny_unknown_fields)]
 pub enum SitesSettingsMutation {
     Title {title:String},
@@ -14,6 +24,8 @@ pub enum SitesSettingsMutation {
     DomainRefresh {domain_id:String},
     DomainRemove {domain_id:String},
     ShareAccess {access_mode:String},
+    ShareRecipient {recipient:String,recipient_type:SiteShareRecipientType,role:SiteShareRecipientRole},
+    ShareEmailRemove {email:String},
     Environment {remove:Vec<String>,set_values:Vec<SiteEnvironmentValue>},
 }
 #[derive(Deserialize)]
@@ -43,6 +55,19 @@ fn normalized_slug(raw:&str)->ServiceResult<String> {
 fn mutates_settings(mutation:&SitesSettingsMutation)->bool { !matches!(mutation,SitesSettingsMutation::SlugAvailability{..}) }
 fn request_body(mutation:&SitesSettingsMutation)->ServiceResult<(&'static str,&'static str,Value)> {
     let result=match mutation {
+        SitesSettingsMutation::ShareRecipient{recipient,recipient_type,role}=>{
+            if javascript_trim(recipient).is_empty() || recipient.chars().any(char::is_control)
+                || matches!(recipient_type,SiteShareRecipientType::Group) && matches!(role,SiteShareRecipientRole::Role(SiteShareRole::Editor)) {
+                return Err(failure("invalid_request","Invalid existing site sharing recipient or role"));
+            }
+            let recipient_type=match recipient_type {SiteShareRecipientType::User=>"user",SiteShareRecipientType::Group=>"group"};
+            let role=match role {SiteShareRecipientRole::Role(SiteShareRole::Viewer)=>json!("viewer"),SiteShareRecipientRole::Role(SiteShareRole::Editor)=>json!("editor"),SiteShareRecipientRole::Remove(())=>Value::Null};
+            ("share_access","share_access",json!({"recipient":recipient,"recipient_type":recipient_type,"role":role}))
+        },
+        SitesSettingsMutation::ShareEmailRemove{email}=>{
+            if javascript_trim(email).is_empty() || email.chars().any(char::is_control){return Err(failure("invalid_request","Existing site sharing email required"));}
+            ("share_access","share_access",json!({"email":email,"role":null}))
+        },
         SitesSettingsMutation::ShareAccess{access_mode}=>{
             if !matches!(access_mode.as_str(),"custom"|"workspace_all"|"public") {
                 return Err(failure("invalid_request","Unsupported site sharing access mode"));
@@ -88,7 +113,7 @@ fn valid_custom_domain(body:&Value,project_id:&str,domain_id:Option<&str>)->bool
 }
 fn validate_body(mutation:&SitesSettingsMutation,id:&str,body:&Value)->ServiceResult<()> {
     let valid=match mutation {
-        SitesSettingsMutation::ShareAccess{..}=>body.is_null() || body.get("status").and_then(Value::as_str).is_some_and(|status|matches!(status,"pending"|"accepted")),
+        SitesSettingsMutation::ShareAccess{..}|SitesSettingsMutation::ShareRecipient{..}|SitesSettingsMutation::ShareEmailRemove{..}=>body.is_null() || body.get("status").and_then(Value::as_str).is_some_and(|status|matches!(status,"pending"|"accepted")),
         SitesSettingsMutation::DomainAdd{..}=>valid_custom_domain(body,id,None),
         SitesSettingsMutation::DomainRefresh{domain_id}|SitesSettingsMutation::DomainRemove{domain_id}=>valid_custom_domain(body,id,Some(domain_id)),
         SitesSettingsMutation::SlugAvailability{slug}=>body.get("slug").and_then(Value::as_str)==normalized_slug(slug).ok().as_deref() && body.get("available").is_some_and(Value::is_boolean),
@@ -162,7 +187,7 @@ impl ChatgptService {
                 let mut outgoing=build_http_request(&route,credentials,integrity.as_deref(),&request.profile)?;
                 outgoing.method=match request.mutation {
                     SitesSettingsMutation::DomainRemove{..}=>HttpMethod::Delete,
-                    SitesSettingsMutation::ShareAccess{..}=>HttpMethod::Patch,
+                    SitesSettingsMutation::ShareAccess{..}|SitesSettingsMutation::ShareRecipient{..}|SitesSettingsMutation::ShareEmailRemove{..}=>HttpMethod::Patch,
                     _=>HttpMethod::Post,
                 };
                 if !matches!(request.mutation,SitesSettingsMutation::DomainRefresh{..}|SitesSettingsMutation::DomainRemove{..}) {

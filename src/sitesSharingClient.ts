@@ -1,10 +1,11 @@
 import { accountRead } from "./config";
-import { readChatgptService, serviceIdentity, writeSiteSharingAccess, type SiteSharingWriteResult } from "./chatgptService";
+import { readChatgptService, serviceIdentity, writeSiteSharingAccess, writeSiteSharingRecipient, serviceErrorMessage, type SiteSharingWriteResult, type SiteSharingMemberMutation } from "./chatgptService";
 import { selectedServiceAccount } from "./serviceAccounts";
-import { parseSiteSharing, parseSitePreferredUrl, type SiteSharingPolicy, type SiteSharingMode } from "./siteSharingData";
+import { parseSiteSharing, parseSitePreferredUrl, type SiteSharingPolicy, type SiteSharingMode, type SiteSharingMemberTarget } from "./siteSharingData";
 import type { SitesClientAccess } from "./sitesClient";
 
-export interface SiteSharingContext { memberId: string; email: string | null; workspace: boolean }
+export interface SiteSharingContext { memberId: string; email: string | null; workspace: boolean; sharingManagementAllowed: boolean; canManageEditors: boolean; canInviteExternal: boolean; externalPermissionError: string | null }
+const externalPermissionPlans = new Set(["business", "enterprise", "enterprise_cbp_usage_based", "enterprise_cbp_automation", "enterprise_cbp_trial", "enterprise_cbp_view_only", "deprecated_enterprise", "hc", "hc_consumption", "finserv", "law", "ent26", "education", "edu_plus", "edu_pro", "edu", "deprecated_edu", "k12", "quorum"]);
 function allowed(access: SitesClientAccess, signal: AbortSignal) { signal.throwIfAborted(); if (!access.enabled) throw Error("当前账号不可使用站点。"); }
 async function current(access: SitesClientAccess, signal: AbortSignal) {
   signal.throwIfAborted(); const identity = await serviceIdentity(signal);
@@ -15,8 +16,35 @@ export async function readSiteSharingContext(access: SitesClientAccess, signal: 
   const [body, authentication] = await Promise.all([readChatgptService("share_accounts", {}, access.identity, signal), accountRead()]);
   const account = selectedServiceAccount(body, access.identity.accountId).account;
   if (authentication.account?.type !== "chatgpt" || authentication.workspaceRouting?.chatgptAccountId != null && authentication.workspaceRouting.chatgptAccountId !== access.identity.accountId) throw Error("当前登录身份与站点账号不符。");
+  const workspace = account.structure === "workspace", permissionPlan = externalPermissionPlans.has(account.plan_type);
+  let permissions: string[] | null = null, externalPermissionError: string | null = null;
+  if (access.externalSharingAllowed && workspace && permissionPlan) {
+    try {
+      const settings = await readChatgptService("sites_workspace_settings", {}, access.identity, signal) as { permissions?: unknown };
+      if (!Array.isArray(settings?.permissions) || settings.permissions.some(value => typeof value !== "string")) throw Error("无法确认外部邀请权限。");
+      permissions = settings.permissions;
+    } catch (error) { signal.throwIfAborted(); externalPermissionError = serviceErrorMessage(error); }
+  }
   await current(access, signal);
-  return { memberId: account.account_user_id, email: typeof authentication.account.email === "string" ? authentication.account.email : null, workspace: account.structure === "workspace" };
+  return { memberId: account.account_user_id, email: typeof authentication.account.email === "string" ? authentication.account.email : null, workspace,
+    sharingManagementAllowed: access.sharingManagementAllowed === true, canManageEditors: workspace && access.sharingManagementAllowed === true,
+    canInviteExternal: access.externalSharingAllowed === true && (!permissionPlan || permissions !== null && (account.account_user_role === "account-owner" || permissions.includes("chatgpt.workspace.feature.sites.invite_external.access"))), externalPermissionError };
+}
+export async function writeSiteSharingMember(access: SitesClientAccess, id: string, target: SiteSharingMemberTarget, role: "viewer" | "editor" | null, signal: AbortSignal): Promise<SiteSharingWriteResult> {
+  allowed(access, signal);
+  if (![null, "viewer", "editor"].includes(role) || target.kind === "group" && role === "editor" || target.kind === "email" && role !== null) throw Error("当前参与者角色操作不可用。");
+  let mutation: SiteSharingMemberMutation;
+  if (target.kind === "email") { if (!target.email) throw Error("参与者邮箱缺失。"); mutation = { operation: "share_email_remove", email: target.email }; }
+  else { if (!target.id) throw Error("参与者身份缺失。"); mutation = { operation: "share_recipient", recipient: target.id, recipient_type: target.kind, role }; }
+  await current(access, signal);
+  try {
+    const result = await writeSiteSharingRecipient(id, mutation, access.identity, signal);
+    await current(access, signal); return result;
+  } catch (cause) {
+    const error = cause as { code?: string; status?: number };
+    if (!signal.aborted && error?.status != null && error.status >= 400 && error.status < 500 && error.code !== "sites_settings_unknown") throw cause;
+    throw Object.assign(Error("共享操作结果未确认，请先刷新权限。"), { code: "site_sharing_unconfirmed", status: error?.status, cause });
+  }
 }
 export async function readSiteSharingPolicy(access: SitesClientAccess, id: string, signal: AbortSignal): Promise<SiteSharingPolicy | null> {
   allowed(access, signal); const result = parseSiteSharing(await readChatgptService("sites_share_access", { id }, access.identity, signal));

@@ -1,10 +1,10 @@
 # 21J Sites 共享参与者与邀请：固定版本开发前规格
 
-2026-11-07。状态：**只读静态取证草案，未开发、未验收**。承接21I链接共享闭环；本文件覆盖已有参与者的角色、移除确认，以及邀请、成员/组搜索和团队建议。主线程的preview.9发布不代表本单元已实现。
+2026-11-07。状态：**已有参与者角色/移除有限本地自验完成；整页及完整邀请仍开发中，未用户验收**。承接21I链接共享闭环；本文件先完成只读取证，覆盖已有参与者的角色、移除确认，以及邀请、成员/组搜索和团队建议。实现、已登记界面差异与证据见[21J阶段记录](../acceptance/21J-sites-sharing-members.md)。preview.9不包含本单元。
 
 ## 1. 基准、证据及边界
 
-固定官方Windows Store `26.1027.3384.0`，asar SHA256 `6fbedf054a8d8cafaf5c745b40aa59176512e106e0bd6308275ae123b60fd074`。本轮复用21E完整提取，重新计算8份原始文件hash并逐一匹配manifest与asar entry integrity；**没有重新整包hash**，没有真实账号HTTP、官方GUI、权限/gate激活、Cargo、产品构建或像素测试。
+固定官方Windows Store `26.1027.3384.0`，asar SHA256 `6fbedf054a8d8cafaf5c745b40aa59176512e106e0bd6308275ae123b60fd074`。开发前取证复用21E完整提取，重新计算8份原始文件hash并逐一匹配manifest与asar entry integrity；**没有重新整包hash**，取证步骤没有真实账号HTTP、官方GUI、权限/gate激活、Cargo、产品构建或像素测试。后续实现的实际验证另记阶段记录，不覆盖取证时的边界。
 
 本轮证据：`.ref/parity/21/actual/21J-sites-sharing-members/reference/` 的 `manifest.json`、`anchors.json`、`translations.json`、`self-check.json`、可重复 `extract.cjs`。8份资源、55个完整函数/赋值/局部handler、25个真实export、42项直接中文；hash和片段往返0错误。原文位置均为0-based UTF-16字符偏移、右端不含，不是行号。raw路径明确引用21E原文件，未伪装重新从安装包提取。
 
@@ -199,4 +199,4 @@ shared `Rj`完整函数中的Lj（FormatJS formatMessage）已补证：在messag
 
 尚未证明：本机官方当前locale provider是否叠加远端/另份messages、onError实际配置、缺译运行时日志、rich text插值输出、屏幕实际英文/空值。没有运行官方GUI，因此不能声称用户屏幕已看到这句英文。clone可忠实提供当前英文defaultMessage并记录缺译，不能自造中文并标“官方文案”。
 
-以上只补强第5节的可实施输入；没有开发/放行21J，不改变真实HTTP、完整schema、原生与像素待验状态。
+以上是开发前对第5节输入的补强，该取证步骤本身没有开发或放行21J；后续有限实现见阶段记录，不改变真实HTTP、完整schema、正常共享原生与像素待验状态。

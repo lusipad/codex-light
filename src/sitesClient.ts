@@ -1,7 +1,7 @@
 import { readChatgptService, readSitesMetadata, readSiteAsset, writeSitePin, writeSiteTitle, writeSiteEnvironment, readSiteSlugAvailability, writeSiteSlug, writeSiteDomain, serviceIdentity, shareAccessBootstrap, serviceErrorMessage, type ServiceIdentity, type SiteAssetRef, type SiteEnvironmentPatch, type SiteSlugAvailability, type SiteSlugChange, type SiteDomainMutation } from "./chatgptService";
 import { parseSitesAccess, parseSitesPage, parseSite, parseSiteDomains, parseSiteEnvironmentSnapshot, parseSiteSettingsCapabilities, type SiteRecord, type SitesAccess, type SiteDomain, type SiteEnvironment, type SiteEnvironmentSnapshot, type SiteSettingsCapabilities } from "./sitesService";
 
-export interface SitesClientAccess extends SitesAccess { identity: ServiceIdentity; pinned: boolean; collectionPreview: boolean; slugChangeAllowed: boolean }
+export interface SitesClientAccess extends SitesAccess { identity: ServiceIdentity; pinned: boolean; collectionPreview: boolean; slugChangeAllowed: boolean; sharingManagementAllowed: boolean; externalSharingAllowed: boolean }
 export type SitesListKind = "owned" | "shared" | "pinned";
 export interface SitesClientPage { items: SiteRecord[]; cursor: string | null; assets: SiteAssetRef[] }
 const object = (value: unknown): value is Record<string, any> => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -23,7 +23,7 @@ export async function readSitesAccess(signal: AbortSignal): Promise<SitesClientA
     return value === true;
   };
   const enabledGate = gate("637432221", true), sharing = gate("476199071"), pinned = gate("1425956883");
-  const access: SitesClientAccess = { identity, enabled: false, workspace: false, editable: false, pinned: false, collectionPreview: gate("1498265771"), slugChangeAllowed: gate("324493575") };
+  const access: SitesClientAccess = { identity, enabled: false, workspace: false, editable: false, pinned: false, collectionPreview: gate("1498265771"), slugChangeAllowed: gate("324493575"), sharingManagementAllowed: sharing, externalSharingAllowed: gate("2196156952") };
   if (enabledGate) {
     const entry = await readChatgptService("sites_entry_access", {}, identity, signal);
     if (!object(entry) || typeof entry.enabled !== "boolean") throw Error("站点入口资格返回无效。");

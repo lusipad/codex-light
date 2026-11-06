@@ -107,6 +107,7 @@ try {
   Invoke-Step "Sites custom domain client contracts" { node scripts/verify-sites-domain-client.mjs }
   Invoke-Step "Sites custom domain actions and readback UI regression" { node scripts/verify-sites-domain-ui.mjs }
   Invoke-Step "Sites sharing data and fixed-source reference contracts" { node scripts/verify-sites-sharing-data.mjs }
+  Invoke-Step "Sites participant permissions and target contracts" { node scripts/verify-sites-sharing-members.mjs }
   Invoke-Step "Sites sharing identity-bound client contracts" { node scripts/verify-sites-sharing-client.mjs }
   Invoke-Step "Sites sharing dialog and recovery contracts" { node scripts/verify-sites-sharing-ui.mjs }
   Invoke-Step "Codex Cloud authenticated configuration regression" { node scripts/verify-cloud-environments.mjs }

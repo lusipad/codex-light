@@ -44,6 +44,8 @@ await test('participant, group and warning values remain real service data witho
   const sample = policy({ users: [{ role: 'viewer', email: 'reader@example.invalid', pending: true, editable: false, opaque: 'kept' }], groups: [{ id: 'group', name: '真实组', size: 17, editable: true }], show_private_tunnels_warning: true });
   const parsed = api.parseSiteSharing(sample);
   assert.deepEqual(plain(parsed.users), sample.users); assert.deepEqual(plain(parsed.groups), sample.groups); assert.equal(parsed.showPrivateTunnelsWarning, true);
+  for (const changed of [{editable:'false'},{pending:'false'},{size:'3'},{size:Infinity}]) assert.throws(()=>api.parseSiteSharing(policy({groups:[{id:'group',...changed}]})));
+  assert.deepEqual(plain(api.parseSiteSharing(policy({groups:[{id:'group',editable:false,pending:false,size:0,unknown:'kept'}]})).groups),[{id:'group',editable:false,pending:false,size:0,unknown:'kept'}]);
 });
 await test('preferred URL consumes live_url only, preserves exact valid text and rejects unsafe targets', () => {
   const url = 'https://preferred.example.invalid/path?opaque=1';

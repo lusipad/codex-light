@@ -18,6 +18,19 @@
 .site-sharing-mode-menu button:focus-visible, .site-sharing-mode-menu button:hover:not(:disabled) { background: var(--bg-hover); }
 .site-sharing-mode-menu button > span:nth-child(2) { flex: 1; min-width: 0; }
 .site-sharing-mode-menu small { display: block; color: var(--text-secondary); font-size: 12px; }
+.site-sharing-dialog .site-sharing-member-trigger { min-height: 28px; padding: 2px 4px; border: 0; border-radius: 999px; font-size: 12px; }
+.site-sharing-member-menu { width: max-content; max-width: calc(100vw - 24px); border-radius: 16px; }
+.site-sharing-dialog .site-sharing-member-menu button { min-height: 0; padding: 8px 12px; }
+.site-sharing-member-menu small { font-size: 14px; line-height: 20px; }
+.site-sharing-member-menu button > span:first-child { flex: 1; min-width: 0; max-width: 256px; }
+.site-sharing-member-menu hr { width: 100%; margin: 4px 0; border: 0; border-top: 1px solid var(--border-default); }
+.site-sharing-dialog .site-sharing-remove-access { color: var(--accent-red); }
+.site-sharing-member-confirm-body { position: relative; overflow-y: auto; padding: 20px; }
+.site-sharing-member-confirm-body h2 { margin-inline-end: 24px; }
+.site-sharing-member-confirm-body > p { margin-top: 24px; }
+.site-sharing-member-confirm-body .site-sharing-close { position: absolute; top: 16px; right: 16px; }
+.site-sharing-member-confirm footer { padding-inline: 20px; padding-bottom: 20px; justify-content: flex-end; }
+.site-sharing-dialog .site-sharing-member-danger { color: white; background: var(--accent-red); }
 .site-sharing-dialog p { margin: 4px 0 0; font-size: 13px; line-height: 20px; color: var(--text-secondary); }
 .site-sharing-participants { display: flex; flex-direction: column; gap: 12px; margin-bottom: 12px; }
 .site-sharing-person { display: flex; align-items: center; gap: 12px; min-width: 0; }
