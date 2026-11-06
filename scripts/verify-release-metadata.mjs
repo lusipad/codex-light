@@ -24,9 +24,9 @@ fs.writeFileSync(path.join(dir, 'fixture'), 'second commit');
 git(['add', 'fixture']);
 git(['-c', 'user.name=Release Test', '-c', 'user.email=release-test@example.invalid', 'commit', '--quiet', '-m', 'second']);
 const sha = git(['rev-parse', 'HEAD']);
-function run(env) {
+function run(env, args = []) {
   fs.writeFileSync(output, '');
-  const result = spawnSync(process.execPath, [script], {
+  const result = spawnSync(process.execPath, [script, ...args], {
     cwd: dir, encoding: 'utf8', env: { ...process.env, GITHUB_REF: 'refs/heads/master', CREATE_RELEASE: '', GITHUB_SHA: sha,
       RELEASE_TAG: '', RELEASE_PRERELEASE: '', GITHUB_OUTPUT: output, ...env },
   });
@@ -58,6 +58,24 @@ for (const annotated of [false, true]) {
   assert.equal(run(publish).status, 0);
   git(['tag', '-d', publish.RELEASE_TAG]);
 }
+const remote = path.join(dir, 'remote.git');
+git(['clone', '--bare', '--quiet', '--no-hardlinks', dir, remote]);
+git(['remote', 'add', 'origin', remote]);
+git(['-C', remote, '-c', 'user.name=Release Test', '-c', 'user.email=release-test@example.invalid', 'tag', '-a', '-m', 'remote annotated tag', publish.RELEASE_TAG, sha]);
+git(['tag', publish.RELEASE_TAG, sha]);
+const legacyFetch = spawnSync('git', ['fetch', 'origin', '--tags'], { cwd: dir, encoding: 'utf8' });
+assert.notEqual(legacyFetch.status, 0, 'checkout lightweight tag conflicts with the remote annotated tag');
+assert.match(legacyFetch.stderr, /would clobber existing tag/);
+assert.equal(run(publish, ['--revalidate-remote']).status, 0, 'matching remote annotated tag remains publishable');
+assert.equal(git(['cat-file', '-t', `refs/tags/${publish.RELEASE_TAG}`]), 'commit', 'validation must not replace checkout tag');
+git(['-C', remote, 'tag', '-f', publish.RELEASE_TAG, first]);
+const remoteMismatch = run(publish, ['--revalidate-remote']);
+assert.notEqual(remoteMismatch.status, 0, 'remote tag moving away from the verified commit must block publication');
+assert.equal(remoteMismatch.output, '');
+git(['-C', remote, 'tag', '-f', publish.RELEASE_TAG, sha]);
+assert.equal(run(publish, ['--revalidate-remote']).status, 0, 'matching remote lightweight tag is supported');
+git(['-C', remote, 'tag', '-d', publish.RELEASE_TAG]);
+assert.notEqual(run(publish, ['--revalidate-remote']).status, 0, 'missing remote tag must block publication');
 // Only remove this test's newly created, verified private root.
 assert.equal(path.dirname(path.resolve(dir)), path.resolve(os.tmpdir()));
 assert.ok(path.basename(dir).startsWith('codex-release-metadata-'));

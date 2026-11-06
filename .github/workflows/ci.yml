@@ -141,9 +141,7 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
           RELEASE_PRERELEASE: ${{ inputs.prerelease }}
         run: |
-          git fetch origin --tags
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node scripts/prepare-github-release.mjs
+          node scripts/prepare-github-release.mjs --revalidate-remote
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v') || inputs.create_release == true

@@ -29,6 +29,13 @@ if (publish) {
     const target = git(['rev-parse', `refs/tags/${tag}^{commit}`]);
     if (target.status !== 0 || target.stdout.trim() !== sha) throw Error('Existing release tag points to a different commit');
   } else if (existing.status !== 1) throw Error('Cannot verify release tag');
+  if (process.argv.includes('--revalidate-remote')) {
+    const remoteRef = `refs/codex-release-tags/${tag}`;
+    const fetch = git(['fetch', '--no-tags', 'origin', `refs/tags/${tag}:${remoteRef}`]);
+    if (fetch.status !== 0) throw Error('Cannot fetch remote release tag');
+    const target = git(['rev-parse', `${remoteRef}^{commit}`]);
+    if (target.status !== 0 || target.stdout.trim() !== sha) throw Error('Remote release tag points to a different commit');
+  }
   const prerelease = tag.includes('-') || process.env.RELEASE_PRERELEASE === 'true';
   if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `tag=${tag}\nnotes=${notes}\nprerelease=${prerelease}\n`);
   console.log(`Validated ${tag} (${prerelease ? 'preview' : 'release'}) at ${sha}`);

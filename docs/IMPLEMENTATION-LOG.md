@@ -2199,3 +2199,9 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 - 独立复核保留并发新增误拒、晚草稿误报已保存、父子卸载丢flush、地域标志恢复、旧标题截图grant及跨页身份失效真实红绿。跨页写期间保留唯一身份监听，实际pending settle后退订，账号失效抑制旧错误通知。
 - 全库580 Rust、累计81前端、完整非Fast335段/32探针退出0。原生组件发现弹窗左上且背景透明，追共享默认后限定三文件CSS/aria/空名称说明及断言修复，再跑81前端、类型/Vite及原生构建；保留标准修复前输入和最终680输入，不称标准全量在样式修后重跑。
 - 最终EXE `dist-artifacts/sites-21F-20261107/CodexNative.exe` SHA256 `1b02207603f729820ea17537658a6846161df0cec4ecbadf508c31caa75ab6e5`。浏览器宽窄/92vw/恢复/跨页、隔离原生组件键盘取消及最终生产EXE未登录/sites/重试/退出与0会话留证。真实账号HTTP、配对像素、物理IME、多窗和用户验收仍缺；完整Sites后续范围未缩减，详见[21F记录](antigravity/acceptance/21F-sites-settings-write.md)。22E/21E/21F准备累计preview.8，发布与远端验证另行记录。
+
+## 2026-11-07 — preview.8补发与附注标签复核修复
+
+- 精确2aef033分支CI42273942594完整success，81前端/580全库Rust/适配器/程序/MSI/NSIS通过。标签CI42273942595构建上传通过，最后bulk fetch因checkout临时轻量标签与远端附注标签对象不同而clobber失败，未自动发布；保留failure，不将其说成成功。
+- 修复为单标签独立本地ref抓取并比较解引用commit；真实私有Git回归先红后绿，兼容两种标签且继续拒绝远端提交不符/缺失。原标签不移动、不force覆盖，其他21G改动不混入本修复提交。详见[诊断记录](research/ci-annotated-release-tag-20261107.md)。
+- preview.8使用完整success作业的原始artifact13533870644经digest/校验和/精确许可及远端标签验证后补发；实际发布页与四资源下载验证另留.ref记录。完整自动tag流程修后尚未新标签实跑，不宣称已验证。
