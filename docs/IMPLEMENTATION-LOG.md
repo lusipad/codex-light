@@ -2205,3 +2205,16 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 - 精确2aef033分支CI42273942594完整success，81前端/580全库Rust/适配器/程序/MSI/NSIS通过。标签CI42273942595构建上传通过，最后bulk fetch因checkout临时轻量标签与远端附注标签对象不同而clobber失败，未自动发布；保留failure，不将其说成成功。
 - 修复为单标签独立本地ref抓取并比较解引用commit；真实私有Git回归先红后绿，兼容两种标签且继续拒绝远端提交不符/缺失。原标签不移动、不force覆盖，其他21G改动不混入本修复提交。详见[诊断记录](research/ci-annotated-release-tag-20261107.md)。
 - preview.8使用完整success作业的原始artifact13533870644经digest/校验和/精确许可及远端标签验证后补发；实际发布页与四资源下载验证另留.ref记录。完整自动tag流程修后尚未新标签实跑，不宣称已验证。
+
+## 2026-11-07 — 21G设置能力第一增量（开发中，未提交/发布）
+
+- 先完成5资源/31函数/34export/57中文动作合同，明确settings能力独立于sharing、URL pending收敛与域名完整写返回。首个增量只修真实能力读取/关闭/失败分支和独立域名Retry，保留环境snapshot/草稿；完整URL/域名写链仍在本单元队列。
+- 保留能力关闭仍请求域名、错误呈现及首屏错误加载行的实际红绿。19client/31view/18settings及旧读取14/数据5、类型检查和81前端通过；真实组件1280/640明确离线bridge验证请求计数、关闭隐藏和保draft，无外网/真实HTTP。
+- 证据与范围见[21G进行中记录](antigravity/acceptance/21G-sites-url-domains.md)。未新构建原生、未重复完整标准或Rust、未用户验收，不包含preview.8。发布脚本修复b25cb71暂留本地，随下一完整阶段推送，避免只为工作流小修再触发整套无产品变化构建。
+
+## 2026-11-07 — 21G URL阶段限定交付
+
+- 在前述调研后完成独立slug gate、规范化/400ms查询、typed availability/metadata写、真实读回、pending立即GET/1秒/10分钟确认、跨页通知及无人观察后GC；复用既有身份、取消、请求跟踪与原子metadata/截图授权回写，无新依赖。域名写链/DNS仍保留，解析依赖尚未获答复、未安装。
+- 新客户端9组、状态/JSX22组与父页面32组保留实际红绿；真实浏览器发现恢复按钮被复用为submit导致额外POST，最小preventDefault修复后同路径写次数保持1。StrictMode纯构造/可重入挂载、旧GET/旧hydrate、晚pending跨页、complete回读错误分别锁定。
+- 全库587 Rust零失败/忽略/过滤；最终83前端和原生debug构建退出0，684输入稳定。完整非Fast337段/32探针首次仅模型偏好即时快照失败，修复探针确认后两CLI专项0，原退出1及一次未定因配置落盘失败均保留，不将定向恢复称同轮标准全绿。
+- EXE `dist-artifacts/sites-21G-20261107/CodexNative.exe` SHA256 `fb7a6dcd9ba36f28cddd16082c7876e3a9e553fa3534a7c5857b1bde6d827f6c`。生产EXE私有未登录/sites重试/退出、SQLite0线程通过；私有原生组件准备被自动审批拒绝，正常URL原生/账号HTTP/配对像素/IME/用户验收仍缺。详见[21G阶段记录](antigravity/acceptance/21G-sites-url-domains.md)与[协议同步诊断](research/model-preference-probe-sync-20261107.md)。本阶段先本地提交，暂不推送/发布；preview.8不含本阶段。

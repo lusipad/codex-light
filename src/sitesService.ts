@@ -1,4 +1,5 @@
 export interface SitesAccess { enabled: boolean; workspace: boolean; editable: boolean }
+export interface SiteSettingsCapabilities { slugChangeEnabled: boolean; customDomainsEnabled: boolean }
 export interface SiteRecord {
   id: string; title: string; slug: string; description: string; status: "active" | "archived" | "suspended" | "deleting";
   liveUrl: string | null; updatedAt: string; disabledBy: string | null; role: string | null;
@@ -19,6 +20,10 @@ export function parseSitesAccess(value: any): SitesAccess {
   if (typeof value?.enabled !== "boolean" || (value.supports_workspace_listing != null && typeof value.supports_workspace_listing !== "boolean") ||
     (value.supports_editable_listing != null && typeof value.supports_editable_listing !== "boolean")) throw malformed();
   return { enabled: value.enabled, workspace: value.supports_workspace_listing ?? false, editable: value.supports_editable_listing ?? false };
+}
+export function parseSiteSettingsCapabilities(value: any): SiteSettingsCapabilities {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw malformed();
+  return { slugChangeEnabled: value.slug_change_enabled === true, customDomainsEnabled: value.custom_domains_enabled === true };
 }
 export function parseSite(value: any): SiteRecord {
   if (!value || !["active", "archived", "suspended", "deleting"].includes(value.status) || !value.id ||
@@ -58,6 +63,14 @@ export function filterSites(items: SiteRecord[], query: string): SiteRecord[] {
 }
 export function safeSiteUrl(value: string | null): string | null {
   try { const url = new URL(value ?? ""); return ["https:", "http:"].includes(url.protocol) && !url.username && !url.password ? url.href : null; } catch { return null; }
+}
+export function siteHostedDomainSuffix(site: Pick<SiteRecord, "hostedUrl" | "liveUrl" | "slug">): string | null {
+  const value = site.hostedUrl ?? site.liveUrl;
+  if (value === null) return null;
+  try {
+    const hostname = new URL(value).hostname, slug = site.slug.trim().toLowerCase();
+    return !slug || !hostname.startsWith(`${slug}.`) || ![".chatgpt-team.site", ".chatgpt.site", ".appgardenapps.dev"].some(suffix => hostname.endsWith(suffix)) ? null : hostname.slice(slug.length);
+  } catch { return null; }
 }
 export function parseSiteEnvironment(value: any, projectId: string): SiteEnvironment[] {
   if (value?.project_id !== projectId || !Array.isArray(value.entries)) throw malformed();

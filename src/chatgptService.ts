@@ -173,7 +173,7 @@ export interface SiteEnvironmentSnapshot {
 }
 
 async function writeSiteSettings(
-  id: string, mutation: { operation: "title"; title: string } | ({ operation: "environment" } & SiteEnvironmentPatch),
+  id: string, mutation: { operation: "title"; title: string } | ({ operation: "environment" } & SiteEnvironmentPatch) | { operation: "slug_availability" | "slug"; slug: string },
   identity: ServiceIdentity, signal: AbortSignal,
 ): Promise<unknown> {
   signal.throwIfAborted();
@@ -183,6 +183,19 @@ async function writeSiteSettings(
     { request: { requestId, id, mutation, expectedIdentity: identity, profile: browserProfile() } }, signal,
   );
   return responseBody(result, requestId, identity);
+}
+export interface SiteSlugAvailability { slug: string; available: boolean }
+export interface SiteSlugChange { requestedSlug: string; status: "pending" | "complete" }
+export async function readSiteSlugAvailability(id: string, slug: string, identity: ServiceIdentity, signal: AbortSignal): Promise<SiteSlugAvailability> {
+  const body = await writeSiteSettings(id, { operation: "slug_availability", slug }, identity, signal) as { slug?: unknown; available?: unknown };
+  if (!body || body.slug !== slug || typeof body.available !== "boolean") throw Error("站点 URL 可用性返回无效，请重试。");
+  return { slug, available: body.available };
+}
+export async function writeSiteSlug(id: string, slug: string, identity: ServiceIdentity, signal: AbortSignal): Promise<SiteSlugChange> {
+  const body = await writeSiteSettings(id, { operation: "slug", slug }, identity, signal) as { slug_change?: { requested_slug?: unknown; status?: unknown } };
+  const change = body?.slug_change;
+  if (!change || change.requested_slug !== slug || (change.status !== "pending" && change.status !== "complete")) throw Error("站点 URL 更改结果未知，请先重新读取站点。");
+  return { requestedSlug: slug, status: change.status };
 }
 
 export async function writeSiteTitle(id: string, title: string, identity: ServiceIdentity, signal: AbortSignal): Promise<SiteTitleWrite> {

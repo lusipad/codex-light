@@ -37,7 +37,7 @@ export function rebaseEnvironment(current: EnvironmentDraft[], sent: Environment
 }
 const stores = new Map<string, SiteSettingsState>();
 const requests = new Map<AbortSignal, Set<Promise<unknown>>>();
-function trackRequest<T>(scope: AbortSignal, request: Promise<T>): Promise<T> {
+export function trackRequest<T>(scope: AbortSignal, request: Promise<T>): Promise<T> {
   let active = requests.get(scope); if (!active) { active = new Set(); requests.set(scope, active); }
   const tracked = request.finally(() => { active!.delete(tracked); if (!active!.size) requests.delete(scope); });
   active.add(tracked); return tracked;

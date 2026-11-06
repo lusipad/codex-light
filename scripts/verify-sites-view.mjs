@@ -12,6 +12,7 @@ const flush = async () => { for (let i = 0; i < 40; i++) await Promise.resolve()
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
 const identity = { accountId: "account", userId: "user", generation: 1 };
 const access = { identity, enabled: true, workspace: true, editable: true, pinned: true, collectionPreview: false };
+const capabilities = { slugChangeEnabled: false, customDomainsEnabled: true };
 const raw = (id, extra = {}) => ({ id, title: `站点 ${id}`, slug: id, status: "active", updated_at: "2026-11-03T01:00:00Z", live_url: `https://example.invalid/${id}`,
   sharing: { access_mode: "private", user_count: 1, group_count: 0 }, ...extra });
 
@@ -65,7 +66,9 @@ function harness({ deferredListener = false, listenerError, href = "http://local
         if (name === "lucide-react") return new Proxy({}, { get: (_, key) => String(key) });
         if (name.endsWith(".css")) return {};
         if (name === "../sitesService" || name === "./sitesService") return load("src/sitesService.ts");
-        if (name === "../siteSettingsState") return load("src/siteSettingsState.ts");
+        if (name === "../siteSettingsState" || name === "./siteSettingsState") return load("src/siteSettingsState.ts");
+        if (name === "../siteSlugState") return load("src/siteSlugState.ts");
+        if (name === "./SiteSlugSettings") return load("src/components/SiteSlugSettings.tsx");
         if (name === "./SiteSettingsForm") return load("src/components/SiteSettingsForm.tsx");
         if (name === "../sitesNavigation") return load("src/sitesNavigation.ts");
         if (name === "../chatgptService") return { serviceErrorMessage: error => error.message || error.code };
@@ -75,12 +78,15 @@ function harness({ deferredListener = false, listenerError, href = "http://local
           readSitesPage: (access, kind, query, cursor, signal, seen) => call("page", [access, kind, query, cursor, seen], signal),
           readSiteDetail: (access, id, signal) => call("detail", [access, id], signal),
           readSiteSettings: (access, id, signal) => call("settings", [access, id], signal),
+          readSiteDomainSettings: (access, id, signal) => call("domain-settings", [access, id], signal),
           readSiteScreenshot: (asset, access, signal) => call("screenshot", [asset, access], signal),
           readSitePin: (access, id, signal) => call("pin-read", [access, id], signal),
           setSitePinned: (access, id, pinned, signal) => call("pin-write", [access, id, pinned], signal),
           saveSiteTitle: (access, id, title, signal) => call("title-write", [access, id, title], signal),
           saveSiteEnvironment: (access, id, patch, signal, baseline) => call("environment-write", [access, id, patch, baseline], signal),
           readSiteEnvironmentSnapshot: (access, id, signal) => call("environment-read", [access, id], signal),
+          checkSiteSlug: (access, id, slug, signal) => call("slug-check", [access, id, slug], signal),
+          changeSiteSlug: (access, id, slug, signal) => call("slug-write", [access, id, slug], signal),
         };
         if (name === "./LibraryStickyHeader") return { LibraryStickyHeader: p => React.createElement("header", null, React.createElement("h1", null, p.title), p.description, p.navigation, p.actions) };
         if (name === "./ThreadActionsMenu") return { ThreadActionsMenu: p => React.createElement("mock-menu", p) };
@@ -211,10 +217,10 @@ await check("settings is a route workface; detail failure retries, independent c
   assert.equal(new URL(h.window.location.href).pathname, "/sites/one/settings"); assert.equal(walk(h.render()).some(n => n.type === "dialog"), false);
   latest(h, "detail").reject(Error("not_found")); await flush(); assert.match(text(h.render()), /not_found/);
   button(h, "重试").props.onClick(); h.render(); await flush(); latest(h, "detail").resolve({ site: h.data.parseSite(raw("one", { live_url: null })), assets: [] }); await flush();
-  latest(h, "settings").resolve({ environment: null, domains: [{ id: "apex", hostname: "apex.example.invalid", status: "pending", cname: "real-target", ipv4: ["192.0.2.14"], records: [{ type: "TXT", value: "real-proof" }] }], errors: { environment: "environment failed" } }); await flush();
+  latest(h, "settings").resolve({ capabilities, environment: null, domains: [{ id: "apex", hostname: "apex.example.invalid", status: "pending", cname: "real-target", ipv4: ["192.0.2.14"], records: [{ type: "TXT", value: "real-proof" }] }], errors: { environment: "environment failed" } }); await flush();
   assert.match(text(h.render()), /environment failed/); assert.match(text(h.render()), /real-target|real-proof/); assert.match(text(h.render()), /192\.0\.2\.14/);
   button(h, "重试").props.onClick(); const first = latest(h, "settings"); button(h, "重试").props.onClick(); assert.equal(latest(h, "settings"), first);
-  first.resolve({ environment: h.data.parseSiteEnvironment({ project_id: "one", entries: [{ type: "envvar", key: "TOKEN", is_secret: true, value: "never-render" }, { type: "envvar", key: "MODE", is_secret: false, value: "prod" }] }, "one"), environmentSnapshot: { projectId: "one", entries: [{ key: "TOKEN", secret: true, value: null }, { key: "MODE", secret: false, value: "prod" }], revision: 1, updatedAt: null }, domains: [], errors: {} }); await flush();
+  first.resolve({ capabilities, environment: h.data.parseSiteEnvironment({ project_id: "one", entries: [{ type: "envvar", key: "TOKEN", is_secret: true, value: "never-render" }, { type: "envvar", key: "MODE", is_secret: false, value: "prod" }] }, "one"), environmentSnapshot: { projectId: "one", entries: [{ key: "TOKEN", secret: true, value: null }, { key: "MODE", secret: false, value: "prod" }], revision: 1, updatedAt: null }, domains: [], errors: {} }); await flush();
   assert.ok(walk(h.render()).some(n => n.type === "input" && n.props.value === "prod")); assert.doesNotMatch(JSON.stringify(h.render(), (key, value) => key === "element" || key === "ref" ? undefined : value), /never-render/);
   button(h, "← 网站").props.onClick(); h.render(); assert.equal(new URL(h.window.location.href).pathname, "/sites"); h.unmount();
 });
@@ -280,7 +286,7 @@ await check("popstate cancels prior detail; no late detail/settings can replace 
   h.pop("http://localhost/sites?keep=1#hash"); h.render(); assert.equal(old.signal.aborted, true);
   old.resolve({ site: h.data.parseSite(raw("one", { title: "旧详情" })), assets: [] }); await flush(); assert.doesNotMatch(text(h.render()), /旧详情/);
   menu(h).props.onSelect("settings"); h.render(); await flush(); latest(h, "detail").resolve({ site: h.data.parseSite(raw("one")), assets: [] }); await flush(); const settings = latest(h, "settings");
-  h.invalidate(); h.render(); settings.resolve({ environment: [{ key: "old-key", value: "旧配置" }], domains: [], errors: {} }); await flush(); assert.doesNotMatch(text(h.render()), /旧配置|old-key/); h.unmount();
+  h.invalidate(); h.render(); settings.resolve({ capabilities, environment: [{ key: "old-key", value: "旧配置" }], domains: [], errors: {} }); await flush(); assert.doesNotMatch(text(h.render()), /旧配置|old-key/); h.unmount();
 });
 await check("production route has no fake deployment data or unconditional dialog; timestamp is actual relative metadata", async () => {
   const source = fs.readFileSync("src/components/SitesView.tsx", "utf8"), app = fs.readFileSync("src/App.tsx", "utf8");
@@ -326,13 +332,24 @@ await check("detail screenshot withdrawal synchronizes both cached lists and lea
   button(h, "与你共享").props.onClick(); h.render(); await flush(); latest(h, "page").resolve(page(h, [raw("one", { screenshot_url: "https://example.invalid/shared" })], null, [{ id: "one", assetKey: "shared", sourceRequestId: "request-shared" }])); await flush(); h.render();
   latest(h, "screenshot").resolve("data:image/png;base64,shared"); await flush(); h.render(); menu(h).props.onSelect("settings"); h.render(); await flush();
   latest(h, "detail").resolve({ site: h.data.parseSite(raw("one", { screenshot_url: null })), assets: [] }); await flush(); h.render();
-  latest(h, "settings").resolve({ environment: [], domains: [], errors: {} }); await flush(); button(h, "← 网站").props.onClick(); h.render();
+  latest(h, "settings").resolve({ capabilities, environment: [], domains: [], errors: {} }); await flush(); button(h, "← 网站").props.onClick(); h.render();
   assert.equal(walk(h.render()).filter(n => n.type === "img").length, 0); const count = h.calls.filter(c => c.operation === "screenshot").length;
   button(h, "你拥有的").props.onClick(); h.render(); await flush(); assert.equal(walk(h.render()).filter(n => n.type === "img").length, 0); assert.equal(h.calls.filter(c => c.operation === "screenshot").length, count); h.unmount();
 });
+await check("URL change entry requires the official gate, settings capability, active status and owner context", async () => {
+  for (const gate of [false, true]) for (const enabled of [false, true]) for (const status of ["active", "archived", "suspended", "deleting"]) for (const role of [null, "owner", "editor", "viewer"]) {
+    const h = await boot(harness(), { slugChangeAllowed: gate });
+    menu(h).props.onSelect("settings"); h.render(); await flush();
+    latest(h, "detail").resolve({ site: h.data.parseSite(raw("one", { status, current_user_role: role })), assets: [] }); await flush(); h.render();
+    latest(h, "settings").resolve({ capabilities: { slugChangeEnabled: enabled, customDomainsEnabled: false }, environment: [], environmentSnapshot: { projectId: "one", entries: [], revision: 0, updatedAt: null }, domains: null, errors: {} }); await flush();
+    const change = walk(h.render()).some(n => n.type === "button" && n.props["aria-label"] === "更改托管站点 URL");
+    assert.equal(change, gate && enabled && status === "active" && (role === null || role === "owner"), JSON.stringify({ gate, enabled, status, role }));
+    assert.equal(h.calls.some(c => c.operation === "slug-write"), false); h.unmount();
+  }
+});
 await check("settings title is editable through the real source component", async () => {
   const h = await boot(); menu(h).props.onSelect("settings"); h.render(); await flush(); latest(h, "detail").resolve({ site: h.data.parseSite(raw("one")), assets: [] }); await flush();
-  latest(h, "settings").resolve({ environment: [], environmentSnapshot: { projectId: "one", entries: [], revision: 0, updatedAt: null }, domains: [], errors: {} }); await flush();
+  latest(h, "settings").resolve({ capabilities, environment: [], environmentSnapshot: { projectId: "one", entries: [], revision: 0, updatedAt: null }, domains: [], errors: {} }); await flush();
   const field = walk(h.render()).find(n => n.type === "input" && n.props["aria-label"] === "站点标题");
   assert.ok(field); assert.notEqual(field.props.readOnly, true); assert.equal(typeof field.props.onChange, "function"); h.unmount();
 });
@@ -340,10 +357,62 @@ await check("older title readback callback cannot replace the grant paired with 
   const h = await boot(); menu(h).props.onSelect("settings"); h.render(); await flush();
   const site = h.data.parseSite(raw("one", { title: "新缓存标题", updated_at: "2026-11-05T00:00:00Z", screenshot_url: "https://example.invalid/new" }));
   latest(h, "detail").resolve({ site, assets: [{ id: "one", assetKey: "new-grant", sourceRequestId: "new-request" }] }); await flush(); h.render();
-  latest(h, "settings").resolve({ environment: [], environmentSnapshot: { projectId: "one", entries: [], revision: 0, updatedAt: null }, domains: [], errors: {} }); await flush(); h.render();
+  latest(h, "settings").resolve({ capabilities, environment: [], environmentSnapshot: { projectId: "one", entries: [], revision: 0, updatedAt: null }, domains: [], errors: {} }); await flush(); h.render();
   h.componentProps.get("SiteSettingsForm").onSite({ site: h.data.parseSite(raw("one", { title: "旧标题", updated_at: "2026-11-04T00:00:00Z", screenshot_url: "https://example.invalid/old" })), assets: [{ id: "one", assetKey: "old-grant", sourceRequestId: "old-request" }] });
   h.render(); button(h, "← 网站").props.onClick(); h.render(); await flush();
   assert.match(text(h.render()), /新缓存标题/); assert.equal(latest(h, "screenshot").args[0].assetKey, "new-grant"); h.unmount();
+});
+async function openDomainSettings(result) {
+  const h = await boot(); menu(h).props.onSelect("settings"); h.render(); await flush(); latest(h, "detail").resolve({ site: h.data.parseSite(raw("one")), assets: [] }); await flush(); h.render();
+  if (result) { latest(h, "settings").resolve(result); await flush(); h.render(); }
+  return h;
+}
+const domainEnvironment = { projectId: "one", entries: [{ key: "MODE", secret: false, value: "dev" }], revision: 1, updatedAt: null };
+const domainSettings = (extra = {}) => ({ capabilities, environment: domainEnvironment.entries, environmentSnapshot: domainEnvironment, domains: [], errors: {}, ...extra });
+await check("unfetched and false custom-domain capability hide the complete section without a fake empty state", async () => {
+  const h = await openDomainSettings(); assert.doesNotMatch(text(h.render()), /自定义域名|暂无域名/);
+  latest(h, "settings").resolve(domainSettings({ capabilities: { slugChangeEnabled: true, customDomainsEnabled: false }, domains: null, errors: { environment: "environment failed" } })); await flush();
+  assert.doesNotMatch(text(h.render()), /自定义域名/); assert.equal(walk(h.render()).some(n => n.props["aria-label"] === "站点标题"), true);
+  button(h, "重试").props.onClick(); h.render(); assert.doesNotMatch(text(h.render()), /自定义域名/);
+  latest(h, "settings").resolve(domainSettings({ capabilities: { slugChangeEnabled: false, customDomainsEnabled: false }, domains: null })); await flush(); h.unmount();
+});
+await check("capability failure has independent single-flight retry which preserves environment snapshot and unsaved draft", async () => {
+  const h = await openDomainSettings(domainSettings({ capabilities: null, domains: null, errors: { capabilities: "capability failed" } }));
+  assert.match(text(h.render()), /capability failed/); const snapshot = h.componentProps.get("SiteSettingsForm").snapshot;
+  walk(h.render()).find(n => n.props["aria-label"] === "值").props.onChange({ target: { value: "unsaved draft" } });
+  const retry = button(h, "重试自定义域名"), initialSettings = h.calls.filter(c => c.operation === "settings").length;
+  retry.props.onClick(); retry.props.onClick(); assert.equal(h.calls.filter(c => c.operation === "domain-settings").length, 1); assert.equal(latest(h, "domain-settings").args[1], "one");
+  latest(h, "domain-settings").resolve({ capabilities, domains: [{ id: "verified", hostname: "verified.example.invalid", status: "pending", cname: "real-target", ipv4: [], records: [] }], errors: {} }); await flush();
+  assert.match(text(h.render()), /verified.example.invalid/); assert.doesNotMatch(text(h.render()), /capability failed/);
+  assert.equal(h.calls.filter(c => c.operation === "settings").length, initialSettings); assert.equal(h.componentProps.get("SiteSettingsForm").snapshot, snapshot);
+  assert.equal(walk(h.render()).find(n => n.props["aria-label"] === "值").props.value, "unsaved draft"); h.invalidate(); h.render(); h.unmount();
+});
+await check("domain read failure is distinct from capability failure; retry false hides domains without resetting environment errors", async () => {
+  const h = await openDomainSettings(domainSettings({ domains: null, errors: { domains: "domain failed", environment: "environment failed" } }));
+  assert.match(text(h.render()), /无法读取自定义域名/); assert.doesNotMatch(text(h.render()), /无法读取设置能力/);
+  button(h, "重试自定义域名").props.onClick(); latest(h, "domain-settings").resolve({ capabilities: { slugChangeEnabled: false, customDomainsEnabled: false }, domains: null, errors: {} }); await flush();
+  assert.doesNotMatch(text(h.render()), /自定义域名|domain failed/); assert.match(text(h.render()), /environment failed/); h.unmount();
+});
+await check("leaving or switching identity discards old domain capability responses and cannot unlock a new site retry", async () => {
+  const h = await openDomainSettings(domainSettings({ capabilities: null, domains: null, errors: { capabilities: "first failed" } }));
+  button(h, "重试自定义域名").props.onClick(); const old = latest(h, "domain-settings"); h.pop("http://localhost/sites/two/settings"); h.render(); await flush(); assert.equal(old.signal.aborted, true);
+  latest(h, "detail").resolve({ site: h.data.parseSite(raw("two")), assets: [] }); await flush(); h.render(); latest(h, "settings").resolve(domainSettings({ environmentSnapshot: { ...domainEnvironment, projectId: "two" }, capabilities: null, domains: null, errors: { capabilities: "second failed" } })); await flush();
+  button(h, "重试自定义域名").props.onClick(); const current = latest(h, "domain-settings"); assert.equal(current.args[1], "two");
+  old.resolve({ capabilities, domains: [{ id: "old", hostname: "old.example.invalid", status: "active", records: [], ipv4: [] }], errors: {} }); await flush();
+  assert.doesNotMatch(text(h.render()), /old.example.invalid/); assert.equal(button(h, "重试自定义域名").props.disabled, true);
+  h.invalidate(); h.render(); assert.equal(current.signal.aborted, true); current.resolve({ capabilities, domains: [{ id: "late", hostname: "late.example.invalid", status: "active", records: [], ipv4: [] }], errors: {} }); await flush();
+  assert.doesNotMatch(text(h.render()), /late.example.invalid/); h.unmount();
+});
+await check("domain and full-settings retries cannot race to overwrite each other's state", async () => {
+  const h = await openDomainSettings(domainSettings({ domains: null, errors: { domains: "domain failed", environment: "environment failed" } }));
+  const environmentRetry = () => walk(h.render()).find(n => n.type === "button" && text(n) === "重试" && !n.props["aria-label"]);
+  button(h, "重试自定义域名").props.onClick(); const initial = h.calls.filter(c => c.operation === "settings").length;
+  environmentRetry().props.onClick(); assert.equal(h.calls.filter(c => c.operation === "settings").length, initial);
+  latest(h, "domain-settings").reject(Error("capability retry failed")); await flush();
+  assert.match(text(h.render()), /无法读取设置能力：\s*capability retry failed/); assert.doesNotMatch(text(h.render()), /无法读取自定义域名：\s*domain failed/);
+  environmentRetry().props.onClick(); const retries = h.calls.filter(c => c.operation === "domain-settings").length;
+  button(h, "重试自定义域名").props.onClick(); assert.equal(h.calls.filter(c => c.operation === "domain-settings").length, retries);
+  latest(h, "settings").resolve(domainSettings({ capabilities: { slugChangeEnabled: false, customDomainsEnabled: false }, domains: null })); await flush(); assert.doesNotMatch(text(h.render()), /自定义域名/); h.unmount();
 });
 assert.equal(failures.length, 0, failures.map(f => f.name).join("; "));
 console.log(`PASS 21E production SitesView/SiteScreenshot JSX: ${passed} groups; offline client/menu/header boundaries; actual HTTP, DOM menu focus, browser/native and pixel parity require separate evidence`);

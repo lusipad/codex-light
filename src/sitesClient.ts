@@ -1,7 +1,7 @@
-import { readChatgptService, readSitesMetadata, readSiteAsset, writeSitePin, writeSiteTitle, writeSiteEnvironment, serviceIdentity, shareAccessBootstrap, serviceErrorMessage, type ServiceIdentity, type SiteAssetRef, type SiteEnvironmentPatch } from "./chatgptService";
-import { parseSitesAccess, parseSitesPage, parseSite, parseSiteDomains, parseSiteEnvironmentSnapshot, type SiteRecord, type SitesAccess, type SiteDomain, type SiteEnvironment, type SiteEnvironmentSnapshot } from "./sitesService";
+import { readChatgptService, readSitesMetadata, readSiteAsset, writeSitePin, writeSiteTitle, writeSiteEnvironment, readSiteSlugAvailability, writeSiteSlug, serviceIdentity, shareAccessBootstrap, serviceErrorMessage, type ServiceIdentity, type SiteAssetRef, type SiteEnvironmentPatch, type SiteSlugAvailability, type SiteSlugChange } from "./chatgptService";
+import { parseSitesAccess, parseSitesPage, parseSite, parseSiteDomains, parseSiteEnvironmentSnapshot, parseSiteSettingsCapabilities, type SiteRecord, type SitesAccess, type SiteDomain, type SiteEnvironment, type SiteEnvironmentSnapshot, type SiteSettingsCapabilities } from "./sitesService";
 
-export interface SitesClientAccess extends SitesAccess { identity: ServiceIdentity; pinned: boolean; collectionPreview: boolean }
+export interface SitesClientAccess extends SitesAccess { identity: ServiceIdentity; pinned: boolean; collectionPreview: boolean; slugChangeAllowed: boolean }
 export type SitesListKind = "owned" | "shared" | "pinned";
 export interface SitesClientPage { items: SiteRecord[]; cursor: string | null; assets: SiteAssetRef[] }
 const object = (value: unknown): value is Record<string, any> => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -23,7 +23,7 @@ export async function readSitesAccess(signal: AbortSignal): Promise<SitesClientA
     return value === true;
   };
   const enabledGate = gate("637432221", true), sharing = gate("476199071"), pinned = gate("1425956883");
-  const access: SitesClientAccess = { identity, enabled: false, workspace: false, editable: false, pinned: false, collectionPreview: gate("1498265771") };
+  const access: SitesClientAccess = { identity, enabled: false, workspace: false, editable: false, pinned: false, collectionPreview: gate("1498265771"), slugChangeAllowed: gate("324493575") };
   if (enabledGate) {
     const entry = await readChatgptService("sites_entry_access", {}, identity, signal);
     if (!object(entry) || typeof entry.enabled !== "boolean") throw Error("站点入口资格返回无效。");
@@ -38,6 +38,24 @@ export async function readSitesAccess(signal: AbortSignal): Promise<SitesClientA
   await confirmIdentity(identity, signal); return access;
 }
 function requireAccess(access: SitesClientAccess) { if (!access.enabled) throw Error("当前账号不可使用站点。"); }
+function normalizedSiteSlug(access: SitesClientAccess, raw: string): string {
+  requireAccess(access); if (!access.slugChangeAllowed) throw Error("当前账号不可更改站点 URL。");
+  const slug = raw.trim().toLowerCase();
+  if (!/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u.test(slug)) throw Error("站点 URL 格式无效。");
+  return slug;
+}
+export async function checkSiteSlug(access: SitesClientAccess, id: string, rawSlug: string, signal: AbortSignal): Promise<SiteSlugAvailability> {
+  const slug = normalizedSiteSlug(access, rawSlug); await confirmIdentity(access.identity, signal);
+  const result = await readSiteSlugAvailability(id, slug, access.identity, signal);
+  await confirmIdentity(access.identity, signal); return result;
+}
+export async function changeSiteSlug(access: SitesClientAccess, id: string, rawSlug: string, signal: AbortSignal): Promise<SiteSlugChange> {
+  const slug = normalizedSiteSlug(access, rawSlug); await confirmIdentity(access.identity, signal);
+  try {
+    const result = await writeSiteSlug(id, slug, access.identity, signal);
+    await confirmIdentity(access.identity, signal); return result;
+  } catch (cause) { throw Object.assign(Error("站点 URL 更改结果未确认，请读取当前站点后再操作。"), { code: "site_slug_unconfirmed", status: (cause as { status?: number })?.status, cause }); }
+}
 export async function readSitesPage(access: SitesClientAccess, kind: SitesListKind, query: string, cursor: string | null, signal: AbortSignal, seenCursors: readonly string[] = []): Promise<SitesClientPage> {
   requireAccess(access);
   if (kind === "pinned" && !access.pinned || kind === "shared" && !access.workspace && !access.editable) throw Error("当前账号不可读取此站点目录。");
@@ -62,14 +80,28 @@ export async function readSiteDetail(access: SitesClientAccess, id: string, sign
   if (site.id !== id) throw Error("站点详情与请求不符。");
   await confirmIdentity(access.identity, signal); return { site, assets: result.assets };
 }
-export async function readSiteSettings(access: SitesClientAccess, id: string, signal: AbortSignal): Promise<{ environment: SiteEnvironment[] | null; environmentSnapshot: SiteEnvironmentSnapshot | null; domains: SiteDomain[] | null; errors: Record<string, string> }> {
-  requireAccess(access); const result: { environment: SiteEnvironment[] | null; environmentSnapshot: SiteEnvironmentSnapshot | null; domains: SiteDomain[] | null; errors: Record<string, string> } = { environment: null, environmentSnapshot: null, domains: null, errors: {} };
-  await Promise.all((["environment", "domains"] as const).map(async kind => {
-    try { const body = await readChatgptService(kind === "environment" ? "sites_environment" : "sites_domains", { id }, access.identity, signal);
-      if (kind === "environment") { result.environmentSnapshot = parseSiteEnvironmentSnapshot(body, id); result.environment = result.environmentSnapshot.entries; } else result.domains = parseSiteDomains(body, id);
-    } catch (error) { signal.throwIfAborted(); result.errors[kind] = serviceErrorMessage(error); }
-  }));
+export interface SiteDomainSettings { capabilities: SiteSettingsCapabilities | null; domains: SiteDomain[] | null; errors: Record<string, string> }
+export async function readSiteDomainSettings(access: SitesClientAccess, id: string, signal: AbortSignal): Promise<SiteDomainSettings> {
+  requireAccess(access); const result: SiteDomainSettings = { capabilities: null, domains: null, errors: {} };
+  try {
+    result.capabilities = parseSiteSettingsCapabilities(await readChatgptService("sites_access", {}, access.identity, signal));
+    await confirmIdentity(access.identity, signal);
+  } catch (error) { signal.throwIfAborted(); result.errors.capabilities = serviceErrorMessage(error); }
+  if (result.capabilities?.customDomainsEnabled && !result.errors.capabilities) {
+    try { result.domains = parseSiteDomains(await readChatgptService("sites_domains", { id }, access.identity, signal), id); }
+    catch (error) { signal.throwIfAborted(); result.errors.domains = serviceErrorMessage(error); }
+  }
   await confirmIdentity(access.identity, signal); return result;
+}
+export async function readSiteSettings(access: SitesClientAccess, id: string, signal: AbortSignal): Promise<SiteDomainSettings & { environment: SiteEnvironment[] | null; environmentSnapshot: SiteEnvironmentSnapshot | null }> {
+  requireAccess(access);
+  const result: { environmentSnapshot: SiteEnvironmentSnapshot | null } = { environmentSnapshot: null }; const errors: Record<string, string> = {};
+  const [domainSettings] = await Promise.all([readSiteDomainSettings(access, id, signal), (async () => {
+    try { result.environmentSnapshot = parseSiteEnvironmentSnapshot(await readChatgptService("sites_environment", { id }, access.identity, signal), id); }
+    catch (error) { signal.throwIfAborted(); errors.environment = serviceErrorMessage(error); }
+  })()]);
+  await confirmIdentity(access.identity, signal);
+  return { ...domainSettings, environmentSnapshot: result.environmentSnapshot, environment: result.environmentSnapshot?.entries ?? null, errors: { ...domainSettings.errors, ...errors } };
 }
 export async function readSiteEnvironmentSnapshot(access: SitesClientAccess, id: string, signal: AbortSignal): Promise<SiteEnvironmentSnapshot> {
   requireAccess(access);

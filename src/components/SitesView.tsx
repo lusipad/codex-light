@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { Ellipsis, ExternalLink, Globe, Grid2X2, List, Pin, Plus, Search, X } from "lucide-react";
 import { tauriListen } from "../bridge";
 import { serviceErrorMessage, type SiteAssetRef } from "../chatgptService";
-import { readSitesAccess, readSitesPage, readSiteDetail, readSiteSettings, readSiteScreenshot, readSitePin, setSitePinned,
+import { readSitesAccess, readSitesPage, readSiteDetail, readSiteSettings, readSiteDomainSettings, readSiteScreenshot, readSitePin, setSitePinned,
   type SitesClientAccess, type SitesClientPage, type SitesListKind } from "../sitesClient";
 import { filterSites, mergeSites, safeSiteUrl, siteRole, type SiteRecord } from "../sitesService";
 import { parseSitesLocation, sitesLocationUrl, type SitesLocation, type SitesNavigation } from "../sitesNavigation";
@@ -65,6 +65,7 @@ export const SitesView: React.FC<SitesViewProps> = ({ collectionNavigation = fal
   const [detail, setDetail] = useState<{ site: SiteRecord; assets: SiteAssetRef[] } | null>(null), [detailError, setDetailError] = useState<string | null>(null), [detailRevision, setDetailRevision] = useState(0);
   const [settings, setSettings] = useState<Awaited<ReturnType<typeof readSiteSettings>> | null>(null), [settingsLoading, setSettingsLoading] = useState(false);
   const settingsPending = useRef(false);
+  const [domainsLoading, setDomainsLoading] = useState(false), domainsPending = useRef(false), domainRequest = useRef(0);
   const [pins, setPins] = useState<Record<string, { value: boolean | null; pending: boolean; unconfirmed: boolean; error: string | null }>>({});
   const pinBusy = useRef(new Set<string>()), unconfirmedPins = useRef(new Set<string>());
   const [viewMode, setViewMode] = useState<"list" | "grid">(() => localStorage.getItem("sites-view-mode") === "grid" ? "grid" : "list");
@@ -173,13 +174,37 @@ export const SitesView: React.FC<SitesViewProps> = ({ collectionNavigation = fal
   }, [ready, location.siteId, location.view, items.length, moreKinds.map(kind => pages[kind].cursor).join(":"), visiblePages.some(page => page.paging)]);
   const retryList = (kind: SitesListKind) => { sources.current[kind]?.abort(); setPages(value => ({ ...value, [kind]: emptyPage() })); setListRevision(value => value + 1); };
   const readSettings = async (current: SitesClientAccess, id: string, controller: AbortController) => {
-    if (settingsPending.current) return; settingsPending.current = true; setSettingsLoading(true);
+    if (settingsPending.current || domainsPending.current) return; settingsPending.current = true; setSettingsLoading(true);
     try { const value = await readSiteSettings(current, id, controller.signal); if (!controller.signal.aborted && accessRef.current === current) setSettings(value); }
     finally { if (!controller.signal.aborted && accessRef.current === current) { settingsPending.current = false; setSettingsLoading(false); } }
+  };
+  const retryDomains = async () => {
+    const current = accessRef.current, id = locationRef.current.siteId, controller = detailSource.current;
+    if (!current || !id || !controller || controller.signal.aborted || domainsPending.current || settingsPending.current) return;
+    const request = ++domainRequest.current; domainsPending.current = true; setDomainsLoading(true);
+    try {
+      const result = await readSiteDomainSettings(current, id, controller.signal);
+      if (controller.signal.aborted || accessRef.current !== current || locationRef.current.siteId !== id || domainRequest.current !== request) return;
+      setSettings(previous => {
+        if (!previous) return previous;
+        const errors = { ...previous.errors }; delete errors.capabilities; delete errors.domains;
+        return { ...previous, capabilities: result.capabilities, domains: result.domains, errors: { ...errors, ...result.errors } };
+      });
+    } catch (cause) {
+      if (!controller.signal.aborted && accessRef.current === current && locationRef.current.siteId === id && domainRequest.current === request)
+        setSettings(previous => {
+          if (!previous) return previous;
+          const errors = { ...previous.errors }; delete errors.domains;
+          return { ...previous, capabilities: null, domains: null, errors: { ...errors, capabilities: serviceErrorMessage(cause) } };
+        });
+    } finally {
+      if (!controller.signal.aborted && accessRef.current === current && locationRef.current.siteId === id && domainRequest.current === request) { domainsPending.current = false; setDomainsLoading(false); }
+    }
   };
   useEffect(() => {
     const id = location.siteId;
     detailSource.current?.abort(); setDetail(null); setDetailError(null); setSettings(null); settingsPending.current = false; setSettingsLoading(false);
+    domainRequest.current++; domainsPending.current = false; setDomainsLoading(false);
     if (!id || !access?.enabled) return;
     const controller = new AbortController(); detailSource.current = controller;
     void (async () => {
@@ -230,7 +255,7 @@ export const SitesView: React.FC<SitesViewProps> = ({ collectionNavigation = fal
       <nav className="sites-detail-tabs" aria-label="站点详情"><button type="button" aria-current="page">设置</button><button type="button" disabled title="数据库工作面尚未接入">数据库</button><button type="button" disabled title="站点日程尚未接入">已安排</button></nav>
       {detailError && <div className="sites-state"><p role="alert">{detailError}</p><button type="button" onClick={() => setDetailRevision(value => value + 1)}>重试</button></div>}
       {!detail && !detailError && <p className="sites-state" role="status">正在加载网站</p>}
-      {detail && <div className="sites-settings-groups">{access && settingsWriteScope.current && <SiteSettingsForm access={access} site={detail.site} snapshot={settings?.environmentSnapshot ?? null} scope={settingsWriteScope.current.signal} environmentError={settings?.errors.environment} loading={settingsLoading} sharingText={siteSharingText(detail.site)} onError={onSaveError} onSite={result => {
+      {detail && <div className="sites-settings-groups">{access && settingsWriteScope.current && <SiteSettingsForm access={access} site={detail.site} snapshot={settings?.environmentSnapshot ?? null} scope={settingsWriteScope.current.signal} environmentError={settings?.errors.environment} loading={settingsLoading} sharingText={siteSharingText(detail.site)} canChangeSlug={access.slugChangeAllowed && settings?.capabilities?.slugChangeEnabled === true && detail.site.status === "active" && (detail.site.role === null || detail.site.role === "owner")} onError={onSaveError} onSite={result => {
         if (accessRef.current !== access || source.current?.signal.aborted) return;
         setDetail(previous => previous?.site.id === result.site.id && Date.parse(result.site.updatedAt) >= Date.parse(previous.site.updatedAt) ? result : previous);
         setPages(previous => Object.fromEntries(Object.entries(previous).map(([kind, page]) => {
@@ -239,8 +264,12 @@ export const SitesView: React.FC<SitesViewProps> = ({ collectionNavigation = fal
           return [kind, { ...page, items: page.items.map(site => site.id === result.site.id ? result.site : site), assets: [...page.assets.filter(ref => ref.id !== result.site.id), ...result.assets] }];
         })) as Record<SitesListKind, Page>);
       }} />}
-        <section><h2>自定义域名</h2>{settings?.errors.domains && <p role="alert">{settings.errors.domains}</p>}{settings?.domains?.map(domain => <div className="sites-domain" key={domain.id}><h3>{domain.hostname}</h3><p>{domain.status}</p>{domain.cname && <p>CNAME：{domain.cname}</p>}{domain.ipv4.map(ip => <p key={ip}>A：{ip}</p>)}{domain.ssl && <p>SSL：{domain.ssl}</p>}{domain.error && <p role="alert">{domain.error}</p>}{domain.records.map((record, index) => <p key={index}>{record.type} {record.name} {record.value}</p>)}</div>)}</section>
-        {settings && Object.keys(settings.errors).length > 0 && <button type="button" disabled={settingsLoading} onClick={() => { if (access && location.siteId && detailSource.current) void readSettings(access, location.siteId, detailSource.current).catch(() => {}); }}>重试</button>}
+        {(domainsLoading || settings?.errors.capabilities || settings?.capabilities?.customDomainsEnabled) && <section><h2>自定义域名</h2>{(settingsLoading || domainsLoading) && <p role="status">正在读取自定义域名…</p>}
+          {settings?.errors.capabilities && <p role="alert">无法读取设置能力：{settings.errors.capabilities}</p>}{settings?.errors.domains && <p role="alert">无法读取自定义域名：{settings.errors.domains}</p>}
+          {settings?.capabilities?.customDomainsEnabled && settings.domains?.map(domain => <div className="sites-domain" key={domain.id}><h3>{domain.hostname}</h3><p>{domain.status}</p>{domain.cname && <p>CNAME：{domain.cname}</p>}{domain.ipv4.map(ip => <p key={ip}>A：{ip}</p>)}{domain.ssl && <p>SSL：{domain.ssl}</p>}{domain.error && <p role="alert">{domain.error}</p>}{domain.records.map((record, index) => <p key={index}>{record.type} {record.name} {record.value}</p>)}</div>)}
+          {(settings?.errors.capabilities || settings?.errors.domains) && <button type="button" aria-label="重试自定义域名" disabled={domainsLoading || settingsLoading} onClick={() => void retryDomains()}>重试</button>}
+        </section>}
+        {settings?.errors.environment && <button type="button" disabled={settingsLoading || domainsLoading} onClick={() => { if (access && location.siteId && detailSource.current) void readSettings(access, location.siteId, detailSource.current).catch(() => {}); }}>重试</button>}
         <section><h2>危险操作区</h2><div className="sites-setting-row"><div>删除站点<p>永久删除此站点</p></div><button type="button" disabled title="站点删除尚未接入">删除站点</button></div></section>
       </div>}
     </div></div> : <>

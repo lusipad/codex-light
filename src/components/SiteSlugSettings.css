@@ -1,0 +1,12 @@
+.site-slug-dialog { position: fixed; inset: 50% auto auto 50%; transform: translate(-50%,-50%); margin: 0; width: 420px; max-width: 92vw; box-sizing: border-box; overflow: auto; padding: 20px; border: 0; border-radius: 20px; background: rgb(65 65 65 / 90%); backdrop-filter: blur(24px); box-shadow: 0 0 0 .5px var(--border-default), var(--shadow-lg); color: var(--text-primary); }
+[data-theme="light"] .site-slug-dialog { background: rgb(249 249 249 / 90%); }
+.site-slug-dialog::backdrop { background: #0008; }
+.site-slug-dialog h2 { margin: 0 24px 8px 0; font-size: 18px; line-height: 24px; font-weight: 500; }
+.site-slug-dialog p { margin: 8px 0; color: var(--text-secondary); }
+.site-slug-dialog .site-slug-close { position: absolute; top: 12px; right: 12px; border: 0; padding: 4px 8px; background: transparent; color: inherit; }
+.site-slug-input { display: flex; align-items: center; gap: 8px; margin-top: 20px; }
+.site-slug-input input { flex: 1; min-width: 0; height: 36px; box-sizing: border-box; border: 1px solid var(--border-subtle); border-radius: 6px; background: var(--bg-primary); color: inherit; padding: 0 8px; }
+.site-slug-input span { color: var(--text-secondary); }
+.site-slug-dialog footer { display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px; }
+.site-slug-dialog button { border: 1px solid var(--border-subtle); border-radius: 8px; padding: 6px 12px; background: var(--bg-secondary); color: inherit; font: inherit; }
+.site-slug-dialog button:disabled { opacity: .45; }

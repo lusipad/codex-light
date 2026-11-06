@@ -14,7 +14,8 @@ const options = {
 const version = spawnSync(binary, ["--version"], { ...options, encoding: "utf8" });
 assert.equal(version.status, 0, version.stderr);
 let child;
-const observations = [], notifications = [];
+const observations = [], notifications = [], receivedMessages = [];
+const notificationWaiters = new Set();
 const pending = new Map(), calls = [];
 let nextId = 0, buffer = "", errorOutput = "", failure = null;
 function launch() {
@@ -29,8 +30,9 @@ child.stdout.on("data", data => {
     const line = buffer.slice(0, end).trim(); buffer = buffer.slice(end + 1);
     if (!line) continue;
     const message = JSON.parse(line);
+    const received = { sequence: receivedMessages.length + 1, message }; receivedMessages.push(received);
     if (message.id != null) pending.get(message.id)?.resolve(message);
-    else notifications.push(message);
+    else { notifications.push(message); for (const waiter of notificationWaiters) waiter(received); }
   }
 });
 child.on("error", error => { for (const item of pending.values()) item.reject(error); });
@@ -64,6 +66,23 @@ async function rpc(method, params) {
     return response.result;
   } finally { clearTimeout(timer); pending.delete(id); }
 }
+async function updateSettings(params, expected) {
+  const after = receivedMessages.length;
+  await rpc('thread/settings/update', params);
+  // Unchanged settings may emit no notification. A matching real snapshot also confirms the asserted fields.
+  const snapshot = (await rpc('thread/read', {threadId:params.threadId,includeTurns:false})).thread;
+  if (snapshot.id === params.threadId && snapshot.model === expected.model && snapshot.reasoningEffort === expected.effort) return;
+  // An empty ACK alone confirms receipt, not completion. Keep the original readback assertions.
+  await new Promise((resolve, reject) => {
+    const matches = ({sequence,message}) => sequence > after && message.method === 'thread/settings/updated'
+      && message.params?.threadId === params.threadId && message.params.threadSettings?.model === expected.model
+      && message.params.threadSettings?.effort === expected.effort;
+    const confirm = received => { if (matches(received)) { clearTimeout(timer); notificationWaiters.delete(confirm); resolve(); } };
+    const timer = setTimeout(() => { notificationWaiters.delete(confirm); reject(Error(`thread/settings/updated timeout: ${JSON.stringify({threadId:params.threadId,expected,after})}`)); }, 20000);
+    notificationWaiters.add(confirm);
+    for (const received of receivedMessages) if (matches(received)) { confirm(received); break; }
+  });
+}
 try {
   await initialize();
   const read=()=>rpc("config/read",{includeLayers:true});
@@ -87,9 +106,9 @@ try {
   const final=await read(); assert.equal(final.config.model,null); assert.equal(final.config.model_reasoning_effort,null); assert.equal(final.config.service_tier,null);
   const thread=await rpc('thread/start',{cwd:home,model:'probe-model'});
   const threadId=thread.thread.id;
-  await rpc('thread/settings/update',{threadId,model:'changed-model',effort:'high',serviceTier:'priority'});
+  await updateSettings({threadId,model:'changed-model',effort:'high',serviceTier:'priority'},{model:'changed-model',effort:'high'});
   await assert.rejects(()=>rpc('thread/resume',{threadId}),/no rollout found/);
-  await rpc('thread/settings/update',{threadId,serviceTier:null});
+  await updateSettings({threadId,serviceTier:null},{model:'changed-model',effort:'high'});
   const metadata=await rpc('thread/read',{threadId,includeTurns:false}); assert.equal(metadata.thread.id,threadId); assert.equal(metadata.thread.model,'changed-model'); assert.equal(metadata.thread.reasoningEffort,'high');
   // Offline fixture materializes a rollout; no assistant or model execution is requested.
   await rpc('thread/inject_items',{threadId,items:[{type:'message',role:'user',content:[{type:'input_text',text:'Offline model preference persistence probe fixture. No model execution.'}]}]});
@@ -101,7 +120,7 @@ try {
     return actual;
   };
   for(const tier of ['priority','fast','default',null]) {
-    await rpc('thread/settings/update',{threadId,model:'persisted-probe-model',effort:'medium',serviceTier:tier});
+    await updateSettings({threadId,model:'persisted-probe-model',effort:'medium',serviceTier:tier},{model:'persisted-probe-model',effort:'medium'});
     const expected={model:'persisted-probe-model',reasoningEffort:'medium',serviceTier:tier};
     sample('live-resume-'+String(tier),await rpc('thread/resume',{threadId}),expected);
     await stop();await initialize();
@@ -117,6 +136,6 @@ try {
   const directory = ".ref/parity/16.05/actual/16-05B/protocol";
   fs.mkdirSync(directory, { recursive: true });
   fs.writeFileSync(path.join(directory, "protocol-model-preferences.json"), JSON.stringify({
-    version: version.stdout.trim(), isolatedHome: home, calls, observations, notifications, fixtureKind:"offline-injected-context-no-model-turn", failure, errorOutput, modelTurns: 0,
+    version: version.stdout.trim(), isolatedHome: home, calls, observations, notifications, receivedMessages, fixtureKind:"offline-injected-context-no-model-turn", failure, errorOutput, modelTurns: 0,
   }, null, 2));
 }

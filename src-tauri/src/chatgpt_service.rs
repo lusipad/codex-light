@@ -8184,4 +8184,61 @@ mod sites21f_regression {
     }
 }
 
+#[cfg(test)]
+mod sites21g_regression {
+    use super::*;
+    fn write(id:&str,operation:&str,slug:&str)->SitesSettingsRequest {
+        serde_json::from_value(json!({"requestId":id,"expectedIdentity":identity(),"profile":{
+            "language":"zh-CN","deviceId":"fixture-device","userAgent":"Mozilla/5.0 Chrome/140.0.0.0",
+            "userAgentClientHints":"\"Chromium\";v=\"140\"","platformClientHint":"\"Windows\""},"id":"site/a?b#c%","mutation":{"operation":operation,"slug":slug}})).expect("fixed Sites slug operation must deserialize")
+    }
+    fn response(body:Value)->FakeTransport {let transport=FakeTransport::new(&[200]);transport.responses.lock().unwrap()[0].body=serde_json::to_vec(&body).unwrap();transport}
+    fn ack(status:&str)->Value {json!({"slug_change":{"requested_slug":"new-slug","status":status}})}
+    #[test]
+    fn sites_slug_operations_are_explicit_typed_variants() {
+        for operation in ["slug_availability","slug"] {let _=write("supported",operation,"valid-slug");}
+    }
+    #[tokio::test]
+    async fn sites_slug_post_routes_bodies_and_response_contracts_are_distinct() {
+        for (operation,suffix,body) in [("slug_availability","slug/availability",json!({"slug":"new-slug","available":true,"extra":"preserved"})),("slug","metadata",ack("pending")),("slug","metadata",ack("complete"))] {
+            let service=ChatgptService::default();let transport=response(body.clone());let result=service.sites_settings_with(write("fixed",operation,"  NeW-SlUg  "),share_rpc,&transport).await.unwrap();assert_eq!(result.body,body);assert_eq!(result.identity,identity());
+            let calls=transport.requests.lock().unwrap();assert_eq!(calls.len(),1);assert_eq!(calls[0].url,format!("https://chatgpt.com/backend-api/websites/site%2Fa%3Fb%23c%25/{suffix}"));assert_eq!(calls[0].method,HttpMethod::Post);assert_eq!(serde_json::from_slice::<Value>(&calls[0].body).unwrap(),json!({"slug":"new-slug"}));assert_eq!(calls[0].headers["Content-Type"],"application/json");
+        }
+    }
+    #[tokio::test]
+    async fn sites_invalid_slugs_fail_before_auth_without_invented_length_limit() {
+        for operation in ["slug_availability","slug"] {for slug in ["","  ","1abc","-abc","abc-","abc--def","a_b","a.b","中文","a\nsecond","a/b","\u{0085}abc"] {
+            let transport=FakeTransport::new(&[]);assert_eq!(ChatgptService::default().sites_settings_with(write("invalid",operation,slug),|_,_|std::future::ready(Err("must not auth".into())),&transport).await.err().unwrap().code,"invalid_request");assert!(transport.requests.lock().unwrap().is_empty());
+        }}
+        let transport=response(json!({"slug":"bom-slug","available":true}));ChatgptService::default().sites_settings_with(write("bom","slug_availability","\u{feff} BoM-Slug \u{feff}"),share_rpc,&transport).await.unwrap();
+        let slug="a".repeat(101);let transport=response(json!({"slug":slug,"available":false}));ChatgptService::default().sites_settings_with(write("long","slug_availability",&slug),share_rpc,&transport).await.unwrap();
+    }
+    #[tokio::test]
+    async fn sites_slug_availability_rejects_stale_or_malformed_ack_as_read_error() {
+        for body in [json!({"slug":"other","available":true}),json!({"slug":"new-slug","available":"true"}),json!({"available":true}),json!({"slug":"new-slug","status":"available"})] {
+            let transport=response(body);assert_eq!(ChatgptService::default().sites_settings_with(write("bad-check","slug_availability","new-slug"),share_rpc,&transport).await.err().unwrap().code,"invalid_response");assert_eq!(transport.requests.lock().unwrap().len(),1);
+        }
+        let transport=response(json!({"slug":"new-slug","available":false}));assert_eq!(ChatgptService::default().sites_settings_with(write("unavailable","slug_availability","new-slug"),share_rpc,&transport).await.unwrap().body["available"],false);
+    }
+    #[tokio::test]
+    async fn sites_slug_mutation_requires_matching_pending_or_complete_without_title_or_id() {
+        for body in [json!({}),json!({"slug_change":null}),json!({"slug_change":{"requested_slug":"other","status":"complete"}}),json!({"slug_change":{"requested_slug":"new-slug","status":"done"}}),json!({"slug_change":{"requested_slug":"new-slug"}})] {
+            let transport=response(body);assert_eq!(ChatgptService::default().sites_settings_with(write("bad-write","slug","new-slug"),share_rpc,&transport).await.err().unwrap().code,"sites_settings_unknown");assert_eq!(transport.requests.lock().unwrap().len(),1);
+        }
+        for operation in ["slug_availability","slug"] {let transport=FakeTransport::new(&[500,200]);let error=ChatgptService::default().sites_settings_with(write("server-error",operation,"new-slug"),share_rpc,&transport).await.err().unwrap();assert_eq!(error.code,if operation=="slug"{"sites_settings_unknown"}else{"service_error"});assert_eq!(transport.requests.lock().unwrap().len(),1);}
+    }
+    #[tokio::test]
+    async fn sites_slug_cancel_and_identity_never_deliver_old_success() {
+        for operation in ["slug_availability","slug"] {let service=Arc::new(ChatgptService::default());let body=if operation=="slug"{ack("pending")}else{json!({"slug":"new-slug","available":true})};let transport=Arc::new(FakeTransport{delay_ms:100,..response(body)});let task={let service=service.clone();let transport=transport.clone();tokio::spawn(async move{service.sites_settings_with(write("cancel",operation,"new-slug"),share_rpc,transport.as_ref()).await})};tokio::time::timeout(Duration::from_secs(5),async{while !transport.entered.load(Ordering::SeqCst){tokio::task::yield_now().await;}}).await.expect("Sites slug request did not reach transport");service.cancel("cancel");assert_eq!(task.await.unwrap().err().unwrap().code,if operation=="slug"{"sites_settings_unknown"}else{"cancelled"});assert_eq!(transport.requests.lock().unwrap().len(),1);}
+        struct Invalidate<'a>(&'a ChatgptService);impl Transport for Invalidate<'_>{fn send(&self,_:HttpRequest,_:Arc<AtomicBool>)->TransportFuture<'_>{Box::pin(async move{self.0.invalidate();Ok(HttpResponse{status:200,headers:BTreeMap::new(),body:serde_json::to_vec(&ack("complete")).unwrap()})})}}
+        let service=ChatgptService::default();assert_eq!(service.sites_settings_with(write("old-account","slug","new-slug"),share_rpc,&Invalidate(&service)).await.err().unwrap().code,"account_changed");
+    }
+    #[tokio::test]
+    async fn sites_slug_single_flight_separates_availability_from_mutation_and_rejects_duplicate() {
+        let service=Arc::new(ChatgptService::default());let transport=Arc::new(FakeTransport{delay_ms:100,..response(ack("pending"))});let task={let service=service.clone();let transport=transport.clone();tokio::spawn(async move{service.sites_settings_with(write("pending","slug","new-slug"),share_rpc,transport.as_ref()).await})};tokio::time::timeout(Duration::from_secs(5),async{while !transport.entered.load(Ordering::SeqCst){tokio::task::yield_now().await;}}).await.expect("Sites slug request did not reach transport");
+        assert_eq!(service.sites_settings_with(write("duplicate","slug","other"),share_rpc,&FakeTransport::new(&[])).await.err().unwrap().code,"busy");
+        let check=response(json!({"slug":"new-slug","available":true}));service.sites_settings_with(write("independent-check","slug_availability","new-slug"),share_rpc,&check).await.unwrap();task.await.unwrap().unwrap();assert_eq!(check.requests.lock().unwrap().len(),1);assert!(service.site_settings_active.lock().unwrap().is_empty());
+    }
+}
+
 }

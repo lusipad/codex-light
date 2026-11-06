@@ -9,7 +9,7 @@ const hash=key=>{let n=0;for(const c of key)n=(Math.imul(n,31)+c.charCodeAt(0))>
 function fixture(){
  const calls=[],cancelled=[];let serial=0;
  const c={gates:{'637432221':true,'476199071':true,'1425956883':true,'1498265771':false},compact:false,hashed:false,identity:()=>clone(identity),envelope:r=>r,pinned:false};
- c.read=async r=>r.operation==='sites_entry_access'?{enabled:true}:r.operation==='sites_access'?{enabled:true,supports_workspace_listing:true,supports_editable_listing:true}:r.operation==='sites_pin'?{is_pinned:c.pinned}:r.operation==='sites_detail'?site(r.params.id):r.operation==='sites_environment'?{project_id:r.params.id,entries:[],revision:1,updated_at:null}:r.operation==='sites_domains'?{items:[]}:r.operation==='sites_asset'?{dataUrl:'data:image/png;base64,iVBORw0KGgo='}:{items:[site()],cursor:null};
+ c.read=async r=>r.operation==='sites_entry_access'?{enabled:true}:r.operation==='sites_access'?{enabled:true,supports_workspace_listing:true,supports_editable_listing:true,custom_domains_enabled:true}:r.operation==='sites_pin'?{is_pinned:c.pinned}:r.operation==='sites_detail'?site(r.params.id):r.operation==='sites_environment'?{project_id:r.params.id,entries:[],revision:1,updated_at:null}:r.operation==='sites_domains'?{items:[]}:r.operation==='sites_asset'?{dataUrl:'data:image/png;base64,iVBORw0KGgo='}:{items:[site()],cursor:null};
  const bridge={tauriInvoke:async(command,args)=>{
   calls.push({command,args:clone(args)});
   if(command==='chatgpt_service_identity')return c.identity();

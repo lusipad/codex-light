@@ -8,6 +8,8 @@ pub struct SiteEnvironmentValue { pub is_secret:bool, pub key:String, pub r#type
 #[serde(tag="operation",rename_all="snake_case",deny_unknown_fields)]
 pub enum SitesSettingsMutation {
     Title {title:String},
+    SlugAvailability {slug:String},
+    Slug {slug:String},
     Environment {remove:Vec<String>,set_values:Vec<SiteEnvironmentValue>},
 }
 #[derive(Deserialize)]
@@ -21,8 +23,21 @@ pub struct SitesSettingsRequest {
 pub struct SitesSettingsResponse { pub request_id:String, pub identity:ServiceIdentity, pub body:Value }
 
 fn unknown()->ServiceError {failure("sites_settings_unknown","Site settings write outcome is unknown; read the settings before retrying")}
+fn normalized_slug(raw:&str)->ServiceResult<String> {
+    // Match JavaScript String.trim: BOM is whitespace, NEL is not.
+    let slug=raw.trim_matches(|c:char|matches!(c,'\u{0009}'|'\u{000a}'|'\u{000b}'|'\u{000c}'|'\u{000d}'|'\u{0020}'|'\u{00a0}'|'\u{1680}'|'\u{2000}'..='\u{200a}'|'\u{2028}'|'\u{2029}'|'\u{202f}'|'\u{205f}'|'\u{3000}'|'\u{feff}')).to_ascii_lowercase();
+    // Equivalent to the source /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/ without a new dependency.
+    if !slug.as_bytes().first().is_some_and(u8::is_ascii_lowercase) || slug.ends_with('-') || slug.contains("--")
+        || slug.bytes().any(|byte|!byte.is_ascii_lowercase() && !byte.is_ascii_digit() && byte!=b'-') {
+        return Err(failure("invalid_request","Invalid site URL slug"));
+    }
+    Ok(slug)
+}
+fn mutates_settings(mutation:&SitesSettingsMutation)->bool { !matches!(mutation,SitesSettingsMutation::SlugAvailability{..}) }
 fn request_body(mutation:&SitesSettingsMutation)->ServiceResult<(&'static str,&'static str,Value)> {
     let result=match mutation {
+        SitesSettingsMutation::SlugAvailability{slug}=>("slug_availability","slug/availability",json!({"slug":normalized_slug(slug)?})),
+        SitesSettingsMutation::Slug{slug}=>("slug","metadata",json!({"slug":normalized_slug(slug)?})),
         SitesSettingsMutation::Title{title}=>{
             let title=title.trim();
             if title.is_empty() {return Err(failure("invalid_request","Site title must not be empty"));}
@@ -44,6 +59,9 @@ fn request_body(mutation:&SitesSettingsMutation)->ServiceResult<(&'static str,&'
 }
 fn validate_body(mutation:&SitesSettingsMutation,id:&str,body:&Value)->ServiceResult<()> {
     let valid=match mutation {
+        SitesSettingsMutation::SlugAvailability{slug}=>body.get("slug").and_then(Value::as_str)==normalized_slug(slug).ok().as_deref() && body.get("available").is_some_and(Value::is_boolean),
+        SitesSettingsMutation::Slug{slug}=>body.pointer("/slug_change/requested_slug").and_then(Value::as_str)==normalized_slug(slug).ok().as_deref()
+            && body.pointer("/slug_change/status").and_then(Value::as_str).is_some_and(|status|matches!(status,"pending"|"complete")),
         SitesSettingsMutation::Title{..}=>body.get("title").is_some_and(Value::is_string) && body.get("updated_at").is_some_and(Value::is_string),
         SitesSettingsMutation::Environment{..}=>body.get("project_id").and_then(Value::as_str)==Some(id)
             && body.get("revision").and_then(Value::as_f64).is_some()
@@ -54,7 +72,7 @@ fn validate_body(mutation:&SitesSettingsMutation,id:&str,body:&Value)->ServiceRe
                 && entry.get("type").and_then(Value::as_str)==Some("envvar")
                 && entry.get("value").is_some_and(|value|value.is_string()||value.is_null()))),
     };
-    if valid {Ok(())}else{Err(unknown())}
+    if valid {Ok(())}else if mutates_settings(mutation){Err(unknown())}else{Err(failure("invalid_response","Site URL availability response did not match the request"))}
 }
 fn known_environment_error(response:&HttpResponse)->Option<ServiceError> {
     if !(400..500).contains(&response.status) {return None;}
@@ -85,6 +103,7 @@ impl ChatgptService {
         {let mut active=self.site_settings_active.lock().map_err(|_|failure("busy","Site settings are busy"))?;if !active.insert(key.clone()){return Err(failure("busy","This site field already has a pending write; read before retrying"));}}
         let _guard=SettingsGuard{service:self,key};
         let registration=self.register(&request.request_id)?;
+        let mutating=mutates_settings(&request.mutation);
         let sent=AtomicBool::new(false);
         let result=tokio::select! {
             _=cancelled(&registration.cancelled)=>Err(if sent.load(Ordering::SeqCst){unknown()}else{failure("cancelled","Service request cancelled")}),
@@ -102,16 +121,16 @@ impl ChatgptService {
                 let destination=outgoing.url.clone();
                 share_network_allowed(&call,&destination).await?;
                 self.check_share_current(&request.expected_identity,&registration)?;
-                sent.store(true,Ordering::SeqCst);
-                let response=send_bounded(transport,outgoing,registration.cancelled.clone(),Duration::from_secs(50)).await.map_err(|_|unknown())?;
+                sent.store(mutating,Ordering::SeqCst);
+                let response=send_bounded(transport,outgoing,registration.cancelled.clone(),Duration::from_secs(50)).await.map_err(|error|if mutating{unknown()}else{error})?;
                 self.check_share_current(&request.expected_identity,&registration)?;
                 share_network_allowed(&call,&destination).await?;
                 self.check_share_current(&request.expected_identity,&registration)?;
                 apply_integrity(&mut session.integrity,integrity.as_deref(),response.headers.get("x-oai-is-update"));
-                if response.status>=500 {return Err(unknown());}
+                if mutating && response.status>=500 {return Err(unknown());}
                 if matches!(request.mutation,SitesSettingsMutation::Environment{..}) {if let Some(error)=known_environment_error(&response){return Err(error);}}
                 let success=(200..300).contains(&response.status);
-                let decoded=decode_response(response,request.request_id.clone(),request.expected_identity.clone()).map_err(|error|if success{unknown()}else{error})?;
+                let decoded=decode_response(response,request.request_id.clone(),request.expected_identity.clone()).map_err(|error|if success && mutating{unknown()}else{error})?;
                 validate_body(&request.mutation,&request.id,&decoded.body)?;
                 Ok(SitesSettingsResponse{request_id:request.request_id.clone(),identity:request.expected_identity.clone(),body:decoded.body})
             }=>result,

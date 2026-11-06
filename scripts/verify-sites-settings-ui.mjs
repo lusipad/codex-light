@@ -91,7 +91,7 @@ await check("same-identity unmount starts flush and pending draft survives; abor
 });
 await check("existing row delete requires confirmation; cancel is unchanged; confirm only deletes the captured stable row", async () => {
   const f = fixture(); button(f.h, "删除此项").props.onClick(); assert.match(text(f.render()), /确定要删除环境变量/); assert.equal(f.h.calls.length, 0);
-  const dialog = walk(f.render()).find(n => n.type === "dialog");
+  const dialog = walk(f.render()).find(n => n.type === "dialog" && n.props.className === "site-environment-delete");
   assert.equal(walk(dialog).find(n => n.type === "h2").props.id, dialog.props["aria-labelledby"]);
   assert.equal(walk(dialog).find(n => n.type === "p").props.id, dialog.props["aria-describedby"]);
   button(f.h, "取消").props.onClick(); assert.equal(f.state.entries.length, 1); button(f.h, "删除此项").props.onClick(); f.render();
