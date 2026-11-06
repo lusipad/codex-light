@@ -16,6 +16,9 @@ interface State {
 }
 export interface ArchivedCloudTasksState extends State {
   reload: () => void; loadMore: () => void; retryListeners: () => void;
+  readVersion: number; isCurrentIdentity: (identity: ServiceIdentity) => boolean;
+  canUnarchive: (id: string, identity: ServiceIdentity) => boolean;
+  forgetAccepted: (id: string, identity: ServiceIdentity) => boolean;
 }
 const empty = (): State => ({ items: [], identity: null, status: "signed_out", error: null,
   loadingMore: false, pageError: null, nextCursor: null, httpEmptyStatus: null });
@@ -81,6 +84,7 @@ async function readPage(cursor: string | null, expected: ServiceIdentity | null,
 export function useArchivedCloudTasks({ enabled, scope, connected }: { enabled: boolean; scope: string; connected: boolean }): ArchivedCloudTasksState {
   const [state, setState] = useState<State>(empty);
   const [viewScope, setViewScope] = useState(scope);
+  const readVersion = useRef(0);
   const data = useRef(state), request = useRef<AbortController | null>(null), seen = useRef(new Set<string>());
   const latestRead = useRef<(more: boolean, capturedEpoch: number) => Promise<void>>(async () => {});
   const publish = (next: State) => { data.current = next; setState(next); setViewScope(scope); };
@@ -108,6 +112,7 @@ export function useArchivedCloudTasks({ enabled, scope, connected }: { enabled: 
       if (cursor !== null) seen.current.add(cursor);
       const ids = new Set<string>();
       const items = [...(more ? previous.items : []), ...result.page.items].filter(item => { if (ids.has(item.id)) return false; ids.add(item.id); return true; });
+      if (!more && result.httpEmptyStatus === null) readVersion.current++;
       publish({ items, identity: result.identity, status: "ready", error: null, loadingMore: false, pageError: null, nextCursor: next, httpEmptyStatus: result.httpEmptyStatus });
     } catch (cause) {
       if (valid(version, scope) && !controller.signal.aborted) {
@@ -123,6 +128,15 @@ export function useArchivedCloudTasks({ enabled, scope, connected }: { enabled: 
   latestRead.current = read;
   const visible = !enabled ? empty() : !connected ? { ...empty(), status: "error" as const, error: "连接已断开，请重新连接后重试。" }
     : viewScope === scope ? state : { ...empty(), status: "loading" as const };
-  return { ...visible, reload: () => void read(false), loadMore: () => void read(true),
+  const isCurrentIdentity = (identity: ServiceIdentity) => valid(renderEpoch, scope) && sameIdentity(data.current.identity, identity);
+  const canUnarchive = (id: string, identity: ServiceIdentity) => isCurrentIdentity(identity) && data.current.status === "ready"
+    && data.current.items.some(item => item.id === id);
+  const forgetAccepted = (id: string, identity: ServiceIdentity) => {
+    if (!isCurrentIdentity(identity)) return false;
+    abort();
+    publish({ ...data.current, items: data.current.items.filter(item => item.id !== id), loadingMore: false, pageError: null });
+    return true;
+  };
+  return { ...visible, readVersion: readVersion.current, isCurrentIdentity, canUnarchive, forgetAccepted, reload: () => void read(false), loadMore: () => void read(true),
     retryListeners };
 }

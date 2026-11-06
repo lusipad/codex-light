@@ -1,10 +1,10 @@
 # 15H 云端取消归档：开发前合同
 
-2026-11-06。状态：静态调研完成、未开发。仅聚焦Codex cloud task与ChatGPT conversation取消归档；不扩展永久删除、内部会话工作面或真实账号写入。本文与正在冻结验证的15G产品分开。本次未发HTTP、未操作账号、未运行模型/构建/Cargo/Git。
+2026-11-06。状态：静态调研完成，阶段已实现并自验，待用户验收，详见[整合记录](../acceptance/15H-cloud-unarchive.md)。仅聚焦Codex cloud task与ChatGPT conversation取消归档；不扩展永久删除、内部会话工作面或真实账号写入。下面保留开发前合同与来源边界；取证本身不算产品已通过。
 
 ## 1. 基准和证据
 
-固定Store `26.1027.3384.0`；asar基准SHA-256 `6fbedf054a8d8cafaf5c745b40aa59176512e106e0bd6308275ae123b60fd074`沿既有记录，本次没有再次整包hash。从固定安装包只读提取7个资源到 `.ref/parity/15/actual/15H-cloud-unarchive/reference/raw/`，manifest保存entry相对offset、整包byte位置、size和SHA，均匹配entry integrity。anchors.json保存33个片段，定位为0-based UTF-16字符偏移。
+固定Store `26.1027.3384.0`；asar基准SHA-256 `6fbedf054a8d8cafaf5c745b40aa59176512e106e0bd6308275ae123b60fd074`。初次取证沿用既有整包记录，15H实施前已重新计算整包并复核原7项参考资源，结果保存在本单元`verification/official-baseline.json`；后补同版共享按钮原文，当前manifest共8项。资源位于 `.ref/parity/15/actual/15H-cloud-unarchive/reference/raw/`，manifest保存entry相对offset、整包byte位置、size和SHA，均匹配entry integrity。anchors.json保存初始33个片段，后续专项定位另存；定位为0-based UTF-16字符偏移。
 
 主要来源：`data-controls-805edc0381e3.js:hn@2155`、`app-initial-4267e52fe5b0.js:i2i@5920075`、`app-primary-998934e837fc.js:uDn@1711289`与同版中文资源。本合同只证明这些静态链，不能证明当前账号可写、网络重试全过程、官方原生焦点或像素。
 
@@ -29,7 +29,7 @@ hn通过mutationKey区分`recover-cloud-task`与`unarchive-chatgpt-conversation`
 
 ## 4. 官方按钮、成功和错误呈现
 
-hn行右侧为“取消归档”按钮，secondary/toolbar样式；pending时loading，disabled条件为该恢复mutation、同行删除mutation或该task状态忙。点击先检查P.isPending。没有确认弹窗；不同条目是否必须全表互斥未发现来源，不应擅自给整页加长时间全局锁冒充官方行为。实现仍应以每source/id的同步锁防同tick重复请求，并区分这是本地幂等保护。
+hn行右侧为“取消归档”按钮，secondary/toolbar样式；pending时loading，disabled条件为该恢复mutation、同行删除mutation或全局对应task删除进行中。`ge(Dt,id)`追到primary `GJ/WJ`，由`BOn`按accountId/userId/taskId设置删除标志，不是服务端任务运行状态；补充锚点见`task-delete-busy-source.json`，不额外发明running状态gate。点击先检查P.isPending。没有确认弹窗；不同条目是否必须全表互斥未发现来源，不应擅自给整页加长时间全局锁冒充官方行为。实现仍应以每source/id的同步锁防同tick重复请求，并区分这是本地幂等保护。
 
 中文键：
 
@@ -52,7 +52,7 @@ conversation成功后，调用onUnarchiveStart捕获的焦点恢复回调；失�
 
 两条源码都没有“再次GET到同一项is_archived=false后才成功”的独立读回合同，mutation响应body在hn/i2i未作业务确认。query invalidation可以触发读取，但静态代码不能保证每个来源已立即完成且验证成功。因此不能把“官方source明确做了独立读回验证”写进报告。
 
-本项目应区分：HTTP已接受恢复、刷新确认恢复、恢复结果未知、恢复已执行但刷新失败。可在成功响应后刷新该真实来源，只有页面实际重读结果才作为读回证据；如果前端只持有部分归档页，某ID未在已读页出现不能单独证明它已恢复，不能伪造archived=false字段。受控新增单项读回endpoint必须另取证，不能为满足验证造API。没有完整读回时保留“请求已接受，结果待刷新确认”，不得报成失败后自动重复写。
+本项目应区分：HTTP已接受恢复、刷新确认恢复、恢复结果未知、恢复已执行但刷新失败。按已证官方2xx合同显示“聊天已取消归档”并更新对应缓存；该提示代表服务已接受动作，不在证据中宣称独立读回确认。随后刷新该真实来源，只有页面实际重读结果才作为读回证据；如果前端只持有部分归档页，某ID未在已读页出现不能单独证明它已恢复，不能伪造archived=false字段。受控新增单项读回endpoint必须另取证，不能为满足验证造API。结果未知或刷新失败需明确提示并先重新读取，不得报成普通失败后自动重复写，也不为正常成功增加无官方依据的常驻技术状态卡。
 
 筛选/排序不改变恢复目标；成功只移除相应source/id，不删除其他来源同ID。重读失败保留成功写事实与错误，不把已恢复项回滚成服务器仍归档的断言。
 

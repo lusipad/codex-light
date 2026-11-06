@@ -88,6 +88,8 @@ try {
   Invoke-Step "Conversation archive host qualification and transport contracts" { node scripts/verify-archive-conversations-transport.mjs }
   Invoke-Step "Conversation archive paging, scope changes and account lifecycle" { node scripts/verify-archive-conversations.mjs }
   Invoke-Step "Conversation archive three-source projection and action isolation" { node scripts/verify-archive-conversations-ui.mjs }
+  Invoke-Step "Cloud unarchive fixed mutation transport and result contracts" { node scripts/verify-archive-unarchive-transport.mjs }
+  Invoke-Step "Cloud unarchive lifecycle, source isolation and actual controls" { node scripts/verify-archive-unarchive-ui.mjs }
   Invoke-Step "Account notification data contracts" { node scripts/verify-account-notifications.mjs }
   Invoke-Step "Account notification concurrency and lifecycle" { node scripts/verify-account-notifications-ui.mjs }
   Invoke-Step "Rust authenticated read service contracts" { cargo test --manifest-path src-tauri/Cargo.toml chatgpt_service }

@@ -13,7 +13,9 @@ interface State {
   status: "signed_out" | "unsupported_auth" | "denied" | "loading" | "ready" | "error";
   error: string | null; loadingMore: boolean; pageError: string | null; nextOffset: number | null; includeWorkCloud: boolean | null;
 }
-export interface ArchivedConversationsState extends State { reload: () => void; loadMore: () => void; retryListeners: () => void }
+export interface ArchivedConversationsState extends State { reload: () => void; loadMore: () => void; retryListeners: () => void;
+  readVersion: number; isCurrentIdentity: (identity: ServiceIdentity) => boolean;
+  canUnarchive: (id: string, identity: ServiceIdentity) => boolean; forgetAccepted: (id: string, identity: ServiceIdentity) => boolean }
 const empty = (): State => ({ items: [], identity: null, status: "signed_out", error: null, loadingMore: false, pageError: null, nextOffset: null, includeWorkCloud: null });
 const record = (value: unknown): Record<string, unknown> | null => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 const sameIdentity = (a: ServiceIdentity | null, b: ServiceIdentity | null) => Boolean(a && b && a.accountId === b.accountId && a.userId === b.userId && a.generation === b.generation);
@@ -81,6 +83,7 @@ async function readPage(offset: number, expected: ServiceIdentity | null, signal
 
 export function useArchivedConversations({ enabled, scope, connected }: { enabled: boolean; scope: string; connected: boolean }): ArchivedConversationsState {
   const [state, setState] = useState<State>(empty), [viewScope, setViewScope] = useState(scope);
+  const readVersion = useRef(0);
   const data = useRef(state), request = useRef<AbortController | null>(null);
   const latestRead = useRef<(more: boolean, capturedEpoch: number) => Promise<void>>(async () => {});
   const publish = (next: State) => { data.current = next; setState(next); setViewScope(scope); };
@@ -104,6 +107,7 @@ export function useArchivedConversations({ enabled, scope, connected }: { enable
       if (result.state !== "ready") { publish({ ...empty(), status: result.state, identity: result.state === "denied" ? result.identity : null }); return; }
       const ids = new Set<string>();
       const items = [...(more ? previous.items : []), ...result.page.items].filter(item => { if (ids.has(item.id)) return false; ids.add(item.id); return true; });
+      if (!more) readVersion.current++;
       publish({ items, identity: result.identity, status: "ready", error: null, loadingMore: false, pageError: null,
         nextOffset: result.page.nextOffset, includeWorkCloud: result.includeWorkCloud });
     } catch (cause) {
@@ -118,5 +122,14 @@ export function useArchivedConversations({ enabled, scope, connected }: { enable
   latestRead.current = read;
   const visible = !enabled ? empty() : !connected ? { ...empty(), status: "error" as const, error: "连接已断开，请重新连接后重试。" }
     : viewScope === scope ? state : { ...empty(), status: "loading" as const };
-  return { ...visible, reload: () => void read(false), loadMore: () => void read(true), retryListeners };
+  const isCurrentIdentity = (identity: ServiceIdentity) => valid(renderEpoch, scope) && sameIdentity(data.current.identity, identity);
+  const canUnarchive = (id: string, identity: ServiceIdentity) => isCurrentIdentity(identity) && data.current.status === "ready"
+    && data.current.items.some(item => item.id === id);
+  const forgetAccepted = (id: string, identity: ServiceIdentity) => {
+    if (!isCurrentIdentity(identity)) return false;
+    abort();
+    publish({ ...data.current, items: data.current.items.filter(item => item.id !== id), loadingMore: false, pageError: null });
+    return true;
+  };
+  return { ...visible, readVersion: readVersion.current, isCurrentIdentity, canUnarchive, forgetAccepted, reload: () => void read(false), loadMore: () => void read(true), retryListeners };
 }

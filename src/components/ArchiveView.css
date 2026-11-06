@@ -279,3 +279,7 @@
 .archive-cloud-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--text-secondary); font-size: var(--text-xs); line-height: 1.5; }
 .archive-cloud-icon { flex: none; color: var(--text-secondary); }
 .archive-cloud-row .archive-row-actions { flex-wrap: wrap; justify-content: flex-end; }
+
+.archive-recovery-button { display: inline-flex; align-items: center; gap: 6px; }
+.archive-recovery-spinner { animation: archive-recovery-spin 1s linear infinite; }
+@keyframes archive-recovery-spin { to { transform: rotate(360deg); } }

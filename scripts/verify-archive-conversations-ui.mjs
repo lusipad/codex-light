@@ -76,7 +76,7 @@ assert.ok(keys(tree).includes("chatgpt-conversation:a") && keys(tree).includes("
 props.cloudArchive = taskState; tree = render();
 const row = nodes(tree, cls("archive-conversation-row"))[0];
 assert.equal(nodes(row, n => n.type === "a").length, 0, "CV03: absent internal ChatGPT page cannot be replaced with browser/local thread navigation");
-for(const button of nodes(row, n => n.type === "button")) { assert.equal(button.props.disabled, true); assert.equal(button.props.onClick, undefined); }
+for(const button of nodes(row, n => n.type === "button")) { assert.equal(button.props.disabled, true, "CV: untrusted reader cannot enable writes"); if(button.props["aria-label"] === "取消归档")button.props.onClick(); else assert.equal(button.props.onClick, undefined); }
 assert.ok(text(tree).includes("ChatGPT 会话页面")); assert.ok(!text(tree).includes("ChatGPT 会话归档尚未接入"));
 props.conversationArchive = { ...props.conversationArchive, items: props.conversationArchive.items.map(item => item.id === "a" ? { ...item, updatedAt: 50 } : item) }; tree = render();
 assert.deepEqual(keys(tree), ["cloud-task:a", "chatgpt-conversation:a", "local:a"], "CV04: changed source array invalidates memo without filter/sort toggles");

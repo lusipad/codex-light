@@ -572,6 +572,19 @@ async fn archive_conversations_read(
 }
 
 #[tauri::command]
+async fn archive_unarchive(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: chatgpt_service::ArchiveUnarchiveRequest,
+) -> Result<chatgpt_service::ArchiveUnarchiveResponse, chatgpt_service::ServiceError> {
+    state.chatgpt_service.archive_unarchive(request, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
 async fn cloud_service_access(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -2096,6 +2109,7 @@ pub fn run() {
             share_thread_asset_read,
             share_thread_access,
             archive_conversations_read,
+            archive_unarchive,
             chatgpt_service_cancel,
             cloud_service_identity,
             cloud_service_access,

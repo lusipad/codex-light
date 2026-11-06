@@ -116,4 +116,37 @@ for (const [value, status] of [[null, "signed_out"], [{ type: "apiKey" }, "unsup
   account = { account: value }; const count = calls.length; view = mount(); await flush(); view.render();
   assert.equal(view.state.status, status); assert.equal(calls.length, count); view.dispose();
 }
+// Accepted cache changes are live-epoch operations, distinct from the ready gate for starting writes.
+identity = { accountId: "a", userId: "u", generation: 20 };
+account = { account: { type: "chatgpt" }, workspaceRouting: { chatgptAccountId: "a" } }; identityError = null;
+view = mount(); await flush(); calls.at(-1).resolve(page(["one", "two"], 0, 40, false)); await flush(); view.render();
+assert.equal(view.state.canUnarchive("one", identity), true);
+assert.equal(view.state.canUnarchive("not-read", identity), false);
+assert.equal(view.state.forgetAccepted("one", { ...identity, generation: 21 }), false);
+assert.equal(view.state.canUnarchive("already-left-current-page", identity), false, "absent targets cannot start new writes");
+assert.equal(view.state.forgetAccepted("already-left-current-page", identity), true, "accepted targets evicted by another operation's first-page refresh are a successful cache no-op");
+const acceptedReadVersion = view.state.readVersion;
+view.state.reload(); await flush(); const absentTargetOldRead = calls.at(-1); view.render();
+assert.equal(view.state.forgetAccepted("already-left-current-page", identity), true);
+assert.equal(absentTargetOldRead.signal.aborted, true, "accepted absent targets must still cancel pre-write reads");
+absentTargetOldRead.resolve(page(["already-left-current-page", "one", "two"], 0, 40, false)); await flush(); view.render();
+assert.deepEqual(Array.from(view.state.items, item=>item.id), ["one", "two"], "a missing-cache no-op must not permit late reinsertion");
+const oldCanRecover = view.state.canUnarchive, oldForgetAccepted = view.state.forgetAccepted, oldCurrentIdentity = view.state.isCurrentIdentity;
+view.state.reload(); await flush(); const stalePageAfterAcceptance = calls.at(-1); view.render();
+assert.equal(view.state.status, "loading"); assert.equal(view.state.canUnarchive("two", identity), false);
+assert.equal(view.state.isCurrentIdentity(identity), true, "same-account ordinary refresh does not invalidate in-flight writes");
+assert.equal(view.state.forgetAccepted("one", identity), true, "accepted operations may finish during an ordinary list refresh");
+assert.equal(stalePageAfterAcceptance.signal.aborted, true);
+stalePageAfterAcceptance.resolve(page(["one", "two"], 0, 40, false)); await flush(); view.render();
+assert.equal(view.state.readVersion, acceptedReadVersion, "local cache acceptance is not a successful network snapshot");
+assert.deepEqual(Array.from(view.state.items, item=>item.id), ["two"], "aborted older page must not reinsert an accepted ID");
+view.state.reload(); await flush(); calls.at(-1).resolve(page(["two"], 0, 1, false)); await flush(); view.render();
+assert.equal(view.state.readVersion, acceptedReadVersion + 1, "only a successful fresh network replacement advances the snapshot proof");
+listeners.get("app-server:notification")({ method: "account/updated" });
+assert.equal(oldCanRecover("two", identity), false); assert.equal(oldForgetAccepted("two", identity), false); assert.equal(oldCurrentIdentity(identity), false, "same identity but invalidated epoch rejects stale callbacks before render");
+await flush(); calls.at(-1).resolve(page(["same-identity-new-epoch"], 0, 1, false)); await flush(); view.render();
+assert.equal(view.state.canUnarchive("same-identity-new-epoch", identity), true);
+view.props.connected = false; view.render(false);
+assert.equal(view.state.isCurrentIdentity(identity), false); assert.equal(view.state.forgetAccepted("same-identity-new-epoch", identity), false);
+view.render(); view.dispose();
 console.log("PASS archived conversations: source decoding/dates, real offset, scope changes, independent errors, subscriber gate/cleanup, ABA, identity and authentication boundaries");

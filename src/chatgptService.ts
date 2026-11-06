@@ -155,6 +155,31 @@ export interface ProfileMutationResult {
   readback: unknown;
 }
 
+export type ArchiveCloudSource = "cloud-task" | "chatgpt-conversation";
+
+// An accepted write is not an independent readback of the conversation.
+export async function unarchiveCloudItem(
+  source: ArchiveCloudSource, targetId: string, identity: ServiceIdentity, signal: AbortSignal,
+): Promise<void> {
+  if (signal.aborted) throw Object.assign(Error("请求已取消"), { code: "cancelled" });
+  if (!["cloud-task", "chatgpt-conversation"].includes(source) || typeof targetId !== "string" || !targetId.trim()
+    || targetId === "." || targetId === ".." || /[\u0000-\u001f\u007f-\u009f]/.test(targetId) || new TextEncoder().encode(targetId).length > 2048) {
+    throw Object.assign(Error("取消归档目标无效。"), { code: "invalid_request" });
+  }
+  const requestId = crypto.randomUUID(), profile = browserProfile();
+  const unknown = () => Object.assign(Error("取消归档结果尚未确认，请先刷新列表。"), { code: "archive_write_unknown" });
+  let result: { requestId: string; identity: ServiceIdentity; status: "accepted" };
+  try {
+    result = await invokeService("archive_unarchive", requestId,
+      { request: { requestId, expectedIdentity: identity, profile, source, targetId } }, signal);
+  } catch (error) {
+    if (!(error as { code?: string })?.code) throw unknown();
+    throw error;
+  }
+  if (!result || result.requestId !== requestId || result.identity?.accountId !== identity.accountId
+    || result.identity?.userId !== identity.userId || result.identity?.generation !== identity.generation || result.status !== "accepted") throw unknown();
+}
+
 export async function readAccountNotifications(identity: ServiceIdentity, signal: AbortSignal): Promise<unknown> {
   const requestId = crypto.randomUUID();
   const result = await invokeService<{ requestId: string; identity: ServiceIdentity; body: unknown }>(
@@ -408,6 +433,7 @@ export function serviceErrorMessage(error: unknown): string {
     network_policy_unavailable: "无法读取组织网络策略，请重试。",
     archive_access_unknown: "暂时无法确认当前账号的聊天归档资格，请重试。",
     archive_scope_changed: "归档读取范围已变化，请从首页重新读取。",
+    archive_write_unknown: "取消归档结果尚未确认，请先刷新列表后再决定是否重试。",
     network_restricted: "组织网络策略不允许访问此目标。",
     plugin_busy: "该插件正在执行另一项操作，请稍后重新读取。",
     plugin_write_unknown: "无法确认插件变更是否已送达，请先只读核验，避免重复提交。",

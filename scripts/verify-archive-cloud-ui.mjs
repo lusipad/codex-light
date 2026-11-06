@@ -88,7 +88,8 @@ const cloudRows = nodes(tree, cls("archive-cloud-row"));
 for (const row of cloudRows) {
   assert.equal(nodes(row, n => n.type === "a").length, 0);
   assert.equal(nodes(row, n => n.props?.className?.includes("danger")).length, 0);
-  const restore = nodes(row, n => n.type === "button")[0]; assert.equal(restore.props.disabled, true); assert.equal(restore.props.onClick, undefined);
+  const restore = nodes(row, n => n.type === "button")[0]; assert.equal(restore.props.disabled, true, "AC: missing trusted lifecycle capability keeps legacy fixture read-only"); restore.props.onClick();
+  const deletion = nodes(row, n => n.type === "button")[1]; assert.equal(deletion.props.disabled, true); assert.equal(deletion.props.onClick, undefined);
 }
 assert.ok(text(tree).includes("ChatGPT 会话归档尚未接入"));
 project(tree).props.onChange("project:local::one"); tree = render();
