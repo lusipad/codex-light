@@ -322,6 +322,19 @@ async fn chatgpt_service_site_pin(
 }
 
 #[tauri::command]
+async fn chatgpt_service_sites_settings(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: chatgpt_service::SitesSettingsRequest,
+) -> Result<chatgpt_service::SitesSettingsResponse, chatgpt_service::ServiceError> {
+    state.chatgpt_service.sites_settings(request, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
 async fn remote_plugin_inventory(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -2184,6 +2197,7 @@ pub fn run() {
             chatgpt_service_identity,
             chatgpt_service_read,
             chatgpt_service_site_pin,
+            chatgpt_service_sites_settings,
             remote_plugin_inventory,
             remote_plugin_mutation,
             profile_mutation,

@@ -1,0 +1,23 @@
+.site-title-setting > input { max-width: 336px; }
+.site-title-setting > div { flex: 1; }
+.site-setting-save-error { color: var(--text-secondary); }
+.site-setting-save-error button, .site-environment-add { border: 1px solid var(--border-subtle); border-radius: 8px; padding: 6px 12px; background: var(--bg-primary); color: var(--text-primary); }
+.site-environment-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 16px; }
+.site-environment-grid { display: grid; grid-template-columns: repeat(12,minmax(0,1fr)); align-items: center; gap: 8px; padding: 16px; }
+.site-environment-columns, .site-environment-edit-row { display: contents; }
+.site-environment-columns > span { font-size: 12px; font-weight: 500; color: var(--text-secondary); user-select: none; }
+.site-environment-columns > span:nth-child(-n+2) { grid-column: span 5; }
+.site-environment-edit-row > div { min-width: 0; }
+.site-environment-key, .site-environment-value { grid-column: span 5; }
+.site-environment-edit-row .site-environment-secret { display: flex; justify-content: center; }
+.site-environment-secret input { width: 16px; height: 16px; margin: 8px 0; }
+.site-environment-value button { min-height: 34px; border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--bg-primary); color: var(--text-primary); }
+.site-environment-remove { display: flex; align-items: center; justify-content: center; min-height: 34px; border: 0; background: transparent; color: var(--text-secondary); }
+.site-environment-add { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.site-environment-delete { position: fixed; inset: 50% auto auto 50%; transform: translate(-50%, -50%); margin: 0; width: 520px; max-width: 92vw; box-sizing: border-box; overflow: hidden; border: 0; border-radius: 20px; padding: 20px; color: var(--text-primary); background: rgb(65 65 65 / 90%); backdrop-filter: blur(24px); box-shadow: 0 0 0 .5px var(--border-default), var(--shadow-lg); }
+[data-theme="light"] .site-environment-delete { background: rgb(249 249 249 / 90%); }
+.site-environment-delete > h2 { margin: 0; }
+.site-environment-delete > p { margin: 12px 0 0; }
+.site-environment-delete::backdrop { background: #0008; }
+.site-environment-delete > div { display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px; }
+.site-environment-delete button { padding: 6px 12px; border: 1px solid var(--border-subtle); border-radius: 8px; color: var(--text-primary); background: var(--bg-secondary); }

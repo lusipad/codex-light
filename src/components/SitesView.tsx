@@ -8,6 +8,8 @@ import { filterSites, mergeSites, safeSiteUrl, siteRole, type SiteRecord } from 
 import { parseSitesLocation, sitesLocationUrl, type SitesLocation, type SitesNavigation } from "../sitesNavigation";
 import { LibraryStickyHeader } from "./LibraryStickyHeader";
 import { ThreadActionsMenu, type ThreadActionItem } from "./ThreadActionsMenu";
+import { SiteSettingsForm } from "./SiteSettingsForm";
+import { waitForSiteSettingsWrites } from "../siteSettingsState";
 import "./SitesView.css";
 
 type Page = SitesClientPage & { loaded: boolean; loading: boolean; paging: boolean; error: string | null; pageError: string | null; query: string };
@@ -45,8 +47,8 @@ export function SiteScreenshot({ site, assets, access, scope }: { site: SiteReco
   }, [key, scope]);
   return <div className="sites-screenshot">{image?.key === key && !scope.aborted ? <img src={image.url} alt="" loading="lazy" onError={() => setImage(null)} /> : <Globe size={22} aria-hidden="true" />}</div>;
 }
-interface SitesViewProps { collectionNavigation?: boolean; onNavigationChange?: (navigation: SitesNavigation | null) => void }
-export const SitesView: React.FC<SitesViewProps> = ({ collectionNavigation = false, onNavigationChange }) => {
+interface SitesViewProps { collectionNavigation?: boolean; onNavigationChange?: (navigation: SitesNavigation | null) => void; onSaveError?: (message: string) => void }
+export const SitesView: React.FC<SitesViewProps> = ({ collectionNavigation = false, onNavigationChange, onSaveError }) => {
   const [revision, setRevision] = useState(0), [access, setAccess] = useState<SitesClientAccess | null>(null);
   const accessRef = useRef<SitesClientAccess | null>(null);
   const [loading, setLoading] = useState(true), [error, setError] = useState<string | null>(null), [notice, setNotice] = useState<string | null>(null);
@@ -59,6 +61,7 @@ export const SitesView: React.FC<SitesViewProps> = ({ collectionNavigation = fal
   const cursors = useRef<Record<SitesListKind, string[]>>({ owned: [], shared: [], pinned: [] });
   const paging = useRef(new Set<SitesListKind>());
   const source = useRef<AbortController | null>(null), detailSource = useRef<AbortController | null>(null);
+  const settingsWriteScope = useRef<AbortController | null>(null);
   const [detail, setDetail] = useState<{ site: SiteRecord; assets: SiteAssetRef[] } | null>(null), [detailError, setDetailError] = useState<string | null>(null), [detailRevision, setDetailRevision] = useState(0);
   const [settings, setSettings] = useState<Awaited<ReturnType<typeof readSiteSettings>> | null>(null), [settingsLoading, setSettingsLoading] = useState(false);
   const settingsPending = useRef(false);
@@ -94,12 +97,13 @@ export const SitesView: React.FC<SitesViewProps> = ({ collectionNavigation = fal
   useEffect(() => {
     let disposed = false, unlisten: (() => void) | undefined;
     const controller = new AbortController(); source.current = controller;
+    const writes = new AbortController(); settingsWriteScope.current = writes;
     accessRef.current = null; abortLists(); detailSource.current?.abort(); setAccess(null); setPages(emptyPages()); setDetail(null); setSettings(null); setError(null); setLoading(true); setNotice(null); setPins({});
     pinBusy.current.clear(); unconfirmedPins.current.clear(); cursors.current = { owned: [], shared: [], pinned: [] }; paging.current.clear();
     void (async () => {
       try {
         const stop = await tauriListen("chatgpt-service:invalidated", () => {
-          if (disposed) return; controller.abort(); abortLists(); detailSource.current?.abort(); accessRef.current = null;
+          writes.abort(); if (disposed) return; controller.abort(); abortLists(); detailSource.current?.abort(); accessRef.current = null;
           setAccess(null); setPages(emptyPages()); setDetail(null); setSettings(null); setPins({}); setRevision(value => value + 1);
         });
         if (disposed) { stop(); return; } unlisten = stop;
@@ -109,7 +113,7 @@ export const SitesView: React.FC<SitesViewProps> = ({ collectionNavigation = fal
         if ((!current.pinned && selected.view === "pinned") || (!(current.workspace || current.editable) && ["shared", "all"].includes(selected.view))) navigate({ ...selected, view: "owned", search: "" }, true);
       } catch (cause) { if (!controller.signal.aborted) { setError(serviceErrorMessage(cause)); setLoading(false); } }
     })();
-    return () => { disposed = true; controller.abort(); abortLists(); detailSource.current?.abort(); unlisten?.(); };
+    return () => { disposed = true; accessRef.current = null; controller.abort(); abortLists(); detailSource.current?.abort(); void waitForSiteSettingsWrites(writes.signal).then(() => unlisten?.()); };
   }, [revision]);
   useEffect(() => {
     if (!access?.enabled) return;
@@ -226,8 +230,15 @@ export const SitesView: React.FC<SitesViewProps> = ({ collectionNavigation = fal
       <nav className="sites-detail-tabs" aria-label="站点详情"><button type="button" aria-current="page">设置</button><button type="button" disabled title="数据库工作面尚未接入">数据库</button><button type="button" disabled title="站点日程尚未接入">已安排</button></nav>
       {detailError && <div className="sites-state"><p role="alert">{detailError}</p><button type="button" onClick={() => setDetailRevision(value => value + 1)}>重试</button></div>}
       {!detail && !detailError && <p className="sites-state" role="status">正在加载网站</p>}
-      {detail && <div className="sites-settings-groups"><section><h2>常规</h2><label>名称<input aria-label="站点标题" value={detail.site.title} readOnly maxLength={100} /></label><div className="sites-setting-row"><div>URL<p>{safeSiteUrl(detail.site.hostedUrl ?? detail.site.liveUrl) ?? "未发布"}</p></div><button type="button" disabled title="站点 URL 更改尚未接入">更改</button></div><div className="sites-setting-row"><div>共享设置<p>{siteSharingText(detail.site)}</p></div><button type="button" disabled title="共享设置写入尚未接入">管理</button></div></section>
-        <section><h2>环境变量</h2><p>添加网站所需的 API 密钥和其他环境变量</p>{settingsLoading && <p role="status">正在读取配置…</p>}{settings?.errors.environment && <p role="alert">{settings.errors.environment}</p>}{settings?.environment?.map(entry => <div className="sites-environment-row" key={entry.key}><code>{entry.key}</code><span>{entry.secret ? "••••••" : entry.value ?? "未设置"}</span></div>)}</section>
+      {detail && <div className="sites-settings-groups">{access && settingsWriteScope.current && <SiteSettingsForm access={access} site={detail.site} snapshot={settings?.environmentSnapshot ?? null} scope={settingsWriteScope.current.signal} environmentError={settings?.errors.environment} loading={settingsLoading} sharingText={siteSharingText(detail.site)} onError={onSaveError} onSite={result => {
+        if (accessRef.current !== access || source.current?.signal.aborted) return;
+        setDetail(previous => previous?.site.id === result.site.id && Date.parse(result.site.updatedAt) >= Date.parse(previous.site.updatedAt) ? result : previous);
+        setPages(previous => Object.fromEntries(Object.entries(previous).map(([kind, page]) => {
+          const current = page.items.find(site => site.id === result.site.id);
+          if (!current || Date.parse(result.site.updatedAt) < Date.parse(current.updatedAt)) return [kind, page];
+          return [kind, { ...page, items: page.items.map(site => site.id === result.site.id ? result.site : site), assets: [...page.assets.filter(ref => ref.id !== result.site.id), ...result.assets] }];
+        })) as Record<SitesListKind, Page>);
+      }} />}
         <section><h2>自定义域名</h2>{settings?.errors.domains && <p role="alert">{settings.errors.domains}</p>}{settings?.domains?.map(domain => <div className="sites-domain" key={domain.id}><h3>{domain.hostname}</h3><p>{domain.status}</p>{domain.cname && <p>CNAME：{domain.cname}</p>}{domain.ipv4.map(ip => <p key={ip}>A：{ip}</p>)}{domain.ssl && <p>SSL：{domain.ssl}</p>}{domain.error && <p role="alert">{domain.error}</p>}{domain.records.map((record, index) => <p key={index}>{record.type} {record.name} {record.value}</p>)}</div>)}</section>
         {settings && Object.keys(settings.errors).length > 0 && <button type="button" disabled={settingsLoading} onClick={() => { if (access && location.siteId && detailSource.current) void readSettings(access, location.siteId, detailSource.current).catch(() => {}); }}>重试</button>}
         <section><h2>危险操作区</h2><div className="sites-setting-row"><div>删除站点<p>永久删除此站点</p></div><button type="button" disabled title="站点删除尚未接入">删除站点</button></div></section>

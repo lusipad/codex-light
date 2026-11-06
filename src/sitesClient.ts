@@ -1,5 +1,5 @@
-import { readChatgptService, readSitesMetadata, readSiteAsset, writeSitePin, serviceIdentity, shareAccessBootstrap, serviceErrorMessage, type ServiceIdentity, type SiteAssetRef } from "./chatgptService";
-import { parseSitesAccess, parseSitesPage, parseSite, parseSiteDomains, parseSiteEnvironment, type SiteRecord, type SitesAccess, type SiteDomain, type SiteEnvironment } from "./sitesService";
+import { readChatgptService, readSitesMetadata, readSiteAsset, writeSitePin, writeSiteTitle, writeSiteEnvironment, serviceIdentity, shareAccessBootstrap, serviceErrorMessage, type ServiceIdentity, type SiteAssetRef, type SiteEnvironmentPatch } from "./chatgptService";
+import { parseSitesAccess, parseSitesPage, parseSite, parseSiteDomains, parseSiteEnvironmentSnapshot, type SiteRecord, type SitesAccess, type SiteDomain, type SiteEnvironment, type SiteEnvironmentSnapshot } from "./sitesService";
 
 export interface SitesClientAccess extends SitesAccess { identity: ServiceIdentity; pinned: boolean; collectionPreview: boolean }
 export type SitesListKind = "owned" | "shared" | "pinned";
@@ -62,14 +62,54 @@ export async function readSiteDetail(access: SitesClientAccess, id: string, sign
   if (site.id !== id) throw Error("站点详情与请求不符。");
   await confirmIdentity(access.identity, signal); return { site, assets: result.assets };
 }
-export async function readSiteSettings(access: SitesClientAccess, id: string, signal: AbortSignal): Promise<{ environment: SiteEnvironment[] | null; domains: SiteDomain[] | null; errors: Record<string, string> }> {
-  requireAccess(access); const result: { environment: SiteEnvironment[] | null; domains: SiteDomain[] | null; errors: Record<string, string> } = { environment: null, domains: null, errors: {} };
+export async function readSiteSettings(access: SitesClientAccess, id: string, signal: AbortSignal): Promise<{ environment: SiteEnvironment[] | null; environmentSnapshot: SiteEnvironmentSnapshot | null; domains: SiteDomain[] | null; errors: Record<string, string> }> {
+  requireAccess(access); const result: { environment: SiteEnvironment[] | null; environmentSnapshot: SiteEnvironmentSnapshot | null; domains: SiteDomain[] | null; errors: Record<string, string> } = { environment: null, environmentSnapshot: null, domains: null, errors: {} };
   await Promise.all((["environment", "domains"] as const).map(async kind => {
     try { const body = await readChatgptService(kind === "environment" ? "sites_environment" : "sites_domains", { id }, access.identity, signal);
-      if (kind === "environment") result.environment = parseSiteEnvironment(body, id); else result.domains = parseSiteDomains(body, id);
+      if (kind === "environment") { result.environmentSnapshot = parseSiteEnvironmentSnapshot(body, id); result.environment = result.environmentSnapshot.entries; } else result.domains = parseSiteDomains(body, id);
     } catch (error) { signal.throwIfAborted(); result.errors[kind] = serviceErrorMessage(error); }
   }));
   await confirmIdentity(access.identity, signal); return result;
+}
+export async function readSiteEnvironmentSnapshot(access: SitesClientAccess, id: string, signal: AbortSignal): Promise<SiteEnvironmentSnapshot> {
+  requireAccess(access);
+  const snapshot = parseSiteEnvironmentSnapshot(await readChatgptService("sites_environment", { id }, access.identity, signal), id);
+  await confirmIdentity(access.identity, signal); return snapshot;
+}
+export async function saveSiteTitle(access: SitesClientAccess, id: string, title: string, signal: AbortSignal): Promise<{ site: SiteRecord; assets: SiteAssetRef[] }> {
+  requireAccess(access); const value = title.trim();
+  if (!value || value.length > 100) throw Error("请输入不超过 100 个字符的站点名称。");
+  await confirmIdentity(access.identity, signal);
+  try {
+    const acknowledged = await writeSiteTitle(id, value, access.identity, signal);
+    if (acknowledged.title !== value) throw Error("服务返回的站点名称不符。");
+    const actual = await readSiteDetail(access, id, signal);
+    if (actual.site.title !== value) throw Error("站点名称尚未确认。");
+    return actual;
+  } catch (cause) { throw Object.assign(Error("站点名称保存结果未确认，请读取当前状态后再操作。"), { code: "site_title_unconfirmed", status: (cause as { status?: number })?.status, cause }); }
+}
+export async function saveSiteEnvironment(access: SitesClientAccess, id: string, patch: SiteEnvironmentPatch, signal: AbortSignal, baseline: SiteEnvironmentSnapshot): Promise<SiteEnvironmentSnapshot> {
+  requireAccess(access);
+  if (baseline.projectId !== id || !Array.isArray(patch.remove) || !Array.isArray(patch.set_values)) throw Error("环境变量保存参数无效。");
+  const keys = new Set<string>();
+  for (const entry of patch.set_values) {
+    if (typeof entry.key !== "string" || !entry.key.trim() || keys.has(entry.key) || entry.type !== "envvar" || typeof entry.is_secret !== "boolean" || typeof entry.value !== "string") throw Error("环境变量的键必须非空且不能重复。");
+    keys.add(entry.key);
+  }
+  if (patch.remove.some(key => typeof key !== "string" || !key.trim() || keys.has(key)) || new Set(patch.remove).size !== patch.remove.length) throw Error("环境变量删除参数无效。");
+  await confirmIdentity(access.identity, signal);
+  try {
+    parseSiteEnvironmentSnapshot(await writeSiteEnvironment(id, patch, access.identity, signal), id);
+    const actual = await readSiteEnvironmentSnapshot(access, id, signal);
+    const expected = new Map(baseline.entries.map(entry => [entry.key, entry]));
+    for (const key of patch.remove) expected.delete(key);
+    for (const entry of patch.set_values) expected.set(entry.key, { key: entry.key, secret: entry.is_secret, value: entry.is_secret ? null : entry.value });
+    const found = new Map(actual.entries.map(entry => [entry.key, entry]));
+    if (found.size !== actual.entries.length || patch.remove.some(key => found.has(key)) || [...expected].some(([key, entry]) => {
+      const saved = found.get(key); return !saved || saved.secret !== entry.secret || (!entry.secret && saved.value !== entry.value);
+    })) throw Error("环境变量读回与保存内容不符。");
+    return actual;
+  } catch (cause) { throw Object.assign(Error("环境变量保存结果未确认，请读取当前状态后再操作。"), { code: "site_environment_unconfirmed", status: (cause as { status?: number })?.status, cause }); }
 }
 export async function readSiteScreenshot(ref: SiteAssetRef, access: SitesClientAccess, signal: AbortSignal): Promise<string> {
   requireAccess(access); const result = await readSiteAsset(ref, access.identity, signal); await confirmIdentity(access.identity, signal); return result;

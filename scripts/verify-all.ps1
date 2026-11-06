@@ -100,6 +100,8 @@ try {
   Invoke-Step "Sites current data contract" { node scripts/verify-sites-data.mjs }
   Invoke-Step "Sites authenticated read and pin contract" { node scripts/verify-sites-read.mjs }
   Invoke-Step "Sites route and host navigation regression" { node scripts/verify-sites-navigation.mjs }
+  Invoke-Step "Sites settings write and readback contracts" { node scripts/verify-sites-settings-client.mjs }
+  Invoke-Step "Sites settings autosave and environment UI regression" { node scripts/verify-sites-settings-ui.mjs }
   Invoke-Step "Codex Cloud authenticated configuration regression" { node scripts/verify-cloud-environments.mjs }
   Invoke-Step "Codex Cloud current access contract" { node scripts/verify-cloud-environment-access.mjs }
   Invoke-Step "Codex Cloud settings data contract" { node scripts/verify-cloud-environment-data.mjs }

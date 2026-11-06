@@ -159,6 +159,48 @@ export async function writeSitePin(id: string, pinned: boolean, identity: Servic
   return { project_id: id, is_pinned: body.is_pinned };
 }
 
+export interface SiteTitleWrite { title: string; updated_at: string }
+export interface SiteEnvironmentPatch {
+  remove: string[];
+  set_values: { is_secret: boolean; key: string; type: "envvar"; value: string }[];
+}
+export interface SiteEnvironmentSnapshot {
+  entries: { is_secret: boolean; key: string; type: "envvar"; value: string | null }[];
+  project_id: string;
+  revision: number;
+  updated_at: string | null;
+  requires_secrets?: boolean;
+}
+
+async function writeSiteSettings(
+  id: string, mutation: { operation: "title"; title: string } | ({ operation: "environment" } & SiteEnvironmentPatch),
+  identity: ServiceIdentity, signal: AbortSignal,
+): Promise<unknown> {
+  signal.throwIfAborted();
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; body: unknown }>(
+    "chatgpt_service_sites_settings", requestId,
+    { request: { requestId, id, mutation, expectedIdentity: identity, profile: browserProfile() } }, signal,
+  );
+  return responseBody(result, requestId, identity);
+}
+
+export async function writeSiteTitle(id: string, title: string, identity: ServiceIdentity, signal: AbortSignal): Promise<SiteTitleWrite> {
+  const body = await writeSiteSettings(id, { operation: "title", title: title.trim() }, identity, signal) as SiteTitleWrite;
+  if (!body || typeof body.title !== "string" || typeof body.updated_at !== "string") throw Error("名称保存结果未知，请先重新读取站点。");
+  return body;
+}
+
+export async function writeSiteEnvironment(id: string, patch: SiteEnvironmentPatch, identity: ServiceIdentity, signal: AbortSignal): Promise<SiteEnvironmentSnapshot> {
+  const body = await writeSiteSettings(id, { operation: "environment", ...patch }, identity, signal) as SiteEnvironmentSnapshot;
+  if (!body || body.project_id !== id || typeof body.revision !== "number" || !Number.isFinite(body.revision)
+    || (body.updated_at !== null && typeof body.updated_at !== "string")
+    || (body.requires_secrets !== undefined && typeof body.requires_secrets !== "boolean") || !Array.isArray(body.entries)
+    || body.entries.some(entry => !entry || typeof entry.key !== "string" || typeof entry.is_secret !== "boolean" || entry.type !== "envvar"
+      || (entry.value !== null && typeof entry.value !== "string"))) throw Error("环境变量保存结果未知，请先重新读取配置。");
+  return body;
+}
+
 export function isImagesAssetRef(value: unknown): value is ImagesAssetRef {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const ref = value as ImagesAssetRef;

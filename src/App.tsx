@@ -5534,7 +5534,7 @@ export const App: React.FC = () => {
         ) : activeRoute === "sites" ? (
           <div className="full-route-view sites-route-view">
             <div className="full-route-container sites-route-container">
-              <SitesView onNavigationChange={updateSitesNavigation} />
+              <SitesView onNavigationChange={updateSitesNavigation} onSaveError={message => showAppToast(message, "error")} />
             </div>
           </div>
         ) : activeRoute === "library" ? (

@@ -10,6 +10,7 @@ export interface SiteRecord {
 }
 export interface SitesPage { items: SiteRecord[]; cursor: string | null }
 export interface SiteEnvironment { key: string; secret: boolean; value: string | null }
+export interface SiteEnvironmentSnapshot { projectId: string; entries: SiteEnvironment[]; revision: number; updatedAt: string | null; requiresSecrets?: boolean }
 export interface SiteDomain { id: string; hostname: string; status: string; cname: string | null; ipv4: string[]; ssl: string | null; error: string | null; records: { name: string | null; type: string | null; value: string | null }[] }
 const malformed = () => Error("Sites 服务返回了无法识别的数据。");
 function string(value: unknown): string { if (typeof value !== "string") throw malformed(); return value; }
@@ -65,6 +66,13 @@ export function parseSiteEnvironment(value: any, projectId: string): SiteEnviron
     const actual = optionalString(entry.value);
     return { key: string(entry.key), secret: entry.is_secret, value: entry.is_secret ? null : actual };
   });
+}
+export function parseSiteEnvironmentSnapshot(value: any, projectId: string): SiteEnvironmentSnapshot {
+  if (typeof value?.revision !== "number" || !Number.isFinite(value.revision) || !(value.updated_at === null || typeof value.updated_at === "string")
+    || (value.requires_secrets !== undefined && typeof value.requires_secrets !== "boolean") || !Array.isArray(value.entries)
+    || value.entries.some((entry: any) => !(entry?.value === null || typeof entry.value === "string"))) throw malformed();
+  return { projectId, entries: parseSiteEnvironment(value, projectId), revision: value.revision, updatedAt: value.updated_at,
+    ...(value.requires_secrets === undefined ? {} : { requiresSecrets: value.requires_secrets }) };
 }
 export function parseSiteDomains(value: any, projectId: string): SiteDomain[] {
   if (!Array.isArray(value?.items)) throw malformed();

@@ -17,12 +17,13 @@ const raw = (id, extra = {}) => ({ id, title: `站点 ${id}`, slug: id, status: 
 
 function harness({ deferredListener = false, listenerError, href = "http://localhost/sites?keep=1#hash", savedMode, props = {}, component = "SitesView" } = {}) {
   const contexts = new Map(), effects = [], layouts = [], calls = [], listeners = [], timers = new Map(), events = new Map(), elements = new Map();
-  const disk = new Map(savedMode ? [["sites-view-mode", savedMode]] : []), observers = [];
-  let owner, used, tree, writes = 0, clock = 0, timerId = 0, unlistened = 0;
+  const disk = new Map(savedMode ? [["sites-view-mode", savedMode]] : []), observers = [], componentProps = new Map();
+  let owner, used, tree, writes = 0, clock = 0, timerId = 0, unlistened = 0, currentProps = props;
   const document = { activeElement: null, body: { style: {} }, addEventListener() {}, removeEventListener() {} };
   const window = { location: { href }, history: { state: { kept: true }, pushState(state, _title, url) { assert.equal(state.kept, true); this.state = state; window.location.href = new URL(url, window.location.href).href; }, replaceState(state, _title, url) { assert.equal(state.kept, true); this.state = state; window.location.href = new URL(url, window.location.href).href; } },
     addEventListener(name, callback) { events.set(name, callback); }, removeEventListener(name, callback) { if (events.get(name) === callback) events.delete(name); } };
   function render(type, props) {
+    componentProps.set(type.name, props);
     const previous = owner, key = `${previous?.key ?? "root"}/${type.name}:${props?.key ?? (previous ? previous.childIndex++ : 0)}`;
     if (!contexts.has(key)) contexts.set(key, { key, hooks: [] });
     owner = contexts.get(key); owner.cursor = 0; owner.childIndex = 0; owner.domIndex = 0; used.add(key);
@@ -34,7 +35,7 @@ function harness({ deferredListener = false, listenerError, href = "http://local
       if (type === React.Fragment) return children.flat(Infinity);
       if (typeof type === "function") return render(type, { ...props, children: children.flat(Infinity) });
       const node = { type, props: props ?? {}, children: children.flat(Infinity) }, key = `${owner?.key}/${(owner ? owner.domIndex++ : 0)}:${type}:${props?.key ?? ""}`;
-      if (!elements.has(key)) elements.set(key, { attributes: {}, isConnected: true, focus() { document.activeElement = this; }, removeAttribute(name) { delete this.attributes[name]; }, scrollIntoView() {}, querySelector() { return null; } });
+      if (!elements.has(key)) elements.set(key, { attributes: {}, isConnected: true, focus() { document.activeElement = this; }, removeAttribute(name) { delete this.attributes[name]; }, scrollIntoView() {}, querySelector() { return null; }, contains(target) { return walk(this.node).some(n => n.element === target); }, showModal() { this.open = true; }, close() { this.open = false; } });
       node.element = elements.get(key); node.element.node = node;
       if (props?.src) node.element.attributes.src = props.src;
       if (typeof props?.ref === "function") props.ref(node.element); else if (props?.ref) props.ref.current = node.element;
@@ -63,11 +64,13 @@ function harness({ deferredListener = false, listenerError, href = "http://local
         if (name === "react-dom") return { createPortal: node => node };
         if (name === "lucide-react") return new Proxy({}, { get: (_, key) => String(key) });
         if (name.endsWith(".css")) return {};
-        if (name === "../sitesService") return load("src/sitesService.ts");
+        if (name === "../sitesService" || name === "./sitesService") return load("src/sitesService.ts");
+        if (name === "../siteSettingsState") return load("src/siteSettingsState.ts");
+        if (name === "./SiteSettingsForm") return load("src/components/SiteSettingsForm.tsx");
         if (name === "../sitesNavigation") return load("src/sitesNavigation.ts");
         if (name === "../chatgptService") return { serviceErrorMessage: error => error.message || error.code };
-        if (name === "../bridge") return { tauriListen: (_name, callback) => { const pending = deferred(); listeners.push({ callback, ...pending }); return listenerError ? Promise.reject(listenerError) : deferredListener ? pending.promise : Promise.resolve(() => unlistened++); } };
-        if (name === "../sitesClient") return {
+        if (name === "../bridge") return { tauriListen: (_name, callback) => { const pending = deferred(), registration = { callback, active: true, ...pending }; listeners.push(registration); return listenerError ? Promise.reject(listenerError) : deferredListener ? pending.promise : Promise.resolve(() => { if (registration.active) { registration.active = false; unlistened++; } }); } };
+        if (name === "../sitesClient" || name === "./sitesClient") return {
           readSitesAccess: signal => call("access", [], signal),
           readSitesPage: (access, kind, query, cursor, signal, seen) => call("page", [access, kind, query, cursor, seen], signal),
           readSiteDetail: (access, id, signal) => call("detail", [access, id], signal),
@@ -75,20 +78,23 @@ function harness({ deferredListener = false, listenerError, href = "http://local
           readSiteScreenshot: (asset, access, signal) => call("screenshot", [asset, access], signal),
           readSitePin: (access, id, signal) => call("pin-read", [access, id], signal),
           setSitePinned: (access, id, pinned, signal) => call("pin-write", [access, id, pinned], signal),
+          saveSiteTitle: (access, id, title, signal) => call("title-write", [access, id, title], signal),
+          saveSiteEnvironment: (access, id, patch, signal, baseline) => call("environment-write", [access, id, patch, baseline], signal),
+          readSiteEnvironmentSnapshot: (access, id, signal) => call("environment-read", [access, id], signal),
         };
         if (name === "./LibraryStickyHeader") return { LibraryStickyHeader: p => React.createElement("header", null, React.createElement("h1", null, p.title), p.description, p.navigation, p.actions) };
         if (name === "./ThreadActionsMenu") return { ThreadActionsMenu: p => React.createElement("mock-menu", p) };
         throw Error(name);
       } }); return exports;
   };
-  const data = load("src/sitesService.ts"), view = load("src/components/SitesView.tsx");
-  return { calls, listeners, data, disk, window, document, view,
-    render(nextProps = props) { used = new Set(); tree = render(view[component], nextProps);
+  const data = load("src/sitesService.ts"), view = load(component === "SiteSettingsForm" ? "src/components/SiteSettingsForm.tsx" : "src/components/SitesView.tsx");
+  return { calls, listeners, data, disk, window, document, view, load, componentProps,
+    render(nextProps = currentProps) { currentProps = nextProps; used = new Set(); tree = render(view[component], nextProps);
       for (const [key, current] of contexts) if (!used.has(key)) { current.hooks.forEach(h => h?.cleanup?.()); contexts.delete(key); }
       while (layouts.length) layouts.shift()(); while (effects.length) effects.shift()(); return tree; },
     tick(ms = 300) { clock += ms; for (const [id, timer] of [...timers]) if (timer.due <= clock) { timers.delete(id); timer.callback(); } },
     intersect() { for (const observer of [...observers]) if (observer.active) observer.callback([{ isIntersecting: true }]); },
-    invalidate() { listeners.at(-1).callback(); }, pop(href) { window.location.href = href; events.get("popstate")?.({ state: window.history.state }); },
+    invalidate() { for (const registration of [...listeners]) if (registration.active) registration.callback(); }, pop(href) { window.location.href = href; events.get("popstate")?.({ state: window.history.state }); },
     unmount() { for (const current of contexts.values()) current.hooks.forEach(h => h?.cleanup?.()); contexts.clear(); },
     get writes() { return writes; }, get unlistened() { return unlistened; },
   };
@@ -208,8 +214,8 @@ await check("settings is a route workface; detail failure retries, independent c
   latest(h, "settings").resolve({ environment: null, domains: [{ id: "apex", hostname: "apex.example.invalid", status: "pending", cname: "real-target", ipv4: ["192.0.2.14"], records: [{ type: "TXT", value: "real-proof" }] }], errors: { environment: "environment failed" } }); await flush();
   assert.match(text(h.render()), /environment failed/); assert.match(text(h.render()), /real-target|real-proof/); assert.match(text(h.render()), /192\.0\.2\.14/);
   button(h, "重试").props.onClick(); const first = latest(h, "settings"); button(h, "重试").props.onClick(); assert.equal(latest(h, "settings"), first);
-  first.resolve({ environment: h.data.parseSiteEnvironment({ project_id: "one", entries: [{ type: "envvar", key: "TOKEN", is_secret: true, value: "never-render" }, { type: "envvar", key: "MODE", is_secret: false, value: "prod" }] }, "one"), domains: [], errors: {} }); await flush();
-  assert.match(text(h.render()), /prod/); assert.doesNotMatch(JSON.stringify(h.render(), (key, value) => key === "element" || key === "ref" ? undefined : value), /never-render/);
+  first.resolve({ environment: h.data.parseSiteEnvironment({ project_id: "one", entries: [{ type: "envvar", key: "TOKEN", is_secret: true, value: "never-render" }, { type: "envvar", key: "MODE", is_secret: false, value: "prod" }] }, "one"), environmentSnapshot: { projectId: "one", entries: [{ key: "TOKEN", secret: true, value: null }, { key: "MODE", secret: false, value: "prod" }], revision: 1, updatedAt: null }, domains: [], errors: {} }); await flush();
+  assert.ok(walk(h.render()).some(n => n.type === "input" && n.props.value === "prod")); assert.doesNotMatch(JSON.stringify(h.render(), (key, value) => key === "element" || key === "ref" ? undefined : value), /never-render/);
   button(h, "← 网站").props.onClick(); h.render(); assert.equal(new URL(h.window.location.href).pathname, "/sites"); h.unmount();
 });
 await check("pin mutation is single-flight; unknown write outcome locks repeat writes until explicit GET recovery", async () => {
@@ -324,5 +330,22 @@ await check("detail screenshot withdrawal synchronizes both cached lists and lea
   assert.equal(walk(h.render()).filter(n => n.type === "img").length, 0); const count = h.calls.filter(c => c.operation === "screenshot").length;
   button(h, "你拥有的").props.onClick(); h.render(); await flush(); assert.equal(walk(h.render()).filter(n => n.type === "img").length, 0); assert.equal(h.calls.filter(c => c.operation === "screenshot").length, count); h.unmount();
 });
+await check("settings title is editable through the real source component", async () => {
+  const h = await boot(); menu(h).props.onSelect("settings"); h.render(); await flush(); latest(h, "detail").resolve({ site: h.data.parseSite(raw("one")), assets: [] }); await flush();
+  latest(h, "settings").resolve({ environment: [], environmentSnapshot: { projectId: "one", entries: [], revision: 0, updatedAt: null }, domains: [], errors: {} }); await flush();
+  const field = walk(h.render()).find(n => n.type === "input" && n.props["aria-label"] === "站点标题");
+  assert.ok(field); assert.notEqual(field.props.readOnly, true); assert.equal(typeof field.props.onChange, "function"); h.unmount();
+});
+await check("older title readback callback cannot replace the grant paired with newer cached site metadata", async () => {
+  const h = await boot(); menu(h).props.onSelect("settings"); h.render(); await flush();
+  const site = h.data.parseSite(raw("one", { title: "新缓存标题", updated_at: "2026-11-05T00:00:00Z", screenshot_url: "https://example.invalid/new" }));
+  latest(h, "detail").resolve({ site, assets: [{ id: "one", assetKey: "new-grant", sourceRequestId: "new-request" }] }); await flush(); h.render();
+  latest(h, "settings").resolve({ environment: [], environmentSnapshot: { projectId: "one", entries: [], revision: 0, updatedAt: null }, domains: [], errors: {} }); await flush(); h.render();
+  h.componentProps.get("SiteSettingsForm").onSite({ site: h.data.parseSite(raw("one", { title: "旧标题", updated_at: "2026-11-04T00:00:00Z", screenshot_url: "https://example.invalid/old" })), assets: [{ id: "one", assetKey: "old-grant", sourceRequestId: "old-request" }] });
+  h.render(); button(h, "← 网站").props.onClick(); h.render(); await flush();
+  assert.match(text(h.render()), /新缓存标题/); assert.equal(latest(h, "screenshot").args[0].assetKey, "new-grant"); h.unmount();
+});
 assert.equal(failures.length, 0, failures.map(f => f.name).join("; "));
 console.log(`PASS 21E production SitesView/SiteScreenshot JSX: ${passed} groups; offline client/menu/header boundaries; actual HTTP, DOM menu focus, browser/native and pixel parity require separate evidence`);
+
+export { harness, walk, text, flush, latest, button, raw, access, identity };

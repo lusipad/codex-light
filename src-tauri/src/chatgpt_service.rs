@@ -21,6 +21,8 @@ pub use archive_delete::{ArchiveDeleteRequest, ArchiveDeleteResponse};
 mod images_assets;
 mod gpts_assets;
 mod sites_assets;
+mod sites_settings;
+pub use sites_settings::{SitesSettingsRequest, SitesSettingsResponse};
 pub use sites_assets::{SiteAssetRef, SitesPinRequest, SitesPinResponse};
 pub use gpts_assets::GptAssetRef;
 pub use images_assets::ImagesAssetRef;
@@ -461,6 +463,7 @@ pub struct ChatgptService {
     gpts_assets: Mutex<gpts_assets::GptsRegistry>,
     sites_assets: Mutex<sites_assets::SitesRegistry>,
     site_pin_active: Mutex<std::collections::HashSet<String>>,
+    site_settings_active: Mutex<std::collections::HashSet<(String,String,u64,String,&'static str)>>,
 }
 
 struct Registration<'a> {
@@ -2880,13 +2883,7 @@ struct HttpResponse {
     body: Vec<u8>,
 }
 
-fn build_http_request(
-    route: &str,
-    credentials: &Credentials,
-    integrity: Option<&str>,
-    profile: &ServiceProfile,
-) -> ServiceResult<HttpRequest> {
-    validate_origin(&credentials.origin)?;
+fn validate_browser_profile(profile:&ServiceProfile)->ServiceResult<()> {
     for value in [
         &profile.language,
         &profile.device_id,
@@ -2907,6 +2904,17 @@ fn build_http_request(
             "Chromium browser profile required",
         ));
     }
+    Ok(())
+}
+
+fn build_http_request(
+    route: &str,
+    credentials: &Credentials,
+    integrity: Option<&str>,
+    profile: &ServiceProfile,
+) -> ServiceResult<HttpRequest> {
+    validate_origin(&credentials.origin)?;
+    validate_browser_profile(profile)?;
     let mut headers = BTreeMap::from([
         (
             "Authorization".to_owned(),
@@ -8094,6 +8102,85 @@ mod sites21e_regression {
             let operation:ServiceOperation=serde_json::from_value(json!(name)).expect("fixed Sites operation");
             assert_eq!(resolve_route(&operation,&params).unwrap(),expected);
         }
+    }
+}
+
+#[cfg(test)]
+mod sites21f_regression {
+    use super::*;
+    fn wire(id:&str,mutation:Value)->Value {
+        json!({"requestId":id,"expectedIdentity":identity(),"profile":{
+            "language":"zh-CN","deviceId":"fixture-device","userAgent":"Mozilla/5.0 Chrome/140.0.0.0",
+            "userAgentClientHints":"\"Chromium\";v=\"140\"","platformClientHint":"\"Windows\""},"id":"site/a?b#c%","mutation":mutation})
+    }
+    fn write(id:&str,mutation:Value)->SitesSettingsRequest {serde_json::from_value(wire(id,mutation)).unwrap()}
+    fn environment()->Value {json!({"operation":"environment","remove":["OLD"],"set_values":[{"is_secret":true,"key":"secret-key","type":"envvar","value":"fixture-secret-value"}]})}
+    fn snapshot()->Value {json!({"entries":[{"is_secret":true,"key":"secret-key","type":"envvar","value":null}],"project_id":"site/a?b#c%","revision":1.5,"updated_at":null,"requires_secrets":true})}
+    fn response(body:Value)->FakeTransport {let transport=FakeTransport::new(&[200]);transport.responses.lock().unwrap()[0].body=serde_json::to_vec(&body).unwrap();transport}
+    #[tokio::test]
+    async fn sites_title_and_environment_use_fixed_post_exact_source_body_and_raw_response() {
+        for (mutation,body,suffix,expected) in [
+            (json!({"operation":"title","title":"  新标题  "}),json!({"title":"服务端标题","updated_at":"2026-11-07T00:00:00Z","extra":"preserved"}),"metadata",json!({"title":"新标题"})),
+            (environment(),snapshot(),"environment",json!({"remove":["OLD"],"set_values":[{"is_secret":true,"key":"secret-key","type":"envvar","value":"fixture-secret-value"}]})),
+        ] {
+            let service=ChatgptService::default();let transport=response(body.clone());let result=service.sites_settings_with(write("write",mutation),share_rpc,&transport).await.unwrap();
+            assert_eq!(result.body,body);assert_eq!(result.identity,identity());
+            let sent=transport.requests.lock().unwrap();assert_eq!(sent.len(),1);assert_eq!(sent[0].method,HttpMethod::Post);assert_eq!(sent[0].url,format!("https://chatgpt.com/backend-api/websites/site%2Fa%3Fb%23c%25/{suffix}"));assert_eq!(sent[0].headers["Content-Type"],"application/json");assert!(sent[0].headers.contains_key("Authorization"));assert!(sent[0].headers.contains_key("ChatGPT-Account-Id"));assert_eq!(serde_json::from_slice::<Value>(&sent[0].body).unwrap(),expected);
+        }
+    }
+    #[tokio::test]
+    async fn sites_settings_invalid_fields_fail_before_auth_and_do_not_expose_values() {
+        for mutation in [json!({"operation":"title","title":" \t "}),json!({"operation":"environment","remove":[],"set_values":[{"is_secret":false,"key":"  ","type":"envvar","value":"fixture-private"}]}),json!({"operation":"environment","remove":[],"set_values":[{"is_secret":false,"key":"A","type":"envvar","value":"1"},{"is_secret":true,"key":"A","type":"envvar","value":"fixture-private"}]}),json!({"operation":"environment","remove":[],"set_values":[{"is_secret":true,"key":"A","type":"url","value":"fixture-private"}]}),json!({"operation":"title","title":"x".repeat(256*1024+1)})] {
+            let service=ChatgptService::default();let transport=FakeTransport::new(&[]);let error=service.sites_settings_with(write("invalid",mutation),|_,_|std::future::ready(Err("auth must not run".into())),&transport).await.err().unwrap();assert_eq!(error.code,"invalid_request");assert!(!error.message.contains("fixture-private"));assert!(transport.requests.lock().unwrap().is_empty());
+        }
+        let mut request=write("bad-id",json!({"operation":"title","title":"valid"}));request.id="..".into();assert_eq!(ChatgptService::default().sites_settings_with(request,|_,_|std::future::ready(Err("must not auth".into())),&FakeTransport::new(&[])).await.err().unwrap().code,"invalid_request");
+        let mut invalid_profile=write("invalid-profile",json!({"operation":"title","title":"valid"}));invalid_profile.profile.device_id="fixture\r\nInjected: private".into();
+        assert_eq!(ChatgptService::default().sites_settings_with(invalid_profile,|_,_|std::future::ready(Err("auth must not run".into())),&FakeTransport::new(&[])).await.err().unwrap().code,"invalid_request");
+        assert!(serde_json::from_value::<SitesSettingsRequest>(wire("unknown-field",json!({"operation":"title","title":"valid","slug":"unproven"}))).is_err());
+    }
+    #[tokio::test]
+    async fn sites_settings_preserve_raw_keys_empty_literal_values_and_title_ui_only_limit() {
+        let service=ChatgptService::default();let transport=response(snapshot());let mutation=json!({"operation":"environment","remove":[],"set_values":[{"is_secret":false,"key":"A","type":"envvar","value":""},{"is_secret":false,"key":"a","type":"envvar","value":"<REDACTED>"},{"is_secret":true,"key":" A ","type":"envvar","value":"new"}]});service.sites_settings_with(write("raw-values",mutation),share_rpc,&transport).await.unwrap();
+        let sent=transport.requests.lock().unwrap();let body:Value=serde_json::from_slice(&sent[0].body).unwrap();assert_eq!(body["set_values"][0]["value"],"");assert_eq!(body["set_values"][1]["value"],"<REDACTED>");assert_eq!(body["set_values"][2]["key"]," A ");drop(sent);
+        let title="a".repeat(101);let transport=response(json!({"title":title,"updated_at":"now"}));service.sites_settings_with(write("long-title",json!({"operation":"title","title":title})),share_rpc,&transport).await.unwrap();
+    }
+    #[tokio::test]
+    async fn sites_settings_bad_success_is_unknown_and_never_retried() {
+        for (mutation,body) in [
+            (json!({"operation":"title","title":"new"}),json!({"title":"new"})),
+            (environment(),json!({"project_id":"other","entries":[],"revision":1,"updated_at":null})),
+            (environment(),json!({"project_id":"site/a?b#c%","entries":[],"updated_at":null})),
+            (environment(),json!({"project_id":"site/a?b#c%","entries":[{"key":"A","is_secret":true,"type":"envvar"}],"revision":1,"updated_at":null})),
+        ] {let service=ChatgptService::default();let transport=response(body);assert_eq!(service.sites_settings_with(write("bad-success",mutation),share_rpc,&transport).await.err().unwrap().code,"sites_settings_unknown");assert_eq!(transport.requests.lock().unwrap().len(),1);}
+        let service=ChatgptService::default();let transport=FakeTransport::new(&[200]);transport.responses.lock().unwrap()[0].body=b"not JSON".to_vec();assert_eq!(service.sites_settings_with(write("bad-json",environment()),share_rpc,&transport).await.err().unwrap().code,"sites_settings_unknown");
+    }
+    #[tokio::test]
+    async fn sites_settings_known_4xx_errors_are_static_and_do_not_retry_or_leak_remote_body() {
+        for (status,code) in [(400,"environment_requires_secrets"),(422,"invalid_secret_name"),(403,"regional_environment_unavailable")] {
+            let service=ChatgptService::default();let transport=FakeTransport::new(&[status,200]);transport.responses.lock().unwrap()[0].body=serde_json::to_vec(&json!({"detail":{"type":code,"key":"private-key","value":"fixture-private"}})).unwrap();let error=service.sites_settings_with(write("known-error",environment()),share_rpc,&transport).await.err().unwrap();assert_eq!(error.code,code);assert_eq!(error.status,Some(status));assert!(!error.message.contains("fixture-private"));assert!(!error.message.contains("private-key"));assert_eq!(transport.requests.lock().unwrap().len(),1);
+        }
+        for status in [401,403,409,429,500] {let service=ChatgptService::default();let transport=FakeTransport::new(&[status,200]);let error=service.sites_settings_with(write("http-error",environment()),share_rpc,&transport).await.err().unwrap();if status==500{assert_eq!(error.code,"sites_settings_unknown");}assert_eq!(transport.requests.lock().unwrap().len(),1);}
+    }
+    #[tokio::test]
+    async fn sites_settings_policy_and_pre_cancel_stop_writes_and_sent_cancel_is_unknown() {
+        let service=ChatgptService::default();service.cancel("pre-cancel");let transport=FakeTransport::new(&[]);assert_eq!(service.sites_settings_with(write("pre-cancel",environment()),share_rpc,&transport).await.err().unwrap().code,"cancelled");assert!(transport.requests.lock().unwrap().is_empty());
+        let denied=|method,params|if method=="configRequirements/read"{std::future::ready(Ok(json!({"requirements":{"application":{"network":{"enabled":true,"domains":{}}}}})))}else{share_rpc(method,params)};
+        assert_eq!(service.sites_settings_with(write("policy",environment()),denied,&transport).await.err().unwrap().code,"network_restricted");assert!(transport.requests.lock().unwrap().is_empty());
+        let service=Arc::new(ChatgptService::default());let transport=Arc::new(FakeTransport{delay_ms:100,..response(snapshot())});let task={let service=service.clone();let transport=transport.clone();tokio::spawn(async move{service.sites_settings_with(write("sent-cancel",environment()),share_rpc,transport.as_ref()).await})};while !transport.entered.load(Ordering::SeqCst){tokio::task::yield_now().await;}service.cancel("sent-cancel");assert_eq!(task.await.unwrap().err().unwrap().code,"sites_settings_unknown");assert_eq!(transport.requests.lock().unwrap().len(),1);
+    }
+    #[tokio::test]
+    async fn sites_settings_single_flight_is_scoped_to_site_and_field() {
+        let service=Arc::new(ChatgptService::default());let transport=Arc::new(FakeTransport{delay_ms:100,..response(snapshot())});let task={let service=service.clone();let transport=transport.clone();tokio::spawn(async move{service.sites_settings_with(write("first",environment()),share_rpc,transport.as_ref()).await})};while !transport.entered.load(Ordering::SeqCst){tokio::task::yield_now().await;}
+        let duplicate=service.sites_settings_with(write("duplicate",environment()),share_rpc,&FakeTransport::new(&[])).await.err().unwrap();assert_eq!(duplicate.code,"busy");
+        let other=response(json!({"title":"other","updated_at":"now"}));service.sites_settings_with(write("other-field",json!({"operation":"title","title":"other"})),share_rpc,&other).await.unwrap();task.await.unwrap().unwrap();assert_eq!(other.requests.lock().unwrap().len(),1);assert!(service.site_settings_active.lock().unwrap().is_empty());
+    }
+    #[tokio::test]
+    async fn sites_settings_identity_and_completion_checks_prevent_success_after_write() {
+        struct Invalidate<'a>(&'a ChatgptService);
+        impl Transport for Invalidate<'_>{fn send(&self,_:HttpRequest,_:Arc<AtomicBool>)->TransportFuture<'_>{Box::pin(async move{self.0.invalidate();Ok(HttpResponse{status:200,headers:BTreeMap::new(),body:br#"{"title":"new","updated_at":"now"}"#.to_vec()})})}}
+        let service=ChatgptService::default();assert_eq!(service.sites_settings_with(write("identity",json!({"operation":"title","title":"new"})),share_rpc,&Invalidate(&service)).await.err().unwrap().code,"account_changed");
+        let service=ChatgptService::default();let calls=AtomicUsize::new(0);let rpc=|method,params|if method=="configRequirements/read"{let completed=calls.fetch_add(1,Ordering::SeqCst)>0;std::future::ready(Ok(if completed{json!({"requirements":{"application":{"network":{"enabled":true,"domains":{}}}}})}else{json!({"requirements":null})}))}else{share_rpc(method,params)};
+        let transport=response(snapshot());assert_eq!(service.sites_settings_with(write("completion-policy",environment()),rpc,&transport).await.err().unwrap().code,"sites_settings_unknown");assert_eq!(transport.requests.lock().unwrap().len(),1);
     }
 }
 
