@@ -143,6 +143,7 @@ import { HotkeyWindow } from "./components/HotkeyWindow";
 import { ImagesView } from "./components/ImagesView";
 import { GptsView } from "./components/GptsView";
 import { SitesView } from "./components/SitesView";
+import { parseSitesLocation, type SitesNavigation } from "./sitesNavigation";
 import { LibraryView, type LibraryNavigation } from "./components/LibraryView";
 import { LibraryCleanupView } from "./components/LibraryCleanupView";
 import { CloudEnvironmentsView } from "./components/CloudEnvironmentsView";
@@ -328,13 +329,19 @@ export const App: React.FC = () => {
   const [threadEventsReady, setThreadEventsReady] = useState(false);
   const promptStorageKey = isQuickChatWindow ? "codex_quick_chat_prompt_drafts_v1" : threadWindowId ? `codex_thread_window_drafts_v1:${threadWindowId}` : "codex_composer_prompt_drafts_v1";
   // Primary Route & Shell Layout State
-  const [activeRoute, commitActiveRoute] = useState<MainViewRoute>(() => window.location.pathname === "/code-review" ? "code-review" : "home");
+  const [activeRoute, commitActiveRoute] = useState<MainViewRoute>(() => window.location.pathname === "/code-review" ? "code-review" : parseSitesLocation(window.location.href) ? "sites" : "home");
   const [libraryCleanupTab, setLibraryCleanupTab] = useState<"all" | "images" | null>(null);
   const [libraryNavigation, setLibraryNavigation] = useState<LibraryNavigation | null>(null);
   const libraryNavigationRef = useRef<LibraryNavigation | null>(null);
   const updateLibraryNavigation = useCallback((navigation: LibraryNavigation | null) => {
     libraryNavigationRef.current = navigation;
     setLibraryNavigation(navigation);
+  }, []);
+  const [sitesNavigation, setSitesNavigation] = useState<SitesNavigation | null>(null);
+  const sitesNavigationRef = useRef<SitesNavigation | null>(null);
+  const updateSitesNavigation = useCallback((navigation: SitesNavigation | null) => {
+    sitesNavigationRef.current = navigation;
+    setSitesNavigation(navigation);
   }, []);
   const [remotePullRequestUrl, setRemotePullRequestUrl] = useState(() => window.location.pathname === "/code-review"
     ? new URLSearchParams(window.location.hash.slice(1)).get("pullRequest") ?? "" : "");
@@ -355,6 +362,26 @@ export const App: React.FC = () => {
     setRemotePullRequestUrl(parseRemotePullRequestUrl(url).url);
     setActiveRoute("code-review");
   };
+  useEffect(() => {
+    const onSitesPopState = () => {
+      if (parseSitesLocation(window.location.href)) setActiveRoute("sites");
+      else if (activeRouteRef.current === "sites") setActiveRoute("home");
+    };
+    window.addEventListener("popstate", onSitesPopState);
+    return () => window.removeEventListener("popstate", onSitesPopState);
+  }, [setActiveRoute]);
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (activeRoute === "sites" && !parseSitesLocation(url)) {
+      url.pathname = "/sites";
+      url.searchParams.delete("view");
+      window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+    } else if (activeRoute !== "sites" && parseSitesLocation(url)) {
+      url.pathname = "/";
+      url.searchParams.delete("view");
+      window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+    }
+  }, [activeRoute]);
   useEffect(() => {
     if (activeRoute === "code-review") {
       const hash = remotePullRequestUrl ? `#${new URLSearchParams({ pullRequest: remotePullRequestUrl })}` : "";
@@ -386,11 +413,18 @@ export const App: React.FC = () => {
   const { canGoBack, canGoForward } = useMemo(() => {
     const history = routeHistoryRef.current;
     return {
-      canGoBack: (activeRoute === "library" && !libraryCleanupTab && libraryNavigation?.canGoBack) || history.index > 0,
-      canGoForward: (activeRoute === "library" && !libraryCleanupTab && libraryNavigation?.canGoForward) || history.index < history.entries.length - 1,
+      canGoBack: (activeRoute === "library" && !libraryCleanupTab && libraryNavigation?.canGoBack) || (activeRoute === "sites" && sitesNavigation?.canGoBack) || history.index > 0,
+      canGoForward: (activeRoute === "library" && !libraryCleanupTab && libraryNavigation?.canGoForward) || (activeRoute === "sites" && sitesNavigation?.canGoForward) || history.index < history.entries.length - 1,
     };
-  }, [routeHistoryVersion, activeRoute, libraryCleanupTab, libraryNavigation]);
+  }, [routeHistoryVersion, activeRoute, libraryCleanupTab, libraryNavigation, sitesNavigation]);
   const navigateRouteHistory = useCallback((direction: -1 | 1): void => {
+    if (activeRouteRef.current === "sites") {
+      const navigation = sitesNavigationRef.current;
+      if (direction < 0 ? navigation?.canGoBack : navigation?.canGoForward) {
+        if (direction < 0) navigation!.back(); else navigation!.forward();
+        return;
+      }
+    }
     if (activeRouteRef.current === "library") {
       const navigation = libraryNavigationRef.current;
       if (direction < 0 ? navigation?.canGoBack : navigation?.canGoForward) {
@@ -5498,9 +5532,9 @@ export const App: React.FC = () => {
             </div>
           </div>
         ) : activeRoute === "sites" ? (
-          <div className="full-route-view">
-            <div className="full-route-container">
-              <SitesView />
+          <div className="full-route-view sites-route-view">
+            <div className="full-route-container sites-route-container">
+              <SitesView onNavigationChange={updateSitesNavigation} />
             </div>
           </div>
         ) : activeRoute === "library" ? (

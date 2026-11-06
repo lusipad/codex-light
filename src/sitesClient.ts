@@ -1,0 +1,93 @@
+import { readChatgptService, readSitesMetadata, readSiteAsset, writeSitePin, serviceIdentity, shareAccessBootstrap, serviceErrorMessage, type ServiceIdentity, type SiteAssetRef } from "./chatgptService";
+import { parseSitesAccess, parseSitesPage, parseSite, parseSiteDomains, parseSiteEnvironment, type SiteRecord, type SitesAccess, type SiteDomain, type SiteEnvironment } from "./sitesService";
+
+export interface SitesClientAccess extends SitesAccess { identity: ServiceIdentity; pinned: boolean; collectionPreview: boolean }
+export type SitesListKind = "owned" | "shared" | "pinned";
+export interface SitesClientPage { items: SiteRecord[]; cursor: string | null; assets: SiteAssetRef[] }
+const object = (value: unknown): value is Record<string, any> => value !== null && typeof value === "object" && !Array.isArray(value);
+async function confirmIdentity(identity: ServiceIdentity, signal: AbortSignal) {
+  signal.throwIfAborted(); const current = await serviceIdentity(signal);
+  if (current.accountId !== identity.accountId || current.userId !== identity.userId || current.generation !== identity.generation) throw Error("读取期间账号发生变化，请重试。");
+}
+export async function readSitesAccess(signal: AbortSignal): Promise<SitesClientAccess> {
+  const identity = await serviceIdentity(signal), bootstrap = await shareAccessBootstrap(identity, signal);
+  signal.throwIfAborted();
+  if (!object(bootstrap) || typeof bootstrap.statsigPayload !== "string") throw Error("无法读取站点访问权限。");
+  const payload = JSON.parse(bootstrap.statsigPayload);
+  if (!object(payload) || payload.user?.userID !== identity.userId || payload.user?.customIDs?.account_id !== identity.accountId || !object(payload.feature_gates)
+    || payload.has_updates !== true || payload.is_delta === true || payload.isDelta === true || payload.live_overlay != null || ![undefined, "init-v1", "init-v2"].includes(payload.response_format)) throw Error("站点权限快照不完整或与当前账号不符。");
+  const gate = (key: string, required = false) => {
+    let hash = 0; for (let index = 0; index < key.length; index++) hash = (Math.imul(hash, 31) + key.charCodeAt(index)) >>> 0;
+    const entry = payload.feature_gates[key] ?? payload.feature_gates[String(hash)], value = entry?.[payload.response_format === "init-v2" ? "v" : "value"];
+    if ((required || value !== undefined) && typeof value !== "boolean") throw Error("站点访问资格尚未确认。");
+    return value === true;
+  };
+  const enabledGate = gate("637432221", true), sharing = gate("476199071"), pinned = gate("1425956883");
+  const access: SitesClientAccess = { identity, enabled: false, workspace: false, editable: false, pinned: false, collectionPreview: gate("1498265771") };
+  if (enabledGate) {
+    const entry = await readChatgptService("sites_entry_access", {}, identity, signal);
+    if (!object(entry) || typeof entry.enabled !== "boolean") throw Error("站点入口资格返回无效。");
+    access.enabled = entry.enabled;
+    if (entry.enabled && sharing) {
+      const capabilities = parseSitesAccess(await readChatgptService("sites_access", {}, identity, signal));
+      access.workspace = capabilities.enabled && capabilities.workspace;
+      access.editable = capabilities.editable;
+    }
+    access.pinned = entry.enabled && pinned;
+  }
+  await confirmIdentity(identity, signal); return access;
+}
+function requireAccess(access: SitesClientAccess) { if (!access.enabled) throw Error("当前账号不可使用站点。"); }
+export async function readSitesPage(access: SitesClientAccess, kind: SitesListKind, query: string, cursor: string | null, signal: AbortSignal, seenCursors: readonly string[] = []): Promise<SitesClientPage> {
+  requireAccess(access);
+  if (kind === "pinned" && !access.pinned || kind === "shared" && !access.workspace && !access.editable) throw Error("当前账号不可读取此站点目录。");
+  const operation = kind === "pinned" ? "sites_pinned" : kind === "shared" && access.workspace ? "sites_shared" : "sites_list";
+  const search = query.trim().toLowerCase();
+  const params = operation === "sites_list" ? { limit: 20, include_editable: kind === "shared", ...(cursor !== null ? { after: cursor } : kind === "shared" ? { after: "sites-shared-projects:" } : {}) }
+    : { limit: 20, ...(cursor !== null ? { after: cursor } : {}), ...(search ? { query: search } : {}) };
+  let result;
+  try { result = await readSitesMetadata(operation, params, access.identity, signal); }
+  catch (error) {
+    if (kind === "shared" && !access.workspace && cursor === null && (error as { status?: number })?.status === 400)
+      throw Object.assign(Error("当前服务不支持共享站点列表。"), { code: "shared_fallback_unavailable", status: 400 });
+    throw error;
+  }
+  const page = parseSitesPage(result.body);
+  if (page.cursor !== null && (page.cursor === cursor || seenCursors.includes(page.cursor))) throw Error("站点服务返回了重复分页游标，请刷新后重试。");
+  await confirmIdentity(access.identity, signal);
+  return { ...page, items: kind === "shared" && !access.workspace ? page.items.filter(site => site.role !== "owner") : page.items, assets: result.assets };
+}
+export async function readSiteDetail(access: SitesClientAccess, id: string, signal: AbortSignal): Promise<{ site: SiteRecord; assets: SiteAssetRef[] }> {
+  requireAccess(access); const result = await readSitesMetadata("sites_detail", { id }, access.identity, signal), site = parseSite(result.body);
+  if (site.id !== id) throw Error("站点详情与请求不符。");
+  await confirmIdentity(access.identity, signal); return { site, assets: result.assets };
+}
+export async function readSiteSettings(access: SitesClientAccess, id: string, signal: AbortSignal): Promise<{ environment: SiteEnvironment[] | null; domains: SiteDomain[] | null; errors: Record<string, string> }> {
+  requireAccess(access); const result: { environment: SiteEnvironment[] | null; domains: SiteDomain[] | null; errors: Record<string, string> } = { environment: null, domains: null, errors: {} };
+  await Promise.all((["environment", "domains"] as const).map(async kind => {
+    try { const body = await readChatgptService(kind === "environment" ? "sites_environment" : "sites_domains", { id }, access.identity, signal);
+      if (kind === "environment") result.environment = parseSiteEnvironment(body, id); else result.domains = parseSiteDomains(body, id);
+    } catch (error) { signal.throwIfAborted(); result.errors[kind] = serviceErrorMessage(error); }
+  }));
+  await confirmIdentity(access.identity, signal); return result;
+}
+export async function readSiteScreenshot(ref: SiteAssetRef, access: SitesClientAccess, signal: AbortSignal): Promise<string> {
+  requireAccess(access); const result = await readSiteAsset(ref, access.identity, signal); await confirmIdentity(access.identity, signal); return result;
+}
+export async function readSitePin(access: SitesClientAccess, id: string, signal: AbortSignal): Promise<boolean> {
+  requireAccess(access); if (!access.pinned) throw Error("当前账号不可置顶站点。");
+  const body = await readChatgptService("sites_pin", { id }, access.identity, signal);
+  if (!object(body) || (body.project_id !== undefined && body.project_id !== id) || typeof body.is_pinned !== "boolean") throw Error("站点置顶状态无效。");
+  await confirmIdentity(access.identity, signal); return body.is_pinned;
+}
+export async function setSitePinned(access: SitesClientAccess, id: string, pinned: boolean, signal: AbortSignal): Promise<boolean> {
+  requireAccess(access); if (!access.pinned) throw Error("当前账号不可置顶站点。");
+  await confirmIdentity(access.identity, signal);
+  try {
+    const response = await writeSitePin(id, pinned, access.identity, signal);
+    if (response.project_id !== id || response.is_pinned !== pinned) throw Error("服务返回的站点置顶状态不符。");
+    const actual = await readSitePin(access, id, signal);
+    if (actual !== pinned) throw Error("站点置顶状态尚未确认。");
+    return actual;
+  } catch (cause) { throw Object.assign(Error("站点置顶结果未确认，请读取当前状态后再操作。"), { code: "site_pin_unconfirmed", cause }); }
+}

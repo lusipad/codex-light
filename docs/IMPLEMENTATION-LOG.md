@@ -2185,3 +2185,10 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 - 四个实际下载文件核API size/digest、SHA256SUMS、ZIP成员及五许可精确tag blob，退出0；便携EXE SHA256 426a080b44a410540fd994c647286f9b432aa809184f25cdf75a5f93b92590b8。未运行下载EXE。证据`.ref/releases/v0.2.0-preview.7/verification.json`；[发布页](https://github.com/lusipad/codex-desktop-native/releases/tag/v0.2.0-preview.7)。不把发布当全软件1:1或用户验收。
 - 22E最终668输入稳定：563全库Rust零失败/忽略/过滤，75前端，完整非Fast330段/32探针和当前原生debug构建全部退出0。生产EXE设置快捷键→Unicode搜索→Codex云端入口、Explore独立入口及两处真实未登录重试、退出和0会话通过；SHA256 884effe0eb79e4827b2d0f2c1b6d5c820019bbe425d3c2292de2132f75456d63。正常原生组件中止记录及HTTP/IME/像素/用户验收缺口保留，完整写链继续待实现。
 - 21E Sites开发前fresh108资源、1170定位、350中文、13真实export、hash/UTF16往返0错误已完成，只新增[详细规格](antigravity/specs/21E-sites.md)，未修改Sites产品。后续按完整权限、目录/详情/创建编辑发布、设置写链和子页推进，不因本轮只读合同收窄原目标。
+
+## 2026-11-07 — 21E Sites目录、设置路由与置顶开发
+
+- 按固定官方入口、能力和动作补证接入真实目录/摘要/截图grant，条件页签、分页和搜索、列表/网格、独立设置URL以及真实环境/DNS只读；复用现有服务身份、header、菜单和App导航，不新增依赖。
+- 置顶使用独立写桥与GET读回，未知结果禁止重放，只允许显式GET恢复；账号/取消/卸载隔离、源请求授权、秘密遮罩保留。缓存分页控制器、旧finally解锁、跨目录/分页截图和all共享搜索均补真实红绿，组件24组和客户端14组通过。
+- 网格容器移至父节点的最小修复依据规范与源码；CUA重置仍无法绑定浏览器，未报告宽窄/像素通过。fixture服务已停，异常创建的本轮空白tab清理未确认。完整标准、全库和原生构建结果及剩余完整写链见[21E阶段记录](antigravity/acceptance/21E-sites.md)。
+- 最终674输入稳定，全库572零失败/忽略/过滤、累计前端79、完整非Fast333段/32协议探针及原生debug构建退出0。当前EXE SHA256 f90b17e3b497ab9ebd10ada2aaaebd11670f21b1be097bfdb7dd769f212facf0；私有配置下探索入口、/sites实际URL、真实未登录重试、正常退出和0会话通过，正常数据/菜单原生、浏览器宽窄、HTTP/IME/像素/用户验收仍缺。

@@ -97,6 +97,9 @@ try {
   Invoke-Step "GPT metadata and restriction decoding regression" { node scripts/verify-gpts-data.mjs }
   Invoke-Step "GPT direct access and read contracts regression" { node scripts/verify-gpts-read.mjs }
   Invoke-Step "Sites authenticated catalog and readonly settings regression" { node scripts/verify-sites-service.mjs }
+  Invoke-Step "Sites current data contract" { node scripts/verify-sites-data.mjs }
+  Invoke-Step "Sites authenticated read and pin contract" { node scripts/verify-sites-read.mjs }
+  Invoke-Step "Sites route and host navigation regression" { node scripts/verify-sites-navigation.mjs }
   Invoke-Step "Codex Cloud authenticated configuration regression" { node scripts/verify-cloud-environments.mjs }
   Invoke-Step "Codex Cloud current access contract" { node scripts/verify-cloud-environment-access.mjs }
   Invoke-Step "Codex Cloud settings data contract" { node scripts/verify-cloud-environment-data.mjs }

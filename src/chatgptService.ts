@@ -20,7 +20,7 @@ export interface ReviewProviderPreferences {
 }
 export type ServiceOperation = "library_favorites" | "library_nodes" | "library_directory_path" | "library_file" | "library_file_content" | "library_suggested" | "library_images" | "library_settings" | "library_image" | "storage_usage" | "images_init" | "images_styles" |
   "images_recent" | "images_workspace_settings" | "images_asset" | "gpts_discovery" | "gpts_category" | "gpts_search" | "gpts_detail" | "gpts_about" | "gpts_avatar" | "gpts_workspace_settings" | "cloud_workspace_settings" |
-  "sites_access" | "sites_list" | "sites_shared" | "sites_detail" | "sites_environment" | "sites_domains" | "sites_share_access" | "github_repository" |
+  "sites_entry_access" | "sites_pinned" | "sites_pin" | "sites_asset" | "sites_access" | "sites_list" | "sites_shared" | "sites_detail" | "sites_environment" | "sites_domains" | "sites_share_access" | "github_repository" |
   "share_accounts" | "share_users" | "share_groups" | "wham_usage" | "account_me" | "profile_identity" | "profile_page";
 
 function browserProfile() {
@@ -115,6 +115,48 @@ export async function readGptsMetadata(
     keys.add(ref.assetKey);
   }
   return { body, assets: result.gptAssets };
+}
+
+export interface SiteAssetRef { assetKey: string; sourceRequestId: string; id: string }
+
+export async function readSitesMetadata(
+  operation: "sites_list" | "sites_shared" | "sites_pinned" | "sites_detail", params: Record<string, unknown>,
+  identity: ServiceIdentity, signal: AbortSignal,
+): Promise<{ body: unknown; assets: SiteAssetRef[] }> {
+  signal.throwIfAborted();
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; body: unknown; siteAssets?: unknown }>(
+    "chatgpt_service_read", requestId,
+    { request: { requestId, operation, params, expectedIdentity: identity, profile: browserProfile() } }, signal,
+  );
+  const body = responseBody(result, requestId, identity);
+  if (!Array.isArray(result.siteAssets)) throw Error("站点截图引用缺失，请重试。");
+  const keys = new Set<string>();
+  const valid = (value: unknown) => typeof value === "string" && value.length > 0 && value.length <= 4096 && !/[\u0000-\u001f\u007f-\u009f]/u.test(value);
+  for (const ref of result.siteAssets) {
+    if (!ref || typeof ref !== "object" || Array.isArray(ref) || !valid(ref.assetKey) || !valid(ref.id)
+      || ref.sourceRequestId !== requestId || keys.has(ref.assetKey)) throw Error("站点截图引用无效，请重试。");
+    keys.add(ref.assetKey);
+  }
+  return { body, assets: result.siteAssets };
+}
+
+export async function readSiteAsset(ref: SiteAssetRef, identity: ServiceIdentity, signal: AbortSignal): Promise<string> {
+  const body = await readChatgptService("sites_asset", { asset_key: ref.assetKey, source_request_id: ref.sourceRequestId }, identity, signal) as { dataUrl?: unknown };
+  if (typeof body?.dataUrl !== "string" || body.dataUrl.length > 12 * 1024 * 1024 || !/^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/u.test(body.dataUrl)) throw Error("站点截图无效，请重试。");
+  return body.dataUrl;
+}
+
+export async function writeSitePin(id: string, pinned: boolean, identity: ServiceIdentity, signal: AbortSignal): Promise<{ project_id: string; is_pinned: boolean }> {
+  signal.throwIfAborted();
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; body: unknown }>(
+    "chatgpt_service_site_pin", requestId,
+    { request: { requestId, id, pinned, expectedIdentity: identity, profile: browserProfile() } }, signal,
+  );
+  const body = responseBody(result, requestId, identity) as { project_id?: unknown; is_pinned?: unknown };
+  if (body?.project_id !== id || typeof body.is_pinned !== "boolean") throw Error("置顶结果未知，请先重新读取置顶状态。");
+  return { project_id: id, is_pinned: body.is_pinned };
 }
 
 export function isImagesAssetRef(value: unknown): value is ImagesAssetRef {

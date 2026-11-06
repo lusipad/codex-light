@@ -2,6 +2,11 @@ export interface SitesAccess { enabled: boolean; workspace: boolean; editable: b
 export interface SiteRecord {
   id: string; title: string; slug: string; description: string; status: "active" | "archived" | "suspended" | "deleting";
   liveUrl: string | null; updatedAt: string; disabledBy: string | null; role: string | null;
+  hostedUrl: string | null; screenshotUrl: string | null;
+  latestEditContext: { chatgptConversationId: string | null; codexThreadId: string | null } | null;
+  owner: { name: string | null; email: string | null } | null;
+  sharing: { accessMode: string; userCount: number; groupCount: number; countsAvailable: boolean | undefined };
+  isPinned: boolean | null; raw: Record<string, unknown>;
 }
 export interface SitesPage { items: SiteRecord[]; cursor: string | null }
 export interface SiteEnvironment { key: string; secret: boolean; value: string | null }
@@ -20,8 +25,21 @@ export function parseSite(value: any): SiteRecord {
     !value.sharing || typeof value.sharing.access_mode !== "string" || !Number.isInteger(value.sharing.user_count) || !Number.isInteger(value.sharing.group_count)) throw malformed();
   const updatedAt = string(value.updated_at);
   if (!Number.isFinite(Date.parse(updatedAt))) throw malformed();
+  if ((value.is_pinned != null && typeof value.is_pinned !== "boolean") || (value.sharing.counts_available !== undefined && typeof value.sharing.counts_available !== "boolean")
+    || value.sharing.user_count < 0 || value.sharing.group_count < 0) throw malformed();
+  const context = value.latest_edit_context, owner = value.owner;
+  if ((context != null && (typeof context !== "object" || Array.isArray(context))) || (owner != null && (typeof owner !== "object" || Array.isArray(owner)))) throw malformed();
   return { id: string(value.id), title: string(value.title), slug: string(value.slug), description: optionalString(value.description) ?? "",
-    status: value.status, liveUrl: optionalString(value.live_url), updatedAt, disabledBy: optionalString(value.disabled_by), role: optionalString(value.current_user_role) };
+    status: value.status, liveUrl: optionalString(value.live_url), updatedAt, disabledBy: optionalString(value.disabled_by), role: optionalString(value.current_user_role),
+    hostedUrl: optionalString(value.hosted_url), screenshotUrl: optionalString(value.screenshot_url),
+    latestEditContext: context == null ? null : { chatgptConversationId: optionalString(context.chatgpt_conversation_id), codexThreadId: optionalString(context.codex_thread_id) },
+    owner: owner == null ? null : { name: optionalString(owner.name), email: optionalString(owner.email) },
+    sharing: { accessMode: value.sharing.access_mode, userCount: value.sharing.user_count, groupCount: value.sharing.group_count, countsAvailable: value.sharing.counts_available },
+    isPinned: value.is_pinned ?? null, raw: value };
+}
+/** The owned-list context infers owner; shared responses retain their actual role. */
+export function siteRole(site: SiteRecord, context: "owned" | "shared" | "pinned"): string | null {
+  return context === "owned" && site.role !== "editor" ? "owner" : site.role;
 }
 export function parseSitesPage(value: any): SitesPage {
   if (!Array.isArray(value?.items)) throw malformed();

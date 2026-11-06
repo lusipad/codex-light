@@ -135,3 +135,17 @@ primary **`k5n`**（真实export tv）被新列表Qt使用：
 |S-E12|640/1280+宽窗、菜单/长标题/滚动，当前Tauri|截图/DOM/焦点/Tab/Escape/中文IME、无横向溢出；官方同环境配对差异≤1物理像素，缺配对不得评分通过。|
 
 所有阶段最终需要当前源码对应构建、完整标准、受影响公共组件回归、原生实际操作与用户验收。静态资料/离线fixture通过只证明该层，不等同真实账号或1:1。未完写链与深层页面仍保留在完整目标中。
+
+## 21E 动作、设置 route 与截图认证补证（2026-11-07，仅静态来源）
+
+精确证据为 `.ref/parity/21/actual/21E-sites/verification/actions-source/contracts.json`；逐项保存完整函数/方法、原文件 SHA-256、0-based UTF-16 起止位置，native 原文件由同包重新只读提取并核 entry integrity，见同目录 `native-manifest.json`。未调用真实网络或官方 GUI；下列合同不能当运行时、像素或用户验收通过。
+
+- `primary:k5n` 的 `sf/Cre/dr/kn` **均从 shared import**，不要在 initial 同名 exported symbol 上误解。shared `pV=y2`，初始化 `y2=sites@${iet}`，`iet=openai-curated-remote`；真实插件 ID 是 `sites@openai-curated-remote`。`kR=Tun` 返回 `plugin://` 加 trim 后 ID；`IL=B4` 对 label/URL 分别 Markdown 转义。站点 mention `GO=cIn` 经 `sIn` 生成 `sites-project://` + `encodeURIComponent(projectId.trim())` 再用 `B4(title,url)` 序列化。创建中文为“使用 {sitesMention} 创建新网站”，发布为“{siteMention} 发布此站点”；均尾部空格、切 Work、仅预填、不自动发送。
+- `site-edit-route:Re` 先恢复真实未归档且非只读的 ChatGPT conversation（`/conversation/{conversation_id}`，保留 gizmo 与 promptSource）；或真实 Codex host/thread：解析 host、读取 thread/cwd、确认 recent IDs 后 resume。恢复不可用则保留完整站点 mention 与 prompt，默认“对 {siteMention} 进行以下修改：”。route `Be` 在 account_id 与当前身份不符时给切换账户说明，不能偷偷替用户切号；request signal/route/account/user 必须绑定，取消后不得晚导航。
+- 当前 `App.tsx` 的 Composer 发往 `codex app-server`，只有 text/localImage/文件 mention 的 native inputs；会话恢复是该 bridge 的 `thread/resume`，没有 Work/ChatGPT conversation 类型与其流式发送/消息渲染合同。因此普通 Codex 新线程预填文字不能宣称完成 Sites 创建/发布；它需要明确的 Work 会话类型、真实能力与插件安装上下文，以及真实 ChatGPT conversation 读取/发送/通知/取消链。可单独推进经身份与 host/cwd/recent ID 核实的现有 Codex thread 恢复，但不能将 ChatGPT conversation ID 当作 app-server thread ID。此差距仍需后续实现，不是永久删除主动作。
+- 详情不是 dialog：`appgen-site-detail-layout:At` 为 flex h-full 外壳、固定 toolbar、独立 overflow-y-auto（px-panel/pt-panel/pb-panel、md:pt-16），主体 mx-auto w-full max-w-3xl flex-col gap-6 pb-8。顶部 `Nt` 缩略图 w-26/h-15/rounded-lg，h1 text-2xl/leading-8/font-normal；下方 URL 行 text-sm/leading-5。toolbar 返回按钮中文 `appgenSiteDetail.header.sites` 的真实值为“网站”；访问与编辑键在该 locale 缺失时需登记，不能将自行翻译称官方中文。
+- browse 子导航为设置、条件分析（262557526）、数据库、条件插件（1855826876 且 owner）、已加载详情时的日程“已安排”；分析事件另受663642302约束。导航 pb-6 且 scrollable，tabpanel 有稳定 ID/可访问名称，403/404 回 Sites，禁用/未知分支按真实 redirect。设置 form gap-12，常规（名称、URL、更改）、环境/域名、危险操作区（转让、删除）分组，复用设置 row 的 split label/control 与真实错误/保存状态，不延用长详情 dialog。
+- 列表 `On` 实际用短 sharing 消息：仅自己可见、N 人、N 个群组、人员和群组、所有人、你的工作区、受限。owner_only 只在 `countsAvailable!==false` 且 accessMode=admins_only/custom 且 userCount/groupCount 都为0；countsAvailable=false 绝不能标“仅自己可见”。key 与完整中文在 contracts.json 的 translations 中。
+- 列表缩略图 `appgen-updated-at:E` h-[50px]/w-20/rounded-[6px]，img object-cover/lazy，loading/error 有独立 fallback；网格 card h-64/footer h-16，图 flex-1。实际网格 container 断点为28rem/42rem/64rem分别2/3/4列（来自原CSS），不是 viewport 断点。`j→primary:XRn` 更新时间最少1分钟，60分钟内显示分钟，24小时内小时，之后按本地日历差判断昨天，其余 month short/day numeric；不要把全部超过24小时都输出 N 天前。
+- 截图真实 `hMi` 对返回 URL 仅将边界匹配的 `/api/codex` 改成 `/wham`，调用 `Zg.fetch`→`udt`→native HTTP fetch，未传 marker 或特殊 header，缓存 INFINITE。native `ensureAbsoluteUrl` 对相对地址使用 YK（module88807:c→Xzz/nZ）拼 API base，因此生产 `/wham/...` 成 `/backend-api/wham/...`。
+- native `shouldInferCodexApiAuth` 先验证真实受允许域，再仅对 `/wham`、`/api/wham`、`/backend-api/wham`（各自自身与子路径）和 `/backend-api/estuary/content`（自身与子路径）自动附认证。其他绝对截图 URL 即便为 chatgpt.com 也不因域相同一律附认证。原函数允许部分 http/devlocalhost、OpenAI域和排除ab.的ChatGPT子域；我们 HTTPS-only、禁止devlocalhost、固定大小与重定向剥离是明确的适配边界，不能称原hMi的限制。内部 attachAuth marker 被消费，不应原样放 HTTP wire。

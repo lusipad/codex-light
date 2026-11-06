@@ -12,6 +12,7 @@ const scripts = [
   'verify-images-data.mjs', 'verify-images-assets.mjs', 'verify-images-view.mjs',
   'verify-cloud-environments.mjs', 'verify-cloud-environment-access.mjs', 'verify-cloud-environment-data.mjs',
   'verify-gpts-data.mjs', 'verify-gpts-read.mjs', 'verify-gpts-service.mjs',
+  'verify-sites-data.mjs', 'verify-sites-read.mjs', 'verify-sites-service.mjs', 'verify-sites-navigation.mjs',
   'verify-appearance-color.mjs', 'verify-system-fonts.mjs', 'verify-general-preference-select.mjs',
   'verify-settings-ui-correction.mjs', 'verify-appearance-theme-state.mjs', 'verify-appearance-theme-ui.mjs',
   'verify-general-open.mjs', 'verify-notification-settings-ui.mjs',

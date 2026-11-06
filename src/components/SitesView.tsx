@@ -1,181 +1,279 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Ellipsis, ExternalLink, Globe, Grid2X2, List, Pin, Plus, Search, X } from "lucide-react";
 import { tauriListen } from "../bridge";
-import { readChatgptService, serviceErrorMessage, serviceIdentity, type ServiceIdentity } from "../chatgptService";
-import { filterSites, mergeSites, parseSite, parseSiteDomains, parseSiteEnvironment, parseSitesAccess, parseSitesPage, safeSiteUrl,
-  type SiteDomain, type SiteEnvironment, type SiteRecord, type SitesAccess } from "../sitesService";
+import { serviceErrorMessage, type SiteAssetRef } from "../chatgptService";
+import { readSitesAccess, readSitesPage, readSiteDetail, readSiteSettings, readSiteScreenshot, readSitePin, setSitePinned,
+  type SitesClientAccess, type SitesClientPage, type SitesListKind } from "../sitesClient";
+import { filterSites, mergeSites, safeSiteUrl, siteRole, type SiteRecord } from "../sitesService";
+import { parseSitesLocation, sitesLocationUrl, type SitesLocation, type SitesNavigation } from "../sitesNavigation";
+import { LibraryStickyHeader } from "./LibraryStickyHeader";
+import { ThreadActionsMenu, type ThreadActionItem } from "./ThreadActionsMenu";
 import "./SitesView.css";
 
-type Tab = "owned" | "shared" | "all";
-interface Session { identity: ServiceIdentity; access: SitesAccess; controller: AbortController }
-interface Page { items: SiteRecord[]; cursor: string | null; loading: boolean; loaded: boolean; error: string | null; paging: boolean; pageError: string | null }
-const emptyPage = (): Page => ({ items: [], cursor: null, loading: false, loaded: false, error: null, paging: false, pageError: null });
-const statusText = { active: "活跃", archived: "已归档", suspended: "已暂停", deleting: "正在删除" };
-export const SitesView: React.FC = () => {
-  const [revision, setRevision] = useState(0);
-  const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [owned, setOwned] = useState<Page>(emptyPage);
-  const [shared, setShared] = useState<Page>(emptyPage);
-  const [tab, setTab] = useState<Tab>("owned");
-  const [query, setQuery] = useState("");
-  const [sharedRevision, setSharedRevision] = useState(0);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<"list" | "grid">(() => localStorage.getItem("sites-view-mode") === "grid" ? "grid" : "list");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [detail, setDetail] = useState<SiteRecord | null>(null);
-  const [detailError, setDetailError] = useState<string | null>(null);
-  const [environment, setEnvironment] = useState<SiteEnvironment[] | null>(null);
-  const [domains, setDomains] = useState<SiteDomain[] | null>(null);
-  const [settingsErrors, setSettingsErrors] = useState<Record<string, string>>({});
-  const [settingsLoading, setSettingsLoading] = useState(false);
-  const source = useRef<AbortController | null>(null);
-  const sharedSource = useRef<AbortController | null>(null);
-  const detailSource = useRef<AbortController | null>(null);
-  const paging = useRef(new Set<string>());
+type Page = SitesClientPage & { loaded: boolean; loading: boolean; paging: boolean; error: string | null; pageError: string | null; query: string };
+const emptyPage = (): Page => ({ items: [], cursor: null, assets: [], loaded: false, loading: false, paging: false, error: null, pageError: null, query: "" });
+const emptyPages = (): Record<SitesListKind, Page> => ({ owned: emptyPage(), shared: emptyPage(), pinned: emptyPage() });
+const rootLocation: SitesLocation = { view: "owned", siteId: null, search: "" };
+export function siteSharingText(site: SiteRecord): string {
+  const value = site.sharing;
+  if (value.accessMode === "public") return "所有人";
+  if (value.accessMode === "workspace") return "你的工作区";
+  if (value.countsAvailable === false) return "受限";
+  if (["admins_only", "custom"].includes(value.accessMode) && value.userCount === 0 && value.groupCount === 0) return "仅自己可见";
+  if (value.userCount > 0 && value.groupCount > 0) return "人员和群组";
+  if (value.groupCount > 0) return `${value.groupCount} 个群组`;
+  return `${value.userCount} 人`;
+}
+export function siteUpdatedText(updatedAt: string, now = Date.now()): string {
+  const date = new Date(updatedAt), minutes = Math.max(1, Math.floor((now - date.getTime()) / 60000));
+  if (minutes < 60) return `${minutes} 分钟前`;
+  const hours = Math.floor(minutes / 60); if (hours < 24) return `${hours} 小时前`;
+  const today = new Date(now); today.setHours(0, 0, 0, 0); const day = new Date(date); day.setHours(0, 0, 0, 0);
+  return Math.max(1, Math.round((today.getTime() - day.getTime()) / 86400000)) === 1 ? "昨天" : date.toLocaleDateString("zh-CN", { month: "short", day: "numeric" });
+}
+export function SiteScreenshot({ site, assets, access, scope }: { site: SiteRecord; assets: SiteAssetRef[]; access: SitesClientAccess; scope: AbortSignal }) {
+  const asset = assets.find(value => value.id === site.id);
+  const [image, setImage] = useState<{ key: string; url: string } | null>(null);
+  const key = JSON.stringify([access.identity, asset?.assetKey, asset?.sourceRequestId, site.screenshotUrl]);
+  useEffect(() => {
+    const controller = new AbortController(); const abort = () => { controller.abort(); setImage(null); };
+    scope.addEventListener("abort", abort, { once: true }); setImage(null);
+    if (asset && site.screenshotUrl && !scope.aborted) void readSiteScreenshot(asset, access, controller.signal).then(url => {
+      if (!controller.signal.aborted && !scope.aborted) setImage({ key, url });
+    }).catch(() => { if (!controller.signal.aborted) setImage(null); });
+    return () => { controller.abort(); scope.removeEventListener("abort", abort); };
+  }, [key, scope]);
+  return <div className="sites-screenshot">{image?.key === key && !scope.aborted ? <img src={image.url} alt="" loading="lazy" onError={() => setImage(null)} /> : <Globe size={22} aria-hidden="true" />}</div>;
+}
+interface SitesViewProps { collectionNavigation?: boolean; onNavigationChange?: (navigation: SitesNavigation | null) => void }
+export const SitesView: React.FC<SitesViewProps> = ({ collectionNavigation = false, onNavigationChange }) => {
+  const [revision, setRevision] = useState(0), [access, setAccess] = useState<SitesClientAccess | null>(null);
+  const accessRef = useRef<SitesClientAccess | null>(null);
+  const [loading, setLoading] = useState(true), [error, setError] = useState<string | null>(null), [notice, setNotice] = useState<string | null>(null);
+  const [location, setLocation] = useState<SitesLocation>(() => parseSitesLocation(window.location.href, collectionNavigation) ?? rootLocation);
+  const locationRef = useRef(location); locationRef.current = location;
+  const navIndex = useRef(0), navLength = useRef(1), [historyVersion, setHistoryVersion] = useState(0);
+  const [pages, setPages] = useState(emptyPages); const pagesRef = useRef(pages); pagesRef.current = pages;
+  const [listRevision, setListRevision] = useState(0);
+  const sources = useRef<Partial<Record<SitesListKind, AbortController>>>({});
+  const cursors = useRef<Record<SitesListKind, string[]>>({ owned: [], shared: [], pinned: [] });
+  const paging = useRef(new Set<SitesListKind>());
+  const source = useRef<AbortController | null>(null), detailSource = useRef<AbortController | null>(null);
+  const [detail, setDetail] = useState<{ site: SiteRecord; assets: SiteAssetRef[] } | null>(null), [detailError, setDetailError] = useState<string | null>(null), [detailRevision, setDetailRevision] = useState(0);
+  const [settings, setSettings] = useState<Awaited<ReturnType<typeof readSiteSettings>> | null>(null), [settingsLoading, setSettingsLoading] = useState(false);
   const settingsPending = useRef(false);
-  const dialogRef = useRef<HTMLDialogElement | null>(null);
-  const detailTrigger = useRef<HTMLButtonElement | null>(null);
-  const needShared = tab !== "owned";
-  const sharedQuery = session?.access.workspace ? query.trim() : "";
-
+  const [pins, setPins] = useState<Record<string, { value: boolean | null; pending: boolean; unconfirmed: boolean; error: string | null }>>({});
+  const pinBusy = useRef(new Set<string>()), unconfirmedPins = useRef(new Set<string>());
+  const [viewMode, setViewMode] = useState<"list" | "grid">(() => localStorage.getItem("sites-view-mode") === "grid" ? "grid" : "list");
+  const [preferenceError, setPreferenceError] = useState<string | null>(null);
+  const scroll = useRef<HTMLDivElement>(null), body = useRef<HTMLDivElement>(null), sentinel = useRef<HTMLDivElement>(null), detailHeading = useRef<HTMLHeadingElement>(null);
+  const rows = useRef(new Map<string, HTMLElement>()), restoreFocus = useRef<string | null>(null);
+  const sharedAvailable = Boolean(access?.workspace || access?.editable);
+  const kinds: SitesListKind[] = location.view === "all" ? ["owned", "shared"] : [location.view];
+  const serverQuery = location.view === "pinned" || ["shared", "all"].includes(location.view) && access?.workspace ? location.search.trim() : "";
+  const navigate = useCallback((next: SitesLocation, replace = false) => {
+    const index = replace ? navIndex.current : navIndex.current + 1;
+    if (!replace) navLength.current = index + 1;
+    navIndex.current = index;
+    window.history[replace ? "replaceState" : "pushState"]({ ...window.history.state, sitesIndex: index }, "", sitesLocationUrl(window.location.href, next, collectionNavigation));
+    locationRef.current = next; setLocation(next); setHistoryVersion(value => value + 1);
+  }, [collectionNavigation]);
+  const back = useCallback(() => window.history.back(), []), forward = useCallback(() => window.history.forward(), []);
   useEffect(() => {
-    let disposed = false;
-    const subscription = tauriListen("chatgpt-service:invalidated", () => {
-      if (disposed) return;
-      source.current?.abort(); sharedSource.current?.abort(); detailSource.current?.abort();
-      setSession(null); setOwned(emptyPage()); setShared(emptyPage()); setSelectedId(null); setRevision(value => value + 1);
-    });
-    return () => { disposed = true; void subscription.then(unlisten => unlisten()); };
-  }, []);
+    window.history.replaceState({ ...window.history.state, sitesIndex: 0 }, "", sitesLocationUrl(window.location.href, locationRef.current, collectionNavigation));
+    const pop = (event: PopStateEvent) => {
+      const next = parseSitesLocation(window.location.href, collectionNavigation); if (!next) return;
+      navIndex.current = Number.isInteger(event.state?.sitesIndex) ? event.state.sitesIndex : 0;
+      locationRef.current = next; setLocation(next); setHistoryVersion(value => value + 1);
+    };
+    window.addEventListener("popstate", pop); return () => window.removeEventListener("popstate", pop);
+  }, [collectionNavigation]);
+  useEffect(() => { onNavigationChange?.({ canGoBack: navIndex.current > 0, canGoForward: navIndex.current + 1 < navLength.current, back, forward }); }, [historyVersion, back, forward, onNavigationChange]);
+  useEffect(() => () => onNavigationChange?.(null), [onNavigationChange]);
+  const abortLists = () => Object.values(sources.current).forEach(controller => controller?.abort());
   useEffect(() => {
+    let disposed = false, unlisten: (() => void) | undefined;
     const controller = new AbortController(); source.current = controller;
-    setSession(null); setLoading(true); setError(null); setNotice(null); setOwned(emptyPage()); setShared(emptyPage()); setTab("owned"); setSelectedId(null); paging.current.clear();
+    accessRef.current = null; abortLists(); detailSource.current?.abort(); setAccess(null); setPages(emptyPages()); setDetail(null); setSettings(null); setError(null); setLoading(true); setNotice(null); setPins({});
+    pinBusy.current.clear(); unconfirmedPins.current.clear(); cursors.current = { owned: [], shared: [], pinned: [] }; paging.current.clear();
     void (async () => {
       try {
-        const identity = await serviceIdentity(controller.signal); if (controller.signal.aborted) return;
-        const access = parseSitesAccess(await readChatgptService("sites_access", {}, identity, controller.signal)); if (controller.signal.aborted) return;
-        setSession({ identity, access, controller }); setLoading(false);
-        if (!access.enabled) return;
-        setOwned({ ...emptyPage(), loading: true });
-        try {
-          const page = parseSitesPage(await readChatgptService("sites_list", { limit: 20, include_editable: false }, identity, controller.signal));
-          if (!controller.signal.aborted) setOwned({ ...emptyPage(), ...page, items: mergeSites(page.items), loaded: true });
-        } catch (cause) { if (!controller.signal.aborted) setOwned({ ...emptyPage(), error: serviceErrorMessage(cause) }); }
+        const stop = await tauriListen("chatgpt-service:invalidated", () => {
+          if (disposed) return; controller.abort(); abortLists(); detailSource.current?.abort(); accessRef.current = null;
+          setAccess(null); setPages(emptyPages()); setDetail(null); setSettings(null); setPins({}); setRevision(value => value + 1);
+        });
+        if (disposed) { stop(); return; } unlisten = stop;
+        const current = await readSitesAccess(controller.signal); if (controller.signal.aborted) return;
+        accessRef.current = current; setAccess(current); setLoading(false);
+        const selected = locationRef.current;
+        if ((!current.pinned && selected.view === "pinned") || (!(current.workspace || current.editable) && ["shared", "all"].includes(selected.view))) navigate({ ...selected, view: "owned", search: "" }, true);
       } catch (cause) { if (!controller.signal.aborted) { setError(serviceErrorMessage(cause)); setLoading(false); } }
     })();
-    return () => { controller.abort(); sharedSource.current?.abort(); detailSource.current?.abort(); };
+    return () => { disposed = true; controller.abort(); abortLists(); detailSource.current?.abort(); unlisten?.(); };
   }, [revision]);
   useEffect(() => {
-    if (!session?.access.enabled || !needShared || (!session.access.workspace && !session.access.editable)) return;
-    const controller = new AbortController(); sharedSource.current = controller;
-    paging.current.delete("shared"); setShared({ ...emptyPage(), loading: true });
-    const load = async () => {
-      try {
-        const params = session.access.workspace ? { limit: 20, ...(sharedQuery ? { query: sharedQuery } : {}) }
-          : { limit: 20, include_editable: true, after: "sites-shared-projects:" };
-        const page = parseSitesPage(await readChatgptService(session.access.workspace ? "sites_shared" : "sites_list", params, session.identity, controller.signal));
-        if (!controller.signal.aborted && !session.controller.signal.aborted) setShared({ ...emptyPage(), ...page, items: mergeSites(page.items), loaded: true });
-      } catch (cause) {
-        if (controller.signal.aborted || session.controller.signal.aborted) return;
-        if (!session.access.workspace && (cause as { status?: number })?.status === 400) {
-          setSession({ ...session, access: { ...session.access, editable: false } }); setTab("owned"); setNotice("当前服务不支持共享站点列表。");
-        } else setShared({ ...emptyPage(), error: serviceErrorMessage(cause) });
+    if (!access?.enabled) return;
+    const active: SitesListKind[] = location.view === "all" ? ["owned", "shared"] : [location.view];
+    const controllers: AbortController[] = [], timers: ReturnType<typeof setTimeout>[] = [];
+    for (const kind of active) {
+      if (kind === "shared" && !sharedAvailable || kind === "pinned" && !access.pinned) continue;
+      const search = kind === "pinned" || kind === "shared" && access.workspace ? serverQuery : "", previous = pagesRef.current[kind];
+      if (previous.loaded && previous.query === search && !previous.error) {
+        const controller = new AbortController(); sources.current[kind] = controller; controllers.push(controller);
+        paging.current.delete(kind);
+        if (previous.paging) setPages(value => ({ ...value, [kind]: { ...value[kind], paging: false } }));
+        continue;
       }
-    };
-    const timer = session.access.workspace && sharedQuery ? setTimeout(() => void load(), 300) : null;
-    if (!timer) void load();
-    return () => { if (timer) clearTimeout(timer); controller.abort(); };
-  }, [session, needShared, sharedQuery, sharedRevision]);
+      sources.current[kind]?.abort(); const controller = new AbortController(); sources.current[kind] = controller; controllers.push(controller);
+      paging.current.delete(kind); cursors.current[kind] = [];
+      setPages(value => ({ ...value, [kind]: { ...emptyPage(), loading: true, query: search } }));
+      const read = async () => {
+        try {
+          const page = await readSitesPage(access, kind, search, null, controller.signal);
+          if (controller.signal.aborted || source.current?.signal.aborted || accessRef.current !== access) return;
+          cursors.current[kind] = page.cursor ? [page.cursor] : [];
+          setPages(value => ({ ...value, [kind]: { ...emptyPage(), ...page, loaded: true, query: search } }));
+        } catch (cause) {
+          if (controller.signal.aborted || accessRef.current !== access) return;
+          if ((cause as { code?: string })?.code === "shared_fallback_unavailable") {
+            const next = { ...access, editable: false }; accessRef.current = next; setAccess(next); setNotice(serviceErrorMessage(cause)); navigate({ ...locationRef.current, view: "owned", search: "" }, true);
+          } else setPages(value => ({ ...value, [kind]: { ...emptyPage(), query: search, error: serviceErrorMessage(cause) } }));
+        }
+      };
+      if (search && (kind === "pinned" || kind === "shared" && access.workspace)) timers.push(setTimeout(() => void read(), 300)); else void read();
+    }
+    return () => { timers.forEach(clearTimeout); controllers.forEach(controller => controller.abort()); };
+  }, [access, location.view, serverQuery, sharedAvailable, listRevision]);
+  const loadMore = async (kind: SitesListKind) => {
+    const current = accessRef.current, controller = sources.current[kind], page = pagesRef.current[kind];
+    if (!current?.enabled || !controller || controller.signal.aborted || !page.cursor || paging.current.has(kind)) return;
+    paging.current.add(kind); setPages(value => ({ ...value, [kind]: { ...value[kind], paging: true, pageError: null } }));
+    try {
+      const next = await readSitesPage(current, kind, page.query, page.cursor, controller.signal, cursors.current[kind]);
+      if (controller.signal.aborted || source.current?.signal.aborted || accessRef.current !== current) return;
+      if (next.cursor) cursors.current[kind].push(next.cursor);
+      setPages(value => ({ ...value, [kind]: { ...value[kind], items: mergeSites(value[kind].items, next.items), cursor: next.cursor,
+        assets: [...value[kind].assets.filter(ref => !next.items.some(site => site.id === ref.id)), ...next.assets] } }));
+    } catch (cause) { if (!controller.signal.aborted && accessRef.current === current) setPages(value => ({ ...value, [kind]: { ...value[kind], pageError: serviceErrorMessage(cause) } })); }
+    finally { if (!controller.signal.aborted && accessRef.current === current) { paging.current.delete(kind); setPages(value => ({ ...value, [kind]: { ...value[kind], paging: false } })); } }
+  };
+  const visiblePages = kinds.map(kind => pages[kind]);
+  const items = mergeSites(...kinds.map(kind => kind === "shared" && access?.workspace || kind === "pinned" ? pages[kind].items : filterSites(pages[kind].items, location.search)));
+  const ready = Boolean(access?.enabled && visiblePages.every(page => page.loaded && !page.loading && !page.error));
+  const moreKinds = kinds.filter(kind => pages[kind].cursor);
+  const more = () => moreKinds.forEach(kind => { if (!pagesRef.current[kind].pageError) void loadMore(kind); });
   useEffect(() => {
-    if (!selectedId) return;
-    const dialog = dialogRef.current; dialog?.showModal();
-    return () => { dialog?.close(); detailTrigger.current?.focus(); };
-  }, [selectedId]);
-
-  const loadMore = async (kind: "owned" | "shared") => {
-    const page = kind === "owned" ? owned : shared;
-    const controller = kind === "owned" ? source.current : sharedSource.current;
-    const setPage = kind === "owned" ? setOwned : setShared;
-    if (!session || !controller || controller.signal.aborted || !page.cursor || paging.current.has(kind)) return;
-    paging.current.add(kind); setPage(value => ({ ...value, paging: true, pageError: null }));
-    try {
-      const operation = kind === "shared" && session.access.workspace ? "sites_shared" : "sites_list";
-      const params = { limit: 20, after: page.cursor, ...(operation === "sites_shared" ? (sharedQuery ? { query: sharedQuery } : {}) : { include_editable: kind === "shared" }) };
-      const next = parseSitesPage(await readChatgptService(operation, params, session.identity, controller.signal));
-      if (next.cursor === page.cursor) throw Error("服务返回了重复分页游标，请刷新后重试。");
-      if (!controller.signal.aborted && !session.controller.signal.aborted) setPage(value => ({ ...value, items: mergeSites(value.items, next.items), cursor: next.cursor }));
-    } catch (cause) { if (!controller.signal.aborted && !session.controller.signal.aborted) setPage(value => ({ ...value, pageError: serviceErrorMessage(cause) })); }
-    finally { if (!controller.signal.aborted && !session.controller.signal.aborted) { paging.current.delete(kind); setPage(value => ({ ...value, paging: false })); } }
+    const marker = sentinel.current; if (!marker || !ready || location.siteId || !moreKinds.length) return;
+    const observer = new IntersectionObserver(entries => { if (entries.some(entry => entry.isIntersecting)) more(); }, { root: scroll.current, rootMargin: "240px" });
+    observer.observe(marker); return () => observer.disconnect();
+  }, [ready, location.siteId, location.view, items.length, moreKinds.map(kind => pages[kind].cursor).join(":"), visiblePages.some(page => page.paging)]);
+  const retryList = (kind: SitesListKind) => { sources.current[kind]?.abort(); setPages(value => ({ ...value, [kind]: emptyPage() })); setListRevision(value => value + 1); };
+  const readSettings = async (current: SitesClientAccess, id: string, controller: AbortController) => {
+    if (settingsPending.current) return; settingsPending.current = true; setSettingsLoading(true);
+    try { const value = await readSiteSettings(current, id, controller.signal); if (!controller.signal.aborted && accessRef.current === current) setSettings(value); }
+    finally { if (!controller.signal.aborted && accessRef.current === current) { settingsPending.current = false; setSettingsLoading(false); } }
   };
-  const openDetail = async (id: string) => {
-    if (!session || session.controller.signal.aborted) return;
-    detailSource.current?.abort(); const controller = new AbortController(); detailSource.current = controller;
-    settingsPending.current = false; setSelectedId(id); setDetail(null); setDetailError(null); setEnvironment(null); setDomains(null); setSettingsErrors({}); setSettingsLoading(false);
-    try {
-      const record = parseSite(await readChatgptService("sites_detail", { id }, session.identity, controller.signal));
-      if (record.id !== id) throw Error("站点详情身份与请求不匹配，请重试。");
-      if (!controller.signal.aborted && !session.controller.signal.aborted) setDetail(record);
-    } catch (cause) { if (!controller.signal.aborted && !session.controller.signal.aborted) setDetailError(serviceErrorMessage(cause)); }
-  };
-  const readSettings = async () => {
-    const controller = detailSource.current;
-    if (!session || !selectedId || !controller || controller.signal.aborted || settingsPending.current) return;
-    settingsPending.current = true; setSettingsLoading(true); setSettingsErrors({});
-    await Promise.all((["environment", "domains"] as const).map(async kind => {
+  useEffect(() => {
+    const id = location.siteId;
+    detailSource.current?.abort(); setDetail(null); setDetailError(null); setSettings(null); settingsPending.current = false; setSettingsLoading(false);
+    if (!id || !access?.enabled) return;
+    const controller = new AbortController(); detailSource.current = controller;
+    void (async () => {
       try {
-        const body = await readChatgptService(kind === "environment" ? "sites_environment" : "sites_domains", { id: selectedId }, session.identity, controller.signal);
-        if (controller.signal.aborted || session.controller.signal.aborted) return;
-        if (kind === "environment") setEnvironment(parseSiteEnvironment(body, selectedId)); else setDomains(parseSiteDomains(body, selectedId));
-      } catch (cause) { if (!controller.signal.aborted && !session.controller.signal.aborted) setSettingsErrors(value => ({ ...value, [kind]: serviceErrorMessage(cause) })); }
-    }));
-    if (!controller.signal.aborted && !session.controller.signal.aborted) { settingsPending.current = false; setSettingsLoading(false); }
+        const result = await readSiteDetail(access, id, controller.signal);
+        if (controller.signal.aborted || accessRef.current !== access) return;
+        setDetail(result);
+        setPages(value => Object.fromEntries(Object.entries(value).map(([kind, page]) => [kind, { ...page, items: page.items.map(site => site.id === id ? result.site : site), assets: [...page.assets.filter(ref => ref.id !== id), ...result.assets] }])) as Record<SitesListKind, Page>);
+        await readSettings(access, id, controller);
+      } catch (cause) { if (!controller.signal.aborted && accessRef.current === access) setDetailError(serviceErrorMessage(cause)); }
+    })();
+    return () => controller.abort();
+  }, [access, location.siteId, detailRevision]);
+  useLayoutEffect(() => {
+    if (location.siteId) detailHeading.current?.focus();
+    else if (restoreFocus.current) { rows.current.get(restoreFocus.current)?.querySelector<HTMLButtonElement>(".sites-row-menu-button")?.focus(); restoreFocus.current = null; }
+  }, [location.siteId]);
+  const closeSettings = () => { detailSource.current?.abort(); restoreFocus.current = location.siteId; navigate({ ...location, siteId: null }); };
+  const updatePin = async (site: SiteRecord, readOnly = false) => {
+    const current = accessRef.current, controller = source.current;
+    if (!current?.pinned || !controller || controller.signal.aborted || pinBusy.current.has(site.id) || !readOnly && unconfirmedPins.current.has(site.id)) return;
+    pinBusy.current.add(site.id); setPins(value => ({ ...value, [site.id]: { value: value[site.id]?.value ?? site.isPinned, pending: true, unconfirmed: unconfirmedPins.current.has(site.id), error: null } }));
+    try {
+      const known = pins[site.id]?.value ?? site.isPinned;
+      const value = readOnly || known === null ? await readSitePin(current, site.id, controller.signal) : await setSitePinned(current, site.id, !known, controller.signal);
+      if (controller.signal.aborted || accessRef.current !== current) return;
+      unconfirmedPins.current.delete(site.id); setPins(previous => ({ ...previous, [site.id]: { value, pending: false, unconfirmed: false, error: null } }));
+      setPages(previous => ({ ...previous, pinned: { ...emptyPage() }, owned: { ...previous.owned, items: previous.owned.items.map(item => item.id === site.id ? { ...item, isPinned: value } : item) }, shared: { ...previous.shared, items: previous.shared.items.map(item => item.id === site.id ? { ...item, isPinned: value } : item) } }));
+      setListRevision(value => value + 1);
+    } catch (cause) {
+      if (controller.signal.aborted || accessRef.current !== current) return;
+      const unknown = (cause as { code?: string })?.code === "site_pin_unconfirmed";
+      if (unknown) unconfirmedPins.current.add(site.id);
+      setPins(previous => ({ ...previous, [site.id]: { value: previous[site.id]?.value ?? site.isPinned, pending: false, unconfirmed: unknown, error: serviceErrorMessage(cause) } }));
+    } finally { if (accessRef.current === current) pinBusy.current.delete(site.id); }
   };
-  const closeDetail = () => { detailSource.current?.abort(); setSelectedId(null); };
-  const sharedAvailable = Boolean(session?.access.workspace || session?.access.editable);
-  const ownedItems = filterSites(owned.items, query);
-  const sharedItems = session?.access.workspace ? shared.items : filterSites(shared.items, query);
-  const items = tab === "owned" ? ownedItems : tab === "shared" ? sharedItems : mergeSites(ownedItems, sharedItems);
-  const pages = tab === "owned" ? [owned] : tab === "shared" ? [shared] : [owned, shared];
-  const ready = Boolean(session?.access.enabled && pages.every(page => page.loaded && !page.loading && !page.error));
-  const selectMode = (mode: "list" | "grid") => { setViewMode(mode); localStorage.setItem("sites-view-mode", mode); };
-  return <div className="sites-view-container">
-    <div className="sites-view-header"><h2>Sites</h2></div>
-    {loading && <p role="status">正在读取 Sites…</p>}
-    {error && <section><p role="alert">{error}</p><button type="button" onClick={() => setRevision(value => value + 1)}>重试</button></section>}
-    {!loading && session && !session.access.enabled && <p role="status">当前账号不可使用 Sites。</p>}
-    {notice && <p role="status">{notice}</p>}
-    {session?.access.enabled && <>
-      <div className="sites-controls-bar"><div className="sites-tabs">{(["owned", "shared", "all"] as const).map(value => <button type="button" key={value} aria-pressed={tab === value} disabled={value !== "owned" && !sharedAvailable}
-        className={`sites-tab-btn ${tab === value ? "active" : ""}`} onClick={() => setTab(value)}>{value === "owned" ? "我创建的" : value === "shared" ? "共享" : "全部"}</button>)}</div>
-        <div className="sites-search-wrap"><input type="search" maxLength={256} aria-label="搜索站点" placeholder="搜索站点…" value={query} onChange={event => setQuery(event.target.value)} /></div>
-        <div className="sites-layout-toggle">{(["list", "grid"] as const).map(mode => <button type="button" key={mode} aria-pressed={viewMode === mode} className="layout-btn" onClick={() => selectMode(mode)}>{mode === "list" ? "列表" : "网格"}</button>)}</div>
+  const selectTab = (view: SitesLocation["view"]) => navigate({ view, siteId: null, search: "" });
+  const updateQuery = (search: string) => {
+    const next = { ...location, search }; if (collectionNavigation) navigate(next, true); else { locationRef.current = next; setLocation(next); }
+  };
+  const selectMode = (mode: "list" | "grid") => { setViewMode(mode); try { localStorage.setItem("sites-view-mode", mode); setPreferenceError(null); } catch { setPreferenceError("无法保存网站布局偏好。"); } };
+  const screenshot = (site: SiteRecord, assets: SiteAssetRef[]) => access && source.current ? <SiteScreenshot site={site} assets={assets} access={access} scope={source.current.signal} /> : null;
+  const searchField = <div className="sites-header-actions library-header-actions"><label className="sites-search library-search"><Search size={16} aria-hidden="true" /><input type="search" aria-label="搜索站点" placeholder="搜索站点" value={location.search} maxLength={location.view === "pinned" || ["shared", "all"].includes(location.view) && access?.workspace ? 200 : undefined} onChange={event => updateQuery(event.target.value)} />{location.search && <button type="button" aria-label="清除搜索" onClick={() => updateQuery("")}><X size={14} /></button>}</label><button type="button" className="sites-create-button" disabled title="Sites 的 Work 会话尚未接入"><Plus size={16} />创建新站点</button></div>;
+  const tabs = <div className="sites-navigation"><nav aria-label="站点视图">{([["owned", collectionNavigation ? "你的网站" : "你拥有的"], ...(access?.pinned ? [["pinned", "已置顶"]] : []), ...(sharedAvailable ? [["shared", "与你共享"], ...(collectionNavigation ? [["all", "全部"]] : [])] : [])] as [SitesLocation["view"], string][]).map(([view, label]) => <button type="button" key={view} aria-current={location.view === view ? "page" : undefined} onClick={() => selectTab(view)}>{label}</button>)}</nav><div className="sites-view-mode" role="group" aria-label="网站布局">{(["list", "grid"] as const).map(mode => <button type="button" key={mode} aria-label={mode === "list" ? "列表视图" : "网格视图"} title={mode === "list" ? "列表" : "网格"} aria-pressed={viewMode === mode} onClick={() => selectMode(mode)}>{mode === "list" ? <List size={16} /> : <Grid2X2 size={16} />}</button>)}</div></div>;
+  return <div className="sites-page"><div className="sites-scroll" ref={scroll}>
+    {location.siteId ? <div className="sites-settings-workface"><header className="sites-settings-toolbar"><button type="button" onClick={closeSettings}>← 网站</button></header><div className="sites-settings-content">
+      <div className="sites-detail-identity">{detail && screenshot(detail.site, detail.assets)}<h1 ref={detailHeading} tabIndex={-1}>{detail?.site.title ?? "站点"}</h1></div>
+      <nav className="sites-detail-tabs" aria-label="站点详情"><button type="button" aria-current="page">设置</button><button type="button" disabled title="数据库工作面尚未接入">数据库</button><button type="button" disabled title="站点日程尚未接入">已安排</button></nav>
+      {detailError && <div className="sites-state"><p role="alert">{detailError}</p><button type="button" onClick={() => setDetailRevision(value => value + 1)}>重试</button></div>}
+      {!detail && !detailError && <p className="sites-state" role="status">正在加载网站</p>}
+      {detail && <div className="sites-settings-groups"><section><h2>常规</h2><label>名称<input aria-label="站点标题" value={detail.site.title} readOnly maxLength={100} /></label><div className="sites-setting-row"><div>URL<p>{safeSiteUrl(detail.site.hostedUrl ?? detail.site.liveUrl) ?? "未发布"}</p></div><button type="button" disabled title="站点 URL 更改尚未接入">更改</button></div><div className="sites-setting-row"><div>共享设置<p>{siteSharingText(detail.site)}</p></div><button type="button" disabled title="共享设置写入尚未接入">管理</button></div></section>
+        <section><h2>环境变量</h2><p>添加网站所需的 API 密钥和其他环境变量</p>{settingsLoading && <p role="status">正在读取配置…</p>}{settings?.errors.environment && <p role="alert">{settings.errors.environment}</p>}{settings?.environment?.map(entry => <div className="sites-environment-row" key={entry.key}><code>{entry.key}</code><span>{entry.secret ? "••••••" : entry.value ?? "未设置"}</span></div>)}</section>
+        <section><h2>自定义域名</h2>{settings?.errors.domains && <p role="alert">{settings.errors.domains}</p>}{settings?.domains?.map(domain => <div className="sites-domain" key={domain.id}><h3>{domain.hostname}</h3><p>{domain.status}</p>{domain.cname && <p>CNAME：{domain.cname}</p>}{domain.ipv4.map(ip => <p key={ip}>A：{ip}</p>)}{domain.ssl && <p>SSL：{domain.ssl}</p>}{domain.error && <p role="alert">{domain.error}</p>}{domain.records.map((record, index) => <p key={index}>{record.type} {record.name} {record.value}</p>)}</div>)}</section>
+        {settings && Object.keys(settings.errors).length > 0 && <button type="button" disabled={settingsLoading} onClick={() => { if (access && location.siteId && detailSource.current) void readSettings(access, location.siteId, detailSource.current).catch(() => {}); }}>重试</button>}
+        <section><h2>危险操作区</h2><div className="sites-setting-row"><div>删除站点<p>永久删除此站点</p></div><button type="button" disabled title="站点删除尚未接入">删除站点</button></div></section>
+      </div>}
+    </div></div> : <>
+      <LibraryStickyHeader title="站点" description="将你的想法变成真实网站" newLayout scrollContainerRef={scroll} bodyRef={body} actions={searchField} navigation={tabs} />
+      <div className="sites-content" ref={body}>
+        {loading && <p className="sites-state" role="status">正在加载网站</p>}
+        {error && <div className="sites-state"><h2>无法加载站点</h2><p role="alert">{error}</p><button type="button" onClick={() => setRevision(value => value + 1)}>重试</button></div>}
+        {!loading && access && !access.enabled && <p className="sites-state" role="status">当前账号不可使用站点。</p>}
+        {notice && <p className="sites-state" role="status">{notice}</p>}{preferenceError && <p role="alert">{preferenceError}</p>}
+        {access?.enabled && <>
+          {visiblePages.some(page => page.loading) && <p className="sites-state" role="status">正在加载网站</p>}
+          {kinds.map(kind => pages[kind].error && <section className="sites-state" key={kind}><h2>无法加载站点</h2><p role="alert">{pages[kind].error}</p><button type="button" onClick={() => retryList(kind)}>重试</button></section>)}
+          {ready && !items.length && <div className="sites-state" role="status"><h2>{location.view === "pinned" && !location.search.trim() ? "尚未置顶任何站点" : "暂无站点"}</h2><p>{location.view === "pinned" ? "在网站菜单中选择“置顶”，即可在此处找到" : "使用数据库和登录功能构建网站和应用——试试“构建团队仪表板”或“创建活动报名页面”"}</p></div>}
+          <div className={`sites-results sites-results-${viewMode}`}>
+            {viewMode === "list" && items.length > 0 && <div className="sites-columns"><span>站点</span>{location.view !== "owned" && <span className="sites-owner">所有者</span>}<span className="sites-sharing">共享对象</span><span /></div>}
+            {items.map(site => {
+              const context = location.view === "owned" || location.view === "all" && pages.owned.items.some(item => item.id === site.id) ? "owned" : location.view === "pinned" ? "pinned" : "shared";
+              const role = siteRole(site, context), editable = role === "owner" || role === "editor", disabled = site.status === "suspended" || site.disabledBy !== null;
+              const live = !disabled && site.status === "active" ? safeSiteUrl(site.liveUrl) : null;
+              const isPinned = pins[site.id]?.value ?? site.isPinned;
+              const assets = kinds.map(kind => pages[kind]).find(page => page.items.includes(site))?.assets ?? [];
+              const actions: ThreadActionItem[] = [
+                ...(access.pinned ? [{ id: "pin", label: isPinned ? "取消置顶" : "置顶", disabled: pins[site.id]?.pending || pins[site.id]?.unconfirmed || isPinned === null }] : []),
+                { id: "publish", label: "发布", disabled: true, hint: "Sites 发布会话尚未接入" },
+                { id: "edit", label: "编辑", disabled: true, hint: "Sites 编辑会话尚未接入" },
+                { id: "settings", label: "设置" },
+              ];
+              return <article className="sites-result" key={site.id} ref={node => { if (node) rows.current.set(site.id, node); else rows.current.delete(site.id); }} data-appgen-row>
+                {!editable && live ? <a className="sites-primary-action" href={live} target="_blank" rel="noreferrer" aria-label={`在新标签页中打开 ${site.title}`} /> : <button className="sites-primary-action" type="button" disabled title={disabled ? "已被管理员禁用" : "Sites 编辑会话尚未接入"} aria-label={`编辑 ${site.title}`} />}
+                <div className="sites-result-preview">{screenshot(site, assets)}</div><div className="sites-result-information"><div className="sites-result-name"><span>{site.title}</span>{isPinned && <Pin size={12} aria-label="已置顶" />}{disabled && <span className="sites-disabled">已禁用</span>}</div><div className="sites-result-meta">{site.status === "active" && site.liveUrl === null && <span>未发布 · </span>}<time dateTime={site.updatedAt}>{siteUpdatedText(site.updatedAt)}</time></div></div>
+                {location.view !== "owned" && <div className="sites-owner">{role === "owner" ? "你" : site.owner?.name ?? site.owner?.email ?? "所有者不可用"}</div>}
+                <div className="sites-sharing">{siteSharingText(site)}</div>
+                <div className="sites-result-actions">{live && <a href={live} target="_blank" rel="noreferrer" aria-label={`在新标签页中打开 ${site.title}`} title="打开网站"><ExternalLink size={16} /></a>}
+                  <ThreadActionsMenu items={actions} triggerAriaLabel={`${site.title} 的更多操作`} label={<Ellipsis size={16} />} buttonClassName="sites-row-menu-button" onOpenChange={open => { if (open && access.pinned && isPinned === null && !pinBusy.current.has(site.id)) void updatePin(site, true); }} onSelect={id => { if (id === "settings") navigate({ ...location, siteId: site.id }); else if (id === "pin") void updatePin(site); }} />
+                </div>
+                {pins[site.id]?.error && <div className="sites-pin-error" role="alert">无法更新置顶项。请重试。<button type="button" disabled={pins[site.id]?.pending} onClick={() => void updatePin(site, true)}>重新读取置顶状态</button></div>}
+              </article>;
+            })}
+          </div>
+          {moreKinds.map(kind => pages[kind].pageError && <div className="sites-page-error" key={kind}><p role="alert">无法加载更多网站：{pages[kind].pageError}</p><button type="button" disabled={pages[kind].paging} onClick={() => void loadMore(kind)}>重试</button></div>)}
+          <div ref={sentinel} className="sites-pagination" aria-hidden="true" />
+          {visiblePages.some(page => page.paging) && <p role="status">正在加载更多网站</p>}
+        </>}
       </div>
-      {query.trim() && tab !== "shared" && <p role="status">我创建的站点仅搜索已加载内容。</p>}
-      {pages.some(page => page.loading) && <p role="status">正在加载站点…</p>}
-      {pages.map((page, index) => page.error && <div key={index}><p role="alert">{page.error}</p><button type="button" onClick={() => tab === "shared" || (tab === "all" && index === 1) ? setSharedRevision(value => value + 1) : setRevision(value => value + 1)}>重试列表</button></div>)}
-      {ready && !items.length && <p role="status">没有匹配的站点。</p>}
-      <div className={viewMode === "grid" ? "sites-grid" : "sites-list-view"}>{items.map(site => <article className="site-card" key={site.id}>
-        <button type="button" className="link-btn site-name" onClick={event => { detailTrigger.current = event.currentTarget; void openDetail(site.id); }}>{site.title}</button>
-        <span>{statusText[site.status]}</span>{site.disabledBy && <span>此站点已被停用</span>}
-        <p>{site.description}</p><time dateTime={site.updatedAt}>{new Date(site.updatedAt).toLocaleString()}</time>
-        {!site.disabledBy && site.status === "active" && safeSiteUrl(site.liveUrl) ? <a href={safeSiteUrl(site.liveUrl)!} target="_blank" rel="noreferrer">打开在线站点</a> : <span>暂无可用在线地址</span>}
-      </article>)}</div>
-      {(["owned", "shared"] as const).filter(kind => tab === kind || tab === "all").map(kind => {
-        const page = kind === "owned" ? owned : shared;
-        return <div key={kind}>{page.pageError && <p role="alert">{page.pageError}</p>}{page.cursor && <button type="button" disabled={page.paging} onClick={() => void loadMore(kind)}>{page.paging ? "正在加载…" : page.pageError ? `重试加载${kind === "owned" ? "我的站点" : "共享站点"}` : `加载更多${kind === "owned" ? "我的站点" : "共享站点"}`}</button>}</div>;
-      })}
     </>}
-    {selectedId && <dialog ref={dialogRef} aria-label="站点详情" onCancel={event => { event.preventDefault(); closeDetail(); }}>
-      <button type="button" onClick={closeDetail}>关闭</button>
-      {detailError ? <><p role="alert">{detailError}</p><button type="button" onClick={() => void openDetail(selectedId)}>重试详情</button></> : !detail ? <p role="status">正在读取详情…</p> : <>
-        <h2>{detail.title}</h2><p>{detail.description}</p><p>{statusText[detail.status]}</p>
-        {!detail.disabledBy && detail.status === "active" && safeSiteUrl(detail.liveUrl) ? <a href={safeSiteUrl(detail.liveUrl)!} target="_blank" rel="noreferrer">打开在线站点</a> : <p>暂无可用在线地址</p>}
-        <button type="button" disabled={settingsLoading} onClick={() => void readSettings()}>{settingsLoading ? "正在读取配置…" : "读取域名与环境变量"}</button>
-        {Object.entries(settingsErrors).map(([kind, message]) => <p role="alert" key={kind}>{kind === "environment" ? "环境变量" : "域名"}：{message}</p>)}
-        {environment && <section aria-label="环境变量"><h3>环境变量</h3>{!environment.length && <p>暂无环境变量。</p>}{environment.map(entry => <p key={entry.key}><code>{entry.key}</code>：{entry.secret ? "••••••" : entry.value ?? "未设置"}</p>)}</section>}
-        {domains && <section aria-label="自定义域名"><h3>自定义域名</h3>{!domains.length && <p>暂无自定义域名。</p>}{domains.map(domain => <div key={domain.id}><p>{domain.hostname} · {domain.status}</p>{domain.cname && <p>CNAME：{domain.cname}</p>}{domain.ipv4.map(ip => <p key={ip}>A：{ip}</p>)}{domain.ssl && <p>SSL：{domain.ssl}</p>}{domain.error && <p role="alert">{domain.error}</p>}{domain.records.map((record, index) => <p key={index}>{record.type} {record.name} {record.value}</p>)}</div>)}</section>}
-      </>}
-    </dialog>}
-  </div>;
+  </div></div>;
 };
