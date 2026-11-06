@@ -30,7 +30,7 @@ function load(file, dependencies, uuid) {
     localStorage: { getItem: () => "fixture-device" }, require: dependencies });
   return exports;
 }
-function client(requestId = "fixed-library-id") {
+export function client(requestId = "fixed-library-id") {
   const calls = [], cancelled = [];
   const control = { identity: async () => identity, bootstrap: async () => bootstrap(payload()),
     account: async () => account("plus"),

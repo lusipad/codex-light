@@ -9,44 +9,73 @@ const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve()
 const nodes = node => node && typeof node === "object" ? [node, ...(node.children ?? []).flatMap(nodes)] : [];
 const text = tree => nodes(tree).flatMap(node => node.children.filter(child => typeof child === "string")).join(" ");
 const button = (tree, label) => { const found = nodes(tree).find(node => node.type === "button" && text(node) === label); assert.ok(found, label); return found; };
-export function harness(listenerError = null) {
-  const hooks = [], effects = [], accesses = [], reads = [], paths = []; let cursor = 0, listener, writes = 0, navigation = null;
-  const React = { createElement: (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat(Infinity) }),
-    useState: initial => { const i = cursor++; if (!(i in hooks)) hooks[i] = initial; return [hooks[i], value => { writes++; hooks[i] = typeof value === "function" ? value(hooks[i]) : value; }]; },
-    useCallback: (fn, deps) => { const i = cursor++, old = hooks[i]; if (!old || deps.some((value, j) => !Object.is(value, old.deps[j]))) hooks[i] = { deps, fn }; return hooks[i].fn; },
-    useRef: initial => { const i = cursor++; if (!(i in hooks)) hooks[i] = { current: initial }; return hooks[i]; },
-    useEffect: (effect, deps) => { const i = cursor++, old = hooks[i]; if (!old || deps.some((v, j) => !Object.is(v, old.deps[j]))) { hooks[i] = { deps, cleanup: old?.cleanup }; effects.push(() => { hooks[i].cleanup?.(); hooks[i].cleanup = effect(); }); } },
+export function harness(listenerError = null, storage = new Map()) {
+  const contexts = new Map(), effects = [], accesses = [], reads = [], paths = [], images = [];
+  let listener, writes = 0, navigation = null, context, used;
+  const componentContext = key => { if (!contexts.has(key)) contexts.set(key, { hooks: [], cursor: 0 }); return contexts.get(key); };
+  const renderComponent = (type, props) => {
+    const before = context, key = `${type.name}:${props?.key ?? "single"}`;
+    context = componentContext(key); context.cursor = 0; used.add(key);
+    const tree = type(props); context = before; return tree;
+  };
+  const React = { createElement: (type, props, ...children) => {
+      if (typeof type === "function") return renderComponent(type, { ...props, children: children.flat(Infinity) });
+      if (type === "button" && props?.onClick) { const callback = props.onClick; props = { ...props, onClick: event => callback(event ?? { currentTarget: { isConnected: true, focus() {} }, preventDefault() {}, stopPropagation() {} }) }; }
+      return { type, props: props ?? {}, children: children.flat(Infinity) };
+    },
+    useState: initial => { const owner = context, i = owner.cursor++; if (!(i in owner.hooks)) owner.hooks[i] = typeof initial === "function" ? initial() : initial;
+      return [owner.hooks[i], value => { writes++; owner.hooks[i] = typeof value === "function" ? value(owner.hooks[i]) : value; }]; },
+    useCallback: (fn, deps) => { const owner = context, i = owner.cursor++, old = owner.hooks[i]; if (!old || deps.some((value, j) => !Object.is(value, old.deps[j]))) owner.hooks[i] = { deps, fn }; return owner.hooks[i].fn; },
+    useRef: initial => { const owner = context, i = owner.cursor++; if (!(i in owner.hooks)) owner.hooks[i] = { current: initial }; return owner.hooks[i]; },
+    useEffect: (effect, deps) => { const owner = context, i = owner.cursor++, old = owner.hooks[i]; if (!old || deps.some((v, j) => !Object.is(v, old.deps[j]))) { owner.hooks[i] = { deps, cleanup: old?.cleanup }; effects.push(() => { owner.hooks[i].cleanup?.(); owner.hooks[i].cleanup = effect(); }); } },
   }; React.default = React; React.useLayoutEffect = React.useEffect;
-  const exports = {};
-  vm.runInNewContext(compile("src/components/LibraryView.tsx"), { exports, AbortController, require: name => {
-    if (name === "react") return React;
-    if (name === "lucide-react") return { Search: "Search", X: "X" };
-    if (name.endsWith(".css")) return {};
-    if (name === "./ThreadActionsMenu") return { ThreadActionsMenu: "ThreadActionsMenu" };
-    if (name === "./LibraryPreviewPane") return { LibraryPreviewPane: "LibraryPreviewPane" };
-    if (name === "../bridge") return { tauriListen: (_event, callback) => { listener = callback; return listenerError ? Promise.reject(listenerError) : Promise.resolve(() => {}); } };
-    if (name === "../chatgptService") return { serviceErrorMessage: cause => cause.message };
-    if (name === "../libraryData") return data;
-    if (name === "../storageUsage") return { formatStorageBytes: value => `${value} bytes` };
-    if (name === "../libraryClient") return {
-      readLibraryAccess: signal => { const pending = deferred(); accesses.push({ signal, ...pending }); return pending.promise; },
-      readLibraryPage: (access, tab, cursor, signal, directoryId, search) => { const pending = deferred(); reads.push({ access, tab, cursor, signal, directoryId, search, ...pending }); return pending.promise; },
-      readLibraryDirectoryPath: (access, directoryId, signal) => { const pending = deferred(); paths.push({ access, directoryId, signal, ...pending }); return pending.promise; },
-    }; assert.fail(name);
-  } });
+  const modules = new Map();
+  const load = file => {
+    if (modules.has(file)) return modules.get(file);
+    const exports = {}; modules.set(file, exports);
+    vm.runInNewContext(compile(file), { exports, AbortController, Date, Intl, Map, Set, Number, JSON,
+      document: { body: {}, addEventListener() {}, removeEventListener() {} }, window: { innerWidth: 1280, innerHeight: 800, addEventListener() {}, removeEventListener() {} },
+      localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
+      require: name => {
+      if (name === "react") return React;
+      if (name === "react-dom") return { createPortal: node => ({ type: "portal", props: {}, children: [node] }) };
+      if (name === "lucide-react") return new Proxy({}, { get: (_, key) => String(key) });
+      if (name.endsWith(".css")) return {};
+      if (name === "./LibraryBrowseLayout") return load("src/components/LibraryBrowseLayout.tsx");
+      if (name === "./ThreadActionsMenu") return { ThreadActionsMenu: "ThreadActionsMenu" };
+      if (name === "./LibraryPreviewPane") return { LibraryPreviewPane: "LibraryPreviewPane" };
+      if (name === "../bridge") return { tauriListen: (_event, callback) => { listener = callback; return listenerError ? Promise.reject(listenerError) : Promise.resolve(() => {}); } };
+      if (name === "../chatgptService") return { serviceErrorMessage: cause => cause.message };
+      if (name === "../libraryData" || name === "./libraryData") return data;
+      if (name === "../libraryBrowse" || name === "./libraryBrowse") return load("src/libraryBrowse.ts");
+      if (name === "../libraryBrowsePreferences") return load("src/libraryBrowsePreferences.ts");
+      if (name === "../storageUsage") return { formatStorageBytes: value => `${value} bytes` };
+      if (name === "../libraryClient") return {
+        readLibraryAccess: signal => { const pending = deferred(); accesses.push({ signal, ...pending }); return pending.promise; },
+        readLibraryBrowsePage: (access, scope, cursor, signal) => { const pending = deferred(); reads.push({ access, ...scope, search: scope.search.trim(), cursor, signal, ...pending }); return pending.promise; },
+        readLibraryDirectoryPath: (access, directoryId, signal) => { const pending = deferred(); paths.push({ access, directoryId, signal, ...pending }); return pending.promise; },
+        readLibraryImage: (item, access, signal) => { const pending = deferred(); images.push({ item, access, signal, ...pending }); return pending.promise; },
+      }; assert.fail(name);
+    } }); return exports;
+  };
+  const exports = load("src/components/LibraryView.tsx");
   const onNavigationChange = next => { navigation = next; };
-  return { accesses, reads, paths, get navigation() { return navigation; }, setListenError(value) { listenerError = value; }, render() { cursor = 0; const tree = exports.LibraryView({ onNavigationChange }); while (effects.length) effects.shift()(); return tree; }, invalidate() { listener(); }, unmount() { for (const h of hooks) h?.cleanup?.(); }, get writes() { return writes; } };
+  return { accesses, reads, paths, images, storage, get navigation() { return navigation; }, setListenError(value) { listenerError = value; }, render() {
+    used = new Set(); const tree = renderComponent(exports.LibraryView, { onNavigationChange });
+    for (const [key, owner] of contexts) if (!used.has(key)) { owner.hooks.forEach(hook => hook?.cleanup?.()); contexts.delete(key); }
+    while (effects.length) effects.shift()(); return tree;
+  }, invalidate() { listener(); }, unmount() { for (const owner of contexts.values()) owner.hooks.forEach(hook => hook?.cleanup?.()); }, get writes() { return writes; } };
 }
 const access = { available: true, identity: { accountId: "a", userId: "u", generation: 1 }, onedrive: false };
 const page = (names, cursor = null) => ({ items: names.map(name => ({ node: { id: name, name, kind: "file", file_size_bytes: 10 } })), cursor });
 let h = harness(); assert.match(text(h.render()), /正在读取/); await flush();
 h.accesses[0].reject(Error("not authenticated")); await flush(); assert.match(text(h.render()), /not authenticated/); assert.doesNotMatch(text(h.render()), /暂无/);
 button(h.render(), "重试").props.onClick(); h.render(); await flush(); h.accesses.at(-1).resolve({ ...access, available: false }); await flush(); assert.equal(h.reads.length, 0); assert.match(text(h.render()), /暂不支持/);
-h = harness(); h.render(); await flush(); h.accesses[0].resolve(access); await flush(); assert.equal(h.reads[0].tab, "all"); assert.equal(h.reads[0].cursor, null);
+h = harness(); h.render(); await flush(); h.accesses[0].resolve(access); await flush(); assert.equal(h.reads[0].tab, "suggested"); assert.equal(h.reads[0].cursor, null);
 h.reads[0].resolve(page(["real.pdf"], "next")); await flush(); assert.match(text(h.render()), /real.pdf/);
 const more = button(h.render(), "加载更多"); more.props.onClick(); more.props.onClick(); assert.equal(h.reads.length, 2);
 h.reads.at(-1).reject(Error("page failed")); await flush(); assert.match(text(h.render()), /page failed/); assert.match(text(h.render()), /real.pdf/);
-button(h.render(), "重试加载").props.onClick(); h.reads.at(-1).resolve(page(["real.pdf", "second.pdf"], "last")); await flush(); assert.equal(nodes(h.render()).filter(node => node.type === "tr").length, 3);
+button(h.render(), "重试加载").props.onClick(); h.reads.at(-1).resolve(page(["real.pdf", "second.pdf"], "last")); await flush(); assert.equal(nodes(h.render()).filter(node => node.props["data-library-item"]).length, 2);
 button(h.render(), "加载更多").props.onClick(); h.reads.at(-1).resolve(page(["third.pdf"], "last")); await flush(); assert.match(text(h.render()), /重复分页/); assert.doesNotMatch(text(h.render()), /third.pdf/);
 button(h.render(), "重试加载").props.onClick(); const oldRead = h.reads.at(-1); h.invalidate(); assert.equal(oldRead.signal.aborted, true); h.render(); oldRead.resolve(page(["old account"])); await flush(); assert.doesNotMatch(text(h.render()), /old account|real.pdf/);
 h.accesses.at(-1).resolve(access); await flush(); const last = h.reads.at(-1); h.unmount(); const writes = h.writes; last.resolve(page(["unmounted"])); await flush(); assert.equal(h.writes, writes);

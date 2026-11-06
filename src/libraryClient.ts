@@ -2,6 +2,7 @@ import { callAppServer } from "./bridge";
 import { readChatgptService, serviceIdentity, shareAccessBootstrap, type ServiceIdentity } from "./chatgptService";
 import { parseLibraryDirectoryPath, parseLibraryImagesPage, parseLibraryNodesPage, type LibraryDirectoryEntry, type LibraryItem, type LibraryPage } from "./libraryData";
 import { LIBRARY_PREVIEW_MAX_BYTES, parseLibraryFile, type LibraryFile } from "./libraryPreview";
+import type { LibraryBrowseScope } from "./libraryBrowse";
 
 export type LibraryTab = "all" | "images";
 export interface LibraryAccess { identity: ServiceIdentity; available: boolean; onedrive: boolean }
@@ -71,16 +72,32 @@ export async function readLibraryAccess(signal: AbortSignal): Promise<LibraryAcc
   return decodeLibraryAccess(bootstrap, settings, account, identity, accounts);
 }
 
-export async function readLibraryPage(access: LibraryAccess, tab: LibraryTab, cursor: string | null, signal: AbortSignal, directoryId?: string | null, search = ""): Promise<LibraryPage> {
+export async function readLibraryPage(access: LibraryAccess, tab: LibraryTab, cursor: string | null, signal: AbortSignal, directoryId?: string | null, search = "", browse?: LibraryBrowseScope): Promise<LibraryPage> {
   if (!access.available) throw Error("当前账号暂不支持资料库。");
   if (tab === "images") return parseLibraryImagesPage(await readChatgptService("library_images", { cursor }, access.identity, signal));
   return parseLibraryNodesPage(await readChatgptService("library_nodes", {
     ...(directoryId != null ? { parent_directory_id: directoryId } : {}),
     ...(search ? { q: search } : {}),
-    entry_surface: "library", cursor, categories: [], source: null, include_hidden_files: false, include_files: true,
+    entry_surface: "library", cursor, categories: browse?.categories ?? [], source: browse?.sources.length === 1 ? browse.sources[0] : null,
+    include_hidden_files: false, include_files: !(browse?.tab === "folders" && directoryId == null && !search),
     include_saved_entities: true, defer_sharing_badges: true, include_sites: false,
     include_folder_counts: false, include_onedrive: access.onedrive, hydrate_folder_thumbnails: true,
   }, access.identity, signal));
+}
+
+export async function readLibraryBrowsePage(access: LibraryAccess, scope: LibraryBrowseScope, cursor: string | null, signal: AbortSignal): Promise<LibraryPage> {
+  if (!access.available) throw Error("当前账号暂不支持资料库。");
+  const search = scope.search.trim(), source = scope.sources.length === 1 ? scope.sources[0] : null;
+  if (!search && scope.directoryId === null && scope.tab === "suggested") {
+    return parseLibraryImagesPage(await readChatgptService("library_suggested", {
+      cursor, categories: scope.categories, source,
+    }, access.identity, signal));
+  }
+  if (!search && scope.directoryId === null && scope.tab === "images") {
+    return parseLibraryImagesPage(await readChatgptService("library_images", { cursor, source }, access.identity, signal));
+  }
+  const page = await readLibraryPage(access, "all", cursor, signal, scope.directoryId, search, scope);
+  return scope.categories.length ? { ...page, items: page.items.filter(item => item.node.kind !== "directory") } : page;
 }
 
 export async function readLibraryDirectoryPath(access: LibraryAccess, directoryId: string, signal: AbortSignal): Promise<LibraryDirectoryEntry[]> {

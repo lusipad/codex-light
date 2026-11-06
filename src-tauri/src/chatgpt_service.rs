@@ -42,6 +42,7 @@ pub enum ServiceOperation {
     LibraryNodes,
     LibraryDirectoryPath,
     LibraryImages,
+    LibrarySuggested,
     LibrarySettings,
     LibraryImage,
     LibraryFile,
@@ -1465,10 +1466,11 @@ impl ChatgptService {
                     }
                     let sent_integrity = session.integrity.clone();
                     let mut http_request = build_http_request(&route, credentials, sent_integrity.as_deref(), &request.profile)?;
-                    if matches!(request.operation, ServiceOperation::LibraryImages) {
+                    if matches!(request.operation, ServiceOperation::LibraryImages | ServiceOperation::LibrarySuggested) {
                         http_request.method = HttpMethod::Post;
                         http_request.headers.insert("Content-Type".into(), "application/json".into());
-                        http_request.body = serde_json::to_vec(&library_images_body(&request.params)?)
+                        let body=if matches!(request.operation,ServiceOperation::LibrarySuggested) {library_suggested_body(&request.params)?} else {library_images_body(&request.params)?};
+                        http_request.body = serde_json::to_vec(&body)
                             .map_err(|_| failure("invalid_request", "Invalid library query"))?;
                     }
                     let usage = matches!(request.operation, ServiceOperation::WhamUsage);
@@ -1478,7 +1480,7 @@ impl ChatgptService {
                         http_request.headers.insert("X-Codex-Expected-User-Id".into(), request.expected_identity.user_id.clone());
                         http_request.headers.insert("X-Codex-Expected-Account-Id".into(), request.expected_identity.account_id.clone());
                     }
-                    if archive_tasks || profile_read || review_connections || matches!(request.operation, ServiceOperation::StorageUsage | ServiceOperation::LibraryNodes | ServiceOperation::LibraryDirectoryPath | ServiceOperation::LibraryFavorites | ServiceOperation::LibraryImages | ServiceOperation::LibrarySettings | ServiceOperation::LibraryImage | ServiceOperation::ShareAccounts) {
+                    if archive_tasks || profile_read || review_connections || matches!(request.operation, ServiceOperation::StorageUsage | ServiceOperation::LibraryNodes | ServiceOperation::LibraryDirectoryPath | ServiceOperation::LibraryFavorites | ServiceOperation::LibraryImages | ServiceOperation::LibrarySuggested | ServiceOperation::LibrarySettings | ServiceOperation::LibraryImage | ServiceOperation::ShareAccounts) {
                         share_network_allowed(&call, &http_request.url).await?;
                         self.check_share_current(&request.expected_identity, &registration)?;
                     }
@@ -1493,7 +1495,7 @@ impl ChatgptService {
                     if self.generation() != generation {
                         return Err(failure("account_changed", "Authenticated identity changed"));
                     }
-                    if archive_tasks || matches!(request.operation, ServiceOperation::LibraryDirectoryPath) { self.check_share_current(&request.expected_identity, &registration)?; }
+                    if archive_tasks || matches!(request.operation, ServiceOperation::LibraryDirectoryPath | ServiceOperation::LibrarySuggested) { self.check_share_current(&request.expected_identity, &registration)?; }
                     apply_integrity(&mut session.integrity, sent_integrity.as_deref(), response.headers.get("x-oai-is-update"));
                     if archive_tasks && account_instructions_ip_denied(&response) {
                         // A workspace IP refusal is not NDn's unavailable/unsupported source.
@@ -1559,7 +1561,7 @@ impl ChatgptService {
             }
             return Err(failure("account_changed", "Authenticated identity changed"));
         }
-        if archive_tasks || matches!(request.operation, ServiceOperation::LibraryDirectoryPath) { self.check_share_current(&request.expected_identity, &registration)?; }
+        if archive_tasks || matches!(request.operation, ServiceOperation::LibraryDirectoryPath | ServiceOperation::LibrarySuggested) { self.check_share_current(&request.expected_identity, &registration)?; }
         result
     }
 
@@ -2359,8 +2361,8 @@ fn resolve_route(operation: &ServiceOperation, params: &Value) -> ServiceResult<
     if matches!(operation, ServiceOperation::ArchiveCloudTasks) { return archive_cloud_tasks_route(params); }
     if matches!(operation, ServiceOperation::LibraryDirectoryPath) { return library_directory_path_route(params); }
     if matches!(operation, ServiceOperation::LibraryImage) { return library_image_route(params); }
-    if matches!(operation, ServiceOperation::LibraryImages) {
-        library_images_body(params)?;
+    if matches!(operation, ServiceOperation::LibraryImages | ServiceOperation::LibrarySuggested) {
+        if matches!(operation, ServiceOperation::LibrarySuggested) {library_suggested_body(params)?;} else {library_images_body(params)?;}
         return Ok("/backend-api/files/library".into());
     }
     let params = params
@@ -2396,7 +2398,7 @@ fn resolve_route(operation: &ServiceOperation, params: &Value) -> ServiceResult<
         ),
         ServiceOperation::StorageUsage => ("/backend-api/files/library/storage/usage".into(), &[]),
         ServiceOperation::LibrarySettings => ("/backend-api/settings/user".into(), &[]),
-        ServiceOperation::LibraryImages => unreachable!(),
+        ServiceOperation::LibraryImages | ServiceOperation::LibrarySuggested => unreachable!(),
         ServiceOperation::LibraryImage | ServiceOperation::LibraryFile | ServiceOperation::LibraryFileContent => unreachable!(),
         ServiceOperation::LibraryDirectoryPath => unreachable!(),
         ServiceOperation::WhamUsage => ("/backend-api/wham/usage".into(), &[]),
@@ -2576,6 +2578,23 @@ fn archive_cloud_tasks_route(params: &Value) -> ServiceResult<String> {
     url.query_pairs_mut().append_pair("limit", "20").append_pair("task_filter", "archived");
     if let Some(cursor) = cursor { url.query_pairs_mut().append_pair("cursor", cursor); }
     Ok(format!("{}?{}", url.path(), url.query().unwrap()))
+}
+
+fn library_suggested_body(params:&Value)->ServiceResult<Value> {
+    let params=params.as_object().ok_or_else(||failure("invalid_request","Library parameters must be an object"))?;
+    let mut body=json!({"cursor":null,"limit":50,"categories":[],"source":null,"include_hidden_files":false,
+        "include_saved_entities":true,"include_sites":false,"trashed_only":false,"ranking":"suggested","providers":[]});
+    for (key,value) in params {
+        let valid=match key.as_str() {
+            "cursor"=>value.is_null() || value.as_str().is_some_and(|cursor|!cursor.trim().is_empty() && cursor.len()<=2048 && !cursor.chars().any(char::is_control)),
+            "source"=>value.is_null() || matches!(value.as_str(),Some("uploaded"|"generated")),
+            "categories"=>value.as_array().is_some_and(|categories|categories.len()<=20 && categories.iter().all(|category|matches!(category.as_str(),Some("images"|"documents"|"spreadsheets"|"presentations"|"pdfs")))),
+            _=>false,
+        };
+        if !valid{return Err(failure("invalid_request","Unsupported library suggested parameter"));}
+        body[key]=value.clone();
+    }
+    Ok(body)
 }
 
 fn library_images_body(params: &Value) -> ServiceResult<Value> {
@@ -6020,6 +6039,64 @@ mod tests {
                 if invalidate { "account_changed" } else { "cancelled" });
             assert!(service.active.lock().unwrap().is_empty());
         }
+    }
+
+    fn suggested_request(id:&str,params:Value)->ServiceRequest {
+        let mut request=library_request(id,serde_json::from_value(json!("library_suggested")).unwrap());request.params=params;request
+    }
+
+    #[tokio::test]
+    async fn library_suggested_fixed_post_preserves_real_file_records_and_cursor() {
+        let body=json!({"items":[{"id":"libfile_real","file_name":"Real note.md","directory_id":null,"current_version_number":3,"last_used_at":"2026-11-06"}],"cursor":"next"});
+        for params in [json!({}),json!({"cursor":"next","categories":["images","documents","spreadsheets","presentations","pdfs"],"source":"uploaded"}),json!({"cursor":null,"source":"generated","categories":[]})] {
+            let service=ChatgptService::default();let transport=instructions_transport(&[200],&[body.clone()]);
+            let result=service.read_with(suggested_request("suggested",params.clone()),share_rpc,&transport).await.unwrap();assert_eq!(result.body,body);assert_eq!(result.identity,identity());
+            let calls=transport.requests.lock().unwrap();assert_eq!(calls.len(),1);assert_eq!(calls[0].method,HttpMethod::Post);assert_eq!(calls[0].url,"https://chatgpt.com/backend-api/files/library");assert_eq!(calls[0].headers["ChatGPT-Account-Id"],"account-fixture");assert_eq!(calls[0].headers["Authorization"],format!("Bearer {}",fixture_token()));
+            assert_eq!(serde_json::from_slice::<Value>(&calls[0].body).unwrap(),json!({"cursor":params.get("cursor").cloned().unwrap_or(Value::Null),"limit":50,"categories":params.get("categories").cloned().unwrap_or(json!([])),"source":params.get("source").cloned().unwrap_or(Value::Null),"include_hidden_files":false,"include_saved_entities":true,"include_sites":false,"trashed_only":false,"ranking":"suggested","providers":[]}));
+        }
+    }
+
+    #[tokio::test]
+    async fn library_suggested_rejects_unproven_inputs_before_credentials() {
+        for params in [json!(null),json!([]),json!({"url":"https://evil.test"}),json!({"method":"POST"}),json!({"body":{}}),json!({"headers":{}}),json!({"ranking":"suggested"}),json!({"limit":50}),json!({"q":"search"}),json!({"providers":[]}),json!({"include_hidden_files":false}),json!({"include_sites":true}),json!({"trashed_only":false}),json!({"cursor":""}),json!({"cursor":"a\nb"}),json!({"cursor":false}),json!({"cursor":"a".repeat(2049)}),json!({"source":"all"}),json!({"source":" "}),json!({"source":false}),json!({"categories":null}),json!({"categories":"images"}),json!({"categories":["image"]}),json!({"categories":["pages"]}),json!({"categories":[1]})] {
+            let service=ChatgptService::default();let transport=FakeTransport::new(&[]);let auth_calls=AtomicUsize::new(0);
+            let rpc=|_,_|{auth_calls.fetch_add(1,Ordering::SeqCst);std::future::ready(Err("must not authenticate".into()))};
+            assert_eq!(service.read_with(suggested_request("suggested-invalid",params),rpc,&transport).await.err().unwrap().code,"invalid_request");assert_eq!(auth_calls.load(Ordering::SeqCst),0);assert!(transport.requests.lock().unwrap().is_empty());assert!(service.active.lock().unwrap().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn library_suggested_errors_network_identity_and_single_refresh_stay_scoped() {
+        for (status,code) in [(403,"forbidden"),(404,"not_found"),(429,"rate_limited"),(500,"service_error")] {
+            let service=ChatgptService::default();let transport=FakeTransport::new(&[status]);assert_eq!(service.read_with(suggested_request("suggested-http",json!({})),share_rpc,&transport).await.err().unwrap().code,code);assert_eq!(transport.requests.lock().unwrap().len(),1);assert!(service.active.lock().unwrap().is_empty());
+        }
+        let service=ChatgptService::default();let transport=FakeTransport::new(&[]);
+        let denied=|method,params|if method=="configRequirements/read"{std::future::ready(Ok(json!({"requirements":{"application":{"network":{"enabled":true,"domains":{}}}}})))}else{share_rpc(method,params)};
+        assert_eq!(service.read_with(suggested_request("suggested-network",json!({})),denied,&transport).await.err().unwrap().code,"network_restricted");assert!(transport.requests.lock().unwrap().is_empty());
+        for changed in [false,true] {
+            let service=ChatgptService::default();let transport=instructions_transport(if changed{&[401]}else{&[401,200]},&[Value::Null,json!({"items":[],"cursor":null})]);
+            let rpc=|method,params:Value|if method=="getAuthStatus"&&params["refreshToken"]==true{std::future::ready(Ok(auth(&token("account-fixture",if changed{"other-user"}else{"user-fixture"},4102444801))))}else{share_rpc(method,params)};
+            let result=service.read_with(suggested_request("suggested-refresh",json!({"cursor":"page2","source":"generated"})),rpc,&transport).await;
+            if changed{assert_eq!(result.err().unwrap().code,"account_changed");}else{assert_eq!(result.unwrap().body,json!({"items":[],"cursor":null}));}
+            let calls=transport.requests.lock().unwrap();assert_eq!(calls.len(),if changed{1}else{2});if !changed{assert_eq!(calls[0].body,calls[1].body);assert_ne!(calls[0].headers["Authorization"],calls[1].headers["Authorization"]);}
+            assert!(service.active.lock().unwrap().is_empty());
+        }
+        let service=ChatgptService::default();let transport=FakeTransport::new(&[401,401]);assert_eq!(service.read_with(suggested_request("suggested-twice",json!({})),share_rpc,&transport).await.err().unwrap().code,"unauthorized");assert_eq!(transport.requests.lock().unwrap().len(),2);
+    }
+
+    #[tokio::test]
+    async fn library_suggested_cancel_and_late_completion_do_not_publish_a_body() {
+        for invalidate in [false,true] {
+            let service=ChatgptService::default();let mut transport=FakeTransport::new(&[200]);transport.delay_ms=1000;
+            let read=service.read_with(suggested_request("suggested-pending",json!({})),share_rpc,&transport);
+            let cancel=async {while !transport.entered.load(Ordering::SeqCst){tokio::task::yield_now().await;}if invalidate{service.invalidate();}else{service.cancel("suggested-pending");}};
+            assert_eq!(tokio::join!(read,cancel).0.err().unwrap().code,if invalidate{"account_changed"}else{"cancelled"});assert!(transport.dropped.load(Ordering::SeqCst));assert!(service.active.lock().unwrap().is_empty());
+        }
+        struct CancelOnComplete;
+        impl Transport for CancelOnComplete {
+            fn send(&self,_:HttpRequest,cancel:Arc<AtomicBool>)->TransportFuture<'_>{Box::pin(async move{cancel.store(true,Ordering::SeqCst);Ok(HttpResponse{status:200,headers:BTreeMap::new(),body:br#"{"items":[],"cursor":null}"#.to_vec()})})}
+        }
+        let service=ChatgptService::default();assert_eq!(service.read_with(suggested_request("suggested-late",json!({})),share_rpc,&CancelOnComplete).await.err().unwrap().code,"cancelled");assert!(service.active.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

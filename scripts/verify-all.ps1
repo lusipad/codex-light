@@ -82,6 +82,8 @@ try {
   Invoke-Step "Library preview component lifecycle" { node scripts/verify-library-preview-ui.mjs }
   Invoke-Step "Library preview remote media isolation" { node scripts/verify-library-preview-media.mjs }
   Invoke-Step "Library native search, location and preview contracts" { node scripts/verify-library-search.mjs }
+  Invoke-Step "Library ranked browse readers and local sorting" { node scripts/verify-library-browse.mjs }
+  Invoke-Step "Library browse layout, filters and display preferences" { node scripts/verify-library-browse-ui.mjs }
   Invoke-Step "Library response mapping, paging and sorting" { node scripts/verify-library-data.mjs }
   Invoke-Step "Library access and real client contracts" { node scripts/verify-library-read.mjs }
   Invoke-Step "Library cleanup lifecycle and presentation regression" { node scripts/verify-library-cleanup.mjs }

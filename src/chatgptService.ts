@@ -18,7 +18,7 @@ export interface ReviewProviderPreferences {
   githubConnection: { hostname: string; connectorId: string; accountLinkId: string } | null;
   gitlabConnectorId: string | null;
 }
-export type ServiceOperation = "library_favorites" | "library_nodes" | "library_directory_path" | "library_file" | "library_file_content" | "library_images" | "library_settings" | "library_image" | "storage_usage" | "images_init" | "images_styles" |
+export type ServiceOperation = "library_favorites" | "library_nodes" | "library_directory_path" | "library_file" | "library_file_content" | "library_suggested" | "library_images" | "library_settings" | "library_image" | "storage_usage" | "images_init" | "images_styles" |
   "images_recent" | "gpts_discovery" | "gpts_category" | "gpts_search" | "gpts_detail" | "gpts_about" |
   "sites_access" | "sites_list" | "sites_shared" | "sites_detail" | "sites_environment" | "sites_domains" | "sites_share_access" | "github_repository" |
   "share_accounts" | "share_users" | "share_groups" | "wham_usage" | "account_me" | "profile_identity" | "profile_page";
