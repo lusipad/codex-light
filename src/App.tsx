@@ -603,6 +603,7 @@ export const App: React.FC = () => {
   const [inboxItems, setInboxItems] = useState<InboxNotificationItem[]>([]);
 
   // Composer State
+  const homePromptRevisionRef = useRef(0);
   const [promptDrafts, setPromptDrafts] = useState<Record<string, string>>(() => {
     try {
       const stored = JSON.parse(localStorage.getItem(promptStorageKey) || "{}");
@@ -618,6 +619,7 @@ export const App: React.FC = () => {
   const promptInput = promptDrafts[promptDraftKey] ?? "";
   const setThreadPrompt = useCallback((threadId: string | null, update: React.SetStateAction<string>) => {
     const key = threadId ? `thread:${threadId}` : "home";
+    if (threadId === null) homePromptRevisionRef.current++;
     setPromptDrafts((previous) => {
       const value = typeof update === "function" ? update(previous[key] ?? "") : update;
       if (value === previous[key] || (!value && !(key in previous))) return previous;
@@ -631,6 +633,7 @@ export const App: React.FC = () => {
     setThreadPrompt(activeThreadId, update);
   }, [activeThreadId, setThreadPrompt]);
   const moveHomePromptToThread = useCallback((threadId: string) => {
+    homePromptRevisionRef.current++;
     setPromptDrafts((previous) => {
       if (!previous.home) return previous;
       const next = { ...previous, [`thread:${threadId}`]: previous.home };
@@ -862,6 +865,10 @@ export const App: React.FC = () => {
   const modelAccountIdentity = JSON.stringify(accountInfo);
   const worktreeCreationControllersRef = useRef(new Map<AbortController, MainViewRoute>());
   const worktreeProjectScope = JSON.stringify([sidebarProjectMembership.selectedProjectId, sidebarProjectMembership.localProjects?.find(project => project.id === sidebarProjectMembership.selectedProjectId)?.rootPaths]);
+  const skillTrialContextKey = JSON.stringify([modelAccountIdentity, activeWorkspace?.path, worktreeProjectScope, appServerStatus.connected, appServerStatus.binaryPath, appServerStatus.appServerVersion, appServerStatus.userAgent]);
+  const skillTrialContextRef = useRef({ key: skillTrialContextKey });
+  if (skillTrialContextRef.current.key !== skillTrialContextKey) skillTrialContextRef.current = { key: skillTrialContextKey };
+  const skillTrialRequestRef = useRef(0);
   const createWorktree = useCallback(async (options: WorktreeCreationOptions) => {
     const controller = new AbortController();
     worktreeCreationControllersRef.current.set(controller, activeRouteRef.current);
@@ -2329,16 +2336,16 @@ export const App: React.FC = () => {
   }, [attachedFiles, activeThreadId, setScopedAttachedFiles, showAppToast]);
 
   // Thread Navigation & Lifecycle
-  const startNewThread = useCallback(
-    async (workspacePath?: string, project?: SidebarLocalProject, projectless = false): Promise<void> => {
-      if (personalizationNavigationGuardRef.current?.(() => { void startNewThread(workspacePath, project, projectless); }) === false) return;
+  // Call only from a navigation continuation after its guard accepts.
+  const commitNewThreadNavigation = useCallback(
+    async (workspacePath?: string, project?: SidebarLocalProject, projectless = false): Promise<number | null> => {
       if (project && (!project.serverProjectId || project.rootPaths.length === 0)) {
         showAppToast("暂时无法在此项目中新建聊天，请重试。", "error");
-        return;
+        return null;
       }
       for (const controller of worktreeCreationControllersRef.current.keys()) controller.abort();
       const navigation = ++navigationRequestRef.current;
-      if (navigation !== navigationRequestRef.current) return;
+      if (navigation !== navigationRequestRef.current) return null;
       if (project) {
         ++refreshWorkspaceGenerationRef.current;
         try {
@@ -2346,7 +2353,7 @@ export const App: React.FC = () => {
             workspaces: WorkspaceRootItem[];
             projectMembership: SidebarProjectMembership;
           }>("workspace_select_project", { projectId: project.id });
-          if (navigation !== navigationRequestRef.current) return;
+          if (navigation !== navigationRequestRef.current) return null;
           ++refreshWorkspaceGenerationRef.current;
           setWorkspaces(selected.workspaces);
           setSidebarProjectMembership(selected.projectMembership);
@@ -2354,50 +2361,82 @@ export const App: React.FC = () => {
           if (navigation === navigationRequestRef.current) {
             showAppToast(`选择项目失败：${String(error)}`, "error");
           }
-          return;
+          return null;
         }
       } else if (workspacePath) {
         handleSelectWorkspace(workspacePath);
       }
-      pendingNewThreadProjectRef.current = project ?? null;
-      pendingProjectlessRef.current = projectless;
-      setPermissionModes(previous => Object.fromEntries(Object.entries(previous).filter(([key]) => !key.includes(":draft:"))));
-      threadRequestRef.current += 1;
-      threadHistoryBufferRef.current.discard();
-      finishedTurnIdsRef.current.clear();
-      activeThreadIdRef.current = null;
-      attachmentScopeRef.current = "home";
-      earlierRequestRef.current = false;
-      setLoadingEarlierTurns(false);
-      setLoadingThread(false);
-      setHistoryError(null);
-      setIsStreaming(false);
-      setActiveThreadId(null);
-      setActiveTurnId(null);
-      setActiveThreadStatus(null);
-      setTurns([]);
-      setTurnsCursor(null);
-      setHasMoreTurns(false);
-      setPlanSteps([]);
-      setPlanExplanation(null);
-      setTurnDiffFiles([]);
-      setTokenUsage(null);
-      setActiveRoute("home");
-      setComposerFocusRequest((request) => request + 1);
+      let committed = false;
+      const finalCommit = (): number | null => {
+        if (committed || navigation !== navigationRequestRef.current) return null;
+        committed = true;
+        pendingNewThreadProjectRef.current = project ?? null;
+        pendingProjectlessRef.current = projectless;
+        setPermissionModes(previous => Object.fromEntries(Object.entries(previous).filter(([key]) => !key.includes(":draft:"))));
+        threadRequestRef.current += 1;
+        threadHistoryBufferRef.current.discard();
+        finishedTurnIdsRef.current.clear();
+        activeThreadIdRef.current = null;
+        attachmentScopeRef.current = "home";
+        earlierRequestRef.current = false;
+        setLoadingEarlierTurns(false);
+        setLoadingThread(false);
+        setHistoryError(null);
+        setIsStreaming(false);
+        setActiveThreadId(null);
+        setActiveTurnId(null);
+        setActiveThreadStatus(null);
+        setTurns([]);
+        setTurnsCursor(null);
+        setHasMoreTurns(false);
+        setPlanSteps([]);
+        setPlanExplanation(null);
+        setTurnDiffFiles([]);
+        setTokenUsage(null);
+        activeRouteRef.current = "home";
+        commitActiveRoute("home");
+        setComposerFocusRequest(request => request + 1);
+        return navigation;
+      };
+      // Project selection crossed an await: the current form may now have unsaved changes.
+      if (project && personalizationNavigationGuardRef.current?.(() => { finalCommit(); }) === false) return null;
+      return finalCommit();
     },
     [handleSelectWorkspace, showAppToast]
   );
 
+  const startNewThread = useCallback(async (workspacePath?: string, project?: SidebarLocalProject, projectless = false): Promise<void> => {
+    const apply = async () => {
+      await commitNewThreadNavigation(workspacePath, project, projectless);
+    };
+    if (personalizationNavigationGuardRef.current?.(() => { void apply(); }) === false) return;
+    await apply();
+  }, [commitNewThreadNavigation]);
+
   const handleTrySkill = useCallback(async (skill: { name: string; path: string; defaultPrompt?: string | null }): Promise<boolean> => {
-    if (personalizationNavigationGuardRef.current?.(() => { void handleTrySkill(skill); }) === false) return false;
+    const request = ++skillTrialRequestRef.current;
+    const context = skillTrialContextRef.current;
     const identity = executionIdentityRef.current;
-    await startNewThread();
-    if (identity !== executionIdentityRef.current || activeThreadIdRef.current !== null || activeRouteRef.current !== "home") return false;
+    const revision = homePromptRevisionRef.current;
+    const originNavigation = navigationRequestRef.current;
+    const originRoute = deepLinkRouteRef.current;
     const prompt = buildSkillTrialPrompt(skill);
-    setThreadPrompt(null, previous => previous.trim() ? `${previous}\n\n${prompt}` : prompt);
-    setComposerFocusRequest(request => request + 1);
-    return true;
-  }, [startNewThread, setThreadPrompt]);
+    const isCurrent = () => request === skillTrialRequestRef.current && context === skillTrialContextRef.current
+      && identity === executionIdentityRef.current && revision === homePromptRevisionRef.current;
+    let consumed = false;
+    const apply = async (): Promise<boolean> => {
+      if (consumed || !isCurrent() || originNavigation !== navigationRequestRef.current || originRoute !== deepLinkRouteRef.current) return false;
+      consumed = true;
+      const navigation = await commitNewThreadNavigation();
+      if (navigation === null || navigation !== navigationRequestRef.current || !isCurrent()
+        || activeThreadIdRef.current !== null || activeRouteRef.current !== "home") return false;
+      setThreadPrompt(null, prompt);
+      setComposerFocusRequest(value => value + 1);
+      return true;
+    };
+    if (personalizationNavigationGuardRef.current?.(() => { void apply(); }) === false) return false;
+    return apply();
+  }, [commitNewThreadNavigation, setThreadPrompt]);
 
   const selectThread = useCallback(async (threadId: string): Promise<void> => {
     if (personalizationNavigationGuardRef.current?.(() => { void selectThread(threadId); }) === false) return;

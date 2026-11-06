@@ -266,6 +266,7 @@ try {
   Invoke-Step "Namespaced skill enable selector" { node scripts/verify-skill-selector.mjs }
   Invoke-Step "Skill trial prompt reference construction" { node scripts/verify-skill-trial.mjs }
   Invoke-Step "Skill trial real draft host" { node scripts/verify-skill-trial-host.mjs }
+  Invoke-Step "Skill trial replacement and stale navigation guards" { node scripts/verify-skill-trial-prefill.mjs }
   Invoke-Step "Skill file host acknowledgment and dirty guard" { node scripts/verify-skill-file-host.mjs }
   Invoke-Step "Code review targets parity" { node scripts/verify-code-review.mjs }
   Invoke-Step "Review start, delivery and navigation regression" { node scripts/verify-review-actions.mjs }

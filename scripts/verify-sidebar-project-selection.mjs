@@ -6,10 +6,12 @@ import ts from "typescript";
 // Execute the production callback; controlled promises prove ordering, not native parity.
 const source = ts.createSourceFile("App.tsx", fs.readFileSync("src/App.tsx", "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 let callback;
+let commitCallback;
 function visit(node) {
   if (ts.isVariableDeclaration(node) && node.name.getText(source) === "startNewThread") {
     callback = node.initializer.arguments[0].getText(source);
   }
+  if (ts.isVariableDeclaration(node) && node.name.getText(source) === "commitNewThreadNavigation") commitCallback = node.initializer.arguments[0].getText(source);
   ts.forEachChild(node, visit);
 }
 visit(source);
@@ -33,7 +35,7 @@ function mount({ select = async () => snapshot, persist = async () => ({ errors:
     worktreeCreationControllersRef: { current: new Map() },
     personalizationNavigationGuardRef: { current: null },
     setPermissionModes: update => { state.permissionModes = update(state.permissionModes ?? {}); },
-    navigationRequestRef: { current: 0 }, activeThreadIdRef: { current: "old" },
+    navigationRequestRef: { current: 0 }, activeThreadIdRef: { current: "old" }, activeRouteRef: { current: "thread" },
     attachmentScopeRef: { current: "thread:old" },
     setComposerAttachmentDrafts: update => { state.attachmentDrafts = update(state.attachmentDrafts); },
     attachedFilesRef: { current: state.attachedFiles }, refreshWorkspaceGenerationRef: { current: 0 },
@@ -51,6 +53,8 @@ function mount({ select = async () => snapshot, persist = async () => ({ errors:
     const key = name[0].toLowerCase() + name.slice(1);
     context[`set${name}`] = value => { state[key] = value; calls.push([`set${name}`, value]); };
   }
+  context.commitActiveRoute = context.setActiveRoute;
+  context.commitNewThreadNavigation = vm.runInNewContext(ts.transpileModule(`(${commitCallback})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
   return { start: vm.runInNewContext(code, context), context, state, calls };
 }
 async function waitForSelection(view, count = 1) {
@@ -145,4 +149,21 @@ for (const scenario of ["same-root-new-draft", "navigation-refused", "invalid-pr
   await navigating;
 }
 console.log("PASS actual same-root new-draft setup cancellation: accepted draft cancels immediately, rejected navigation or invalid project never cancels an unrelated operation");
+for (const outcome of ["confirm", "cancel", "newer-navigation"]) {
+  const disk = deferred(), view = mount({ select: () => disk.promise });
+  const pending = view.start("D:/one", project);
+  await waitForSelection(view);
+  let resume;
+  view.context.personalizationNavigationGuardRef.current = continuation => { resume = continuation; return false; };
+  disk.resolve(snapshot); await pending;
+  assert.equal(view.state.activeThreadId, "old", "a guard installed during project IO must protect the current form before any reset");
+  assert.equal(view.calls.some(c => c[0] === "discard"), false);
+  assert.equal(typeof resume, "function");
+  if (outcome === "newer-navigation") ++view.context.navigationRequestRef.current;
+  if (outcome !== "cancel") { resume(); resume(); }
+  assert.equal(view.state.activeThreadId, outcome === "confirm" ? null : "old");
+  assert.equal(view.calls.filter(c => c[0] === "invoke").length, 1, "confirmation must reuse the completed project selection");
+  assert.equal(view.calls.filter(c => c[0] === "setComposerFocusRequest").length, outcome === "confirm" ? 1 : 0);
+}
+console.log("PASS project IO late guard: cancel, single confirmation, no repeated IO, focus and stale continuation");
 export { mount as mountProjectNavigation };

@@ -1,5 +1,12 @@
 # 实施日志（按轮次）
 
+## 2026-11-06 — 13F技能试用目标替换与导航保护
+
+- 同版ASAR补追普通home持久key与实例生命周期，确认nonce不是持久槽，撤回多nonce草稿推断。技能预填改为替换目标home，其他thread稿不变；复用既有持久键、首次发送迁移和主Composer，不加多草稿结构。
+- 冻结请求身份、上下文、编辑版本与导航；旧确认、ABA、晚到和重复continuation不注入。提取公共新聊天提交段后，独立审查发现项目IO期间新guard绕过，先红回归后用当前guard、navigation token与单次finalCommit修复，确认不重复项目IPC且只聚焦一次。
+- 16项试用回调与3组项目晚guard检查、43组前端回归、完整非Fast标准307段/32协议探针及当前Tauri debug构建退出0。620输入冻结后稳定，345产品输入/3产物绑定新EXE。私有原生实测替换、重复单引用、键入焦点及重启读回，threads为0、技能字节不变、正常退出；官方配对像素/IME/用户验收仍缺证，见[13F记录](antigravity/acceptance/13F-skill-trial-drafts.md)。本轮保留本地阶段版本，不混称已发布。
+- 上一阶段42f0d019已推送并发布preview.3；CI42173170846完整成功、全库512项通过，4下载资源均与API大小/digest匹配，3包与SHA256SUMS匹配，ZIP含实际codex-tauri.exe与5项许可文件。该远端结果属于上一提交，证据在13E verification/final-result.json，不代替13F新版本验证。
+
 ## 2026-11-06 — 13E已安装技能详情预览
 
 - 先核固定Store版本、13项原包条目和6项补充动作/CSS来源，按目录preview/editor实现独立详情；不套用设置contents/xwideTall、Showcase或技能文本。复制保留原文，预览单独清洗；无路径身份不足不猜远端RPC，文件错误不回退到猜测服务。

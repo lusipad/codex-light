@@ -24,12 +24,15 @@ function mount({ blocked = false, moved = false, draft = "", afterStart } = {}) 
     personalizationNavigationGuardRef: { current: blocked ? action => { ctx.resume = action; return false; } : null },
     executionIdentityRef: { current: identity }, activeThreadIdRef: { current: null },
     activeRouteRef: { current: "skills" },
+    skillTrialRequestRef: { current: 0 }, skillTrialContextRef: { current: {} }, homePromptRevisionRef: { current: 0 },
+    deepLinkRouteRef: { current: { route: "skills", revision: 0 } }, navigationRequestRef: { current: 0 },
     buildSkillTrialPrompt: skill => `use $${skill.name} `,
-    startNewThread: async () => {
+    commitNewThreadNavigation: async () => {
       calls.push("new draft"); ctx.activeRouteRef.current = moved ? "thread" : "home";
       afterStart?.(ctx);
+      return ++ctx.navigationRequestRef.current;
     },
-    setThreadPrompt: (id, update) => { assert.equal(id, null); ctx.draft = update(ctx.draft); },
+    setThreadPrompt: (id, update) => { assert.equal(id, null); ctx.draft = typeof update === "function" ? update(ctx.draft) : update; },
     setComposerFocusRequest: () => calls.push("focus"),
     showAppToast: (...args) => notices.push(args), draft,
   };
@@ -43,7 +46,7 @@ assert.equal(view.ctx.draft, "use $demo ");
 assert.deepEqual(view.calls, ["new draft", "focus"]);
 view = mount({ draft: "unsent work" });
 assert.equal(await view.run({ name: "demo" }), true);
-assert.equal(view.ctx.draft, "unsent work\n\nuse $demo ", "existing draft must survive");
+assert.equal(view.ctx.draft, "use $demo ", "official default home prefill replaces the target text");
 view = mount({ blocked: true });
 assert.equal(await view.run({ name: "demo" }), false);
 assert.deepEqual(view.calls, []);
@@ -78,4 +81,4 @@ for (const accepted of [true, false]) {
   assert.equal(await open("SKILL.md"), accepted);
   assert.deepEqual(events, ["clear review", "clear external request", "open", "render open", "read SKILL.md"]);
 }
-console.log("PASS skill trial draft host: no auto-send, preserved draft, guard and stale identity");
+console.log("PASS skill trial draft host: no auto-send, target replacement, guard and stale identity");

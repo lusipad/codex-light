@@ -24,7 +24,7 @@ function mount(serialized = null, utility = false) {
   const disk = new Map(serialized === null ? [] : [[storageKey, serialized]]);
   const context = {
     localStorage: { getItem: key => disk.get(key) ?? null, setItem: (key, value) => disk.set(key, value) },
-    console: { warn() {} }, activeThreadId: null, promptStorageKey: storageKey,
+    console: { warn() {} }, activeThreadId: null, promptStorageKey: storageKey, homePromptRevisionRef: { current: 0 },
   };
   const state = declarations.get("[promptDrafts, setPromptDrafts]");
   assert.ok(state, "prompt drafts must have separate persisted identities instead of one global input");
