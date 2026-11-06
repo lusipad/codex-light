@@ -35,6 +35,38 @@
   justify-content: flex-end;
 }
 
+.projects-official-table .project-sort-button {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.projects-official-table .project-sort-button:hover,
+.projects-official-table .project-sort-button.is-active {
+  color: var(--text-primary);
+}
+
+.project-sort-button:focus-visible {
+  outline: 1px solid var(--text-secondary);
+  outline-offset: 4px;
+}
+
+.project-sort-direction {
+  display: inline-flex;
+  transition: transform 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.project-sort-direction.descending {
+  transform: rotate(180deg);
+}
+
 @media (max-width: 680px) {
   .projects-official-table .projects-table-head,
   .projects-official-table .projects-table-row {

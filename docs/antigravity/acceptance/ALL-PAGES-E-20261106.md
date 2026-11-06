@@ -1,6 +1,6 @@
 # E 阶段集成与预览发布记录
 
-2026-11-06。状态：自验中，尚未用户验收；整个软件未完成 1:1。范围和发布合同见[阶段计划](../ALL-PAGES-E-20261106.md)。
+2026-11-06。状态：限定增量本地检查与预览发布完成，逐页用户验收尚未完成；整个软件未完成 1:1。范围和发布合同见[阶段计划](../ALL-PAGES-E-20261106.md)。
 
 ## 实现与审查
 
@@ -33,7 +33,13 @@
 
 ## 发布
 
-计划应用版本 0.2.0，标签 v0.2.0-preview.1，标记 prerelease。等待最终检查后提交推送及同提交 CI 发布；当前不宣称远端成功或已存在可下载版本。
+应用版本0.2.0已从提交 `ba6d4c640af0b4c7b14d96b210645960b8eed9c6` 推送并发布为[v0.2.0-preview.1](https://github.com/lusipad/codex-desktop-native/releases/tag/v0.2.0-preview.1)，prerelease=true、draft=false，实际标签提交已通过GitHub ref API和ls-remote双重核对。
+
+[run 42142616559](https://github.com/lusipad/codex-desktop-native/actions/runs/42142616559)最终completed/success，watch退出0。云端Node20的23项前端回放、类型/构建、原生SDK、474项完整Rust（0失败/忽略/过滤）、EXE/MSI/NSIS、资产上传、标签复核、Release发布和收尾均成功，不沿用旧run代替本次结果。
+
+已实际下载MSI、安装程序、便携ZIP及SHA256SUMS.txt，三个载荷同时匹配清单与GitHub资产digest；清单自身也匹配API digest。ZIP内EXE及5份许可存在。首次按本地原始LF字节比较许可失败，后查明云端checkout为CRLF：分别多567/22/21/21/33字节；仅将CRLF还原LF后，与该提交五份Git blob的SHA-256逐一完全一致，未忽略其他空白或内容变化。原始验证事实与最终结果留在 `.ref/parity/all-pages-E-20261106/{download-verification,portable-license-verification,final-result}.json`。
+
+此预览不包含之后开发的04E项目排序；预览发布成功不关闭剩余页面目标。
 
 ## 剩余边界
 

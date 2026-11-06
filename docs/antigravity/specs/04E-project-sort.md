@@ -1,6 +1,6 @@
 # 04E 项目列表排序与有效更新时间：开发前合同
 
-2026-11-06，只读取证完成，尚未实施。E预览构建冻结期间准备下一单元，不计入本次预览功能。
+2026-11-06，取证后已实施页面投影排序，聚焦回归完成，待浏览器与原生验证。不计入此前已冻结的 E 预览构建。
 
 基准 Store 26.1027.3384.0，来源 `.ref/parity/04/actual/04-11-15D/reference/raw/`；重新核对项目 chunk SHA-256 `03edef77b4b9a033d4ddeb17bb8cbc2adb89bfc2ec446c7f0e272243fb2b20e1`、中文包 `672ea7570754a484585121ddbbbbbba078e95f51ecf68db6e4f901a011577745`，均匹配既有清单。定位均为0-based UTF-16字符偏移。
 
@@ -13,7 +13,7 @@
 | `19931/20164`；`23025` Ei | 名称/已更新为按钮；仅活动列有方向箭头，降序旋转180度；680px以下隐藏时间列 |
 | `zh-CN-88ebb426d686.js:1504753/1504791` | 已更新、名称 |
 
-CSS沿已有同版本 `5257da4ba4ae.css` 及本项目token：text-xs 589280、text-default 619311、text-tertiary 623550、gap-1 430260、rotate-180 413167、transition-transform 697116。不能从utility名称直接推断物理像素。
+CSS沿已有同版本 `5257da4ba4ae.css` 及本项目token：text-xs 589280、text-default 619311、text-tertiary 623550、gap-1 430260、rotate-180 413167、transition-transform 697116；默认 transition 定义 140127 附近为 `.15s` 和 `cubic-bezier(.4,0,.2,1)`。不能从utility名称直接推断物理像素。
 
 ## 当前差距与最小范围
 
@@ -31,3 +31,13 @@ ProjectsIndexView表头为span，filteredProjects只过滤，沿用projects.ts�
 6. 原项目创建、ID归属、同根多项目、展开、新聊天和兼容移动动作回归不退化。
 
 修改前先补生产组件回归使现状失败。之后宽窄浏览器检查及原生焦点验证单列。当前没有官方同环境配对图，score=null；静态来源不能证明运行时gate或排序持久化，不新增未经证明的持久化逻辑。
+
+## 本轮实现映射
+
+- `ProjectsIndexView.tsx`：新增组件内排序状态，初值 modified/descending；原生 button 同列反转、换列采用该列默认值。只排序 `filter` 生成的新数组，不修改 `projects`、持久 position、侧栏或移动动作。
+- 同一 `timestampMilliseconds` 规范化项目与聊天的有效更新时间；排序与相对时间显示共用结果，避免聊天毫秒值再次乘1000。未知/非有限/非正数按缺失时间0处理；只对现代 Unix 秒/毫秒样本验证，不新增协议字段。
+- 平局严格采用官方 `Intl.Collator(undefined,{sensitivity:"base"})` 再比较 ID；降序翻转整个比较结果，包含平局的名称/ID顺序。
+- 保留按项目 ID 的展开状态；排序不发请求或持久写入。兼容上移/下移仍按原持久数组定义，与页面显示投影分离。
+- 活动列显示现有 `ChevronUpIcon`，降序旋转180度，活动文字使用主文本色；680px以下沿现有规则隐藏整个更新时间按钮/单元格。使用现有图标是适配选择，不能宣称其图形与官方 fe 完全一致。
+- `Ei` 的 button 无 title，排序按钮不新增原生悬停提示；箭头转动显式采用已证150ms和 `cubic-bezier(0.4,0,0.2,1)`，不使用浏览器默认 ease。
+- `verify-project-index-sort.mjs` 执行整个生产组件及生产点击回调，使用按 Object.is 依赖缓存的隔离 hooks 和只读内存 transport；覆盖 PS01–PS09。PS07单独替换 threads 数组，不改变 sort；项目更新经生产 notification → loadProjects → 新列表，不在原数组上修改，以真实检验 memo 依赖。不是浏览器/原生键盘验证，也不是实际服务器持久化测试。

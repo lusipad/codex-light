@@ -5,6 +5,7 @@ import {
   SearchIcon,
   ChevronRightIcon,
   ChevronDownIcon,
+  ChevronUpIcon,
   CloseIcon,
   NewChatComposeIcon,
   RefreshIcon,
@@ -51,6 +52,18 @@ export interface ProjectsIndexViewProps {
 }
 
 type ProjectLoadState = "loading" | "ready" | "unavailable";
+type ProjectSortColumn = "name" | "modified";
+const projectNameCollator = new Intl.Collator(undefined, { sensitivity: "base" });
+
+function timestampMilliseconds(value?: number | null): number {
+  if (value == null || !Number.isFinite(value) || value <= 0) return 0;
+  return value > 1e12 ? value : value * 1000;
+}
+
+function effectiveProjectUpdated(project: Project, threads: ThreadSummary[]): number {
+  return Math.max(timestampMilliseconds(project.updatedAt),
+    ...threads.map(thread => timestampMilliseconds(thread.updatedAt || thread.createdAt)));
+}
 
 function normPath(p?: string | null): string {
   if (!p) return "";
@@ -62,7 +75,7 @@ function formatRelativeTime(unixSeconds?: number | null): string {
     return "未知";
   }
   // 兼容秒 / 毫秒时间戳
-  const ms = unixSeconds > 1e12 ? unixSeconds : unixSeconds * 1000;
+  const ms = timestampMilliseconds(unixSeconds);
   const diff = Date.now() - ms;
   if (diff < 0) return new Date(ms).toLocaleDateString();
   const minute = 60 * 1000;
@@ -94,6 +107,17 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
   onShowToast,
 }) => {
   const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<{ column: ProjectSortColumn; direction: "ascending" | "descending" }>({
+    column: "modified", direction: "descending",
+  });
+  const handleSort = (column: ProjectSortColumn) => {
+    setSort(previous => ({
+      column,
+      direction: previous.column === column
+        ? previous.direction === "ascending" ? "descending" : "ascending"
+        : column === "name" ? "ascending" : "descending",
+    }));
+  };
 
   /* ── 真实项目实体（project/*） ── */
   const [projects, setProjects] = useState<Project[]>([]);
@@ -195,16 +219,6 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
   }, [loadProjects, onProjectsChanged, onThreadsChanged]);
 
   /* ── 搜索过滤（项目 / workspace 两套视图共用输入） ── */
-  const filteredProjects = useMemo(() => {
-    if (!search.trim()) return projects;
-    const q = search.toLowerCase();
-    return projects.filter(
-      (project) =>
-        project.name.toLowerCase().includes(q) ||
-        project.roots.some((root) => root.path.toLowerCase().includes(q))
-    );
-  }, [projects, search]);
-
   const filteredWorkspaces = useMemo(() => {
     if (!search.trim()) return workspaces;
     const q = search.toLowerCase();
@@ -225,6 +239,19 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
     }
     return map;
   }, [threads]);
+
+  const filteredProjects = useMemo(() => {
+    const q = search.trim() ? search.toLowerCase() : "";
+    return projects.filter(project => !q || project.name.toLowerCase().includes(q) ||
+      project.roots.some(root => root.path.toLowerCase().includes(q)))
+      .sort((a, b) => {
+        const nameOrder = projectNameCollator.compare(a.name, b.name) || a.id.localeCompare(b.id);
+        const order = sort.column === "name" ? nameOrder :
+          effectiveProjectUpdated(a, threadsByProjectId[a.id] || []) -
+          effectiveProjectUpdated(b, threadsByProjectId[b.id] || []) || nameOrder;
+        return sort.direction === "ascending" ? order : -order;
+      });
+  }, [projects, search, sort, threadsByProjectId]);
 
   /* ── 回退视图：按 cwd 归组到 workspace（原有逻辑） ── */
   const threadsByWorkspacePath = useMemo(() => {
@@ -623,10 +650,7 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
       const roots = project.roots;
       const isBusy = actionBusyId === project.id;
       const index = projects.findIndex((item) => item.id === project.id);
-      const effectiveUpdated = Math.max(
-        project.updatedAt,
-        ...projectThreads.map((t) => (t.updatedAt || t.createdAt || 0) * 1000)
-      );
+      const effectiveUpdated = effectiveProjectUpdated(project, projectThreads);
 
       return (
         <div className="projects-table-group" key={project.id}>
@@ -959,8 +983,14 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
         {isFallback ? renderWorkspaceFallback() : (
           <div className="projects-index-table projects-official-table">
             <div className="projects-table-head">
-              <span>名称</span>
-              <span className="project-col-updated">已更新</span>
+              <button type="button" className={`project-sort-button ${sort.column === "name" ? "is-active" : ""}`} onClick={() => handleSort("name")}>
+                名称
+                {sort.column === "name" && <span aria-hidden="true" className={`project-sort-direction ${sort.direction === "descending" ? "descending" : ""}`}><ChevronUpIcon size={12} /></span>}
+              </button>
+              <button type="button" className={`project-sort-button project-col-updated ${sort.column === "modified" ? "is-active" : ""}`} onClick={() => handleSort("modified")}>
+                已更新
+                {sort.column === "modified" && <span aria-hidden="true" className={`project-sort-direction ${sort.direction === "descending" ? "descending" : ""}`}><ChevronUpIcon size={12} /></span>}
+              </button>
               <span />
             </div>
             {renderProjectRows()}
