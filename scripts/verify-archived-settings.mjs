@@ -25,6 +25,7 @@ const React = { createElement: (type, props, ...children) => ({ type, props: pro
 const tree = vm.runInNewContext(compile(`(${archiveBranch.getText(ast)})`), { activeSection: "archived-chats", archiveViewProps, React, ArchiveView });
 const child = tree.children[0];
 assert.equal(child.type, ArchiveView);
+assert.equal(child.props.surface, "settings", "ARS01: settings explicitly selects its researched surface");
 for (const [key, value] of Object.entries(archiveViewProps)) assert.equal(child.props[key], value, `ARS02/04: ${key} forwarded without changing identity`);
 assert.equal(vm.runInNewContext(compile(`(${archiveBranch.getText(ast)})`), { activeSection: "storage", archiveViewProps, React, ArchiveView }), false);
 const appAst = parse("App.tsx", app);
@@ -38,9 +39,14 @@ function find(node) {
 }
 find(appAst);
 const props = settings.attributes.properties.find(p => p.name?.getText(appAst) === "archiveViewProps").initializer.expression;
-const bindings = { archiveRefreshTick: 63, appServerStatus: { connected: true }, selectThread() {}, handleUnarchiveThread() {}, handleDeleteArchivedThread() {}, handleDeleteAllArchivedThreads() {}, showAppToast() {} };
+const bindings = { workspaces: [{ id: "root", path: "C:/project" }], sidebarProjectMembership: { localProjects: [{ id: "project", name: "Project" }] }, workspaceHints: { thread: "C:/project" }, archiveRefreshTick: 63, appServerStatus: { connected: true }, selectThread() {}, handleUnarchiveThread() {}, handleDeleteArchivedThread() {}, handleDeleteAllArchivedThreads() {}, showAppToast() {} };
 const shared = vm.runInNewContext(compile(`(${props.getText(appAst)})`), bindings);
+for (const [key, binding] of [["workspaces", "workspaces"], ["projectMembership", "sidebarProjectMembership"], ["workspaceHints", "workspaceHints"]]) {
+  assert.equal(shared[key], bindings[binding], `ARS04: settings receives current ${key} by identity`);
+}
+assert.ok(!standalone.attributes.properties.some(p => p.name?.getText(appAst) === "surface"), "ARS04: global archive retains its default surface");
 for (const [key, value] of Object.entries(shared)) {
+  if (["workspaces", "projectMembership", "workspaceHints"].includes(key)) continue;
   const attribute = standalone.attributes.properties.find(p => p.name?.getText(appAst) === key);
   assert.ok(attribute, `ARS04: standalone archive has ${key}`);
   assert.equal(vm.runInNewContext(compile(`(${attribute.initializer.expression.getText(appAst)})`), bindings), value, `ARS02-04: both entry points use identical ${key}`);

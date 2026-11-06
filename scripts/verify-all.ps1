@@ -162,6 +162,7 @@ try {
   Invoke-Step "Model parameters across actual submission paths" { node scripts/verify-model-requests-b.mjs }
   Invoke-Step "Rust model defaults and recent persistence regression" { cargo test --locked --manifest-path src-tauri/Cargo.toml --lib model_preferences }
   Invoke-Step "Archived settings shared lifecycle regression" { node scripts/verify-archived-settings.mjs }
+  Invoke-Step "Archived settings project identity, grouping and honest source projection" { node scripts/verify-archive-settings-projection.mjs }
   Invoke-Step "Storage cloud capability and destructive entry regression" { node scripts/verify-storage-settings.mjs }
   Invoke-Step "Agent user config version, readback and lifecycle regression" { node scripts/verify-agent-settings.mjs }
   Invoke-Step "Agent scoped configuration, requirements and persistence regression" { node scripts/verify-agent-configuration-b.mjs }

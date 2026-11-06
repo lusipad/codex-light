@@ -7,7 +7,7 @@ interface GeneralPreferenceSelectProps {
   id: string;
   label: string;
   value: string;
-  options: { value: string; label: string }[];
+  options: { value: string; label: string; title?: string }[];
   disabled?: boolean;
   placeholder?: string;
   className?: string;
@@ -112,7 +112,7 @@ export const GeneralPreferenceSelect: React.FC<GeneralPreferenceSelectProps> = (
     </button>
     {open && !unavailable && createPortal(<div id={`${id}-menu`} ref={menuRef} role="menu" aria-label={label}
       className={`general-preference-menu ${className}`} style={position} onBlur={handleBlur} onKeyDown={handleMenuKeyDown}>
-      {options.map(option => <button type="button" key={option.value} role="menuitemradio"
+      {options.map(option => <button type="button" key={option.value} role="menuitemradio" title={option.title}
         aria-checked={value === option.value} onClick={() => {
           close();
           if (!unavailable) {

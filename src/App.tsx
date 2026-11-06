@@ -5425,6 +5425,9 @@ export const App: React.FC = () => {
               onAccountChanged={() => void refreshAccount()}
               onNavigationGuardChange={setPersonalizationNavigationGuard}
               archiveViewProps={{
+                workspaces,
+                projectMembership: sidebarProjectMembership,
+                workspaceHints,
                 refreshToken: `${archiveRefreshTick}:${appServerStatus.connected}`,
                 onSelectThread: selectThread,
                 onUnarchive: handleUnarchiveThread,

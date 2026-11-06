@@ -358,7 +358,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         {/* SECTION: ARCHIVED CHATS */}
         {activeSection === "archived-chats" && (
           <div className="settings-scroll-container">
-            <ArchiveView {...archiveViewProps} />
+            <ArchiveView {...archiveViewProps} surface="settings" />
           </div>
         )}
 

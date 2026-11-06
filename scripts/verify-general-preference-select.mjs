@@ -112,6 +112,15 @@ console.log('PASS general preference production menu: checked state, one-shot se
 }
 console.log('PASS portal menu: composing keys ignored, measured viewport positioning, bottom flip, scroll/resize updates, non-focusable outside click, listener cleanup');
 
+{
+  const view = mount({ options: [{ value: 'a', label: 'Same project', title: 'C:/alpha' }, { value: 'b', label: 'Same project', title: 'C:/beta' }], value: 'a' });
+  trigger(view).props.onClick(); view.render();
+  const items = view.all().filter(node => node.props.role === 'menuitemradio');
+  assert.deepEqual(items.map(item => item.props.title), ['C:/alpha', 'C:/beta']);
+  items[1].props.onClick();
+  assert.deepEqual(view.calls, ['b'], 'same-label choices retain distinct identities');
+}
+
 // Render the real consumer: options must remain service-derived, not a replacement static list.
 {
   const fixture = { platform: 'windows', preferredTarget: 'cursor', targets: [{ id: 'cursor', label: 'Cursor' }],

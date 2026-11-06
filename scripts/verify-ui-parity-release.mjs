@@ -9,6 +9,7 @@ const scripts = [
   'verify-account-notifications.mjs', 'verify-account-notifications-ui.mjs',
   'verify-command-cards.mjs', 'verify-user-message-presentation.mjs',
   'verify-project-index-sort.mjs',
+  'verify-archive-settings-projection.mjs', 'verify-archived-settings.mjs',
   'verify-workspace-file-tree.mjs', 'verify-workspace-recursive-tree.mjs', 'verify-workbench-app-e.mjs',
   'verify-file-editor-lifecycle.mjs', 'verify-file-editor-save.mjs',
   'verify-terminal-ui.mjs', 'verify-terminal-lifecycle.mjs', 'verify-terminal-output.mjs',

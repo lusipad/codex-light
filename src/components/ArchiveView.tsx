@@ -1,12 +1,19 @@
-import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { Trash2 } from "lucide-react";
+import React, { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Check, ChevronDown, ListFilter, Folder, Trash2 } from "lucide-react";
 import { callAppServer } from "../bridge";
-import { ArchiveDeleteResult, ThreadSummary } from "../types";
+import { ArchiveDeleteResult, SidebarProjectMembership, ThreadSummary, WorkspaceRootItem } from "../types";
+import { createPortal } from "react-dom";
+import { buildSidebarProjectGroups } from "../sidebarProjects";
+import { GeneralPreferenceSelect } from "./GeneralPreferenceSelect";
 import "./RenameThreadDialog.css";
 import "./ArchiveView.css";
 
 export interface ArchiveViewProps {
   refreshToken?: number | string | null;
+  surface?: "global" | "settings";
+  workspaces?: WorkspaceRootItem[];
+  projectMembership?: SidebarProjectMembership;
+  workspaceHints?: Record<string, string>;
   onSelectThread: (threadId: string) => void;
   onUnarchive: (thread: ThreadSummary) => Promise<void> | void;
   onDelete: (thread: ThreadSummary) => Promise<ArchiveDeleteResult>;
@@ -29,6 +36,96 @@ function formatRelative(seconds?: number): string {
   if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`;
   if (diff < 30 * 86_400_000) return `${Math.floor(diff / 86_400_000)} 天前`;
   return new Date(ms).toLocaleDateString();
+}
+
+type ArchiveSortKey = "updated" | "created" | "alphabetical";
+type ArchiveKindFilter = "all" | "local" | "cloud";
+const EMPTY_MEMBERSHIP: SidebarProjectMembership = { threadProjectAssignments: {}, projectlessThreadIds: [], workspaceProjectAssignments: {} };
+const EMPTY_WORKSPACES: WorkspaceRootItem[] = [];
+const EMPTY_HINTS: Record<string, string> = {};
+const archiveTitle = (thread: ArchivedThread) => thread.name?.trim() || thread.preview?.trim() || "无标题聊天";
+const archiveTime = (value?: number, fallback?: number) => Number.isFinite(value) ? value! : Number.isFinite(fallback) ? fallback! : 0;
+const archivePath = (value?: string | null) => (value || "").replace(/\\/g, "/").replace(/\/+$/, "");
+const archiveRepo = (value?: string | null) => archivePath(value).split("/").at(-1)?.split(/\s+/).slice(0, 3).join(" ") || "";
+
+// Official archive identity uses EY/Pa; display paths keep their original case.
+function archiveProjectPath(value?: string | null): string {
+  let path = value || "";
+  if (/^\\\\\?\\(?:UNC\\|[a-z]:[\\/])/i.test(path)) path = path.slice(4).replace(/^UNC\\/i, "\\\\");
+  path = path.replace(/\\/g, "/").toLowerCase();
+  const wsl = path.match(/^\/\/(?:wsl\$|wsl\.localhost)\/[^/]+(?:\/(.*))?$/);
+  if (wsl) return `/${wsl[1] || ""}`.replace(/\/+$/, "");
+  const drive = path.match(/^\/?([a-z]):(?:\/(.*))?$/);
+  if (drive) path = `/mnt/${drive[1]}${drive[2] ? `/${drive[2]}` : ""}`;
+  return path.replace(/\/+$/, "");
+}
+
+function ArchiveFilterMenu({ kindFilter, sortKey, onKindFilterChange, onSortKeyChange }: {
+  kindFilter: ArchiveKindFilter; sortKey: ArchiveSortKey;
+  onKindFilterChange: (value: ArchiveKindFilter) => void; onSortKeyChange: (value: ArchiveSortKey) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState({ left: 0, top: 0, maxHeight: 320 });
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const initialFocus = useRef(0);
+  const close = () => { setOpen(false); triggerRef.current?.focus(); };
+  useLayoutEffect(() => {
+    if (!open) return;
+    const update = () => {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      if (rect.bottom < 0 || rect.top > window.innerHeight) { setOpen(false); return; }
+      const width = menuRef.current?.offsetWidth || 220, height = menuRef.current?.offsetHeight || 320;
+      const below = window.innerHeight - rect.bottom - 12, above = rect.top - 12;
+      const upward = below < height && above > below, maxHeight = Math.max(32, Math.min(320, upward ? above : below));
+      setPosition({ left: Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8)),
+        top: upward ? Math.max(8, rect.top - Math.min(height, maxHeight) - 4) : rect.bottom + 4, maxHeight });
+    };
+    const outside = (event: PointerEvent) => {
+      if (!triggerRef.current?.contains(event.target as Node) && !menuRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    update();
+    menuRef.current?.querySelectorAll<HTMLButtonElement>("[role=menuitemradio]")[initialFocus.current]?.focus();
+    document.addEventListener("pointerdown", outside);
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => { document.removeEventListener("pointerdown", outside); window.removeEventListener("resize", update); window.removeEventListener("scroll", update, true); };
+  }, [open]);
+  const kinds: { value: ArchiveKindFilter; label: string }[] = [{ value: "all", label: "全部聊天" }, { value: "local", label: "本地" }, { value: "cloud", label: "云端" }];
+  const sorts: { value: ArchiveSortKey; label: string }[] = [{ value: "updated", label: "更新时间" }, { value: "created", label: "创建时间" }, { value: "alphabetical", label: "按字母顺序" }];
+  const blur = (event: React.FocusEvent<HTMLElement>) => {
+    if (!triggerRef.current?.contains(event.relatedTarget) && !menuRef.current?.contains(event.relatedTarget)) setOpen(false);
+  };
+  return <div className="general-preference-select archive-kind-filter" onBlur={blur}>
+    <button type="button" ref={triggerRef} className="general-preference-trigger" aria-label="筛选已归档聊天"
+      aria-haspopup="menu" aria-expanded={open} aria-controls={open ? "archive-kind-menu" : undefined}
+      onClick={() => { if (open) close(); else { initialFocus.current = kinds.findIndex(item => item.value === kindFilter); setOpen(true); } }}
+      onKeyDown={event => {
+        if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+        if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); initialFocus.current = event.key === "ArrowUp" ? 5 : 0; setOpen(true); }
+      }}><ListFilter size={14} aria-hidden="true" /><span>{kinds.find(item => item.value === kindFilter)?.label}</span><ChevronDown size={12} aria-hidden="true" /></button>
+    {open && createPortal(<div id="archive-kind-menu" role="menu" aria-label="筛选已归档聊天" ref={menuRef}
+      className="general-preference-menu archive-filter-menu" style={position} onBlur={blur}
+      onKeyDown={event => {
+        if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+        if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); return; }
+        if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+        event.preventDefault();
+        const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>("[role=menuitemradio]") || []);
+        const index = items.indexOf(event.target as HTMLButtonElement);
+        items[event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus();
+      }}>
+      <div role="group" aria-label="类型"><div className="archive-menu-label">类型</div>
+        {kinds.map(item => <button key={item.value} type="button" role="menuitemradio" aria-checked={kindFilter === item.value}
+          onClick={() => { close(); onKindFilterChange(item.value); }}><span>{item.label}</span>{kindFilter === item.value && <Check size={14} aria-hidden="true" />}</button>)}
+      </div><div role="separator" className="archive-menu-separator" />
+      <div role="group" aria-label="排序方式"><div className="archive-menu-label">排序方式</div>
+        {sorts.map(item => <button key={item.value} type="button" role="menuitemradio" aria-checked={sortKey === item.value}
+          onClick={() => { close(); onSortKeyChange(item.value); }}><span>{item.label}</span>{sortKey === item.value && <Check size={14} aria-hidden="true" />}</button>)}
+      </div>
+    </div>, document.body)}
+  </div>;
 }
 
 function ArchiveDeleteDialog({ all, onDecision, fallbackRef }: {
@@ -83,12 +180,19 @@ function ArchiveDeleteDialog({ all, onDecision, fallbackRef }: {
 
 export const ArchiveView: React.FC<ArchiveViewProps> = ({
   refreshToken,
+  surface = "global",
+  workspaces = EMPTY_WORKSPACES,
+  projectMembership = EMPTY_MEMBERSHIP,
+  workspaceHints = EMPTY_HINTS,
   onSelectThread,
   onUnarchive,
   onDelete,
   onDeleteAll,
   onShowToast,
 }) => {
+  const [kindFilter, setKindFilter] = useState<ArchiveKindFilter>("all");
+  const [sortKey, setSortKey] = useState<ArchiveSortKey>("updated");
+  const [projectFilter, setProjectFilter] = useState("all");
   const [threads, setThreads] = useState<ArchivedThread[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -207,28 +311,75 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
     !query || (thread.name || thread.preview || thread.id).toLocaleLowerCase().includes(query)
   ), [threads, query]);
 
+  const settings = surface === "settings";
+  const projects = useMemo(() => settings ? buildSidebarProjectGroups(workspaces, projectMembership) : [], [settings, workspaces, projectMembership]);
+  const projectOptions = useMemo(() => [
+    { value: "all", label: "所有项目" },
+    ...projects.map(project => ({ value: `project:local::${project.id}`, label: project.label,
+      title: projects.filter(item => item.label === project.label).length > 1 ? project.rootPaths.join("\n") : undefined })),
+    { value: "special:none", label: "聊天" }, { value: "special:automations", label: "定时任务" },
+  ], [projects]);
+  const activeProjectFilter = projectOptions.some(option => option.value === projectFilter) ? projectFilter : "all";
+  const settingsGroups = useMemo(() => {
+    if (kindFilter === "cloud" || activeProjectFilter === "special:automations") return [];
+    const entries = threads.map(thread => {
+      let project: typeof projects[number] | undefined;
+      const hasWorkspaceOverride = Object.prototype.hasOwnProperty.call(projectMembership.workspaceProjectAssignments, thread.id);
+      const workspaceOverride = projectMembership.workspaceProjectAssignments[thread.id];
+      if (!projectMembership.projectlessThreadIds.includes(thread.id) && !(hasWorkspaceOverride && workspaceOverride == null)) {
+        const assignment = hasWorkspaceOverride ? workspaceOverride : projectMembership.threadProjectAssignments[thread.id];
+        if (assignment?.projectKind === "local") project = projects.find(item => item.id === assignment.projectId || item.serverProjectId === assignment.projectId);
+        if (!project) for (const path of [workspaceHints[thread.id], thread.cwd]) {
+          if (!path?.trim()) continue;
+          const normalized = archiveProjectPath(path);
+          const matches = projects.filter(item => item.rootPaths.some(root => archiveProjectPath(root) === normalized));
+          if (matches.length === 1) { project = matches[0]; break; }
+        }
+      }
+      return { thread, groupId: project ? `project:local::${project.id}` : "special:none", label: project?.label ?? "" };
+    }).filter(entry => (activeProjectFilter === "all" || entry.groupId === activeProjectFilter)
+      && (!query || [archiveTitle(entry.thread), entry.label, archiveRepo(entry.thread.cwd)].some(value => value.toLocaleLowerCase().includes(query))));
+    const groups = new Map<string, { id: string; label: string; threads: ArchivedThread[] }>();
+    for (const entry of entries) {
+      const id = activeProjectFilter === "all" ? entry.groupId : "all";
+      if (!groups.has(id)) groups.set(id, { id, label: entry.label, threads: [] });
+      groups.get(id)!.threads.push(entry.thread);
+    }
+    const time = (thread: ArchivedThread) => sortKey === "created" ? archiveTime(thread.createdAt, thread.updatedAt) : archiveTime(thread.updatedAt, thread.createdAt);
+    const compare = (a: ArchivedThread, b: ArchivedThread) => sortKey === "alphabetical"
+      ? archiveTitle(a).localeCompare(archiveTitle(b)) || archiveTime(b.updatedAt, b.createdAt) - archiveTime(a.updatedAt, a.createdAt)
+      : time(b) - time(a) || archiveTitle(a).localeCompare(archiveTitle(b));
+    const result = [...groups.values()];
+    for (const group of result) group.threads.sort(compare);
+    return result.sort((a, b) => (sortKey === "alphabetical" ? 0 : Math.max(0, ...b.threads.map(time)) - Math.max(0, ...a.threads.map(time)))
+      || a.label.localeCompare(b.label) || a.id.localeCompare(b.id));
+  }, [threads, projects, projectMembership, workspaceHints, activeProjectFilter, kindFilter, sortKey, query]);
+  const displayedGroups = settings ? settingsGroups : [{ id: "global", label: "", threads: visible }];
+  const displayedCount = displayedGroups.reduce((count, group) => count + group.threads.length, 0);
+  const unavailableSource = settings && (kindFilter === "cloud" || activeProjectFilter === "special:automations");
+
   return (
-    <div className="archive-view" ref={viewRef} tabIndex={-1}>
+    <div className={`archive-view${settings ? " archive-settings" : ""}`} ref={viewRef} tabIndex={-1}>
       <header className="archive-header">
-        <div>
+        {!settings && <div>
           <h2 className="archive-title">归档</h2>
           <p className="archive-subtitle">
             归档的会话不会出现在侧边栏；可随时恢复或在需要时彻底删除。
           </p>
-        </div>
+        </div>}
         <div className="archive-header-actions">
           {!loading && !error && threads.length > 0 && (
-            <button type="button" className="archive-action danger" disabled={busyId !== null}
-              onClick={() => { if (!mutationPendingRef.current) setDeleteTarget("all"); }}>全部删除</button>
+            <button type="button" className="archive-action danger" disabled={busyId !== null} aria-label="删除所有本地已归档聊天"
+              onClick={() => { if (!mutationPendingRef.current) setDeleteTarget("all"); }}>{settings && kindFilter === "cloud" ? "删除全部本地归档" : "全部删除"}</button>
           )}
-          <input
+          {!settings && <input
             className="archive-search"
             type="text"
             aria-label="搜索已归档的聊天"
             placeholder="搜索已归档的聊天"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-          />
+          />}
           <button
             type="button"
             className="archive-refresh"
@@ -239,6 +390,19 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
           </button>
         </div>
       </header>
+
+      {settings && <>
+        <div className="archive-settings-toolbar">
+          <input className="archive-search" type="search" aria-label="搜索已归档的聊天" placeholder="搜索已归档的聊天" value={search} onChange={event => setSearch(event.target.value)} />
+          <div className="archive-settings-filters">
+            <ArchiveFilterMenu kindFilter={kindFilter} sortKey={sortKey} onKindFilterChange={setKindFilter} onSortKeyChange={setSortKey} />
+            <GeneralPreferenceSelect id="archive-project-filter" label="按项目筛选已归档的聊天" value={activeProjectFilter} options={projectOptions} onChange={setProjectFilter} />
+          </div>
+        </div>
+        {kindFilter === "all" && <div className="archive-source-notice" role="status">当前仅列出本地归档，云端归档尚未接入，全部聊天的来源不完整。</div>}
+        {kindFilter === "cloud" && <div className="archive-source-notice" role="status">云端归档尚未实现，无法读取云端结果。</div>}
+        {activeProjectFilter === "special:automations" && kindFilter !== "cloud" && <div className="archive-source-notice" role="status">计划任务归档的身份映射尚未接入，无法确认结果。</div>}
+      </>}
 
       {restoredThread && (
         <div className="archive-footer" role="status">
@@ -256,23 +420,31 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
         </div>
       )}
 
-      {!error && !loading && visible.length === 0 && (
+      {!error && !loading && !unavailableSource && displayedCount === 0 && (
         <div className="archive-empty">
           <div className="archive-empty-title">{query ? "未找到匹配的归档聊天" : "暂无已归档的聊天"}</div>
         </div>
       )}
 
-      {visible.length > 0 && (
+      {displayedCount > 0 && displayedGroups.map(group => (
+        <section key={group.id} className="archive-group">
+          {settings && activeProjectFilter === "all" && <header className="archive-group-header"><Folder size={14} aria-hidden="true" /><h3>{group.label || "无项目"}</h3><span>{group.threads.length} 个聊天</span></header>}
         <div className="archive-list">
-          {visible.map((thread) => (
+          {group.threads.map((thread) => (
             <div key={thread.id} className="archive-row">
               <div className="archive-row-main">
                 <span className="archive-row-title">
-                  {thread.name || thread.preview || thread.id}
+                  {settings ? archiveTitle(thread) : thread.name || thread.preview || thread.id}
                 </span>
                 <span className="archive-row-meta">
-                  <span className="mono">{formatRelative(thread.updatedAt || thread.createdAt)}</span>
-                  {thread.cwd && (
+                  {settings ? <span>{(() => {
+                    const updated = new Date((thread.updatedAt ?? NaN) * 1000), created = new Date((thread.createdAt ?? NaN) * 1000);
+                    const date = Number.isFinite(updated.getTime()) ? updated : Number.isFinite(created.getTime()) ? created : null;
+                    if (!date) return null;
+                    const label = `${date.toLocaleDateString("zh-CN", { year: "numeric", month: "short", day: "numeric" })}，${date.toLocaleTimeString("zh-CN", { hour: "numeric", minute: "2-digit" })}`;
+                    return activeProjectFilter !== "all" && thread.cwd ? `${label} • ${archiveRepo(thread.cwd)}` : label;
+                  })()}</span> : <span className="mono">{formatRelative(thread.updatedAt || thread.createdAt)}</span>}
+                  {!settings && thread.cwd && (
                     <span className="mono archive-row-cwd" title={thread.cwd}>
                       {thread.cwd}
                     </span>
@@ -302,11 +474,12 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
             </div>
           ))}
         </div>
-      )}
+        </section>
+      ))}
 
-      <footer className="archive-footer">
-        共 {visible.length} 个归档会话{loading ? "（加载中…）" : ""}
-      </footer>
+      {!unavailableSource && <footer className="archive-footer">
+        共 {displayedCount} 个{settings ? "本地归档聊天" : "归档会话"}{loading ? "（加载中…）" : ""}
+      </footer>}
       {deleteTarget && <ArchiveDeleteDialog all={deleteTarget === "all"} onDecision={handleDeleteDecision} fallbackRef={viewRef} />}
     </div>
   );
