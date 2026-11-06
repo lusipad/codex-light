@@ -1,5 +1,12 @@
 # 实施日志（按轮次）
 
+## 2026-11-06 — 18E普通资料库目录导航
+
+- 先核固定Store26.1027.3384.0、12条原包integrity与25函数/中文锚点，再复用nodes/真实资格恢复普通native目录、独立祖先path、分页、面包屑及现有标题栏前后退；保留metadata表与原cleanup，无新增依赖或假预览。
+- 新path宿主为固定GET/唯一directory_id，复用鉴权/网络/身份/取消；独立数据结构不要求kind/cursor。监听间隙旧身份目录、旧retry/more借新controller、根态残留前进历史分别真实红转绿；普通导航history与known祖先裁剪分开。
+- 最终58组前端、独立复核、宽窄真实组件与全库Rust519项通过；完整非Fast标准315段/32探针和最终Tauri构建退出0；627输入稳定，私有原生未登录错误/重试、标题栏往返及正常退出通过，见[18E阶段记录](antigravity/acceptance/18E-library-navigation.md)。真实账号HTTP、配对像素/物理IME/用户验收及完整browse/URL/预览仍缺，不纳入preview.4。
+- [18F预览](antigravity/specs/18F-library-preview.md)已先取证27条目/68原函数和14分类样本，追到右侧panel、metadata及字节链，仅调研；不把library_image扩称全类型能力。
+
 ## 2026-11-06 — 09C活动会话与归档必要边界
 
 - 按当前57项官方锚点/原函数序列和字段映射开发，另用CLI0.165.0隔离schema核秒时间与systemError/readState。session存有序成员、已见ID、打开时间/作用域和显示数；summary始终读当前数据，已读/结束保留，新建idle补入、权威移除/关闭重开各自处理。

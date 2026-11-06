@@ -76,6 +76,8 @@ try {
   Invoke-Step "Plugin preparation component lifecycle contracts" { node scripts/verify-plugin-preparation-ui.mjs }
   Invoke-Step "Worktree removal conversation and result contracts" { node scripts/verify-worktree-removal.mjs }
   Invoke-Step "Library authenticated service boundary regression" { node scripts/verify-library-service.mjs }
+  Invoke-Step "Library directory navigation and cancellation" { node scripts/verify-library-navigation.mjs }
+  Invoke-Step "Library directory titlebar history" { node scripts/verify-library-host-navigation.mjs }
   Invoke-Step "Library response mapping, paging and sorting" { node scripts/verify-library-data.mjs }
   Invoke-Step "Library access and real client contracts" { node scripts/verify-library-read.mjs }
   Invoke-Step "Library cleanup lifecycle and presentation regression" { node scripts/verify-library-cleanup.mjs }

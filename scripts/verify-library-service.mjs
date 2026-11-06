@@ -9,27 +9,31 @@ const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve()
 const nodes = node => node && typeof node === "object" ? [node, ...(node.children ?? []).flatMap(nodes)] : [];
 const text = tree => nodes(tree).flatMap(node => node.children.filter(child => typeof child === "string")).join(" ");
 const button = (tree, label) => { const found = nodes(tree).find(node => node.type === "button" && text(node) === label); assert.ok(found, label); return found; };
-function harness(listenerError = null) {
-  const hooks = [], effects = [], accesses = [], reads = []; let cursor = 0, listener, writes = 0;
+export function harness(listenerError = null) {
+  const hooks = [], effects = [], accesses = [], reads = [], paths = []; let cursor = 0, listener, writes = 0, navigation = null;
   const React = { createElement: (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat(Infinity) }),
     useState: initial => { const i = cursor++; if (!(i in hooks)) hooks[i] = initial; return [hooks[i], value => { writes++; hooks[i] = typeof value === "function" ? value(hooks[i]) : value; }]; },
+    useCallback: (fn, deps) => { const i = cursor++, old = hooks[i]; if (!old || deps.some((value, j) => !Object.is(value, old.deps[j]))) hooks[i] = { deps, fn }; return hooks[i].fn; },
     useRef: initial => { const i = cursor++; if (!(i in hooks)) hooks[i] = { current: initial }; return hooks[i]; },
     useEffect: (effect, deps) => { const i = cursor++, old = hooks[i]; if (!old || deps.some((v, j) => !Object.is(v, old.deps[j]))) { hooks[i] = { deps, cleanup: old?.cleanup }; effects.push(() => { hooks[i].cleanup?.(); hooks[i].cleanup = effect(); }); } },
-  }; React.default = React;
+  }; React.default = React; React.useLayoutEffect = React.useEffect;
   const exports = {};
   vm.runInNewContext(compile("src/components/LibraryView.tsx"), { exports, AbortController, require: name => {
     if (name === "react") return React;
     if (name.endsWith(".css")) return {};
+    if (name === "./ThreadActionsMenu") return { ThreadActionsMenu: "ThreadActionsMenu" };
     if (name === "../bridge") return { tauriListen: (_event, callback) => { listener = callback; return listenerError ? Promise.reject(listenerError) : Promise.resolve(() => {}); } };
     if (name === "../chatgptService") return { serviceErrorMessage: cause => cause.message };
     if (name === "../libraryData") return data;
     if (name === "../storageUsage") return { formatStorageBytes: value => `${value} bytes` };
     if (name === "../libraryClient") return {
       readLibraryAccess: signal => { const pending = deferred(); accesses.push({ signal, ...pending }); return pending.promise; },
-      readLibraryPage: (access, tab, cursor, signal) => { const pending = deferred(); reads.push({ access, tab, cursor, signal, ...pending }); return pending.promise; },
+      readLibraryPage: (access, tab, cursor, signal, directoryId) => { const pending = deferred(); reads.push({ access, tab, cursor, signal, directoryId, ...pending }); return pending.promise; },
+      readLibraryDirectoryPath: (access, directoryId, signal) => { const pending = deferred(); paths.push({ access, directoryId, signal, ...pending }); return pending.promise; },
     }; assert.fail(name);
   } });
-  return { accesses, reads, setListenError(value) { listenerError = value; }, render() { cursor = 0; const tree = exports.LibraryView(); while (effects.length) effects.shift()(); return tree; }, invalidate() { listener(); }, unmount() { for (const h of hooks) h?.cleanup?.(); }, get writes() { return writes; } };
+  const onNavigationChange = next => { navigation = next; };
+  return { accesses, reads, paths, get navigation() { return navigation; }, setListenError(value) { listenerError = value; }, render() { cursor = 0; const tree = exports.LibraryView({ onNavigationChange }); while (effects.length) effects.shift()(); return tree; }, invalidate() { listener(); }, unmount() { for (const h of hooks) h?.cleanup?.(); }, get writes() { return writes; } };
 }
 const access = { available: true, identity: { accountId: "a", userId: "u", generation: 1 }, onedrive: false };
 const page = (names, cursor = null) => ({ items: names.map(name => ({ node: { id: name, name, kind: "file", file_size_bytes: 10 } })), cursor });

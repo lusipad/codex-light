@@ -368,9 +368,27 @@
   font-size: var(--text-sm);
 }
 
-/* Root catalog reading; directory navigation and write actions remain unavailable. */
+/* The existing metadata table is retained while ordinary native directories navigate. */
 .library-root-table { width: 100%; border-collapse: collapse; text-align: left; table-layout: fixed; }
 .library-root-table th, .library-root-table td { padding: 12px 8px; border-bottom: 1px solid var(--border-subtle); overflow-wrap: anywhere; }
 .library-root-table th { color: var(--text-muted); font-size: var(--text-sm); font-weight: 500; }
 .library-root-table th:first-child { width: 55%; }
 .library-root-table th:last-child { width: 18%; }
+
+/* Official Yi: min-width zero, nonshrinking ancestors, truncated current item,
+   measured intermediate-parent collapse and mx-2 separators. */
+.library-directory-navigation { min-width: 0; margin-bottom: 16px; }
+.library-breadcrumbs { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; width: 100%; user-select: none; }
+.library-breadcrumb-visible { grid-area: 1 / 1; display: flex; min-width: 0; align-items: center; overflow: hidden; margin-block: -4px; padding-block: 4px; }
+.library-breadcrumb-entry { display: flex; min-width: 0; align-items: center; flex-shrink: 0; }
+.library-breadcrumb-entry.current { flex-shrink: 1; }
+.library-breadcrumb-separator { display: inline-block; flex-shrink: 0; margin-inline: 8px; color: var(--text-muted); }
+.library-breadcrumb-current { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-block: -4px; padding-block: 4px; }
+.library-breadcrumb-button, .library-directory-link { border: 0; padding: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.library-breadcrumb-button { white-space: nowrap; color: var(--text-muted); }
+.library-breadcrumb-button:hover, .library-directory-link:hover { color: var(--text-main); text-decoration: underline; }
+.library-breadcrumb-button:focus-visible, .library-directory-link:focus-visible { outline: 2px solid var(--border-accent, #8e8e93); outline-offset: 3px; border-radius: 3px; }
+.library-breadcrumb-measure { grid-area: 1 / 1; min-width: 0; overflow: hidden; visibility: hidden; pointer-events: none; }
+.library-breadcrumb-measure > span { display: flex; width: max-content; align-items: center; }
+.library-breadcrumb-measure > span > span { display: flex; flex-shrink: 0; align-items: center; white-space: nowrap; }
+.library-directory-link { overflow-wrap: anywhere; }

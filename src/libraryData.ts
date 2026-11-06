@@ -15,6 +15,26 @@ export interface LibraryPage extends Record<string, unknown> {
   cursor: string | null;
 }
 
+export interface LibraryDirectoryEntry extends Record<string, unknown> {
+  id: string;
+  name: string;
+  is_root?: boolean;
+}
+
+export function parseLibraryDirectoryPath(value: unknown): LibraryDirectoryEntry[] {
+  const result = record(value);
+  if (!Array.isArray(result.items)) throw Error("资料库目录路径数据无效，请重试。");
+  const ids = new Set<string>();
+  return result.items.map(value => {
+    const entry = record(value);
+    if (typeof entry.id !== "string" || !entry.id || typeof entry.name !== "string"
+      || (entry.is_root !== undefined && typeof entry.is_root !== "boolean") || ids.has(entry.id))
+      throw Error("资料库目录路径数据无效，请重试。");
+    ids.add(entry.id);
+    return entry as LibraryDirectoryEntry;
+  });
+}
+
 export interface LibrarySort {
   key: "size" | "name";
   direction: "asc" | "desc";

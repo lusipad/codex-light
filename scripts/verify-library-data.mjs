@@ -70,3 +70,15 @@ const inputOrder = ids(mixed);
 sortLibraryItems(mixed, { key: "name", direction: "desc" });
 assert.deepEqual(ids(mixed), inputOrder, "sorting never mutates merged data");
 console.log("PASS production Library parser, POST mapping, 120-page deduplication, cursor guards and official size/name comparison");
+
+// Directory ancestry is not a nodes page: no kind or cursor is required.
+const { parseLibraryDirectoryPath } = exports;
+const ancestry = { items: [{ id: "root", name: "根", is_root: true }, { id: "目录/a", name: "A", future: 1 }] };
+assert.equal(parseLibraryDirectoryPath(ancestry)[1], ancestry.items[1]);
+assert.deepEqual(Array.from(parseLibraryDirectoryPath({ items: [] })), []);
+for (const invalid of [null, [], {}, { items: null }, { items: [null] },
+  { items: [{ id: "", name: "A" }] }, { items: [{ id: "a", name: 1 }] },
+  { items: [{ id: "a", name: "A", is_root: "true" }] },
+  { items: [{ id: "a", name: "A" }, { id: "a", name: "again" }] }])
+  assert.throws(() => parseLibraryDirectoryPath(invalid));
+console.log("PASS directory path accepts actual ancestry shape without inventing kind/cursor and rejects malformed identities");

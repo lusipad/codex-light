@@ -1,6 +1,6 @@
 import { callAppServer } from "./bridge";
 import { readChatgptService, serviceIdentity, shareAccessBootstrap, type ServiceIdentity } from "./chatgptService";
-import { parseLibraryImagesPage, parseLibraryNodesPage, type LibraryItem, type LibraryPage } from "./libraryData";
+import { parseLibraryDirectoryPath, parseLibraryImagesPage, parseLibraryNodesPage, type LibraryDirectoryEntry, type LibraryItem, type LibraryPage } from "./libraryData";
 
 export type LibraryTab = "all" | "images";
 export interface LibraryAccess { identity: ServiceIdentity; available: boolean; onedrive: boolean }
@@ -70,13 +70,22 @@ export async function readLibraryAccess(signal: AbortSignal): Promise<LibraryAcc
   return decodeLibraryAccess(bootstrap, settings, account, identity, accounts);
 }
 
-export async function readLibraryPage(access: LibraryAccess, tab: LibraryTab, cursor: string | null, signal: AbortSignal): Promise<LibraryPage> {
+export async function readLibraryPage(access: LibraryAccess, tab: LibraryTab, cursor: string | null, signal: AbortSignal, directoryId?: string | null): Promise<LibraryPage> {
   if (!access.available) throw Error("当前账号暂不支持资料库。");
   if (tab === "images") return parseLibraryImagesPage(await readChatgptService("library_images", { cursor }, access.identity, signal));
   return parseLibraryNodesPage(await readChatgptService("library_nodes", {
+    ...(directoryId != null ? { parent_directory_id: directoryId } : {}),
     entry_surface: "library", cursor, categories: [], source: null, include_hidden_files: false, include_files: true,
     include_saved_entities: true, defer_sharing_badges: true, include_sites: false,
     include_folder_counts: false, include_onedrive: access.onedrive, hydrate_folder_thumbnails: true,
+  }, access.identity, signal));
+}
+
+export async function readLibraryDirectoryPath(access: LibraryAccess, directoryId: string, signal: AbortSignal): Promise<LibraryDirectoryEntry[]> {
+  if (!access.available) throw Error("当前账号暂不支持资料库。");
+  if (typeof directoryId !== "string" || !directoryId.trim()) throw Error("无法确认资料库目录。");
+  return parseLibraryDirectoryPath(await readChatgptService("library_directory_path", {
+    directory_id: directoryId,
   }, access.identity, signal));
 }
 

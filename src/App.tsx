@@ -143,7 +143,7 @@ import { HotkeyWindow } from "./components/HotkeyWindow";
 import { ImagesView } from "./components/ImagesView";
 import { GptsView } from "./components/GptsView";
 import { SitesView } from "./components/SitesView";
-import { LibraryView } from "./components/LibraryView";
+import { LibraryView, type LibraryNavigation } from "./components/LibraryView";
 import { LibraryCleanupView } from "./components/LibraryCleanupView";
 import { CloudEnvironmentsView } from "./components/CloudEnvironmentsView";
 import { ThreadActionsMenu, ThreadActionItem } from "./components/ThreadActionsMenu";
@@ -330,6 +330,12 @@ export const App: React.FC = () => {
   // Primary Route & Shell Layout State
   const [activeRoute, commitActiveRoute] = useState<MainViewRoute>(() => window.location.pathname === "/code-review" ? "code-review" : "home");
   const [libraryCleanupTab, setLibraryCleanupTab] = useState<"all" | "images" | null>(null);
+  const [libraryNavigation, setLibraryNavigation] = useState<LibraryNavigation | null>(null);
+  const libraryNavigationRef = useRef<LibraryNavigation | null>(null);
+  const updateLibraryNavigation = useCallback((navigation: LibraryNavigation | null) => {
+    libraryNavigationRef.current = navigation;
+    setLibraryNavigation(navigation);
+  }, []);
   const [remotePullRequestUrl, setRemotePullRequestUrl] = useState(() => window.location.pathname === "/code-review"
     ? new URLSearchParams(window.location.hash.slice(1)).get("pullRequest") ?? "" : "");
   const activeRouteRef = useRef(activeRoute);
@@ -380,11 +386,18 @@ export const App: React.FC = () => {
   const { canGoBack, canGoForward } = useMemo(() => {
     const history = routeHistoryRef.current;
     return {
-      canGoBack: history.index > 0,
-      canGoForward: history.index < history.entries.length - 1,
+      canGoBack: (activeRoute === "library" && !libraryCleanupTab && libraryNavigation?.canGoBack) || history.index > 0,
+      canGoForward: (activeRoute === "library" && !libraryCleanupTab && libraryNavigation?.canGoForward) || history.index < history.entries.length - 1,
     };
-  }, [routeHistoryVersion]);
+  }, [routeHistoryVersion, activeRoute, libraryCleanupTab, libraryNavigation]);
   const navigateRouteHistory = useCallback((direction: -1 | 1): void => {
+    if (activeRouteRef.current === "library") {
+      const navigation = libraryNavigationRef.current;
+      if (direction < 0 ? navigation?.canGoBack : navigation?.canGoForward) {
+        if (direction < 0) navigation!.back(); else navigation!.forward();
+        return;
+      }
+    }
     const history = routeHistoryRef.current;
     const nextIndex = history.index + direction;
     if (nextIndex < 0 || nextIndex >= history.entries.length) return;
@@ -5494,7 +5507,7 @@ export const App: React.FC = () => {
           <div className="full-route-view">
             <div className="full-route-container">
               {libraryCleanupTab ? <LibraryCleanupView tab={libraryCleanupTab} onTabChange={setLibraryCleanupTab}
-                scope={JSON.stringify([modelAccountIdentity, appServerStatus.connected, appServerStatus.binaryPath, appServerStatus.appServerVersion])} /> : <LibraryView />}
+                scope={JSON.stringify([modelAccountIdentity, appServerStatus.connected, appServerStatus.binaryPath, appServerStatus.appServerVersion])} /> : <LibraryView onNavigationChange={updateLibraryNavigation} />}
             </div>
           </div>
         ) : activeRoute === "cloud-environments" ? (

@@ -39,6 +39,7 @@ pub struct ServiceIdentity {
 pub enum ServiceOperation {
     LibraryFavorites,
     LibraryNodes,
+    LibraryDirectoryPath,
     LibraryImages,
     LibrarySettings,
     LibraryImage,
@@ -1471,7 +1472,7 @@ impl ChatgptService {
                         http_request.headers.insert("X-Codex-Expected-User-Id".into(), request.expected_identity.user_id.clone());
                         http_request.headers.insert("X-Codex-Expected-Account-Id".into(), request.expected_identity.account_id.clone());
                     }
-                    if archive_tasks || profile_read || review_connections || matches!(request.operation, ServiceOperation::StorageUsage | ServiceOperation::LibraryNodes | ServiceOperation::LibraryFavorites | ServiceOperation::LibraryImages | ServiceOperation::LibrarySettings | ServiceOperation::LibraryImage | ServiceOperation::ShareAccounts) {
+                    if archive_tasks || profile_read || review_connections || matches!(request.operation, ServiceOperation::StorageUsage | ServiceOperation::LibraryNodes | ServiceOperation::LibraryDirectoryPath | ServiceOperation::LibraryFavorites | ServiceOperation::LibraryImages | ServiceOperation::LibrarySettings | ServiceOperation::LibraryImage | ServiceOperation::ShareAccounts) {
                         share_network_allowed(&call, &http_request.url).await?;
                         self.check_share_current(&request.expected_identity, &registration)?;
                     }
@@ -1486,7 +1487,7 @@ impl ChatgptService {
                     if self.generation() != generation {
                         return Err(failure("account_changed", "Authenticated identity changed"));
                     }
-                    if archive_tasks { self.check_share_current(&request.expected_identity, &registration)?; }
+                    if archive_tasks || matches!(request.operation, ServiceOperation::LibraryDirectoryPath) { self.check_share_current(&request.expected_identity, &registration)?; }
                     apply_integrity(&mut session.integrity, sent_integrity.as_deref(), response.headers.get("x-oai-is-update"));
                     if archive_tasks && account_instructions_ip_denied(&response) {
                         // A workspace IP refusal is not NDn's unavailable/unsupported source.
@@ -1552,7 +1553,7 @@ impl ChatgptService {
             }
             return Err(failure("account_changed", "Authenticated identity changed"));
         }
-        if archive_tasks { self.check_share_current(&request.expected_identity, &registration)?; }
+        if archive_tasks || matches!(request.operation, ServiceOperation::LibraryDirectoryPath) { self.check_share_current(&request.expected_identity, &registration)?; }
         result
     }
 
@@ -2190,6 +2191,7 @@ fn resolve_read_route(operation: &ServiceOperation, params: &Value, identity: &S
 
 fn resolve_route(operation: &ServiceOperation, params: &Value) -> ServiceResult<String> {
     if matches!(operation, ServiceOperation::ArchiveCloudTasks) { return archive_cloud_tasks_route(params); }
+    if matches!(operation, ServiceOperation::LibraryDirectoryPath) { return library_directory_path_route(params); }
     if matches!(operation, ServiceOperation::LibraryImage) { return library_image_route(params); }
     if matches!(operation, ServiceOperation::LibraryImages) {
         library_images_body(params)?;
@@ -2230,6 +2232,7 @@ fn resolve_route(operation: &ServiceOperation, params: &Value) -> ServiceResult<
         ServiceOperation::LibrarySettings => ("/backend-api/settings/user".into(), &[]),
         ServiceOperation::LibraryImages => unreachable!(),
         ServiceOperation::LibraryImage => unreachable!(),
+        ServiceOperation::LibraryDirectoryPath => unreachable!(),
         ServiceOperation::WhamUsage => ("/backend-api/wham/usage".into(), &[]),
         ServiceOperation::ArchiveCloudTasks => unreachable!(),
         ServiceOperation::AccountMe => ("/backend-api/me".into(), &[]),
@@ -2372,6 +2375,24 @@ fn resolve_route(operation: &ServiceOperation, params: &Value) -> ServiceResult<
         url.path(),
         url.query().map(|q| format!("?{q}")).unwrap_or_default()
     ))
+}
+
+fn library_directory_path_route(params: &Value) -> ServiceResult<String> {
+    let params = params.as_object().ok_or_else(|| failure("invalid_request", "Library directory path parameters must be an object"))?;
+    if params.keys().any(|key| key != "directory_id") {
+        return Err(failure("invalid_request", "Library directory path accepts only directory_id"));
+    }
+    let directory = match params.get("directory_id") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(id)) if !id.trim().is_empty() && id.len() <= 2048 && !id.chars().any(char::is_control) => Some(id.as_str()),
+        _ => return Err(failure("invalid_request", "Invalid library directory identifier")),
+    };
+    let path = "/backend-api/files/library/directories/path";
+    let Some(directory) = directory else { return Ok(path.into()); };
+    let mut url = tauri::Url::parse(&format!("https://chatgpt.com{path}"))
+        .map_err(|_| failure("invalid_request", "Invalid library directory path route"))?;
+    url.query_pairs_mut().append_pair("directory_id", directory);
+    Ok(format!("{}?{}", url.path(), url.query().unwrap()))
 }
 
 fn archive_cloud_tasks_route(params: &Value) -> ServiceResult<String> {
@@ -5499,6 +5520,95 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn library_directory_path_fixed_get_preserves_identity_and_opaque_ids() {
+        let parsed: ServiceOperation = serde_json::from_value(json!("library_directory_path")).unwrap();
+        let body = json!({"items":[{"id":"root","name":"资料库","is_root":true},
+            {"id":"目录 /?%#","name":"当前目录"}]});
+        for params in [json!({}), json!({"directory_id":null}), json!({"directory_id":"目录 /?%#"})] {
+            let service = ChatgptService::default();
+            let transport = instructions_transport(&[200], &[body.clone()]);
+            let mut req = library_request("directory-path", parsed.clone());
+            req.params = params.clone();
+            let result = service.read_with(req, share_rpc, &transport).await.unwrap();
+            assert_eq!(result.body, body);
+            assert_eq!(result.identity, identity());
+            let calls = transport.requests.lock().unwrap();
+            assert_eq!(calls.len(), 1);
+            assert_eq!(calls[0].method, HttpMethod::Get);
+            assert!(calls[0].body.is_empty());
+            assert_eq!(calls[0].headers["Authorization"], format!("Bearer {}", fixture_token()));
+            assert_eq!(calls[0].headers["ChatGPT-Account-Id"], "account-fixture");
+            assert_eq!(calls[0].headers["oai-did"], "fixture-device");
+            let url = tauri::Url::parse(&calls[0].url).unwrap();
+            assert_eq!(url.origin().ascii_serialization(), "https://chatgpt.com");
+            assert_eq!(url.path(), "/backend-api/files/library/directories/path");
+            if let Some(id) = params["directory_id"].as_str() {
+                assert_eq!(url.query_pairs().map(|(key,value)| (key.into_owned(),value.into_owned())).collect::<Vec<_>>(),
+                    vec![("directory_id".to_owned(), id.to_owned())]);
+            } else {
+                assert_eq!(url.query(), None);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn library_directory_path_rejects_invalid_parameters_before_auth_or_http() {
+        for params in [json!([]), json!(null), json!({"directory_id":true}), json!({"directory_id":5}),
+            json!({"directory_id":{}}), json!({"directory_id":[]}), json!({"directory_id":""}),
+            json!({"directory_id":" "}), json!({"directory_id":"folder\n"}),
+            json!({"directory_id":"x".repeat(2049)}), json!({"directory_id":"文件".repeat(342)}),
+            json!({"directory_id":"ok","url":"https://other.test"}), json!({"cursor":"next"}),
+            json!({"parent_directory_id":"other"}), json!({"method":"DELETE"})] {
+            let service = ChatgptService::default();
+            let transport = FakeTransport::new(&[]);
+            let mut req = library_request("directory-invalid", ServiceOperation::LibraryDirectoryPath);
+            req.params = params;
+            let calls = AtomicUsize::new(0);
+            let rpc = |_,_| { calls.fetch_add(1, Ordering::SeqCst); std::future::ready(Err("must not authenticate".into())) };
+            assert_eq!(service.read_with(req, rpc, &transport).await.err().unwrap().code, "invalid_request");
+            assert_eq!(calls.load(Ordering::SeqCst), 0);
+            assert!(transport.requests.lock().unwrap().is_empty());
+        }
+        assert!(resolve_route(&ServiceOperation::LibraryDirectoryPath, &json!({"directory_id":"x".repeat(2048)})).is_ok());
+    }
+
+    #[tokio::test]
+    async fn library_directory_path_rejects_cancelled_or_other_identity_before_transport() {
+        for other_account in [false, true] {
+            let service = ChatgptService::default();
+            let transport = FakeTransport::new(&[]);
+            let mut req = library_request("directory-rejected", ServiceOperation::LibraryDirectoryPath);
+            req.params = json!({"directory_id":"folder"});
+            if other_account { req.expected_identity.account_id = "other-account".into(); }
+            else { service.cancel("directory-rejected"); }
+            assert_eq!(service.read_with(req, share_rpc, &transport).await.err().unwrap().code,
+                if other_account { "account_changed" } else { "cancelled" });
+            assert!(transport.requests.lock().unwrap().is_empty());
+            assert!(service.active.lock().unwrap().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn library_directory_path_completion_cancel_and_identity_drop_ready_body() {
+        struct CompletionChange<'a> { service:&'a ChatgptService, invalidate:bool }
+        impl Transport for CompletionChange<'_> {
+            fn send(&self, _:HttpRequest, _:Arc<AtomicBool>) -> TransportFuture<'_> {
+                Box::pin(async move {
+                    if self.invalidate { self.service.invalidate(); } else { self.service.cancel("directory-completion"); }
+                    Ok(HttpResponse { status:200, headers:BTreeMap::new(), body:br#"{"items":[{"id":"private","name":"private"}]}"#.to_vec() })
+                })
+            }
+        }
+        for invalidate in [false,true] {
+            let service = ChatgptService::default();
+            let transport = CompletionChange { service:&service, invalidate };
+            assert_eq!(service.read_with(library_request("directory-completion", ServiceOperation::LibraryDirectoryPath), share_rpc, &transport).await.err().unwrap().code,
+                if invalidate { "account_changed" } else { "cancelled" });
+            assert!(service.active.lock().unwrap().is_empty());
+        }
+    }
+
+    #[tokio::test]
     async fn library_read_fixed_methods_body_and_identity_bound_fixture() {
         let body = json!({"items":[{"id":"file-fixture","file_name":"图像.png","file_size_bytes":1024,
             "directory_id":null,"current_version_number":2}],"cursor":"next-fixture"});
@@ -5564,8 +5674,8 @@ mod tests {
 
     #[tokio::test]
     async fn library_read_http_failures_and_network_policy_stay_errors() {
-        for operation in [ServiceOperation::LibraryNodes,ServiceOperation::LibraryFavorites,ServiceOperation::LibraryImages,ServiceOperation::LibrarySettings,ServiceOperation::ShareAccounts] {
-            for (status,code) in [(401,"unauthorized"),(403,"forbidden"),(429,"rate_limited")] {
+        for operation in [ServiceOperation::LibraryNodes,ServiceOperation::LibraryDirectoryPath,ServiceOperation::LibraryFavorites,ServiceOperation::LibraryImages,ServiceOperation::LibrarySettings,ServiceOperation::ShareAccounts] {
+            for (status,code) in [(401,"unauthorized"),(403,"forbidden"),(404,"not_found"),(429,"rate_limited")] {
                 let service=ChatgptService::default();
                 let transport=FakeTransport::new(if status==401 { &[401,401] } else { std::slice::from_ref(&status) });
                 assert_eq!(service.read_with(library_request("library-http",operation.clone()),share_rpc,&transport).await.err().unwrap().code,code);
@@ -5584,7 +5694,7 @@ mod tests {
 
     #[tokio::test]
     async fn library_read_cancel_and_generation_drop_pending_transport() {
-        for operation in [ServiceOperation::LibraryNodes,ServiceOperation::LibraryFavorites,ServiceOperation::LibraryImages,ServiceOperation::LibrarySettings,ServiceOperation::ShareAccounts] {
+        for operation in [ServiceOperation::LibraryNodes,ServiceOperation::LibraryDirectoryPath,ServiceOperation::LibraryFavorites,ServiceOperation::LibraryImages,ServiceOperation::LibrarySettings,ServiceOperation::ShareAccounts] {
             for invalidate in [false,true] {
                 let service=ChatgptService::default();
                 let mut transport=FakeTransport::new(&[200]); transport.delay_ms=2000;

@@ -193,3 +193,42 @@ console.log("PASS production Library access decoding, fixed operations and ident
 if (imageFixture) console.log("PASS actual Rust images service envelope -> production client and parser");
 if (settingsFixture) console.log("PASS actual Rust settings service envelope -> production access decoder");
 if (previewFixture) console.log("PASS actual Rust image bytes data URL -> production image client");
+
+{
+  const c = client();
+  await c.library.readLibraryPage(access, "all", "folder-next", new AbortController().signal, "libdir_fde1_中文/a?#");
+  assert.equal(c.calls[0].args.request.params.parent_directory_id, "libdir_fde1_中文/a?#");
+  assert.equal(c.calls[0].args.request.params.cursor, "folder-next");
+  assert.equal(c.calls[0].args.request.params.include_onedrive, true);
+  await c.library.readLibraryPage(access, "all", null, new AbortController().signal);
+  assert.equal("parent_directory_id" in c.calls[1].args.request.params, false, "existing root/cleanup request is unchanged");
+  c.control.read = async request => ({ requestId: request.requestId, identity, body: { items: [{ id: "a/b", name: "目录" }] } });
+  const path = await c.library.readLibraryDirectoryPath(access, "a/b", new AbortController().signal);
+  assert.equal(path[0].name, "目录");
+  assert.equal(c.calls[2].args.request.operation, "library_directory_path");
+  assert.equal(JSON.stringify(c.calls[2].args.request.params), '{"directory_id":"a/b"}');
+  assert.equal(c.calls[2].args.request.expectedIdentity, identity);
+}
+for (const id of ["", "   ", null, undefined]) {
+  const c = client();
+  await assert.rejects(c.library.readLibraryDirectoryPath(access, id, new AbortController().signal));
+  assert.equal(c.calls.length, 0);
+}
+{
+  const c = client();
+  await assert.rejects(c.library.readLibraryDirectoryPath({ ...access, available: false }, "a", new AbortController().signal), /不支持/);
+  assert.equal(c.calls.length, 0);
+}
+for (const change of [{ requestId: "other" }, { identity: { ...identity, generation: 3 } }]) {
+  const c = client(); c.control.read = async request => ({ requestId: request.requestId, identity, body: { items: [] }, ...change });
+  await assert.rejects(c.library.readLibraryDirectoryPath(access, "a", new AbortController().signal), /账号发生变化/);
+}
+{
+  const c = client(), abort = new AbortController(), wait = deferred();
+  c.control.read = () => wait.promise;
+  const read = c.library.readLibraryDirectoryPath(access, "a", abort.signal); await flush(); abort.abort();
+  wait.resolve({ requestId: "fixed-library-id", identity, body: { items: [] } });
+  await assert.rejects(read, /取消|abort/i);
+  assert.ok(c.cancelled.includes("fixed-library-id"));
+}
+console.log("PASS native directory list scope, fixed path reader, access, identity and late cancellation");
