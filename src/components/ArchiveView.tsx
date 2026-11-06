@@ -2,6 +2,7 @@ import React, { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMe
 import { Check, ChevronDown, ListFilter, Cloud, Folder, Trash2 } from "lucide-react";
 import { callAppServer } from "../bridge";
 import { ArchiveDeleteResult, SidebarProjectMembership, ThreadSummary, WorkspaceRootItem } from "../types";
+import type { ArchivedConversationsState } from "../archiveConversations";
 import type { ArchivedCloudTasksState } from "../archiveCloudTasks";
 import { createPortal } from "react-dom";
 import { buildSidebarProjectGroups } from "../sidebarProjects";
@@ -13,6 +14,7 @@ export interface ArchiveViewProps {
   refreshToken?: number | string | null;
   surface?: "global" | "settings";
   cloudArchive?: ArchivedCloudTasksState;
+  conversationArchive?: ArchivedConversationsState;
   workspaces?: WorkspaceRootItem[];
   projectMembership?: SidebarProjectMembership;
   workspaceHints?: Record<string, string>;
@@ -24,7 +26,8 @@ export interface ArchiveViewProps {
 }
 
 interface ArchivedThread extends ThreadSummary {
-  archiveSource?: "cloud-task";
+  archiveSource?: "cloud-task" | "chatgpt-conversation";
+  gizmoId?: string | null;
   environmentLabel?: string | null;
   displayTime?: number | string | null;
   cwd?: string | null;
@@ -187,6 +190,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
   refreshToken,
   surface = "global",
   cloudArchive,
+  conversationArchive,
   workspaces = EMPTY_WORKSPACES,
   projectMembership = EMPTY_MEMBERSHIP,
   workspaceHints = EMPTY_HINTS,
@@ -332,11 +336,16 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
       && ["ready", "loading", "error"].includes(cloudArchive.status)
       ? cloudArchive.items.map(task => ({ id: task.id, name: task.title, createdAt: task.createdAt ?? undefined,
         updatedAt: task.updatedAt ?? undefined, archiveSource: "cloud-task", environmentLabel: task.environmentLabel, displayTime: task.displayTime })) : [];
-    const entries = [...(kindFilter === "cloud" ? [] : threads), ...cloudItems].map(thread => {
+    const conversations: ArchivedThread[] = kindFilter !== "local" && conversationArchive?.identity
+      && ["ready", "loading", "error"].includes(conversationArchive.status)
+      ? conversationArchive.items.map(item => ({ id: item.id, name: item.title, createdAt: item.createdAt ?? undefined,
+        updatedAt: item.updatedAt ?? undefined, archiveSource: "chatgpt-conversation", gizmoId: item.gizmoId, displayTime: item.displayTime })) : [];
+    const entries = [...(kindFilter === "cloud" ? [] : threads), ...cloudItems, ...conversations].map(thread => {
       let project: typeof projects[number] | undefined;
-      const hasWorkspaceOverride = thread.archiveSource !== "cloud-task" && Object.prototype.hasOwnProperty.call(projectMembership.workspaceProjectAssignments, thread.id);
+      if (thread.archiveSource === "chatgpt-conversation") project = projects.find(item => item.entity?.id === thread.gizmoId);
+      const hasWorkspaceOverride = !thread.archiveSource && Object.prototype.hasOwnProperty.call(projectMembership.workspaceProjectAssignments, thread.id);
       const workspaceOverride = projectMembership.workspaceProjectAssignments[thread.id];
-      if (!projectMembership.projectlessThreadIds.includes(thread.id) && !(hasWorkspaceOverride && workspaceOverride == null)) {
+      if (thread.archiveSource !== "chatgpt-conversation" && !projectMembership.projectlessThreadIds.includes(thread.id) && !(hasWorkspaceOverride && workspaceOverride == null)) {
         const assignment = hasWorkspaceOverride ? workspaceOverride : projectMembership.threadProjectAssignments[thread.id];
         if (assignment?.projectKind === "local") project = projects.find(item => item.id === assignment.projectId || item.serverProjectId === assignment.projectId);
         if (!project && thread.archiveSource !== "cloud-task") for (const path of [workspaceHints[thread.id], thread.cwd]) {
@@ -363,15 +372,16 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
     for (const group of result) group.threads.sort(compare);
     return result.sort((a, b) => (sortKey === "alphabetical" ? 0 : Math.max(0, ...b.threads.map(time)) - Math.max(0, ...a.threads.map(time)))
       || a.label.localeCompare(b.label) || a.id.localeCompare(b.id));
-  }, [threads, projects, projectMembership, workspaceHints, activeProjectFilter, kindFilter, sortKey, query, cloudArchive]);
+  }, [threads, projects, projectMembership, workspaceHints, activeProjectFilter, kindFilter, sortKey, query, cloudArchive, conversationArchive]);
   const displayedGroups = settings ? settingsGroups : [{ id: "global", label: "", threads: visible }];
   const displayedCount = displayedGroups.reduce((count, group) => count + group.threads.length, 0);
   const cloudVisible = settings && kindFilter !== "local";
-  const cloudReady = cloudArchive?.status === "ready";
+  const cloudReady = Boolean(cloudArchive || conversationArchive) && (!cloudArchive || cloudArchive.status === "ready")
+    && (!conversationArchive || conversationArchive.status === "ready");
   const unavailableSource = settings && (activeProjectFilter === "special:automations" || (kindFilter === "cloud" && !cloudReady));
   const localSourceVisible = !settings || kindFilter !== "cloud";
-  const emptyReady = (!localSourceVisible || (!error && !loading)) && !unavailableSource && (!cloudVisible || !cloudArchive || cloudReady);
-  const refreshSources = () => { if (localSourceVisible) void load(); if (cloudVisible) cloudArchive?.reload(); };
+  const emptyReady = (!localSourceVisible || (!error && !loading)) && !unavailableSource && (!cloudVisible || (!cloudArchive && !conversationArchive) || cloudReady);
+  const refreshSources = () => { if (localSourceVisible) void load(); if (cloudVisible) { cloudArchive?.reload(); conversationArchive?.reload(); } };
 
   return (
     <div className={`archive-view${settings ? " archive-settings" : ""}`} ref={viewRef} tabIndex={-1}>
@@ -399,7 +409,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
             type="button"
             className="archive-refresh"
             onClick={refreshSources}
-            disabled={(localSourceVisible && loading) || busyId !== null || (cloudVisible && cloudArchive?.status === "loading")}
+            disabled={(localSourceVisible && loading) || busyId !== null || (cloudVisible && (cloudArchive?.status === "loading" || conversationArchive?.status === "loading"))}
           >
             {loading ? "刷新中…" : "刷新"}
           </button>
@@ -414,9 +424,11 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
             <GeneralPreferenceSelect id="archive-project-filter" label="按项目筛选已归档的聊天" value={activeProjectFilter} options={projectOptions} onChange={setProjectFilter} />
           </div>
         </div>
-        {kindFilter === "all" && !cloudArchive && <div className="archive-source-notice" role="status">当前仅列出本地归档，云端归档尚未接入，全部聊天的来源不完整。</div>}
-        {cloudVisible && cloudArchive && <div className="archive-source-notice" role="status">云端任务归档只读；ChatGPT 会话归档尚未接入，当前结果不代表完整云端归档。</div>}
-        {kindFilter === "cloud" && !cloudArchive && <div className="archive-source-notice" role="status">云端归档尚未实现，无法读取云端结果。</div>}
+        {kindFilter === "all" && !cloudArchive && !conversationArchive && <div className="archive-source-notice" role="status">当前仅列出本地归档，云端归档尚未接入，全部聊天的来源不完整。</div>}
+        {cloudVisible && cloudArchive && !conversationArchive && <div className="archive-source-notice" role="status">云端任务归档只读；ChatGPT 会话归档尚未接入，当前结果不代表完整云端归档。</div>}
+        {cloudVisible && conversationArchive && <div className="archive-source-notice" role="status">按当前账号资格读取归档来源。ChatGPT 会话页面、恢复和删除尚未接入；当前列表仅包含已读取的页。</div>}
+        {cloudVisible && conversationArchive && !cloudArchive && <div className="archive-source-notice" role="status">云端任务来源尚未接入，当前结果不代表完整云端归档。</div>}
+        {kindFilter === "cloud" && !cloudArchive && !conversationArchive && <div className="archive-source-notice" role="status">云端归档尚未实现，无法读取云端结果。</div>}
         {cloudVisible && cloudArchive && <div className="archive-cloud-status" role="status">
           {cloudArchive.status === "signed_out" && <span>请登录 ChatGPT 账号以读取云端任务归档。</span>}
           {cloudArchive.status === "unsupported_auth" && <span>当前登录方式不支持云端任务归档，请使用 ChatGPT 账号。</span>}
@@ -425,6 +437,15 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
           {cloudArchive.httpEmptyStatus !== null && <span>云端任务来源返回 HTTP {cloudArchive.httpEmptyStatus}，按该来源规则无可显示任务；这不是完整云端归档结论。</span>}
           {cloudArchive.pageError && <><span>云端任务后续页读取失败：{cloudArchive.pageError}</span><button type="button" className="archive-action" disabled={cloudArchive.loadingMore} onClick={cloudArchive.loadMore}>重试加载云端任务</button></>}
           {!cloudArchive.pageError && cloudArchive.status === "ready" && cloudArchive.nextCursor !== null && <button type="button" className="archive-action" disabled={cloudArchive.loadingMore} onClick={cloudArchive.loadMore}>{cloudArchive.loadingMore ? "正在加载云端任务…" : "加载更多云端任务"}</button>}
+        </div>}
+        {cloudVisible && conversationArchive && <div className="archive-cloud-status" role="status">
+          {conversationArchive.status === "signed_out" && <span>请登录 ChatGPT 账号以读取 ChatGPT 会话归档。</span>}
+          {conversationArchive.status === "unsupported_auth" && <span>当前登录方式不支持 ChatGPT 会话归档。</span>}
+          {conversationArchive.status === "denied" && <span>当前账号无权读取 ChatGPT 会话归档。</span>}
+          {conversationArchive.status === "loading" && <span>正在读取 ChatGPT 会话归档…</span>}
+          {conversationArchive.status === "error" && <><span>无法读取 ChatGPT 会话归档：{conversationArchive.error}</span><button type="button" className="archive-action" onClick={conversationArchive.retryListeners}>重试 ChatGPT 会话归档</button></>}
+          {conversationArchive.pageError && <><span>ChatGPT 会话后续页读取失败：{conversationArchive.pageError}</span><button type="button" className="archive-action" disabled={conversationArchive.loadingMore} onClick={conversationArchive.loadMore}>重试加载 ChatGPT 会话</button></>}
+          {!conversationArchive.pageError && conversationArchive.status === "ready" && conversationArchive.nextOffset !== null && <button type="button" className="archive-action" disabled={conversationArchive.loadingMore} onClick={conversationArchive.loadMore}>{conversationArchive.loadingMore ? "正在加载 ChatGPT 会话…" : "加载更多 ChatGPT 会话"}</button>}
         </div>}
         {activeProjectFilter === "special:automations" && kindFilter !== "cloud" && <div className="archive-source-notice" role="status">计划任务归档的身份映射尚未接入，无法确认结果。</div>}
       </>}
@@ -447,7 +468,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
 
       {emptyReady && displayedCount === 0 && (
         <div className="archive-empty">
-          <div className="archive-empty-title">{settings && cloudArchive && kindFilter !== "local" ? (query ? "当前已读取的聊天中未找到匹配项" : "当前已读取的来源中没有归档聊天") : query ? "未找到匹配的归档聊天" : "暂无已归档的聊天"}</div>
+          <div className="archive-empty-title">{settings && (cloudArchive || conversationArchive) && kindFilter !== "local" ? (query ? "当前已读取的聊天中未找到匹配项" : "当前已读取的来源中没有归档聊天") : query ? "未找到匹配的归档聊天" : "暂无已归档的聊天"}</div>
         </div>
       )}
 
@@ -456,16 +477,16 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
           {settings && activeProjectFilter === "all" && <header className="archive-group-header"><Folder size={14} aria-hidden="true" /><h3>{group.label || "无项目"}</h3><span>{group.threads.length} 个聊天</span></header>}
         <div className="archive-list">
           {group.threads.map((thread) => (
-            <div key={settings ? `${thread.archiveSource || "local"}:${thread.id}` : thread.id} className={`archive-row${thread.archiveSource ? " archive-cloud-row" : ""}`} >
-              {thread.archiveSource === "cloud-task" && <Cloud size={14} aria-label="云端任务" className="archive-cloud-icon" />}
+            <div key={settings ? `${thread.archiveSource || "local"}:${thread.id}` : thread.id} className={`archive-row${thread.archiveSource ? " archive-cloud-row" : ""}${thread.archiveSource === "chatgpt-conversation" ? " archive-conversation-row" : ""}`} >
+              {thread.archiveSource && <Cloud size={14} aria-label={thread.archiveSource === "cloud-task" ? "云端任务" : "ChatGPT 会话"} className="archive-cloud-icon" />}
               <div className="archive-row-main">
-                <span className="archive-row-title">
+                <span className="archive-row-title" title={thread.archiveSource === "chatgpt-conversation" ? "应用内 ChatGPT 会话页面尚未实现" : undefined}>
                   {settings ? archiveTitle(thread) : thread.name || thread.preview || thread.id}
                 </span>
                 <span className="archive-row-meta">
                   {settings ? <span>{(() => {
                     const updated = new Date((thread.updatedAt ?? NaN) * 1000), created = new Date((thread.createdAt ?? NaN) * 1000);
-                    const date = thread.archiveSource === "cloud-task"
+                    const date = thread.archiveSource
                       ? new Date(typeof thread.displayTime === "number" ? thread.displayTime * 1000 : thread.displayTime ?? NaN)
                       : Number.isFinite(updated.getTime()) ? updated : created;
                     if (!Number.isFinite(date.getTime())) return null;
@@ -483,7 +504,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
                 </span>
               </div>
               <div className="archive-row-actions">
-                {thread.archiveSource === "cloud-task" ? <><button type="button" className="archive-action" disabled title="本阶段仅支持读取云端任务，取消归档尚未实现" aria-label="云端任务取消归档尚未实现">取消归档（只读）</button><button type="button" className="archive-action" disabled title="本阶段仅支持读取云端任务，删除尚未实现" aria-label="云端任务删除尚未实现">删除（只读）</button></> : <>
+                {thread.archiveSource ? <><button type="button" className="archive-action" disabled title="本阶段仅支持读取，取消归档尚未实现" aria-label="云端归档取消归档尚未实现">取消归档（只读）</button><button type="button" className="archive-action" disabled title="本阶段仅支持读取，删除尚未实现" aria-label="云端归档删除尚未实现">删除（只读）</button></> : <>
                 <button
                   type="button"
                   className="archive-action danger"
@@ -510,8 +531,8 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
         </section>
       ))}
 
-      {!unavailableSource && !(cloudVisible && cloudArchive && !cloudReady && displayedCount === 0) && <footer className="archive-footer">
-        {settings && cloudArchive && kindFilter !== "local" ? `已显示 ${displayedCount} 个聊天（仅已读取的本地与云端任务，非完整归档）` : <>共 {displayedCount} 个{settings ? "本地归档聊天" : "归档会话"}{loading ? "（加载中…）" : ""}</>}
+      {!unavailableSource && !(cloudVisible && (cloudArchive || conversationArchive) && !cloudReady && displayedCount === 0) && <footer className="archive-footer">
+        {settings && (cloudArchive || conversationArchive) && kindFilter !== "local" ? `已显示 ${displayedCount} 个聊天（仅当前账号已读取的来源与页）` : <>共 {displayedCount} 个{settings ? "本地归档聊天" : "归档会话"}{loading ? "（加载中…）" : ""}</>}
       </footer>}
       {deleteTarget && <ArchiveDeleteDialog all={deleteTarget === "all"} onDecision={handleDeleteDecision} fallbackRef={viewRef} />}
     </div>

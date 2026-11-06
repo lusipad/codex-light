@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { tauriListen } from "./bridge";
+import { useRef, useState } from "react";
+import { useArchiveReadLifecycle } from "./archiveReadLifecycle";
 import { accountRead } from "./config";
 import { readArchiveCloudTasksPage, serviceErrorMessage, serviceIdentity, type ServiceIdentity } from "./chatgptService";
 
@@ -80,13 +80,17 @@ async function readPage(cursor: string | null, expected: ServiceIdentity | null,
 
 export function useArchivedCloudTasks({ enabled, scope, connected }: { enabled: boolean; scope: string; connected: boolean }): ArchivedCloudTasksState {
   const [state, setState] = useState<State>(empty);
-  const [viewScope, setViewScope] = useState(scope), [listenerRetry, setListenerRetry] = useState(0);
-  const current = useRef({ enabled, scope, connected }); current.current = { enabled, scope, connected };
-  const live = useRef({ mounted: false, subscribed: false, eventConnected: connected });
-  const data = useRef(state), epoch = useRef(0), request = useRef<AbortController | null>(null), seen = useRef(new Set<string>());
+  const [viewScope, setViewScope] = useState(scope);
+  const data = useRef(state), request = useRef<AbortController | null>(null), seen = useRef(new Set<string>());
+  const latestRead = useRef<(more: boolean, capturedEpoch: number) => Promise<void>>(async () => {});
   const publish = (next: State) => { data.current = next; setState(next); setViewScope(scope); };
-  const valid = (version: number, captured: string) => epoch.current === version && live.current.mounted && live.current.subscribed && live.current.eventConnected &&
-    current.current.enabled && current.current.connected && current.current.scope === captured;
+  const abort = () => { request.current?.abort(); request.current = null; seen.current.clear(); };
+  const { epoch, valid, retryListeners } = useArchiveReadLifecycle({ enabled, scope, connected,
+    onReset: disconnected => { abort(); publish({ ...empty(), status: !enabled ? "signed_out" : disconnected ? "error" : "loading",
+      error: disconnected ? "连接已断开，请重新连接后重试。" : null }); },
+    onReady: version => void latestRead.current(false, version),
+    onListenerError: () => publish({ ...empty(), status: "error", error: "无法监听账户更新，请重试以恢复连接。" }), onCleanup: abort,
+  });
   const renderEpoch = epoch.current;
   const read = async (more: boolean, capturedEpoch = renderEpoch) => {
     if (!valid(capturedEpoch, scope) || request.current) return;
@@ -116,42 +120,9 @@ export function useArchivedCloudTasks({ enabled, scope, connected }: { enabled: 
       }
     } finally { if (request.current === controller) request.current = null; }
   };
-  const latestRead = useRef(read); latestRead.current = read;
-  useEffect(() => {
-    live.current.mounted = true; live.current.subscribed = false; live.current.eventConnected = connected;
-    let disposed = false, failed = false; const stops: (() => void)[] = [];
-    const cleanup = () => { for (const stop of stops.splice(0)) stop(); };
-    const reset = () => {
-      epoch.current++; request.current?.abort(); request.current = null; seen.current.clear();
-      const disconnected = enabled && (!current.current.connected || !live.current.eventConnected);
-      publish({ ...empty(), status: !enabled ? "signed_out" : disconnected ? "error" : "loading",
-        error: disconnected ? "连接已断开，请重新连接后重试。" : null });
-    };
-    const refresh = () => {
-      reset();
-      if (live.current.subscribed && live.current.eventConnected && current.current.connected && current.current.enabled && current.current.scope === scope) {
-        void latestRead.current(false, epoch.current);
-      }
-    };
-    reset();
-    if (enabled) {
-      const listen = <T,>(event: string, handler: (payload: T) => void) => tauriListen<T>(event, payload => {
-        if (!disposed && !failed && current.current.enabled && current.current.scope === scope) handler(payload);
-      }).then(stop => { if (disposed || failed) stop(); else stops.push(stop); });
-      void Promise.all([
-        listen<{ method: string }>("app-server:notification", event => { if (event.method === "account/updated") refresh(); }),
-        listen<{ connected: boolean }>("app-server:status", status => { live.current.eventConnected = status.connected; refresh(); }),
-        listen("chatgpt-service:invalidated", refresh),
-      ]).then(() => { if (!disposed && !failed) { live.current.subscribed = true; refresh(); } }).catch(() => {
-        if (disposed) return;
-        failed = true; live.current.subscribed = false; cleanup(); reset();
-        publish({ ...empty(), status: "error", error: "无法监听账户更新，请重试以恢复连接。" });
-      });
-    }
-    return () => { disposed = true; live.current.mounted = false; live.current.subscribed = false; epoch.current++; request.current?.abort(); request.current = null; cleanup(); };
-  }, [enabled, scope, connected, listenerRetry]);
+  latestRead.current = read;
   const visible = !enabled ? empty() : !connected ? { ...empty(), status: "error" as const, error: "连接已断开，请重新连接后重试。" }
     : viewScope === scope ? state : { ...empty(), status: "loading" as const };
   return { ...visible, reload: () => void read(false), loadMore: () => void read(true),
-    retryListeners: () => { if (live.current.subscribed) void read(false); else setListenerRetry(value => value + 1); } };
+    retryListeners };
 }

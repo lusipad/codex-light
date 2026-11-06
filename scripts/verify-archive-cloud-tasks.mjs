@@ -22,6 +22,11 @@ const react = {
   } },
 };
 const module = { exports: {} };
+const listen = (event, fn) => {
+  const result = defer(); listenerRequests.push({ ...result, event, fn });
+  if (!holdListeners) { listeners.set(event, fn); result.resolve(() => listeners.delete(event)); }
+  return result.promise;
+};
 vm.runInNewContext(compiled, { exports: module.exports, AbortController, TextEncoder, console, require(name) {
   if (name === "react") return react;
   if (name.endsWith("config")) return { accountRead: async () => { reads++; return structuredClone(account); } };
@@ -29,11 +34,14 @@ vm.runInNewContext(compiled, { exports: module.exports, AbortController, TextEnc
     serviceIdentity: async () => { if (identityError) throw identityError; return { ...identity }; }, serviceErrorMessage: error => error.message,
     readArchiveCloudTasksPage: (next, expected, signal) => { const item = { ...defer(), cursor: next, expected, signal }; calls.push(item); pending.push(item); return item.promise; },
   };
-  if (name.endsWith("bridge")) return { tauriListen: (event, fn) => {
-    const result = defer(); listenerRequests.push({ ...result, event, fn });
-    if (!holdListeners) { listeners.set(event, fn); result.resolve(() => listeners.delete(event)); }
-    return result.promise;
-  } };
+  if (name.endsWith("bridge")) return { tauriListen: listen };
+  if (name.endsWith("archiveReadLifecycle")) {
+    const shared = { exports: {} };
+    vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/archiveReadLifecycle.ts", "utf8"), { compilerOptions: {
+      target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS,
+    } }).outputText, { exports: shared.exports, require: dependency => dependency === "react" ? react : { tauriListen: listen } });
+    return shared.exports;
+  }
   throw Error(name);
 } });
 const { decodeArchivedCloudTasksPage, useArchivedCloudTasks } = module.exports;

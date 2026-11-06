@@ -124,6 +124,31 @@ export async function readArchiveCloudTasksPage(
   return { status: result.status, body };
 }
 
+export type ArchiveConversationAccess = { status: "allowed"; includeWorkCloud: boolean }
+  | { status: "denied"; includeWorkCloud: null };
+
+// The host resolves the current account's scope; the renderer never supplies it.
+export async function readArchiveConversationsPage(
+  offset: number, identity: ServiceIdentity, signal: AbortSignal,
+): Promise<{ access: ArchiveConversationAccess; body: unknown }> {
+  if (signal.aborted) throw Error("请求已取消");
+  if (!Number.isSafeInteger(offset) || offset < 0) throw Error("聊天归档分页位置无效。");
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; access: ArchiveConversationAccess; body: unknown }>(
+    "archive_conversations_read", requestId,
+    { request: { requestId, expectedIdentity: identity, profile: browserProfile(), offset } }, signal,
+  );
+  let body: unknown;
+  try { body = responseBody(result, requestId, identity); }
+  catch { throw Object.assign(Error("读取期间账号发生变化，请重新刷新。"), { code: "account_changed" }); }
+  const access = result.access;
+  if (!access || !(access.status === "allowed" && typeof access.includeWorkCloud === "boolean" && body !== null && typeof body === "object" && !Array.isArray(body)
+    || access.status === "denied" && access.includeWorkCloud === null && body === null)) {
+    throw Error("聊天归档资格响应无效，请重试。");
+  }
+  return { access, body };
+}
+
 export interface ProfileMutationResult {
   verification: "confirmed" | "pending" | "not_applicable";
   body: unknown;
@@ -381,6 +406,8 @@ export function serviceErrorMessage(error: unknown): string {
     share_missing: "分享准备已失效，请重新打开分享。",
     share_busy: "分享正在发布，请稍候。",
     network_policy_unavailable: "无法读取组织网络策略，请重试。",
+    archive_access_unknown: "暂时无法确认当前账号的聊天归档资格，请重试。",
+    archive_scope_changed: "归档读取范围已变化，请从首页重新读取。",
     network_restricted: "组织网络策略不允许访问此目标。",
     plugin_busy: "该插件正在执行另一项操作，请稍后重新读取。",
     plugin_write_unknown: "无法确认插件变更是否已送达，请先只读核验，避免重复提交。",

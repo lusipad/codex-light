@@ -11,6 +11,7 @@ const scripts = [
   'verify-project-index-sort.mjs',
   'verify-archive-settings-projection.mjs', 'verify-archived-settings.mjs',
   'verify-archive-cloud-transport.mjs', 'verify-archive-cloud-tasks.mjs', 'verify-archive-cloud-ui.mjs',
+  'verify-archive-conversations-transport.mjs', 'verify-archive-conversations.mjs', 'verify-archive-conversations-ui.mjs',
   'verify-workspace-file-tree.mjs', 'verify-workspace-recursive-tree.mjs', 'verify-workbench-app-e.mjs',
   'verify-file-editor-lifecycle.mjs', 'verify-file-editor-save.mjs',
   'verify-terminal-ui.mjs', 'verify-terminal-lifecycle.mjs', 'verify-terminal-output.mjs',

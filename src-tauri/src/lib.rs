@@ -526,6 +526,21 @@ fn share_system_version() -> Option<String> {
     }).clone()
 }
 
+fn desktop_bootstrap_context(app: &AppHandle, window: &tauri::WebviewWindow) -> Result<chatgpt_service::ShareBootstrapContext, chatgpt_service::ServiceError> {
+    static SESSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    let version = share_system_version().ok_or(chatgpt_service::ServiceError {
+        code: "desktop_context_unavailable", message: "Host system version unavailable", status: None,
+    })?;
+    Ok(chatgpt_service::ShareBootstrapContext {
+        app_session_id: SESSION.get_or_init(|| uuid::Uuid::new_v4().to_string()).clone(),
+        app_version: app.package_info().version.to_string(),
+        brand_name: app.config().product_name.clone().unwrap_or_else(|| app.package_info().name.clone()),
+        build_flavor: if cfg!(debug_assertions) { "debug" } else { "release" }.into(),
+        system_name: std::env::consts::OS.into(), system_version: version,
+        window_type: if window.label().starts_with("thread-") { "thread" } else { window.label() }.into(),
+    })
+}
+
 #[tauri::command]
 async fn share_thread_access(
     app: AppHandle,
@@ -533,19 +548,23 @@ async fn share_thread_access(
     state: State<'_, AppState>,
     request: chatgpt_service::ShareAccessRequest,
 ) -> Result<Value, chatgpt_service::ServiceError> {
-    static SESSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    let version = share_system_version().ok_or(chatgpt_service::ServiceError {
-        code: "desktop_context_unavailable", message: "Host system version unavailable", status: None,
-    })?;
-    let context = chatgpt_service::ShareBootstrapContext {
-        app_session_id: SESSION.get_or_init(|| uuid::Uuid::new_v4().to_string()).clone(),
-        app_version: app.package_info().version.to_string(),
-        brand_name: app.config().product_name.clone().unwrap_or_else(|| app.package_info().name.clone()),
-        build_flavor: if cfg!(debug_assertions) { "debug" } else { "release" }.into(),
-        system_name: std::env::consts::OS.into(), system_version: version,
-        window_type: if window.label().starts_with("thread-") { "thread" } else { window.label() }.into(),
-    };
+    let context = desktop_bootstrap_context(&app, &window)?;
     state.chatgpt_service.share_access_bootstrap(request, context, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
+async fn archive_conversations_read(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    state: State<'_, AppState>,
+    request: chatgpt_service::ArchiveConversationsRequest,
+) -> Result<chatgpt_service::ArchiveConversationsResponse, chatgpt_service::ServiceError> {
+    let context = desktop_bootstrap_context(&app, &window)?;
+    state.chatgpt_service.archive_conversations_read(request, context, |method, params| {
         let app = &app;
         let state = &state;
         async move { state.app_server.call(app, method, Some(params)).await }
@@ -2076,6 +2095,7 @@ pub fn run() {
             share_thread_url_safe,
             share_thread_asset_read,
             share_thread_access,
+            archive_conversations_read,
             chatgpt_service_cancel,
             cloud_service_identity,
             cloud_service_access,

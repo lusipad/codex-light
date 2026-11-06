@@ -22,12 +22,14 @@ assert.ok(archiveBranch.getText(ast).includes(archiveChild.getText(ast)));
 const archiveViewProps = { refreshToken: "2:true", onSelectThread() {}, onUnarchive() {}, onDelete() {}, onDeleteAll() {}, onShowToast() {} };
 const ArchiveView = Symbol("ArchiveView");
 const archivedCloudTasks = { source: "actual-settings-hook-state" };
+const archivedConversations = { source: "actual-conversation-hook-state" };
 const React = { createElement: (type, props, ...children) => ({ type, props: props || {}, children }) };
-const tree = vm.runInNewContext(compile(`(${archiveBranch.getText(ast)})`), { activeSection: "archived-chats", archiveViewProps, archivedCloudTasks, React, ArchiveView });
+const tree = vm.runInNewContext(compile(`(${archiveBranch.getText(ast)})`), { activeSection: "archived-chats", archiveViewProps, archivedCloudTasks, archivedConversations, React, ArchiveView });
 const child = tree.children[0];
 assert.equal(child.type, ArchiveView);
 assert.equal(child.props.surface, "settings", "ARS01: settings explicitly selects its researched surface");
 assert.equal(child.props.cloudArchive, archivedCloudTasks, "ARS01: settings forwards the live source state");
+assert.equal(child.props.conversationArchive, archivedConversations, "ARS07: settings forwards the live conversation state");
 for (const [key, value] of Object.entries(archiveViewProps)) assert.equal(child.props[key], value, `ARS02/04: ${key} forwarded without changing identity`);
 assert.equal(vm.runInNewContext(compile(`(${archiveBranch.getText(ast)})`), { activeSection: "storage", archiveViewProps, React, ArchiveView }), false);
 const appAst = parse("App.tsx", app);
@@ -48,6 +50,7 @@ for (const [key, binding] of [["workspaces", "workspaces"], ["projectMembership"
 }
 assert.ok(!standalone.attributes.properties.some(p => p.name?.getText(appAst) === "surface"), "ARS04: global archive retains its default surface");
 assert.ok(!standalone.attributes.properties.some(p => p.name?.getText(appAst) === "cloudArchive"), "ARS04: global archive is not coupled to cloud queries");
+assert.ok(!standalone.attributes.properties.some(p => p.name?.getText(appAst) === "conversationArchive"), "ARS07: global archive does not consume conversation source state");
 for (const [key, value] of Object.entries(shared)) {
   if (["workspaces", "projectMembership", "workspaceHints"].includes(key)) continue;
   const attribute = standalone.attributes.properties.find(p => p.name?.getText(appAst) === key);
@@ -71,3 +74,18 @@ for (const [activeSection, connected] of [["archived-chats", true], ["general-se
   assert.equal(received.scope, JSON.stringify(["connection", "account"]));
 }
 console.log("PASS ARS06: real settings hook binding uses active section, current connection and account scope");
+
+let conversationHook;
+function findConversationHook(node) {
+  if (ts.isVariableDeclaration(node) && node.name.getText(ast) === "archivedConversations") conversationHook = node.initializer;
+  ts.forEachChild(node, findConversationHook);
+}
+findConversationHook(ast); assert.ok(conversationHook);
+for (const [activeSection, connected] of [["archived-chats", true], ["general-settings", true], ["archived-chats", false]]) {
+  let received;
+  vm.runInNewContext(compile(`(${conversationHook.getText(ast)})`), { activeSection, connectionIdentity: "connection", accountIdentity: "account", appServerStatus: { connected }, useArchivedConversations: value => { received = value; } });
+  assert.equal(received.enabled, activeSection === "archived-chats");
+  assert.equal(received.connected, connected);
+  assert.equal(received.scope, JSON.stringify(["connection", "account"]));
+}
+console.log("PASS ARS07: conversation hook binds current settings scope, account and connection only");

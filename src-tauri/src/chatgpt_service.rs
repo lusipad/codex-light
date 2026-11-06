@@ -12,6 +12,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 mod account_notifications;
 pub use account_notifications::{AccountNotificationsRequest, AccountNotificationsResponse, AccountNotificationsWriteRequest};
+mod archive_conversations;
+pub use archive_conversations::{ArchiveConversationsRequest, ArchiveConversationsResponse};
 
 const MAX_RESPONSE: u64 = 8 * 1024 * 1024;
 const MAX_SHARE_SNAPSHOT: usize = 10 * 1024 * 1024;
