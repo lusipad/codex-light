@@ -162,7 +162,7 @@ import {
   buildGoalPrompt,
   goalStatusLabel,
 } from "./threadGoal";
-import { resolveNewThreadProject, threadStartProjectParams } from "./sidebarProjects";
+import { buildSidebarProjectGroups, sidebarThreadProjects, resolveNewThreadProject, threadStartProjectParams } from "./sidebarProjects";
 
 /** Reasoning items carry `summary[]` + `content[]` (and streamed text). */
 function extractReasoningText(item: TurnItem): string {
@@ -494,6 +494,13 @@ export const App: React.FC = () => {
   const [reviewLastResult, setReviewLastResult] = useState<string | null>(null);
   const [reviewRuns, setReviewRuns] = useState<ReviewRun[]>([]);
   const [selectedReviewFinding, setSelectedReviewFinding] = useState<ModelReviewComment | null>(null);
+  const [previewRequestId, setPreviewRequestId] = useState(0);
+  const openPreviewFile = useCallback((filePath: string) => {
+    setSelectedReviewFinding(null);
+    setSelectedPreviewFile(filePath);
+    setPreviewRequestId(current => current + 1);
+    setShowRightDrawer(true);
+  }, []);
   const reviewResultsRef = useRef<ReturnType<typeof createReviewResults> | null>(null);
   if (!reviewResultsRef.current) reviewResultsRef.current = createReviewResults(setReviewRuns);
   const reviewStartPendingRef = useRef(false);
@@ -3707,6 +3714,16 @@ export const App: React.FC = () => {
     [threads, activeThreadId]
   );
 
+  const workbenchWorkspaceRoots = useMemo(() => {
+    const cwd = activeWorkspace?.path;
+    if (!cwd) return [];
+    const groups = buildSidebarProjectGroups(workspaces, sidebarProjectMembership);
+    const matches = activeThreadObj
+      ? sidebarThreadProjects(activeThreadObj, groups, sidebarProjectMembership, workspaceHints)
+      : !activeThreadId ? groups.filter(group => group.id === resolveNewThreadProject(null, sidebarProjectMembership, cwd)?.id) : [];
+    return mergeHookRoots([cwd], matches.length === 1 ? matches[0].rootPaths : []);
+  }, [activeWorkspace?.path, activeThreadObj, activeThreadId, workspaces, sidebarProjectMembership, workspaceHints]);
+
   const handleOpenQuickChat = useCallback(async () => {
     if (!isTauriRuntime()) {
       setShowPopoutModal(value => !value);
@@ -5728,7 +5745,8 @@ export const App: React.FC = () => {
                   const userText = effectiveUserItems.map(extractTextFromItem).join("\n\n");
                   const isBookmarked = (activeThreadId && bookmarkedTurnIds[activeThreadId]?.includes(turn.id)) || false;
                   const renderCommand = (cmd: TurnItem, cIdx: number) => (
-                        <CommandExecutionCard key={cmd.id || cIdx} item={cmd} turnStatus={turn.status} />
+                        <CommandExecutionCard key={cmd.id || cIdx} item={cmd} turnStatus={turn.status}
+                          onOpenFile={filePath => { openPreviewFile(filePath); }} />
                       );
                   const renderFileChange = (fc: TurnItem, fIdx: number) => {
                         const changes: any[] = Array.isArray(fc.changes)
@@ -5758,8 +5776,7 @@ export const App: React.FC = () => {
                             className="file-change-card"
                             onClick={() => {
                               if (primaryPath) {
-                                setSelectedPreviewFile(primaryPath);
-                                setShowRightDrawer(true);
+                                openPreviewFile(primaryPath);
                               }
                             }}
                           >
@@ -5829,7 +5846,7 @@ export const App: React.FC = () => {
                   const renderImage = (img: TurnItem, imIdx: number) => {
                         if (img.type === "imageGeneration") return <GeneratedImageCard
                           key={img.id || imIdx} item={img} turnStatus={turn.status}
-                          onOpenFile={path => { setSelectedPreviewFile(path); setShowRightDrawer(true); }} />;
+                          onOpenFile={path => { openPreviewFile(path); }} />;
                         const path = img.path || img.savedPath || "";
                         return (
                           <div
@@ -5837,8 +5854,7 @@ export const App: React.FC = () => {
                             className="image-item-card"
                             onClick={() => {
                               if (path) {
-                                setSelectedPreviewFile(path);
-                                setShowRightDrawer(true);
+                                openPreviewFile(path);
                               }
                             }}
                           >
@@ -5871,8 +5887,7 @@ export const App: React.FC = () => {
                             setPendingTermCommand({ id: Date.now(), command: cmd });
                           }}
                           onOpenFile={(filePath) => {
-                            setSelectedPreviewFile(filePath);
-                            setShowRightDrawer(true);
+                            openPreviewFile(filePath);
                           }}
                         />
                       );
@@ -5918,8 +5933,7 @@ export const App: React.FC = () => {
                                     : "正在深入思考中…"
                                 }
                                 onOpenFile={(filePath) => {
-                                  setSelectedPreviewFile(filePath);
-                                  setShowRightDrawer(true);
+                                  openPreviewFile(filePath);
                                 }}
                               />
                             </div>
@@ -5936,8 +5950,7 @@ export const App: React.FC = () => {
                           className="user-turn-block"
                         >
                           <UserMessageBubble text={userText} onOpenFile={(filePath) => {
-                            setSelectedPreviewFile(filePath);
-                            setShowRightDrawer(true);
+                            openPreviewFile(filePath);
                           }} />
                           <div className="turn-action-buttons-row right">
                             <button
@@ -6142,8 +6155,7 @@ export const App: React.FC = () => {
                   <TurnDiffPanel
                     files={turnDiffFiles}
                     onOpenFile={(filePath) => {
-                      setSelectedPreviewFile(filePath);
-                      setShowRightDrawer(true);
+                      openPreviewFile(filePath);
                     }}
                     onRefresh={refreshGitStatus}
                   />
@@ -6238,6 +6250,7 @@ export const App: React.FC = () => {
 
       {/* ── 4. Right-Hand Diff & File Review Workbench ── */}
       <DiffDrawer
+        workspaceRoots={workbenchWorkspaceRoots}
         connectionIdentity={JSON.stringify([modelAccountIdentity, appServerStatus.connected, appServerStatus.binaryPath, appServerStatus.appServerVersion, appServerStatus.userAgent])}
         open={showRightDrawer}
         shortcutRequest={workbenchShortcutRequest ?? undefined}
@@ -6252,6 +6265,7 @@ export const App: React.FC = () => {
         onRefreshGit={refreshGitStatus}
         onClose={() => setShowRightDrawer(false)}
         selectedPreviewFile={selectedPreviewFile}
+        previewRequestId={previewRequestId}
         onSelectPreviewFile={setSelectedPreviewFile}
         onSendReviewComment={(comment) => handleSendMessage(comment)}
         reviewTarget={reviewDiffTarget}
@@ -6347,8 +6361,7 @@ export const App: React.FC = () => {
         onSelectThread={selectThread}
         onSearchFiles={() => setQuickSearchMode("files")}
         onSelectFile={(filePath) => {
-          setSelectedPreviewFile(filePath);
-          setShowRightDrawer(true);
+          openPreviewFile(filePath);
         }}
         onSelectSkill={(skillId) => {
           setPromptInput((prev) => `${prev} $${skillId} `);

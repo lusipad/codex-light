@@ -1,0 +1,103 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import vm from "node:vm";
+import ts from "typescript";
+
+const source = fs.readFileSync(new URL("../src/components/TerminalDock.tsx", import.meta.url), "utf8");
+const ast = ts.createSourceFile("TerminalDock.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+let tabHandler, actionsHandler, appearance, appearanceEffect, clearTerminal, closeTerminal;
+const fontButtons={};
+function visit(node) {
+  if (ts.isVariableDeclaration(node) && node.name.getText(ast)==="clearActiveTerminal") clearTerminal=node.initializer;
+  if (ts.isVariableDeclaration(node) && node.name.getText(ast)==="closeTerminalTab") closeTerminal=node.initializer;
+  if (ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect" && node.arguments[0]?.getText(ast).includes("observer.observe(document.documentElement")) appearanceEffect=node.arguments[0];
+  if (ts.isFunctionDeclaration(node) && node.name?.text === "terminalAppearance") appearance = node;
+  if (ts.isJsxOpeningElement(node)) {
+    const text = node.getText(ast);
+    for (const [name,title] of [["decrease","缩小终端字号"],["increase","放大终端字号"]]) {
+      if (text.includes(`title="${title}"`)) {
+        const attrs=node.attributes.properties;
+        fontButtons[name]={
+          click:attrs.find(a=>ts.isJsxAttribute(a)&&a.name.text==="onClick")?.initializer.expression,
+          disabled:attrs.find(a=>ts.isJsxAttribute(a)&&a.name.text==="disabled")?.initializer.expression,
+        };
+      }
+    }
+    const callback = node.attributes.properties.find(attribute => ts.isJsxAttribute(attribute) && attribute.name.text === "onKeyDown")?.initializer;
+    if (callback && ts.isJsxExpression(callback)) {
+      if (text.includes('role="tab"')) tabHandler = callback.expression;
+      if (text.includes('className="terminal-session-actions"')) actionsHandler = callback.expression;
+    }
+  }
+  ts.forEachChild(node, visit);
+}
+visit(ast);
+assert.ok(tabHandler && actionsHandler && appearance);
+const compile = node => ts.transpileModule(`(${node.getText(ast)})`, {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+const selected = [], closed = [], focused = [];
+const context = {
+  t:{id:"a"}, tabs:[{id:"a"},{id:"b"},{id:"c"}],
+  setActiveTabId:id=>selected.push(id), closeTerminalTab:id=>closed.push(id),
+  tabListRef:{current:{querySelectorAll:()=>[0,1,2].map(index=>({focus:()=>focused.push(index)}))}},
+  setActionsOpen:value=>{context.actionsOpen=value;}, actionsTriggerRef:{current:{focus:()=>focused.push("actions")}},
+};
+const key = vm.runInNewContext(compile(tabHandler), context);
+const event = (key, composing=false) => ({key,nativeEvent:{isComposing:composing},preventDefault(){this.prevented=true;},stopPropagation(){}});
+for (const [input,target,index] of [["ArrowRight","b",1],["ArrowLeft","c",2],["End","c",2],["Home","a",0]]) {
+  const e = event(input); key(e);
+  assert.equal(selected.at(-1),target); assert.equal(focused.at(-1),index); assert.equal(e.prevented,true);
+}
+const before=selected.length;
+key(event("ArrowRight",true)); key({...event("Delete"),keyCode:229});
+assert.equal(selected.length,before); assert.equal(closed.length,0);
+key(event("Delete")); assert.deepEqual(closed,["a"]);
+const escape=vm.runInNewContext(compile(actionsHandler),context);
+escape(event("Escape",true)); assert.equal(context.actionsOpen,undefined);
+escape(event("Escape")); assert.equal(context.actionsOpen,false); assert.equal(focused.at(-1),"actions");
+
+const values={"--font-mono":'"Custom Mono", monospace',"--font-code-size":"18px","--bg-primary":"#ffffff","--text-primary":"#111111","--selection-bg":"#abcdef"};
+const read=vm.runInNewContext(compile(appearance),{getComputedStyle:()=>({getPropertyValue:key=>values[key]||""})});
+const result=read({});
+assert.equal(result.fontFamily,values["--font-mono"]); assert.equal(result.fontSize,18);
+assert.equal(result.theme.background,"#ffffff"); assert.equal(result.theme.cursor,"#111111");
+const requests=[], fontListeners=new Map(), renderer={term:{options:{},cols:90,rows:25},fit:{fit(){renderer.fits=(renderer.fits||0)+1;}},ready:Promise.resolve(true)};
+let observerCallback, disconnected=false;
+const appearanceContext={
+  containerRef:{current:{}},xtermMapRef:{current:new Map([["same-session",renderer]])},
+  terminalAppearance:()=>read({}),setFontSize:size=>{appearanceContext.fontSize=size;},
+  invoke:(method,args)=>{requests.push({method,args});return Promise.resolve();},
+  MutationObserver:class{constructor(callback){observerCallback=callback;}observe(){}disconnect(){disconnected=true;}},
+  document:{documentElement:{},fonts:{addEventListener:(name,fn)=>fontListeners.set(name,fn),removeEventListener:name=>fontListeners.delete(name)}},
+};
+const stop=vm.runInNewContext(compile(appearanceEffect),appearanceContext)();
+await Promise.resolve(); await Promise.resolve();
+assert.equal(renderer.term.options.fontFamily,values["--font-mono"]);
+values["--font-code-size"]="24px";values["--bg-primary"]="#000000";
+observerCallback(); await Promise.resolve();await Promise.resolve();
+assert.equal(renderer.term.options.fontSize,24);assert.equal(renderer.term.options.theme.background,"#000000");
+fontListeners.get("loadingdone")();await Promise.resolve();await Promise.resolve();
+assert.ok(renderer.fits>=3);assert.ok(requests.every(item=>item.method==="terminal_resize"&&item.args.sessionId==="same-session"));
+stop();assert.equal(disconnected,true);assert.equal(fontListeners.size,0);
+let released=0,cleared=0;
+const tabContext={
+  tabs:[{id:"a"},{id:"b"}],activeTabId:"a",
+  xtermMapRef:{current:new Map([["a",{releaseInput(){released++;},term:{clear(){cleared++;},dispose(){}},output:{dispose(){}},cancelHydration(){},el:{remove(){}}}]])},
+  invoke:()=>Promise.resolve(),setTabs:()=>{},setActiveTabId:()=>{},
+};
+vm.runInNewContext(compile(clearTerminal),tabContext)();
+assert.equal(cleared,1);assert.equal(released,0,"TU05: clearing output keeps input classification listeners");
+vm.runInNewContext(compile(closeTerminal),tabContext)("a");
+assert.equal(released,1,"TU05: closing a tab releases input classification listeners");
+for (const initial of [8,10,12,20,24]) {
+  for (const direction of ["decrease","increase"]) {
+    const fontContext={fontSize:initial,setFontSize:update=>{fontContext.fontSize=update(fontContext.fontSize);}};
+    vm.runInNewContext(compile(fontButtons[direction].click),fontContext)();
+    const expected=direction==="decrease"?Math.max(8,initial-1):Math.min(24,initial+1);
+    assert.equal(fontContext.fontSize,expected,`TU03: ${direction} remains monotonic at ${initial}px`);
+    assert.ok(fontButtons[direction].disabled,"TU03: boundary has a disabled expression");
+    fontContext.fontSize=initial;
+    const disabled=vm.runInNewContext(compile(fontButtons[direction].disabled),fontContext);
+    assert.equal(disabled,direction==="decrease"?initial<=8:initial>=24);
+  }
+}
+console.log("PASS TU01–TU03 production callbacks: tab navigation/wrap/close, IME guard, disclosure Escape/focus and applied appearance tokens");

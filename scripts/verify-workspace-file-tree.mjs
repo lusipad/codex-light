@@ -4,7 +4,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 const source = fs.readFileSync('src/components/DiffDrawer.tsx', 'utf8');
 const ast = ts.createSourceFile('DiffDrawer.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-let tree, directoryOpen, directorySelect, searchOpen, searchSelect;
+let tree, directoryOpen, directorySelect, directoryKey, searchOpen, searchSelect;
 function visit(node) {
   if (ts.isFunctionDeclaration(node) && node.name?.text === 'WorkspaceFileTree') tree = node;
   if (ts.isJsxOpeningElement(node)) {
@@ -12,6 +12,7 @@ function visit(node) {
     if (attr('aria-label')?.getText(ast) === '{item.name}') {
       directoryOpen = attr('onDoubleClick')?.expression;
       directorySelect = attr('onClick')?.expression;
+      directoryKey = attr('onKeyDown')?.expression;
     }
     if (attr('aria-label')?.getText(ast) === '{hit.relPath}') {
       searchOpen = attr('onDoubleClick')?.expression;
@@ -59,12 +60,19 @@ function mount(width = 250, parentWidth = 1000) {
   const events = [];
   const context = { item: { path: 'root/a.ts', name: 'a.ts', isDirectory: false }, hit: { absPath: 'root/b.ts' },
     setSelectedTreePath: path => events.push(['select', path]), openFilePreview: path => events.push(['open', path]),
-    setExplorerDraft: () => {}, setCurrentDir: path => events.push(['directory', path]) };
+    setExplorerDraft: () => {}, toggle: value => events.push(value === undefined ? ['expand'] : ['expand', value]), setCurrentDir: path => events.push(['directory', path]) };
   const run = node => vm.runInNewContext(compile(`(${node.getText(ast)})`), context)();
   run(directorySelect); assert.deepEqual(events, [['select', 'root/a.ts']], 'single click preserves current editor');
   run(directoryOpen); assert.deepEqual(events.at(-1), ['open', 'root/a.ts']);
-  context.item.isDirectory = true; run(directoryOpen); assert.deepEqual(events.at(-1), ['directory', 'root/a.ts']);
+  context.item.isDirectory = true; run(directoryOpen); assert.deepEqual(events.at(-1), ['expand'], 'directory expands in place rather than replacing its root');
   run(searchSelect); assert.deepEqual(events.at(-1), ['select', 'root/b.ts']);
   run(searchOpen); assert.deepEqual(events.at(-1), ['open', 'root/b.ts']);
+  const key = vm.runInNewContext(compile(`(${directoryKey.getText(ast)})`), context);
+  const target = {};
+  const press = (value, composing = false) => key({ key: value, nativeEvent: { isComposing: composing }, target, currentTarget: target, preventDefault() {} });
+  press('ArrowRight'); assert.deepEqual(events.at(-1), ['expand', true]);
+  press('ArrowLeft'); assert.deepEqual(events.at(-1), ['expand', false]);
+  const beforeIme = events.length; press('Enter', true); assert.equal(events.length, beforeIme, 'IME selection cannot toggle/open nodes');
+  context.item.isDirectory = false; press('Enter'); assert.deepEqual(events.at(-1), ['open', 'root/a.ts']);
 }
 console.log('PASS actual shared tree callbacks: left resize, min/max/collapse, capture cleanup, keyboard and selection/open separation; official paired pixels and native pointer input unverified');

@@ -1,0 +1,57 @@
+.terminal-dock-workspace {
+  min-height: 140px;
+  background: var(--bg-primary);
+}
+
+.terminal-dock-workspace .terminal-dock-header {
+  flex-shrink: 0;
+  padding-inline: 8px;
+  background: var(--bg-primary);
+}
+
+.terminal-dock-workspace .terminal-tabs { min-width: 0; }
+.terminal-dock-workspace .terminal-tab { flex-shrink: 0; padding: 0 4px 0 0; }
+.terminal-dock-workspace .terminal-tab.active { background: var(--bg-hover); }
+
+.terminal-tab-select {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.terminal-tab-select:focus-visible,
+.terminal-dock-workspace button:focus-visible,
+.terminal-dock-workspace select:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+}
+
+.terminal-session-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.terminal-session-actions .terminal-shell-select { max-width: min(100%, 240px); }
+.terminal-session-actions .terminal-cwd-badge { flex: 1; min-width: 40px; }
+
+.terminal-dock-workspace .terminal-xterm-wrapper {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  padding: 8px 0 12px 16px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}

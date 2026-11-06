@@ -15,7 +15,7 @@ visit(ast);
 assert.ok(commandMap, "Exercise the production App command-card wiring");
 const nodes = node => node && typeof node === "object" ? [node, ...node.children.flatMap(nodes)] : [];
 const textOf = node => node && typeof node === "object" ? node.children.map(textOf).join("") : typeof node === "string" || typeof node === "number" ? String(node) : "";
-function mount(initial, turnStatus = "completed") {
+function mount(initial, turnStatus = "completed", onOpenFile = () => {}) {
   let cursor = 0, item = initial;
   const turn = { status: turnStatus };
   const hooks = [];
@@ -37,23 +37,26 @@ function mount(initial, turnStatus = "completed") {
     require(name) {
       if (name === "react") return React;
       if (name === "./Icons") return { TerminalIcon: () => null, ChevronDownIcon: () => null, CheckIcon: () => null };
+      if (name.endsWith(".css")) return {};
       throw Error(name);
     },
   });
   const renderItem = vm.runInNewContext(ts.transpileModule(`(${commandMap.getText(ast)})`, { compilerOptions: options }).outputText, {
     React, CommandExecutionCard: module.exports.CommandExecutionCard, turn,
+    openPreviewFile: onOpenFile,
   });
   return {
     render() { cursor = 0; return renderItem(item, 0); },
+    renderDirect(onOpenFile) { cursor = 0; return module.exports.CommandExecutionCard({ item, turnStatus: turn.status, onOpenFile }); },
     update(next) { item = next; },
     updateTurnStatus(status) { turn.status = status; },
   };
 }
-const header = tree => nodes(tree).find(node => node.type === "button" && node.props.className === "command-exec-header");
+const header = tree => nodes(tree).find(node => node.type === "button" && Object.hasOwn(node.props, "data-command-expand"));
 const output = tree => nodes(tree).find(node => node.props.className === "command-exec-body");
 const footer = tree => nodes(tree).find(node => node.props.className === "command-exec-footer");
 const summary = tree => textOf(nodes(tree).find(node => node.props.className === "command-exec-summary"));
-const detail = tree => textOf(nodes(tree).find(node => node.props.className === "command-exec-title"));
+const detail = tree => textOf(nodes(tree).find(node => node.props.className?.split(" ").includes("command-exec-title")));
 for (const [action, status, expectedSummary, expectedDetail] of [
   [{ type: "read", name: "README.md", path: "D:/project/README.md" }, "completed", "已读取", "README.md"],
   [{ type: "read", name: "README.md", path: "D:/project/README.md" }, "inProgress", "正在运行命令", "raw command"],
@@ -77,6 +80,19 @@ for (const commandActions of [[], [{ type: "unknown" }], [{ type: "read", name: 
   const sample = mount({ type: "commandExecution", command: "compound", commandActions, status: "completed" });
   assert.equal(summary(sample.render()), "已运行命令", "CD04: never guess a compound or unknown action");
   assert.equal(detail(sample.render()), "compound");
+}
+{
+  const sample = mount({ type: "commandExecution", command: "cat file", status: "completed", commandActions: [{ type: "read", name: "中文 文件.md", path: "D:/项目/中文 文件.md" }] });
+  assert.ok(nodes(sample.renderDirect()).some(node => node.props.className === "command-exec-card command-activity-row"), "CE01: parsed read uses an unboxed activity row");
+  assert.equal(textOf(nodes(sample.renderDirect()).find(node => node.props.className === "command-exec-title")), "中文 文件.md", "CE04: no callback leaves a readable file label");
+  assert.equal(nodes(sample.renderDirect()).find(node => Object.hasOwn(node.props, "data-agent-activity-file-link")), undefined);
+  const opened = [];
+  const onOpenFile = path => opened.push(path);
+  nodes(sample.renderDirect(onOpenFile)).find(node => Object.hasOwn(node.props, "data-agent-activity-file-link")).props.onClick();
+  assert.deepEqual(opened, ["D:/项目/中文 文件.md"], "CE05: file activation forwards the actual path without command interpolation");
+  assert.equal(header(sample.renderDirect(onOpenFile)).props["aria-expanded"], false, "CE01: opening the file must not expand command output");
+  header(sample.renderDirect(onOpenFile)).props.onClick();
+  assert.equal(header(sample.renderDirect(onOpenFile)).props["aria-expanded"], true, "CE03: the separate detail action remains available");
 }
 for (const status of ["declined", "interrupted"]) {
   const sample = mount({ type: "commandExecution", command: "raw command", commandActions: [{ type: "read", name: "never-read" }], status });

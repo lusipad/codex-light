@@ -33,11 +33,14 @@ import {
 } from "../fsClient";
 import {
   CheckIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
   CloseIcon,
   CopyIcon,
   DiffIcon,
   DownloadIcon,
   EllipsisIcon,
+  FileCodeIcon,
   FolderIcon,
   FullscreenIcon,
   GitBranchIcon,
@@ -91,6 +94,60 @@ function WorkspaceFileTree({ width, onResize, children }: {
   </aside>;
 }
 
+type WorkspaceEntryRenderer = (item: DirectoryEntryItem, depth: number, expanded: boolean, toggle: (value?: boolean) => void, groupId: string) => React.ReactNode;
+
+function WorkspaceDirectoryEntry({ item, depth, refreshToken, renderRow }: {
+  item: DirectoryEntryItem;
+  depth: number;
+  refreshToken: DirectoryEntryItem[];
+  renderRow: WorkspaceEntryRenderer;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [entries, setEntries] = useState<DirectoryEntryItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
+  const groupId = React.useId();
+  useEffect(() => {
+    if (!expanded || !item.isDirectory) return;
+    let disposed = false;
+    let sequence = 0;
+    let stopWatch: FsUnwatch | null = null;
+    const refresh = async () => {
+      const request = ++sequence;
+      setLoading(true);
+      try {
+        let children: DirectoryEntryItem[];
+        try { children = toDirectoryEntryItems(item.path, await fsReadDirectory(item.path)); }
+        catch { if (disposed || request !== sequence) return; children = (await invoke<DirectoryEntryItem[]>("fs_list_dir", { path: item.path, showHidden: true })).sort(compareDirectoryEntries); }
+        if (disposed || request !== sequence) return;
+        setEntries(children);
+        setError(null);
+      } catch (reason) {
+        if (!disposed && request === sequence) setError(String(reason));
+      } finally {
+        if (!disposed && request === sequence) setLoading(false);
+      }
+    };
+    void refresh();
+    fsWatchPath(item.path, () => { if (!disposed) void refresh(); })
+      .then(unwatch => { if (disposed) void unwatch(); else stopWatch = unwatch; })
+      .catch(() => {});
+    return () => { disposed = true; if (stopWatch) void stopWatch(); };
+  }, [expanded, item.path, item.isDirectory, refreshToken, retry]);
+  const toggle = (value?: boolean) => setExpanded(previous => value ?? !previous);
+  return <React.Fragment>
+    {renderRow(item, depth, expanded, toggle, groupId)}
+    {expanded && item.isDirectory && <div role="group" id={groupId}>
+      {loading && <div className="workspace-tree-status" role="status" style={{ paddingLeft: (depth + 1) * 16 + 8 }}>正在加载目录…</div>}
+      {error ? <div className="workspace-tree-status" role="alert" title={error} style={{ paddingLeft: (depth + 1) * 16 + 8 }}>
+        目录无法访问 <button type="button" onClick={() => setRetry(value => value + 1)}>重试</button>
+      </div> : !loading && entries.length === 0 ? <div className="workspace-tree-status" style={{ paddingLeft: (depth + 1) * 16 + 8 }}>目录为空</div> :
+        entries.map(child => <WorkspaceDirectoryEntry key={child.path} item={child} depth={depth + 1} refreshToken={refreshToken} renderRow={renderRow} />)}
+    </div>}
+  </React.Fragment>;
+}
+
 export interface WorkbenchTabItem {
   id: string;
   kind: "newTab" | "changes" | "files" | "summary" | "browser" | "sideChat";
@@ -109,6 +166,7 @@ export interface DiffDrawerProps {
   gitPreferencesReady?: boolean;
   connectionIdentity?: string;
   cwd: string;
+  workspaceRoots?: string[];
   gitStatus: GitStatusInfo | null;
   branches?: string[];
   turns?: TurnData[];
@@ -116,6 +174,7 @@ export interface DiffDrawerProps {
   onRefreshGit: () => void;
   onClose: () => void;
   selectedPreviewFile?: string | null;
+  previewRequestId?: number;
   onSelectPreviewFile?: (file: string | null) => void;
   onSendReviewComment?: (commentPrompt: string) => void;
   modelReviewComments?: ModelReviewComment[];
@@ -329,16 +388,6 @@ function fileExtension(pathValue: string): string {
   return dot >= 0 ? base.slice(dot + 1).toLowerCase() : "";
 }
 
-/**
- * Mirror the legacy `fs_list_dir(showHidden=false)` filtering so switching to
- * `fs/readDirectory` (which returns every entry) does not change what is shown.
- */
-function isHiddenEntryName(name: string): boolean {
-  if (name === "node_modules" || name === "target" || name === ".git") return true;
-  if (name.startsWith(".") && name !== ".env" && name !== ".gitignore") return true;
-  return false;
-}
-
 function compareDirectoryEntries(
   a: DirectoryEntryItem,
   b: DirectoryEntryItem
@@ -352,7 +401,6 @@ function toDirectoryEntryItems(
   entries: FsDirectoryEntry[]
 ): DirectoryEntryItem[] {
   return entries
-    .filter((entry) => !isHiddenEntryName(entry.fileName))
     .map((entry) => ({
       name: entry.fileName,
       path: joinFsPath(dir, entry.fileName),
@@ -463,6 +511,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   gitPreferencesReady = true,
   connectionIdentity = "local",
   cwd,
+  workspaceRoots,
   gitStatus,
   branches = [],
   turns = [],
@@ -470,6 +519,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   onRefreshGit,
   onClose,
   selectedPreviewFile,
+  previewRequestId,
   onSelectPreviewFile,
   onSendReviewComment,
   modelReviewComments = [],
@@ -732,9 +782,12 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
 
   // Files & Editor state
   const [currentDir, setCurrentDir] = useState<string>(cwd);
+  const fileTreeRoots = useMemo(() => Array.from(new Set([cwd, ...(workspaceRoots ?? [])].filter(Boolean))), [cwd, workspaceRoots]);
   const [dirEntries, setDirEntries] = useState<DirectoryEntryItem[]>([]);
   const [fileFilterQuery, setFileFilterQuery] = useState("");
   const [fileSearchHits, setFileSearchHits] = useState<WorkspaceFileHit[]>([]);
+  const [fileSearchLoading, setFileSearchLoading] = useState(false);
+  const [fileSearchError, setFileSearchError] = useState<string | null>(null);
   const [filePreview, setFilePreview] = useState<FilePreviewResult | null>(null);
   const [activeReviewFinding, setActiveReviewFinding] = useState<ModelReviewComment | null>(null);
   const fileEditorRef = useRef<HTMLTextAreaElement | null>(null);
@@ -758,7 +811,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
       discardResolverRef.current?.(false);
       discardResolverRef.current = null;
     };
-  }, [cwd, open]);
+  }, [cwd, open, connectionIdentity]);
   const [dirLoading, setDirLoading] = useState(false);
   const [dirError, setDirError] = useState<string | null>(null);
   const isDirtyRef = useRef(isDirty);
@@ -787,16 +840,23 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     return list;
   }, [gitStatus, diffMode]);
   const fsWatchTimerRef = useRef<number | null>(null);
-  const lastExternalPreviewRef = useRef<string | null>(null);
+  const lastExternalPreviewRequestRef = useRef<string | null>(null);
   const appServerConnectedRef = useRef<boolean | null>(null);
   const [watchEpoch, setWatchEpoch] = useState(0);
 
   useEffect(() => {
     if (cwd) {
       setCurrentDir(cwd);
+      setDirEntries([]);
       setExplorerDraft(null);
     }
   }, [cwd]);
+
+  useEffect(() => { setDirEntries([]); }, [connectionIdentity]);
+
+  useEffect(() => {
+    if (!fileTreeRoots.includes(currentDir)) setCurrentDir(cwd);
+  }, [fileTreeRoots, currentDir, cwd]);
 
   useEffect(() => {
     if (gitStatus?.defaultBranch && !baseBranch) {
@@ -882,7 +942,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     // source: `fs/readDirectory` only reports names and types.
     const legacyEntriesPromise = invoke<DirectoryEntryItem[]>("fs_list_dir", {
       path: dir,
-      showHidden: false,
+      showHidden: true,
     }).catch((legacyError) => {
       console.warn("fs_list_dir failed:", legacyError);
       return null;
@@ -927,7 +987,8 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   useEffect(() => {
     if (!open || activeTab !== "files" || !currentDir) return;
     void refreshDirectory(currentDir);
-  }, [open, activeTab, currentDir, refreshDirectory]);
+    return () => { ++dirLoadSeqRef.current; };
+  }, [open, activeTab, currentDir, connectionIdentity, refreshDirectory, watchEpoch]);
 
   // Re-arm `fs/watch` when app-server reconnects (watches are connection-scoped).
   useEffect(() => {
@@ -1006,19 +1067,40 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
       }
       if (stopWatch) void stopWatch();
     };
-  }, [open, activeTab, currentDir, refreshDirectory, watchEpoch]);
+  }, [open, activeTab, currentDir, connectionIdentity, refreshDirectory, watchEpoch]);
+
+  // Expanded folders no longer replace currentDir; watch an opened nested file
+  // independently so external edits retain the existing clean-preview refresh.
+  useEffect(() => {
+    const path = filePreview?.path;
+    if (!open || activeTab !== "files" || !path || parentFsPath(path) === currentDir) return;
+    let disposed = false;
+    let stopWatch: FsUnwatch | null = null;
+    fsWatchPath(path, () => {
+      if (!disposed && filePreviewRef.current?.path === path && !isDirtyRef.current) void openFilePreview(path, { silent: true });
+    }).then(unwatch => { if (disposed) void unwatch(); else stopWatch = unwatch; }).catch(() => {});
+    return () => { disposed = true; if (stopWatch) void stopWatch(); };
+  }, [open, activeTab, filePreview?.path, currentDir, connectionIdentity, watchEpoch]);
 
   useEffect(() => {
-    if (!open || activeTab !== "files" || !cwd) return;
+    if (!open || activeTab !== "files" || !currentDir) return;
     const q = fileFilterQuery.trim();
     if (!q) {
       setFileSearchHits([]);
+      setFileSearchLoading(false);
+      setFileSearchError(null);
       return;
     }
-    invoke<WorkspaceFileHit[]>("fs_search_files", { cwd, query: q, limit: 35 })
-      .then((hits) => setFileSearchHits(hits))
-      .catch(() => setFileSearchHits([]));
-  }, [open, activeTab, cwd, fileFilterQuery]);
+    let disposed = false;
+    setFileSearchHits([]);
+    setFileSearchLoading(true);
+    setFileSearchError(null);
+    invoke<WorkspaceFileHit[]>("fs_search_files", { cwd: currentDir, query: q, limit: 35 })
+      .then((hits) => { if (!disposed) setFileSearchHits(hits); })
+      .catch(error => { if (!disposed) setFileSearchError(String(error)); })
+      .finally(() => { if (!disposed) setFileSearchLoading(false); });
+    return () => { disposed = true; };
+  }, [open, activeTab, currentDir, connectionIdentity, fileFilterQuery]);
 
   const showToast = (msg: string) => {
     setGitToast(msg);
@@ -1434,24 +1516,21 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     setShortcutFocus(null);
   }, [shortcutFocus, open, cwd]);
 
-  // External file selection (timeline cards / @mentions / quick search): keep
-  // the Changes tab behavior untouched, but warm up the Files tab preview.
+  // An explicit external open reveals Files. Consume request identity rather
+  // than caching paths, so a new click can retry a failed read of the same file.
   useEffect(() => {
     if (!open || !selectedPreviewFile) {
-      if (!selectedPreviewFile) lastExternalPreviewRef.current = null;
+      if (!selectedPreviewFile) lastExternalPreviewRequestRef.current = null;
       return;
     }
     if (selectedReviewFinding && selectedReviewFinding.absolutePath === selectedPreviewFile) return;
-    if (lastExternalPreviewRef.current === selectedPreviewFile) return;
-    if (filePreview?.path === selectedPreviewFile) {
-      lastExternalPreviewRef.current = selectedPreviewFile;
-      return;
-    }
-    // Never replace an open editor that has unsaved changes.
-    if (isDirty) return;
-    lastExternalPreviewRef.current = selectedPreviewFile;
-    void openFilePreview(selectedPreviewFile, { silent: true });
-  }, [open, selectedPreviewFile, filePreview?.path, isDirty, selectedReviewFinding]);
+    const requestKey = JSON.stringify([cwd, connectionIdentity, selectedPreviewFile, previewRequestId ?? 0]);
+    if (lastExternalPreviewRequestRef.current === requestKey) return;
+    lastExternalPreviewRequestRef.current = requestKey;
+    setActiveTab("files");
+    if (filePreviewRef.current?.path === selectedPreviewFile) return;
+    void openFilePreview(selectedPreviewFile);
+  }, [open, cwd, connectionIdentity, selectedPreviewFile, previewRequestId, selectedReviewFinding]);
 
   useEffect(() => {
     if (!selectedReviewFinding) { setActiveReviewFinding(null); return; }
@@ -1687,6 +1766,89 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
       commands,
     };
   }, [turns]);
+
+  const renderFileTreeEntry: WorkspaceEntryRenderer = (item, depth, expanded, toggle, groupId) => {
+    const isRenaming =
+      explorerDraft?.mode === "rename" &&
+      explorerDraft.targetPath === item.path;
+    return (
+      <div
+        key={item.path}
+        className={`diff-file-row fe-file-row ${
+          selectedTreePath === item.path ? "active" : ""
+        } ${isRenaming ? "fe-renaming" : ""}`}
+        role="treeitem" tabIndex={0} aria-label={item.name}
+        aria-level={depth + 1} aria-expanded={item.isDirectory ? expanded : undefined}
+        aria-owns={item.isDirectory && expanded ? groupId : undefined}
+        aria-selected={selectedTreePath === item.path}
+        style={{ paddingLeft: depth * 16 + 8 }}
+        onClick={() => setSelectedTreePath(item.path)}
+        onDoubleClick={() => {
+          if (item.isDirectory) {
+            setExplorerDraft(null);
+            toggle();
+          } else {
+            void openFilePreview(item.path);
+          }
+        }}
+        onKeyDown={event => {
+          if (event.target !== event.currentTarget || event.nativeEvent.isComposing) return;
+          if (item.isDirectory && (event.key === "ArrowRight" || event.key === "ArrowLeft")) { event.preventDefault(); toggle(event.key === "ArrowRight"); return; }
+          if (event.key !== "Enter") return;
+          event.preventDefault();
+          if (item.isDirectory) { setExplorerDraft(null); toggle(); }
+          else void openFilePreview(item.path);
+        }}
+      >
+        <button type="button" className="workspace-tree-disclosure"
+          aria-label={`${expanded ? "收起" : "展开"} ${item.name}`} aria-expanded={expanded}
+          tabIndex={-1} style={{ visibility: item.isDirectory ? "visible" : "hidden" }}
+          onClick={event => { event.stopPropagation(); toggle(); }}
+          onDoubleClick={event => event.stopPropagation()}>{expanded ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}</button>
+        <span className="file-icon-tag">{item.isDirectory ? <FolderIcon size={13} /> : <FileCodeIcon size={13} />}</span>
+        <span className="diff-file-path" title={item.path}>
+          {item.name}
+        </span>
+        {!item.isDirectory && item.size > 0 && (
+          <span className="file-size-tag">
+            {(item.size / 1024).toFixed(1)} KB
+          </span>
+        )}
+        <span
+          className="fe-row-actions"
+          onClick={(event) => event.stopPropagation()}
+          onDoubleClick={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            className="fe-row-btn"
+            title={`重命名 ${item.name}`}
+            disabled={explorerBusy}
+            onClick={() => beginRenameDraft(item)}
+          >
+            ✎
+          </button>
+          <button
+            type="button"
+            className="fe-row-btn"
+            title={`复制路径 ${item.path}`}
+            onClick={() => void handleCopyPath(item.path)}
+          >
+            ⧉
+          </button>
+          <button
+            type="button"
+            className="fe-row-btn danger"
+            title={`删除 ${item.name}`}
+            disabled={explorerBusy}
+            onClick={() => void handleDeleteEntry(item)}
+          >
+            <TrashIcon size={11} />
+          </button>
+        </span>
+      </div>
+    );
+  };
 
   if (!open) return null;
 
@@ -2361,6 +2523,10 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
         <div className="diff-drawer-body workspace-files-body">
           {fileTreeWidth > 0 && <WorkspaceFileTree width={fileTreeWidth} onResize={setFileTreeWidth}>
           <div className="file-browser-path-bar">
+            {fileTreeRoots.length > 1 && <select className="workspace-tree-root" aria-label="选择文件树根目录" title={currentDir} value={currentDir}
+              onChange={event => { ++dirLoadSeqRef.current; setDirEntries([]); setDirError(null); setFileSearchHits([]); setExplorerDraft(null); setCurrentDir(event.target.value); }}>
+              {fileTreeRoots.map(root => <option key={root} value={root} title={root}>{baseNameFsPath(root) || root}</option>)}
+            </select>}
             <span className="file-browser-cwd" title={currentDir}>
               {currentDir}
             </span>
@@ -2385,11 +2551,10 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                 <button
                   className="mini-link-btn"
                   onClick={() => {
-                    const parent = parentFsPath(currentDir);
-                    if (parent && parent !== currentDir) setCurrentDir(parent);
+                    setCurrentDir(cwd);
                   }}
                 >
-                  返回上级
+                  返回聊天根目录
                 </button>
               )}
             </div>
@@ -2483,9 +2648,11 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
           </div>
 
           <details className="workspace-all-files" open><summary>所有文件</summary>
-          <div className="file-browser-list">
+          <div className="file-browser-list" role="tree" aria-label="所有文件">
             {fileFilterQuery.trim() ? (
-              fileSearchHits.map((hit) => (
+              fileSearchLoading ? <div className="workspace-tree-status" role="status">正在筛选文件…</div> :
+              fileSearchError ? <div className="workspace-tree-status" role="alert" title={fileSearchError}>无法筛选文件，请更改筛选条件后重试。</div> :
+              fileSearchHits.length === 0 ? <div className="workspace-tree-status">未找到文件</div> : fileSearchHits.map((hit) => (
                 <div
                   key={hit.absPath}
                   className={`diff-file-row ${
@@ -2522,78 +2689,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                 {dirLoading ? "正在加载目录…" : "目录为空"}
               </div>
             ) : (
-              dirEntries.map((item) => {
-                const isRenaming =
-                  explorerDraft?.mode === "rename" &&
-                  explorerDraft.targetPath === item.path;
-                return (
-                  <div
-                    key={item.path}
-                    className={`diff-file-row fe-file-row ${
-                      selectedTreePath === item.path ? "active" : ""
-                    } ${isRenaming ? "fe-renaming" : ""}`}
-                    role="button" tabIndex={0} aria-label={item.name}
-                    onClick={() => setSelectedTreePath(item.path)}
-                    onDoubleClick={() => {
-                      if (item.isDirectory) {
-                        setExplorerDraft(null);
-                        setCurrentDir(item.path);
-                      } else {
-                        void openFilePreview(item.path);
-                      }
-                    }}
-                    onKeyDown={event => {
-                      if (event.key !== "Enter" || event.target !== event.currentTarget) return;
-                      if (item.isDirectory) { setExplorerDraft(null); setCurrentDir(item.path); }
-                      else void openFilePreview(item.path);
-                    }}
-                  >
-                    <span className="file-icon-tag">
-                      {item.isDirectory ? "📁" : "📄"}
-                    </span>
-                    <span className="diff-file-path" title={item.path}>
-                      {item.name}
-                    </span>
-                    {!item.isDirectory && item.size > 0 && (
-                      <span className="file-size-tag">
-                        {(item.size / 1024).toFixed(1)} KB
-                      </span>
-                    )}
-                    <span
-                      className="fe-row-actions"
-                      onClick={(event) => event.stopPropagation()}
-                      onDoubleClick={(event) => event.stopPropagation()}
-                    >
-                      <button
-                        type="button"
-                        className="fe-row-btn"
-                        title={`重命名 ${item.name}`}
-                        disabled={explorerBusy}
-                        onClick={() => beginRenameDraft(item)}
-                      >
-                        ✎
-                      </button>
-                      <button
-                        type="button"
-                        className="fe-row-btn"
-                        title={`复制路径 ${item.path}`}
-                        onClick={() => void handleCopyPath(item.path)}
-                      >
-                        ⧉
-                      </button>
-                      <button
-                        type="button"
-                        className="fe-row-btn danger"
-                        title={`删除 ${item.name}`}
-                        disabled={explorerBusy}
-                        onClick={() => void handleDeleteEntry(item)}
-                      >
-                        <TrashIcon size={11} />
-                      </button>
-                    </span>
-                  </div>
-                );
-              })
+              dirEntries.map(item => <WorkspaceDirectoryEntry key={`${connectionIdentity}:${currentDir}:${item.path}`} item={item} depth={0} refreshToken={dirEntries} renderRow={renderFileTreeEntry} />)
             )}
           </div>
 

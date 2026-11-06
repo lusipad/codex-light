@@ -42,12 +42,13 @@ function mount() {
     subscriptionsReadyRef: { current: Promise.resolve(false) },
     pendingActionRef: { current: request() },
     createTerminalOutput: outputModule.exports.createTerminalOutput,
+    terminalAppearance: () => ({fontFamily: 'Consolas', fontSize: 12, theme: {background: '#111111', foreground: '#eeeeee'}}),
     setCommandError(value) { context.error = value; },
     listen(name, handler) { const pending = deferred(); listeners.push({ name, handler, ...pending }); return pending.promise; },
     invoke(method, args) { const pending = deferred(); requests.push({ method, args, ...pending }); return pending.promise; },
     setTimeout(callback) { timers.add(callback); return callback; },
     clearTimeout(callback) { timers.delete(callback); },
-    document: { createElement: () => ({ style: {}, removed: false, remove() { this.removed = true; } }) },
+    document: { createElement: () => ({ style: {}, removed: false, addEventListener() {}, removeEventListener() {}, remove() { this.removed = true; } }) },
     window: {
       addEventListener(name, fn) { resizeHandlers.add(fn); },
       removeEventListener(name, fn) { resizeHandlers.delete(fn); },
@@ -56,7 +57,7 @@ function mount() {
     FitAddon: class { fit() {} },
     Terminal: class {
       constructor(options) { this.options = options; this.writes = []; this.disposals = 0; this.parsed = []; terminals.push(this); }
-      loadAddon() {} open() {} attachCustomKeyEventHandler(fn) { this.keyHandler = fn; } onData(fn) { this.input = fn; }
+      loadAddon() {} open() {} attachCustomKeyEventHandler(fn) { this.keyHandler = fn; } onData(fn) { this.input = fn; } onKey(fn) { this.userKey = fn; return {dispose() {}}; }
       write(text, callback) { assert.equal(this.disposals, 0, "cannot write disposed terminal"); this.writes.push(text); if (callback) this.parsed.push(callback); }
       writeln(text) { this.write(text); }
       dispose() { this.disposals++; }

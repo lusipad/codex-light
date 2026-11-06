@@ -1,8 +1,9 @@
 import React, { useId, useState } from "react";
 import type { TurnItem } from "../types";
 import { CheckIcon, ChevronDownIcon, TerminalIcon } from "./Icons";
+import "./CommandExecutionCard.css";
 
-export const CommandExecutionCard: React.FC<{ item: TurnItem; turnStatus?: string }> = ({ item, turnStatus }) => {
+export const CommandExecutionCard: React.FC<{ item: TurnItem; turnStatus?: string; onOpenFile?: (path: string) => void }> = ({ item, turnStatus, onOpenFile }) => {
   const [expanded, setExpanded] = useState(false);
   const bodyId = useId();
   const interrupted = item.status === "interrupted" ||
@@ -35,9 +36,24 @@ export const CommandExecutionCard: React.FC<{ item: TurnItem; turnStatus?: strin
     }
   }
   const result = interrupted ? "已停止" : item.exitCode === 0 ? "成功" : `退出码 ${item.exitCode ?? "未知"}`;
+  const activity = !interrupted && item.status !== "declined" && action &&
+    (action.type === "search" || action.type === "listFiles" || (action.type === "read" && !running && !!action.name));
+  const filePath = activity && action?.type === "read" && action.path?.trim() ? action.path : null;
 
   return (
-    <div id={item.id ? `command-${item.id}` : undefined} className="command-exec-card" data-execution-status={interrupted ? "interrupted" : item.status}>
+    <div id={item.id ? `command-${item.id}` : undefined} className={`command-exec-card${activity ? " command-activity-row" : ""}`} data-execution-status={interrupted ? "interrupted" : item.status}>
+      {activity ? <div className="command-activity-header">
+        <span className="command-activity-label">
+          <span className="command-exec-summary">{summary}</span>{" "}
+          {filePath && onOpenFile ? <button type="button" className="command-activity-file command-exec-title" title={filePath}
+            data-agent-activity-file-link onClick={() => onOpenFile(filePath)}>{detail}</button>
+            : <span className="command-exec-title" title={detail}>{detail}</span>}
+        </span>
+        <button type="button" className="command-activity-disclosure" aria-label={expanded ? "收起命令详情" : "展开命令详情"}
+          aria-expanded={expanded} aria-controls={bodyId} data-command-expand onClick={() => setExpanded(value => !value)}>
+          <ChevronDownIcon size={12} className={expanded ? "expanded" : ""} />
+        </button>
+      </div> :
       <button
         type="button"
         className="command-exec-header"
@@ -51,6 +67,7 @@ export const CommandExecutionCard: React.FC<{ item: TurnItem; turnStatus?: strin
         {!expanded && <span className="command-exec-title" title={command}>{detail}</span>}
         <ChevronDownIcon size={12} className={expanded ? "expanded" : ""} />
       </button>
+      }
       {expanded && (
         <div id={bodyId} className="command-exec-details">
           <pre className="command-exec-command">{command}</pre>

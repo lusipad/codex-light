@@ -29,3 +29,5 @@
 ## 执行结果
 
 接近CI目录深度的真实8.3 TEMP/TMP完整测试已退出0：464通过、0失败、0忽略、0过滤；binary及doc-tests均0用例通过。该轮包括全部11个此前失败用例和新增真实短路径用例；输出与退出码已保留。git diff --check通过。新云端结果待提交后核验，不能沿用上一run的SDK通过代替这批测试通过。
+
+2026-11-06补记：已核验修复提交 `0e6e7120b646ff089e323c10640d250a8dc50c83` 的[云端 run 41750917173](https://github.com/lusipad/codex-desktop-native/actions/runs/41750917173)最终 completed/success。该轮完整464 Rust用例、通知SDK和原生安装包均通过，普通分支push未发布Release；最终日志/资产清单留在 `.ref/ci/20261104-notifications/final-result.json`。本补记与本次E阶段新提交的CI结果分开，不能沿用为新版本通过证明。

@@ -8,6 +8,21 @@ import type { DesktopOpenPreferences } from "./GeneralOpenPreferences";
 import { PlusIcon, TerminalIcon, TrashIcon, XIcon } from "./Icons";
 import { createTerminalOutput, type TerminalOutputData, type TerminalOutputExit, type TerminalSnapshot } from "../terminalOutput";
 import type { EnvironmentActionRunRequest } from "../environmentActions";
+import "./TerminalDock.css";
+
+function terminalAppearance(element: HTMLElement) {
+  const style = getComputedStyle(element);
+  return {
+    fontFamily: style.getPropertyValue("--font-mono").trim() || "Consolas, monospace",
+    fontSize: parseFloat(style.getPropertyValue("--font-code-size")) || 12,
+    theme: {
+      background: style.getPropertyValue("--bg-primary").trim(),
+      foreground: style.getPropertyValue("--text-primary").trim(),
+      cursor: style.getPropertyValue("--text-primary").trim(),
+      selectionBackground: style.getPropertyValue("--selection-bg").trim(),
+    },
+  };
+}
 
 interface TerminalDockProps {
   open?: boolean;
@@ -40,7 +55,8 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
 }) => {
   const [selectedShell, setSelectedShell] = useState<string>("");
   const [shellOptions, setShellOptions] = useState<{ id: string; label: string }[]>([]);
-  const [fontSize, setFontSize] = useState<number>(13);
+  const [fontSize, setFontSize] = useState<number>(12);
+  const [actionsOpen, setActionsOpen] = useState(false);
   const [dockHeight, setDockHeight] = useState<number>(260);
   const [commandError, setCommandError] = useState<string | null>(null);
   const [commandRetry, setCommandRetry] = useState(0);
@@ -55,6 +71,8 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
   const [activeTabId, setActiveTabId] = useState<string>(tabs[0].id);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const actionsTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const tabListRef = useRef<HTMLDivElement | null>(null);
   const subscriptionsReadyRef = useRef<Promise<boolean>>(Promise.resolve(false));
   const handledActionsRef = useRef(new Set<string>());
   const onActionResultRef = useRef(onActionResult);
@@ -65,6 +83,7 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
     Map<string, {
       term: Terminal; fit: FitAddon; el: HTMLDivElement; ready: Promise<boolean>;
       output: ReturnType<typeof createTerminalOutput>; cancelHydration: () => void;
+      releaseInput?: () => void;
       actionId?: string;
       cancelAction?: () => void;
     }>
@@ -115,7 +134,8 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
       disposed = true;
       if (unlistenData) unlistenData();
       if (unlistenExit) unlistenExit();
-      xtermMapRef.current.forEach(({ term, el, output, cancelHydration, actionId, cancelAction }, sessionId) => {
+      xtermMapRef.current.forEach(({ term, el, output, cancelHydration, actionId, cancelAction, releaseInput }, sessionId) => {
+        releaseInput?.();
         cancelAction?.();
         if (actionId) void invoke("terminal_close", { sessionId }).catch(() => {});
         output.dispose();
@@ -129,10 +149,48 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
 
   // Update font size on all existing terminals
   useEffect(() => {
-    xtermMapRef.current.forEach((entry) => {
+    const element = containerRef.current;
+    if (!element) return;
+    const update = () => {
+      const appearance = terminalAppearance(element);
+      setFontSize(appearance.fontSize);
+      xtermMapRef.current.forEach((entry, sessionId) => {
+        const { term } = entry;
+        term.options.fontFamily = appearance.fontFamily;
+        term.options.theme = appearance.theme;
+        term.options.fontSize = appearance.fontSize;
+        try {
+          entry.fit.fit();
+          void entry.ready.then(ready => {
+            if (ready && xtermMapRef.current.get(sessionId) === entry) {
+              void invoke("terminal_resize", { sessionId, cols: term.cols, rows: term.rows }).catch(() => {});
+            }
+          });
+        } catch {
+          // Hidden renderers are fitted again when their tab opens.
+        }
+      });
+    };
+    update();
+    const observer = new MutationObserver(update);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["style", "data-theme"] });
+    document.fonts.addEventListener("loadingdone", update);
+    return () => {
+      observer.disconnect();
+      document.fonts.removeEventListener("loadingdone", update);
+    };
+  }, []);
+
+  useEffect(() => {
+    xtermMapRef.current.forEach((entry, sessionId) => {
       entry.term.options.fontSize = fontSize;
       try {
         entry.fit.fit();
+        void entry.ready.then(ready => {
+          if (ready && xtermMapRef.current.get(sessionId) === entry) {
+            void invoke("terminal_resize", { sessionId, cols: entry.term.cols, rows: entry.term.rows }).catch(() => {});
+          }
+        });
       } catch {
         // ignore
       }
@@ -168,6 +226,7 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
 
     let entry = xtermMapRef.current.get(activeTab.id);
     if (entry && entry.actionId !== activeTab.action?.id) {
+      entry.releaseInput?.();
       entry.cancelAction?.();
       entry.output.dispose();
       entry.cancelHydration();
@@ -186,14 +245,8 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
         disableStdin: true,
         cursorBlink: true,
         fontSize,
-        fontFamily:
-          "'JetBrains Mono', 'Cascadia Mono', 'Consolas', monospace",
-        theme: {
-          background: "#0d0f12",
-          foreground: "#e5e7eb",
-          cursor: "#60a5fa",
-          selectionBackground: "rgba(96, 165, 250, 0.28)",
-        },
+        fontFamily: terminalAppearance(el).fontFamily,
+        theme: terminalAppearance(el).theme,
       });
       const fit = new FitAddon();
       term.loadAddon(fit);
@@ -207,6 +260,11 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
       }, 30));
 
       let hydrated = false;
+      let attached = false;
+      let userKey: string | null = null;
+      let userInputEvent: Event | null = null;
+      const compositionInputs: { start: number; end?: number }[] = [];
+      const inputTimers = new Set<ReturnType<typeof setTimeout>>();
       let actionResultReported = false;
       const finishAction = (error?: string) => {
         if (!activeTab.action || actionResultReported) return;
@@ -252,7 +310,7 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
           }
           if ((arg.ctrlKey || arg.metaKey) && arg.key.toLowerCase() === "v") {
             navigator.clipboard.readText().then((clip) => {
-              if (clip && hydrated && isCurrent()) {
+              if (clip && attached && isCurrent()) {
                 invoke("terminal_write", { sessionId: activeTab.id, data: clip }).catch(() => {});
               }
             });
@@ -262,14 +320,65 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
         return true;
       });
 
+      const markUserInput = (event: Event) => {
+        if (event.target === term.textarea) userInputEvent = event;
+      };
+      const keySubscription = term.onKey(event => { userKey = event.key; });
+      const startComposition = (event: Event) => {
+        if (event.target !== term.textarea || !term.textarea) return;
+        const start = term.textarea.value.length;
+        compositionInputs.forEach(input => { input.end ??= start; });
+        compositionInputs.push({ start });
+      };
+      const endComposition = (event: Event) => {
+        if (event.target !== term.textarea) return;
+        const input = compositionInputs.at(-1);
+        if (!input) return;
+        // xterm finalizes composition in a zero-delay timer registered by its
+        // target listener. Expire this exact-text credential after that timer.
+        void Promise.resolve().then(() => {
+          if (!isCurrent()) return;
+          const timer = setTimeout(() => {
+            inputTimers.delete(timer);
+            const index = compositionInputs.indexOf(input);
+            if (index >= 0) compositionInputs.splice(index, 1);
+          }, 0);
+          inputTimers.add(timer);
+        });
+      };
+      el.addEventListener("input", markUserInput, true);
+      el.addEventListener("paste", markUserInput, true);
+      el.addEventListener("compositionstart", startComposition, true);
+      el.addEventListener("compositionend", endComposition, true);
+
       term.onData((data) => {
-        if (!hydrated || !isCurrent()) return;
+        // xterm can ignore an input event without emitting onData. Its Event is
+        // user input only during synchronous dispatch, never a later ANSI reply.
+        const compositionIndex = data.length === 0 ? -1 : compositionInputs.findIndex(input =>
+          term.textarea?.value.substring(input.start, input.end) === data);
+        const fromUser = userKey === data || (userInputEvent != null && userInputEvent.eventPhase !== 0) || compositionIndex >= 0;
+        if (compositionIndex >= 0) compositionInputs.splice(compositionIndex, 1);
+        userKey = null;
+        userInputEvent = null;
+        if (!attached || (!hydrated && !fromUser) || !isCurrent()) return;
         invoke("terminal_write", { sessionId: activeTab.id, data }).catch(
           () => {}
         );
       });
 
       entry = { term, fit, el, output, actionId: activeTab.action?.id,
+        releaseInput: () => {
+          keySubscription.dispose();
+          userKey = null;
+          userInputEvent = null;
+          compositionInputs.length = 0;
+          inputTimers.forEach(clearTimeout);
+          inputTimers.clear();
+          el.removeEventListener("input", markUserInput, true);
+          el.removeEventListener("paste", markUserInput, true);
+          el.removeEventListener("compositionstart", startComposition, true);
+          el.removeEventListener("compositionend", endComposition, true);
+        },
         cancelAction: activeTab.action ? () => finishAction("终端标签页已关闭，操作已取消。") : undefined,
         cancelHydration: () => settleHydration(false), ready: Promise.resolve(false) };
       xtermMapRef.current.set(activeTab.id, entry);
@@ -296,6 +405,8 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
             }
             return false;
           }
+          attached = true;
+          term.options.disableStdin = false;
           output.attach(info);
           finishAction();
           return hydration;
@@ -457,6 +568,7 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
     invoke("terminal_close", { sessionId: id }).catch(() => {});
     const entry = xtermMapRef.current.get(id);
     if (entry) {
+      entry.releaseInput?.();
       entry.output.dispose();
       entry.cancelHydration();
       entry.term.dispose();
@@ -488,30 +600,69 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
   };
 
   return (
-    <div className="terminal-dock" style={{ height: dockHeight, display: open ? undefined : "none" }}>
+    <div className="terminal-dock terminal-dock-workspace" style={{ height: dockHeight, display: open ? undefined : "none" }}>
       <div className="terminal-dock-resizer" onMouseDown={handleStartResize} title="拖动调整终端高度" />
       <div className="terminal-dock-header">
-        <div className="terminal-tabs">
+        <div className="terminal-tabs" role="tablist" aria-label="终端会话" ref={tabListRef}>
           {tabs.map((t) => (
             <div
               key={t.id}
               className={`terminal-tab ${t.id === activeTabId ? "active" : ""}`}
-              onClick={() => setActiveTabId(t.id)}
             >
-              <TerminalIcon size={12} />
-              <span>{t.title}</span>
+              <button className="terminal-tab-select" role="tab" type="button"
+                id={`terminal-tab-${t.id}`} aria-selected={t.id === activeTabId}
+                aria-controls="terminal-active-panel" tabIndex={t.id === activeTabId ? 0 : -1}
+                onClick={() => setActiveTabId(t.id)}
+                onKeyDown={event => {
+                  if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                  const index = tabs.findIndex(tab => tab.id === t.id);
+                  const nextIndex = event.key === "ArrowRight" ? (index + 1) % tabs.length
+                    : event.key === "ArrowLeft" ? (index + tabs.length - 1) % tabs.length
+                    : event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : -1;
+                  if (nextIndex >= 0) {
+                    event.preventDefault();
+                    setActiveTabId(tabs[nextIndex].id);
+                    tabListRef.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[nextIndex]?.focus();
+                  } else if (event.key === "Delete") {
+                    event.preventDefault();
+                    closeTerminalTab(t.id);
+                  }
+                }}>
+                <TerminalIcon size={12} />
+                <span>{t.title}</span>
+              </button>
               <button
                 className="terminal-tab-close"
                 onClick={(e) => {
                   e.stopPropagation();
                   closeTerminalTab(t.id);
                 }}
-                title="关闭终端会话"
+                title="关闭终端会话" aria-label={`关闭 ${t.title}`}
               >
                 <XIcon size={11} />
               </button>
             </div>
           ))}
+          <button className="icon-btn" onClick={addNewTerminal} title="新建终端标签页" aria-label="新建终端标签页">
+            <PlusIcon size={13} />
+          </button>
+        </div>
+        <div className="terminal-dock-actions">
+          <button className="icon-btn" ref={actionsTriggerRef} aria-expanded={actionsOpen}
+            aria-controls="terminal-session-actions" aria-label="终端操作" title="终端操作"
+            onClick={() => setActionsOpen(value => !value)}>···</button>
+          <button className="icon-btn" onClick={onClose} title="隐藏终端面板" aria-label="隐藏终端面板">
+            <XIcon size={14} />
+          </button>
+        </div>
+      </div>
+      {actionsOpen && <div className="terminal-session-actions" id="terminal-session-actions" role="group" aria-label="终端操作"
+        onKeyDown={event => {
+          if (event.key === "Escape" && !event.nativeEvent.isComposing && event.keyCode !== 229) {
+            event.preventDefault(); event.stopPropagation();
+            setActionsOpen(false); actionsTriggerRef.current?.focus();
+          }
+        }}>
           <select
             className="terminal-shell-select"
             value={selectedShell}
@@ -525,28 +676,21 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
               </option>
             ))}
           </select>
-          <button
-            className="icon-btn"
-            onClick={addNewTerminal}
-            title="新建终端标签页"
-          >
-            <PlusIcon size={13} />
-          </button>
-        </div>
-        <div className="terminal-dock-actions">
-          <span className="terminal-cwd-badge" title={cwd}>
-            {cwd}
+          <span className="terminal-cwd-badge" title={tabs.find(tab => tab.id === activeTabId)?.cwd}>
+            {tabs.find(tab => tab.id === activeTabId)?.cwd}
           </span>
           <button
             className="icon-btn"
-            onClick={() => setFontSize((f) => Math.max(10, f - 1))}
+            onClick={() => setFontSize((f) => Math.max(8, f - 1))}
+            disabled={fontSize <= 8}
             title="缩小终端字号"
           >
             A-
           </button>
           <button
             className="icon-btn"
-            onClick={() => setFontSize((f) => Math.min(20, f + 1))}
+            onClick={() => setFontSize((f) => Math.min(24, f + 1))}
+            disabled={fontSize >= 24}
             title="放大终端字号"
           >
             A+
@@ -566,11 +710,7 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
           >
             <TrashIcon size={13} />
           </button>
-          <button className="icon-btn" onClick={onClose} title="隐藏底部终端面板">
-            <XIcon size={14} />
-          </button>
-        </div>
-      </div>
+      </div>}
       {commandError && (
         <div role="status">
           {commandError}
@@ -580,7 +720,8 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
           }}>重试命令</button>}
         </div>
       )}
-      <div className="terminal-xterm-wrapper" ref={containerRef} />
+      <div className="terminal-xterm-wrapper" ref={containerRef} id="terminal-active-panel"
+        data-codex-terminal role="tabpanel" aria-labelledby={`terminal-tab-${activeTabId}`} />
     </div>
   );
 };

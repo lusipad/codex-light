@@ -41,12 +41,13 @@ function mount() {
     containerRef: { current: { appendChild() {} } }, xtermMapRef: { current: new Map() },
     subscriptionsReadyRef: { current: Promise.resolve(false) },
     createTerminalOutput: outputModule.exports.createTerminalOutput,
+    terminalAppearance: () => ({fontFamily: 'Consolas', fontSize: 12, theme: {background: '#111111', foreground: '#eeeeee'}}),
     setCommandError(value) { context.error = value; },
     listen(name, handler) { const pending = deferred(); listeners.push({ name, handler, ...pending }); return pending.promise; },
     invoke(method, args) { const pending = deferred(); requests.push({ method, args, ...pending }); return pending.promise; },
     setTimeout(callback) { timers.add(callback); return callback; },
     clearTimeout(callback) { timers.delete(callback); },
-    document: { createElement: () => ({ style: {}, removed: false, remove() { this.removed = true; } }) },
+    document: { createElement: () => ({ style: {}, removed: false, events: new Map(), addEventListener(name, fn) { this.events.set(name, fn); }, removeEventListener(name) { this.events.delete(name); }, remove() { this.removed = true; } }) },
     window: {
       addEventListener(name, fn) { resizeHandlers.add(fn); },
       removeEventListener(name, fn) { resizeHandlers.delete(fn); },
@@ -55,7 +56,7 @@ function mount() {
     FitAddon: class { fit() {} },
     Terminal: class {
       constructor(options) { this.options = options; this.writes = []; this.disposals = 0; this.parsed = []; terminals.push(this); }
-      loadAddon() {} open() {} attachCustomKeyEventHandler(fn) { this.keyHandler = fn; } onData(fn) { this.input = fn; }
+      loadAddon() {} open(el) { this.el = el; this.textarea = {}; } attachCustomKeyEventHandler(fn) { this.keyHandler = fn; } onData(fn) { this.input = fn; } onKey(fn) { this.userKey = fn; return {dispose() {}}; }
       write(text, callback) { assert.equal(this.disposals, 0, "cannot write disposed terminal"); this.writes.push(text); if (callback) this.parsed.push(callback); }
       writeln(text) { this.write(text); }
       dispose() { this.disposals++; }
@@ -162,6 +163,135 @@ console.log("PASS TL01–TL04 production terminal effects: late subscriptions, v
   cleanup(); cleanupView();
 }
 console.log("PASS TO02–TO03 listener readiness, failure, pre-attach buffering and parser-based input hydration");
+{
+  const view = mount(), cleanup = view.subscription(), cleanupView = view.creation();
+  view.listeners.forEach(entry => entry.resolve(() => {}));
+  await flush();
+  const term = view.terminals[0];
+  term.userKey({key:"before attach"}); term.input("before attach");
+  assert.equal(view.requests.length, 1, "TU04: even user input waits for successful attach");
+  view.requests[0].resolve(snapshot("replaying"));
+  await flush();
+  assert.equal(term.options.disableStdin, false, "TU04: attached replay does not block user typing");
+  term.input("ANSI auto reply");
+  assert.equal(view.requests.length, 1, "TU04: replay-generated input is filtered");
+  for (const inputType of ["insertText", "deleteContentBackward", "insertCompositionText"]) {
+    const ignoredEvent = {target:term.textarea, eventPhase:1, inputType, data:"ignored"};
+    term.el.events.get("input")(ignoredEvent);
+    ignoredEvent.eventPhase=0;
+    term.input("ANSI after ignored input");
+    assert.equal(view.requests.length,1,"TU04: ignored DOM input cannot mark a later ANSI response as user input");
+  }
+  term.userKey({key:"typed during replay"}); term.input("typed during replay");
+  assert.equal(view.requests[1].args.data, "typed during replay", "TU04: explicit user input is preserved");
+  term.input("another ANSI auto reply");
+  assert.equal(view.requests.length, 2, "TU04: user marker is consumed once");
+  term.parsed.shift()();
+  await flush();
+  term.input("live auto reply");
+  assert.equal(view.requests[2].args.data, "live auto reply", "TU04: live protocol replies remain enabled");
+  cleanup(); cleanupView();
+  term.userKey({key:"late user input"}); term.input("late user input");
+  assert.equal(view.requests.length, 3, "TU04: released renderers cannot write");
+}
+console.log("PASS TU04: user typing during replay, generated response filtering, one-shot classification and released-session guard");
+{
+  // Exercise the installed xterm implementation, including branches that do
+  // not emit onData. A callback-only fake would miss the stale-marker defect.
+  const xtermSource=fs.readFileSync(new URL("../node_modules/@xterm/xterm/src/browser/Terminal.ts",import.meta.url),"utf8");
+  const xtermAst=ts.createSourceFile("Terminal.ts",xtermSource,ts.ScriptTarget.Latest,true);
+  let inputMethod;
+  function findInput(node) {
+    if(ts.isMethodDeclaration(node)&&node.name.getText(xtermAst)==="_inputEvent") inputMethod=node;
+    ts.forEachChild(node,findInput);
+  }
+  findInput(xtermAst);assert.ok(inputMethod);
+  const inputBody=ts.transpileModule(`(function(ev) ${inputMethod.body.getText(xtermAst)})`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+  const processInput=vm.runInNewContext(inputBody,{});
+  const clipboardSource=fs.readFileSync(new URL("../node_modules/@xterm/xterm/src/browser/Clipboard.ts",import.meta.url),"utf8");
+  const clipboardAst=ts.createSourceFile("Clipboard.ts",clipboardSource,ts.ScriptTarget.Latest,true);
+  const clipboardFunctions=clipboardAst.statements.filter(node=>ts.isFunctionDeclaration(node)&&["prepareTextForTerminal","bracketTextForPaste","paste","handlePasteEvent"].includes(node.name.text));
+  const clipboardModule={};
+  vm.runInNewContext(ts.transpileModule(clipboardFunctions.map(node=>node.getText(clipboardAst)).join("\n"),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText,{exports:clipboardModule});
+  const view=mount(),cleanup=view.subscription(),cleanupView=view.creation();
+  view.listeners.forEach(entry=>entry.resolve(()=>{}));await flush();
+  view.requests[0].resolve(snapshot("pending parser"));await flush();
+  const term=view.terminals[0];
+  const xterm={_keyPressHandled:false,_keyDownSeen:false,optionsService:{rawOptions:{screenReaderMode:false}},coreService:{triggerDataEvent:data=>term.input(data)},cancel(){}};
+  for(const state of [{inputType:"deleteContentBackward"},{inputType:"insertText",handled:true},{inputType:"insertText",composed:true,keyDown:true}]) {
+    const e={target:term.textarea,eventPhase:1,data:"ignored",composed:false,...state};
+    xterm._keyPressHandled=!!state.handled;xterm._keyDownSeen=!!state.keyDown;
+    term.el.events.get("input")(e);e.eventPhase=2;
+    assert.equal(processInput.call(xterm,e),false);
+    e.eventPhase=0;term.input("\x1b[0n");
+    assert.equal(view.requests.length,1,"TU04: real xterm ignored-input branch cannot leak a replay response");
+  }
+  xterm._keyPressHandled=false;xterm._keyDownSeen=false;
+  const accepted={target:term.textarea,eventPhase:1,data:"中文🙂",inputType:"insertText",composed:false};
+  term.el.events.get("input")(accepted);accepted.eventPhase=2;
+  assert.equal(processInput.call(xterm,accepted),true);accepted.eventPhase=0;
+  assert.equal(view.requests[1].args.data,"中文🙂","TU04: real xterm accepted input is preserved during replay");
+  const core={triggerDataEvent:data=>term.input(data),decPrivateModes:{bracketedPasteMode:true}};
+  for(const text of [null,"粘贴\n下一行"]) {
+    const e={target:term.textarea,eventPhase:1,clipboardData:text==null?null:{getData:()=>text},stopPropagation(){}};
+    term.el.events.get("paste")(e);e.eventPhase=2;
+    clipboardModule.handlePasteEvent(e,term.textarea,core,{rawOptions:{}});e.eventPhase=0;
+    term.input("\x1b[0n");
+    assert.equal(view.requests.length,text==null?2:3,"TU04: no-data paste cannot leak replay responses; actual paste stays writable");
+  }
+  assert.equal(view.requests[2].args.data,"\x1b[200~粘贴\r下一行\x1b[201~","TU04: installed xterm paste normalization and brackets remain intact");
+  cleanup();cleanupView();
+}
+console.log("PASS TU04 real xterm input/paste paths: ignored-event isolation, accepted Chinese input, empty clipboard and bracketed paste during replay");
+{
+  const compositionSource=fs.readFileSync(new URL("../node_modules/@xterm/xterm/src/browser/input/CompositionHelper.ts",import.meta.url),"utf8");
+  const compositionAst=ts.createSourceFile("CompositionHelper.ts",compositionSource,ts.ScriptTarget.Latest,true);
+  const methods=[];
+  function findComposition(node){
+    if(ts.isMethodDeclaration(node)&&["compositionstart","compositionend","_finalizeComposition"].includes(node.name.getText(compositionAst))) methods.push(node.getText(compositionAst));
+    ts.forEachChild(node,findComposition);
+  }
+  findComposition(compositionAst);
+  const timers=[];
+  const composition=vm.runInNewContext(ts.transpileModule(`new (class {${methods.join("\n")}})()`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,{setTimeout:callback=>timers.push(callback)});
+  const view=mount(),cleanup=view.subscription(),cleanupView=view.creation();
+  view.listeners.forEach(entry=>entry.resolve(()=>{}));await flush();
+  view.requests[0].resolve(snapshot("pending parser"));await flush();
+  const term=view.terminals[0];term.textarea.value="";
+  Object.assign(composition,{_textarea:term.textarea,_compositionView:{classList:{add(){},remove(){}}},_compositionPosition:{start:0,end:0},_coreService:{triggerDataEvent:data=>term.input(data)}});
+  const start={target:term.textarea,eventPhase:1};
+  term.el.events.get("compositionstart")?.(start);composition.compositionstart();start.eventPhase=0;
+  term.textarea.value="中文";composition._compositionPosition.end=2;
+  const end={target:term.textarea,eventPhase:1};
+  term.el.events.get("compositionend")?.(end);composition.compositionend();end.eventPhase=0;
+  term.input("\x1b[0n");assert.equal(view.requests.length,1,"TU04: awaiting asynchronous IME never authorizes ANSI");
+  timers.shift()();
+  assert.equal(view.requests[1]?.args.data,"中文","TU04: installed xterm asynchronous composition survives replay outside DOM dispatch");
+  term.input("中文");assert.equal(view.requests.length,2,"TU04: composition text credential is consumed only once");
+  // A second composition can start before the previous finalize timer runs.
+  const dispatchStart=()=>{
+    const event={target:term.textarea,eventPhase:1};
+    term.el.events.get("compositionstart")(event);composition.compositionstart();event.eventPhase=0;
+  };
+  const dispatchEnd=()=>{
+    const event={target:term.textarea,eventPhase:1};
+    term.el.events.get("compositionend")(event);composition.compositionend();event.eventPhase=0;
+  };
+  term.textarea.value="";dispatchStart();
+  term.textarea.value="第一段";composition._compositionPosition.end=3;dispatchEnd();
+  dispatchStart();timers.shift()();
+  assert.equal(view.requests[2]?.args.data,"第一段","TU04: new composition cannot overwrite previous pending text");
+  term.textarea.value="第一段第二段";composition._compositionPosition.end=6;dispatchEnd();timers.shift()();
+  assert.equal(view.requests[3]?.args.data,"第二段","TU04: new composition has its own exact text range");
+  term.textarea.value="";dispatchStart();term.textarea.value="已取消";dispatchEnd();
+  composition._isSendingComposition=false;timers.shift()();
+  await flush();
+  for(const callback of [...view.timers]){view.timers.delete(callback);callback();}
+  term.input("已取消");
+  assert.equal(view.requests.length,4,"TU04: canceled/expired composition never grants a lasting matching-text permission");
+  cleanup();cleanupView();
+}
+console.log("PASS TU04 installed xterm asynchronous composition callback during replay");
 {
   const view = mount(), cleanup = view.subscription(), cleanupView = view.creation();
   view.listeners.forEach(entry => entry.resolve(() => {}));

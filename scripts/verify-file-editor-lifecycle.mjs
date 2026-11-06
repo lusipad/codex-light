@@ -5,11 +5,13 @@ import ts from "typescript";
 const source = fs.readFileSync("src/components/DiffDrawer.tsx", "utf8");
 const ast = ts.createSourceFile("DiffDrawer.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const callbacks = {};
-let change, close, discardEffect;
+let change, close, discardEffect, externalOpenEffect;
 function visit(node) {
   if (ts.isVariableDeclaration(node) && ["openFilePreview", "saveEditedFile", "closeFilePreview"].includes(node.name.getText(ast))) callbacks[node.name.getText(ast)] = node.initializer;
   if (ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect"
     && node.arguments[0]?.getText(ast).includes("discardResolverRef.current?.(false)")) discardEffect = node.arguments[0];
+  if (ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect"
+    && node.arguments[0]?.getText(ast).includes("lastExternalPreviewRequestRef.current")) externalOpenEffect = node.arguments[0];
   if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
     const attrs = node.attributes.properties;
     const attr = name => attrs.find(item => ts.isJsxAttribute(item) && item.name.getText(ast) === name)?.initializer;
@@ -32,6 +34,9 @@ function mount() {
     discardResolverRef: { current: null },
     isDirtyRef: { current: false }, filePreviewRef: { current: preview("A") },
     gitContextRef: { current: { cwd: "root" } },
+    open: true, cwd: "root", connectionIdentity: "local", selectedPreviewFile: "B", previewRequestId: 1,
+    selectedReviewFinding: null, lastExternalPreviewRequestRef: { current: null }, activeTab: "changes",
+    setActiveTab: value => { context.activeTab = value; events.push(["tab", value]); },
     readTextPreviewViaProtocol(path) { const pending = deferred(); reads.push({ path, ...pending }); return pending.promise; },
     saveFileEditorSnapshot(path, baseContent, content) {
       const pending = deferred();
@@ -52,10 +57,11 @@ function mount() {
     return vm.runInNewContext(ts.transpileModule(`(${node.getText(ast)})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
   };
   context.saveEditedFile = run(callbacks.saveEditedFile);
+  context.openFilePreview = run(callbacks.openFilePreview);
   context.closeFilePreview = run(callbacks.closeFilePreview);
   assert.match(close.getText(ast), /closeFilePreview/);
   return {
-    context, reads, writes, events, open: run(callbacks.openFilePreview),
+    context, reads, writes, events, open: context.openFilePreview, externalOpen: run(externalOpenEffect),
     save: context.saveEditedFile, edit: run(change), close: context.closeFilePreview,
     discardCleanup: run(discardEffect)(),
     decide(discard) {
@@ -66,6 +72,40 @@ function mount() {
     },
   };
 }
+{
+  const view = mount();
+  view.externalOpen();
+  assert.equal(view.context.activeTab, "files", "FO01: explicit external open reveals Files from Changes");
+  assert.equal(view.reads[0].path, "B");
+  view.reads[0].reject(Error("missing B")); await settle();
+  assert.ok(view.events.some(([type, message]) => type === "toast" && message.includes("读取文件失败")), "FO02: external failure is visible");
+  assert.equal(view.context.filePreview.path, "A", "failed external read preserves previous editor");
+  view.externalOpen(); assert.equal(view.reads.length, 1, "rerender cannot silently loop failed requests");
+  view.context.previewRequestId++; view.externalOpen();
+  assert.equal(view.reads.length, 2, "FO03: a new click retries the exact same path");
+  view.reads[1].resolve(preview("B")); await settle();
+  assert.equal(view.context.filePreview.path, "B");
+}
+{
+  const view = mount(); view.edit({ target: { value: "A unsaved" } }); view.externalOpen();
+  assert.equal(view.context.activeTab, "files");
+  assert.equal(view.reads.length, 0, "FO04: external request cannot read over dirty editor");
+  assert.equal(view.context.editedContent, "A unsaved");
+  assert.ok(view.events.some(([type, message]) => type === "toast" && message.includes("请先保存")));
+  view.context.isDirtyRef.current = false; view.context.isDirty = false; view.externalOpen();
+  assert.equal(view.reads.length, 0, "clearing dirty state cannot replay the earlier rejected click");
+  view.context.previewRequestId++; view.externalOpen();
+  view.reads[0].resolve(preview("B")); await settle();
+  assert.equal(view.context.filePreview.path, "B");
+}
+{
+  const view = mount(); view.externalOpen();
+  view.context.selectedPreviewFile = "C"; view.context.previewRequestId++; view.externalOpen();
+  view.reads[1].resolve(preview("C")); await settle();
+  view.reads[0].resolve(preview("B")); await settle();
+  assert.equal(view.context.filePreview.path, "C", "FO05: late external request cannot replace the newer file");
+}
+console.log("PASS FO01–FO05 production external open: Changes reveal, visible failure, same-path retry, dirty protection and latest request identity");
 {
   const view = mount(), a = view.open("A"), b = view.open("B");
   view.reads[1].resolve(preview("B")); await b;

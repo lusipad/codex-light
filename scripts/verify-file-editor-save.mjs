@@ -92,7 +92,14 @@ try {
   fs.rmdirSync(dir);
 }
 const drawer = fs.readFileSync("src/components/DiffDrawer.tsx", "utf8");
-const callback = drawer.slice(drawer.indexOf("const saveEditedFile ="), drawer.indexOf("// External file selection"));
+const drawerAst = ts.createSourceFile("DiffDrawer.tsx", drawer, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+let callback;
+function findSave(node) {
+  if (ts.isVariableDeclaration(node) && node.name.getText(drawerAst) === "saveEditedFile") callback = node.initializer?.getText(drawerAst);
+  ts.forEachChild(node, findSave);
+}
+findSave(drawerAst);
+assert.ok(callback, "actual editor save callback must exist");
 assert.match(callback, /saveFileEditorSnapshot/);
 assert.doesNotMatch(callback, /invoke\(|fsWriteFileText\(/, "editor save cannot bypass the guard");
 console.log("PASS file save preflight/readback, conflict preservation, invalidation, failure without fallback, and isolated BOM/CRLF disk roundtrip; atomicity and native IPC unverified");

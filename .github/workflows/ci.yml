@@ -18,6 +18,15 @@ on:
         required: false
         type: boolean
         default: false
+      release_tag:
+        description: 'Explicit version tag, for example v0.2.0-preview.1'
+        required: false
+        type: string
+      prerelease:
+        description: 'Mark publication as a preview'
+        required: false
+        type: boolean
+        default: true
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -57,6 +66,20 @@ jobs:
       - name: Install Frontend Dependencies
         run: npm ci
 
+      - name: Validate Release Metadata
+        id: release
+        env:
+          CREATE_RELEASE: ${{ inputs.create_release }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_PRERELEASE: ${{ inputs.prerelease }}
+        run: node scripts/prepare-github-release.mjs
+
+      - name: Frontend Parity Regressions
+        run: |
+          node scripts/verify-release-metadata.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/verify-ui-parity-release.mjs
+
       - name: Frontend Type-Check & Build
         run: npm run build
 
@@ -74,33 +97,34 @@ jobs:
         id: collect_artifacts
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path "dist-artifacts" | Out-Null
-          
-          # Find and copy the main executable
-          $mainExe = Get-ChildItem -Path "src-tauri/target", "target" -Recurse -Filter "codex-tauri.exe" -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -like "*release*" -and $_.FullName -notlike "*deps*" } |
-            Select-Object -First 1
-
-          if ($mainExe) {
-            Write-Host "Found standalone executable at: $($mainExe.FullName)"
-            Copy-Item $mainExe.FullName -Destination "dist-artifacts/codex-tauri.exe" -Force
-          } else {
-            Write-Warning "Standalone codex-tauri.exe not found directly in target directory."
+          $ErrorActionPreference = 'Stop'
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $metadata = & cargo metadata --no-deps --format-version 1 --manifest-path src-tauri/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve Cargo output directory' }
+          $release = Join-Path ($metadata | ConvertFrom-Json).target_directory 'release'
+          $out = Join-Path $env:GITHUB_WORKSPACE 'dist-artifacts'
+          $portable = Join-Path $env:RUNNER_TEMP "codex-native-package-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          New-Item -ItemType Directory -Force -Path $out,"$portable/licenses/themes" | Out-Null
+          $files = @{
+            "bundle/msi/Codex Native_${version}_x64_en-US.msi" = "Codex-Native_${version}_x64_en-US.msi"
+            "bundle/nsis/Codex Native_${version}_x64-setup.exe" = "Codex-Native_${version}_x64-setup.exe"
           }
-
-          # Find and copy bundle installers (MSI / NSIS / EXE)
-          $bundles = Get-ChildItem -Path "src-tauri/target", "target" -Recurse -Include *.msi,*.exe -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -like "*bundle*" }
-
-          if ($bundles) {
-            foreach ($b in $bundles) {
-              Write-Host "Found installer bundle: $($b.FullName)"
-              Copy-Item $b.FullName -Destination "dist-artifacts/" -Force
-            }
+          foreach ($entry in $files.GetEnumerator()) {
+            $source = Join-Path $release $entry.Key
+            if (!(Test-Path -LiteralPath $source -PathType Leaf)) { throw "Missing required artifact: $source" }
+            Copy-Item -LiteralPath $source -Destination (Join-Path $out $entry.Value)
           }
-
-          Write-Host "`nCollected files in dist-artifacts:"
-          Get-ChildItem -Path "dist-artifacts" | Select-Object Name, Length, LastWriteTime | Format-Table -AutoSize
+          $exe = Join-Path $release 'codex-tauri.exe'
+          if (!(Test-Path -LiteralPath $exe -PathType Leaf)) { throw "Missing required artifact: $exe" }
+          Copy-Item -LiteralPath $exe -Destination $portable
+          foreach ($name in @('THIRD-PARTY-NOTICES','SHIKI-THEMES-LICENSE','GITHUB-LICENSE','DRACULA-LICENSE','SOURCES.md')) {
+            Copy-Item -LiteralPath "src/themes/$name" -Destination "$portable/licenses/themes/$name"
+          }
+          Compress-Archive -Path "$portable/*" -DestinationPath "$out/Codex-Native_${version}_windows-x64.zip"
+          Get-ChildItem -LiteralPath $out -File | Sort-Object Name | ForEach-Object {
+            "$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
+          } | Set-Content -LiteralPath "$out/SHA256SUMS.txt" -Encoding utf8NoBOM
+          Get-ChildItem -LiteralPath $out -File | Select-Object Name,Length
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
@@ -108,15 +132,30 @@ jobs:
           name: codex-desktop-windows-x64
           path: dist-artifacts/*
           retention-days: 30
-          if-no-files-found: warn
+          if-no-files-found: error
+
+      - name: Revalidate Release Tag
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.create_release == true
+        env:
+          CREATE_RELEASE: ${{ inputs.create_release }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          git fetch origin --tags
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/prepare-github-release.mjs
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v') || inputs.create_release == true
         uses: softprops/action-gh-release@v2
         with:
           files: dist-artifacts/*
+          tag_name: ${{ steps.release.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          body_path: ${{ steps.release.outputs.notes }}
           draft: false
-          prerelease: false
-          generate_release_notes: true
+          prerelease: ${{ steps.release.outputs.prerelease == 'true' }}
+          overwrite_files: false
+          fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

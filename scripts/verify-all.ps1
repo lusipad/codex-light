@@ -33,11 +33,15 @@ function Invoke-Step {
 }
 
 try {
+  Invoke-Step "Release version, tag and notes contracts" { node scripts/verify-release-metadata.mjs }
   Invoke-Step "Appearance color official HSV samples and slider contracts" { node scripts/verify-appearance-color.mjs }
   Invoke-Step "System font directory and local font selection contracts" { node scripts/verify-system-fonts.mjs }
   Invoke-Step "Rust real system font directory" { cargo test --locked --manifest-path src-tauri/Cargo.toml system_fonts }
   Invoke-Step "All-page workflow UI correction" { node scripts/verify-workflow-ui-d.mjs }
   Invoke-Step "Workspace file tree and actual file selection" { node scripts/verify-workspace-file-tree.mjs }
+  Invoke-Step "Recursive workspace tree and multi-root lifecycle" { node scripts/verify-workspace-recursive-tree.mjs }
+  Invoke-Step "App workbench project scope" { node scripts/verify-workbench-app-e.mjs }
+  Invoke-Step "Terminal controls, theme and keyboard" { node scripts/verify-terminal-ui.mjs }
   Invoke-Step "General preference menu positioning and keyboard" { node scripts/verify-general-preference-select.mjs }
   Invoke-Step "Settings wrapper and immediate-save UI correction" { node scripts/verify-settings-ui-correction.mjs }
   Invoke-Step "Project, worktree and archive UI correction" { node scripts/verify-organization-ui.mjs }

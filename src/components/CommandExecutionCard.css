@@ -1,0 +1,78 @@
+.command-exec-card.command-activity-row {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  overflow: visible;
+  font-family: var(--font-sans);
+  font-size: inherit;
+}
+
+.command-activity-header {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  gap: 6px;
+  color: var(--text-tertiary);
+}
+
+.command-activity-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-activity-label .command-exec-title {
+  color: inherit;
+}
+
+.command-activity-file {
+  display: inline;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.command-activity-file:hover {
+  text-decoration: underline;
+  color: var(--text-primary);
+}
+
+.command-activity-disclosure {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.command-activity-disclosure:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.command-activity-disclosure .expanded {
+  transform: rotate(180deg);
+}
+
+.command-activity-file:focus-visible,
+.command-activity-disclosure:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 2px;
+}
+
+.command-activity-row .command-exec-details {
+  margin-top: 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  overflow: hidden;
+}

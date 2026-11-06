@@ -54,6 +54,41 @@
 .workspace-file-tree .diff-file-bulk-actions { flex-wrap: wrap; }
 .workspace-file-tree .file-browser-cwd { font-size: var(--text-xs); }
 .workspace-file-tree .file-browser-path-bar { flex-shrink: 0; }
+.workspace-file-tree .file-browser-path-bar:has(.workspace-tree-root) { flex-wrap: wrap; }
+.workspace-tree-root {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  border-bottom: 1px solid var(--border-default);
+  padding: 4px 8px;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  font: inherit;
+}
+.workspace-tree-disclosure {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 14px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  color: var(--text-secondary);
+  background: transparent;
+  cursor: pointer;
+}
+.workspace-tree-status {
+  padding: 4px 8px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.workspace-tree-status button {
+  border: 0;
+  color: var(--text-primary);
+  background: transparent;
+  text-decoration: underline;
+  cursor: pointer;
+}
 .workspace-file-tree .diff-file-items { overflow: auto; }
 .workspace-file-tree .fe-toolbar { flex-wrap: wrap; }
 .workspace-file-tree .workspace-file-actions { border-bottom: 1px solid var(--border-default); }
