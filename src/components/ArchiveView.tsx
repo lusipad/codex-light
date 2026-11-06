@@ -3,7 +3,7 @@ import { Check, ChevronDown, ListFilter, Cloud, Folder, LoaderCircle, Trash2 } f
 import { callAppServer } from "../bridge";
 import { ArchiveDeleteResult, SidebarProjectMembership, ThreadSummary, WorkspaceRootItem } from "../types";
 import { accountRead } from "../config";
-import { serviceIdentity, unarchiveCloudItem, type ArchiveCloudSource, type ServiceIdentity } from "../chatgptService";
+import { serviceIdentity, unarchiveCloudItem, deleteCloudArchiveItem, type ArchiveCloudSource, type ServiceIdentity } from "../chatgptService";
 import type { ArchivedConversationsState } from "../archiveConversations";
 import type { ArchivedCloudTasksState } from "../archiveCloudTasks";
 import { createPortal } from "react-dom";
@@ -24,7 +24,7 @@ export interface ArchiveViewProps {
   onUnarchive: (thread: ThreadSummary) => Promise<void> | void;
   onDelete: (thread: ThreadSummary) => Promise<ArchiveDeleteResult>;
   onDeleteAll: () => Promise<ArchiveDeleteResult>;
-  onShowToast?: (message: string, type?: "info" | "success" | "error") => void;
+  onShowToast?: (message: string, type?: "info" | "success" | "error", action?: { label: string; onClick: () => void }) => void;
 }
 
 interface ArchivedThread extends ThreadSummary {
@@ -71,7 +71,7 @@ function archiveProjectPath(value?: string | null): string {
 }
 
 interface CloudRecovery {
-  source: ArchiveCloudSource; id: string; identity: ServiceIdentity; title: string; token: object;
+  source: ArchiveCloudSource; id: string; identity: ServiceIdentity; title: string; token: object; kind?: "unarchive" | "delete";
   status: "pending" | "accepted" | "unknown" | "failed"; detail?: string; readAfterVersion?: number;
 }
 const sameArchiveIdentity = (a?: ServiceIdentity | null, b?: ServiceIdentity | null) => Boolean(a && b
@@ -195,6 +195,64 @@ function ArchiveDeleteDialog({ all, onDecision, fallbackRef }: {
   </dialog>;
 }
 
+interface CloudDeleteTarget {
+  thread: ArchivedThread; reader: ArchivedCloudTasksState | ArchivedConversationsState;
+  identity: ServiceIdentity; dialogToken: object;
+}
+
+function CloudArchiveDeleteDialog({ title, busy, blocked, unknown, onConfirm, onCancel, onRefresh, fallbackRef }: {
+  title: string; busy: boolean; blocked: boolean; unknown: boolean; onConfirm: () => Promise<void>;
+  onCancel: () => void; onRefresh: () => void; fallbackRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  const dialogRef = useRef<HTMLDialogElement>(null), cancelRef = useRef<HTMLButtonElement>(null);
+  const composing = useRef(false), submitting = useRef(false);
+  const dismiss = () => { if (!busy && !submitting.current && !composing.current) onCancel(); };
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    dialogRef.current?.showModal(); cancelRef.current?.focus();
+    return () => {
+      dialogRef.current?.close();
+      if (previous?.isConnected && !previous.matches(":disabled, [inert]")) previous.focus({ preventScroll: true });
+      else fallbackRef.current?.focus({ preventScroll: true });
+    };
+  }, [fallbackRef]);
+  useEffect(() => { if (busy) dialogRef.current?.focus({ preventScroll: true }); }, [busy]);
+  return <dialog ref={dialogRef} className="rename-thread-dialog cloud-archive-delete-dialog"
+    aria-labelledby="cloud-archive-delete-title" aria-describedby="cloud-archive-delete-description" aria-busy={busy}
+    onCancel={event => { event.preventDefault(); dismiss(); }}
+    onMouseDown={event => {
+      if (event.target !== event.currentTarget) return;
+      const rect = event.currentTarget.getBoundingClientRect();
+      if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dismiss();
+    }}
+    onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }}
+    onKeyDown={event => {
+      event.stopPropagation();
+      if (event.key === "Tab") {
+        const controls = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>("button:not(:disabled)"));
+        const first = controls[0], last = controls.at(-1), active = event.currentTarget.ownerDocument.activeElement;
+        if (!first) event.preventDefault();
+        else if (event.shiftKey && (active === first || active === event.currentTarget)) { event.preventDefault(); last?.focus(); }
+        else if (!event.shiftKey && (active === last || active === event.currentTarget)) { event.preventDefault(); first.focus(); }
+      }
+      if ((composing.current || event.nativeEvent.isComposing || event.keyCode === 229) && (event.key === "Enter" || event.key === "Escape")) event.preventDefault();
+    }}>
+    <form onSubmit={async event => {
+      event.preventDefault();
+      if (busy || blocked || composing.current || submitting.current) return;
+      submitting.current = true;
+      try { await onConfirm(); } finally { submitting.current = false; }
+    }}>
+      <header><h2 id="cloud-archive-delete-title">删除聊天？</h2><p id="cloud-archive-delete-description">这将永久删除“{title}”。此操作无法撤销。</p></header>
+      {unknown && <p role="status">删除结果尚未确认，请刷新查看。 <button type="button" onClick={onRefresh}>刷新列表</button></p>}
+      <footer><button ref={cancelRef} type="button" disabled={busy} onClick={dismiss}>取消</button>
+        <button type="submit" className="archive-action danger archive-recovery-button" disabled={busy || blocked} aria-busy={busy}>
+          {busy && <LoaderCircle size={13} className="archive-recovery-spinner" aria-hidden="true" />}删除聊天
+        </button></footer>
+    </form>
+  </dialog>;
+}
+
 export const ArchiveView: React.FC<ArchiveViewProps> = ({
   refreshToken,
   surface = "global",
@@ -209,6 +267,9 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
   onDeleteAll,
   onShowToast,
 }) => {
+  const [cloudDeleteTarget, setCloudDeleteTarget] = useState<CloudDeleteTarget | null>(null);
+  const cloudDeleteTargetRef = useRef(cloudDeleteTarget);
+  cloudDeleteTargetRef.current = cloudDeleteTarget;
   const [cloudRecoveries, setCloudRecoveries] = useState<Record<string, CloudRecovery>>({});
   const cloudOperationsRef = useRef(new Map<string, { controller: AbortController; identity: ServiceIdentity; sent: boolean; token: object; result: CloudRecovery["status"] }>());
   const cloudReadersRef = useRef({ cloudArchive, conversationArchive, surface });
@@ -277,6 +338,8 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
       if (surface !== "settings" || !reader?.isCurrentIdentity?.(operation.identity)) operation.controller.abort();
       if (surface !== "settings" || !sameArchiveIdentity(reader?.identity, operation.identity)) cloudOperationsRef.current.delete(key);
     }
+    setCloudDeleteTarget(current => current && (surface !== "settings" || !current.reader.isCurrentIdentity?.(current.identity)
+      || !sameArchiveIdentity(cloudReader(current.thread.archiveSource!)?.identity, current.identity)) ? null : current);
     const freshRead = (recovery: CloudRecovery) => {
       const reader = cloudReader(recovery.source);
       return recovery.readAfterVersion !== undefined && reader?.status === "ready" && reader.readVersion > recovery.readAfterVersion
@@ -307,7 +370,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
       || cloudOperationsRef.current.has(key) || ["pending", "unknown", "accepted"].includes(cloudRecoveries[key]?.status)) return;
     const operation = { controller: new AbortController(), identity, sent: false, token: {}, result: "pending" as CloudRecovery["status"] };
     cloudOperationsRef.current.set(key, operation);
-    const base = { source, id: thread.id, identity, title: archiveTitle(thread), token: operation.token };
+    const base = { source, id: thread.id, identity, title: archiveTitle(thread), token: operation.token, kind: "unarchive" as const };
     setCloudRecoveries(current => ({ ...current, [key]: { ...base, status: "pending" } }));
     const active = () => mountedRef.current && cloudReadersRef.current.surface === "settings" && cloudOperationsRef.current.get(key) === operation
       && !operation.controller.signal.aborted && Boolean(cloudReader(source)?.isCurrentIdentity?.(identity))
@@ -358,6 +421,77 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
         return current;
       });
       if (ownsOperation && !refreshed && source === "cloud-task" && operation.sent && !changed && mountedRef.current && cloudReader(source)?.isCurrentIdentity?.(identity)) cloudReader(source)?.reload();
+    }
+  };
+
+  const closeCloudDelete = (target: CloudDeleteTarget) => {
+    if (cloudDeleteTargetRef.current?.dialogToken === target.dialogToken) cloudDeleteTargetRef.current = null;
+    setCloudDeleteTarget(current => current?.dialogToken === target.dialogToken ? null : current);
+  };
+  const requestCloudDelete = (thread: ArchivedThread, renderedReader?: ArchivedCloudTasksState | ArchivedConversationsState) => {
+    const source = thread.archiveSource, identity = renderedReader?.identity;
+    if (!source || !identity || surface !== "settings" || cloudReadersRef.current.surface !== "settings" || cloudOperationsRef.current.has(`${source}:${thread.id}`)
+      || !renderedReader?.canUnarchive?.(thread.id, identity) || !cloudReader(source)?.canUnarchive?.(thread.id, identity)) return;
+    const target = { thread, reader: renderedReader, identity, dialogToken: {} };
+    cloudDeleteTargetRef.current = target; setCloudDeleteTarget(target);
+  };
+  const deleteCloud = async (target: CloudDeleteTarget, retry = false) => {
+    const { thread, reader: renderedReader, identity } = target, source = thread.archiveSource!;
+    const key = `${source}:${thread.id}`;
+    if ((retry ? cloudDeleteTargetRef.current !== null : cloudDeleteTargetRef.current?.dialogToken !== target.dialogToken)
+      || surface !== "settings" || cloudReadersRef.current.surface !== "settings" || cloudOperationsRef.current.has(key)
+      || !renderedReader.canUnarchive?.(thread.id, identity) || !sameArchiveIdentity(cloudReader(source)?.identity, identity)
+      || !cloudReader(source)?.canUnarchive?.(thread.id, identity)) return;
+    const operation = { controller: new AbortController(), identity, sent: false, token: {}, result: "pending" as CloudRecovery["status"] };
+    cloudOperationsRef.current.set(key, operation);
+    const base: CloudRecovery = { source, id: thread.id, identity, title: archiveTitle(thread), token: operation.token, kind: "delete", status: "pending" };
+    setCloudRecoveries(current => ({ ...current, [key]: base }));
+    if (source === "cloud-task") closeCloudDelete(target);
+    const currentOperation = () => mountedRef.current && cloudReadersRef.current.surface === "settings" && cloudOperationsRef.current.get(key) === operation
+      && !operation.controller.signal.aborted && Boolean(cloudReader(source)?.isCurrentIdentity?.(identity));
+    const update = (value: CloudRecovery) => setCloudRecoveries(current => current[key]?.token === operation.token ? { ...current, [key]: value } : current);
+    let accepted = false;
+    try {
+      const before = await accountRead();
+      if (!currentOperation()) return;
+      if (before.account?.type !== "chatgpt" || before.workspaceRouting?.chatgptAccountId && before.workspaceRouting.chatgptAccountId !== identity.accountId
+        || !sameArchiveIdentity(await serviceIdentity(operation.controller.signal), identity)) throw Object.assign(Error("Account changed before delete"), { code: "account_changed" });
+      if (!currentOperation() || !cloudReader(source)?.canUnarchive?.(thread.id, identity)) return;
+      operation.sent = true;
+      await deleteCloudArchiveItem(source, thread.id, identity, operation.controller.signal);
+      accepted = true;
+      if (!currentOperation()) return;
+      const after = await accountRead();
+      if (!currentOperation()) return;
+      if (JSON.stringify(before) !== JSON.stringify(after) || !sameArchiveIdentity(await serviceIdentity(operation.controller.signal), identity)) {
+        operation.result = "accepted";
+        update({ ...base, status: "accepted", detail: "读取失败", readAfterVersion: cloudReader(source)?.readVersion });
+        closeCloudDelete(target); cloudReader(source)?.reload(); return;
+      }
+      if (!currentOperation() || !cloudReader(source)?.forgetAccepted(thread.id, identity)) return;
+      operation.result = "accepted"; update({ ...base, status: "accepted" }); closeCloudDelete(target); cloudReader(source)?.reload();
+    } catch (cause) {
+      if (!currentOperation()) return;
+      const code = (cause as { code?: string })?.code;
+      const unknown = code === "archive_write_unknown" || operation.sent && operation.controller.signal.aborted;
+      operation.result = accepted ? "accepted" : unknown ? "unknown" : "failed";
+      update({ ...base, status: operation.result, detail: accepted ? "读取失败" : undefined,
+        readAfterVersion: accepted ? cloudReader(source)?.readVersion : undefined });
+      if (accepted) { closeCloudDelete(target); cloudReader(source)?.reload(); }
+      else if (unknown) onShowToast?.("删除结果尚未确认，请刷新查看。", "error");
+      else if (source === "cloud-task") onShowToast?.("无法删除聊天。请重试。", "error", { label: "Retry", onClick: () => { void deleteCloud(target, true); } });
+      else onShowToast?.("无法删除已归档的聊天", "error");
+      if (!accepted && (code === "account_changed" || code === "archive_identity_changed" || code === "invalid_auth" || code?.startsWith("auth_"))) cloudReader(source)?.reload();
+    } finally {
+      if (cloudOperationsRef.current.get(key) !== operation) return;
+      const live = mountedRef.current && cloudReadersRef.current.surface === "settings" && cloudReader(source)?.isCurrentIdentity?.(identity);
+      if (live && operation.result === "pending" && operation.sent) {
+        operation.result = accepted ? "accepted" : "unknown";
+        update({ ...base, status: operation.result, detail: accepted ? "列表读取状态已变化" : undefined });
+      }
+      if (!live || !["accepted", "unknown"].includes(operation.result)) cloudOperationsRef.current.delete(key);
+      if (mountedRef.current) setCloudRecoveries(current => current[key]?.token === operation.token && current[key].status === "pending" && operation.result === "pending"
+        ? Object.fromEntries(Object.entries(current).filter(([entry]) => entry !== key)) : current);
     }
   };
 
@@ -541,7 +675,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
         </div>
         {kindFilter === "all" && !cloudArchive && !conversationArchive && <div className="archive-source-notice" role="status">当前仅列出本地归档，云端归档尚未接入，全部聊天的来源不完整。</div>}
         {cloudVisible && cloudArchive && !conversationArchive && <div className="archive-source-notice" role="status">云端任务归档；ChatGPT 会话归档尚未接入，当前结果不代表完整云端归档。</div>}
-        {cloudVisible && conversationArchive && <div className="archive-source-notice" role="status">按当前账号资格读取归档来源。ChatGPT 会话页面和删除尚未接入；当前列表仅包含已读取的页。</div>}
+        {cloudVisible && conversationArchive && <div className="archive-source-notice" role="status">按当前账号资格读取归档来源。ChatGPT 会话页面尚未接入；当前列表仅包含已读取的页。</div>}
         {cloudVisible && conversationArchive && !cloudArchive && <div className="archive-source-notice" role="status">云端任务来源尚未接入，当前结果不代表完整云端归档。</div>}
         {kindFilter === "cloud" && !cloudArchive && !conversationArchive && <div className="archive-source-notice" role="status">云端归档尚未实现，无法读取云端结果。</div>}
         {cloudVisible && cloudArchive && <div className="archive-cloud-status" role="status">
@@ -571,7 +705,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
         const needsRead = recovery.status === "unknown" || recovery.status === "accepted" && (reader?.status === "error" || recovery.detail);
         if (!needsRead) return null;
         return <div key={key} className="archive-source-notice" role="status">
-          {recovery.title}：{recovery.status === "unknown" ? "取消归档结果尚未确认，请刷新查看。" : "聊天已取消归档，但列表刷新失败。"}
+          {recovery.title}：{recovery.status === "unknown" ? (recovery.kind === "delete" ? "删除结果尚未确认，请刷新查看。" : "取消归档结果尚未确认，请刷新查看。") : recovery.kind === "delete" ? "聊天已删除，但列表刷新失败。" : "聊天已取消归档，但列表刷新失败。"}
           <button type="button" className="archive-action" onClick={() => refreshCloudSource(recovery.source)}>刷新列表</button>
         </div>;
       })}
@@ -630,11 +764,16 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
                 </span>
               </div>
               <div className="archive-row-actions">
-                {thread.archiveSource ? <><button type="button" className="archive-action archive-recovery-button" aria-label="取消归档" aria-busy={cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.status === "pending"}
+                {thread.archiveSource ? <><button type="button" className="archive-action archive-recovery-button" aria-label="取消归档" aria-busy={cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.status === "pending" && cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.kind !== "delete"}
                   disabled={!cloudReader(thread.archiveSource)?.identity || cloudReader(thread.archiveSource)?.status !== "ready"
                     || typeof cloudReader(thread.archiveSource)?.canUnarchive !== "function" || !cloudReader(thread.archiveSource)?.canUnarchive(thread.id, cloudReader(thread.archiveSource)!.identity!)
                     || ["pending", "unknown", "accepted"].includes(cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.status)}
-                  onClick={() => void recoverCloud(thread, thread.archiveSource === "cloud-task" ? cloudArchive : conversationArchive)}>{cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.status === "pending" && <LoaderCircle size={13} className="archive-recovery-spinner" aria-hidden="true" />}取消归档</button><button type="button" className="archive-action" disabled title="云端删除尚未实现" aria-label="云端归档删除尚未实现">删除（只读）</button></> : <>
+                  onClick={() => void recoverCloud(thread, thread.archiveSource === "cloud-task" ? cloudArchive : conversationArchive)}>{cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.status === "pending" && cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.kind !== "delete" && <LoaderCircle size={13} className="archive-recovery-spinner" aria-hidden="true" />}取消归档</button><button type="button" className="archive-action danger archive-recovery-button" aria-label={`删除已归档的聊天 ${archiveTitle(thread)}`}
+                  aria-busy={cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.status === "pending" && cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.kind === "delete"}
+                  disabled={!cloudReader(thread.archiveSource)?.identity || !cloudReader(thread.archiveSource)?.canUnarchive?.(thread.id, cloudReader(thread.archiveSource)!.identity!)
+                    || ["pending", "unknown", "accepted"].includes(cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.status)}
+                  onClick={() => requestCloudDelete(thread, thread.archiveSource === "cloud-task" ? cloudArchive : conversationArchive)}>
+                  {cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.status === "pending" && cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.kind === "delete" && <LoaderCircle size={13} className="archive-recovery-spinner" aria-hidden="true" />}删除</button></> : <>
                 <button
                   type="button"
                   className="archive-action danger"
@@ -664,6 +803,12 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
       {!unavailableSource && !(cloudVisible && (cloudArchive || conversationArchive) && !cloudReady && displayedCount === 0) && <footer className="archive-footer">
         {settings && (cloudArchive || conversationArchive) && kindFilter !== "local" ? `已显示 ${displayedCount} 个聊天（仅当前账号已读取的来源与页）` : <>共 {displayedCount} 个{settings ? "本地归档聊天" : "归档会话"}{loading ? "（加载中…）" : ""}</>}
       </footer>}
+      {cloudDeleteTarget && <CloudArchiveDeleteDialog title={archiveTitle(cloudDeleteTarget.thread)} fallbackRef={viewRef}
+        busy={cloudRecoveries[`${cloudDeleteTarget.thread.archiveSource}:${cloudDeleteTarget.thread.id}`]?.kind === "delete" && cloudRecoveries[`${cloudDeleteTarget.thread.archiveSource}:${cloudDeleteTarget.thread.id}`]?.status === "pending"}
+        blocked={![undefined, "failed"].includes(cloudRecoveries[`${cloudDeleteTarget.thread.archiveSource}:${cloudDeleteTarget.thread.id}`]?.status)
+          || !cloudReader(cloudDeleteTarget.thread.archiveSource!)?.canUnarchive?.(cloudDeleteTarget.thread.id, cloudDeleteTarget.identity)}
+        unknown={cloudRecoveries[`${cloudDeleteTarget.thread.archiveSource}:${cloudDeleteTarget.thread.id}`]?.status === "unknown"}
+        onCancel={() => closeCloudDelete(cloudDeleteTarget)} onConfirm={() => deleteCloud(cloudDeleteTarget)} onRefresh={() => refreshCloudSource(cloudDeleteTarget.thread.archiveSource!)} />}
       {deleteTarget && <ArchiveDeleteDialog all={deleteTarget === "all"} onDecision={handleDeleteDecision} fallbackRef={viewRef} />}
     </div>
   );

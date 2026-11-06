@@ -13,6 +13,7 @@ const scripts = [
   'verify-archive-cloud-transport.mjs', 'verify-archive-cloud-tasks.mjs', 'verify-archive-cloud-ui.mjs',
   'verify-archive-conversations-transport.mjs', 'verify-archive-conversations.mjs', 'verify-archive-conversations-ui.mjs',
   'verify-archive-unarchive-transport.mjs', 'verify-archive-unarchive-ui.mjs',
+  'verify-archive-delete-transport.mjs', 'verify-archive-delete-ui.mjs', 'verify-toast-action.mjs',
   'verify-workspace-file-tree.mjs', 'verify-workspace-recursive-tree.mjs', 'verify-workbench-app-e.mjs',
   'verify-file-editor-lifecycle.mjs', 'verify-file-editor-save.mjs',
   'verify-terminal-ui.mjs', 'verify-terminal-lifecycle.mjs', 'verify-terminal-output.mjs',

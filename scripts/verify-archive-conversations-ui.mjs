@@ -11,6 +11,7 @@ const rows = [
   { id: "d", name: "Delta", updatedAt: 0, createdAt: 60, cwd: "D:/One" },
 ];
 let reply = rows, reads = 0;
+const cloudWrites = [];
 const writes = [], slots = [], effects = [];
 let cursor = 0, mounted = false;
 const React = {
@@ -27,6 +28,7 @@ vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { target: ts.Sc
   exports: output, console, Date, Intl, Set, Map, document: { body: {} },
   require(name) {
     if (name === "react") return { ...React, default: React };
+    if (name === "../chatgptService") return { unarchiveCloudItem: (...args) => { cloudWrites.push(args); }, deleteCloudArchiveItem: (...args) => { cloudWrites.push(args); } };
     if (name === "../bridge") return { callAppServer: async (method, params) => { assert.equal(method, "thread/list"); assert.equal(params.archived, true); reads++; return { data: reply, nextCursor: null }; } };
     if (name.endsWith(".css")) return {};
     if (name === "../sidebarProjects") {
@@ -76,7 +78,7 @@ assert.ok(keys(tree).includes("chatgpt-conversation:a") && keys(tree).includes("
 props.cloudArchive = taskState; tree = render();
 const row = nodes(tree, cls("archive-conversation-row"))[0];
 assert.equal(nodes(row, n => n.type === "a").length, 0, "CV03: absent internal ChatGPT page cannot be replaced with browser/local thread navigation");
-for(const button of nodes(row, n => n.type === "button")) { assert.equal(button.props.disabled, true, "CV: untrusted reader cannot enable writes"); if(button.props["aria-label"] === "取消归档")button.props.onClick(); else assert.equal(button.props.onClick, undefined); }
+for(const button of nodes(row, n => n.type === "button")) { assert.equal(button.props.disabled, true, "CV: untrusted reader cannot enable writes"); button.props.onClick(); }
 assert.ok(text(tree).includes("ChatGPT 会话页面")); assert.ok(!text(tree).includes("ChatGPT 会话归档尚未接入"));
 props.conversationArchive = { ...props.conversationArchive, items: props.conversationArchive.items.map(item => item.id === "a" ? { ...item, updatedAt: 50 } : item) }; tree = render();
 assert.deepEqual(keys(tree), ["cloud-task:a", "chatgpt-conversation:a", "local:a"], "CV04: changed source array invalidates memo without filter/sort toggles");
@@ -96,3 +98,6 @@ assert.equal(nodes(tree, n => n.type === "footer").length, 0);
 assert.deepEqual(writes, [], "CV07: three-source projection and read-only controls never invoke local writes");
 props.surface = "global"; tree = render(); assert.equal(nodes(tree, cls("archive-conversation-row")).length, 0); assert.equal(filter(tree), undefined);
 console.log("PASS CV01–CV07: actual three-source projection, exact gizmo identity, independent source failures/paging, no navigation or mutations, legacy isolation");
+
+assert.deepEqual(cloudWrites, [], "Untrusted reader direct handlers never call cloud writes");
+assert.equal(nodes(render(), n => n.type?.name === "CloudArchiveDeleteDialog").length, 0, "Untrusted reader cannot open cloud delete confirmation");

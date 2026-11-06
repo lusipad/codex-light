@@ -11,6 +11,7 @@ const rows = [
   { id: "d", name: "Delta", updatedAt: 0, createdAt: 60, cwd: "D:/One" },
 ];
 let reply = rows, reads = 0;
+const cloudWrites = [];
 const writes = [], slots = [], effects = [];
 let cursor = 0, mounted = false;
 const React = {
@@ -27,6 +28,7 @@ vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { target: ts.Sc
   exports: output, console, Date, Intl, Set, Map, document: { body: {} },
   require(name) {
     if (name === "react") return { ...React, default: React };
+    if (name === "../chatgptService") return { unarchiveCloudItem: (...args) => { cloudWrites.push(args); }, deleteCloudArchiveItem: (...args) => { cloudWrites.push(args); } };
     if (name === "../bridge") return { callAppServer: async (method, params) => { assert.equal(method, "thread/list"); assert.equal(params.archived, true); reads++; return { data: reply, nextCursor: null }; } };
     if (name.endsWith(".css")) return {};
     if (name === "../sidebarProjects") {
@@ -87,9 +89,9 @@ assert.deepEqual(keys(tree), ["cloud-task:a", "cloud-task:c"]);
 const cloudRows = nodes(tree, cls("archive-cloud-row"));
 for (const row of cloudRows) {
   assert.equal(nodes(row, n => n.type === "a").length, 0);
-  assert.equal(nodes(row, n => n.props?.className?.includes("danger")).length, 0);
+  assert.ok(nodes(row, n => n.type === "button").every(button => button.props.disabled), "AC: untrusted cloud rows expose no enabled mutation");
   const restore = nodes(row, n => n.type === "button")[0]; assert.equal(restore.props.disabled, true, "AC: missing trusted lifecycle capability keeps legacy fixture read-only"); restore.props.onClick();
-  const deletion = nodes(row, n => n.type === "button")[1]; assert.equal(deletion.props.disabled, true); assert.equal(deletion.props.onClick, undefined);
+  const deletion = nodes(row, n => n.type === "button")[1]; assert.equal(deletion.props.disabled, true); deletion.props.onClick();
 }
 assert.ok(text(tree).includes("ChatGPT 会话归档尚未接入"));
 project(tree).props.onChange("project:local::one"); tree = render();
@@ -130,3 +132,6 @@ assert.ok(keys(tree).includes("cloud-task:a") && !keys(tree).includes("local:a")
 assert.deepEqual(writes, [["restore", "a"]]);
 props.surface = "global"; tree = render(); assert.equal(nodes(tree, cls("archive-cloud-row")).length, 0); assert.equal(filter(tree), undefined);
 console.log("PASS AC01–AC08: production mixed-source projection, composite IDs, task assignment, source state, paging actions and read-only mutation boundary");
+
+assert.deepEqual(cloudWrites, [], "Untrusted reader direct handlers never call cloud writes");
+assert.equal(nodes(render(), n => n.type?.name === "CloudArchiveDeleteDialog").length, 0, "Untrusted reader cannot open cloud delete confirmation");

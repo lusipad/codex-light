@@ -1,10 +1,12 @@
 # 15I 云端永久删除：开发前合同
 
-2026-11-06。状态：仅静态调研完成，未开发。范围仅设置归档行的Codex cloud task与ChatGPT conversation永久删除，包括确认、真实固定请求、成功/失败、认证重放及账号隔离；不扩大项目批量删除、内部会话工作面或模型功能。未执行真实HTTP、删除、模型、构建/Cargo/Git，未改产品或测试。
+2026-11-06。状态：静态调研完成，阶段已实现并自验，待用户验收，见[整合记录](../acceptance/15I-cloud-delete.md)。范围仅设置归档行的Codex cloud task与ChatGPT conversation永久删除，包括确认、真实固定请求、成功/失败、认证重放及账号隔离；不扩大项目批量删除、内部会话工作面或模型功能。调研阶段未改产品或执行真实HTTP；后续实施与验证另记，不以取证替代验收。
 
 ## 1. 基准与证据
 
 固定Store `26.1027.3384.0`、asar SHA-256 `6fbedf054a8d8cafaf5c745b40aa59176512e106e0bd6308275ae123b60fd074`。沿15H已从固定包提取的7个原始资源，复制到 `.ref/parity/15/actual/15I-cloud-delete/reference/raw/`并重新核对size/SHA与原asar manifest，均匹配；没有重新整包hash。manifest保留原始entry路径/offset/绝对byte位置，anchors.json保存25个0-based UTF-16片段。
+
+实施时已重新计算整包哈希并复核7项资源，见`verification/official-baseline.json`；补入已核验同版app-shared错误解析原文，manifest现共8项。`delete-error-code-source.json`记录bct@1778013/Pct@1780628：按extra、root、error、detail、detail.error、error.error顺序，逐节点检查error_code/file_parse_error_code/code，首个非空字符串优先，不能从任意后项挑conversation_deleted。现有review_error_code已实现相同优先级，可复用。
 
 来源核心：`data-controls-805edc0381e3.js:hn@2155`、`app-primary-998934e837fc.js:BOn@1767693/VOn@1768726/Jqn@2365375`、`app-initial-4267e52fe5b0.js:n2i@5919273`。精确anchor以JSON为准，不用混淆单行的物理行号。
 

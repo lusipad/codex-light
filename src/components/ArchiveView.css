@@ -283,3 +283,34 @@
 .archive-recovery-button { display: inline-flex; align-items: center; gap: 6px; }
 .archive-recovery-spinner { animation: archive-recovery-spin 1s linear infinite; }
 @keyframes archive-recovery-spin { to { transform: rotate(360deg); } }
+
+.cloud-archive-delete-dialog {
+  --archive-dialog-radius-scale: 1;
+  border-radius: calc(20px * var(--archive-dialog-radius-scale));
+  outline: none;
+}
+.cloud-archive-delete-dialog h2 { font-size: calc(18px * var(--font-ui-scale, 1)); }
+.cloud-archive-delete-dialog p { font-size: var(--text-base); }
+.cloud-archive-delete-dialog footer button {
+  padding: 6px 16px;
+  border-radius: calc(10px * var(--archive-dialog-radius-scale));
+  font-size: var(--text-base);
+  line-height: 18px;
+  background: var(--bg-pill);
+}
+.cloud-archive-delete-dialog footer button.archive-action.danger {
+  padding: 6px 16px;
+  border-color: transparent;
+  background: color-mix(in srgb, var(--accent-red) 10%, transparent);
+  color: var(--accent-red);
+}
+.cloud-archive-delete-dialog footer button.archive-action.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent-red) 20%, transparent);
+}
+@supports (corner-shape: superellipse(1.5)) {
+  .cloud-archive-delete-dialog {
+    --archive-dialog-radius-scale: 1.25;
+    corner-shape: superellipse(1.5);
+  }
+  .cloud-archive-delete-dialog footer button { corner-shape: superellipse(1.5); }
+}

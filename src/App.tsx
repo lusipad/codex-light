@@ -741,7 +741,9 @@ export const App: React.FC = () => {
     id: number;
     message: string;
     type?: "info" | "success" | "error";
+    action?: { label: string; onClick: () => void };
   } | null>(null);
+  const appToastSequenceRef = useRef(0);
   const [editingThreadTitle, setEditingThreadTitle] = useState(false);
   const [threadTitleInput, setThreadTitleInput] = useState("");
   const [projectMoveConfirmation, setProjectMoveConfirmation] = useState<{
@@ -754,9 +756,15 @@ export const App: React.FC = () => {
   const projectMoveCancelRef = useRef<HTMLButtonElement>(null);
 
   const showAppToast = useCallback(
-    (message: string, type: "info" | "success" | "error" = "info") => {
-      const id = Date.now();
-      setAppToast({ id, message, type });
+    (message: string, type: "info" | "success" | "error" = "info", action?: { label: string; onClick: () => void }) => {
+      const id = ++appToastSequenceRef.current;
+      let used = false;
+      setAppToast({ id, message, type, action: action && { label: action.label, onClick: () => {
+        if (used) return;
+        used = true;
+        setAppToast(prev => prev?.id === id ? null : prev);
+        action.onClick();
+      } } });
       setTimeout(() => {
         setAppToast((prev) => (prev?.id === id ? null : prev));
       }, 3200);
@@ -6407,6 +6415,7 @@ export const App: React.FC = () => {
       {appToast && (
         <div className={`app-global-toast ${appToast.type || "info"}`}>
           <span>{appToast.message}</span>
+          {appToast.action && <button type="button" onClick={appToast.action.onClick}>{appToast.action.label}</button>}
         </div>
       )}
     </div>

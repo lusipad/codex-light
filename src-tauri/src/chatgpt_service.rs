@@ -16,6 +16,8 @@ mod archive_conversations;
 pub use archive_conversations::{ArchiveConversationsRequest, ArchiveConversationsResponse};
 mod archive_unarchive;
 pub use archive_unarchive::{ArchiveUnarchiveRequest, ArchiveUnarchiveResponse};
+mod archive_delete;
+pub use archive_delete::{ArchiveDeleteRequest, ArchiveDeleteResponse};
 
 const MAX_RESPONSE: u64 = 8 * 1024 * 1024;
 const MAX_SHARE_SNAPSHOT: usize = 10 * 1024 * 1024;
@@ -2532,7 +2534,7 @@ fn build_cloud_http_request(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum HttpMethod { Get, Post, Put, Patch }
+enum HttpMethod { Get, Post, Put, Patch, Delete }
 
 struct HttpRequest {
     url: String,
@@ -3255,6 +3257,8 @@ fn curl_quote(value: &str) -> ServiceResult<String> {
 
 fn curl_config(request: &HttpRequest) -> ServiceResult<String> {
     match request.method {
+        HttpMethod::Delete if !request.body.is_empty() =>
+            return Err(failure("invalid_request", "DELETE cannot carry an upload body")),
         HttpMethod::Get if !request.body.is_empty() =>
             return Err(failure("invalid_request", "GET cannot carry an upload body")),
         HttpMethod::Post | HttpMethod::Patch if request.body.len() > 256 * 1024 =>
@@ -3301,6 +3305,18 @@ impl Drop for UploadBodyFile {
     fn drop(&mut self) { let _ = std::fs::remove_file(&self.0); }
 }
 
+fn curl_method(method:HttpMethod) -> &'static str {
+    match method {HttpMethod::Get=>"GET",HttpMethod::Post=>"POST",HttpMethod::Put=>"PUT",HttpMethod::Patch=>"PATCH",HttpMethod::Delete=>"DELETE"}
+}
+
+fn curl_upload_body(request:&HttpRequest,config:&mut String) -> ServiceResult<Option<UploadBodyFile>> {
+    if matches!(request.method,HttpMethod::Get|HttpMethod::Delete) {return Ok(None);}
+    let file=UploadBodyFile::create(&request.body)?;
+    let path=file.0.to_str().ok_or_else(||failure("transport_error","Upload body path unavailable"))?;
+    config.push_str(&format!("data-binary = {}\n",curl_quote(&format!("@{path}"))?));
+    Ok(Some(file))
+}
+
 async fn curl_request(
     request: HttpRequest,
     cancel: Arc<AtomicBool>,
@@ -3312,12 +3328,7 @@ async fn curl_request(
     // curl's stdin belongs to its private config (including credential headers).
     // A host-created, create_new file carries bytes without shell/config interpretation;
     // RAII removes it on success, cancellation, timeout and failures.
-    let _body_file = if request.method != HttpMethod::Get {
-        let file = UploadBodyFile::create(&request.body)?;
-        let path = file.0.to_str().ok_or_else(|| failure("transport_error", "Upload body path unavailable"))?;
-        config.push_str(&format!("data-binary = {}\n", curl_quote(&format!("@{path}"))?));
-        Some(file)
-    } else { None };
+    let _body_file = curl_upload_body(&request,&mut config)?;
     // Use the system executable, not a PATH-controlled curl shim. -q must be first.
     #[cfg(windows)]
     let executable = std::path::PathBuf::from(
@@ -3335,7 +3346,7 @@ async fn curl_request(
             "--silent",
             "--show-error",
             "--request",
-            match request.method { HttpMethod::Get => "GET", HttpMethod::Post => "POST", HttpMethod::Put => "PUT", HttpMethod::Patch => "PATCH" },
+            curl_method(request.method),
             "--proto",
             "=https",
             "--proto-redir",

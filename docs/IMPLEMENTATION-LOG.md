@@ -1,5 +1,13 @@
 # 实施日志（按轮次）
 
+## 2026-11-06 — 15I云端删除与下一技能预览合同
+
+- 重新核当前Store版本、固定asar整包与来源，分别实现任务/会话无正文DELETE、不同404认可和同身份401一次刷新；扩共享HttpMethod/curl仅增Delete，保留其他上传方式的正文文件生命周期。真实账号删除未执行，无新依赖。
+- 前端复用两真实reader与身份/token锁，task确认即关、失败带真实Retry；conversation等待留窗、明确失败可重试，unknown先只读；取消确认零写、旧确认/ABA不污染新操作。复用现有toast与modal样式，按同版desktop来源局部校准标题/圆角/按钮；真实浏览器发现并修复danger覆盖及Tab焦点短暂落body，独立复核无新增可证缺陷。
+- 客户端、toast、旧确认、accepted快照及Tab回归分别留真实红灯；云端Rust9项、含本地删除16项、服务160项通过，全库512项零失败/忽略/过滤。冻结610输入后完整非Fast385项/32协议探针及原生构建退出0，341产品输入/3前端产物与当前EXE绑定；私有原生未登录导航/刷新/菜单/退出有证据，真实云端确认/DELETE/IME及官方像素未验。
+- [15I阶段记录](antigravity/acceptance/15I-cloud-delete.md)提供debug EXE与范围限制，本阶段本地提交。上一15H已在ed6042c推送并发布preview.2，远端503全绿、EXE/MSI/NSIS及3下载包校验闭环，证据保留15H verification/final-result.json；新15I不混称已在该安装包内。
+- 下一页[13E技能详情](antigravity/specs/13E-skill-detail.md)已完成静态追链：目录preview/editor与设置contents/xwideTall严格分开，13条原包完整性、11份raw和62锚点留证，SD01–14未执行，尚未开发。不用同名Showcase组件或内置技能文本替代本地技能详情。
+
 ## 2026-11-06 — 15H云端取消归档
 
 - 先核固定官方整包与8项资源，分别追踪任务POST recover、会话PATCH及同身份401一次重放；接入专用宿主命令，不接受任意路径/方法/正文。复用原认证、网络、取消和来源reader，无新依赖或全局配置修改。

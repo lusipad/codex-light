@@ -5995,6 +5995,16 @@ html, body, #root {
   color: #f1f5f9;
 }
 
+.app-global-toast button {
+  pointer-events: auto;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .app-global-toast.success {
   background: rgba(6, 78, 59, 0.96);
   border: 1px solid rgba(16, 185, 129, 0.4);
