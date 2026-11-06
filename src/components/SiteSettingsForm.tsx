@@ -11,7 +11,7 @@ interface Props {
   access: SitesClientAccess; site: SiteRecord; snapshot: SiteEnvironmentSnapshot | null; scope: AbortSignal;
   environmentError?: string; loading: boolean; sharingText: string; canChangeSlug?: boolean;
   onSite: (result: { site: SiteRecord; assets: SiteAssetRef[] }) => void;
-  onError?: (message: string) => void;
+  onError?: (message: string) => void; domainSettings?: React.ReactNode;
 }
 const composing = (event: React.KeyboardEvent) => event.nativeEvent.isComposing || event.keyCode === 229;
 function SaveState({ status, error, unknown, onRetry }: { status: string; error: string | null; unknown?: boolean; onRetry: () => void }) {
@@ -39,7 +39,7 @@ function EnvironmentRow({ entry, index, state, change, remove }: { entry: Enviro
     <button type="button" className="site-environment-remove" aria-label="删除此项" disabled={busy} onClick={remove}><Trash2 size={16} /></button>
   </div>;
 }
-export function SiteSettingsForm({ access, site, snapshot, scope, environmentError, loading, sharingText, canChangeSlug = false, onSite, onError }: Props) {
+export function SiteSettingsForm({ access, site, snapshot, scope, environmentError, loading, sharingText, canChangeSlug = false, onSite, onError, domainSettings }: Props) {
   const state = siteSettingsState(access, site, snapshot, scope, onSite, onError), [, update] = useState(0), [deleteTarget, setDeleteTarget] = useState<{ rowId: string; key: string } | null>(null);
   const confirmation = useRef<HTMLDialogElement>(null), cancel = useRef<HTMLButtonElement>(null), removedTrigger = useRef<HTMLButtonElement | null>(null);
   useEffect(() => state.subscribe(() => update(value => value + 1)), [state]);
@@ -53,6 +53,7 @@ export function SiteSettingsForm({ access, site, snapshot, scope, environmentErr
       onCompositionStart={() => state.composeTitle(true)} onCompositionEnd={() => state.composeTitle(false)} onBlur={() => void state.commitTitle()} onKeyDown={event => { if (event.key === "Enter" && !composing(event)) { event.preventDefault(); void state.commitTitle(); } }} /></div>
       <SaveState status={state.titleStatus} error={state.titleError} unknown={state.titleUnknown} onRetry={() => void (state.titleUnknown ? state.recoverTitle() : state.commitTitle())} />
       <SiteSlugSettings access={access} site={site} canChange={canChangeSlug} hostedDomainSuffix={siteHostedDomainSuffix(site)} scope={scope} onSite={onSite} onError={onError} />
+      {domainSettings}
       <div className="sites-setting-row"><div>共享设置<p>{sharingText}</p></div><button type="button" disabled title="共享设置写入尚未接入">管理</button></div>
     </section>
     <section className="site-environment-edit"><div className="site-environment-heading"><div><h2>环境变量</h2><p>添加网站所需的 API 密钥和其他环境变量</p></div>{state.entries && <button className="site-environment-add" type="button" onClick={() => state.editEnvironment([...state.entries!, newEnvironmentDraft(state.environment?.requiresSecrets === true)])}><Plus size={16} />添加变量</button>}</div>{loading && <p role="status">正在读取配置…</p>}{environmentError && <p role="alert">{environmentError}</p>}

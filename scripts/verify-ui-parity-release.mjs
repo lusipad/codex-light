@@ -15,6 +15,7 @@ const scripts = [
   'verify-sites-data.mjs', 'verify-sites-read.mjs', 'verify-sites-service.mjs', 'verify-sites-navigation.mjs',
   'verify-sites-settings-client.mjs', 'verify-sites-settings-ui.mjs',
   'verify-sites-slug-client.mjs', 'verify-sites-slug-ui.mjs',
+  'verify-sites-domain-client.mjs', 'verify-sites-domain-ui.mjs',
   'verify-appearance-color.mjs', 'verify-system-fonts.mjs', 'verify-general-preference-select.mjs',
   'verify-settings-ui-correction.mjs', 'verify-appearance-theme-state.mjs', 'verify-appearance-theme-ui.mjs',
   'verify-general-open.mjs', 'verify-notification-settings-ui.mjs',

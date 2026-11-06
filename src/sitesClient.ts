@@ -1,4 +1,4 @@
-import { readChatgptService, readSitesMetadata, readSiteAsset, writeSitePin, writeSiteTitle, writeSiteEnvironment, readSiteSlugAvailability, writeSiteSlug, serviceIdentity, shareAccessBootstrap, serviceErrorMessage, type ServiceIdentity, type SiteAssetRef, type SiteEnvironmentPatch, type SiteSlugAvailability, type SiteSlugChange } from "./chatgptService";
+import { readChatgptService, readSitesMetadata, readSiteAsset, writeSitePin, writeSiteTitle, writeSiteEnvironment, readSiteSlugAvailability, writeSiteSlug, writeSiteDomain, serviceIdentity, shareAccessBootstrap, serviceErrorMessage, type ServiceIdentity, type SiteAssetRef, type SiteEnvironmentPatch, type SiteSlugAvailability, type SiteSlugChange, type SiteDomainMutation } from "./chatgptService";
 import { parseSitesAccess, parseSitesPage, parseSite, parseSiteDomains, parseSiteEnvironmentSnapshot, parseSiteSettingsCapabilities, type SiteRecord, type SitesAccess, type SiteDomain, type SiteEnvironment, type SiteEnvironmentSnapshot, type SiteSettingsCapabilities } from "./sitesService";
 
 export interface SitesClientAccess extends SitesAccess { identity: ServiceIdentity; pinned: boolean; collectionPreview: boolean; slugChangeAllowed: boolean }
@@ -81,6 +81,32 @@ export async function readSiteDetail(access: SitesClientAccess, id: string, sign
   await confirmIdentity(access.identity, signal); return { site, assets: result.assets };
 }
 export interface SiteDomainSettings { capabilities: SiteSettingsCapabilities | null; domains: SiteDomain[] | null; errors: Record<string, string> }
+export async function readSiteDomains(access: SitesClientAccess, id: string, signal: AbortSignal): Promise<SiteDomain[]> {
+  requireAccess(access);
+  const domains = parseSiteDomains(await readChatgptService("sites_domains", { id }, access.identity, signal), id);
+  await confirmIdentity(access.identity, signal); return domains;
+}
+async function mutateSiteDomain(access: SitesClientAccess, id: string, mutation: SiteDomainMutation, signal: AbortSignal): Promise<SiteDomain> {
+  requireAccess(access); await confirmIdentity(access.identity, signal);
+  try {
+    const domain = await writeSiteDomain(id, mutation, access.identity, signal);
+    await confirmIdentity(access.identity, signal); return domain;
+  } catch (cause) {
+    const error = cause as { code?: string; status?: number };
+    if (!signal.aborted && error?.status != null && error.status >= 400 && error.status < 500 && error.code !== "sites_settings_unknown") throw cause;
+    throw Object.assign(Error("域名操作结果未确认，请读取当前域名后再操作。"), { code: "site_domain_unconfirmed", status: error?.status, cause });
+  }
+}
+export async function addSiteDomain(access: SitesClientAccess, id: string, rawHostname: string, signal: AbortSignal): Promise<SiteDomain> {
+  const hostname = rawHostname.trim(); if (!hostname) throw Error("请输入域名。");
+  return mutateSiteDomain(access, id, { operation: "domain_add", hostname }, signal);
+}
+export function refreshSiteDomain(access: SitesClientAccess, id: string, domainId: string, signal: AbortSignal): Promise<SiteDomain> {
+  return mutateSiteDomain(access, id, { operation: "domain_refresh", domain_id: domainId }, signal);
+}
+export function removeSiteDomain(access: SitesClientAccess, id: string, domainId: string, signal: AbortSignal): Promise<SiteDomain> {
+  return mutateSiteDomain(access, id, { operation: "domain_remove", domain_id: domainId }, signal);
+}
 export async function readSiteDomainSettings(access: SitesClientAccess, id: string, signal: AbortSignal): Promise<SiteDomainSettings> {
   requireAccess(access); const result: SiteDomainSettings = { capabilities: null, domains: null, errors: {} };
   try {

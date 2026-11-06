@@ -69,6 +69,8 @@ function harness({ deferredListener = false, listenerError, href = "http://local
         if (name === "../siteSettingsState" || name === "./siteSettingsState") return load("src/siteSettingsState.ts");
         if (name === "../siteSlugState") return load("src/siteSlugState.ts");
         if (name === "./SiteSlugSettings") return load("src/components/SiteSlugSettings.tsx");
+        if (name === "./SiteDomainSettings") return load("src/components/SiteDomainSettings.tsx");
+        if (name === "../siteDomainState") return load("src/siteDomainState.ts");
         if (name === "./SiteSettingsForm") return load("src/components/SiteSettingsForm.tsx");
         if (name === "../sitesNavigation") return load("src/sitesNavigation.ts");
         if (name === "../chatgptService") return { serviceErrorMessage: error => error.message || error.code };
@@ -79,6 +81,9 @@ function harness({ deferredListener = false, listenerError, href = "http://local
           readSiteDetail: (access, id, signal) => call("detail", [access, id], signal),
           readSiteSettings: (access, id, signal) => call("settings", [access, id], signal),
           readSiteDomainSettings: (access, id, signal) => call("domain-settings", [access, id], signal),
+          readSiteDomains: (access, id, signal) => call("domains-read", [access, id], signal),
+          refreshSiteDomain: (access, id, domainId, signal) => call("domain-refresh", [access, id, domainId], signal),
+          removeSiteDomain: (access, id, domainId, signal) => call("domain-remove", [access, id, domainId], signal),
           readSiteScreenshot: (asset, access, signal) => call("screenshot", [asset, access], signal),
           readSitePin: (access, id, signal) => call("pin-read", [access, id], signal),
           setSitePinned: (access, id, pinned, signal) => call("pin-write", [access, id, pinned], signal),
@@ -218,7 +223,9 @@ await check("settings is a route workface; detail failure retries, independent c
   latest(h, "detail").reject(Error("not_found")); await flush(); assert.match(text(h.render()), /not_found/);
   button(h, "重试").props.onClick(); h.render(); await flush(); latest(h, "detail").resolve({ site: h.data.parseSite(raw("one", { live_url: null })), assets: [] }); await flush();
   latest(h, "settings").resolve({ capabilities, environment: null, domains: [{ id: "apex", hostname: "apex.example.invalid", status: "pending", cname: "real-target", ipv4: ["192.0.2.14"], records: [{ type: "TXT", value: "real-proof" }] }], errors: { environment: "environment failed" } }); await flush();
-  assert.match(text(h.render()), /environment failed/); assert.match(text(h.render()), /real-target|real-proof/); assert.match(text(h.render()), /192\.0\.2\.14/);
+  assert.match(text(h.render()), /environment failed/); assert.match(text(h.render()), /apex.example.invalid/);
+  const retainedDomain = h.componentProps.get("SiteDomainSettings").domains[0];
+  assert.equal(retainedDomain.cname, "real-target"); assert.equal(retainedDomain.records[0].value, "real-proof"); assert.equal(retainedDomain.ipv4[0], "192.0.2.14");
   button(h, "重试").props.onClick(); const first = latest(h, "settings"); button(h, "重试").props.onClick(); assert.equal(latest(h, "settings"), first);
   first.resolve({ capabilities, environment: h.data.parseSiteEnvironment({ project_id: "one", entries: [{ type: "envvar", key: "TOKEN", is_secret: true, value: "never-render" }, { type: "envvar", key: "MODE", is_secret: false, value: "prod" }] }, "one"), environmentSnapshot: { projectId: "one", entries: [{ key: "TOKEN", secret: true, value: null }, { key: "MODE", secret: false, value: "prod" }], revision: 1, updatedAt: null }, domains: [], errors: {} }); await flush();
   assert.ok(walk(h.render()).some(n => n.type === "input" && n.props.value === "prod")); assert.doesNotMatch(JSON.stringify(h.render(), (key, value) => key === "element" || key === "ref" ? undefined : value), /never-render/);
@@ -413,6 +420,24 @@ await check("domain and full-settings retries cannot race to overwrite each othe
   environmentRetry().props.onClick(); const retries = h.calls.filter(c => c.operation === "domain-settings").length;
   button(h, "重试自定义域名").props.onClick(); assert.equal(h.calls.filter(c => c.operation === "domain-settings").length, retries);
   latest(h, "settings").resolve(domainSettings({ capabilities: { slugChangeEnabled: false, customDomainsEnabled: false }, domains: null })); await flush(); assert.doesNotMatch(text(h.render()), /自定义域名/); h.unmount();
+});
+await check("custom domains stay between URL and sharing in the official general group", async () => {
+  const h = await openDomainSettings(domainSettings({ domains: [{ id: "domain-one", projectId: "one", hostname: "order.example.invalid", status: "pending", cname: "target.example.invalid", ipv4: [], ssl: null, error: null, records: [], providerStatus: null, workerName: "worker", createdAt: "2026-11-07", updatedAt: "2026-11-07" }] }));
+  const actual = text(h.render()), domainAt = actual.indexOf("order.example.invalid");
+  assert.ok(domainAt >= 0 && domainAt < actual.indexOf("共享设置") && domainAt < actual.indexOf("环境变量"), "domain control must precede sharing and environment settings");
+  h.unmount();
+});
+for (const kind of ["settings", "domain-settings"]) await check(`confirmed domain removal survives an older ${kind} response`, async () => {
+  const domain = { id: "domain-one", projectId: "one", hostname: "old.example.invalid", status: "pending", cname: null, ipv4: [], ssl: null, error: null, records: [], providerStatus: null, workerName: "worker", createdAt: "2026-11-07", updatedAt: "2026-11-07" };
+  const h = await openDomainSettings(domainSettings({ domains: [domain], errors: { environment: "environment failed", ...(kind === "domain-settings" ? { domains: "domain failed" } : {}) } }));
+  const retry = kind === "domain-settings" ? button(h, "重试自定义域名") : walk(h.render()).find(n => n.type === "button" && text(n) === "重试" && !n.props["aria-label"]);
+  retry.props.onClick(); const pending = latest(h, kind);
+  h.componentProps.get("SiteDomainSettings").onDomains([]); h.render();
+  pending.resolve(kind === "settings" ? domainSettings({ domains: [domain], environmentSnapshot: { ...domainEnvironment, revision: 2 }, errors: { environment: "new environment error" } }) : { capabilities, domains: [domain], errors: {} });
+  await flush(); h.render();
+  assert.equal(h.componentProps.get("SiteDomainSettings").domains.length, 0, "a read started before confirmed removal must not resurrect its domain");
+  if (kind === "settings") { assert.equal(h.componentProps.get("SiteSettingsForm").snapshot.revision, 2); assert.equal(h.componentProps.get("SiteSettingsForm").environmentError, "new environment error"); }
+  h.unmount();
 });
 assert.equal(failures.length, 0, failures.map(f => f.name).join("; "));
 console.log(`PASS 21E production SitesView/SiteScreenshot JSX: ${passed} groups; offline client/menu/header boundaries; actual HTTP, DOM menu focus, browser/native and pixel parity require separate evidence`);

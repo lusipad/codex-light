@@ -1,4 +1,5 @@
 import { tauriInvoke } from "./bridge";
+import { parseSiteDomains, type SiteDomain } from "./sitesService";
 import { parsePinnedReviewComparison, parsePinnedReviewFile, parseRemotePullRequest, parseRemotePullRequestUrl,
   type PinnedReviewComparison, type PinnedReviewFile, type RemotePullRequest } from "./remoteReview";
 
@@ -173,7 +174,7 @@ export interface SiteEnvironmentSnapshot {
 }
 
 async function writeSiteSettings(
-  id: string, mutation: { operation: "title"; title: string } | ({ operation: "environment" } & SiteEnvironmentPatch) | { operation: "slug_availability" | "slug"; slug: string },
+  id: string, mutation: { operation: "title"; title: string } | ({ operation: "environment" } & SiteEnvironmentPatch) | { operation: "slug_availability" | "slug"; slug: string } | SiteDomainMutation,
   identity: ServiceIdentity, signal: AbortSignal,
 ): Promise<unknown> {
   signal.throwIfAborted();
@@ -183,6 +184,13 @@ async function writeSiteSettings(
     { request: { requestId, id, mutation, expectedIdentity: identity, profile: browserProfile() } }, signal,
   );
   return responseBody(result, requestId, identity);
+}
+export type SiteDomainMutation = { operation: "domain_add"; hostname: string } | { operation: "domain_refresh" | "domain_remove"; domain_id: string };
+export async function writeSiteDomain(id: string, mutation: SiteDomainMutation, identity: ServiceIdentity, signal: AbortSignal): Promise<SiteDomain> {
+  const body = await writeSiteSettings(id, mutation, identity, signal);
+  const domain = parseSiteDomains({ items: [body] }, id)[0];
+  if (mutation.operation !== "domain_add" && domain.id !== mutation.domain_id) throw Error("域名返回与请求不符，请先重新读取配置。");
+  return domain;
 }
 export interface SiteSlugAvailability { slug: string; available: boolean }
 export interface SiteSlugChange { requestedSlug: string; status: "pending" | "complete" }

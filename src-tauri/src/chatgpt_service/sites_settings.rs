@@ -10,6 +10,9 @@ pub enum SitesSettingsMutation {
     Title {title:String},
     SlugAvailability {slug:String},
     Slug {slug:String},
+    DomainAdd {hostname:String},
+    DomainRefresh {domain_id:String},
+    DomainRemove {domain_id:String},
     Environment {remove:Vec<String>,set_values:Vec<SiteEnvironmentValue>},
 }
 #[derive(Deserialize)]
@@ -23,9 +26,12 @@ pub struct SitesSettingsRequest {
 pub struct SitesSettingsResponse { pub request_id:String, pub identity:ServiceIdentity, pub body:Value }
 
 fn unknown()->ServiceError {failure("sites_settings_unknown","Site settings write outcome is unknown; read the settings before retrying")}
-fn normalized_slug(raw:&str)->ServiceResult<String> {
+fn javascript_trim(raw:&str)->&str {
     // Match JavaScript String.trim: BOM is whitespace, NEL is not.
-    let slug=raw.trim_matches(|c:char|matches!(c,'\u{0009}'|'\u{000a}'|'\u{000b}'|'\u{000c}'|'\u{000d}'|'\u{0020}'|'\u{00a0}'|'\u{1680}'|'\u{2000}'..='\u{200a}'|'\u{2028}'|'\u{2029}'|'\u{202f}'|'\u{205f}'|'\u{3000}'|'\u{feff}')).to_ascii_lowercase();
+    raw.trim_matches(|c:char|matches!(c,'\u{0009}'|'\u{000a}'|'\u{000b}'|'\u{000c}'|'\u{000d}'|'\u{0020}'|'\u{00a0}'|'\u{1680}'|'\u{2000}'..='\u{200a}'|'\u{2028}'|'\u{2029}'|'\u{202f}'|'\u{205f}'|'\u{3000}'|'\u{feff}'))
+}
+fn normalized_slug(raw:&str)->ServiceResult<String> {
+    let slug=javascript_trim(raw).to_ascii_lowercase();
     // Equivalent to the source /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/ without a new dependency.
     if !slug.as_bytes().first().is_some_and(u8::is_ascii_lowercase) || slug.ends_with('-') || slug.contains("--")
         || slug.bytes().any(|byte|!byte.is_ascii_lowercase() && !byte.is_ascii_digit() && byte!=b'-') {
@@ -36,6 +42,12 @@ fn normalized_slug(raw:&str)->ServiceResult<String> {
 fn mutates_settings(mutation:&SitesSettingsMutation)->bool { !matches!(mutation,SitesSettingsMutation::SlugAvailability{..}) }
 fn request_body(mutation:&SitesSettingsMutation)->ServiceResult<(&'static str,&'static str,Value)> {
     let result=match mutation {
+        SitesSettingsMutation::DomainAdd{hostname}=>{
+            let hostname=javascript_trim(hostname);
+            if hostname.is_empty(){return Err(failure("invalid_request","Site custom domain hostname must not be empty"));}
+            ("domains","custom_domains",json!({"hostname":hostname}))
+        },
+        SitesSettingsMutation::DomainRefresh{..}|SitesSettingsMutation::DomainRemove{..}=>("domains","custom_domains",Value::Null),
         SitesSettingsMutation::SlugAvailability{slug}=>("slug_availability","slug/availability",json!({"slug":normalized_slug(slug)?})),
         SitesSettingsMutation::Slug{slug}=>("slug","metadata",json!({"slug":normalized_slug(slug)?})),
         SitesSettingsMutation::Title{title}=>{
@@ -57,8 +69,20 @@ fn request_body(mutation:&SitesSettingsMutation)->ServiceResult<(&'static str,&'
     }
     Ok(result)
 }
+fn valid_custom_domain(body:&Value,project_id:&str,domain_id:Option<&str>)->bool {
+    body.get("project_id").and_then(Value::as_str)==Some(project_id)
+        && domain_id.is_none_or(|id|body.get("id").and_then(Value::as_str)==Some(id))
+        && ["id","hostname","created_at","updated_at","worker_name"].iter().all(|key|body.get(*key).is_some_and(Value::is_string))
+        && ["cname_target","last_error","provider_status","ssl_status"].iter().all(|key|body.get(*key).is_some_and(|value|value.is_string()||value.is_null()))
+        && body.get("status").and_then(Value::as_str).is_some_and(|status|matches!(status,"pending"|"active"|"failed"))
+        && body.get("apex_proxy_ipv4_targets").and_then(Value::as_array).is_some_and(|targets|targets.iter().all(Value::is_string))
+        && body.get("validation_records").and_then(Value::as_array).is_some_and(|records|records.iter().all(|record|record.is_object()
+            && ["name","record_type","value"].iter().all(|key|record.get(*key).is_none_or(|value|value.is_null()||value.is_string()))))
+}
 fn validate_body(mutation:&SitesSettingsMutation,id:&str,body:&Value)->ServiceResult<()> {
     let valid=match mutation {
+        SitesSettingsMutation::DomainAdd{..}=>valid_custom_domain(body,id,None),
+        SitesSettingsMutation::DomainRefresh{domain_id}|SitesSettingsMutation::DomainRemove{domain_id}=>valid_custom_domain(body,id,Some(domain_id)),
         SitesSettingsMutation::SlugAvailability{slug}=>body.get("slug").and_then(Value::as_str)==normalized_slug(slug).ok().as_deref() && body.get("available").is_some_and(Value::is_boolean),
         SitesSettingsMutation::Slug{slug}=>body.pointer("/slug_change/requested_slug").and_then(Value::as_str)==normalized_slug(slug).ok().as_deref()
             && body.pointer("/slug_change/status").and_then(Value::as_str).is_some_and(|status|matches!(status,"pending"|"complete")),
@@ -85,6 +109,14 @@ fn known_environment_error(response:&HttpResponse)->Option<ServiceError> {
     };
     Some(ServiceError{code,message:"Site environment could not be saved; review its regional requirements",status:Some(response.status)})
 }
+fn known_domain_add_error(response:&HttpResponse)->Option<ServiceError> {
+    if !(400..500).contains(&response.status){return None;}
+    let body:Value=serde_json::from_slice(&response.body).ok()?;
+    if body.pointer("/detail/type").and_then(Value::as_str)==Some("invalid_project")
+        && body.pointer("/detail/message").and_then(Value::as_str)==Some("Publish the Site before adding a custom domain") {
+        Some(ServiceError{code:"site_domain_publish_required",message:"Publish the Site before adding a custom domain",status:Some(response.status)})
+    }else{None}
+}
 struct SettingsGuard<'a>{service:&'a ChatgptService,key:(String,String,u64,String,&'static str)}
 impl Drop for SettingsGuard<'_>{fn drop(&mut self){if let Ok(mut active)=self.service.site_settings_active.lock(){active.remove(&self.key);}}}
 impl ChatgptService {
@@ -97,6 +129,11 @@ impl ChatgptService {
         validate_browser_profile(&request.profile)?;
         let encoded_id=encode_segment(&request.id)?;
         let (field,suffix,body)=request_body(&request.mutation)?;
+        let suffix=match &request.mutation {
+            SitesSettingsMutation::DomainRefresh{domain_id}=>format!("custom_domains/{}/refresh",encode_segment(domain_id)?),
+            SitesSettingsMutation::DomainRemove{domain_id}=>format!("custom_domains/{}",encode_segment(domain_id)?),
+            _=>suffix.to_owned(),
+        };
         let route=format!("/backend-api/websites/{encoded_id}/{suffix}");
         self.check_share_identity(&request.expected_identity)?;
         let key=(request.expected_identity.account_id.clone(),request.expected_identity.user_id.clone(),request.expected_identity.generation,request.id.clone(),field);
@@ -115,9 +152,11 @@ impl ChatgptService {
                 if credentials.identity!=request.expected_identity {return Err(failure("account_changed","Authenticated identity changed"));}
                 let integrity=session.integrity.clone();
                 let mut outgoing=build_http_request(&route,credentials,integrity.as_deref(),&request.profile)?;
-                outgoing.method=HttpMethod::Post;
-                outgoing.headers.insert("Content-Type".into(),"application/json".into());
-                outgoing.body=serde_json::to_vec(&body).map_err(|_|failure("invalid_request","Invalid site settings body"))?;
+                outgoing.method=if matches!(request.mutation,SitesSettingsMutation::DomainRemove{..}){HttpMethod::Delete}else{HttpMethod::Post};
+                if !matches!(request.mutation,SitesSettingsMutation::DomainRefresh{..}|SitesSettingsMutation::DomainRemove{..}) {
+                    outgoing.headers.insert("Content-Type".into(),"application/json".into());
+                    outgoing.body=serde_json::to_vec(&body).map_err(|_|failure("invalid_request","Invalid site settings body"))?;
+                }
                 let destination=outgoing.url.clone();
                 share_network_allowed(&call,&destination).await?;
                 self.check_share_current(&request.expected_identity,&registration)?;
@@ -128,6 +167,7 @@ impl ChatgptService {
                 self.check_share_current(&request.expected_identity,&registration)?;
                 apply_integrity(&mut session.integrity,integrity.as_deref(),response.headers.get("x-oai-is-update"));
                 if mutating && response.status>=500 {return Err(unknown());}
+                if matches!(request.mutation,SitesSettingsMutation::DomainAdd{..}){if let Some(error)=known_domain_add_error(&response){return Err(error);}}
                 if matches!(request.mutation,SitesSettingsMutation::Environment{..}) {if let Some(error)=known_environment_error(&response){return Err(error);}}
                 let success=(200..300).contains(&response.status);
                 let decoded=decode_response(response,request.request_id.clone(),request.expected_identity.clone()).map_err(|error|if success && mutating{unknown()}else{error})?;

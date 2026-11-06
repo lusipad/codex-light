@@ -1,0 +1,23 @@
+.site-domain-controls { display: flex; min-width: 0; align-items: center; gap: 12px; }
+.site-domain-details { display: flex; min-width: 0; flex-direction: column; align-items: flex-end; gap: 2px; text-align: end; }
+.site-domain-hostname { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.site-domain-status { display: flex; min-width: 0; align-items: center; gap: 4px; font-size: 12px; color: var(--text-secondary); }
+.site-domain-status svg { flex-shrink: 0; }
+.site-domain-status span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.site-domain-error { max-width: 320px; font-size: 12px; overflow-wrap: anywhere; }
+.site-domain-failed, .site-domain-error { color: var(--accent-red); }
+.site-domain-actions { display: flex; flex-shrink: 0; align-items: center; gap: 4px; }
+.site-domain-actions button { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: 0; border-radius: 6px; background: transparent; color: var(--text-primary); }
+@media (prefers-reduced-motion: no-preference) { .site-domain-actions [aria-busy="true"] svg { animation: site-domain-spin 2s steps(60,end) infinite; animation-play-state: var(--decorative-animation-play-state,running); } }
+@keyframes site-domain-spin { to { transform: rotate(360deg); } }
+.site-domains button:disabled { opacity: .45; }
+.site-domain-dialog { position: fixed; inset: 50% auto auto 50%; transform: translate(-50%,-50%); margin: 0; width: 420px; max-width: 92vw; box-sizing: border-box; padding: 0; border: 0; border-radius: 20px; background: rgb(65 65 65 / 90%); backdrop-filter: blur(24px); box-shadow: 0 0 0 .5px var(--border-default), var(--shadow-lg); color: var(--text-primary); }
+[data-theme="light"] .site-domain-dialog { background: rgb(249 249 249 / 90%); }
+.site-domain-dialog::backdrop { background: #0008; }
+.site-domain-dialog form { display: flex; flex-direction: column; gap: 16px; padding: 12px 16px; }
+.site-domain-dialog h2 { margin: 0 24px 0 0; font-size: 18px; line-height: 24px; font-weight: 500; overflow-wrap: anywhere; }
+.site-domain-dialog p { margin: 0; color: var(--text-secondary); }
+.site-domain-dialog .site-domain-close { position: absolute; top: 12px; right: 12px; border: 0; padding: 4px; background: transparent; }
+.site-domain-dialog footer { display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px; }
+.site-domain-dialog button { border: 0; border-radius: 8px; padding: 6px 12px; background: transparent; color: inherit; font: inherit; }
+.site-domain-dialog .site-domain-danger { background: var(--accent-red); color: white; }

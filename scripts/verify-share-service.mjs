@@ -9,6 +9,10 @@ const publication = { shareId: "server-share", shareUrl: "https://chatgpt.com/sh
 const calls = [], disk = new Map(), exports = {};
 let sequence = 0, pending, failure, publicationResult = publication;
 const remote = {};
+const sites = {};
+vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/sitesService.ts", "utf8"), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+}).outputText, { exports: sites, URL });
 vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/remoteReview.ts", "utf8"), {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
 }).outputText, { exports: remote, URL });
@@ -19,6 +23,7 @@ vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/chatgptService.ts", "
   navigator: { userAgent: "Chrome/130.0", userAgentData: { brands: [{ brand: "Chromium", version: "130" }], platform: "Windows" } },
   localStorage: { getItem: key => disk.get(key) ?? null, setItem: (key, value) => disk.set(key, value) },
   require: name => {
+    if (name === "./sitesService") return sites;
     if (name === "./remoteReview") return remote;
     assert.equal(name, "./bridge");
     return { tauriInvoke: async (command, args) => {

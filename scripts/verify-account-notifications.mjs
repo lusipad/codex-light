@@ -52,6 +52,10 @@ console.log('PASS account notification dynamic schema, contacts privacy, identit
 
 // Exercise the real IPC wrappers, not a copied request builder.
 const serviceModule = { exports: {} }, calls = []; let wrongIdentity = false;
+const sites = {};
+vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/sitesService.ts', 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText, { exports: sites, URL });
 const serviceCode = ts.transpileModule(fs.readFileSync('src/chatgptService.ts', 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
@@ -59,6 +63,7 @@ vm.runInNewContext(serviceCode, { exports: serviceModule.exports,
   crypto: { randomUUID: () => 'request-test' }, localStorage: { getItem: () => 'test-device' },
   navigator: { userAgent: 'test', userAgentData: { brands: [{ brand: 'Test', version: '1' }], platform: 'Windows' } },
   require(name) {
+    if (name === './sitesService') return sites;
     if (name === './remoteReview') return {};
     if (name === './bridge') return { tauriInvoke: async (command, args) => {
       calls.push([command, args]); const request = args.request;

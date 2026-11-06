@@ -16,7 +16,8 @@ assert.equal(merged.length, 2); assert.equal(merged[0].title, "新标题"); asse
 assert.equal(api.parseSiteEnvironment({ project_id: "one", entries: [{ key: "TOKEN", type: "envvar", is_secret: true, value: "never-render" }] }, "one")[0].value, null);
 assert.throws(() => api.parseSiteEnvironment({ project_id: "foreign", entries: [] }, "one"), /无法识别/);
 const apexDomain = { id: "apex", project_id: "one", hostname: "apex.example.invalid", status: "pending", cname_target: null,
-  apex_proxy_ipv4_targets: ["192.0.2.14"], validation_records: [] };
+  apex_proxy_ipv4_targets: ["192.0.2.14"], validation_records: [], ssl_status: null, last_error: null,
+  provider_status: null, worker_name: "fixture", created_at: "2026-11-03T01:00:00Z", updated_at: "2026-11-03T01:00:00Z" };
 assert.equal(api.parseSiteDomains({ items: [apexDomain] }, "one")[0].ipv4[0], "192.0.2.14");
 assert.throws(() => api.parseSiteDomains({ items: [{ ...apexDomain, apex_proxy_ipv4_targets: [17] }] }, "one"), /无法识别/);
 console.log("PASS existing Sites parsers: access/date/URL/merge/search/environment identity and secret masking/domain DNS validation");

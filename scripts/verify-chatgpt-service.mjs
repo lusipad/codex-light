@@ -6,12 +6,15 @@ let id = 0, pending, calls = [], nativeFailure, mismatch = false, responseBody =
 const disk = new Map(); const identity = { accountId: "account", userId: "user", generation: 2 };
 const exports = {};
 const remoteExports = {};
+const sitesExports = {};
+vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/sitesService.ts", "utf8"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText,
+  { exports: sitesExports, URL });
 vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/remoteReview.ts", "utf8"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText,
   { exports: remoteExports, URL });
 vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/chatgptService.ts", "utf8"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText,
  { exports, crypto: { randomUUID: () => `request-${++id}` }, navigator: { userAgent: "Chrome/130.0", userAgentData: { brands: [{ brand: "Chromium", version: "130" }], platform: "Windows" } },
  localStorage: { getItem: key => disk.get(key) ?? null, setItem: (key, value) => disk.set(key, value) },
- require: name => { if (name === "./remoteReview") return remoteExports; assert.equal(name, "./bridge"); return { tauriInvoke: async (command, params) => {
+ require: name => { if (name === "./sitesService") return sitesExports; if (name === "./remoteReview") return remoteExports; assert.equal(name, "./bridge"); return { tauriInvoke: async (command, params) => {
    calls.push([command, params]); if (nativeFailure) throw nativeFailure;
    if (command === "chatgpt_service_identity" || command === "cloud_service_identity") return identity;
    if (command === "cloud_service_access") return { identity, gateEvidence: "personal-plan-branch" };

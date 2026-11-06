@@ -9,6 +9,7 @@ import { parseSitesLocation, sitesLocationUrl, type SitesLocation, type SitesNav
 import { LibraryStickyHeader } from "./LibraryStickyHeader";
 import { ThreadActionsMenu, type ThreadActionItem } from "./ThreadActionsMenu";
 import { SiteSettingsForm } from "./SiteSettingsForm";
+import { SiteDomainSettings } from "./SiteDomainSettings";
 import { waitForSiteSettingsWrites } from "../siteSettingsState";
 import "./SitesView.css";
 
@@ -175,7 +176,12 @@ export const SitesView: React.FC<SitesViewProps> = ({ collectionNavigation = fal
   const retryList = (kind: SitesListKind) => { sources.current[kind]?.abort(); setPages(value => ({ ...value, [kind]: emptyPage() })); setListRevision(value => value + 1); };
   const readSettings = async (current: SitesClientAccess, id: string, controller: AbortController) => {
     if (settingsPending.current || domainsPending.current) return; settingsPending.current = true; setSettingsLoading(true);
-    try { const value = await readSiteSettings(current, id, controller.signal); if (!controller.signal.aborted && accessRef.current === current) setSettings(value); }
+    const domainVersion = domainRequest.current;
+    try { const value = await readSiteSettings(current, id, controller.signal); if (!controller.signal.aborted && accessRef.current === current) setSettings(previous => {
+      if (!previous || domainRequest.current === domainVersion) return value;
+      const errors = { ...value.errors }; for (const key of ["capabilities", "domains"]) { if (typeof previous.errors[key] === "string") errors[key] = previous.errors[key]; else delete errors[key]; }
+      return { ...value, capabilities: previous.capabilities, domains: previous.domains, errors };
+    }); }
     finally { if (!controller.signal.aborted && accessRef.current === current) { settingsPending.current = false; setSettingsLoading(false); } }
   };
   const retryDomains = async () => {
@@ -247,6 +253,24 @@ export const SitesView: React.FC<SitesViewProps> = ({ collectionNavigation = fal
   };
   const selectMode = (mode: "list" | "grid") => { setViewMode(mode); try { localStorage.setItem("sites-view-mode", mode); setPreferenceError(null); } catch { setPreferenceError("无法保存网站布局偏好。"); } };
   const screenshot = (site: SiteRecord, assets: SiteAssetRef[]) => access && source.current ? <SiteScreenshot site={site} assets={assets} access={access} scope={source.current.signal} /> : null;
+  const applySettingsSite = (result: { site: SiteRecord; assets: SiteAssetRef[] }) => {
+    if (accessRef.current !== access || source.current?.signal.aborted) return;
+    setDetail(previous => previous?.site.id === result.site.id && Date.parse(result.site.updatedAt) >= Date.parse(previous.site.updatedAt) ? result : previous);
+    setPages(previous => Object.fromEntries(Object.entries(previous).map(([kind, page]) => {
+      const current = page.items.find(site => site.id === result.site.id);
+      if (!current || Date.parse(result.site.updatedAt) < Date.parse(current.updatedAt)) return [kind, page];
+      return [kind, { ...page, items: page.items.map(site => site.id === result.site.id ? result.site : site), assets: [...page.assets.filter(ref => ref.id !== result.site.id), ...result.assets] }];
+    })) as Record<SitesListKind, Page>);
+  };
+  const domainControl = (domainsLoading || settings?.errors.capabilities || settings?.capabilities?.customDomainsEnabled) && <div className="site-domains-settings">{(!settings?.domains?.length || domainsLoading || settings?.errors.domains) && <span>自定义域名</span>}{(settingsLoading || domainsLoading) && <p role="status">正在读取自定义域名…</p>}
+    {settings?.errors.capabilities && <p role="alert">无法读取设置能力：{settings.errors.capabilities}</p>}{settings?.errors.domains && <p role="alert">无法读取自定义域名：{settings.errors.domains}</p>}
+    {access && detail && settingsWriteScope.current && settings?.capabilities?.customDomainsEnabled && settings.domains && <SiteDomainSettings access={access} siteId={detail.site.id} domains={settings.domains} scope={settingsWriteScope.current.signal} onError={onSaveError} onSite={applySettingsSite} onDomains={domains => {
+      if (accessRef.current !== access || source.current?.signal.aborted || locationRef.current.siteId !== detail.site.id) return;
+      domainRequest.current++; domainsPending.current = false; setDomainsLoading(false);
+      setSettings(previous => { if (!previous) return previous; const errors = { ...previous.errors }; delete errors.domains; return { ...previous, domains, errors }; });
+    }} />}
+    {(settings?.errors.capabilities || settings?.errors.domains) && <button type="button" aria-label="重试自定义域名" disabled={domainsLoading || settingsLoading} onClick={() => void retryDomains()}>重试</button>}
+  </div>;
   const searchField = <div className="sites-header-actions library-header-actions"><label className="sites-search library-search"><Search size={16} aria-hidden="true" /><input type="search" aria-label="搜索站点" placeholder="搜索站点" value={location.search} maxLength={location.view === "pinned" || ["shared", "all"].includes(location.view) && access?.workspace ? 200 : undefined} onChange={event => updateQuery(event.target.value)} />{location.search && <button type="button" aria-label="清除搜索" onClick={() => updateQuery("")}><X size={14} /></button>}</label><button type="button" className="sites-create-button" disabled title="Sites 的 Work 会话尚未接入"><Plus size={16} />创建新站点</button></div>;
   const tabs = <div className="sites-navigation"><nav aria-label="站点视图">{([["owned", collectionNavigation ? "你的网站" : "你拥有的"], ...(access?.pinned ? [["pinned", "已置顶"]] : []), ...(sharedAvailable ? [["shared", "与你共享"], ...(collectionNavigation ? [["all", "全部"]] : [])] : [])] as [SitesLocation["view"], string][]).map(([view, label]) => <button type="button" key={view} aria-current={location.view === view ? "page" : undefined} onClick={() => selectTab(view)}>{label}</button>)}</nav><div className="sites-view-mode" role="group" aria-label="网站布局">{(["list", "grid"] as const).map(mode => <button type="button" key={mode} aria-label={mode === "list" ? "列表视图" : "网格视图"} title={mode === "list" ? "列表" : "网格"} aria-pressed={viewMode === mode} onClick={() => selectMode(mode)}>{mode === "list" ? <List size={16} /> : <Grid2X2 size={16} />}</button>)}</div></div>;
   return <div className="sites-page"><div className="sites-scroll" ref={scroll}>
@@ -255,20 +279,7 @@ export const SitesView: React.FC<SitesViewProps> = ({ collectionNavigation = fal
       <nav className="sites-detail-tabs" aria-label="站点详情"><button type="button" aria-current="page">设置</button><button type="button" disabled title="数据库工作面尚未接入">数据库</button><button type="button" disabled title="站点日程尚未接入">已安排</button></nav>
       {detailError && <div className="sites-state"><p role="alert">{detailError}</p><button type="button" onClick={() => setDetailRevision(value => value + 1)}>重试</button></div>}
       {!detail && !detailError && <p className="sites-state" role="status">正在加载网站</p>}
-      {detail && <div className="sites-settings-groups">{access && settingsWriteScope.current && <SiteSettingsForm access={access} site={detail.site} snapshot={settings?.environmentSnapshot ?? null} scope={settingsWriteScope.current.signal} environmentError={settings?.errors.environment} loading={settingsLoading} sharingText={siteSharingText(detail.site)} canChangeSlug={access.slugChangeAllowed && settings?.capabilities?.slugChangeEnabled === true && detail.site.status === "active" && (detail.site.role === null || detail.site.role === "owner")} onError={onSaveError} onSite={result => {
-        if (accessRef.current !== access || source.current?.signal.aborted) return;
-        setDetail(previous => previous?.site.id === result.site.id && Date.parse(result.site.updatedAt) >= Date.parse(previous.site.updatedAt) ? result : previous);
-        setPages(previous => Object.fromEntries(Object.entries(previous).map(([kind, page]) => {
-          const current = page.items.find(site => site.id === result.site.id);
-          if (!current || Date.parse(result.site.updatedAt) < Date.parse(current.updatedAt)) return [kind, page];
-          return [kind, { ...page, items: page.items.map(site => site.id === result.site.id ? result.site : site), assets: [...page.assets.filter(ref => ref.id !== result.site.id), ...result.assets] }];
-        })) as Record<SitesListKind, Page>);
-      }} />}
-        {(domainsLoading || settings?.errors.capabilities || settings?.capabilities?.customDomainsEnabled) && <section><h2>自定义域名</h2>{(settingsLoading || domainsLoading) && <p role="status">正在读取自定义域名…</p>}
-          {settings?.errors.capabilities && <p role="alert">无法读取设置能力：{settings.errors.capabilities}</p>}{settings?.errors.domains && <p role="alert">无法读取自定义域名：{settings.errors.domains}</p>}
-          {settings?.capabilities?.customDomainsEnabled && settings.domains?.map(domain => <div className="sites-domain" key={domain.id}><h3>{domain.hostname}</h3><p>{domain.status}</p>{domain.cname && <p>CNAME：{domain.cname}</p>}{domain.ipv4.map(ip => <p key={ip}>A：{ip}</p>)}{domain.ssl && <p>SSL：{domain.ssl}</p>}{domain.error && <p role="alert">{domain.error}</p>}{domain.records.map((record, index) => <p key={index}>{record.type} {record.name} {record.value}</p>)}</div>)}
-          {(settings?.errors.capabilities || settings?.errors.domains) && <button type="button" aria-label="重试自定义域名" disabled={domainsLoading || settingsLoading} onClick={() => void retryDomains()}>重试</button>}
-        </section>}
+      {detail && <div className="sites-settings-groups">{access && settingsWriteScope.current && <SiteSettingsForm access={access} site={detail.site} snapshot={settings?.environmentSnapshot ?? null} scope={settingsWriteScope.current.signal} environmentError={settings?.errors.environment} loading={settingsLoading} sharingText={siteSharingText(detail.site)} domainSettings={domainControl} canChangeSlug={access.slugChangeAllowed && settings?.capabilities?.slugChangeEnabled === true && detail.site.status === "active" && (detail.site.role === null || detail.site.role === "owner")} onError={onSaveError} onSite={applySettingsSite} />}
         {settings?.errors.environment && <button type="button" disabled={settingsLoading || domainsLoading} onClick={() => { if (access && location.siteId && detailSource.current) void readSettings(access, location.siteId, detailSource.current).catch(() => {}); }}>重试</button>}
         <section><h2>危险操作区</h2><div className="sites-setting-row"><div>删除站点<p>永久删除此站点</p></div><button type="button" disabled title="站点删除尚未接入">删除站点</button></div></section>
       </div>}

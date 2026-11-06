@@ -12,10 +12,11 @@ export interface SiteRecord {
 export interface SitesPage { items: SiteRecord[]; cursor: string | null }
 export interface SiteEnvironment { key: string; secret: boolean; value: string | null }
 export interface SiteEnvironmentSnapshot { projectId: string; entries: SiteEnvironment[]; revision: number; updatedAt: string | null; requiresSecrets?: boolean }
-export interface SiteDomain { id: string; hostname: string; status: string; cname: string | null; ipv4: string[]; ssl: string | null; error: string | null; records: { name: string | null; type: string | null; value: string | null }[] }
+export interface SiteDomain { id: string; projectId: string; hostname: string; status: "pending" | "active" | "failed"; cname: string | null; ipv4: string[]; ssl: string | null; error: string | null; providerStatus: string | null; workerName: string; createdAt: string; updatedAt: string; records: { name: string | null; type: string | null; value: string | null }[] }
 const malformed = () => Error("Sites 服务返回了无法识别的数据。");
 function string(value: unknown): string { if (typeof value !== "string") throw malformed(); return value; }
 function optionalString(value: unknown): string | null { return value == null ? null : string(value); }
+function nullableString(value: unknown): string | null { return value === null ? null : string(value); }
 export function parseSitesAccess(value: any): SitesAccess {
   if (typeof value?.enabled !== "boolean" || (value.supports_workspace_listing != null && typeof value.supports_workspace_listing !== "boolean") ||
     (value.supports_editable_listing != null && typeof value.supports_editable_listing !== "boolean")) throw malformed();
@@ -91,8 +92,11 @@ export function parseSiteDomains(value: any, projectId: string): SiteDomain[] {
   if (!Array.isArray(value?.items)) throw malformed();
   return value.items.map((domain: any) => {
     if (domain?.project_id !== projectId || !["pending", "active", "failed"].includes(domain.status) || !Array.isArray(domain.validation_records) || !Array.isArray(domain.apex_proxy_ipv4_targets)) throw malformed();
-    return { id: string(domain.id), hostname: string(domain.hostname), status: domain.status, cname: optionalString(domain.cname_target), ipv4: domain.apex_proxy_ipv4_targets.map(string),
-      ssl: optionalString(domain.ssl_status), error: optionalString(domain.last_error), records: domain.validation_records.map((record: any) =>
-        ({ name: optionalString(record?.name), type: optionalString(record?.record_type), value: optionalString(record?.value) })) };
+    return { id: string(domain.id), projectId, hostname: string(domain.hostname), status: domain.status, cname: nullableString(domain.cname_target), ipv4: domain.apex_proxy_ipv4_targets.map(string),
+      ssl: nullableString(domain.ssl_status), error: nullableString(domain.last_error), providerStatus: nullableString(domain.provider_status), workerName: string(domain.worker_name),
+      createdAt: string(domain.created_at), updatedAt: string(domain.updated_at), records: domain.validation_records.map((record: any) => {
+        if (!record || typeof record !== "object" || Array.isArray(record)) throw malformed();
+        return { name: optionalString(record.name), type: optionalString(record.record_type), value: optionalString(record.value) };
+      }) };
   });
 }

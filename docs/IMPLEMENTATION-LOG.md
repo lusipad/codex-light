@@ -2218,3 +2218,9 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 - 新客户端9组、状态/JSX22组与父页面32组保留实际红绿；真实浏览器发现恢复按钮被复用为submit导致额外POST，最小preventDefault修复后同路径写次数保持1。StrictMode纯构造/可重入挂载、旧GET/旧hydrate、晚pending跨页、complete回读错误分别锁定。
 - 全库587 Rust零失败/忽略/过滤；最终83前端和原生debug构建退出0，684输入稳定。完整非Fast337段/32探针首次仅模型偏好即时快照失败，修复探针确认后两CLI专项0，原退出1及一次未定因配置落盘失败均保留，不将定向恢复称同轮标准全绿。
 - EXE `dist-artifacts/sites-21G-20261107/CodexNative.exe` SHA256 `fb7a6dcd9ba36f28cddd16082c7876e3a9e553fa3534a7c5857b1bde6d827f6c`。生产EXE私有未登录/sites重试/退出、SQLite0线程通过；私有原生组件准备被自动审批拒绝，正常URL原生/账号HTTP/配对像素/IME/用户验收仍缺。详见[21G阶段记录](antigravity/acceptance/21G-sites-url-domains.md)与[协议同步诊断](research/model-preference-probe-sync-20261107.md)。本阶段先本地提交，暂不推送/发布；preview.8不含本阶段。
+
+## 2026-11-07 — 21H 已有域名动作与并发恢复
+
+- 复核固定官方五资源、九UI锚点和完整请求/schema后，接typed add/refresh/remove宿主与严格客户端；仅已接已有域名刷新/移除界面，Add/DNS完整弹窗仍待解析依赖决定。域名行移回URL和共享之间，保留真实metadata/截图授权成对读回，无新依赖。
+- 实际回归修复旧完整设置/域名重试复活已移除条目、明确拒绝丢失最新父数据、离页旧错误和过期确认；新状态/JSX19组、父页面35组通过，宿主31聚焦及全库594通过。真实浏览器核宽窄/92vw、取消焦点、busy Escape、拒绝和unknown显式GET不重放；spinner按同包2秒steps60修复，非猜测1秒动画。
+- 最终690输入稳定，85前端、完整非Fast339段/32协议探针及对应原生debug构建退出0；生产EXE私有未登录/sites重试、退出、0线程通过，SHA256 `c0b20c6b98779fae2bda49e5cbce36a02013c31040db07d21ac7aebe27d64f48`。保留旧夹具/导入加载失败及输入冻结拒绝记录；缺官方配对图、正常HTTP、物理IME与新域名弹窗原生，不标整页或全软件1:1。详见[21H阶段记录](antigravity/acceptance/21H-sites-domain-actions.md)。先本地提交，preview.9仅候选未发布；下一21I共享调研已完成、尚未开发。

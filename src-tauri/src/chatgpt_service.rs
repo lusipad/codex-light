@@ -8241,4 +8241,60 @@ mod sites21g_regression {
     }
 }
 
+#[cfg(test)]
+mod sites21h_regression {
+    use super::*;
+    fn write(id:&str,mutation:Value)->SitesSettingsRequest {
+        serde_json::from_value(json!({"requestId":id,"expectedIdentity":identity(),"profile":{
+            "language":"zh-CN","deviceId":"fixture-device","userAgent":"Mozilla/5.0 Chrome/140.0.0.0",
+            "userAgentClientHints":"\"Chromium\";v=\"140\"","platformClientHint":"\"Windows\""},"id":"site/a?b#c%","mutation":mutation})).expect("fixed Sites domain operation must deserialize")
+    }
+    fn mutation(operation:&str)->Value {if operation=="domain_add"{json!({"operation":operation,"hostname":"\u{feff}  MiXeD.Example.test  \u{feff}"})}else{json!({"operation":operation,"domain_id":"domain/a?b#c%"})}}
+    fn domain()->Value {json!({"apex_proxy_ipv4_targets":["192.0.2.1"],"cname_target":"target.example.test","created_at":"created","hostname":"MiXeD.Example.test","id":"domain/a?b#c%","last_error":null,"project_id":"site/a?b#c%","provider_status":null,"ssl_status":null,"status":"pending","updated_at":"updated","validation_records":[{}, {"name":null,"record_type":"TXT","value":"proof"}],"worker_name":"worker","extra":"preserved"})}
+    fn response(body:Value)->FakeTransport {let transport=FakeTransport::new(&[200]);transport.responses.lock().unwrap()[0].body=serde_json::to_vec(&body).unwrap();transport}
+    async fn entered(transport:&FakeTransport){tokio::time::timeout(Duration::from_secs(5),async{while !transport.entered.load(Ordering::SeqCst){tokio::task::yield_now().await;}}).await.expect("Sites domain request did not reach transport");}
+    #[test]
+    fn sites_domain_operations_are_explicit_typed_variants() {for operation in ["domain_add","domain_refresh","domain_remove"] {let _=write("typed",mutation(operation));}}
+    #[tokio::test]
+    async fn sites_domain_fixed_methods_paths_empty_bodies_and_complete_ack() {
+        for (operation,method,suffix) in [("domain_add",HttpMethod::Post,"custom_domains"),("domain_refresh",HttpMethod::Post,"custom_domains/domain%2Fa%3Fb%23c%25/refresh"),("domain_remove",HttpMethod::Delete,"custom_domains/domain%2Fa%3Fb%23c%25")] {
+            let service=ChatgptService::default();let transport=response(domain());let result=service.sites_settings_with(write("fixed",mutation(operation)),share_rpc,&transport).await.unwrap();assert_eq!(result.body,domain());assert_eq!(result.identity,identity());let calls=transport.requests.lock().unwrap();assert_eq!(calls.len(),1);assert_eq!(calls[0].method,method);assert_eq!(calls[0].url,format!("https://chatgpt.com/backend-api/websites/site%2Fa%3Fb%23c%25/{suffix}"));assert!(calls[0].headers.contains_key("Authorization"));
+            if operation=="domain_add" {assert_eq!(calls[0].headers["Content-Type"],"application/json");assert_eq!(serde_json::from_slice::<Value>(&calls[0].body).unwrap(),json!({"hostname":"MiXeD.Example.test"}));}else{assert!(calls[0].body.is_empty());assert!(!calls[0].headers.contains_key("Content-Type"));}
+        }
+    }
+    #[tokio::test]
+    async fn sites_domain_invalid_input_is_rejected_before_auth_without_hostname_regex() {
+        for value in [json!({"operation":"domain_add","hostname":" \u{feff} "}),json!({"operation":"domain_refresh","domain_id":".."}),json!({"operation":"domain_remove","domain_id":""})] {let transport=FakeTransport::new(&[]);assert_eq!(ChatgptService::default().sites_settings_with(write("invalid",value),|_,_|std::future::ready(Err("must not auth".into())),&transport).await.err().unwrap().code,"invalid_request");assert!(transport.requests.lock().unwrap().is_empty());}
+        let transport=response(domain());ChatgptService::default().sites_settings_with(write("server-validates",json!({"operation":"domain_add","hostname":"  https://MiXeD.Example/path  "})),share_rpc,&transport).await.unwrap();assert_eq!(serde_json::from_slice::<Value>(&transport.requests.lock().unwrap()[0].body).unwrap(),json!({"hostname":"https://MiXeD.Example/path"}));
+    }
+    #[tokio::test]
+    async fn sites_domain_response_requires_complete_schema_and_bound_project_and_domain() {
+        for operation in ["domain_add","domain_refresh","domain_remove"] {
+            let mut wrong_project=domain();wrong_project["project_id"]=json!("other");let mut invalid_status=domain();invalid_status["status"]=json!("verified");
+            for body in [json!({"success":true}),Value::Null,wrong_project,invalid_status] {let transport=response(body);assert_eq!(ChatgptService::default().sites_settings_with(write("bad-ack",mutation(operation)),share_rpc,&transport).await.err().unwrap().code,"sites_settings_unknown");assert_eq!(transport.requests.lock().unwrap().len(),1);}
+            let transport=FakeTransport::new(&[204]);transport.responses.lock().unwrap()[0].body.clear();assert_eq!(ChatgptService::default().sites_settings_with(write("no-content",mutation(operation)),share_rpc,&transport).await.err().unwrap().code,"sites_settings_unknown");
+        }
+        for operation in ["domain_refresh","domain_remove"] {let mut wrong=domain();wrong["id"]=json!("other-domain");let transport=response(wrong);assert_eq!(ChatgptService::default().sites_settings_with(write("wrong-domain",mutation(operation)),share_rpc,&transport).await.err().unwrap().code,"sites_settings_unknown");}
+        for key in ["apex_proxy_ipv4_targets","cname_target","created_at","hostname","id","last_error","project_id","provider_status","ssl_status","status","updated_at","validation_records","worker_name"] {let mut incomplete=domain();incomplete.as_object_mut().unwrap().remove(key);let transport=response(incomplete);assert_eq!(ChatgptService::default().sites_settings_with(write("incomplete",mutation("domain_add")),share_rpc,&transport).await.err().unwrap().code,"sites_settings_unknown");}
+    }
+    #[tokio::test]
+    async fn sites_domain_publish_error_is_exact_and_other_failures_never_replay() {
+        for (kind,message,expected) in [("invalid_project","Publish the Site before adding a custom domain","site_domain_publish_required"),("invalid_project","Publish the Site before adding a custom domain!","service_error"),("other","Publish the Site before adding a custom domain","service_error")] {let transport=FakeTransport::new(&[400,200]);transport.responses.lock().unwrap()[0].body=serde_json::to_vec(&json!({"detail":{"type":kind,"message":message,"private":"fixture-sensitive"}})).unwrap();let error=ChatgptService::default().sites_settings_with(write("failure",mutation("domain_add")),share_rpc,&transport).await.err().unwrap();assert_eq!(error.code,expected);assert_eq!(error.status,Some(400));assert!(!error.message.contains("fixture-sensitive"));assert_eq!(transport.requests.lock().unwrap().len(),1);}
+        for operation in ["domain_add","domain_refresh","domain_remove"] {for status in [401,403,409,429,500] {let transport=FakeTransport::new(&[status,200]);let error=ChatgptService::default().sites_settings_with(write("http",mutation(operation)),share_rpc,&transport).await.err().unwrap();if status==500{assert_eq!(error.code,"sites_settings_unknown");}else{assert_eq!(error.status,Some(status));}assert_eq!(transport.requests.lock().unwrap().len(),1);}}
+    }
+    #[tokio::test]
+    async fn sites_domain_actions_share_site_lock_but_not_title_field() {
+        let service=Arc::new(ChatgptService::default());let transport=Arc::new(FakeTransport{delay_ms:100,..response(domain())});let task={let service=service.clone();let transport=transport.clone();tokio::spawn(async move{service.sites_settings_with(write("pending",mutation("domain_add")),share_rpc,transport.as_ref()).await})};entered(transport.as_ref()).await;
+        for operation in ["domain_add","domain_refresh","domain_remove"] {assert_eq!(service.sites_settings_with(write("duplicate",mutation(operation)),share_rpc,&FakeTransport::new(&[])).await.err().unwrap().code,"busy");}
+        let title=response(json!({"title":"independent","updated_at":"now"}));service.sites_settings_with(write("title",json!({"operation":"title","title":"independent"})),share_rpc,&title).await.unwrap();task.await.unwrap().unwrap();assert_eq!(title.requests.lock().unwrap().len(),1);assert!(service.site_settings_active.lock().unwrap().is_empty());
+    }
+    #[tokio::test]
+    async fn sites_domain_cancel_identity_and_policy_do_not_deliver_old_success() {
+        for operation in ["domain_add","domain_refresh","domain_remove"] {let service=Arc::new(ChatgptService::default());let transport=Arc::new(FakeTransport{delay_ms:100,..response(domain())});let task={let service=service.clone();let transport=transport.clone();tokio::spawn(async move{service.sites_settings_with(write("cancel",mutation(operation)),share_rpc,transport.as_ref()).await})};entered(transport.as_ref()).await;service.cancel("cancel");assert_eq!(task.await.unwrap().err().unwrap().code,"sites_settings_unknown");assert_eq!(transport.requests.lock().unwrap().len(),1);}
+        let denied=|method,params|if method=="configRequirements/read"{std::future::ready(Ok(json!({"requirements":{"application":{"network":{"enabled":true,"domains":{}}}}})))}else{share_rpc(method,params)};let transport=FakeTransport::new(&[]);assert_eq!(ChatgptService::default().sites_settings_with(write("denied",mutation("domain_add")),denied,&transport).await.err().unwrap().code,"network_restricted");assert!(transport.requests.lock().unwrap().is_empty());
+        struct Invalidate<'a>(&'a ChatgptService);impl Transport for Invalidate<'_>{fn send(&self,_:HttpRequest,_:Arc<AtomicBool>)->TransportFuture<'_>{Box::pin(async move{self.0.invalidate();Ok(HttpResponse{status:200,headers:BTreeMap::new(),body:serde_json::to_vec(&domain()).unwrap()})})}}
+        let service=ChatgptService::default();assert_eq!(service.sites_settings_with(write("old-account",mutation("domain_remove")),share_rpc,&Invalidate(&service)).await.err().unwrap().code,"account_changed");
+    }
+}
+
 }
