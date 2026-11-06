@@ -72,6 +72,7 @@ function harness({ deferredListener = false, listenerError, href = "http://local
         if (name === "./SiteDomainSettings") return load("src/components/SiteDomainSettings.tsx");
         if (name === "../siteDomainState") return load("src/siteDomainState.ts");
         if (name === "./SiteSettingsForm") return load("src/components/SiteSettingsForm.tsx");
+        if (name === "./SiteSharingDialog") return { SiteSharingDialog: function SiteSharingDialog(props) { return React.createElement("mock-sharing-dialog", props); } };
         if (name === "../sitesNavigation") return load("src/sitesNavigation.ts");
         if (name === "../chatgptService") return { serviceErrorMessage: error => error.message || error.code };
         if (name === "../bridge") return { tauriListen: (_name, callback) => { const pending = deferred(), registration = { callback, active: true, ...pending }; listeners.push(registration); return listenerError ? Promise.reject(listenerError) : deferredListener ? pending.promise : Promise.resolve(() => { if (registration.active) { registration.active = false; unlistened++; } }); } };
@@ -437,6 +438,53 @@ for (const kind of ["settings", "domain-settings"]) await check(`confirmed domai
   await flush(); h.render();
   assert.equal(h.componentProps.get("SiteDomainSettings").domains.length, 0, "a read started before confirmed removal must not resurrect its domain");
   if (kind === "settings") { assert.equal(h.componentProps.get("SiteSettingsForm").snapshot.revision, 2); assert.equal(h.componentProps.get("SiteSettingsForm").environmentError, "new environment error"); }
+  h.unmount();
+});
+await check("sharing Manage opens without slug owner or settings capability gate and retains the opening title", async () => {
+  const h = harness({ component: "SiteSettingsForm" }), scope = new AbortController();
+  const props = { access: { ...access, workspace: false }, site: h.data.parseSite(raw("one", { current_user_role: "viewer" })), snapshot: null, scope: scope.signal, loading: false, sharingText: "真实摘要", onSite() {} };
+  h.render(props); const manage = button(h, "管理"); assert.ok(!manage.props.disabled, "official Manage has no owner-only disable gate");
+  manage.element.focus(); manage.props.onClick(); h.render(props);
+  assert.equal(h.componentProps.get("SiteSharingDialog").open, true); assert.equal(h.componentProps.get("SiteSharingDialog").siteTitle, "站点 one");
+  h.render({ ...props, site: { ...props.site, title: "后续标题" } }); assert.equal(h.componentProps.get("SiteSharingDialog").siteTitle, "站点 one");
+  h.componentProps.get("SiteSharingDialog").onClose(); h.render(props); assert.equal(h.componentProps.get("SiteSharingDialog").open, false); h.unmount();
+});
+await check("confirmed sharing change reads actual metadata and atomically updates summary and screenshot grants", async () => {
+  const h = await openDomainSettings(domainSettings()); const form = h.componentProps.get("SiteSettingsForm");
+  assert.equal(typeof form.onSharingChange, "function"); const work = form.onSharingChange({ accessMode: "custom" }); const read = latest(h, "detail");
+  const site = h.data.parseSite(raw("one", { updated_at: "2026-11-09T00:00:00Z", sharing: { access_mode: "custom", user_count: 7, group_count: 2 }, screenshot_url: "https://example.invalid/fresh.png" }));
+  read.resolve({ site, assets: [{ id: "one", assetKey: "fresh-sharing-key", sourceRequestId: "sharing-metadata" }] }); await work; await flush(); h.render();
+  assert.equal(h.componentProps.get("SiteSettingsForm").site.sharing.userCount, 7);
+  assert.equal(h.componentProps.get("SiteSettingsForm").site.sharing.groupCount, 2);
+  button(h, "← 网站").props.onClick(); h.render(); await flush();
+  assert.equal(latest(h, "screenshot").args[0].assetKey, "fresh-sharing-key");
+  assert.equal(latest(h, "screenshot").args[0].sourceRequestId, "sharing-metadata");
+  h.unmount();
+});
+await check("late sharing metadata failure after navigation cannot toast an old site", async () => {
+  const errors = [], h = harness({ href: "http://localhost/sites/one/settings", props: { onSaveError: message => errors.push(message) } });
+  h.render(); await flush(); latest(h, "access").resolve(access); await flush(); h.render();
+  latest(h, "detail").resolve({ site: h.data.parseSite(raw("one")), assets: [] }); await flush(); h.render(); latest(h, "settings").resolve(domainSettings()); await flush(); h.render();
+  const callback = h.componentProps.get("SiteSettingsForm").onSharingChange; assert.equal(typeof callback, "function"); const work = callback({ accessMode: "custom" }), old = latest(h, "detail");
+  h.pop("http://localhost/sites/two/settings"); h.render(); await flush(); old.reject(Error("old sharing metadata failure")); await work; await flush();
+  assert.equal(errors.length, 0); h.unmount();
+});
+await check("sharing permission revocation does not spawn metadata reads and pending mode projection cannot be overridden by summary", async () => {
+  const h = await openDomainSettings(domainSettings());
+  h.componentProps.get("SiteSettingsForm").onSite({ site: h.data.parseSite(raw("one", { sharing: { access_mode: "custom", user_count: 1, group_count: 0 } })), assets: [] }); h.render();
+  const callback = h.componentProps.get("SiteSettingsForm").onSharingChange, before = h.calls.filter(call => call.operation === "detail").length;
+  void callback(null); assert.equal(h.calls.filter(call => call.operation === "detail").length, before, "revoked sharing should not trigger a second unauthorized read/toast");
+  const work = callback({ accessMode: "custom" }); latest(h, "detail").resolve({ site: h.data.parseSite(raw("one", { updated_at: "2026-11-09T00:00:00Z", sharing: { access_mode: "workspace_all", user_count: 7, group_count: 2 } })), assets: [] });
+  await work; await flush(); h.render(); assert.equal(h.componentProps.get("SiteSettingsForm").site.sharing.accessMode, "custom"); h.unmount();
+});
+await check("sharing permission revocation invalidates metadata reads already in flight", async () => {
+  const h = await openDomainSettings(domainSettings());
+  h.componentProps.get("SiteSettingsForm").onSite({ site: h.data.parseSite(raw("one", { sharing: { access_mode: "custom", user_count: 1, group_count: 0 } })), assets: [] }); h.render();
+  const callback = h.componentProps.get("SiteSettingsForm").onSharingChange;
+  const work = callback({ accessMode: "custom" }), old = latest(h, "detail"), before = h.calls.filter(call => call.operation === "detail").length;
+  await callback(null); assert.equal(h.calls.filter(call => call.operation === "detail").length, before);
+  old.resolve({ site: h.data.parseSite(raw("one", { sharing: { access_mode: "custom", user_count: 77, group_count: 2 } })), assets: [{ id: "one", assetKey: "revoked-key", sourceRequestId: "revoked-metadata" }] });
+  await work; await flush(); h.render(); assert.equal(h.componentProps.get("SiteSettingsForm").site.sharing.userCount, 1);
   h.unmount();
 });
 assert.equal(failures.length, 0, failures.map(f => f.name).join("; "));

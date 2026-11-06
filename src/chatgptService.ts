@@ -21,7 +21,7 @@ export interface ReviewProviderPreferences {
 }
 export type ServiceOperation = "library_favorites" | "library_nodes" | "library_directory_path" | "library_file" | "library_file_content" | "library_suggested" | "library_images" | "library_settings" | "library_image" | "storage_usage" | "images_init" | "images_styles" |
   "images_recent" | "images_workspace_settings" | "images_asset" | "gpts_discovery" | "gpts_category" | "gpts_search" | "gpts_detail" | "gpts_about" | "gpts_avatar" | "gpts_workspace_settings" | "cloud_workspace_settings" |
-  "sites_entry_access" | "sites_pinned" | "sites_pin" | "sites_asset" | "sites_access" | "sites_list" | "sites_shared" | "sites_detail" | "sites_environment" | "sites_domains" | "sites_share_access" | "github_repository" |
+  "sites_entry_access" | "sites_pinned" | "sites_pin" | "sites_asset" | "sites_access" | "sites_list" | "sites_shared" | "sites_detail" | "sites_environment" | "sites_domains" | "sites_share_access" | "sites_preferred_live_url" | "github_repository" |
   "share_accounts" | "share_users" | "share_groups" | "wham_usage" | "account_me" | "profile_identity" | "profile_page";
 
 function browserProfile() {
@@ -174,7 +174,7 @@ export interface SiteEnvironmentSnapshot {
 }
 
 async function writeSiteSettings(
-  id: string, mutation: { operation: "title"; title: string } | ({ operation: "environment" } & SiteEnvironmentPatch) | { operation: "slug_availability" | "slug"; slug: string } | SiteDomainMutation,
+  id: string, mutation: { operation: "title"; title: string } | ({ operation: "environment" } & SiteEnvironmentPatch) | { operation: "slug_availability" | "slug"; slug: string } | SiteDomainMutation | { operation: "share_access"; access_mode: "custom" | "workspace_all" | "public" },
   identity: ServiceIdentity, signal: AbortSignal,
 ): Promise<unknown> {
   signal.throwIfAborted();
@@ -186,6 +186,13 @@ async function writeSiteSettings(
   return responseBody(result, requestId, identity);
 }
 export type SiteDomainMutation = { operation: "domain_add"; hostname: string } | { operation: "domain_refresh" | "domain_remove"; domain_id: string };
+export type SiteSharingWriteResult = (Record<string, unknown> & { status: "pending" | "accepted" }) | null;
+export async function writeSiteSharingAccess(id: string, mode: "custom" | "workspace_all" | "public", identity: ServiceIdentity, signal: AbortSignal): Promise<SiteSharingWriteResult> {
+  const body = await writeSiteSettings(id, { operation: "share_access", access_mode: mode }, identity, signal);
+  if (body === null) return null;
+  if (!body || typeof body !== "object" || Array.isArray(body) || !["pending", "accepted"].includes((body as { status: string }).status)) throw Error("共享操作结果未确认，请刷新权限。");
+  return body as Exclude<SiteSharingWriteResult, null>;
+}
 export async function writeSiteDomain(id: string, mutation: SiteDomainMutation, identity: ServiceIdentity, signal: AbortSignal): Promise<SiteDomain> {
   const body = await writeSiteSettings(id, mutation, identity, signal);
   const domain = parseSiteDomains({ items: [body] }, id)[0];

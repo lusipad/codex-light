@@ -13,6 +13,7 @@ pub enum SitesSettingsMutation {
     DomainAdd {hostname:String},
     DomainRefresh {domain_id:String},
     DomainRemove {domain_id:String},
+    ShareAccess {access_mode:String},
     Environment {remove:Vec<String>,set_values:Vec<SiteEnvironmentValue>},
 }
 #[derive(Deserialize)]
@@ -42,6 +43,12 @@ fn normalized_slug(raw:&str)->ServiceResult<String> {
 fn mutates_settings(mutation:&SitesSettingsMutation)->bool { !matches!(mutation,SitesSettingsMutation::SlugAvailability{..}) }
 fn request_body(mutation:&SitesSettingsMutation)->ServiceResult<(&'static str,&'static str,Value)> {
     let result=match mutation {
+        SitesSettingsMutation::ShareAccess{access_mode}=>{
+            if !matches!(access_mode.as_str(),"custom"|"workspace_all"|"public") {
+                return Err(failure("invalid_request","Unsupported site sharing access mode"));
+            }
+            ("share_access","share_access",json!({"access_mode":access_mode}))
+        },
         SitesSettingsMutation::DomainAdd{hostname}=>{
             let hostname=javascript_trim(hostname);
             if hostname.is_empty(){return Err(failure("invalid_request","Site custom domain hostname must not be empty"));}
@@ -81,6 +88,7 @@ fn valid_custom_domain(body:&Value,project_id:&str,domain_id:Option<&str>)->bool
 }
 fn validate_body(mutation:&SitesSettingsMutation,id:&str,body:&Value)->ServiceResult<()> {
     let valid=match mutation {
+        SitesSettingsMutation::ShareAccess{..}=>body.is_null() || body.get("status").and_then(Value::as_str).is_some_and(|status|matches!(status,"pending"|"accepted")),
         SitesSettingsMutation::DomainAdd{..}=>valid_custom_domain(body,id,None),
         SitesSettingsMutation::DomainRefresh{domain_id}|SitesSettingsMutation::DomainRemove{domain_id}=>valid_custom_domain(body,id,Some(domain_id)),
         SitesSettingsMutation::SlugAvailability{slug}=>body.get("slug").and_then(Value::as_str)==normalized_slug(slug).ok().as_deref() && body.get("available").is_some_and(Value::is_boolean),
@@ -152,7 +160,11 @@ impl ChatgptService {
                 if credentials.identity!=request.expected_identity {return Err(failure("account_changed","Authenticated identity changed"));}
                 let integrity=session.integrity.clone();
                 let mut outgoing=build_http_request(&route,credentials,integrity.as_deref(),&request.profile)?;
-                outgoing.method=if matches!(request.mutation,SitesSettingsMutation::DomainRemove{..}){HttpMethod::Delete}else{HttpMethod::Post};
+                outgoing.method=match request.mutation {
+                    SitesSettingsMutation::DomainRemove{..}=>HttpMethod::Delete,
+                    SitesSettingsMutation::ShareAccess{..}=>HttpMethod::Patch,
+                    _=>HttpMethod::Post,
+                };
                 if !matches!(request.mutation,SitesSettingsMutation::DomainRefresh{..}|SitesSettingsMutation::DomainRemove{..}) {
                     outgoing.headers.insert("Content-Type".into(),"application/json".into());
                     outgoing.body=serde_json::to_vec(&body).map_err(|_|failure("invalid_request","Invalid site settings body"))?;

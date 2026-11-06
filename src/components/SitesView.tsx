@@ -10,7 +10,8 @@ import { LibraryStickyHeader } from "./LibraryStickyHeader";
 import { ThreadActionsMenu, type ThreadActionItem } from "./ThreadActionsMenu";
 import { SiteSettingsForm } from "./SiteSettingsForm";
 import { SiteDomainSettings } from "./SiteDomainSettings";
-import { waitForSiteSettingsWrites } from "../siteSettingsState";
+import { waitForSiteSettingsWrites, trackRequest } from "../siteSettingsState";
+import type { SiteSharingPolicy } from "../siteSharingData";
 import "./SitesView.css";
 
 type Page = SitesClientPage & { loaded: boolean; loading: boolean; paging: boolean; error: string | null; pageError: string | null; query: string };
@@ -67,6 +68,7 @@ export const SitesView: React.FC<SitesViewProps> = ({ collectionNavigation = fal
   const [settings, setSettings] = useState<Awaited<ReturnType<typeof readSiteSettings>> | null>(null), [settingsLoading, setSettingsLoading] = useState(false);
   const settingsPending = useRef(false);
   const [domainsLoading, setDomainsLoading] = useState(false), domainsPending = useRef(false), domainRequest = useRef(0);
+  const sharingRequest = useRef(0);
   const [pins, setPins] = useState<Record<string, { value: boolean | null; pending: boolean; unconfirmed: boolean; error: string | null }>>({});
   const pinBusy = useRef(new Set<string>()), unconfirmedPins = useRef(new Set<string>());
   const [viewMode, setViewMode] = useState<"list" | "grid">(() => localStorage.getItem("sites-view-mode") === "grid" ? "grid" : "list");
@@ -262,6 +264,17 @@ export const SitesView: React.FC<SitesViewProps> = ({ collectionNavigation = fal
       return [kind, { ...page, items: page.items.map(site => site.id === result.site.id ? result.site : site), assets: [...page.assets.filter(ref => ref.id !== result.site.id), ...result.assets] }];
     })) as Record<SitesListKind, Page>);
   };
+  const refreshSharingSite = async (policy: SiteSharingPolicy | null) => {
+    const request = ++sharingRequest.current;
+    if (!policy) return;
+    const scope = settingsWriteScope.current, id = detail?.site.id;
+    const current = () => accessRef.current === access && scope === settingsWriteScope.current && !scope?.signal.aborted && locationRef.current.siteId === id && sharingRequest.current === request;
+    if (!access || !scope || !id || !current()) return;
+    await trackRequest(scope.signal, (async () => {
+      try { const result = await readSiteDetail(access, id, scope.signal); if (current() && result.site.sharing.accessMode === policy.accessMode) applySettingsSite(result); }
+      catch { if (current()) onSaveError?.("无法读取站点最新信息"); }
+    })());
+  };
   const domainControl = (domainsLoading || settings?.errors.capabilities || settings?.capabilities?.customDomainsEnabled) && <div className="site-domains-settings">{(!settings?.domains?.length || domainsLoading || settings?.errors.domains) && <span>自定义域名</span>}{(settingsLoading || domainsLoading) && <p role="status">正在读取自定义域名…</p>}
     {settings?.errors.capabilities && <p role="alert">无法读取设置能力：{settings.errors.capabilities}</p>}{settings?.errors.domains && <p role="alert">无法读取自定义域名：{settings.errors.domains}</p>}
     {access && detail && settingsWriteScope.current && settings?.capabilities?.customDomainsEnabled && settings.domains && <SiteDomainSettings access={access} siteId={detail.site.id} domains={settings.domains} scope={settingsWriteScope.current.signal} onError={onSaveError} onSite={applySettingsSite} onDomains={domains => {
@@ -279,7 +292,7 @@ export const SitesView: React.FC<SitesViewProps> = ({ collectionNavigation = fal
       <nav className="sites-detail-tabs" aria-label="站点详情"><button type="button" aria-current="page">设置</button><button type="button" disabled title="数据库工作面尚未接入">数据库</button><button type="button" disabled title="站点日程尚未接入">已安排</button></nav>
       {detailError && <div className="sites-state"><p role="alert">{detailError}</p><button type="button" onClick={() => setDetailRevision(value => value + 1)}>重试</button></div>}
       {!detail && !detailError && <p className="sites-state" role="status">正在加载网站</p>}
-      {detail && <div className="sites-settings-groups">{access && settingsWriteScope.current && <SiteSettingsForm access={access} site={detail.site} snapshot={settings?.environmentSnapshot ?? null} scope={settingsWriteScope.current.signal} environmentError={settings?.errors.environment} loading={settingsLoading} sharingText={siteSharingText(detail.site)} domainSettings={domainControl} canChangeSlug={access.slugChangeAllowed && settings?.capabilities?.slugChangeEnabled === true && detail.site.status === "active" && (detail.site.role === null || detail.site.role === "owner")} onError={onSaveError} onSite={applySettingsSite} />}
+      {detail && <div className="sites-settings-groups">{access && settingsWriteScope.current && <SiteSettingsForm access={access} site={detail.site} snapshot={settings?.environmentSnapshot ?? null} scope={settingsWriteScope.current.signal} environmentError={settings?.errors.environment} loading={settingsLoading} sharingText={siteSharingText(detail.site)} domainSettings={domainControl} onSharingChange={refreshSharingSite} canChangeSlug={access.slugChangeAllowed && settings?.capabilities?.slugChangeEnabled === true && detail.site.status === "active" && (detail.site.role === null || detail.site.role === "owner")} onError={onSaveError} onSite={applySettingsSite} />}
         {settings?.errors.environment && <button type="button" disabled={settingsLoading || domainsLoading} onClick={() => { if (access && location.siteId && detailSource.current) void readSettings(access, location.siteId, detailSource.current).catch(() => {}); }}>重试</button>}
         <section><h2>危险操作区</h2><div className="sites-setting-row"><div>删除站点<p>永久删除此站点</p></div><button type="button" disabled title="站点删除尚未接入">删除站点</button></div></section>
       </div>}

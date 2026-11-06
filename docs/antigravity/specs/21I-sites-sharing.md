@@ -44,3 +44,19 @@
 下一有限闭环：管理入口→真实权限/URL读取→加载、错误与刷新→owner链接访问暂存→固定PATCH→pending/accepted区分→GET收敛。先写实际宿主/客户端/JSX回归，再实现；不解除尚未完成的邀请或角色操作按钮来伪装完整。
 
 参与者邀请、角色/移除、团队建议及profile showcase保留后续独立动作合同。完整服务schema、账号权限矩阵、团队建议底层请求、pending真实服务时序、原生焦点/关闭、官方配对像素均待证。本调研不放行整页完成、不代表实际账号或任何写权限已验证。
+
+## 开发前补证与明确适配
+
+补证保存在`.ref/parity/21/actual/21I-sites-sharing/reference/`：8份既有核心同包JS，另补px转换工具JS及共享框CSS，共10项资源再次核hash/integrity，64完整片段、9真实export、86项直接中文往返0失败。首次提取脚本的CommonJS exports命名冲突已留失败，未修改官方来源。仍未运行官方GUI或真实账号HTTP。
+
+- 共享框实际是initial kls→Als/jls/Els，不是21H的ISn。Als传maxWidth512；CSS `_901vo_2`在<48rem为底部全宽sheet、max-height92%、仅顶部圆角，>=48rem父容器居中、最大宽512、内部滚动上限calc(95vh - 40px)。按CSS根字号语义处理断点，不能直接把rem当物理像素；clone若限定768 CSS px需明确为根字号差异适配。
+- header ps6/pe4/pt4，sectioned body px6/pb6、pt4或pt6，footer可换行；打开前记录trigger，仅焦点仍处弹层/body且trigger仍连接时关闭后回焦。Y未传isDismissalDisabled，不能照域名保存中隐藏X/阻止所有关闭；未实测的原生关闭时序仍待验。
+- Cn的底部取消只清暂存，保持弹窗；完成才关闭。成功保存清draft，不自动关闭。Gn提交仅owner、存在暂存且!disabled时执行，Enter不得绕过。
+- owner成员来自h_t规范化后按authenticatedAccountId重排的账户。clone继续用selectedServiceAccount按绑定ServiceIdentity.accountId读取raw map，不取原始ordering首项。邮箱源为AuthContext.email；已证Codex account/read refreshToken:false适配，不额外把GET /me写成官方来源。缺邮箱可仅匹配真实member ID；缺少身份不能因undefined相等授予owner。
+- user消费account_user_id/email/name/role/avatar_url/editable/pending；un将缺身份/姓名字段归一null，其余保留；group为id/name/size/editable/pending。源不对allowed_editors自身额外去重，owner不被editor覆盖；不假称已恢复完整OpenAPI schema。
+- preferred live URL是独立query，undefined不呈现链接动作，null为暂无发布URL。链接读取失败不清空已取回权限，也不拼接站点URL替代。复制与访问需按真实URL和动作结果处理。
+- 只有show_private_tunnels_warning===true、draft public且原mode非public才显示“如果此网站使用私有隧道，任何拥有链接的人都可能使用可访问已连接的私有服务的功能。”
+- 模式实际文案为“仅限我自己”“仅限受邀者”“此工作区内收到链接的任何人”“互联网上的任何人”。个人custom且无外部访问者可显示owner-only文案，仍写custom。具体控件顺序/描述见补证，不换成自行简化标签。
+- 本项目对成功写另做GET读回、未知结果显式GET恢复，是适配验证；不得将其称官方已实测请求次数。原pending workspace_all保custom必须保留，不能宣称全员已开放。权限/真实URL状态和错误独立，403/404撤销旧权限。
+
+纯数据回归使用执行原始m/Zji生成的固定向量，来源hash/UTF16定位随fixture保留，CI不依赖ignored `.ref`目录；不能从本项目输出更新这些基准消除失败。正常HTTP、原生/像素、邀请/编辑者/团队/profile和首次发布仍留后续完整范围。

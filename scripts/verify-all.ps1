@@ -106,6 +106,9 @@ try {
   Invoke-Step "Sites URL availability and convergence UI regression" { node scripts/verify-sites-slug-ui.mjs }
   Invoke-Step "Sites custom domain client contracts" { node scripts/verify-sites-domain-client.mjs }
   Invoke-Step "Sites custom domain actions and readback UI regression" { node scripts/verify-sites-domain-ui.mjs }
+  Invoke-Step "Sites sharing data and fixed-source reference contracts" { node scripts/verify-sites-sharing-data.mjs }
+  Invoke-Step "Sites sharing identity-bound client contracts" { node scripts/verify-sites-sharing-client.mjs }
+  Invoke-Step "Sites sharing dialog and recovery contracts" { node scripts/verify-sites-sharing-ui.mjs }
   Invoke-Step "Codex Cloud authenticated configuration regression" { node scripts/verify-cloud-environments.mjs }
   Invoke-Step "Codex Cloud current access contract" { node scripts/verify-cloud-environment-access.mjs }
   Invoke-Step "Codex Cloud settings data contract" { node scripts/verify-cloud-environment-data.mjs }

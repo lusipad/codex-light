@@ -1,0 +1,647 @@
+{
+  "version": "26.1027.3384.0",
+  "generatedFrom": "Executed original m and Zji only; no product implementation used",
+  "sources": [
+    {
+      "file": "sites-share-query-3bfcb272daf5.js",
+      "start": 257,
+      "end": 622,
+      "offsetNotation": "0-based UTF-16",
+      "sha256": "6a0dfe202eb3fcde0be17b5a9e2c2f42e23692ee21a2eb411f96f860ab7fb424"
+    },
+    {
+      "file": "app-initial-4267e52fe5b0.js",
+      "start": 5476069,
+      "end": 5476283,
+      "offsetNotation": "0-based UTF-16",
+      "sha256": "ba06de8c5418586b49ca7d639ea5ad2af531c1037454ec69b10b9ea11e00992e"
+    }
+  ],
+  "normalization": [
+    {
+      "input": {
+        "access_mode": "custom",
+        "users": [
+          {
+            "account_user_id": "member",
+            "email": "OWNER@example.invalid",
+            "name": "所有者",
+            "role": "owner"
+          }
+        ],
+        "groups": []
+      },
+      "users": [
+        {
+          "account_user_id": "member",
+          "email": "OWNER@example.invalid",
+          "name": "所有者",
+          "role": "owner"
+        }
+      ]
+    },
+    {
+      "input": {
+        "access_mode": "custom",
+        "users": [
+          {
+            "account_user_id": "member",
+            "email": "OWNER@example.invalid",
+            "name": "所有者",
+            "role": "owner"
+          },
+          {
+            "account_user_id": "same",
+            "role": "viewer",
+            "name": "旧名"
+          }
+        ],
+        "groups": [],
+        "allowed_editors": [
+          {
+            "account_user_id": "same",
+            "name": "编辑者"
+          }
+        ]
+      },
+      "users": [
+        {
+          "account_user_id": "member",
+          "email": "OWNER@example.invalid",
+          "name": "所有者",
+          "role": "owner"
+        },
+        {
+          "account_user_id": "same",
+          "name": "编辑者",
+          "role": "editor",
+          "editable": true
+        }
+      ]
+    },
+    {
+      "input": {
+        "access_mode": "custom",
+        "users": [
+          {
+            "account_user_id": "member",
+            "email": "OWNER@example.invalid",
+            "name": "所有者",
+            "role": "owner"
+          }
+        ],
+        "groups": [],
+        "allowed_editors": [
+          {
+            "account_user_id": "member",
+            "name": "同ID编辑者"
+          }
+        ]
+      },
+      "users": [
+        {
+          "account_user_id": "member",
+          "email": "OWNER@example.invalid",
+          "name": "所有者",
+          "role": "owner"
+        },
+        {
+          "account_user_id": "member",
+          "name": "同ID编辑者",
+          "role": "editor",
+          "editable": true
+        }
+      ]
+    }
+  ],
+  "options": [
+    {
+      "input": {
+        "access_mode": "admins_only"
+      },
+      "workspace": false,
+      "expected": [
+        {
+          "disabled": true,
+          "value": "admins_only"
+        }
+      ]
+    },
+    {
+      "input": {
+        "access_mode": "admins_only",
+        "available_access_modes": null
+      },
+      "workspace": false,
+      "expected": [
+        {
+          "disabled": true,
+          "value": "admins_only"
+        }
+      ]
+    },
+    {
+      "input": {
+        "access_mode": "admins_only",
+        "available_access_modes": []
+      },
+      "workspace": false,
+      "expected": [
+        {
+          "disabled": true,
+          "value": "admins_only"
+        }
+      ]
+    },
+    {
+      "input": {
+        "access_mode": "admins_only",
+        "available_access_modes": [
+          "custom",
+          "public"
+        ]
+      },
+      "workspace": false,
+      "expected": [
+        {
+          "disabled": false,
+          "value": "custom"
+        },
+        {
+          "disabled": false,
+          "value": "public"
+        },
+        {
+          "disabled": true,
+          "value": "admins_only"
+        }
+      ]
+    },
+    {
+      "input": {
+        "access_mode": "custom"
+      },
+      "workspace": false,
+      "expected": [
+        {
+          "disabled": true,
+          "value": "custom"
+        }
+      ]
+    },
+    {
+      "input": {
+        "access_mode": "custom",
+        "available_access_modes": null
+      },
+      "workspace": false,
+      "expected": [
+        {
+          "disabled": true,
+          "value": "custom"
+        }
+      ]
+    },
+    {
+      "input": {
+        "access_mode": "custom",
+        "available_access_modes": []
+      },
+      "workspace": false,
+      "expected": [
+        {
+          "disabled": true,
+          "value": "custom"
+        }
+      ]
+    },
+    {
+      "input": {
+        "access_mode": "custom",
+        "available_access_modes": [
+          "custom",
+          "public"
+        ]
+      },
+      "workspace": false,
+      "expected": [
+        {
+          "disabled": false,
+          "value": "custom"
+        },
+        {
+          "disabled": false,
+          "value": "public"
+        }
+      ]
+    },
+    {
+      "input": {
+        "access_mode": "workspace_all"
+      },
+      "workspace": false,
+      "expected": [
+        {
+          "disabled": true,
+          "value": "workspace_all"
+        }
+      ]
+    },
+    {
+      "input": {
+        "access_mode": "workspace_all",
+        "available_access_modes": null
+      },
+      "workspace": false,
+      "expected": [
+        {
+          "disabled": true,
+          "value": "workspace_all"
+        }
+      ]
+    },
+    {
+      "input": {
+        "access_mode": "workspace_all",
+        "available_access_modes": []
+      },
+      "workspace": false,
+      "expected": [
+        {
+          "disabled": true,
+          "value": "workspace_all"
+        }
+      ]
+    },
+    {
+      "input": {
+        "access_mode": "workspace_all",
+        "available_access_modes": [
+          "custom",
+          "public"
+        ]
+      },
+      "workspace": false,
+      "expected": [
+        {
+          "disabled": false,
+          "value": "custom"
+        },
+        {
+          "disabled": false,
+          "value": "public"
+        },
+        {
+          "disabled": true,
+          "value": "workspace_all"
+        }
+      ]
+    },
+    {
+      "input": {
+        "access_mode": "public"
+      },
+      "workspace": false,
+      "expected": [
+        {
+          "disabled": true,
+          "value": "public"
+        }
+      ]
+    },
+    {
+      "input": {
+        "access_mode": "public",
+        "available_access_modes": null
+      },
+      "workspace": false,
+      "expected": [
+        {
+          "disabled": true,
+          "value": "public"
+        }
+      ]
+    },
+    {
+      "input": {
+        "access_mode": "public",
+        "available_access_modes": []
+      },
+      "workspace": false,
+      "expected": [
+        {
+          "disabled": true,
+          "value": "public"
+        }
+      ]
+    },
+    {
+      "input": {
+        "access_mode": "public",
+        "available_access_modes": [
+          "custom",
+          "public"
+        ]
+      },
+      "workspace": false,
+      "expected": [
+        {
+          "disabled": false,
+          "value": "custom"
+        },
+        {
+          "disabled": false,
+          "value": "public"
+        }
+      ]
+    },
+    {
+      "input": {
+        "access_mode": "admins_only"
+      },
+      "workspace": true,
+      "expected": [
+        {
+          "disabled": false,
+          "value": "workspace_all"
+        },
+        {
+          "disabled": false,
+          "value": "custom"
+        },
+        {
+          "disabled": true,
+          "value": "admins_only"
+        }
+      ]
+    },
+    {
+      "input": {
+        "access_mode": "admins_only",
+        "available_access_modes": null
+      },
+      "workspace": true,
+      "expected": [
+        {
+          "disabled": false,
+          "value": "workspace_all"
+        },
+        {
+          "disabled": false,
+          "value": "custom"
+        },
+        {
+          "disabled": true,
+          "value": "admins_only"
+        }
+      ]
+    },
+    {
+      "input": {
+        "access_mode": "admins_only",
+        "available_access_modes": []
+      },
+      "workspace": true,
+      "expected": [
+        {
+          "disabled": true,
+          "value": "admins_only"
+        }
+      ]
+    },
+    {
+      "input": {
+        "access_mode": "admins_only",
+        "available_access_modes": [
+          "custom",
+          "public"
+        ]
+      },
+      "workspace": true,
+      "expected": [
+        {
+          "disabled": false,
+          "value": "custom"
+        },
+        {
+          "disabled": false,
+          "value": "public"
+        },
+        {
+          "disabled": true,
+          "value": "admins_only"
+        }
+      ]
+    },
+    {
+      "input": {
+        "access_mode": "custom"
+      },
+      "workspace": true,
+      "expected": [
+        {
+          "disabled": false,
+          "value": "workspace_all"
+        },
+        {
+          "disabled": false,
+          "value": "custom"
+        }
+      ]
+    },
+    {
+      "input": {
+        "access_mode": "custom",
+        "available_access_modes": null
+      },
+      "workspace": true,
+      "expected": [
+        {
+          "disabled": false,
+          "value": "workspace_all"
+        },
+        {
+          "disabled": false,
+          "value": "custom"
+        }
+      ]
+    },
+    {
+      "input": {
+        "access_mode": "custom",
+        "available_access_modes": []
+      },
+      "workspace": true,
+      "expected": [
+        {
+          "disabled": true,
+          "value": "custom"
+        }
+      ]
+    },
+    {
+      "input": {
+        "access_mode": "custom",
+        "available_access_modes": [
+          "custom",
+          "public"
+        ]
+      },
+      "workspace": true,
+      "expected": [
+        {
+          "disabled": false,
+          "value": "custom"
+        },
+        {
+          "disabled": false,
+          "value": "public"
+        }
+      ]
+    },
+    {
+      "input": {
+        "access_mode": "workspace_all"
+      },
+      "workspace": true,
+      "expected": [
+        {
+          "disabled": false,
+          "value": "workspace_all"
+        },
+        {
+          "disabled": false,
+          "value": "custom"
+        }
+      ]
+    },
+    {
+      "input": {
+        "access_mode": "workspace_all",
+        "available_access_modes": null
+      },
+      "workspace": true,
+      "expected": [
+        {
+          "disabled": false,
+          "value": "workspace_all"
+        },
+        {
+          "disabled": false,
+          "value": "custom"
+        }
+      ]
+    },
+    {
+      "input": {
+        "access_mode": "workspace_all",
+        "available_access_modes": []
+      },
+      "workspace": true,
+      "expected": [
+        {
+          "disabled": true,
+          "value": "workspace_all"
+        }
+      ]
+    },
+    {
+      "input": {
+        "access_mode": "workspace_all",
+        "available_access_modes": [
+          "custom",
+          "public"
+        ]
+      },
+      "workspace": true,
+      "expected": [
+        {
+          "disabled": false,
+          "value": "custom"
+        },
+        {
+          "disabled": false,
+          "value": "public"
+        },
+        {
+          "disabled": true,
+          "value": "workspace_all"
+        }
+      ]
+    },
+    {
+      "input": {
+        "access_mode": "public"
+      },
+      "workspace": true,
+      "expected": [
+        {
+          "disabled": false,
+          "value": "workspace_all"
+        },
+        {
+          "disabled": false,
+          "value": "custom"
+        },
+        {
+          "disabled": true,
+          "value": "public"
+        }
+      ]
+    },
+    {
+      "input": {
+        "access_mode": "public",
+        "available_access_modes": null
+      },
+      "workspace": true,
+      "expected": [
+        {
+          "disabled": false,
+          "value": "workspace_all"
+        },
+        {
+          "disabled": false,
+          "value": "custom"
+        },
+        {
+          "disabled": true,
+          "value": "public"
+        }
+      ]
+    },
+    {
+      "input": {
+        "access_mode": "public",
+        "available_access_modes": []
+      },
+      "workspace": true,
+      "expected": [
+        {
+          "disabled": true,
+          "value": "public"
+        }
+      ]
+    },
+    {
+      "input": {
+        "access_mode": "public",
+        "available_access_modes": [
+          "custom",
+          "public"
+        ]
+      },
+      "workspace": true,
+      "expected": [
+        {
+          "disabled": false,
+          "value": "custom"
+        },
+        {
+          "disabled": false,
+          "value": "public"
+        }
+      ]
+    }
+  ]
+}
