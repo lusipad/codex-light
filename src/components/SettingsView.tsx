@@ -1,4 +1,5 @@
 import { CloudPreferencesSettings } from "./CloudPreferencesSettings";
+import { CloudEnvironmentsView } from "./CloudEnvironmentsView";
 import { PetsSettings } from "./PetsSettings";
 import type { PetPreferencesState } from "../petPreferences";
 import { ComputerUseSettings, AppshotsSettings, BrowserUseSettings } from "./ControlCapabilitySettings";
@@ -86,6 +87,7 @@ const SETTINGS_NAV_GROUPS: Array<{
       { slug: "hooks-settings", label: "钩子", keywords: "hooks hooks.json preToolUse postToolUse stop 运行 实时 生命周期 挂钩" },
       { slug: "connections", label: "连接", keywords: "connections mcp servers" },
       { slug: "cloud-settings", label: "云端偏好设置", keywords: "cloud preferences environments diff branch 云端" },
+      { slug: "codex-cloud", label: "Codex 云端", keywords: "cloud environments personal vault 云端 环境 保险库" },
       { slug: "code-review", label: "代码审查", keywords: "code review pr mr diff severity 审查 评审" },
       { slug: "git-settings", label: "Git", keywords: "git branch prefix force lease pr" },
       { slug: "local-environments", label: "环境", keywords: "local environments default.toml run test 环境" },
@@ -100,7 +102,7 @@ const SETTINGS_NAV_ICONS = {
   account: User, "archived-chats": Archive, voice: Mic, storage: HardDrive, agent: SlidersHorizontal,
   personalization: Sparkles, pets: Cat, "keyboard-shortcuts": Keyboard, usage: ChartNoAxesCombined,
   "plugins-settings": Plug, "computer-use": Monitor, appshots: Camera, "browser-use": Globe,
-  "hooks-settings": Webhook, connections: Cable, "cloud-settings": Cloud, "code-review": ScanSearch,
+  "hooks-settings": Webhook, connections: Cable, "cloud-settings": Cloud, "codex-cloud": Cloud, "code-review": ScanSearch,
   "git-settings": GitBranch, "local-environments": Terminal, worktrees: FolderGit2,
 };
 
@@ -297,7 +299,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
       {/* Right Content Pane */}
       <div className="settings-right-content">
-        <div className="panel-page-header">
+        {activeSection !== "codex-cloud" && <div className="panel-page-header">
           <div>
             <h2>
               {activeSection === "storage" ? "存储空间" : SETTINGS_NAV_GROUPS.flatMap((g) => g.items).find(
@@ -316,7 +318,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </p>}
             {activeSection === "agent" && errorBanner && <p role="alert" className="error-banner">{errorBanner}</p>}
           </div>
-        </div>
+        </div>}
 
         {activeSection === "general-settings" && (
           <div className="settings-scroll-container settings-general-content">
@@ -446,6 +448,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         {activeSection === "browser-use" && <BrowserUseSettings />}
 
         {activeSection === "cloud-settings" && <CloudPreferencesSettings />}
+        {activeSection === "codex-cloud" && <div className="settings-scroll-container"><CloudEnvironmentsView embedded /></div>}
 
       </div>
     </div>

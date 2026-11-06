@@ -394,6 +394,7 @@ export type SettingsSectionSlug =
   | "appshots"
   | "browser-use"
   | "cloud-settings"
+  | "codex-cloud"
   | "profile";
 
 export type ActiveNavTab =

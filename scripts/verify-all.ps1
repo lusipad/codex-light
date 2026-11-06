@@ -98,6 +98,8 @@ try {
   Invoke-Step "GPT direct access and read contracts regression" { node scripts/verify-gpts-read.mjs }
   Invoke-Step "Sites authenticated catalog and readonly settings regression" { node scripts/verify-sites-service.mjs }
   Invoke-Step "Codex Cloud authenticated configuration regression" { node scripts/verify-cloud-environments.mjs }
+  Invoke-Step "Codex Cloud current access contract" { node scripts/verify-cloud-environment-access.mjs }
+  Invoke-Step "Codex Cloud settings data contract" { node scripts/verify-cloud-environment-data.mjs }
   Invoke-Step "Authenticated service renderer contracts" { node scripts/verify-chatgpt-service.mjs }
   Invoke-Step "Cloud archive fixed transport and identity envelopes" { node scripts/verify-archive-cloud-transport.mjs }
   Invoke-Step "Cloud archive pagination, account changes and listener lifecycle" { node scripts/verify-archive-cloud-tasks.mjs }

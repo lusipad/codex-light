@@ -59,6 +59,7 @@ pub enum ServiceOperation {
     ImagesAsset,
     GptsAvatar,
     GptsWorkspaceSettings,
+    CloudWorkspaceSettings,
     GptsDiscovery,
     GptsCategory,
     GptsSearch,
@@ -1470,6 +1471,7 @@ impl ChatgptService {
         let route = resolve_read_route(&request.operation, &request.params, &request.expected_identity)?;
         let archive_tasks = matches!(request.operation, ServiceOperation::ArchiveCloudTasks);
         let gpts_read = matches!(request.operation, ServiceOperation::GptsDiscovery | ServiceOperation::GptsCategory | ServiceOperation::GptsSearch | ServiceOperation::GptsDetail | ServiceOperation::GptsAbout | ServiceOperation::GptsWorkspaceSettings);
+        let cloud_read = matches!(request.operation, ServiceOperation::CloudWorkspaceSettings);
         let images_read = matches!(request.operation, ServiceOperation::ImagesInit | ServiceOperation::ImagesStyles | ServiceOperation::ImagesRecent | ServiceOperation::ImagesWorkspaceSettings);
         // Order snapshots before the session lock, not when a possibly late response arrives.
         let images_snapshot = self.images_snapshot.fetch_add(1, Ordering::SeqCst) + 1;
@@ -1507,7 +1509,7 @@ impl ChatgptService {
                         http_request.headers.insert("X-Codex-Expected-User-Id".into(), request.expected_identity.user_id.clone());
                         http_request.headers.insert("X-Codex-Expected-Account-Id".into(), request.expected_identity.account_id.clone());
                     }
-                    if gpts_read || images_read || archive_tasks || profile_read || review_connections || matches!(request.operation, ServiceOperation::StorageUsage | ServiceOperation::LibraryNodes | ServiceOperation::LibraryDirectoryPath | ServiceOperation::LibraryFavorites | ServiceOperation::LibraryImages | ServiceOperation::LibrarySuggested | ServiceOperation::LibrarySettings | ServiceOperation::LibraryImage | ServiceOperation::ShareAccounts) {
+                    if cloud_read || gpts_read || images_read || archive_tasks || profile_read || review_connections || matches!(request.operation, ServiceOperation::StorageUsage | ServiceOperation::LibraryNodes | ServiceOperation::LibraryDirectoryPath | ServiceOperation::LibraryFavorites | ServiceOperation::LibraryImages | ServiceOperation::LibrarySuggested | ServiceOperation::LibrarySettings | ServiceOperation::LibraryImage | ServiceOperation::ShareAccounts) {
                         share_network_allowed(&call, &http_request.url).await?;
                         self.check_share_current(&request.expected_identity, &registration)?;
                     }
@@ -1518,7 +1520,7 @@ impl ChatgptService {
                         share_network_allowed(&call, &http_request.url).await?;
                         self.check_share_current(&request.expected_identity, &registration)?;
                     }
-                    let images_destination = (images_read || gpts_read).then(|| http_request.url.clone());
+                    let images_destination = (images_read || gpts_read || cloud_read).then(|| http_request.url.clone());
                     let response = send_bounded(transport, http_request, registration.cancelled.clone(), Duration::from_secs(if usage { 10 } else if review_connections { 15 } else { 50 })).await?;
                     if self.generation() != generation {
                         return Err(failure("account_changed", "Authenticated identity changed"));
@@ -1527,7 +1529,7 @@ impl ChatgptService {
                         self.check_share_current(&request.expected_identity, &registration)?;
                         share_network_allowed(&call, &destination).await?;
                     }
-                    if gpts_read || images_read || archive_tasks || matches!(request.operation, ServiceOperation::LibraryDirectoryPath | ServiceOperation::LibrarySuggested) { self.check_share_current(&request.expected_identity, &registration)?; }
+                    if cloud_read || gpts_read || images_read || archive_tasks || matches!(request.operation, ServiceOperation::LibraryDirectoryPath | ServiceOperation::LibrarySuggested) { self.check_share_current(&request.expected_identity, &registration)?; }
                     apply_integrity(&mut session.integrity, sent_integrity.as_deref(), response.headers.get("x-oai-is-update"));
                     if archive_tasks && account_instructions_ip_denied(&response) {
                         // A workspace IP refusal is not NDn's unavailable/unsupported source.
@@ -1600,7 +1602,7 @@ impl ChatgptService {
             }
             return Err(failure("account_changed", "Authenticated identity changed"));
         }
-        if gpts_read || images_read || archive_tasks || matches!(request.operation, ServiceOperation::LibraryDirectoryPath | ServiceOperation::LibrarySuggested) { self.check_share_current(&request.expected_identity, &registration)?; }
+        if cloud_read || gpts_read || images_read || archive_tasks || matches!(request.operation, ServiceOperation::LibraryDirectoryPath | ServiceOperation::LibrarySuggested) { self.check_share_current(&request.expected_identity, &registration)?; }
         result
     }
 
@@ -2364,7 +2366,7 @@ fn encode_segment(segment: &str) -> ServiceResult<String> {
 }
 
 fn resolve_read_route(operation: &ServiceOperation, params: &Value, identity: &ServiceIdentity) -> ServiceResult<String> {
-    if matches!(operation, ServiceOperation::ImagesWorkspaceSettings | ServiceOperation::GptsWorkspaceSettings) {
+    if matches!(operation, ServiceOperation::ImagesWorkspaceSettings | ServiceOperation::GptsWorkspaceSettings | ServiceOperation::CloudWorkspaceSettings) {
         if !params.as_object().is_some_and(|params| params.is_empty()) {
             return Err(failure("invalid_request", "Workspace settings does not accept parameters"));
         }
@@ -2496,7 +2498,7 @@ fn resolve_route(operation: &ServiceOperation, params: &Value) -> ServiceResult<
             )
         }
         ServiceOperation::SitesAccess => ("/backend-api/websites/access".into(), &[]),
-        ServiceOperation::ImagesWorkspaceSettings | ServiceOperation::GptsWorkspaceSettings | ServiceOperation::ShareAccounts | ServiceOperation::ShareUsers | ServiceOperation::ShareGroups => {
+        ServiceOperation::ImagesWorkspaceSettings | ServiceOperation::GptsWorkspaceSettings | ServiceOperation::CloudWorkspaceSettings | ServiceOperation::ShareAccounts | ServiceOperation::ShareUsers | ServiceOperation::ShareGroups => {
             return Err(failure("invalid_request", "Identity-bound share route required"));
         }
         ServiceOperation::GithubRepository => {
@@ -7867,6 +7869,22 @@ mod gpts20e_regression {
         let service=ChatgptService::default();let transport=FakeTransport::new(&[200]);
         transport.responses.lock().unwrap()[0].body=serde_json::to_vec(&avatar_body(Some("https://images.example.test/about"))).unwrap();
         let about=serde_json::to_value(service.read_with(metadata_request("about",ServiceOperation::GptsAbout),share_rpc,&transport).await.unwrap()).unwrap();assert!(about.get("gptAssets").is_none());
+    }
+    #[tokio::test]
+    async fn cloud_workspace_settings_identity_route_and_policy_are_fixed() {
+        let service=ChatgptService::default();let transport=FakeTransport::new(&[200]);
+        let result=service.read_with(metadata_request("cloud-settings",ServiceOperation::CloudWorkspaceSettings),share_rpc,&transport).await.unwrap();
+        assert_eq!(result.identity,identity());
+        assert_eq!(transport.requests.lock().unwrap()[0].url,"https://chatgpt.com/backend-api/accounts/account-fixture/settings");
+        assert!(matches!(transport.requests.lock().unwrap()[0].method,HttpMethod::Get));
+        for params in [Value::Null,json!([]),json!({"account_id":"other"}),json!({"url":"https://evil.test"}),json!({"permissions":[]})] {
+            let mut req=metadata_request("invalid-cloud-settings",ServiceOperation::CloudWorkspaceSettings);req.params=params;
+            assert_eq!(service.read_with(req,|_,_|std::future::ready(Err("auth must not run".into())),&FakeTransport::new(&[])).await.err().unwrap().code,"invalid_request");
+        }
+        let service=ChatgptService::default();let transport=FakeTransport::new(&[200]);
+        let denied=|method,params|if method=="configRequirements/read" {std::future::ready(Ok(json!({"requirements":{"application":{"network":{"enabled":true,"domains":{}}}}})))}else{share_rpc(method,params)};
+        assert!(service.read_with(metadata_request("cloud-settings-denied",ServiceOperation::CloudWorkspaceSettings),denied,&transport).await.is_err());
+        assert!(transport.requests.lock().unwrap().is_empty());
     }
     #[tokio::test]
     async fn gpts_workspace_settings_identity_path_and_parameters_are_fixed() {

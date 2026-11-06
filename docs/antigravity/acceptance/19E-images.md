@@ -32,3 +32,5 @@
 真实账号 gate/config/HTTP、物理中文 IME、多窗口、同环境官方配对图与用户验收仍待完成。visual score=null；不能宣称整页 1:1。完整检查失败则继续修复，阶段提交如实保留未验项。
 
 后续20E纠正：本阶段旧隔离账号fixture曾使用整理后的数组，不能证明宿主原始accounts/check的准入兼容。20E已以准确raw map分别复现图像/资料库/分享拒绝并修正；修后真实图像client和App路由wrapper在新的browser-images夹具进入正常页并解码11图，无错误。旧证据不覆盖或更新为新基准，精确范围见[20E记录](20E-gpts.md)。
+
+2026-11-07 发布补记：19E与20E累计版本已在[v0.2.0-preview.7](https://github.com/lusipad/codex-desktop-native/releases/tag/v0.2.0-preview.7)发布，精确标签6ecee66160df74b0a89d89ccf6b4d8ae347d2436。run42253579875最终success，实际四资源摘要、SHA256SUMS及ZIP许可核验通过；最终发布范围包含20E对图像raw accounts和App路由容器的后续修复，以该标签为准，不把19E旧独立EXE当此次安装包。此发布仍不等于图像生成/编辑完整闭环、官方像素或用户验收。

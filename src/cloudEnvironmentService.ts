@@ -1,7 +1,7 @@
 import { readChatgptService, readCloudService, serviceErrorMessage, type ServiceIdentity } from "./chatgptService";
 
 export interface CloudRepository { id: string; ref: string; depth?: number }
-export interface CloudSummary { id: string; name: string; versionId: string; shareSettings: "private" | "workspace"; repositories: CloudRepository[]; isOwner?: boolean }
+export interface CloudSummary { id: string; name: string; description: string | null; versionId: string; versionRevision: number | null; shareSettings: "private" | "workspace"; repositories: CloudRepository[]; isOwner?: boolean }
 export interface CloudNetwork { type: "disabled" | "unrestricted" | "restricted"; hosts: string[]; packageManagers: boolean }
 export interface CloudSecret { name: string; source: "environment" | "user_provided"; target: string; domains: string[]; error: string | null }
 export interface CloudEditable { repositories: CloudRepository[]; network: CloudNetwork; installScript: string | null; cwd: string | null; startSkill: string | null; secrets: CloudSecret[] }
@@ -19,10 +19,14 @@ function repositories(value: any): CloudRepository[] {
   });
 }
 export function parseCloudSummary(value: any): CloudSummary {
-  if (!value || !["private", "workspace"].includes(value.share_settings) || (value.is_owner != null && typeof value.is_owner !== "boolean") ||
-    (value.version_revision != null && (!Number.isInteger(value.version_revision) || value.version_revision <= 0))) throw malformed();
-  return { id: string(value.id), name: string(value.name, false), versionId: string(value.version_id), shareSettings: value.share_settings,
-    repositories: repositories(value.repositories), ...(value.is_owner == null ? {} : { isOwner: value.is_owner }) };
+  if (!value || !["private", "workspace"].includes(value.share_settings) || (value.is_owner !== undefined && typeof value.is_owner !== "boolean") ||
+    (value.version_revision !== undefined && (!Number.isInteger(value.version_revision) || value.version_revision <= 0))) throw malformed();
+  return { id: string(value.id), name: string(value.name, false), description: value.description === undefined ? null : string(value.description, false),
+    versionId: string(value.version_id), versionRevision: value.version_revision ?? null, shareSettings: value.share_settings,
+    repositories: repositories(value.repositories), ...(value.is_owner === undefined ? {} : { isOwner: value.is_owner }) };
+}
+export function cloudSharingLabel(item: CloudSummary): string {
+  return item.shareSettings === "private" ? "私有" : item.isOwner === undefined ? "共享" : item.isOwner ? "由你共享" : "与你共享";
 }
 export function parseCloudPage(value: any): { items: CloudSummary[]; cursor: string | null } {
   if (!Array.isArray(value?.data) || (value.next_cursor !== null && typeof value.next_cursor !== "string")) throw malformed();
@@ -55,6 +59,7 @@ function parseEditable(value: any): CloudEditable {
 }
 export function parseCloudDetail(value: any, id: string, draftId?: string): CloudDetail {
   const summary = parseCloudSummary(value); if (summary.id !== id) throw Error("环境详情与请求身份不匹配，请重试。");
+  string(summary.name);
   let draft: CloudDetail["draft"] = null;
   if (value.draft != null) {
     if (!Number.isInteger(value.draft.revision) || value.draft.revision < 0) throw malformed();
@@ -68,23 +73,25 @@ export function filterCloudCatalog(items: CloudSummary[], query: string, names: 
   return items.filter(item => item.name.toLocaleLowerCase().includes(search) || item.repositories.some(repo => names[repo.id]?.name?.toLocaleLowerCase().includes(search)));
 }
 export async function loadCloudCatalog(identity: ServiceIdentity, signal: AbortSignal): Promise<CloudCatalog> {
-  const scopes = await Promise.all((["user", "workspace"] as const).map(async scope => {
-    const items = new Map<string, CloudSummary>(), seen = new Set<string>(); let cursor: string | null = null;
-    try {
-      do {
-        if (signal.aborted) throw Error("请求已取消");
-        const page = parseCloudPage(await readCloudService("list", { scope, limit: 100, omitDraft: true, ...(cursor ? { cursor } : {}) }, identity, signal));
-        if (signal.aborted) throw Error("请求已取消");
-        for (const item of page.items) items.set(item.id, item);
-        cursor = page.cursor;
-        if (cursor) { if (seen.has(cursor)) throw Error("云端环境目录返回了重复分页游标，请刷新后重试。"); seen.add(cursor); }
-      } while (cursor);
-      return { scope, items: [...items.values()], error: null };
-    } catch (cause) { if (signal.aborted) throw cause; return { scope, items: [...items.values()], error: serviceErrorMessage(cause) }; }
-  }));
-  const items = new Map<string, CloudSummary>(), errors: CloudCatalog["errors"] = {};
-  for (const scope of scopes) { for (const item of scope.items) items.set(item.id, item); if (scope.error) errors[scope.scope] = scope.error; }
-  return { items: [...items.values()], errors };
+  const scopes = ["user", "workspace"] as const;
+  const cursors: Record<typeof scopes[number], string | null | undefined> = { user: undefined, workspace: undefined };
+  const seen = { user: new Set<string>(), workspace: new Set<string>() }, items = new Map<string, CloudSummary>();
+  do {
+    const pages = await Promise.all(scopes.map(async scope => {
+      if (signal.aborted) throw Error("请求已取消");
+      const cursor = cursors[scope];
+      if (cursor === null) return null;
+      const page = parseCloudPage(await readCloudService("list", { scope, limit: 100, omitDraft: true, ...(cursor ? { cursor } : {}) }, identity, signal));
+      if (signal.aborted) throw Error("请求已取消");
+      if (page.cursor) { if (seen[scope].has(page.cursor)) throw Error("云端环境目录返回了重复分页游标，请刷新后重试。"); seen[scope].add(page.cursor); }
+      return { scope, ...page };
+    }));
+    for (const page of pages) if (page) {
+      for (const item of page.items) items.set(item.id, item);
+      cursors[page.scope] = page.cursor;
+    }
+  } while (scopes.some(scope => cursors[scope] !== null));
+  return { items: [...items.values()], errors: {} };
 }
 export async function loadRepositoryName(id: string, identity: ServiceIdentity, signal: AbortSignal): Promise<RepositoryName> {
   try {

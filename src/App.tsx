@@ -5511,8 +5511,8 @@ export const App: React.FC = () => {
             </div>
           </div>
         ) : activeRoute === "cloud-environments" ? (
-          <div className="full-route-view">
-            <div className="full-route-container">
+          <div className="full-route-view cloud-envs-route-view">
+            <div className="full-route-container cloud-envs-route-container">
               <CloudEnvironmentsView />
             </div>
           </div>

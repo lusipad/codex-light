@@ -1,6 +1,6 @@
 # 20E GPT 公共目录、搜索与只读详情：阶段记录
 
-2026-11-06。状态：本阶段本地自验和最终构建已完成，待用户验收；未推送或发布。属于 preview.6 之后的新开发。[开发前合同](../specs/20E-gpts.md)保留整页目标，本阶段不等于 GPT 聊天、工作空间和管理全部完成。
+2026-11-06。状态：本阶段本地自验和最终构建已完成，待用户验收；已推送并发布preview.7，见文末核验。属于 preview.6 之后的新开发。[开发前合同](../specs/20E-gpts.md)保留整页目标，本阶段不等于 GPT 聊天、工作空间和管理全部完成。
 
 ## 官方来源与边界
 
@@ -55,3 +55,9 @@ fresh官方 `h_t` 和实际宿主证明 `share_accounts` 返回 `{account_orderi
 最终差异重验：72组前端、共享服务模块207项（0失败/忽略、355过滤）及原生debug构建均exit0；664输入哈希稳定。末次只变化客户端真实fixture和两Rust文件，不重跑修前完整328段/562全库，保留明确差异清单。最终EXE为 `dist-artifacts/gpts-20E-20261106/CodexNative.exe`，SHA256 `67e2a3f47b079ed655c20759e9d2547b7be2f044ecb2325896b7c3c52b008545`，五许可与构建收据同目录。
 
 该生产EXE使用独立CODEX_HOME/WebView配置和CLI0.165.0，实际打开GPT/图像入口、重试均保持真实“请先登录ChatGPT账号”错误，无伪造卡片，Alt+F4退出后PID消失；只读隔离SQLite确认0会话。正常工作面仍仅为明确离线bridge的真实浏览器/独立原生组件验证，未冒称真实账号HTTP成功。原生截图为JPEG；物理IME、官方配对像素、多窗和用户验收仍未完成。状态为本地阶段自验完成、待用户验收；preview.7仅准备说明，未创建标签或发布。
+
+## 2026-11-07 preview.7发布核验
+
+19E与20E已推送到master；tag `v0.2.0-preview.7` 精确指向 `6ecee66160df74b0a89d89ccf6b4d8ae347d2436`。run42253579875/job128014726569 completed/success，72前端、562全库Rust零失败/忽略/过滤、通知适配器、EXE/MSI/NSIS、发布与缓存收尾均成功。实际四文件下载核API大小/digest及SHA256SUMS，ZIP六文件和五许可对精确提交blob通过；便携EXE SHA256 `426a080b44a410540fd994c647286f9b432aa809184f25cdf75a5f93b92590b8`。未运行下载EXE。
+
+[实际发布页](https://github.com/lusipad/codex-desktop-native/releases/tag/v0.2.0-preview.7)。证据`.ref/releases/v0.2.0-preview.7/verification.json`及关键日志。22E云环境本轮工作树不在该标签内。远端全库成功补齐20E末次裸详情修复后的全库验证；仍不能替代官方像素、真实账号HTTP、物理IME、多窗和用户验收。

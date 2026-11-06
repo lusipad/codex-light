@@ -1,13 +1,16 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { ChevronRight, Ellipsis, Plus, Search } from "lucide-react";
 import { tauriListen } from "../bridge";
-import { cloudServiceAccess, readCloudService, serviceErrorMessage, type CloudAccess } from "../chatgptService";
-import { filterCloudCatalog, loadCloudCatalog, loadRepositoryName, parseCloudDetail,
-  type CloudCatalog, type CloudDetail, type RepositoryName } from "../cloudEnvironmentService";
+import { readCloudEnvironmentAccess, type CloudEnvironmentAccess } from "../cloudEnvironmentAccess";
+import { readCloudService, serviceErrorMessage } from "../chatgptService";
+import { cloudSharingLabel, filterCloudCatalog, loadCloudCatalog, loadRepositoryName, parseCloudDetail,
+  type CloudCatalog, type CloudDetail, type CloudSummary, type RepositoryName } from "../cloudEnvironmentService";
 import "./CloudEnvironmentsView.css";
 
-export const CloudEnvironmentsView: React.FC = () => {
+export const CloudEnvironmentsView: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
   const [revision, setRevision] = useState(0);
-  const [access, setAccess] = useState<CloudAccess | null>(null);
+  const [access, setAccess] = useState<CloudEnvironmentAccess | null>(null);
   const [catalog, setCatalog] = useState<CloudCatalog | null>(null);
   const [names, setNames] = useState<Record<string, RepositoryName>>({});
   const [loading, setLoading] = useState(true);
@@ -16,111 +19,142 @@ export const CloudEnvironmentsView: React.FC = () => {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<CloudDetail | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{ item: CloudSummary; left: number; top: number; trigger: HTMLButtonElement } | null>(null);
   const source = useRef<AbortController | null>(null);
   const detailSource = useRef<AbortController | null>(null);
   const catalogBusy = useRef(false);
+  const catalogSequence = useRef(0);
   const noResultRefresh = useRef<string | null>(null);
-  const dialogRef = useRef<HTMLDialogElement | null>(null);
-  const detailTrigger = useRef<HTMLButtonElement | null>(null);
+  const rowTriggers = useRef(new Map<string, HTMLButtonElement>());
+  const restoreFocus = useRef<string | null>(null);
+  const detailTitle = useRef<HTMLHeadingElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const visible = filterCloudCatalog(catalog?.items ?? [], query, names);
 
-  const readCatalog = async (current: CloudAccess) => {
+  const readCatalog = async (current: CloudEnvironmentAccess) => {
     const controller = source.current;
-    if (!controller || controller.signal.aborted || catalogBusy.current) return;
-    catalogBusy.current = true; setLoading(true); setError(null); setNames({});
+    if (!controller || controller.signal.aborted || catalogBusy.current || !current.available) return;
+    const sequence = ++catalogSequence.current;
+    catalogBusy.current = true; setLoading(true); setError(null);
     try {
       const result = await loadCloudCatalog(current.identity, controller.signal);
-      if (controller.signal.aborted) return;
-      setCatalog(result);
+      if (controller.signal.aborted || sequence !== catalogSequence.current) return;
+      setCatalog(result); setNames({}); setLoading(false); catalogBusy.current = false;
       const repositoryIds = [...new Set(result.items.flatMap(item => item.repositories.map(repo => repo.id)))];
       await Promise.all(repositoryIds.map(async id => {
         const name = await loadRepositoryName(id, current.identity, controller.signal);
-        if (!controller.signal.aborted) setNames(value => ({ ...value, [id]: name }));
+        if (!controller.signal.aborted && sequence === catalogSequence.current) setNames(value => ({ ...value, [id]: name }));
       }));
-    } catch (cause) { if (!controller.signal.aborted) setError(serviceErrorMessage(cause)); }
-    finally { if (!controller.signal.aborted) { catalogBusy.current = false; setLoading(false); } }
+    } catch (cause) { if (!controller.signal.aborted && sequence === catalogSequence.current) setError(serviceErrorMessage(cause)); }
+    finally { if (!controller.signal.aborted && sequence === catalogSequence.current) { catalogBusy.current = false; setLoading(false); } }
   };
   useEffect(() => {
     let disposed = false;
-    const subscription = tauriListen("chatgpt-service:invalidated", () => {
-      if (disposed) return;
-      source.current?.abort(); detailSource.current?.abort();
-      setAccess(null); setCatalog(null); setNames({}); setSelectedId(null); setRevision(value => value + 1);
-    });
-    return () => { disposed = true; void subscription.then(unlisten => unlisten()); };
-  }, []);
-  useEffect(() => {
+    let unlisten: (() => void) | undefined;
     const controller = new AbortController(); source.current = controller;
-    catalogBusy.current = false; setAccess(null); setCatalog(null); setNames({}); setLoading(true); setError(null); setSelectedId(null);
+    catalogBusy.current = false; noResultRefresh.current = null;
+    setAccess(null); setCatalog(null); setNames({}); setLoading(true); setError(null); setSelectedId(null); setDetail(null); setMenu(null);
     void (async () => {
       try {
-        const current = await cloudServiceAccess(controller.signal); if (controller.signal.aborted) return;
+        const stop = await tauriListen("chatgpt-service:invalidated", () => {
+          if (disposed) return;
+          controller.abort(); detailSource.current?.abort(); setAccess(null); setCatalog(null); setNames({}); setSelectedId(null); setDetail(null); setMenu(null);
+          restoreFocus.current = null; setRevision(value => value + 1);
+        });
+        if (disposed) { stop(); return; }
+        unlisten = stop;
+        const current = await readCloudEnvironmentAccess(controller.signal);
+        if (controller.signal.aborted) return;
         setAccess(current);
-        if (current.gateEvidence === "personal-plan-branch") await readCatalog(current); else setLoading(false);
+        if (current.available) await readCatalog(current); else setLoading(false);
       } catch (cause) { if (!controller.signal.aborted) { setError(serviceErrorMessage(cause)); setLoading(false); } }
     })();
-    return () => { controller.abort(); detailSource.current?.abort(); };
+    return () => { disposed = true; controller.abort(); detailSource.current?.abort(); unlisten?.(); };
   }, [revision]);
   useEffect(() => { noResultRefresh.current = null; }, [query]);
   useEffect(() => {
     const search = query.trim();
-    if (!access || !catalog || loading || !search || visible.length || noResultRefresh.current === search) return;
+    if (!access?.available || !catalog || loading || error || selectedId || !search || visible.length || noResultRefresh.current === search) return;
     const timer = setTimeout(() => { noResultRefresh.current = search; void readCatalog(access); }, 300);
     return () => clearTimeout(timer);
-  }, [access, catalog, loading, query, visible.length]);
-  useEffect(() => {
-    if (!selectedId) return;
-    const dialog = dialogRef.current; dialog?.showModal();
-    return () => { dialog?.close(); detailTrigger.current?.focus(); };
+  }, [access, catalog, loading, error, selectedId, query, visible.length]);
+  useLayoutEffect(() => {
+    if (selectedId) detailTitle.current?.focus();
+    else if (restoreFocus.current) { rowTriggers.current.get(restoreFocus.current)?.focus(); restoreFocus.current = null; }
   }, [selectedId]);
+  useLayoutEffect(() => {
+    if (!menu) return;
+    menuRef.current?.querySelector<HTMLButtonElement>("[role=menuitem]:not(:disabled)")?.focus();
+    const close = (returnFocus: boolean) => { setMenu(null); if (returnFocus) menu.trigger.focus(); };
+    const pointer = (event: PointerEvent) => { if (!menuRef.current?.contains(event.target as Node) && !menu.trigger.contains(event.target as Node)) close(false); };
+    const key = (event: KeyboardEvent) => {
+      if (event.isComposing || event.keyCode === 229) return;
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(true); }
+      else if (event.key === "Tab") close(false);
+      else if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) { event.preventDefault(); menuRef.current?.querySelector<HTMLButtonElement>("[role=menuitem]:not(:disabled)")?.focus(); }
+    };
+    const reposition = () => close(false);
+    document.addEventListener("pointerdown", pointer); document.addEventListener("keydown", key);
+    window.addEventListener("resize", reposition); window.addEventListener("scroll", reposition, true);
+    return () => { document.removeEventListener("pointerdown", pointer); document.removeEventListener("keydown", key); window.removeEventListener("resize", reposition); window.removeEventListener("scroll", reposition, true); };
+  }, [menu]);
   const openDetail = async (id: string) => {
-    if (!access || source.current?.signal.aborted) return;
+    if (!access?.available || source.current?.signal.aborted) return;
     detailSource.current?.abort(); const controller = new AbortController(); detailSource.current = controller;
-    setSelectedId(id); setDetail(null); setDetailError(null);
+    setMenu(null); setSelectedId(id); setDetail(null); setDetailError(null);
     try {
       const value = parseCloudDetail(await readCloudService("detail", { id }, access.identity, controller.signal), id);
       if (controller.signal.aborted || source.current?.signal.aborted) return;
       setDetail(value);
-      const repositoryIds = [...new Set((value.draft ?? value).repositories.map(repo => repo.id))];
-      await Promise.all(repositoryIds.filter(repositoryId => !names[repositoryId]).map(async repositoryId => {
-        const name = await loadRepositoryName(repositoryId, access.identity, controller.signal);
-        if (!controller.signal.aborted && !source.current?.signal.aborted) setNames(current => ({ ...current, [repositoryId]: name }));
+      const ids = [...new Set((value.draft ?? value).repositories.map(repo => repo.id))];
+      await Promise.all(ids.filter(id => !names[id]).map(async id => {
+        const name = await loadRepositoryName(id, access.identity, controller.signal);
+        if (!controller.signal.aborted && !source.current?.signal.aborted) setNames(current => ({ ...current, [id]: name }));
       }));
     } catch (cause) { if (!controller.signal.aborted) setDetailError(serviceErrorMessage(cause)); }
   };
-  const closeDetail = () => { detailSource.current?.abort(); setSelectedId(null); };
-  const repositoryLabel = (id: string) => names[id]?.name ?? (names[id]?.error === "未知仓库" ? "未知仓库" : names[id]?.error ? "仓库名称读取失败" : "仓库名称尚未解析");
+  const closeDetail = () => { detailSource.current?.abort(); restoreFocus.current = selectedId; setSelectedId(null); setDetail(null); setDetailError(null); };
+  const repositoryLabel = (id: string) => names[id]?.name ?? "未知代码仓库";
+  const repository = (id: string) => names[id] ? <span title={repositoryLabel(id)}>{repositoryLabel(id)}</span>
+    : <span className="cloud-envs-repo-loading" role="status" aria-label="正在加载代码仓库…"><span /></span>;
+  const selected = catalog?.items.find(item => item.id === selectedId);
   const effective = detail?.draft ?? detail;
-  const hasScopeError = Boolean(catalog && Object.keys(catalog.errors).length);
-  return <div className="cloud-envs-container">
-    <div className="cloud-envs-header"><h2>云端环境</h2></div>
-    {loading && <p role="status">正在读取云端环境…</p>}
-    {error && <section><p role="alert">{error}</p><button type="button" onClick={() => setRevision(value => value + 1)}>重试</button></section>}
-    {access?.gateEvidence === "incomplete" && <p role="status">官方云访问资格尚未完成核对。</p>}
-    {access && <>
-      <div className="cloud-envs-filter-bar"><div className="search-box"><input aria-label="搜索云端环境" maxLength={128} placeholder="搜索环境或仓库…" value={query} onChange={event => setQuery(event.target.value.slice(0, 128))} /></div>
-        <button type="button" disabled={loading} onClick={() => void readCatalog(access)}>{catalog ? "刷新" : "读取云环境"}</button></div>
-      {catalog && Object.entries(catalog.errors).map(([scope, message]) => <p role="alert" key={scope}>{scope === "user" ? "个人" : "工作区"}目录读取未完成：{message}</p>)}
-      {hasScopeError && <button type="button" disabled={loading} onClick={() => void readCatalog(access)}>重试目录</button>}
-      {catalog && !loading && !error && !hasScopeError && !visible.length && <p role="status">没有匹配的环境配置。</p>}
-      {catalog && <table className="cloud-envs-table"><thead><tr><th>环境</th><th>共享</th></tr></thead><tbody>{visible.map(item => <tr key={item.id}>
-        <td><button type="button" className="link-btn" onClick={event => { detailTrigger.current = event.currentTarget; void openDetail(item.id); }}>{item.name}</button>
-          {item.repositories.map(repo => <div className="cloud-envs-repository" key={repo.id}>{repositoryLabel(repo.id)}</div>)}</td><td>{item.shareSettings === "private" ? "私密" : "工作区"}</td>
-      </tr>)}</tbody></table>}
-    </>}
-    {selectedId && <dialog ref={dialogRef} aria-label="云端环境详情" onCancel={event => { event.preventDefault(); closeDetail(); }}>
-      <button type="button" onClick={closeDetail}>关闭</button>
-      {detailError ? <><p role="alert">{detailError}</p><button type="button" onClick={() => void openDetail(selectedId)}>重试详情</button></> : !detail || !effective ? <p role="status">正在读取详情…</p> : <>
-        <h2>{detail.name}</h2><dl className="cloud-envs-properties"><div><dt>共享</dt><dd>{detail.shareSettings === "private" ? "私密" : "工作区"}</dd></div><div><dt>配置状态</dt><dd>{detail.status}</dd></div></dl>
-        {detail.draft && <p>正在显示草稿配置（修订 {detail.draft.revision}）。</p>}
-        <section><h3>仓库</h3>{!effective.repositories.length && <p>暂无仓库。</p>}{effective.repositories.map(repo => <p key={repo.id}>{repositoryLabel(repo.id)} · {repo.ref}</p>)}</section>
-        <section><h3>网络</h3><p>{effective.network.type === "disabled" ? "禁用" : effective.network.type === "unrestricted" ? "不受限" : "受限"}</p>
-          {effective.network.packageManagers && <p>允许软件包管理器</p>}{effective.network.hosts.map(host => <p key={host}>{host}</p>)}</section>
-        {effective.cwd != null && <p>工作目录：{effective.cwd}</p>}{effective.installScript != null && <section><h3>安装脚本</h3><pre>{effective.installScript}</pre></section>}
-        {effective.startSkill != null && <section><h3>启动技能</h3><pre>{effective.startSkill}</pre></section>}
-        <section><h3>密钥</h3>{!effective.secrets.length && <p>暂无密钥。</p>}{effective.secrets.map((secret, index) => <div key={index}><p>{secret.name} · {secret.source} · {secret.target}</p>{secret.domains.map(domain => <p key={domain}>{domain}</p>)}{secret.error && <p role="alert">{secret.error}</p>}</div>)}</section>
-        <details className="cloud-envs-technical"><summary>技术详情</summary><p>版本：{detail.versionId}</p>{effective.repositories.map(repo => <p key={repo.id}><code>{repo.id}</code>{repo.depth != null && <span> 深度 {repo.depth}</span>}</p>)}</details>
+  return <div className={`cloud-envs-page${embedded ? " cloud-envs-embedded" : ""}`}>
+    <div className="cloud-envs-content">
+      {selectedId ? <>
+        <nav className="cloud-envs-breadcrumb" aria-label="环境导航"><button type="button" onClick={closeDetail}>环境</button><ChevronRight size={14} /><span>{detail?.name ?? selected?.name}</span></nav>
+        <h2 ref={detailTitle} tabIndex={-1} className="cloud-envs-detail-title">{detail?.name ?? selected?.name}</h2>
+        {!detail || !effective ? <div className="cloud-envs-state" role={detailError ? "alert" : "status"}>{detailError ? <><span>未能加载环境</span><p>{detailError}</p><button type="button" onClick={() => void openDetail(selectedId)}>重试</button></> : "正在载入环境…"}<button type="button" onClick={closeDetail}>取消</button></div> : <>
+          <form aria-label="环境设置" className="cloud-envs-config" onSubmit={event => event.preventDefault()}>
+            {detail.description && <p className="cloud-envs-description">{detail.description}</p>}
+            <section><h3>共享</h3><p>{cloudSharingLabel(detail)}</p></section>
+            <section><h3>代码仓库</h3>{effective.repositories.map(repo => <div className="cloud-envs-config-repo" key={repo.id}>{repository(repo.id)}<span>{repo.ref}</span></div>)}</section>
+            <section><h3>网络</h3><p>{effective.network.type === "disabled" ? "禁用" : effective.network.type === "unrestricted" ? "不受限" : "受限"}</p>{effective.network.packageManagers && <p>允许软件包管理器</p>}{effective.network.hosts.map(host => <p key={host}>{host}</p>)}</section>
+            {effective.cwd != null && <section><h3>工作目录</h3><pre>{effective.cwd}</pre></section>}
+            {effective.installScript != null && <section><h3>安装脚本</h3><pre>{effective.installScript}</pre></section>}
+            {effective.startSkill != null && <section><h3>启动技能</h3><pre>{effective.startSkill}</pre></section>}
+            <section><h3>密钥</h3>{!effective.secrets.length && <p>暂无密钥。</p>}{effective.secrets.map((secret, index) => <div key={index}><p>{secret.name} · {secret.source} · {secret.target}</p>{secret.domains.map(domain => <p key={domain}>{domain}</p>)}{secret.error && <p role="alert">{secret.error}</p>}</div>)}</section>
+          </form>
+          <footer className="cloud-envs-footer"><button type="button" onClick={closeDetail}>取消</button><button type="button" disabled title="环境配置保存尚未接入">保存更改</button></footer>
+        </>}
+      </> : <>
+        <header className="cloud-envs-page-header"><h2>Codex 云端</h2><p>设置云端环境，为 Codex 在你的项目中开展工作提供所需的代码仓库、工具和设置</p></header>
+        <div className="cloud-envs-controls"><div className="cloud-envs-tabs" role="tablist" aria-label="Codex 云端设置"><button type="button" role="tab" aria-selected="true">环境</button><button type="button" role="tab" aria-selected="false" disabled title="个人保险库尚未接入">个人保险库</button></div>
+          <div className="cloud-envs-toolbar"><label className="cloud-envs-search"><Search size={16} aria-hidden="true" /><input aria-label="搜索环境" maxLength={128} placeholder="搜索" value={query} onChange={event => setQuery(event.target.value.slice(0, 128))} /></label><button type="button" className="cloud-envs-create" disabled title="云环境设置聊天尚未接入"><Plus size={16} aria-hidden="true" />创建环境</button></div>
+        </div>
+        {loading && <p className="cloud-envs-state" role="status">正在加载已保存的环境…</p>}
+        {error && <section className="cloud-envs-state" role="alert"><span>无法加载已保存的环境</span><p>{error}</p><button type="button" onClick={() => setRevision(value => value + 1)}>重试</button></section>}
+        {access && !access.available && !loading && <p className="cloud-envs-state" role="status">此工作空间无法设置云环境</p>}
+        {access?.available && catalog && !loading && !error && <section className="cloud-envs-list" aria-label="已保存的环境">
+          {visible.length > 0 && <div className="cloud-envs-columns"><span>环境</span><span>共享</span><span /></div>}
+          {visible.map(item => <div className="cloud-envs-row" key={item.id}><div className="cloud-envs-row-label"><div className="cloud-envs-row-info"><div className="cloud-envs-name"><span title={item.name}>{item.name}</span>{item.versionRevision === 1 && <span className="cloud-envs-unpublished" title="发布后即可使用">未发布</span>}</div>{item.description && <span className="cloud-envs-description" title={item.description}>{item.description}</span>}
+            <div className="cloud-envs-repositories">{item.repositories[0] && repository(item.repositories[0].id)}{item.repositories.length > 1 && <span className="cloud-envs-more-repos" tabIndex={0} title={item.repositories.slice(1).map(repo => repositoryLabel(repo.id)).join("\n")}>+{item.repositories.length - 1} 个仓库</span>}</div></div><span className="cloud-envs-sharing">{cloudSharingLabel(item)}</span></div>
+            <button type="button" className="cloud-envs-actions" aria-label={`针对 ${item.name} 的操作`} aria-haspopup="menu" aria-expanded={menu?.item.id === item.id} ref={node => { if (node) rowTriggers.current.set(item.id, node); else rowTriggers.current.delete(item.id); }} onClick={event => { const trigger = event.currentTarget; const rect = trigger.getBoundingClientRect(); setMenu(menu?.item.id === item.id ? null : { item, trigger, left: Math.max(8, Math.min(rect.right - 220, window.innerWidth - 228)), top: rect.bottom + 128 < window.innerHeight ? rect.bottom + 4 : Math.max(8, rect.top - 124) }); }}><Ellipsis size={16} /></button>
+          </div>)}
+          {!visible.length && <p className="cloud-envs-state" role="status">{query.trim() ? "没有匹配的环境" : "暂无已保存的环境"}</p>}
+        </section>}
       </>}
-    </dialog>}
+    </div>
+    {menu && createPortal(<div ref={menuRef} className="cloud-envs-menu" role="menu" aria-label={`针对 ${menu.item.name} 的操作`} style={{ left: menu.left, top: menu.top }}><button type="button" role="menuitem" disabled title="环境编辑聊天尚未接入">{menu.item.versionRevision === 1 ? "继续设置" : "编辑"}</button><button type="button" role="menuitem" onClick={() => void openDetail(menu.item.id)}>查看</button><button type="button" role="menuitem" disabled title="环境删除尚未接入">删除环境</button></div>, document.body)}
   </div>;
 };

@@ -2171,3 +2171,17 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 - 完整非Fast328段/32协议探针、72前端和原生构建曾通过；末次从官方完整safeGet调用链发现详情bare资源夹具误包装，真实回归先红101再修一行授权读取，13GPT专项绿。最终差异、共享服务模块及重建结果见[20E验收记录](antigravity/acceptance/20E-gpts.md)，不把修前562/328冒称修后重跑。
 - 真实宽窄浏览器、原生组件、头像解码/撤销、键盘和焦点证据已留存；全软件1:1、官方配对像素、真实账号HTTP、物理IME和用户验收仍未完成。下一单元[22E云环境](antigravity/specs/22E-cloud-environments.md)取证完成，保留现有真实ASB能力并纠正同页布局；21为Sites，不混用页面编号。
 - 20E最终差异重验：72前端、207共享服务及原生构建退出0，664输入稳定。EXE SHA256 67e2a3f47b079ed655c20759e9d2547b7be2f044ecb2325896b7c3c52b008545；隔离生产EXE的GPT/图像未登录入口、重试、退出与只读0会话均通过。preview.7仅有草拟发布说明，尚未发布。
+
+## 2026-11-07 — 22E云环境资格、列表和同页配置
+
+- 先fresh固定官方55资源/74锚点/75中文及schema，再补独立cloudAccess与固定workspace settings GET、真实description/revision/owner和四共享状态。旧incomplete手动读取绕过已撤；未知权限不能因HTTP成功放行。
+- 双scope分页按官方每轮共同成功推进；任一失败不返回部分目录。草稿仅覆盖配置字段，root metadata与secret值边界保留。首轮数据红2/6、屏障红9/1，修后11组；准入7组、Rust专项1项及真实组件11组通过。
+- 设置行/菜单查看/同页配置取代表格dialog，仓库骨架/首项+N、300ms稳定无匹配刷新和目录请求序列隔离实际红绿；取消回原行焦点、切号旧详情不回写。设置新增实际Codex云端入口，复用原设置壳、读桥与仓库解析，无新依赖。保留创建/草稿编辑/保存/删除/保险库缺口，未接执行器的控件禁用。
+- 宽窄真实浏览器无横向溢出，768内容/512容器断点留证；当前全库563和75累计前端通过，完整标准/原生构建进行中。原生组件窗口被最小化且工具检测用户操作，停止输入并恢复私有测试宿主，不把该次当组件通过；最终结果见[22E验收记录](antigravity/acceptance/22E-cloud-environments.md)。
+
+## 2026-11-07 — preview.7实际发布与下载核验
+
+- tag v0.2.0-preview.7精确指向已推送6ecee66160df74b0a89d89ccf6b4d8ae347d2436，包含19E/20E，不含本轮22E。run42253579875/job128014726569最终success，72前端、562全库Rust零失败/忽略/过滤、SDK、原生release/MSI/NSIS与发布均成功。
+- 四个实际下载文件核API size/digest、SHA256SUMS、ZIP成员及五许可精确tag blob，退出0；便携EXE SHA256 426a080b44a410540fd994c647286f9b432aa809184f25cdf75a5f93b92590b8。未运行下载EXE。证据`.ref/releases/v0.2.0-preview.7/verification.json`；[发布页](https://github.com/lusipad/codex-desktop-native/releases/tag/v0.2.0-preview.7)。不把发布当全软件1:1或用户验收。
+- 22E最终668输入稳定：563全库Rust零失败/忽略/过滤，75前端，完整非Fast330段/32探针和当前原生debug构建全部退出0。生产EXE设置快捷键→Unicode搜索→Codex云端入口、Explore独立入口及两处真实未登录重试、退出和0会话通过；SHA256 884effe0eb79e4827b2d0f2c1b6d5c820019bbe425d3c2292de2132f75456d63。正常原生组件中止记录及HTTP/IME/像素/用户验收缺口保留，完整写链继续待实现。
+- 21E Sites开发前fresh108资源、1170定位、350中文、13真实export、hash/UTF16往返0错误已完成，只新增[详细规格](antigravity/specs/21E-sites.md)，未修改Sites产品。后续按完整权限、目录/详情/创建编辑发布、设置写链和子页推进，不因本轮只读合同收窄原目标。

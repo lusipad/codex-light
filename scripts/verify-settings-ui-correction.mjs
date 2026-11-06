@@ -12,7 +12,7 @@ const nodes = node => node && typeof node === 'object' ? [node, ...(node.childre
 const content = node => typeof node === 'string' ? node : node && typeof node === 'object' ? (node.children ?? []).map(content).join('') : '';
 const slugs = ['general-settings', 'notifications', 'import', 'profile', 'appearance', 'account', 'archived-chats', 'voice', 'storage',
   'agent', 'personalization', 'pets', 'keyboard-shortcuts', 'usage', 'plugins-settings', 'computer-use', 'appshots', 'browser-use',
-  'hooks-settings', 'connections', 'cloud-settings', 'code-review', 'git-settings', 'local-environments', 'worktrees'];
+  'hooks-settings', 'connections', 'cloud-settings', 'codex-cloud', 'code-review', 'git-settings', 'local-environments', 'worktrees'];
 function mount(section) {
   const hooks = [], effects = [], calls = [], children = new Map(); let cursor = 0, tree;
   const react = { Fragment: 'fragment', createElement: (type, props, ...items) => ({ type, props: props ?? {}, children: items.flat(Infinity) }),
@@ -93,13 +93,16 @@ test('Navigation uses current official Chinese and preserves all routes plus ali
   const page = mount('appearance');
   const groupTitles = page.all().filter(n => n.props.className === 'settings-nav-group-title').map(content);
   assert.deepEqual(groupTitles, ['个人', '集成', '编码']);
-  for (const label of ['常规', '通知', '导入', '外观', '个性化', '虚拟宠物', '语音', 'Git', '环境', '连接', '云端偏好设置']) {
+  for (const label of ['常规', '通知', '导入', '外观', '个性化', '虚拟宠物', '语音', 'Git', '环境', '连接', '云端偏好设置', 'Codex 云端']) {
     assert.ok(page.by(n => n.type === 'button' && content(n) === label), label);
   }
   assert.equal(page.all().filter(n => /settings-nav-item/.test(n.props.className ?? '')).length, slugs.length);
   const search = page.by(n => n.type === 'input'); search.props.onChange({ target: { value: 'git' } }); page.render();
   assert.ok(page.all().filter(n => /settings-nav-item/.test(n.props.className ?? '')).length < slugs.length);
   assert.ok(mount('providers-models').child('AgentSettings')); assert.ok(mount('experimental').child('GeneralOpenPreferences'));
+  const cloud = mount('codex-cloud');
+  assert.equal(cloud.child('CloudEnvironmentsView').props.embedded, true);
+  assert.equal(cloud.all().filter(n => n.props.className === 'panel-page-header').length, 0, 'cloud workface owns its list/detail heading');
 });
 test('Dedicated state, service scopes and navigation guards survive wrapper correction', () => {
   const page = mount('worktrees'); assert.ok(page.child('WorktreeSettings')); assert.doesNotMatch(content(page.render()), /尚未接入实际执行器/);
