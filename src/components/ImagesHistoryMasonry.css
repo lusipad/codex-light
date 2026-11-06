@@ -1,0 +1,10 @@
+.images-masonry-container { container-type:inline-size; }
+.images-masonry { --images-masonry-columns:1; position:relative; display:grid; grid-template-columns:repeat(var(--images-masonry-columns),minmax(0,1fr)); align-items:start; gap:12px; }
+.images-masonry > [data-masonry-item] { min-width:0; }
+@media(min-width:640px) { .images-masonry { gap:16px; } }
+/* Official 24/36/48/64/80rem container tokens at its 16px root; this app uses 13px. */
+@container(min-width:384px) { .images-masonry { --images-masonry-columns:2; } }
+@container(min-width:576px) { .images-masonry { --images-masonry-columns:3; } }
+@container(min-width:768px) { .images-masonry { --images-masonry-columns:4; } }
+@container(min-width:1024px) { .images-masonry { --images-masonry-columns:5; } }
+@container(min-width:1280px) { .images-masonry { --images-masonry-columns:6; } }

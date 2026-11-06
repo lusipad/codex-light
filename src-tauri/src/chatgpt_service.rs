@@ -18,6 +18,8 @@ mod archive_unarchive;
 pub use archive_unarchive::{ArchiveUnarchiveRequest, ArchiveUnarchiveResponse};
 mod archive_delete;
 pub use archive_delete::{ArchiveDeleteRequest, ArchiveDeleteResponse};
+mod images_assets;
+pub use images_assets::ImagesAssetRef;
 
 const MAX_RESPONSE: u64 = 8 * 1024 * 1024;
 const MAX_LIBRARY_FILE: u64 = 40 * 1024 * 1024;
@@ -51,6 +53,8 @@ pub enum ServiceOperation {
     ImagesInit,
     ImagesStyles,
     ImagesRecent,
+    ImagesWorkspaceSettings,
+    ImagesAsset,
     GptsDiscovery,
     GptsCategory,
     GptsSearch,
@@ -404,6 +408,8 @@ pub struct ServiceResponse {
     pub body: Value,
     // Only explicitly selected, non-credential headers are exposed.
     pub headers: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assets: Option<Vec<ImagesAssetRef>>,
 }
 
 // Intentionally neither Debug nor Serialize.
@@ -435,6 +441,8 @@ pub struct ChatgptService {
     cancelled_before_start: Mutex<VecDeque<String>>,
     shares: Mutex<HashMap<String, PreparedShare>>,
     pinned_reviews: Mutex<VecDeque<(String, PinnedReview)>>,
+    images_assets: Mutex<images_assets::ImagesRegistry>,
+    images_snapshot: AtomicU64,
 }
 
 struct Registration<'a> {
@@ -929,6 +937,7 @@ impl ChatgptService {
             shares.clear();
         }
         if let Ok(mut reviews) = self.pinned_reviews.lock() { reviews.clear(); }
+        if let Ok(mut assets) = self.images_assets.lock() { *assets = images_assets::ImagesRegistry::default(); }
         // Pending credential-bearing futures are dropped by cancellation. Cached
         // credentials are dropped synchronously whenever the session is unlocked.
         if let Ok(mut session) = self.session.try_lock() {
@@ -1440,12 +1449,18 @@ impl ChatgptService {
         Fut: Future<Output = Result<Value, String>>,
         T: Transport,
     {
+        if matches!(request.operation, ServiceOperation::ImagesAsset) {
+            return self.images_asset_with(request, call, transport).await;
+        }
         if matches!(request.operation, ServiceOperation::LibraryFile | ServiceOperation::LibraryFileContent) {
             return self.library_file_with(request, call, transport).await;
         }
         // Resolve before credential acquisition: unsupported parameters cannot invoke auth.
         let route = resolve_read_route(&request.operation, &request.params, &request.expected_identity)?;
         let archive_tasks = matches!(request.operation, ServiceOperation::ArchiveCloudTasks);
+        let images_read = matches!(request.operation, ServiceOperation::ImagesInit | ServiceOperation::ImagesStyles | ServiceOperation::ImagesRecent | ServiceOperation::ImagesWorkspaceSettings);
+        // Order snapshots before the session lock, not when a possibly late response arrives.
+        let images_snapshot = self.images_snapshot.fetch_add(1, Ordering::SeqCst) + 1;
         let registration = self.register(&request.request_id)?;
         let generation = request.expected_identity.generation;
         if self.generation() != generation {
@@ -1480,7 +1495,7 @@ impl ChatgptService {
                         http_request.headers.insert("X-Codex-Expected-User-Id".into(), request.expected_identity.user_id.clone());
                         http_request.headers.insert("X-Codex-Expected-Account-Id".into(), request.expected_identity.account_id.clone());
                     }
-                    if archive_tasks || profile_read || review_connections || matches!(request.operation, ServiceOperation::StorageUsage | ServiceOperation::LibraryNodes | ServiceOperation::LibraryDirectoryPath | ServiceOperation::LibraryFavorites | ServiceOperation::LibraryImages | ServiceOperation::LibrarySuggested | ServiceOperation::LibrarySettings | ServiceOperation::LibraryImage | ServiceOperation::ShareAccounts) {
+                    if images_read || archive_tasks || profile_read || review_connections || matches!(request.operation, ServiceOperation::StorageUsage | ServiceOperation::LibraryNodes | ServiceOperation::LibraryDirectoryPath | ServiceOperation::LibraryFavorites | ServiceOperation::LibraryImages | ServiceOperation::LibrarySuggested | ServiceOperation::LibrarySettings | ServiceOperation::LibraryImage | ServiceOperation::ShareAccounts) {
                         share_network_allowed(&call, &http_request.url).await?;
                         self.check_share_current(&request.expected_identity, &registration)?;
                     }
@@ -1491,11 +1506,16 @@ impl ChatgptService {
                         share_network_allowed(&call, &http_request.url).await?;
                         self.check_share_current(&request.expected_identity, &registration)?;
                     }
+                    let images_destination = images_read.then(|| http_request.url.clone());
                     let response = send_bounded(transport, http_request, registration.cancelled.clone(), Duration::from_secs(if usage { 10 } else if review_connections { 15 } else { 50 })).await?;
                     if self.generation() != generation {
                         return Err(failure("account_changed", "Authenticated identity changed"));
                     }
-                    if archive_tasks || matches!(request.operation, ServiceOperation::LibraryDirectoryPath | ServiceOperation::LibrarySuggested) { self.check_share_current(&request.expected_identity, &registration)?; }
+                    if let Some(destination) = images_destination {
+                        self.check_share_current(&request.expected_identity, &registration)?;
+                        share_network_allowed(&call, &destination).await?;
+                    }
+                    if images_read || archive_tasks || matches!(request.operation, ServiceOperation::LibraryDirectoryPath | ServiceOperation::LibrarySuggested) { self.check_share_current(&request.expected_identity, &registration)?; }
                     apply_integrity(&mut session.integrity, sent_integrity.as_deref(), response.headers.get("x-oai-is-update"));
                     if archive_tasks && account_instructions_ip_denied(&response) {
                         // A workspace IP refusal is not NDn's unavailable/unsupported source.
@@ -1508,9 +1528,13 @@ impl ChatgptService {
                     if ((usage || archive_tasks) && matches!(response.status, 401 | 403 | 404)) ||
                         (matches!(request.operation, ServiceOperation::ProfileIdentity | ServiceOperation::ProfilePage) && matches!(response.status, 403 | 404)) {
                         return Ok(ServiceResponse { request_id:request.request_id.clone(), identity:request.expected_identity.clone(),
-                            status:response.status, body:Value::Null, headers:BTreeMap::new() });
+                            status:response.status, body:Value::Null, headers:BTreeMap::new(), assets:None });
                     }
                     let mut decoded = decode_response(response, request.request_id.clone(), request.expected_identity.clone())?;
+                    if matches!(request.operation, ServiceOperation::ImagesInit | ServiceOperation::ImagesStyles | ServiceOperation::ImagesRecent) {
+                        decoded.assets = Some(self.register_images_assets(&request, &decoded.body,
+                            &session.credentials.as_ref().unwrap().origin, images_snapshot)?);
+                    }
                     if matches!(request.operation, ServiceOperation::LibraryImage) {
                         if decoded.body.get("status").and_then(Value::as_str).is_some_and(|s|matches!(s,"retry"|"processing"|"pending")) {
                             return Err(failure("processing","Library image download is not ready"));
@@ -1561,7 +1585,7 @@ impl ChatgptService {
             }
             return Err(failure("account_changed", "Authenticated identity changed"));
         }
-        if archive_tasks || matches!(request.operation, ServiceOperation::LibraryDirectoryPath | ServiceOperation::LibrarySuggested) { self.check_share_current(&request.expected_identity, &registration)?; }
+        if images_read || archive_tasks || matches!(request.operation, ServiceOperation::LibraryDirectoryPath | ServiceOperation::LibrarySuggested) { self.check_share_current(&request.expected_identity, &registration)?; }
         result
     }
 
@@ -1639,7 +1663,7 @@ impl ChatgptService {
         };
         self.check_share_current(&request.expected_identity,&registration)?;
         result.map(|body|ServiceResponse{request_id:request.request_id,identity:request.expected_identity,status:200,
-            body:if content {body} else {json!({"requestedFileId":id,"file":body})},headers:BTreeMap::new()})
+            body:if content {body} else {json!({"requestedFileId":id,"file":body})},headers:BTreeMap::new(),assets:None})
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2325,6 +2349,12 @@ fn encode_segment(segment: &str) -> ServiceResult<String> {
 }
 
 fn resolve_read_route(operation: &ServiceOperation, params: &Value, identity: &ServiceIdentity) -> ServiceResult<String> {
+    if matches!(operation, ServiceOperation::ImagesWorkspaceSettings) {
+        if !params.as_object().is_some_and(|params| params.is_empty()) {
+            return Err(failure("invalid_request", "Images workspace settings does not accept parameters"));
+        }
+        return Ok(format!("/backend-api/accounts/{}/settings", encode_segment(&identity.account_id)?));
+    }
     if !matches!(operation, ServiceOperation::ShareAccounts | ServiceOperation::ShareUsers | ServiceOperation::ShareGroups) {
         return resolve_route(operation, params);
     }
@@ -2407,6 +2437,7 @@ fn resolve_route(operation: &ServiceOperation, params: &Value) -> ServiceResult<
         ServiceOperation::ProfileIdentity => ("/backend-api/profiles/me".into(), &[]),
         ServiceOperation::ProfilePage => ("/backend-api/profiles/me/page".into(), &[]),
         ServiceOperation::ImagesInit => ("/backend-api/images/init".into(), &[]),
+        ServiceOperation::ImagesAsset => return Err(failure("invalid_request", "Registered image reference required")),
         ServiceOperation::ImagesStyles => (
             "/backend-api/images/styles".into(),
             &["include_image_suggestions"],
@@ -2449,7 +2480,7 @@ fn resolve_route(operation: &ServiceOperation, params: &Value) -> ServiceResult<
             )
         }
         ServiceOperation::SitesAccess => ("/backend-api/websites/access".into(), &[]),
-        ServiceOperation::ShareAccounts | ServiceOperation::ShareUsers | ServiceOperation::ShareGroups => {
+        ServiceOperation::ImagesWorkspaceSettings | ServiceOperation::ShareAccounts | ServiceOperation::ShareUsers | ServiceOperation::ShareGroups => {
             return Err(failure("invalid_request", "Identity-bound share route required"));
         }
         ServiceOperation::GithubRepository => {
@@ -3477,6 +3508,7 @@ fn decode_response(
         status: response.status,
         body,
         headers,
+        assets: None,
     })
 }
 
@@ -4427,14 +4459,18 @@ mod tests {
         let service = ChatgptService::default();
         let refreshes = AtomicUsize::new(0);
         let calls = AtomicUsize::new(0);
+        let policies = AtomicUsize::new(0);
         let transport = FakeTransport::new(&[401, 200]);
         let rpc = |method, params: Value| {
-            calls.fetch_add(1, Ordering::SeqCst);
+            if method == "configRequirements/read" { policies.fetch_add(1, Ordering::SeqCst); }
+            else { calls.fetch_add(1, Ordering::SeqCst); }
             if params["refreshToken"] == true {
                 refreshes.fetch_add(1, Ordering::SeqCst);
             }
             async move {
-                Ok(if method == "getAuthStatus" {
+                Ok(if method == "configRequirements/read" {
+                    json!({"requirements":null})
+                } else if method == "getAuthStatus" {
                     auth(&fixture_token())
                 } else {
                     account()
@@ -4447,6 +4483,7 @@ mod tests {
             .unwrap();
         assert_eq!(refreshes.load(Ordering::SeqCst), 1);
         assert_eq!(calls.load(Ordering::SeqCst), 4);
+        assert_eq!(policies.load(Ordering::SeqCst), 4);
         assert_eq!(transport.requests.lock().unwrap().len(), 2);
         let requests = transport.requests.lock().unwrap();
         assert_eq!(requests[0].headers["ChatGPT-Account-Id"], "account-fixture");
@@ -4475,7 +4512,9 @@ mod tests {
                     refreshes.fetch_add(1, Ordering::SeqCst);
                 }
                 async move {
-                    Ok(if method == "getAuthStatus" {
+                    Ok(if method == "configRequirements/read" {
+                        json!({"requirements":null})
+                    } else if method == "getAuthStatus" {
                         auth(&fixture_token())
                     } else {
                         account()
@@ -4537,7 +4576,9 @@ mod tests {
             let mut transport = FakeTransport::new(&[200]);
             transport.delay_ms = 2000;
             let rpc = |method, _: Value| async move {
-                Ok(if method == "getAuthStatus" {
+                Ok(if method == "configRequirements/read" {
+                    json!({"requirements":null})
+                } else if method == "getAuthStatus" {
                     auth(&fixture_token())
                 } else {
                     account()
@@ -6197,6 +6238,344 @@ mod tests {
                 assert_eq!(tokio::join!(read,change).0.err().unwrap().code,if invalidate {"account_changed"} else {"cancelled"});
                 assert!(transport.dropped.load(Ordering::SeqCst));
                 assert!(service.active.lock().unwrap().is_empty());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn images_assets_roles_are_unambiguous_in_real_metadata_envelope() {
+        let service=ChatgptService::default();
+        let transport=FakeTransport::new(&[200]);
+        transport.responses.lock().unwrap()[0].body=serde_json::to_vec(&json!({
+            "styles":[{"id":"same","image_url":"https://images.example.test/style"}],
+            "image_suggestions":[{"id":"same","image_url":"https://images.example.test/suggestion"}]
+        })).unwrap();
+        let mut req=request("images-roles");req.operation=ServiceOperation::ImagesStyles;
+        let response=service.read_with(req,share_rpc,&transport).await.unwrap();
+        let envelope=serde_json::to_value(response).unwrap();
+        let assets=envelope["assets"].as_array().expect("real Images metadata must expose opaque assets");
+        assert_eq!(assets.len(),2);
+        assert_eq!(assets[0]["role"],"styles");assert_eq!(assets[1]["role"],"image_suggestions");
+        assert_ne!(assets[0]["assetKey"],assets[1]["assetKey"]);
+        for asset in assets {
+            let download=FakeTransport::new(&[200]);
+            download.responses.lock().unwrap()[0].body=b"\x89PNG\r\n\x1a\nfixture".to_vec();
+            let mut req=request(&format!("asset-{}",asset["role"].as_str().unwrap()));
+            req.operation=serde_json::from_value(json!("images_asset")).expect("registered image operation");
+            req.params=json!({"asset_key":asset["assetKey"],"source_request_id":asset["sourceRequestId"]});
+            assert!(service.read_with(req,share_rpc,&download).await.unwrap().body["dataUrl"].as_str().unwrap().starts_with("data:image/png;base64,"));
+            let requests=download.requests.lock().unwrap();
+            assert!(requests[0].headers.is_empty());
+            assert!(requests[0].url.ends_with(if asset["role"]=="styles" {"/style"} else {"/suggestion"}));
+        }
+    }
+
+    #[tokio::test]
+    async fn images_assets_inflight_download_cannot_survive_a_new_denial() {
+        let service=ChatgptService::default();
+        let metadata=FakeTransport::new(&[200]);
+        metadata.responses.lock().unwrap()[0].body=serde_json::to_vec(&json!({"items":[{"id":"image-a","url":"https://images.example.test/a"}]})).unwrap();
+        let mut req=request("images-allowed");req.operation=ServiceOperation::ImagesRecent;
+        let envelope=serde_json::to_value(service.read_with(req,share_rpc,&metadata).await.unwrap()).unwrap();
+        let asset=&envelope["assets"][0];assert!(asset.is_object(),"metadata must register real image");
+        let mut req=request("images-downloading");req.operation=serde_json::from_value(json!("images_asset")).unwrap();
+        req.params=json!({"asset_key":asset["assetKey"],"source_request_id":asset["sourceRequestId"]});
+        struct DelayedImage {entered:AtomicBool,release:tokio::sync::Notify}
+        impl Transport for DelayedImage {
+            fn send(&self,_:HttpRequest,_:Arc<AtomicBool>)->TransportFuture<'_> {Box::pin(async move {
+                self.entered.store(true,Ordering::SeqCst);self.release.notified().await;
+                Ok(HttpResponse {status:200,headers:BTreeMap::new(),body:b"\x89PNG\r\n\x1a\nfixture".to_vec()})
+            })}
+        }
+        let download=DelayedImage {entered:AtomicBool::new(false),release:tokio::sync::Notify::new()};
+        let read=service.read_with(req,share_rpc,&download);
+        let deny=async {
+            while !download.entered.load(Ordering::SeqCst) {tokio::task::yield_now().await;}
+            let denied=FakeTransport::new(&[200]);denied.responses.lock().unwrap()[0].body=serde_json::to_vec(&json!({"items":[{"id":"image-a","output_blocked":true}]})).unwrap();
+            let mut req=request("images-denied");req.operation=ServiceOperation::ImagesRecent;
+            service.read_with(req,share_rpc,&denied).await.unwrap();
+            download.release.notify_one();
+        };
+        let (result,())=tokio::join!(read,deny);
+        assert_eq!(result.err().expect("denied bytes must never cross IPC").code,"asset_unavailable");
+    }
+
+    async fn images_asset_fixture(service: &ChatgptService, id: &str, operation: ServiceOperation, body: Value) -> Value {
+        let transport=FakeTransport::new(&[200]);transport.responses.lock().unwrap()[0].body=serde_json::to_vec(&body).unwrap();
+        let mut req=request(id);req.operation=operation;
+        serde_json::to_value(service.read_with(req,share_rpc,&transport).await.unwrap()).unwrap()
+    }
+
+    fn images_asset_request(id: &str, asset: &Value) -> ServiceRequest {
+        let mut req=request(id);req.operation=ServiceOperation::ImagesAsset;
+        req.params=json!({"asset_key":asset["assetKey"],"source_request_id":asset["sourceRequestId"]});req
+    }
+
+    #[tokio::test]
+    async fn images_assets_catalog_same_origin_has_no_credentials_and_recent_nullish_path_is_strict() {
+        let service=ChatgptService::default();
+        let metadata=images_asset_fixture(&service,"catalog-no-auth",ServiceOperation::ImagesInit,json!({"groups":[{"id":"g","items":[
+            {"id":"same-origin","image_url":"https://chatgpt.com/backend-api/catalog.png"},
+            {"id":"variant","image_url":"","image_variant_urls":["","https://images.example.test/variant"]}
+        ]}]})).await;
+        assert_eq!(metadata["assets"].as_array().unwrap().len(),2);
+        let transport=FakeTransport::new(&[200]);transport.responses.lock().unwrap()[0].body=b"\x89PNG\r\n\x1a\nimage".to_vec();
+        service.read_with(images_asset_request("catalog-bytes",&metadata["assets"][0]),share_rpc,&transport).await.unwrap();
+        assert!(transport.requests.lock().unwrap()[0].headers.is_empty());
+        let recent=images_asset_fixture(&service,"nullish",ServiceOperation::ImagesRecent,json!({"items":[
+            {"id":"empty","url":"https://images.example.test/fallback","encodings":{"thumbnail":{"path":""}}},
+            {"id":"null","url":"https://images.example.test/fallback","encodings":{"thumbnail":{"path":null}}},
+            {"id":"blocked","url":"https://images.example.test/blocked","output_blocked":true},
+            {"id":"archived","url":"https://images.example.test/archived","is_archived":true}
+        ]})).await;
+        assert_eq!(recent["assets"].as_array().unwrap().len(),1);assert_eq!(recent["assets"][0]["id"],"null");
+    }
+
+    #[tokio::test]
+    async fn images_assets_json_refresh_and_redirect_never_revive_credentials_after_external_hop() {
+        for action in ["thumbnail","content","download"] {
+            let service=ChatgptService::default();
+            let metadata=images_asset_fixture(&service,"json-source",ServiceOperation::ImagesRecent,json!({"items":[{"id":"a","url":format!("/api/library/files/plain-id/{action}")}]})).await;
+            let transport=FakeTransport::new(&[200,302,302,200]);
+            {let mut responses=transport.responses.lock().unwrap();
+                responses[0].body=serde_json::to_vec(&json!({(format!("{action}_url")):"https://chatgpt.com/backend-api/estuary/content?id=img"})).unwrap();
+                responses[1].headers.insert("location".into(),"https://images.example.test/external".into());
+                responses[2].headers.insert("location".into(),"https://chatgpt.com/backend-api/estuary/content?id=back".into());
+                responses[3].body=b"\x89PNG\r\n\x1a\nimage".to_vec();
+            }
+            service.read_with(images_asset_request("json-bytes",&metadata["assets"][0]),share_rpc,&transport).await.unwrap();
+            let requests=transport.requests.lock().unwrap();assert_eq!(requests.len(),4);
+            assert!(requests[0].url.contains(&format!("/{action}_url")));
+            assert!(requests[0].headers.contains_key("Authorization"));assert!(requests[1].headers.contains_key("Authorization"));
+            assert!(requests[2].headers.is_empty());assert!(requests[3].headers.is_empty());
+            assert!(requests.iter().all(|request|!request.headers.contains_key("X-OpenAI-Attach-Auth")));
+        }
+        let service=ChatgptService::default();
+        let metadata=images_asset_fixture(&service,"direct-302",ServiceOperation::ImagesRecent,json!({"items":[{"id":"a","url":"/__codex-api/estuary/public_content/enc/image"}]})).await;
+        let transport=FakeTransport::new(&[302,200]);transport.responses.lock().unwrap()[0].headers.insert("location".into(),"https://images.example.test/image".into());
+        transport.responses.lock().unwrap()[1].body=b"\x89PNG\r\n\x1a\nimage".to_vec();
+        service.read_with(images_asset_request("direct-302-bytes",&metadata["assets"][0]),share_rpc,&transport).await.unwrap();
+        assert!(transport.requests.lock().unwrap()[1].headers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn images_assets_reject_bad_selectors_before_auth_and_invalid_payloads_after_download() {
+        let service=ChatgptService::default();
+        for params in [json!({"url":"https://images.example.test/a"}),json!({"asset_key":"fake","source_request_id":"source","headers":{}}),json!({"asset_key":"fake","source_request_id":"source"})] {
+            let mut req=request("bad-image-key");req.operation=ServiceOperation::ImagesAsset;req.params=params;
+            let rpc=|_,_| -> std::future::Ready<Result<Value,String>> {panic!("invalid image selector must not invoke credentials")};
+            assert!(service.read_with(req,rpc,&FakeTransport::new(&[])).await.is_err());
+        }
+        let metadata=images_asset_fixture(&service,"bad-image-payload",ServiceOperation::ImagesInit,json!({"groups":[{"items":[{"id":"a","image_url":"https://images.example.test/a"}]}]})).await;
+        for (bytes,content_type) in [(b"<html>not an image</html>".to_vec(),None),(b"\x89PNG\r\n\x1a\nimage".to_vec(),Some("text/html")),(vec![0;MAX_RESPONSE as usize+1],None)] {
+            let transport=FakeTransport::new(&[200]);{let mut responses=transport.responses.lock().unwrap();responses[0].body=bytes;
+                if let Some(mime)=content_type {responses[0].headers.insert("content-type".into(),mime.into());}}
+            assert_eq!(service.read_with(images_asset_request("bad-image-bytes",&metadata["assets"][0]),share_rpc,&transport).await.err().unwrap().code,"invalid_response");
+        }
+    }
+
+    #[tokio::test]
+    async fn images_assets_old_keys_stay_revoked_after_denial_and_late_metadata_cannot_restore_them() {
+        for denial in ["output_blocked","is_archived"] {
+            let service=ChatgptService::default();
+            let allowed=json!({"items":[{"id":"a","url":"https://images.example.test/a"}]});
+            let mut req=request("old-snapshot");req.operation=ServiceOperation::ImagesRecent;
+            let old=service.register_images_assets(&req,&allowed,"https://chatgpt.com",1).unwrap();assert_eq!(old.len(),1);
+            let denied=json!({"items":[{"id":"a",(denial):true}]});
+            service.register_images_assets(&req,&denied,"https://chatgpt.com",3).unwrap();
+            assert!(service.register_images_assets(&req,&allowed,"https://chatgpt.com",2).unwrap().is_empty());
+            let transport=FakeTransport::new(&[]);
+            let asset=serde_json::to_value(&old[0]).unwrap();
+            assert_eq!(service.read_with(images_asset_request("revoked-key",&asset),share_rpc,&transport).await.err().unwrap().code,"asset_unavailable");
+            assert!(transport.requests.lock().unwrap().is_empty());
+            assert_eq!(service.register_images_assets(&req,&allowed,"https://chatgpt.com",4).unwrap().len(),1);
+            assert!(service.read_with(images_asset_request("still-revoked-key",&asset),share_rpc,&transport).await.is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn images_assets_identity_cancel_policy_redirect_and_capacity_are_bounded() {
+        let service=ChatgptService::default();
+        let metadata=images_asset_fixture(&service,"bounded-images",ServiceOperation::ImagesRecent,json!({"items":[{"id":"a","url":"https://images.example.test/a"}]})).await;
+        let asset=&metadata["assets"][0];
+        service.cancel("pre-cancel-image");
+        assert_eq!(service.read_with(images_asset_request("pre-cancel-image",asset),share_rpc,&FakeTransport::new(&[])).await.err().unwrap().code,"cancelled");
+        let denied=|method,params| if method=="configRequirements/read" {std::future::ready(Ok(json!({"requirements":{"application":{"network":{"enabled":true,"domains":{}}}}})))} else {share_rpc(method,params)};
+        assert_eq!(service.read_with(images_asset_request("network-denied-image",asset),denied,&FakeTransport::new(&[])).await.err().unwrap().code,"network_restricted");
+        let transport=FakeTransport::new(&[302,302,302,302,302,302]);
+        for response in transport.responses.lock().unwrap().iter_mut(){response.headers.insert("location".into(),"https://images.example.test/loop".into());}
+        assert_eq!(service.read_with(images_asset_request("redirect-limit-image",asset),share_rpc,&transport).await.err().unwrap().code,"invalid_response");assert_eq!(transport.requests.lock().unwrap().len(),6);
+        let mut req=request("capacity-image");req.operation=ServiceOperation::ImagesRecent;
+        let too_many=json!({"items":(0..1025).map(|i|json!({"id":format!("image-{i}"),"url":"https://images.example.test/a"})).collect::<Vec<_>>()});
+        assert_eq!(service.register_images_assets(&req,&too_many,"https://chatgpt.com",100).err().unwrap().code,"asset_limit");
+        service.invalidate();
+        assert!(service.read_with(images_asset_request("stale-identity-image",asset),share_rpc,&FakeTransport::new(&[])).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn images_assets_capacity_refresh_recovers_and_evicted_keys_are_unavailable() {
+        let service=ChatgptService::default();
+        let body=json!({"groups":[{"id":"g","items":(0..1024).map(|i|json!({"id":format!("image-{i}"),"image_url":"https://images.example.test/a"})).collect::<Vec<_>>()}]});
+        let first=images_asset_fixture(&service,"capacity-first",ServiceOperation::ImagesInit,body.clone()).await;
+        for id in ["capacity-second","capacity-third","capacity-fourth"] {
+            images_asset_fixture(&service,id,ServiceOperation::ImagesInit,body.clone()).await;
+        }
+        let latest=images_asset_fixture(&service,"capacity-refresh",ServiceOperation::ImagesInit,body).await;
+        assert_eq!(latest["assets"].as_array().unwrap().len(),1024,"a normal refresh must recover within the registry bound");
+        let transport=FakeTransport::new(&[200]);transport.responses.lock().unwrap()[0].body=b"\x89PNG\r\n\x1a\nimage".to_vec();
+        service.read_with(images_asset_request("capacity-new-bytes",&latest["assets"][0]),share_rpc,&transport).await.unwrap();
+        assert_eq!(service.read_with(images_asset_request("capacity-old-bytes",&first["assets"][0]),share_rpc,&FakeTransport::new(&[])).await.err().unwrap().code,"asset_unavailable");
+    }
+
+    fn images_read_operations() -> [ServiceOperation; 4] {
+        [ServiceOperation::ImagesInit, ServiceOperation::ImagesStyles, ServiceOperation::ImagesRecent,
+            serde_json::from_value(json!("images_workspace_settings")).expect("fixed Images workspace operation")]
+    }
+
+    #[tokio::test]
+    async fn images_read_workspace_route_is_identity_derived_and_rejects_renderer_parameters_before_auth() {
+        let operation: ServiceOperation = serde_json::from_value(json!("images_workspace_settings")).unwrap();
+        let mut selected = identity(); selected.account_id = "workspace/id?中".into();
+        assert_eq!(resolve_read_route(&operation, &json!({}), &selected).unwrap(),
+            "/backend-api/accounts/workspace%2Fid%3F%E4%B8%AD/settings");
+        for account_id in ["", ".", "..", "a\nb"] {
+            selected.account_id = account_id.into();
+            assert!(resolve_read_route(&operation, &json!({}), &selected).is_err());
+        }
+        assert!(resolve_route(&operation, &json!({})).is_err());
+        for params in [json!(null), json!([]), json!({"account_id":"other"}), json!({"accountId":"other"}),
+            json!({"url":"https://other.test"}), json!({"headers":{}}), json!({"method":"POST"})] {
+            let service = ChatgptService::default(); let transport = FakeTransport::new(&[]);
+            let calls = AtomicUsize::new(0);
+            let rpc = |_,_| { calls.fetch_add(1, Ordering::SeqCst); std::future::ready(Err("must not authenticate".into())) };
+            let mut req = request("images-settings-invalid"); req.operation = operation.clone(); req.params = params;
+            assert_eq!(service.read_with(req, rpc, &transport).await.err().unwrap().code, "invalid_request");
+            assert_eq!(calls.load(Ordering::SeqCst), 0); assert!(transport.requests.lock().unwrap().is_empty());
+        }
+        let service = ChatgptService::default();
+        let body = json!({"permissions":["chatgpt.workspace.feature.image-gen.access"]});
+        let transport = instructions_transport(&[200], &[body.clone()]);
+        let mut req = request("images-settings"); req.operation = operation;
+        let result = service.read_with(req, share_rpc, &transport).await.unwrap();
+        assert_eq!(result.body, body); assert_eq!(result.identity, identity());
+        let calls = transport.requests.lock().unwrap(); assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].method, HttpMethod::Get); assert!(calls[0].body.is_empty());
+        assert_eq!(calls[0].url, "https://chatgpt.com/backend-api/accounts/account-fixture/settings");
+        assert_eq!(calls[0].headers["ChatGPT-Account-Id"], "account-fixture");
+    }
+
+    #[tokio::test]
+    async fn images_read_network_denial_prevents_all_metadata_transports() {
+        // Keep the existing three reads ahead of the new operation: this catches their current policy gap independently.
+        for operation in [ServiceOperation::ImagesInit, ServiceOperation::ImagesStyles, ServiceOperation::ImagesRecent] {
+            let service = ChatgptService::default(); let transport = FakeTransport::new(&[200]);
+            let denied = |method,params| if method == "configRequirements/read" {
+                std::future::ready(Ok(json!({"requirements":{"application":{"network":{"enabled":true,"domains":{}}}}})))
+            } else { share_rpc(method,params) };
+            let mut req = request("images-network-denied"); req.operation = operation;
+            let result = service.read_with(req, denied, &transport).await;
+            assert!(result.is_err(), "Images metadata was delivered despite network denial; policy RPC was skipped and {} HTTP request(s) escaped", transport.requests.lock().unwrap().len());
+            assert_eq!(result.err().unwrap().code, "network_restricted");
+            assert!(transport.requests.lock().unwrap().is_empty());
+        }
+        let service = ChatgptService::default(); let transport = FakeTransport::new(&[200]);
+        let denied = |method,params| if method == "configRequirements/read" {
+            std::future::ready(Ok(json!({"requirements":{"application":{"network":{"enabled":true,"domains":{}}}}})))
+        } else { share_rpc(method,params) };
+        let mut req = request("images-settings-denied"); req.operation = images_read_operations()[3].clone();
+        assert_eq!(service.read_with(req, denied, &transport).await.err().unwrap().code, "network_restricted");
+        assert!(transport.requests.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn images_read_completion_cancellation_does_not_release_a_ready_body() {
+        struct CancelOnComplete;
+        impl Transport for CancelOnComplete {
+            fn send(&self, _:HttpRequest, cancel:Arc<AtomicBool>) -> TransportFuture<'_> {
+                Box::pin(async move { cancel.store(true, Ordering::SeqCst);
+                    Ok(HttpResponse {status:200, headers:BTreeMap::new(), body:br#"{"items":[{"id":"private"}]}"#.to_vec()}) })
+            }
+        }
+        // Existing reads must reject ready-but-cancelled responses too.
+        for operation in [ServiceOperation::ImagesInit, ServiceOperation::ImagesStyles, ServiceOperation::ImagesRecent] {
+            let service = ChatgptService::default(); let mut req = request("images-complete"); req.operation = operation;
+            let result = service.read_with(req, share_rpc, &CancelOnComplete).await;
+            assert!(result.is_err(), "Images metadata was delivered after the transport marked its registration cancelled");
+            assert_eq!(result.err().unwrap().code, "cancelled");
+            assert!(service.active.lock().unwrap().is_empty());
+        }
+        let service = ChatgptService::default(); let mut req = request("images-settings-complete");
+        req.operation = images_read_operations()[3].clone();
+        assert_eq!(service.read_with(req, share_rpc, &CancelOnComplete).await.err().unwrap().code, "cancelled");
+    }
+
+    #[tokio::test]
+    async fn images_read_policy_change_during_transport_does_not_release_a_body() {
+        for operation in images_read_operations() {
+            let service = ChatgptService::default(); let transport = FakeTransport::new(&[200]);
+            let policy_calls = AtomicUsize::new(0);
+            let rpc = |method,params| if method == "configRequirements/read" {
+                let completed = policy_calls.fetch_add(1, Ordering::SeqCst) > 0;
+                std::future::ready(Ok(if completed { json!({"requirements":{"application":{"network":{"enabled":true,"domains":{}}}}}) }
+                    else { json!({"requirements":null}) }))
+            } else { share_rpc(method,params) };
+            let mut req = request("images-policy-change"); req.operation = operation;
+            let result = service.read_with(req, rpc, &transport).await;
+            assert!(result.is_err(), "Images metadata was delivered without rechecking policy at completion; observed {} policy RPC(s)", policy_calls.load(Ordering::SeqCst));
+            assert_eq!(result.err().unwrap().code, "network_restricted");
+            assert_eq!(transport.requests.lock().unwrap().len(), 1); assert_eq!(policy_calls.load(Ordering::SeqCst), 2);
+            assert!(service.active.lock().unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn images_read_recent_first_and_next_page_use_the_host_parameter_contract() {
+        assert_eq!(resolve_route(&ServiceOperation::ImagesRecent, &json!({"limit":25})).unwrap(),
+            "/backend-api/my/recent/image_gen?limit=25");
+        assert_eq!(resolve_route(&ServiceOperation::ImagesRecent, &json!({"limit":20,"after":"next"})).unwrap(),
+            "/backend-api/my/recent/image_gen?after=next&limit=20");
+        assert!(resolve_route(&ServiceOperation::ImagesRecent, &json!({"limit":25,"after":null})).is_err());
+    }
+
+    #[tokio::test]
+    async fn images_read_ready_body_and_auth_refresh_remain_identity_bound() {
+        struct InvalidateOnComplete<'a>(&'a ChatgptService);
+        impl Transport for InvalidateOnComplete<'_> {
+            fn send(&self, _:HttpRequest, _:Arc<AtomicBool>) -> TransportFuture<'_> {
+                Box::pin(async move { self.0.invalidate();
+                    Ok(HttpResponse {status:200, headers:BTreeMap::new(), body:br#"{"items":[{"id":"private"}]}"#.to_vec()}) })
+            }
+        }
+        for operation in images_read_operations() {
+            let service = ChatgptService::default(); let mut req = request("images-ready-identity"); req.operation = operation.clone();
+            assert_eq!(service.read_with(req, share_rpc, &InvalidateOnComplete(&service)).await.err().unwrap().code, "account_changed");
+            assert!(service.active.lock().unwrap().is_empty());
+            for changed in [false,true] {
+                let service = ChatgptService::default(); let transport = FakeTransport::new(if changed {&[401]} else {&[401,200]});
+                let rpc = |method,params:Value| if method == "getAuthStatus" && params["refreshToken"] == true {
+                    std::future::ready(Ok(auth(&token("account-fixture", if changed {"other-user"} else {"user-fixture"}, 4102444801))))
+                } else { share_rpc(method,params) };
+                let mut req = request("images-refresh"); req.operation = operation.clone();
+                let result = service.read_with(req, rpc, &transport).await;
+                if changed { assert_eq!(result.err().unwrap().code, "account_changed"); } else { assert!(result.is_ok()); }
+                let calls = transport.requests.lock().unwrap(); assert_eq!(calls.len(), if changed {1} else {2});
+                if !changed { assert_eq!(calls[0].url, calls[1].url); assert_ne!(calls[0].headers["Authorization"], calls[1].headers["Authorization"]); }
+                assert!(service.active.lock().unwrap().is_empty());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn images_read_pending_cancellation_or_identity_change_drops_transport() {
+        for operation in images_read_operations() {
+            for invalidate in [false,true] {
+                let service = ChatgptService::default(); let mut transport = FakeTransport::new(&[200]); transport.delay_ms = 1000;
+                let mut req = request("images-pending"); req.operation = operation.clone();
+                let read = service.read_with(req, share_rpc, &transport);
+                let change = async { while !transport.entered.load(Ordering::SeqCst) { tokio::task::yield_now().await; }
+                    if invalidate { service.invalidate(); } else { service.cancel("images-pending"); } };
+                assert_eq!(tokio::join!(read,change).0.err().unwrap().code, if invalidate {"account_changed"} else {"cancelled"});
+                assert!(transport.dropped.load(Ordering::SeqCst)); assert!(service.active.lock().unwrap().is_empty());
             }
         }
     }

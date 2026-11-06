@@ -19,7 +19,7 @@ export interface ReviewProviderPreferences {
   gitlabConnectorId: string | null;
 }
 export type ServiceOperation = "library_favorites" | "library_nodes" | "library_directory_path" | "library_file" | "library_file_content" | "library_suggested" | "library_images" | "library_settings" | "library_image" | "storage_usage" | "images_init" | "images_styles" |
-  "images_recent" | "gpts_discovery" | "gpts_category" | "gpts_search" | "gpts_detail" | "gpts_about" |
+  "images_recent" | "images_workspace_settings" | "images_asset" | "gpts_discovery" | "gpts_category" | "gpts_search" | "gpts_detail" | "gpts_about" |
   "sites_access" | "sites_list" | "sites_shared" | "sites_detail" | "sites_environment" | "sites_domains" | "sites_share_access" | "github_repository" |
   "share_accounts" | "share_users" | "share_groups" | "wham_usage" | "account_me" | "profile_identity" | "profile_page";
 
@@ -81,6 +81,47 @@ function responseBody(result: { requestId: string; identity: ServiceIdentity; bo
     throw Error("读取期间账号发生变化，请重新刷新。");
   }
   return result.body;
+}
+
+export interface ImagesAssetRef {
+  assetKey: string;
+  sourceRequestId: string;
+  role: "init_group" | "styles" | "image_suggestions" | "recent";
+  id: string;
+  groupId: string | null;
+  variant: 0;
+}
+
+export function isImagesAssetRef(value: unknown): value is ImagesAssetRef {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const ref = value as ImagesAssetRef;
+  const identifier = (text: unknown) => typeof text === "string" && text.length > 0 && text.length <= 4096 && !/[\u0000-\u001f\u007f-\u009f]/u.test(text);
+  return identifier(ref.assetKey) && identifier(ref.sourceRequestId) && identifier(ref.id) && ref.variant === 0
+    && ["init_group", "styles", "image_suggestions", "recent"].includes(ref.role)
+    && (ref.role === "init_group" ? identifier(ref.groupId) : ref.groupId === null);
+}
+
+/** Opaque host-issued image references; metadata URLs never authorize a download. */
+export async function readImagesMetadata(
+  operation: "images_init" | "images_styles" | "images_recent", params: Record<string, unknown>,
+  identity: ServiceIdentity, signal: AbortSignal,
+): Promise<{ body: unknown; assets: ImagesAssetRef[] }> {
+  if (signal.aborted) throw Error("请求已取消");
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; body: unknown; assets?: unknown }>(
+    "chatgpt_service_read", requestId,
+    { request: { requestId, operation, params, expectedIdentity: identity, profile: browserProfile() } }, signal,
+  );
+  const body = responseBody(result, requestId, identity);
+  if (!Array.isArray(result.assets)) throw Error("图像资源引用缺失，请重试。");
+  const roles = operation === "images_init" ? ["init_group"] : operation === "images_styles" ? ["styles", "image_suggestions"] : ["recent"];
+  const keys = new Set<string>();
+  for (const ref of result.assets) {
+    if (!isImagesAssetRef(ref) || ref.sourceRequestId !== requestId || !roles.includes(ref.role)) throw Error("图像资源引用无效，请重试。");
+    if (keys.has(ref.assetKey)) throw Error("图像资源引用重复，请重试。");
+    keys.add(ref.assetKey);
+  }
+  return { body, assets: result.assets };
 }
 
 export async function readCloudService(

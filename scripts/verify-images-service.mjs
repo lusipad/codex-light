@@ -11,9 +11,9 @@ const load = path => { const exports = {}; vm.runInNewContext(compile(fs.readFil
  require: name => { if (name === "react") return React; if (name === "../imageSave") return { saveGeneratedImageBytes() { assert.fail("render alone cannot save"); } }; if (name.endsWith(".css")) return {}; throw Error(`unexpected dependency ${name}`); },
  setTimeout() { assert.fail("no delayed fake images"); }, localStorage: { getItem() { assert.fail("no fake local gallery"); }, setItem() { assert.fail("no fake local generation"); } } }); return exports; };
 const all = node => node && typeof node === "object" ? [node, ...(node.children ?? []).flatMap(all)] : [];
-const page = load("src/components/ImagesView.tsx").ImagesView();
-assert.match(JSON.stringify(page), /图像服务尚未连接/);
-assert.equal(all(page).filter(node => ["button", "input", "textarea", "img", "select"].includes(node.type)).length, 0);
+// The Images route now has a real readonly service surface. Its actual JSX,
+// listener/identity lifecycle and disabled write controls have a dedicated fixture.
+await import("./verify-images-view.mjs");
 const { generatedImageState: state, GeneratedImageCard: Card } = load("src/components/GeneratedImageCard.tsx");
 const completed = result => ({ type: "imageGeneration", id: "generated", status: "completed", result });
 assert.equal(state(completed("iVBORw0KGgo=")).src, "data:image/png;base64,iVBORw0KGgo=");

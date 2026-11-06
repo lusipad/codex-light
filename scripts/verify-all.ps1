@@ -90,6 +90,9 @@ try {
   Invoke-Step "Library access and real client contracts" { node scripts/verify-library-read.mjs }
   Invoke-Step "Library cleanup lifecycle and presentation regression" { node scripts/verify-library-cleanup.mjs }
   Invoke-Step "Images authenticated service and real result regression" { node scripts/verify-images-service.mjs }
+  Invoke-Step "Images catalog and history snapshot mapping" { node scripts/verify-images-data.mjs }
+  Invoke-Step "Images direct access, metadata grants and image bytes" { node scripts/verify-images-assets.mjs }
+  Invoke-Step "Images readonly workface and lifecycle" { node scripts/verify-images-view.mjs }
   Invoke-Step "GPTs service and identity boundary regression" { node scripts/verify-gpts-service.mjs }
   Invoke-Step "Sites authenticated catalog and readonly settings regression" { node scripts/verify-sites-service.mjs }
   Invoke-Step "Codex Cloud authenticated configuration regression" { node scripts/verify-cloud-environments.mjs }
