@@ -5,6 +5,7 @@ import { readLibraryAccess, readLibraryDirectoryPath, readLibraryPage, type Libr
 import { mergeLibraryPages, type LibraryDirectoryEntry, type LibraryNode, type LibraryPage } from "../libraryData";
 import { formatStorageBytes } from "../storageUsage";
 import { ThreadActionsMenu } from "./ThreadActionsMenu";
+import { LibraryPreviewPane, type LibraryPreviewRequest } from "./LibraryPreviewPane";
 import "./LibraryView.css";
 
 interface DirectoryLocation { directoryId: string | null; known: LibraryDirectoryEntry[] }
@@ -23,6 +24,12 @@ interface LibraryViewProps { onNavigationChange?: (navigation: LibraryNavigation
 
 export const LibraryView: React.FC<LibraryViewProps> = ({ onNavigationChange }) => {
   const [revision, setRevision] = useState(0);
+  const [preview, setPreview] = useState<LibraryPreviewRequest | null>(null);
+  const previewRef = useRef<LibraryPreviewRequest | null>(null);
+  const previewTrigger = useRef<HTMLButtonElement | null>(null);
+  const clearPreview = useCallback(() => {
+    previewRef.current?.controller.abort(); previewRef.current = null; setPreview(null);
+  }, []);
   const [location, setLocation] = useState<DirectoryLocation>(rootLocation);
   const locationRef = useRef(location);
   const history = useRef<DirectoryLocation[]>([]);
@@ -66,6 +73,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onNavigationChange }) 
       try {
         unlisten = await tauriListen("chatgpt-service:invalidated", () => {
           if (controller.signal.aborted) return;
+          clearPreview();
           controller.abort(); identity.current = null; history.current = []; future.current = []; locationRef.current = rootLocation;
           setLocation(rootLocation); setPath(null); setAccess(null); setPages([]); setRevision(value => value + 1);
         });
@@ -77,11 +85,13 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onNavigationChange }) 
         if (previous && (previous.accountId !== current.identity.accountId || previous.userId !== current.identity.userId
           || previous.generation !== current.identity.generation)) {
           const reset = { ...rootLocation };
+          clearPreview();
           controller.abort(); history.current = []; future.current = []; locationRef.current = reset;
           setLocation(reset); setAccess(null); setPages([]); setPath(null);
           return;
         }
         setAccess(current);
+        if (!current.available) clearPreview();
         if (current.available) {
           if (location.directoryId !== null) void readPath(current, controller, location.directoryId);
           const page = await readLibraryPage(current, "all", null, controller.signal, location.directoryId);
@@ -90,13 +100,14 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onNavigationChange }) 
       } catch (cause) { if (!controller.signal.aborted) setError(serviceErrorMessage(cause)); }
       finally { if (!controller.signal.aborted) setLoading(false); }
     })();
-    return () => { controller.abort(); unlisten?.(); };
+    return () => { controller.abort(); previewRef.current?.controller.abort(); unlisten?.(); };
   }, [revision, location]);
   const changeLocation = useCallback((next: DirectoryLocation) => {
+    clearPreview();
     source.current?.abort(); locationRef.current = next;
     setPages([]); setPath(null); setError(null); setPageError(null); setPathError(null);
     setLoading(true); setPaging(false); setPathLoading(false); setLocation(next);
-  }, []);
+  }, [clearPreview]);
   const renderedSource = source.current;
   const navigate = (directoryId: string | null, known: LibraryDirectoryEntry[]) => {
     if (location.directoryId !== locationRef.current.directoryId) return;
@@ -143,8 +154,23 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onNavigationChange }) 
     void readPath(access, renderedSource, location.directoryId);
   };
   const retryList = () => {
-    if (location.directoryId === locationRef.current.directoryId && source.current === renderedSource && !renderedSource?.signal.aborted)
+    if (location.directoryId === locationRef.current.directoryId && source.current === renderedSource && !renderedSource?.signal.aborted) {
+      clearPreview();
       setRevision(value => value + 1);
+    }
+  };
+  const openFile = (node: LibraryNode, trigger: HTMLButtonElement) => {
+    if (node.kind !== "file" || !nativeDirectory(node.id) || !access?.available
+      || location.directoryId !== locationRef.current.directoryId || !renderedSource
+      || renderedSource !== source.current || renderedSource.signal.aborted) return;
+    clearPreview(); previewTrigger.current = trigger;
+    const request = { id: node.id, name: node.name, access, controller: new AbortController() };
+    previewRef.current = request; setPreview(request);
+  };
+  const closePreview = (request: LibraryPreviewRequest) => {
+    if (request !== previewRef.current) return;
+    clearPreview();
+    if (previewTrigger.current?.isConnected) previewTrigger.current.focus();
   };
   const ancestors = path ?? location.known;
   const breadcrumbs: { id: string | null; name: string }[] = [{ id: null, name: "资料库" }, ...ancestors];
@@ -173,7 +199,8 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onNavigationChange }) 
   const visible = keep > 0 ? [breadcrumbs[0], ...breadcrumbs.slice(-keep)] : breadcrumbs.slice(-1);
   const selectBreadcrumb = (id: string | null) => navigate(id, id === null ? [] : ancestors.slice(0, ancestors.findIndex(entry => entry.id === id) + 1));
   const items = mergeLibraryPages(pages);
-  return <div className="library-view-container">
+  return <div className="library-workspace">
+    <div className="library-view-container">
     <div className="library-view-header"><h2>资料库</h2></div>
     <div className="library-directory-navigation">
       <div className="library-breadcrumbs" ref={breadcrumbRef} role="navigation" aria-label="文件夹路径">
@@ -199,9 +226,13 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onNavigationChange }) 
     {!loading && !error && access?.available && !items.length && cursor && <p role="status">当前页没有条目，可继续加载更多内容。</p>}
     {Boolean(items.length) && <table className="library-root-table"><thead><tr><th>名称</th><th>类型</th><th>大小</th></tr></thead>
       <tbody>{items.map(item => <tr key={item.node.id}><td>{item.node.kind === "directory" && nativeDirectory(item.node.id)
-        ? <button type="button" className="library-directory-link" onClick={() => openDirectory(item.node)}>{item.node.name}</button> : item.node.name}</td><td>{item.node.kind === "directory" ? "文件夹" : item.node.kind === "file" ? typeof item.node.mime_type === "string" ? item.node.mime_type : "文件" : item.node.kind}</td>
+        ? <button type="button" className="library-directory-link" onClick={() => openDirectory(item.node)}>{item.node.name}</button>
+        : item.node.kind === "file" && nativeDirectory(item.node.id)
+          ? <button type="button" className="library-directory-link" onClick={event => openFile(item.node, event.currentTarget)}>{item.node.name}</button> : item.node.name}</td><td>{item.node.kind === "directory" ? "文件夹" : item.node.kind === "file" ? typeof item.node.mime_type === "string" ? item.node.mime_type : "文件" : item.node.kind}</td>
         <td>{typeof item.node.file_size_bytes === "number" && item.node.file_size_bytes >= 0 ? formatStorageBytes(item.node.file_size_bytes) : "—"}</td></tr>)}</tbody></table>}
     {pageError && <p role="alert">{pageError}</p>}
     {cursor && <button type="button" disabled={paging} onClick={() => void loadMore()}>{paging ? "正在加载…" : pageError ? "重试加载" : "加载更多"}</button>}
+    </div>
+    {preview && !preview.controller.signal.aborted && <LibraryPreviewPane request={preview} onClose={() => closePreview(preview)} />}
   </div>;
 };

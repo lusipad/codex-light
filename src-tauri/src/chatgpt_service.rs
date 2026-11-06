@@ -20,6 +20,7 @@ mod archive_delete;
 pub use archive_delete::{ArchiveDeleteRequest, ArchiveDeleteResponse};
 
 const MAX_RESPONSE: u64 = 8 * 1024 * 1024;
+const MAX_LIBRARY_FILE: u64 = 40 * 1024 * 1024;
 const MAX_SHARE_SNAPSHOT: usize = 10 * 1024 * 1024;
 const MAX_SHARE_ASSET: usize = 25 * 1024 * 1024;
 const MAX_SHARE_ASSETS: usize = 100 * 1024 * 1024;
@@ -43,6 +44,8 @@ pub enum ServiceOperation {
     LibraryImages,
     LibrarySettings,
     LibraryImage,
+    LibraryFile,
+    LibraryFileContent,
     StorageUsage,
     ImagesInit,
     ImagesStyles,
@@ -1436,6 +1439,9 @@ impl ChatgptService {
         Fut: Future<Output = Result<Value, String>>,
         T: Transport,
     {
+        if matches!(request.operation, ServiceOperation::LibraryFile | ServiceOperation::LibraryFileContent) {
+            return self.library_file_with(request, call, transport).await;
+        }
         // Resolve before credential acquisition: unsupported parameters cannot invoke auth.
         let route = resolve_read_route(&request.operation, &request.params, &request.expected_identity)?;
         let archive_tasks = matches!(request.operation, ServiceOperation::ArchiveCloudTasks);
@@ -1555,6 +1561,166 @@ impl ChatgptService {
         }
         if archive_tasks || matches!(request.operation, ServiceOperation::LibraryDirectoryPath) { self.check_share_current(&request.expected_identity, &registration)?; }
         result
+    }
+
+    async fn library_file_with<F, Fut, T>(&self, request: ServiceRequest, call: F, transport: &T) -> ServiceResult<ServiceResponse>
+    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output=Result<Value,String>>, T: Transport {
+        let content=matches!(request.operation,ServiceOperation::LibraryFileContent);
+        let (id,route)=library_file_route(&request.params,content)?;
+        let registration=self.register(&request.request_id)?;
+        self.check_share_current(&request.expected_identity,&registration)?;
+        let result=tokio::select! {
+            _=cancelled(&registration.cancelled)=>Err(failure("cancelled","Service request cancelled")),
+            result=async {
+                let body=if content {
+                    let deadline=tokio::time::Instant::now()+Duration::from_secs(15);
+                    let retry_download=route.starts_with("/backend-api/files/download/");
+                    let mut delay=500u64;
+                    let mut attempt=0;
+                    let body=loop {
+                        let body=self.library_file_json(&route,None,&request,&registration,&call,transport).await?;
+                        if body["status"]!="retry" || !retry_download {break body;}
+                        let remaining=deadline.saturating_duration_since(tokio::time::Instant::now());
+                        if attempt==9 || remaining.is_zero(){return Err(failure("processing","Library file is not ready"));}
+                        tokio::time::sleep(Duration::from_millis(delay).min(remaining)).await;
+                        self.check_share_current(&request.expected_identity,&registration)?;
+                        delay=library_file_retry_delay(delay);attempt+=1;
+                    };
+                    if body.get("status").and_then(Value::as_str).is_some_and(|status|matches!(status,"retry"|"processing"|"pending")) {return Err(failure("processing","Library file is not ready"));}
+                    if body["status"]=="error" {return Err(failure("service_error","Library file download failed"));}
+                    let target=body.get("content_url").or_else(||body.get("download_url")).and_then(Value::as_str)
+                        .filter(|url|!url.trim().is_empty()).ok_or_else(||failure("invalid_response","Library file URL is missing"))?;
+                    let origin={let session=self.session.lock().await;self.check_share_current(&request.expected_identity,&registration)?;session.credentials.as_ref().unwrap().origin.clone()};
+                    self.library_file_bytes(target,&origin,&request,&registration,&call,transport).await?
+                } else {
+                    let direct_node=id.starts_with("libfile_fde1_") || id.starts_with("libfile_fde2_") || id.starts_with("libfile_fde3_");
+                    let node_route=format!("{route}/node");
+                    if direct_node {
+                        validate_library_file(self.library_file_json(&node_route,None,&request,&registration,&call,transport).await?,&id,true)?
+                    } else {
+                        match self.library_file_json(&route,None,&request,&registration,&call,transport).await {
+                            Ok(body)=>validate_library_file(body,&id,false)?,
+                            Err(error) if matches!(error.status,Some(403|404))=>{
+                                let mut node=None;
+                                let fallback_error=match self.library_file_json(&node_route,None,&request,&registration,&call,transport).await {
+                                    Ok(body)=>{
+                                        let mut body=validate_library_file(body,&id,false)?;
+                                        if body["access_kind"]=="owned" && body["library_file_category"]=="image" && body["library_artifact_type"].is_null() {
+                                            node=Some(body.clone());
+                                            match self.library_file_json(&format!("{route}/versions?limit=1"),None,&request,&registration,&call,transport).await {
+                                                Ok(versions)=>{if let Some(kind)=versions.pointer("/items/0/library_artifact_type"){body["library_artifact_type"]=kind.clone();}return Ok(body);},
+                                                Err(error) if matches!(error.status,Some(403|404))=>error,
+                                                Err(error)=>return Err(error),
+                                            }
+                                        } else {return validate_library_file(body,&id,true);}
+                                    },
+                                    Err(error) if matches!(error.status,Some(403|404))=>error,
+                                    Err(error)=>return Err(error),
+                                };
+                                let mut cursor=Value::Null;let mut seen=std::collections::HashSet::new();
+                                loop {
+                                    let page=self.library_file_json("/backend-api/files/library",Some(json!({"cursor":cursor,"limit":100,"include_hidden_files":true,"include_saved_entities":true})),&request,&registration,&call,transport).await?;
+                                    let items=page["items"].as_array().ok_or_else(||failure("invalid_response","Library file list is invalid"))?;
+                                    if let Some(found)=items.iter().find(|item|item["id"].as_str()==Some(&id)){break validate_library_file(found.clone(),&id,false)?;}
+                                    cursor=page.get("cursor").cloned().unwrap_or(Value::Null);
+                                    if cursor.is_null(){break validate_library_file(node.ok_or(fallback_error)?,&id,true)?;}
+                                    let next=cursor.as_str().filter(|s|!s.is_empty() && s.len()<=2048 && !s.chars().any(char::is_control)).ok_or_else(||failure("invalid_response","Invalid library cursor"))?;
+                                    if !seen.insert(next.to_owned()){break validate_library_file(node.ok_or(fallback_error)?,&id,true)?;}
+                                }
+                            },
+                            Err(error)=>return Err(error),
+                        }
+                    }
+                };
+                Ok(body)
+            }=>result,
+        };
+        self.check_share_current(&request.expected_identity,&registration)?;
+        result.map(|body|ServiceResponse{request_id:request.request_id,identity:request.expected_identity,status:200,
+            body:if content {body} else {json!({"requestedFileId":id,"file":body})},headers:BTreeMap::new()})
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn library_file_json<F,Fut,T>(&self,route:&str,body:Option<Value>,request:&ServiceRequest,registration:&Registration<'_>,call:&F,transport:&T)->ServiceResult<Value>
+    where F:Fn(&'static str,Value)->Fut,Fut:Future<Output=Result<Value,String>>,T:Transport {
+        self.check_share_current(&request.expected_identity,registration)?;
+        let mut session=self.session.lock().await;
+        self.prepare(&mut session,request.expected_identity.generation,call,false).await?;
+        for attempt in 0..2 {
+            self.check_share_current(&request.expected_identity,registration)?;
+            let credentials=session.credentials.as_ref().unwrap();
+            if credentials.identity!=request.expected_identity{return Err(failure("account_changed","Authenticated identity changed"));}
+            let integrity=session.integrity.clone();let mut outgoing=build_http_request(route,credentials,integrity.as_deref(),&request.profile)?;
+            if let Some(body)=&body {outgoing.method=HttpMethod::Post;outgoing.body=serde_json::to_vec(body).map_err(|_|failure("invalid_request","Invalid library request"))?;outgoing.headers.insert("Content-Type".into(),"application/json".into());}
+            share_network_allowed(call,&outgoing.url).await?;self.check_share_current(&request.expected_identity,registration)?;
+            let response=send_bounded(transport,outgoing,registration.cancelled.clone(),Duration::from_secs(50)).await?;
+            self.check_share_current(&request.expected_identity,registration)?;
+            apply_integrity(&mut session.integrity,integrity.as_deref(),response.headers.get("x-oai-is-update"));
+            if response.status==401 && attempt==0 && !account_instructions_ip_denied(&response){self.prepare(&mut session,request.expected_identity.generation,call,true).await?;continue;}
+            return Ok(decode_response(response,registration.id.clone(),request.expected_identity.clone())?.body);
+        }
+        unreachable!()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn library_file_bytes<F,Fut,T>(&self,target:&str,service_origin:&str,request:&ServiceRequest,registration:&Registration<'_>,call:&F,transport:&T)->ServiceResult<Value>
+    where F:Fn(&'static str,Value)->Fut,Fut:Future<Output=Result<Value,String>>,T:Transport {
+        let mut url=library_file_url(target,service_origin)?;
+        let origin=tauri::Url::parse(service_origin).map_err(|_|failure("invalid_response","Invalid service origin"))?;
+        if url.origin()==origin.origin() && !url.query_pairs().any(|(key,_)|key=="page_id" || key=="file_id") {
+            if let Some(rest)=url.path().strip_prefix("/backend-api/files/library/files/") {
+                if let Some((id,action))=rest.rsplit_once('/') {
+                    let endpoint=match action {"content_redirect"=>Some("content_url"),"download_redirect"=>Some("download_url"),"thumbnail_redirect"=>Some("thumbnail_url"),_=>None};
+                    if let Some(endpoint)=endpoint {
+                        if id.is_empty() || id.contains('/') {return Err(failure("invalid_response","Invalid library redirect identifier"));}
+                        let resolved=self.library_file_json(&format!("/backend-api/files/library/files/{id}/{endpoint}"),None,request,registration,call,transport).await?;
+                        let target=resolved.get("content_url").or_else(||resolved.get("download_url")).or_else(||resolved.get("thumbnail_url")).and_then(Value::as_str)
+                            .ok_or_else(||failure("invalid_response","Library file URL is missing"))?;
+                        url=library_file_url(target,service_origin)?;
+                    }
+                }
+            }
+        }
+        for redirect in 0..=5 {
+            self.check_share_current(&request.expected_identity,registration)?;
+            share_network_allowed(call,url.as_str()).await?;self.check_share_current(&request.expected_identity,registration)?;
+            let origin=tauri::Url::parse(service_origin).map_err(|_|failure("invalid_response","Invalid service origin"))?;
+            let authenticated=url.origin()==origin.origin() && url.path().starts_with("/backend-api/");
+            let mut auth_attempt=0;
+            let response=loop {
+                let (outgoing,sent_integrity)=if authenticated {
+                    let mut session=self.session.lock().await;
+                    self.prepare(&mut session,request.expected_identity.generation,call,false).await?;
+                    self.check_share_current(&request.expected_identity,registration)?;
+                    let credentials=session.credentials.as_ref().unwrap();
+                    if credentials.identity!=request.expected_identity || credentials.origin!=service_origin {return Err(failure("account_changed","Authenticated identity or routing changed"));}
+                    let integrity=session.integrity.clone();
+                    (build_http_request(&format!("{}{}",url.path(),url.query().map(|q|format!("?{q}")).unwrap_or_default()),credentials,integrity.as_deref(),&request.profile)?,integrity)
+                } else {(HttpRequest{url:url.to_string(),headers:BTreeMap::new(),method:HttpMethod::Get,body:Vec::new()},None)};
+                let response=tokio::time::timeout(Duration::from_secs(50),transport.send_library_file(outgoing,registration.cancelled.clone())).await.unwrap_or_else(|_|Err(failure("timeout","Library file read timed out")))?;
+                self.check_share_current(&request.expected_identity,registration)?;
+                if authenticated {
+                    let mut session=self.session.lock().await;
+                    self.check_share_current(&request.expected_identity,registration)?;
+                    apply_integrity(&mut session.integrity,sent_integrity.as_deref(),response.headers.get("x-oai-is-update"));
+                    if response.status==401 && auth_attempt==0 && !account_instructions_ip_denied(&response) {
+                        self.prepare(&mut session,request.expected_identity.generation,call,true).await?;
+                        auth_attempt+=1;continue;
+                    }
+                }
+                break response;
+            };
+            if matches!(response.status,301|302|303|307|308){
+                if redirect==5{return Err(failure("invalid_response","Too many library file redirects"));}
+                let target=response.headers.get("location").ok_or_else(||failure("invalid_response","Missing library redirect"))?;
+                url=library_file_url(url.join(target).map_err(|_|failure("invalid_response","Invalid library redirect"))?.as_str(),service_origin)?;continue;
+            }
+            if !(200..300).contains(&response.status){return Err(ServiceError{code:match response.status{401=>"unauthorized",403=>"forbidden",404=>"not_found",429=>"rate_limited",_=>"service_error"},message:"Library file read failed",status:Some(response.status)});}
+            if response.body.len() as u64>MAX_LIBRARY_FILE{return Err(failure("response_too_large","Library file exceeds 40 MiB"));}
+            let mime=response.headers.get("content-type").filter(|mime|mime.len()<=256 && !mime.chars().any(char::is_control)).cloned().unwrap_or_else(||"application/octet-stream".into());
+            return Ok(json!({"bytesBase64":base64::engine::general_purpose::STANDARD.encode(response.body),"mimeType":mime}));
+        }
+        unreachable!()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2231,7 +2397,7 @@ fn resolve_route(operation: &ServiceOperation, params: &Value) -> ServiceResult<
         ServiceOperation::StorageUsage => ("/backend-api/files/library/storage/usage".into(), &[]),
         ServiceOperation::LibrarySettings => ("/backend-api/settings/user".into(), &[]),
         ServiceOperation::LibraryImages => unreachable!(),
-        ServiceOperation::LibraryImage => unreachable!(),
+        ServiceOperation::LibraryImage | ServiceOperation::LibraryFile | ServiceOperation::LibraryFileContent => unreachable!(),
         ServiceOperation::LibraryDirectoryPath => unreachable!(),
         ServiceOperation::WhamUsage => ("/backend-api/wham/usage".into(), &[]),
         ServiceOperation::ArchiveCloudTasks => unreachable!(),
@@ -2429,6 +2595,50 @@ fn library_images_body(params: &Value) -> ServiceResult<Value> {
     Ok(body)
 }
 
+fn library_file_route(params:&Value,content:bool)->ServiceResult<(String,String)> {
+    let params=params.as_object().ok_or_else(||failure("invalid_request","Library file identifiers required"))?;
+    for (key,value) in params {
+        if !(key=="library_file_id" || content && matches!(key.as_str(),"file_id"|"gizmo_id")) || value.as_str().is_none_or(|id|id.trim().is_empty() || encode_segment(id).is_err()) {
+            return Err(failure("invalid_request","Invalid library file identifier"));
+        }
+    }
+    let id=params.get("library_file_id").and_then(Value::as_str).ok_or_else(||failure("invalid_request","Library file identifier required"))?;
+    if !native_library_id(id) {
+        return Err(failure("invalid_request","Only native Library file identifiers are supported"));
+    }
+    let mut route=format!("/backend-api/files/library/files/{}",encode_segment(id)?);
+    if content {
+        let target=if id.strip_prefix("libfile_fde").and_then(|rest|rest.split_once('_')).is_some_and(|(version,_)|!version.is_empty() && version.bytes().all(|b|b.is_ascii_digit())) {id} else {params.get("file_id").and_then(Value::as_str).unwrap_or(id)};
+        if native_library_id(target) {route=format!("/backend-api/files/library/files/{}/content_url",encode_segment(target)?);}
+        else {route=format!("/backend-api/files/download/{}?inline=true",encode_segment(&target.replace('#',"*"))?.replace("%2A","*"));if let Some(gizmo)=params.get("gizmo_id").and_then(Value::as_str){route.push_str(&format!("&gizmo_id={}",encode_segment(gizmo)?));}}
+    }
+    Ok((id.into(),route))
+}
+
+fn library_file_retry_delay(delay:u64)->u64 { delay.saturating_mul(8).div_ceil(5).min(4000) }
+
+fn native_library_id(id:&str)->bool {
+    (id.starts_with("libfile_") || id.starts_with("libfile-")) && id.len()>8 && id.bytes().all(|b|b.is_ascii_alphanumeric() || b"_-".contains(&b))
+}
+
+fn fde_library_id(id:&str)->bool {
+    ["libfile_fde1_","libfile_fde2_","libfile_fde3_"].iter().any(|prefix|id.starts_with(prefix))
+}
+
+fn validate_library_file(mut body:Value,id:&str,canonical:bool)->ServiceResult<Value> {
+    if !body.is_object() || body["id"].as_str()!=Some(id) {return Err(failure("invalid_response","Library file metadata does not match the requested file"));}
+    if canonical {
+        if let Some(value)=body.get("canonical_file_id").filter(|value|!value.is_null()) {
+            let target=value.as_str().filter(|target|native_library_id(target) && fde_library_id(target));
+            if body["kind"]!="file" || body["access_kind"]!="shared" || fde_library_id(id) || target.is_none() {
+                return Err(failure("invalid_response","Shared Library file metadata does not match the request"));
+            }
+            body["id"]=json!(target.unwrap());
+        }
+    }
+    Ok(body)
+}
+
 fn library_image_route(params: &Value) -> ServiceResult<String> {
     let params=params.as_object().ok_or_else(||failure("invalid_request","Library image identifiers required"))?;
     for (key,value) in params {
@@ -2447,6 +2657,20 @@ fn library_image_route(params: &Value) -> ServiceResult<String> {
     let mut route=format!("/backend-api/files/download/{}?inline=true",encode_segment(&id.replace('#',"*"))?.replace("%2A","*"));
     if let Some(id)=params.get("gizmo_id").and_then(Value::as_str) { route.push_str(&format!("&gizmo_id={}",encode_segment(id)?)); }
     Ok(route)
+}
+
+fn library_file_url(target:&str,origin:&str)->ServiceResult<tauri::Url> {
+    if target.contains('\\') || target.len()>16384 || target.chars().any(char::is_control) {return Err(failure("invalid_response","Invalid library file target"));}
+    let mut url=library_image_url(target.trim(),origin)?;
+    let service=tauri::Url::parse(origin).map_err(|_|failure("invalid_response","Invalid service origin"))?;
+    if url.origin()==service.origin() {
+        let path=url.path().to_owned();
+        let mapped=if let Some(path)=path.strip_prefix("/__codex-api/") {Some(format!("/backend-api/{path}"))}
+            else if matches!(path.as_str(),"/estuary/content"|"/estuary/content/") || path.strip_prefix("/estuary/public_content/enc/").is_some_and(|id|!id.is_empty() && !id.contains('/')) {Some(format!("/backend-api{path}"))}
+            else {path.strip_prefix("/library/files/").filter(|path|path.ends_with("/thumbnail") && path.split('/').count()==2).map(|path|format!("/api/library/files/{path}"))};
+        if let Some(path)=mapped {url.set_path(&path);}
+    }
+    library_image_url(url.as_str(),origin)
 }
 
 fn library_image_url(target: &str, origin: &str) -> ServiceResult<tauri::Url> {
@@ -3239,12 +3463,16 @@ fn decode_response(
 
 trait Transport {
     fn send(&self, request: HttpRequest, cancel: Arc<AtomicBool>) -> TransportFuture<'_>;
+    fn send_library_file(&self, request: HttpRequest, cancel: Arc<AtomicBool>) -> TransportFuture<'_> { self.send(request, cancel) }
 }
 
 struct CurlTransport;
 impl Transport for CurlTransport {
     fn send(&self, request: HttpRequest, cancel: Arc<AtomicBool>) -> TransportFuture<'_> {
         Box::pin(curl_request(request, cancel))
+    }
+    fn send_library_file(&self, request: HttpRequest, cancel: Arc<AtomicBool>) -> TransportFuture<'_> {
+        Box::pin(curl_request_limit(request, cancel, MAX_LIBRARY_FILE))
     }
 }
 
@@ -3342,6 +3570,10 @@ async fn curl_request(
     request: HttpRequest,
     cancel: Arc<AtomicBool>,
 ) -> ServiceResult<HttpResponse> {
+    curl_request_limit(request, cancel, MAX_RESPONSE).await
+}
+
+async fn curl_request_limit(request: HttpRequest, cancel: Arc<AtomicBool>, limit: u64) -> ServiceResult<HttpResponse> {
     if cancel.load(Ordering::SeqCst) {
         return Err(failure("cancelled", "Service request cancelled"));
     }
@@ -3379,7 +3611,7 @@ async fn curl_request(
             "--max-time",
             "45",
             "--max-filesize",
-            "8388608",
+            &limit.to_string(),
             "--include",
             "--suppress-connect-headers",
         ])
@@ -3409,11 +3641,11 @@ async fn curl_request(
         drop(stdin);
         let mut bytes = Vec::new();
         stdout
-            .take(MAX_RESPONSE + 1)
+            .take(limit + 65536 + 1)
             .read_to_end(&mut bytes)
             .await
             .map_err(|_| failure("network_error", "HTTP transport read failed"))?;
-        if bytes.len() as u64 > MAX_RESPONSE {
+        if bytes.len() as u64 > limit + 65536 {
             return Err(failure(
                 "response_too_large",
                 "ChatGPT service response exceeded size limit",
@@ -3429,7 +3661,9 @@ async fn curl_request(
                 "ChatGPT service network request failed",
             ));
         }
-        parse_http(&bytes)
+        let response = parse_http(&bytes)?;
+        if response.body.len() as u64 > limit { return Err(failure("response_too_large", "ChatGPT service response exceeded size limit")); }
+        Ok(response)
     };
     tokio::select! {
         _ = cancelled(&cancel) => Err(failure("cancelled", "Service request cancelled")),
@@ -5341,6 +5575,186 @@ mod tests {
         let mut request = request(id);
         request.operation = operation;
         request
+    }
+
+    #[tokio::test]
+    async fn library_file_metadata_uses_only_permission_fallback_and_preserves_fields() {
+        let id="libfile_fixture";
+        let node=json!({"id":id,"kind":"file","name":"notes.txt","mime_type":"text/plain","extra":{"original":true}});
+        for statuses in [&[200][..], &[404,200][..], &[403,404,200][..]] {
+            let service=ChatgptService::default();
+            let bodies=if statuses.len()==1 {vec![node.clone()]} else if statuses.len()==2 {vec![Value::Null,node.clone()]} else {vec![Value::Null,Value::Null,json!({"items":[node.clone()],"cursor":null})]};
+            let transport=instructions_transport(statuses,&bodies);
+            let mut req=library_request("metadata",ServiceOperation::LibraryFile);req.params=json!({"library_file_id":id});
+            assert_eq!(service.read_with(req,share_rpc,&transport).await.unwrap().body,json!({"requestedFileId":id,"file":node}));
+            assert_eq!(transport.requests.lock().unwrap().len(),statuses.len());
+        }
+        for status in [401,429,500] {
+            let service=ChatgptService::default();let transport=instructions_transport(&[status,status],&[Value::Null,Value::Null]);
+            let mut req=library_request("metadata-error",ServiceOperation::LibraryFile);req.params=json!({"library_file_id":id});
+            assert!(service.read_with(req,share_rpc,&transport).await.is_err());
+            assert!(transport.requests.lock().unwrap().iter().all(|r|r.url.ends_with("/libfile_fixture")));
+        }
+    }
+
+    #[tokio::test]
+    async fn library_file_content_returns_real_text_and_strips_credentials_on_redirect() {
+        let service=ChatgptService::default();
+        let transport=instructions_transport(&[200,302,200],&[json!({"content_url":"/api/library/files/libfile_fde1_fixture/content?page_id=fixture"}),Value::Null,Value::Null]);
+        let bytes="中文\nactual text".as_bytes().to_vec();
+        {let mut responses=transport.responses.lock().unwrap();responses[1].headers.insert("location".into(),"https://files.example.test/signed".into());responses[2].body=bytes.clone();responses[2].headers.insert("content-type".into(),"text/plain; charset=utf-8".into());}
+        let mut req=library_request("file-content",ServiceOperation::LibraryFileContent);req.params=json!({"library_file_id":"libfile_fde1_fixture"});
+        assert_eq!(service.read_with(req,share_rpc,&transport).await.unwrap().body,json!({"bytesBase64":base64::engine::general_purpose::STANDARD.encode(bytes),"mimeType":"text/plain; charset=utf-8"}));
+        let requests=transport.requests.lock().unwrap();assert!(requests[2].headers.is_empty());assert!(requests[1].headers.contains_key("Authorization"));
+    }
+
+    #[tokio::test]
+    async fn library_file_metadata_canonical_versions_and_repeated_cursor_are_checked() {
+        let shared=json!({"id":"libfile_alias","kind":"file","access_kind":"shared","canonical_file_id":"libfile_fde2_canonical","name":"Shared note"});
+        let result=validate_library_file(shared.clone(),"libfile_alias",true).unwrap();assert_eq!(result["id"],"libfile_fde2_canonical");assert_eq!(result["name"],"Shared note");
+        for patch in [json!({"id":"other"}),json!({"kind":"directory"}),json!({"access_kind":"owned"}),json!({"canonical_file_id":"file-id"}),json!({"canonical_file_id":"libfile_fde9_wrong"})] {
+            let mut bad=shared.clone();for (key,value) in patch.as_object().unwrap(){bad[key]=value.clone();}
+            assert!(validate_library_file(bad,"libfile_alias",true).is_err());
+        }
+        assert!(validate_library_file(json!({"id":"libfile_fde1_original","kind":"file","access_kind":"shared","canonical_file_id":"libfile_fde2_target"}),"libfile_fde1_original",true).is_err());
+        let service=ChatgptService::default();
+        let node=json!({"id":"libfile_image","kind":"file","access_kind":"owned","library_file_category":"image","name":"Image"});
+        let transport=instructions_transport(&[404,200,200],&[Value::Null,node.clone(),json!({"items":[{"library_artifact_type":"image_gen"}]})]);
+        let mut req=library_request("file-version",ServiceOperation::LibraryFile);req.params=json!({"library_file_id":"libfile_image"});
+        assert_eq!(service.read_with(req,share_rpc,&transport).await.unwrap().body["file"]["library_artifact_type"],"image_gen");
+        assert!(transport.requests.lock().unwrap()[2].url.ends_with("/versions?limit=1"));
+        let service=ChatgptService::default();
+        let transport=instructions_transport(&[404,404,200,200],&[Value::Null,Value::Null,json!({"items":[],"cursor":"again"}),json!({"items":[],"cursor":"again"})]);
+        let mut req=library_request("file-loop",ServiceOperation::LibraryFile);req.params=json!({"library_file_id":"libfile_missing"});
+        assert_eq!(service.read_with(req,share_rpc,&transport).await.err().unwrap().status,Some(404));
+        assert_eq!(transport.requests.lock().unwrap().len(),4);
+        let service=ChatgptService::default();let transport=instructions_transport(&[200],&[shared]);
+        let mut req=library_request("file-canonical",ServiceOperation::LibraryFile);req.params=json!({"library_file_id":"libfile_alias"});
+        // The direct metadata endpoint preserves its response; canonical conversion belongs to /node.
+        assert_eq!(service.read_with(req,share_rpc,&transport).await.unwrap().body["file"]["id"],"libfile_alias");
+        let service=ChatgptService::default();let transport=instructions_transport(&[403,200],&[Value::Null,json!({"id":"libfile_alias","kind":"file","access_kind":"shared","canonical_file_id":"libfile_fde2_canonical","custom":"kept"})]);
+        let mut req=library_request("file-canonical-node",ServiceOperation::LibraryFile);req.params=json!({"library_file_id":"libfile_alias"});
+        assert_eq!(service.read_with(req,share_rpc,&transport).await.unwrap().body,json!({"requestedFileId":"libfile_alias","file":{"id":"libfile_fde2_canonical","kind":"file","access_kind":"shared","canonical_file_id":"libfile_fde2_canonical","custom":"kept"}}));
+        let service=ChatgptService::default();let transport=instructions_transport(&[200],&[json!({"id":"libfile_wrong"})]);
+        let mut req=library_request("file-mismatch",ServiceOperation::LibraryFile);req.params=json!({"library_file_id":"libfile_fde1_requested"});
+        assert_eq!(service.read_with(req,share_rpc,&transport).await.err().unwrap().code,"invalid_response");assert_eq!(transport.requests.lock().unwrap().len(),1);
+    }
+
+    #[tokio::test]
+    async fn library_file_content_retries_native_download_and_resolves_attach_redirect() {
+        assert_eq!([500,800,1280,2048,3277,4000].map(library_file_retry_delay),[800,1280,2048,3277,4000,4000]);
+        let service=ChatgptService::default();
+        let transport=instructions_transport(&[200,200,200],&[json!({"status":"retry"}),json!({"status":"success","download_url":"https://files.example.test/signed"}),Value::Null]);
+        transport.responses.lock().unwrap()[2].body=b"actual".to_vec();
+        let mut req=library_request("file-retry",ServiceOperation::LibraryFileContent);req.params=json!({"library_file_id":"libfile_native","file_id":"file-a#b","gizmo_id":"gizmo"});
+        let start=tokio::time::Instant::now();assert!(service.read_with(req,share_rpc,&transport).await.is_ok());assert!(start.elapsed()>=Duration::from_millis(500));
+        let requests=transport.requests.lock().unwrap();assert!(requests[0].url.ends_with("/files/download/file-a*b?inline=true&gizmo_id=gizmo"));assert_eq!(requests[0].url,requests[1].url);drop(requests);
+        let service=ChatgptService::default();
+        let transport=instructions_transport(&[200,200,200],&[json!({"content_url":"/api/library/files/libfile_native/content"}),json!({"content_url":"https://files.example.test/signed"}),Value::Null]);
+        transport.responses.lock().unwrap()[2].body=b"resolved".to_vec();
+        let mut req=library_request("file-resolve",ServiceOperation::LibraryFileContent);req.params=json!({"library_file_id":"libfile_native"});
+        assert!(service.read_with(req,share_rpc,&transport).await.is_ok());
+        let requests=transport.requests.lock().unwrap();assert_eq!(requests[0].url,requests[1].url);assert!(requests[2].headers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn library_file_content_size_identity_cancellation_and_network_boundaries() {
+        for size in [MAX_RESPONSE+1,MAX_LIBRARY_FILE,MAX_LIBRARY_FILE+1] {
+            let service=ChatgptService::default();let transport=instructions_transport(&[200,200],&[json!({"content_url":"https://files.example.test/signed"}),Value::Null]);
+            transport.responses.lock().unwrap()[1].body=vec![b'a';size as usize];
+            let mut req=library_request("file-size",ServiceOperation::LibraryFileContent);req.params=json!({"library_file_id":"libfile_native"});
+            let result=service.read_with(req,share_rpc,&transport).await;
+            if size>MAX_LIBRARY_FILE {assert_eq!(result.err().unwrap().code,"response_too_large");} else {assert!(result.is_ok());}
+        }
+        assert_eq!(MAX_RESPONSE,8*1024*1024);
+        for change_identity in [false,true] {
+            let service=ChatgptService::default();let mut transport=instructions_transport(&[200],&[json!({"status":"retry"})]);transport.delay_ms=50;
+            let mut req=library_request("file-cancel",ServiceOperation::LibraryFileContent);req.params=json!({"library_file_id":"libfile_native","file_id":"file-native"});
+            let read=service.read_with(req,share_rpc,&transport);
+            let cancel=async {while !transport.entered.load(Ordering::SeqCst){tokio::task::yield_now().await;}tokio::time::sleep(Duration::from_millis(100)).await;if change_identity {service.invalidate();}else{service.cancel("file-cancel");}};
+            assert_eq!(tokio::join!(read,cancel).0.err().unwrap().code,if change_identity{"account_changed"}else{"cancelled"});assert_eq!(transport.requests.lock().unwrap().len(),1);
+        }
+        for change_identity in [false,true] {
+            let service=ChatgptService::default();let mut transport=instructions_transport(&[200,200],&[json!({"content_url":"https://files.example.test/signed"}),Value::Null]);transport.delay_ms=50;
+            transport.responses.lock().unwrap()[1].body=b"late bytes".to_vec();
+            let mut req=library_request("file-byte-cancel",ServiceOperation::LibraryFileContent);req.params=json!({"library_file_id":"libfile_native"});
+            let read=service.read_with(req,share_rpc,&transport);
+            let cancel=async {loop{let count=transport.requests.lock().unwrap().len();if count>=2{break;}tokio::task::yield_now().await;}if change_identity{service.invalidate();}else{service.cancel("file-byte-cancel");}};
+            assert_eq!(tokio::join!(read,cancel).0.err().unwrap().code,if change_identity{"account_changed"}else{"cancelled"});assert_eq!(transport.requests.lock().unwrap().len(),2);
+        }
+        for params in [json!({"url":"https://evil.test"}),json!({"library_file_id":"mounted_provider"}),json!({"library_file_id":"libfile_native","headers":{}})] {
+            assert!(library_file_route(&params,true).is_err());
+        }
+        let service=ChatgptService::default();let transport=FakeTransport::new(&[]);
+        let denied=|method,params|if method=="configRequirements/read"{std::future::ready(Ok(json!({"requirements":{"application":{"network":{"enabled":true,"domains":{}}}}})))}else{share_rpc(method,params)};
+        let mut req=library_request("file-network",ServiceOperation::LibraryFile);req.params=json!({"library_file_id":"libfile_native"});
+        assert_eq!(service.read_with(req,denied,&transport).await.err().unwrap().code,"network_restricted");assert!(transport.requests.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn library_file_content_uses_refreshed_credentials_after_attach_resolution() {
+        struct RefreshTransport {inner:FakeTransport,expected_token:String}
+        impl Transport for RefreshTransport {
+            fn send(&self,request:HttpRequest,cancel:Arc<AtomicBool>)->TransportFuture<'_> {
+                if request.url=="https://chatgpt.com/backend-api/estuary/content?id=native" &&
+                    (request.headers.get("Authorization")!=Some(&format!("Bearer {}",self.expected_token)) || request.headers.get("X-OAI-IS").map(String::as_str)!=Some("ois1.fresh.header.value")) {
+                    self.inner.requests.lock().unwrap().push(request);
+                    return Box::pin(async {Ok(HttpResponse{status:401,headers:BTreeMap::new(),body:Vec::new()})});
+                }
+                self.inner.send(request,cancel)
+            }
+        }
+        let service=ChatgptService::default();
+        let fresh_token=token("account-fixture","user-fixture",4102444801);
+        let inner=instructions_transport(&[200,401,200,302,200],&[
+            json!({"content_url":"/api/library/files/libfile_native/content"}),Value::Null,
+            json!({"content_url":"/estuary/content?id=native"}),Value::Null,Value::Null]);
+        {let mut responses=inner.responses.lock().unwrap();responses[0].headers.insert("x-oai-is-update".into(),"ois1.old.header.value".into());responses[2].headers.insert("x-oai-is-update".into(),"ois1.fresh.header.value".into());responses[3].headers.insert("location".into(),"https://files.example.test/signed".into());responses[4].body=b"fresh content".to_vec();}
+        let transport=RefreshTransport{inner,expected_token:fresh_token.clone()};
+        let refreshed=AtomicBool::new(false);
+        let rpc=|method,params:Value| {
+            if method=="getAuthStatus" {
+                let refresh=params["refreshToken"]==true;
+                if refresh {refreshed.store(true,Ordering::SeqCst);}
+                let selected=if refresh{fresh_token.clone()}else{fixture_token()};
+                std::future::ready(Ok(auth(&selected)))
+            } else {share_rpc(method,params)}
+        };
+        let mut req=library_request("file-refresh",ServiceOperation::LibraryFileContent);req.params=json!({"library_file_id":"libfile_native"});
+        let result=service.read_with(req,rpc,&transport).await.unwrap();
+        assert_eq!(result.body["bytesBase64"],base64::engine::general_purpose::STANDARD.encode(b"fresh content"));assert!(refreshed.load(Ordering::SeqCst));
+        let requests=transport.inner.requests.lock().unwrap();assert_eq!(requests.len(),5);
+        assert_eq!(requests[3].headers["Authorization"],format!("Bearer {fresh_token}"));assert_eq!(requests[3].headers["X-OAI-IS"],"ois1.fresh.header.value");assert!(requests[4].headers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn library_file_content_refreshes_same_origin_bytes_once_without_authenticating_signed_hosts() {
+        for statuses in [&[200,401,200][..],&[200,401,401][..]] {
+            let service=ChatgptService::default();let transport=instructions_transport(statuses,&[json!({"content_url":"/estuary/content?id=native"}),Value::Null,Value::Null]);
+            transport.responses.lock().unwrap()[2].body=b"fresh bytes".to_vec();
+            let refreshed=AtomicBool::new(false);let fresh=token("account-fixture","user-fixture",4102444801);
+            let rpc=|method,params:Value|if method=="getAuthStatus"{let refresh=params["refreshToken"]==true;if refresh{refreshed.store(true,Ordering::SeqCst);}let selected=if refresh{fresh.clone()}else{fixture_token()};std::future::ready(Ok(auth(&selected)))}else{share_rpc(method,params)};
+            let mut req=library_request("bytes-refresh",ServiceOperation::LibraryFileContent);req.params=json!({"library_file_id":"libfile_native"});
+            let result=service.read_with(req,rpc,&transport).await;
+            if statuses[2]==200{assert!(result.is_ok());}else{assert_eq!(result.err().unwrap().code,"unauthorized");}
+            assert!(refreshed.load(Ordering::SeqCst));let requests=transport.requests.lock().unwrap();assert_eq!(requests.len(),3);assert_eq!(requests[1].headers["Authorization"],format!("Bearer {}",fixture_token()));assert_eq!(requests[2].headers["Authorization"],format!("Bearer {fresh}"));
+        }
+        let service=ChatgptService::default();let transport=instructions_transport(&[200,401],&[json!({"content_url":"https://files.example.test/signed"}),Value::Null]);
+        let mut req=library_request("signed-no-auth-refresh",ServiceOperation::LibraryFileContent);req.params=json!({"library_file_id":"libfile_native"});
+        assert_eq!(service.read_with(req,share_rpc,&transport).await.err().unwrap().code,"unauthorized");let requests=transport.requests.lock().unwrap();assert_eq!(requests.len(),2);assert!(requests[1].headers.is_empty());
+    }
+
+    #[test]
+    fn library_file_urls_and_underlying_file_precedence_match_official_native_routes() {
+        for (target,path) in [("/estuary/content?id=fixture","/backend-api/estuary/content?id=fixture"),
+            ("/estuary/public_content/enc/fixture","/backend-api/estuary/public_content/enc/fixture"),
+            ("/__codex-api/files/library/content_download?id=fixture","/backend-api/files/library/content_download?id=fixture"),
+            ("/library/files/libfile_fixture/thumbnail","/backend-api/files/library/files/libfile_fixture/thumbnail_redirect")] {
+            let url=library_file_url(target,"https://chatgpt.com").unwrap();assert_eq!(url.as_str(),format!("https://chatgpt.com{path}"));
+        }
+        assert!(library_file_route(&json!({"library_file_id":"libfile_fde12_a","file_id":"file-ignored"}),true).unwrap().1.ends_with("/libfile_fde12_a/content_url"));
+        assert!(library_file_route(&json!({"library_file_id":"libfile_fdebad_a","file_id":"file-real"}),true).unwrap().1.ends_with("/files/download/file-real?inline=true"));
+        for target in ["http://files.example.test/a","https://127.0.0.1/a","//evil.test/a","https://user@files.example.test/a","https://files.example.test/a#fragment"]{assert!(library_file_url(target,"https://chatgpt.com").is_err());}
     }
 
     #[tokio::test]

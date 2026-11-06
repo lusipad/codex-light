@@ -7,7 +7,7 @@ interface MarkdownViewProps {
   variant?: "default" | "user-message";
   onRunCommand?: (cmd: string) => void;
   onOpenFile?: (filePath: string) => void;
-  remoteContent?: boolean;
+  remoteContent?: boolean | "no-remote-images";
 }
 
 interface ParsedBlock {
@@ -118,7 +118,7 @@ function renderInlineSegments(
   text: string,
   onOpenFile?: (filePath: string) => void,
   userMessage = false,
-  remoteContent = false
+  remoteContent: boolean | "no-remote-images" = false
 ): React.ReactNode[] {
   const inlineRegex =
     /(`[^`]+`|!\[[^\]]*\]\([^)]+\)|\[[^\]]+\]\([^)]+\)|\*\*\*[^*]+\*\*\*|\*\*[^*]+\*\*|~~[^~]+~~|(?<!\*)\*[^*\s][^*]*\*(?!\*)|(?<!\w)_[^_\s][^_]*_(?!\w))/g;
@@ -159,6 +159,7 @@ function renderInlineSegments(
         return <React.Fragment key={idx}>!{renderInlineSegments(part.slice(1), onOpenFile, true, remoteContent)}</React.Fragment>;
       }
       const [, alt, src] = imgMatch;
+      if (remoteContent === "no-remote-images") return <span key={idx} className="md-unsupported-media" title="远程图片">{alt || "图片"}</span>;
       if (hasUnsafeImageProtocol(src) || (remoteContent && !/^https:\/\//i.test(src))) {
         return <span key={idx} className="md-unsupported-media">不支持的图片地址</span>;
       }
@@ -279,7 +280,7 @@ function renderTextParagraphs(
   text: string,
   onOpenFile?: (filePath: string) => void,
   userMessage = false,
-  remoteContent = false
+  remoteContent: boolean | "no-remote-images" = false
 ) {
   const lines = text.split(/\r?\n/);
   const elements: React.ReactNode[] = [];

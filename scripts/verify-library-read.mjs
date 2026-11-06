@@ -48,7 +48,8 @@ function client(requestId = "fixed-library-id") {
   } };
   const service = load("src/chatgptService.ts", name => name === "./bridge" ? bridge : {}, () => requestId);
   const data = load("src/libraryData.ts", () => { throw Error("unexpected data dependency"); }, () => requestId);
-  const library = load("src/libraryClient.ts", name => ({ "./bridge": bridge, "./chatgptService": service, "./libraryData": data })[name], () => requestId);
+  const preview = load("src/libraryPreview.ts", () => { throw Error("unexpected preview dependency"); }, () => requestId);
+  const library = load("src/libraryClient.ts", name => ({ "./bridge": bridge, "./chatgptService": service, "./libraryData": data, "./libraryPreview": preview })[name], () => requestId);
   return { library, control, calls, cancelled };
 }
 const productionDecode = client().library.decodeLibraryAccess;

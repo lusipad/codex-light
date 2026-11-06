@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';import fs from 'node:fs';import vm from 'node:vm';import ts from 'typescript';
+const React={createElement:(type,props,...children)=>({type,props:props??{},children:children.flat(Infinity)}),Fragment:'fragment',memo:fn=>fn,useState:v=>[v,()=>{}],useRef:v=>({current:v}),useEffect:()=>{}};React.default=React;
+const exports={};let localActions=0;
+vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/components/MarkdownView.tsx','utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.React}}).outputText,{exports,require:name=>name==='react'?React:name==='../clipboard'?{copyTextToClipboard:()=>{localActions++}}:{},URL});
+const walk=n=>n&&typeof n==='object'?[n,...(n.children??[]).flatMap(walk)]:[];
+const props={content:'![private](https://127.0.0.1/private)\n\n![remote](https://example.test/tracker)\n\n[bad](file:///secret)\n\n`C:/secret.txt`',onRunCommand:()=>localActions++,onOpenFile:()=>localActions++};
+const isolated=walk(exports.MarkdownView({...props,remoteContent:'no-remote-images'}));
+assert.equal(isolated.filter(n=>n.type==='img').length,0,'Library file bytes must not auto-fetch images outside the authenticated policy boundary');
+assert.equal(isolated.filter(n=>n.props.href?.startsWith('file:')).length,0);assert.equal(localActions,0);
+const prior=walk(exports.MarkdownView({...props,remoteContent:true}));assert.equal(prior.filter(n=>n.type==='img').length,2,'existing remote-content callers keep their prior contract');
+console.log('PASS actual MarkdownView isolated Library media has no automatic image requests or local actions; existing callers unchanged');

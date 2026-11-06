@@ -78,6 +78,9 @@ try {
   Invoke-Step "Library authenticated service boundary regression" { node scripts/verify-library-service.mjs }
   Invoke-Step "Library directory navigation and cancellation" { node scripts/verify-library-navigation.mjs }
   Invoke-Step "Library directory titlebar history" { node scripts/verify-library-host-navigation.mjs }
+  Invoke-Step "Library preview metadata and byte contracts" { node scripts/verify-library-preview.mjs }
+  Invoke-Step "Library preview component lifecycle" { node scripts/verify-library-preview-ui.mjs }
+  Invoke-Step "Library preview remote media isolation" { node scripts/verify-library-preview-media.mjs }
   Invoke-Step "Library response mapping, paging and sorting" { node scripts/verify-library-data.mjs }
   Invoke-Step "Library access and real client contracts" { node scripts/verify-library-read.mjs }
   Invoke-Step "Library cleanup lifecycle and presentation regression" { node scripts/verify-library-cleanup.mjs }

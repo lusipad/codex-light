@@ -1,5 +1,13 @@
 # 实施日志（按轮次）
 
+## 2026-11-06 — 18F-A 资料库普通文件真内容与右侧预览
+
+- 承接18F预先合同补齐原函数/中文、native metadata与字节链取证，再接固定library_file/library_file_content，复用鉴权、网络策略、取消与原目录。普通图片/文本/Markdown使用真实内容和右侧面板，保留40MiB边界、宽比保存、URL释放、旧回调/身份隔离；cleanup容器未放宽。
+- 复现并修正9MiB Base64校验堆栈溢出、charset MIME误拒、Markdown自动外链图越过宿主策略及刷新后旧凭据；特殊artifact不冒充普通支持，writing_block只读回退/专用gate仍明确欠缺。最后按官方text-base修正预览13→14px，重测宽窄14px/28px且无横溢出。
+- 61组前端、全库Rust527项、完整非Fast标准318段/32隔离探针、类型/前端构建/最终Tauri debug构建均退出0。634输入前后稳定，3资产、EXE及5许可已绑定；首次打包遗漏嵌套许可已补齐并核对当前源码，无新增依赖。
+- 浏览器实际组件和独立Tauri/WebView2内存reader夹具分别验证；最终生产EXE另测私有未登录资料库/重试/正常退出，0会话。EXE为dist-artifacts/library-18F-20261106/CodexNative.exe，SHA256 98b4d30c7a7ae2503359a4b2ef9367d2941aae7a26017133c388f26bde4c8409。没有真实账号文件HTTP、原生认证预览、物理IME、官方配对像素或用户验收。
+- PDF两页原生sandboxed Blob探针未显示页；没有放行DevTools粘贴、去掉sandbox或搬官方混合chunk。下一PDF工作面已取证到PDF.js5.4.296/页轨/搜索/缩放与许可，独立引擎仍需新增依赖授权及安全选型；Office/HTML/特殊artifact和完整Library矩阵未完成。详见18F-A验收与18F-B合同；阶段提交不代表整页1:1。
+
 ## 2026-11-06 — 18E普通资料库目录导航
 
 - 先核固定Store26.1027.3384.0、12条原包integrity与25函数/中文锚点，再复用nodes/真实资格恢复普通native目录、独立祖先path、分页、面包屑及现有标题栏前后退；保留metadata表与原cleanup，无新增依赖或假预览。

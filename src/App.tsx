@@ -5504,8 +5504,8 @@ export const App: React.FC = () => {
             </div>
           </div>
         ) : activeRoute === "library" ? (
-          <div className="full-route-view">
-            <div className="full-route-container">
+          <div className={`full-route-view${libraryCleanupTab ? "" : " library-route-view"}`}>
+            <div className={`full-route-container${libraryCleanupTab ? "" : " library-route-container"}`}>
               {libraryCleanupTab ? <LibraryCleanupView tab={libraryCleanupTab} onTabChange={setLibraryCleanupTab}
                 scope={JSON.stringify([modelAccountIdentity, appServerStatus.connected, appServerStatus.binaryPath, appServerStatus.appServerVersion])} /> : <LibraryView onNavigationChange={updateLibraryNavigation} />}
             </div>

@@ -1,6 +1,6 @@
 # 18F 资料库文件预览：后续完整链合同
 
-日期：2026-11-06。状态：静态调研完成，未开发、未验收。承接[18E目录](18E-library-navigation.md)；本合同覆盖普通文件预览目标，不把图片或文本子范围当成整个预览完成。
+日期：2026-11-06。状态：普通图片/文本/Markdown阶段本地功能自验完成；完整类型矩阵未完成、未用户验收。承接[18E目录](18E-library-navigation.md)；本合同覆盖普通文件预览目标，不把图片或文本子范围当成整个预览完成。
 
 ## 固定来源
 
@@ -36,3 +36,14 @@ Store26.1027.3384.0；同会话固定asar整包hash6fbedf054a8d8cafaf5c745b40aa5
 ## 开发前还需补证
 
 真实账号响应、native谓词与底层OY/file-service全合同、HTML隔离、PDF/Office/notebook现有可用能力和许可、全部特殊artifact gates/写边界、官方同环境宽窄截图与焦点/IME。当前14纯分类样本仅证明分支，不能替代下载、权限、viewer渲染或原生集成。后续先补相应决定性证据，再开发对应分支。
+
+## 18F-A本次阶段实现与剩余矩阵
+
+- 补证见同目录reference/preview-supplement.md、46个完整函数及25条实际中文、native-file-service-supplement.json。原包metadata两类顶层结构不含file包装；本项目宿主桥明确新增requestedFileId/file包络，用于绑定请求与严格canonical alias，不能称其为官方HTTP结构。
+- 固定library_file/library_file_content操作复用账号、代次、取消、网络策略。metadata的403/404受限fallback、canonical id、content_url/attach规范化、有限重试、同源401一次刷新及外域无认证头均有生产函数回归。40MiB按真实字节检查，原8MiB通道未整体扩大。provider、mounted、shared conversation专用链仍未完成。
+- 普通图片、文本、Markdown按metadata后真字节读取；右侧面板使用测量宽度、比例持久化、取消、URL释放和延迟Escape。窗口小于672 CSS px时全宽是当前实现，仍需官方运行时确认；关闭回原按钮是本项目可访问性选择，尚不能称官方已证。
+- 颜色/尺寸以原函数和CSS为锚点，缺少官方同环境截图时score=null，不生成像素通过。Markdown暂禁止自动远程图片，保留文本alt；官方受控媒体链尚未实现，属于明确视觉功能缺口。
+- 已知special artifacts暂隔离出普通读取资格。官方writing_block有按gate决定编辑或只读回退，因此当前统一未显示不是官方完整行为；snapshot跳原聊天、automation/flashcards/app/site等专用派发仍须实现，不能把限制状态计入1:1完成。
+- PDF探针使用独立编译夹具、生成两页本地PDF，file origin的sandboxed Blob iframe显示插件阻止图标，未显示文档。DevTools脚本粘贴被保护阻止且未执行；没有放行粘贴、取消sandbox或改官方配置。本结果只证明该探针路径不可用，不能推广为WebView2不支持PDF；生产tauri origin和官方专用viewer均未完成。
+
+阶段验证和交付以[18F-A记录](../acceptance/18F-library-preview.md)的实际结果为准。

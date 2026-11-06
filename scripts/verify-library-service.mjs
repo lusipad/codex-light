@@ -22,6 +22,7 @@ export function harness(listenerError = null) {
     if (name === "react") return React;
     if (name.endsWith(".css")) return {};
     if (name === "./ThreadActionsMenu") return { ThreadActionsMenu: "ThreadActionsMenu" };
+    if (name === "./LibraryPreviewPane") return { LibraryPreviewPane: "LibraryPreviewPane" };
     if (name === "../bridge") return { tauriListen: (_event, callback) => { listener = callback; return listenerError ? Promise.reject(listenerError) : Promise.resolve(() => {}); } };
     if (name === "../chatgptService") return { serviceErrorMessage: cause => cause.message };
     if (name === "../libraryData") return data;
