@@ -370,7 +370,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         {/* SECTION: NOTIFICATIONS */}
         {activeSection === "notifications" && (
           <div className="settings-scroll-container">
-            <AccountNotificationSettings scope={JSON.stringify([connectionIdentity, accountIdentity])} onManageTasks={() => onNavigateRoute?.("scheduled")} />
+            <AccountNotificationSettings scope={JSON.stringify([connectionIdentity, accountIdentity])} connected={appServerStatus.connected} onManageTasks={() => onNavigateRoute?.("scheduled")} />
           </div>
         )}
 

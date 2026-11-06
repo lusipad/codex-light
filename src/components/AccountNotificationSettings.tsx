@@ -8,7 +8,7 @@ import "./AccountNotificationSettings.css";
 const sameIdentity = (a: AccountNotificationSnapshot["identity"], b: AccountNotificationSnapshot["identity"]) =>
   Boolean(a && b && a.accountId === b.accountId && a.userId === b.userId && a.generation === b.generation);
 
-export function AccountNotificationSettings({ scope, onManageTasks }: { scope: string; onManageTasks?: () => void }) {
+export function AccountNotificationSettings({ scope, connected, onManageTasks }: { scope: string; connected: boolean; onManageTasks?: () => void }) {
   const [snapshot, setSnapshot] = useState<AccountNotificationSnapshot | null>(null);
   const [viewScope, setViewScope] = useState(scope);
   const [loading, setLoading] = useState(true);
@@ -16,20 +16,23 @@ export function AccountNotificationSettings({ scope, onManageTasks }: { scope: s
   const [accountUnavailable, setAccountUnavailable] = useState(false);
   const [writeError, setWriteError] = useState<string | null>(null);
   const [listenerError, setListenerError] = useState<string | null>(null);
+  const [listenerRetry, setListenerRetry] = useState(0);
   const [blocked, setBlocked] = useState(false);
-  const current = useRef({ mounted: false, scope }); current.current.scope = scope;
+  const current = useRef({ mounted: false, scope, connected }); current.current.scope = scope; current.current.connected = connected;
   const data = useRef<AccountNotificationSnapshot | null>(null);
   const epoch = useRef(0), readVersion = useRef(0), sequence = useRef(0);
   const reading = useRef<AbortController | null>(null);
   const writes = useRef(new Map<number, AbortController>());
   const latest = useRef(new Map<string, number>());
   const locked = useRef(false);
+  const subscribed = useRef(false);
+  const connectionLost = useRef(false);
   const renderEpoch = epoch.current;
   const valid = (version: number, captured: string) => current.current.mounted && epoch.current === version && current.current.scope === captured;
   const publish = (next: AccountNotificationSnapshot | null) => { data.current = next; setSnapshot(next); };
   const reload = async () => {
     // A read while writes are in flight can replace optimistic values with an older server snapshot.
-    if (writes.current.size) return;
+    if (!subscribed.current || !current.current.connected || connectionLost.current || writes.current.size) return;
     const version = epoch.current, captured = scope, request = ++readVersion.current;
     reading.current?.abort(); const controller = new AbortController(); reading.current = controller;
     setLoading(true); setReadError(null); setAccountUnavailable(false);
@@ -48,9 +51,13 @@ export function AccountNotificationSettings({ scope, onManageTasks }: { scope: s
     }
   };
   const latestReload = useRef(reload); latestReload.current = reload;
+  const retry = () => {
+    if (!subscribed.current) setListenerRetry(value => value + 1);
+    else void reload();
+  };
   const change = async (category: string, channel: string, enabled: boolean) => {
     const selected = data.current;
-    if (!current.current.mounted || current.current.scope !== scope || renderEpoch !== epoch.current || locked.current || !selected?.identity || selected.access !== "allowed" || viewScope !== scope) return;
+    if (!current.current.mounted || !current.current.connected || !subscribed.current || connectionLost.current || current.current.scope !== scope || renderEpoch !== epoch.current || locked.current || !selected?.identity || selected.access !== "allowed" || viewScope !== scope) return;
     const row = selected.settings.find(item => item.category === category);
     const option = row?.options.find(item => item.channel === channel);
     if (!option || option.enabled === enabled || category === "teen_safety" &&
@@ -92,34 +99,51 @@ export function AccountNotificationSettings({ scope, onManageTasks }: { scope: s
   };
   useEffect(() => {
     current.current.mounted = true;
-    let disposed = false; const stops: (() => void)[] = [];
-    const reset = (disconnected = false) => {
+    subscribed.current = false; setListenerError(null);
+    connectionLost.current = !connected;
+    let disposed = false, failed = false; const stops: (() => void)[] = [];
+    const stopAll = () => { for (const stop of stops.splice(0)) stop(); };
+    const reset = (disconnected = connectionLost.current) => {
+      connectionLost.current = disconnected;
       epoch.current++; readVersion.current++; reading.current?.abort();
       writes.current.forEach(controller => controller.abort()); writes.current.clear(); latest.current.clear();
-      publish(null); setViewScope(scope); setWriteError(null); setAccountUnavailable(false); locked.current = disconnected; setBlocked(disconnected);
+      publish(null); setViewScope(scope); setWriteError(null); setAccountUnavailable(false);
+      locked.current = disconnected || !subscribed.current; setBlocked(locked.current);
       setLoading(!disconnected); setReadError(disconnected ? "连接已断开，请重新连接后重试。" : null);
-      if (!disconnected) void latestReload.current();
+      if (!disconnected && subscribed.current) void latestReload.current();
     };
     const listen = <T,>(event: string, handler: (payload: T) => void) => {
-      void tauriListen<T>(event, handler).then(stop => { if (disposed) stop(); else stops.push(stop); })
-        .catch(() => { if (!disposed) setListenerError("无法监听账户更新，请重新读取。"); });
+      return tauriListen<T>(event, payload => { if (!disposed && !failed) handler(payload); })
+        .then(stop => { if (disposed || failed) stop(); else stops.push(stop); });
     };
-    listen<{ method: string }>("app-server:notification", event => { if (!disposed && event.method === "account/updated") reset(); });
-    listen<{ connected: boolean }>("app-server:status", status => { if (!disposed) reset(!status.connected); });
-    listen("chatgpt-service:invalidated", () => { if (!disposed) reset(); });
     reset();
+    void Promise.all([
+      listen<{ method: string }>("app-server:notification", event => { if (event.method === "account/updated") reset(); }),
+      listen<{ connected: boolean }>("app-server:status", status => reset(!status.connected)),
+      listen("chatgpt-service:invalidated", () => reset()),
+    ]).then(() => {
+      if (disposed || failed) return;
+      subscribed.current = true; reset();
+    }).catch(() => {
+      if (disposed) return;
+      failed = true; subscribed.current = false; stopAll();
+      locked.current = true; setBlocked(true); setLoading(false);
+      setListenerError("无法监听账户更新，请重试以恢复连接。");
+    });
     return () => {
-      disposed = true; current.current.mounted = false; epoch.current++; readVersion.current++; reading.current?.abort();
-      writes.current.forEach(controller => controller.abort()); writes.current.clear(); latest.current.clear(); stops.forEach(stop => stop());
+      disposed = true; subscribed.current = false; current.current.mounted = false; epoch.current++; readVersion.current++; reading.current?.abort();
+      writes.current.forEach(controller => controller.abort()); writes.current.clear(); latest.current.clear(); stopAll();
     };
-  }, [scope]);
+  }, [scope, connected, listenerRetry]);
   const visible = viewScope === scope ? snapshot : null;
+  const retryDisabled = loading || (subscribed.current && connectionLost.current);
   const readErrorTitle = accountUnavailable ? "无法加载你的账户信息。" : "无法加载 ChatGPT 通知设置。";
   if (!visible) return <div className="account-notification-settings">
     {loading && <p role="status">正在加载 ChatGPT 通知设置。</p>}
     {readError && <div role="alert"><p>{readErrorTitle}</p><p>{readError}</p>
-      <button type="button" disabled={loading} onClick={() => void reload()}>重试</button></div>}
+      <button type="button" disabled={retryDisabled} onClick={retry}>重试</button></div>}
     {listenerError && <p role="alert">{listenerError}</p>}
+    {listenerError && <button type="button" disabled={retryDisabled} onClick={retry}>重试</button>}
   </div>;
   if (visible.access !== "allowed") return null;
   return <section className="account-notification-settings" aria-labelledby="account-notification-heading">
@@ -137,7 +161,7 @@ export function AccountNotificationSettings({ scope, onManageTasks }: { scope: s
             {row.category === "tasks" && onManageTasks && <button type="button" className="account-notification-tasks" onClick={onManageTasks}>管理任务</button>}
           </div>
           <div className="account-notification-control">
-            {contactError ? <button type="button" disabled={loading} onClick={() => void reload()}>重试</button> : contactLoading
+            {contactError ? <button type="button" disabled={retryDisabled} onClick={retry}>重试</button> : contactLoading
               ? <span role="status" aria-label="正在加载联系方式">…</span>
               : <AccountNotificationMenu label={row.name} options={options} disabled={blocked}
                 onChange={(channel, enabled) => void change(row.category, channel, enabled)} />}
@@ -148,6 +172,6 @@ export function AccountNotificationSettings({ scope, onManageTasks }: { scope: s
     {writeError && <p role="alert">{writeError}</p>}
     {listenerError && <p role="alert">{listenerError}</p>}
     {readError && <div role="alert"><p>{readErrorTitle}</p><p>{readError}</p></div>}
-    {(readError || writeError) && <button type="button" disabled={loading} onClick={() => void reload()}>重试</button>}
+    {(readError || writeError || listenerError) && <button type="button" disabled={retryDisabled} onClick={retry}>重试</button>}
   </section>;
 }

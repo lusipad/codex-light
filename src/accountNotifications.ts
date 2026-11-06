@@ -39,7 +39,15 @@ export function decodeNotificationSettings(value: unknown): AccountNotificationS
 }
 
 export async function loadAccountNotifications(signal: AbortSignal): Promise<AccountNotificationSnapshot> {
-  const account = await accountRead();
+  const readAccount = async () => {
+    if (signal.aborted) throw Error("请求已取消");
+    try { return await accountRead(); }
+    catch {
+      if (signal.aborted) throw Error("请求已取消");
+      throw Object.assign(Error("无法加载你的账户信息。"), { code: "notifications_account_unavailable" });
+    }
+  };
+  const account = await readAccount();
   if (signal.aborted) throw Error("请求已取消");
   const denied: AccountNotificationSnapshot = { identity: null, access: "denied", settings: [], contacts: null, contactsError: false };
   if (account.account?.type !== "chatgpt") return denied;
@@ -51,7 +59,7 @@ export async function loadAccountNotifications(signal: AbortSignal): Promise<Acc
   const contacts = record(body.contacts);
   if (body.contacts !== null && (!contacts || typeof contacts.email !== "boolean" || typeof contacts.sms !== "boolean")) throw Error("联系方式资格响应格式无效。");
   if (body.access === "denied" && settings.length) throw Error("通知访问资格响应格式无效。");
-  const after = await accountRead(), current = await serviceIdentity(signal);
+  const after = await readAccount(), current = await serviceIdentity(signal);
   if (signal.aborted) throw Error("请求已取消");
   if (JSON.stringify(account) !== JSON.stringify(after) || !sameIdentity(identity, current)) throw Error("读取期间账号发生变化，请重新刷新。");
   return { identity, access: body.access as "allowed" | "denied", settings,

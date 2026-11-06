@@ -8,14 +8,14 @@ const account = { account: { type: 'chatgpt' }, workspaceRouting: { chatgptAccou
 const settings = [{ category: 'server_category', name: '服务端名称', description: '', options: [
   { channel: 'future_channel', name: '新渠道', enabled: false },
 ] }];
-let current = identity, active = account, writes = [], reads = 0, mutate;
+let current = identity, active = account, writes = [], reads = 0, mutate, accountFailure;
 let body = { access: 'allowed', settings, contacts: null, contactsError: false };
 const module = { exports: {} };
 const code = ts.transpileModule(fs.readFileSync('src/accountNotifications.ts', 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
 vm.runInNewContext(code, { exports: module.exports, require(name) {
-  if (name === './config') return { accountRead: async () => active };
+  if (name === './config') return { accountRead: async () => { if (accountFailure) throw accountFailure; return active; } };
   if (name === './chatgptService') return { serviceIdentity: async () => current,
     readAccountNotifications: async () => { reads++; const result = structuredClone(body); mutate?.(); return result; },
     writeAccountNotification: async (...args) => { writes.push(args); return { verification: 'confirmed', readback: { settings } }; },
@@ -42,6 +42,12 @@ assert.equal(writes.length, 1); assert.equal(writes[0][0], 'server_category'); a
 await assert.rejects(api.updateAccountNotification('server_category', 'future_channel', true, identity, signal), /读回与提交值不符/);
 const aborted = new AbortController(); aborted.abort();
 await assert.rejects(api.loadAccountNotifications(aborted.signal), /取消/);
+accountFailure = Error('account IPC unavailable');
+await assert.rejects(api.loadAccountNotifications(signal), error => error.code === 'notifications_account_unavailable');
+accountFailure = undefined;
+mutate = () => { accountFailure = Error('account readback unavailable'); };
+await assert.rejects(api.loadAccountNotifications(signal), error => error.code === 'notifications_account_unavailable');
+accountFailure = undefined; mutate = undefined;
 console.log('PASS account notification dynamic schema, contacts privacy, identity generation, no-auth, cancellation and readback');
 
 // Exercise the real IPC wrappers, not a copied request builder.

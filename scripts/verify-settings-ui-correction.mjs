@@ -60,6 +60,10 @@ test('General keeps real external-open and Enter consumers without debug/reset c
   assert.equal(page.child('NotificationSettings')?.props.state, page.props.notificationState, 'local notification group belongs in General');
   assert.equal(mount('notifications').child('NotificationSettings'), undefined, 'account notification route cannot reuse local preferences');
   assert.ok(mount('notifications').child('AccountNotificationSettings'), 'account notification route delegates its own remote settings');
+  const remote = mount('notifications');
+  assert.equal(remote.child('AccountNotificationSettings').props.connected, true);
+  remote.props.appServerStatus = { ...remote.props.appServerStatus, connected: false }; remote.render();
+  assert.equal(remote.child('AccountNotificationSettings').props.connected, false, 'pass current connection state without decoding scope');
   assert.doesNotMatch(content(page.render()), /App-Server|恢复出厂|自定义 Codex CLI/);
   const enter = page.by(n => n.props.id === 'composer-enter-behavior');
   assert.equal(enter.type.name, 'GeneralPreferenceSelect');

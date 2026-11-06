@@ -18,9 +18,9 @@ const sample = (email = false, push = false) => ({ identity, access: "allowed", 
   ] }] });
 const nodes = node => node && typeof node === "object" ? [node, ...(node.children ?? []).flatMap(nodes)] : [];
 const text = node => typeof node === "string" ? node : node && typeof node === "object" ? (node.children ?? []).map(text).join("") : "";
-function mount() {
+function mount({ failEvent = null, lateEvent = null, connected = true } = {}) {
   const hooks = [], effects = [], cleanups = new Map(), listeners = new Map(), reads = [], writes = [];
-  let cursor = 0, tree; const props = { scope: "a", onManageTasks() { tasks++; } }; let tasks = 0;
+  let cursor = 0, tree; const props = { scope: "a", connected, onManageTasks() { tasks++; } }; let tasks = 0;
   const react = {
     createElement: (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat(Infinity) }),
     useRef(value) { return hooks[cursor++] ??= { current: value }; },
@@ -32,7 +32,11 @@ function mount() {
   const module = { exports: {} };
   vm.runInNewContext(code, { exports: module.exports, AbortController, console, require(name) {
     if (name === "react") return react;
-    if (name.endsWith("bridge")) return { tauriListen: async (event, callback) => { listeners.set(event, callback); return () => { if (listeners.get(event) === callback) listeners.delete(event); }; } };
+    if (name.endsWith("bridge")) return { tauriListen: async (event, callback) => {
+      if (event === failEvent) throw Error("listener unavailable");
+      if (event === lateEvent?.event) await lateEvent.promise;
+      listeners.set(event, callback); return () => { if (listeners.get(event) === callback) listeners.delete(event); };
+    } };
     if (name.endsWith("chatgptService")) return { serviceErrorMessage: error => error.message };
     if (name.endsWith("accountNotifications")) return {
       loadAccountNotifications: signal => { const item = { ...deferred(), signal }; reads.push(item); return item.promise; },
@@ -46,10 +50,13 @@ function mount() {
   const render = () => { cursor = 0; tree = module.exports.AccountNotificationSettings(props); for (const effect of effects.splice(0)) effect(); return tree; };
   const all = () => nodes(tree), menu = label => all().find(node => node.type?.name === "AccountNotificationMenu" && node.props.label === label);
   render();
-  return { props, render, all, menu, reads, writes, listeners, tasks: () => tasks, dispose() { for (const cleanup of cleanups.values()) cleanup?.(); } };
+  return { props, render, all, menu, reads, writes, listeners, tasks: () => tasks,
+    recoverListeners() { failEvent = null; }, dispose() { for (const cleanup of cleanups.values()) cleanup?.(); } };
 }
 const page = mount();
 assert.ok(page.all().some(node => node.props.role === "status"));
+assert.equal(page.reads.length, 0, "initial reads wait for invalidation listeners");
+await flush(); page.render();
 page.reads[0].resolve(sample()); await flush(); page.render();
 assert.equal(page.menu("来自服务器的任务").props.options.length, 2);
 assert.deepEqual(Array.from(page.menu("家庭").props.options, item => item.channel), ["email", "other"]);
@@ -95,20 +102,22 @@ assert.deepEqual(Array.from(page.menu("来自服务器的任务").props.options,
 page.menu("来自服务器的任务").props.onChange("email", true); page.render();
 const oldChange = page.menu("来自服务器的任务").props.onChange;
 page.props.scope = "b"; page.render(); page.props.scope = "a"; page.render();
+await flush(); page.render();
 page.reads.at(-1).resolve(sample(false, false)); await flush(); page.render();
 oldChange("push", true); assert.equal(page.writes.length, 7, "old rendered callback is rejected even after returning to the same scope");
 page.writes[6].resolve({ settings: sample(true, true).settings, verification: "confirmed" }); await flush(); page.render();
 assert.equal(page.menu("来自服务器的任务").props.options[0].enabled, false, "ABA scope cannot revive an old write");
 page.dispose(); assert.equal(page.listeners.size, 0);
 
-const contacts = mount(); contacts.reads[0].resolve({ ...sample(), contacts: null, contactsError: true }); await flush(); contacts.render();
+const contacts = mount(); await flush(); contacts.render(); contacts.reads[0].resolve({ ...sample(), contacts: null, contactsError: true }); await flush(); contacts.render();
 assert.equal(contacts.menu("家庭"), undefined); assert.ok(contacts.menu("来自服务器的任务"));
 assert.ok(contacts.all().some(node => node.props.role === "alert" && text(node).includes("无法加载你的联系方式"))); contacts.dispose();
 for (const snapshot of [{ ...sample(), access: "denied" }, { ...sample(), settings: [] }]) {
-  const empty = mount(); empty.reads[0].resolve(snapshot); await flush(); empty.render();
+  const empty = mount(); await flush(); empty.render(); empty.reads[0].resolve(snapshot); await flush(); empty.render();
   assert.equal(empty.all().filter(node => node.type?.name === "AccountNotificationMenu").length, 0); empty.dispose();
 }
 const unavailable = mount();
+await flush(); unavailable.render();
 unavailable.reads[0].reject({ code: "notifications_account_unavailable", message: "inventory unavailable" });
 await flush(); unavailable.render();
 assert.ok(unavailable.all().some(node => node.props.role === "alert" && text(node).includes("无法加载你的账户信息。")));
@@ -116,7 +125,7 @@ assert.equal(unavailable.all().some(node => node.props.role === "alert" && text(
 unavailable.all().find(node => node.type === "button" && text(node) === "重试").props.onClick();
 unavailable.reads[1].resolve(sample()); await flush(); unavailable.render();
 assert.equal(unavailable.menu("来自服务器的任务").props.disabled, false); unavailable.dispose();
-const pending = mount(); pending.reads[0].resolve(sample()); await flush(); pending.render();
+const pending = mount(); await flush(); pending.render(); pending.reads[0].resolve(sample()); await flush(); pending.render();
 pending.menu("来自服务器的任务").props.onChange("email", true); pending.render();
 pending.writes[0].resolve({ settings: null, verification: "pending" }); await flush(); pending.render();
 assert.ok(pending.all().some(node => node.props.role === "alert" && text(node).includes("等待通知设置同步")));
@@ -124,3 +133,47 @@ pending.reads[1].resolve(sample(true)); await flush(); pending.render();
 assert.equal(pending.all().some(node => node.props.role === "alert"), false, "confirmed reread clears pending verification prompt");
 assert.equal(pending.menu("来自服务器的任务").props.disabled, false); pending.dispose();
 console.log("PASS account notifications page: dynamic rows, contacts, per-channel ordering, convergence, unknown writes, retry, invalidation, scope ABA and cleanup");
+
+const delayed = { ...deferred(), event: "chatgpt-service:invalidated" };
+const broken = mount({ failEvent: "app-server:status", lateEvent: delayed });
+await flush(); broken.render();
+assert.equal(broken.reads.length, 0, "no data read before all invalidation subscriptions are ready");
+assert.equal(broken.listeners.size, 0, "partial subscriptions are released on failure");
+delayed.resolve(); await flush(); broken.render();
+assert.equal(broken.listeners.size, 0, "late successful registration is released after sibling failure");
+const retry = broken.all().find(node => node.type === "button" && text(node) === "重试");
+assert.ok(retry, "subscription failure provides a retry that actually restores listeners");
+broken.recoverListeners(); retry.props.onClick(); broken.render(); await flush(); broken.render();
+assert.equal(broken.listeners.size, 3); assert.equal(broken.reads.length, 1);
+broken.reads[0].resolve(sample()); await flush(); broken.render();
+assert.equal(broken.all().some(node => node.props.role === "alert" && text(node).includes("无法监听")), false);
+broken.menu("来自服务器的任务").props.onChange("email", true); broken.render(); assert.equal(broken.writes.length, 1);
+broken.dispose(); assert.equal(broken.listeners.size, 0); assert.equal(broken.writes[0].signal.aborted, true);
+const lateStatus = { ...deferred(), event: "chatgpt-service:invalidated" };
+const offline = mount({ lateEvent: lateStatus }); await flush(); offline.render();
+offline.listeners.get("app-server:status")({ connected: false }); offline.render();
+lateStatus.resolve(); await flush(); offline.render();
+assert.equal(offline.reads.length, 0, "registration completing cannot erase a disconnect observed during setup");
+offline.listeners.get("app-server:status")({ connected: true }); await flush(); offline.render();
+assert.equal(offline.reads.length, 1); offline.dispose(); assert.equal(offline.reads[0].signal.aborted, true);
+
+const lateUnmount = { ...deferred(), event: "chatgpt-service:invalidated" };
+const disposed = mount({ lateEvent: lateUnmount }); await flush(); disposed.dispose();
+lateUnmount.resolve(); await flush(); assert.equal(disposed.listeners.size, 0); assert.equal(disposed.reads.length, 0);
+const disconnected = mount(); await flush(); disconnected.reads[0].resolve(sample()); await flush(); disconnected.render();
+const beforeDisconnect = disconnected.menu("来自服务器的任务").props.onChange;
+disconnected.listeners.get("app-server:status")({ connected: false }); disconnected.render();
+disconnected.all().find(node => node.type === "button" && text(node) === "重试").props.onClick();
+assert.equal(disconnected.reads.length, 1, "retry cannot bypass an observed disconnect");
+beforeDisconnect("email", true); assert.equal(disconnected.writes.length, 0);
+disconnected.listeners.get("app-server:status")({ connected: true }); await flush(); disconnected.render();
+disconnected.reads[1].resolve(sample()); await flush(); disconnected.render();
+disconnected.menu("来自服务器的任务").props.onChange("email", true); assert.equal(disconnected.writes.length, 1);
+disconnected.dispose();
+const missedReconnect = mount({ failEvent: "app-server:status", connected: false }); await flush(); missedReconnect.render();
+assert.equal(missedReconnect.reads.length, 0);
+missedReconnect.recoverListeners(); missedReconnect.props.connected = true; missedReconnect.render(); await flush(); missedReconnect.render();
+assert.equal(missedReconnect.reads.length, 1, "current parent connection status recovers a reconnect missed during the listener gap");
+missedReconnect.reads[0].resolve(sample()); await flush(); missedReconnect.render();
+assert.equal(missedReconnect.menu("来自服务器的任务").props.disabled, false); missedReconnect.dispose();
+console.log("PASS failed/partial/late subscriptions, retry recovery and gated reads/writes");
