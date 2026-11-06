@@ -1,3 +1,4 @@
+import { selectedServiceAccount } from "./serviceAccounts";
 import { callAppServer } from "./bridge";
 import { readChatgptService, serviceIdentity, shareAccessBootstrap, type ServiceIdentity } from "./chatgptService";
 import { parseLibraryDirectoryPath, parseLibraryImagesPage, parseLibraryNodesPage, type LibraryDirectoryEntry, type LibraryItem, type LibraryPage } from "./libraryData";
@@ -18,11 +19,9 @@ export function decodeLibraryAccess(bootstrap: unknown, settings: unknown, accou
   if (!object(account) || account.account?.type !== "chatgpt"
     || (account.workspaceRouting?.chatgptAccountId != null && account.workspaceRouting.chatgptAccountId !== identity.accountId))
     throw Error("无法确认当前账号的资料库访问资格。");
-  if (!object(accounts) || !Array.isArray(accounts.accounts) || !Array.isArray(accounts.account_ordering)
-    || !accounts.account_ordering.includes(identity.accountId)) throw Error("无法确认资料库账号。");
-  const selected = accounts.accounts.filter((entry: unknown) => object(entry) && entry.id === identity.accountId);
-  if (selected.length !== 1 || !supportedPlans.has(selected[0].plan_type)
-    || selected[0].can_access_with_session === false || selected[0].is_deactivated === true)
+  const selected = selectedServiceAccount(accounts, identity.accountId);
+  if (!supportedPlans.has(selected.account.plan_type)
+    || selected.can_access_with_session === false || selected.account.is_deactivated === true)
     throw Error("无法确认当前账号的资料库访问资格。");
   if (!object(bootstrap) || typeof bootstrap.statsigPayload !== "string") throw Error("无法读取资料库访问权限。");
   const payload = JSON.parse(bootstrap.statsigPayload);

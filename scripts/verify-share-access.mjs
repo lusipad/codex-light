@@ -7,12 +7,17 @@ const identity = { accountId: "account-a", userId: "user-a", generation: 4 };
 const clone = value => JSON.parse(JSON.stringify(value));
 let identityRead, bootstrapRead, accountsRead;
 const calls = [];
+const memberships = { exports: {} };
+vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/serviceAccounts.ts", "utf8"), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+}).outputText, { exports: memberships.exports, Error, Set });
 const module = { exports: {} };
 vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/shareAccess.ts", "utf8"), {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
 }).outputText, {
   exports: module.exports, Error, Set,
   require: name => {
+    if (name === "./serviceAccounts") return memberships.exports;
     assert.equal(name, "./chatgptService");
     return {
       serviceIdentity: async signal => { calls.push(["identity", signal]); return identityRead; },
@@ -31,10 +36,10 @@ function bootstrap(value = true, format) {
 }
 const accounts = () => ({
   account_ordering: [identity.accountId, "other"],
-  accounts: [
-    { id: "other", structure: "personal", account_user_id: "other-membership" },
-    { id: identity.accountId, structure: "workspace", account_user_id: "membership-a", name: "Workspace" },
-  ],
+  accounts: {
+    other: { account: { account_id: "other", structure: "personal", account_user_id: "other-membership", account_user_role: "account-owner", plan_type: "plus", is_zdr: false } },
+    [identity.accountId]: { account: { account_id: identity.accountId, structure: "workspace", account_user_id: "membership-a", name: "Workspace", account_user_role: "account-owner", plan_type: "team", is_zdr: false } },
+  },
 });
 for (const format of [undefined, "init-v1", "init-v2"]) {
   const result = decodeShareAccess(bootstrap(true, format), accounts(), identity);
@@ -45,7 +50,9 @@ for (const format of [undefined, "init-v1", "init-v2"]) {
   assert.equal(decodeShareAccess({ statsigPayload: JSON.stringify(payload) }, accounts(), identity).gate, true);
   assert.deepEqual(clone(decodeShareAccess(bootstrap(false, format), null, identity)), { identity, gate: false, account: null });
 }
-const personal = accounts(); personal.accounts[1].structure = "personal"; delete personal.accounts[1].name;
+const reordered = accounts(); reordered.account_ordering.reverse();
+assert.equal(decodeShareAccess(bootstrap(), reordered, identity).account.accountUserId, "membership-a");
+const personal = accounts(); personal.accounts[identity.accountId].account.structure = "personal"; delete personal.accounts[identity.accountId].account.name;
 assert.deepEqual(clone(decodeShareAccess(bootstrap(), personal, identity).account), { kind: "personal", accountUserId: "membership-a" });
 for (const change of [
   p => { p.user.userID = "other"; }, p => { p.user.customIDs.account_id = "other"; },
@@ -62,13 +69,35 @@ for (const bad of [null, {}, { statsigPayload: {} }, { statsigPayload: "not-json
   assert.throws(() => decodeShareAccess(bad, accounts(), identity));
 }
 for (const change of [
-  a => { a.account_ordering.reverse(); }, a => { a.accounts.push(a.accounts[1]); },
-  a => { a.accounts.pop(); }, a => { a.accounts[1].structure = "unknown"; },
-  a => { a.accounts[1].account_user_id = ""; }, a => { a.accounts[1].name = 123; },
-  a => { a.accounts[1].is_deactivated = true; }, a => { a.accounts[1].can_access_with_session = false; },
+  a => { a.account_ordering.push(identity.accountId); }, a => { a.accounts[identity.accountId].account.account_id = "other"; },
+  a => { delete a.accounts[identity.accountId]; }, a => { a.accounts[identity.accountId].account.structure = "unknown"; },
+  a => { a.accounts[identity.accountId].account.account_user_id = ""; }, a => { a.accounts[identity.accountId].account.name = 123; },
+  a => { a.accounts[identity.accountId].account.is_deactivated = true; }, a => { a.accounts[identity.accountId].can_access_with_session = false; },
 ]) {
   const value = accounts(); change(value); assert.throws(() => decodeShareAccess(bootstrap(), value, identity));
 }
+// Exercise the real selected-membership decoder independently of page gates.
+const select = memberships.exports.selectedServiceAccount;
+const raw = accounts(), rawCopy = clone(raw);
+assert.equal(select(raw, identity.accountId), raw.accounts[identity.accountId]);
+assert.deepEqual(raw, rawCopy, "selection must not reorder or mutate the raw response");
+raw.accounts[identity.accountId].features = ["codex_only"];
+assert.equal(select(raw, identity.accountId).features, raw.accounts[identity.accountId].features);
+for (const change of [
+  a => { a.account_ordering = []; }, a => { a.account_ordering = [identity.accountId, ""]; },
+  a => { a.accounts = []; }, a => { a.accounts[identity.accountId] = null; },
+  a => { a.accounts[identity.accountId].account = []; },
+  ...["account_id", "account_user_id", "account_user_role", "structure", "plan_type", "is_zdr"].map(key =>
+    a => { delete a.accounts[identity.accountId].account[key]; }),
+  a => { a.accounts[identity.accountId].account.is_zdr = "false"; },
+  a => { a.accounts[identity.accountId].can_access_with_session = "false"; },
+  a => { a.accounts[identity.accountId].account.is_deactivated = "false"; },
+]) { const value = accounts(); change(value); assert.throws(() => select(value, identity.accountId)); }
+const restricted = accounts();
+restricted.accounts[identity.accountId].can_access_with_session = false;
+restricted.accounts[identity.accountId].account.can_access_with_session = true;
+assert.equal(select(restricted, identity.accountId).can_access_with_session, false, "raw outer session flag wins over account shadow");
+assert.throws(() => decodeShareAccess(bootstrap(), restricted, identity));
 const recipients = decodeShareRecipients({ items: [
   { id: "global-owner", account_user_id: "membership-a", name: "Self" },
   { id: "global-user", account_user_id: "membership-b", name: "Name", email: "mail@example.invalid" },

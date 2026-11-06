@@ -1,6 +1,6 @@
 # 20E GPT 目录：当前发行包重新取证与开发前合同
 
-日期：2026-11-06。**调研完成，尚未开发；没有官方运行时、真实账号 HTTP 或像素验收。** 当前 `GptsView` 已有真实目录、搜索、分类分页及详情 metadata 读取，不能称为占位页。本单元应在此基础上改正可观察差异，保留身份绑定、取消和错误恢复，不回退为永久“未连接”。
+日期：2026-11-06。**公共目录、搜索与只读详情已开发，阶段自验进行中；没有官方运行时、真实账号 HTTP 或像素验收。** 当前实现与精确验证范围见[20E阶段记录](../acceptance/20E-gpts.md)。 当前 `GptsView` 已有真实目录、搜索、分类分页及详情 metadata 读取，不能称为占位页。本单元应在此基础上改正可观察差异，保留身份绑定、取消和错误恢复，不回退为永久“未连接”。
 
 ## 基准与证据边界
 
@@ -82,7 +82,7 @@ Sidebar 的 GPT 入口另要求 ChatGPT sidebar mode/相应分支、`chatgpt.isC
 | workspace | GET `/workspace-resources/{account_id}/gizmos`；query_continuation、limit10、search、categories、user_ids | 当前宿主无固定操作；必须按已验证当前 identity 派生 account path，不能前端任意传账号/URL |
 | workspace settings | 先身份输入订阅，再固定账户 settings；allow_third_party_gpts 参与说明/owner例外 | 不可仅用目录成功推断全部 workspace 规则已具备 |
 | creators | GET `/accounts/{account_id}/users`；limit30、offset、query；items/total | 当前无该 GPT 操作；不得用本地作者字符串拼 creator 列表 |
-| detail | GET `/gizmos/{gizmo_id_or_short_url}`，普通 GPT；resource/gizmo，queryKey detail | 已有 `gpts_detail`；business-agent 的 conversation context/headers 是另一路额外校验，不能直接扩展为任意 header |
+| detail | GET `/gizmos/{gizmo_id_or_short_url}`，普通 GPT；顶层资源 `{gizmo, tools, ...}`，queryKey detail | 已有 `gpts_detail`；business-agent 的 conversation context/headers 是另一路额外校验，不能直接扩展为任意 header |
 | about | GET `/gizmos/{gizmo_id}/about`；独立 account/gizmo query，about_blocks | 已有 `gpts_about`，当前页面尚未使用 |
 | 同作者 | GET `/gizmo_creators/{uid}/gizmos`；来自真实 resource.gizmo.author.user_id | 当前无固定操作；只在对应详情分支 enable |
 | pin/bootstrap | `/pins?item_type=gizmo`、`/gizmos/bootstrap?limit=20` | 详情 overflow pin 状态来自服务，不能 localStorage 冒充 |
@@ -141,4 +141,22 @@ Sidebar 的 GPT 入口另要求 ChatGPT sidebar mode/相应分支、`chatgpt.isC
 | GE12 | Start Chat开真实gizmo route及会话请求绑定，promptStarter只prefill不send；旧普通thread假绑定必须保持不存在 |
 | GE13 | 换账号/失效/离页取消目录、搜索、分页、详情、头像；晚到内容/bytes不得写回，所有listener/observer/timer清理 |
 
-本次只执行来源自检、原始纯函数16断言与文档检查，没有构建或产品测试；没有真实HTTP、GUI、IME、官方同环境图、创建/迁移/会话动作。整页仍未开发完成、未自验通过、未用户验收。
+初始取证时只执行来源自检、原始纯函数16断言与文档检查；后续产品开发及检查见20E阶段记录，不沿用此历史范围作为当前状态。初始取证没有构建或产品测试；没有真实HTTP、GUI、IME、官方同环境图、创建/迁移/会话动作。整页仍未开发完成、未自验通过、未用户验收。
+
+
+## 直接路由能力补证（20E 开发前）
+
+补证见 `.ref/parity/20/actual/20E-gpts/reference/access-contract.md/.json`：保存12个完整原函数与16项离线执行结果。`Dw` 默认查的是 `Gb(chatgpt)` 与 `Gb(chatgpt.seat-access)`；`Cv` 仅在 JD Header 布局计算里使用，不能代替 GPT 产品资格。实际 chatgpt 资格由 `Odt` 身份/精确计划集合、`770071981` 条件 workspace permission `chatgpt.workspace.feature.desktop-app-chat.access`、default host 完整 `experimentalFeature/list` 中 `in_app_chat!==false` 共同决定。`770071981=false` 不代表拒绝。`Dlt` 的 Og 表不含 `team`，不能把所有 workspace 都强制该 permission。Seat 要保留 raw `accounts/check` entry 的 `features`，`codex_only` 才进入专用 seat screen，且该分支在拒绝跳首页前处理。`share_accounts` 宿主实际保留原 map，不能套用 Images/Library 的前端数组假定。当前账号快照未实测；不以这些静态样本宣称真实账号可用。
+
+
+### 20E 当前桥形状兼容差距
+
+宿主 `ShareAccounts` 的 `/backend-api/wham/accounts/check` 响应保持官方 `accounts` keyed map / `account_ordering` 原形；Images/Library 当前客户端按数组查找 selected 是已有兼容差距，不能把其解析逻辑继承为 GPT 资格证据，本补证未改这些模块。GPT 应保留 entry.account 与 entry.features，明确与当前前端数组假定的边界。公共 discovery/category 的 shared safeGet 附加标记为 `X-OpenAI-Attach-Auth: 1`（directory S / discovery M ← shared ggt ← Oct），不是任意 renderer header 通道；来源与 native 转译边界见 access-contract。
+
+
+### Header 原生消费结论（后续补证，覆盖此前未定边界）
+
+已确证 X-OpenAI-Attach-Auth 是内部 fetch marker：同包 early-bootstrap.js 的 XIF→nW→nH 在读取后删除该键；early-bootstrap-491-e75c34fa1b2c0832.js 的 performDesktopFetch 消费其布尔值，获取 token，再将已去 marker 的 headers 附真实认证后交 applicationNetwork.fetch。Tauri 固定鉴权链是等价实现，不应把 marker 原样发给 server。access-contract.json 保存两个新文件 integrity、完整消费函数/方法和4个原函数离线删除样本，均未调用真实 HTTP。
+
+
+详情原始形状补证：`reference/detail-resource-contract.json`保存safeGet→makeRequest→fetchJson与wH→wt/Tt完整链，没有resource解包。HTTP详情返回顶层gizmo，与目录item.resource.gizmo不同；头像宿主必须登记body.gizmo，不能用旧wrapper夹具证明正确。实施修正与红绿范围见20E记录。

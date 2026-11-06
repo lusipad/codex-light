@@ -34,7 +34,7 @@ function client() {
   let serial = 0;
   const control = { payload: snapshot(),
     account: { account: { type: "chatgpt" }, workspaceRouting: { chatgptAccountId: identity.accountId } },
-    accounts: { account_ordering: [identity.accountId], accounts: [{ id: identity.accountId, structure: "personal" }] }, config: { config: {} },
+    accounts: { account_ordering: [identity.accountId], accounts: { [identity.accountId]: { account: { account_id: identity.accountId, account_user_id: "member", account_user_role: "account-owner", is_zdr: false, plan_type: "plus", structure: "personal" } } } }, config: { config: {} },
     identity: async () => clone(identity),
     read: async request => request.operation === "share_accounts" ? control.accounts
       : request.operation === "images_workspace_settings" ? { permissions: ["chatgpt.workspace.feature.image-gen.access"] }
@@ -65,7 +65,8 @@ function client() {
   // Only used for the unchanged 19C red comparison: same real service wrapper underneath.
   service.readImagesService = async (...args) => ({ data: await service.readChatgptService(...args), assets: [] });
   const data = load("src/imagesData.ts", () => { throw Error("unexpected data dependency"); }, uuid);
-  const images = load(process.env.IMAGES_CLIENT_SOURCE ?? "src/imagesClient.ts", name => ({ "./bridge": bridge, "./chatgptService": service, "./imagesData": data })[name], uuid);
+  const memberships = load("src/serviceAccounts.ts", () => { throw Error("unexpected membership dependency"); }, uuid);
+  const images = load(process.env.IMAGES_CLIENT_SOURCE ?? "src/imagesClient.ts", name => ({ "./bridge": bridge, "./chatgptService": service, "./imagesData": data, "./serviceAccounts": memberships })[name], uuid);
   const assets = load("src/imagesAssets.ts", name => name === "./imagesData" ? data : {}, uuid);
   return { images, control, calls, cancelled, data, service, assets };
 }
@@ -95,22 +96,23 @@ await check("full V1/V2 and hashed keys decode only independent direct gates/con
 await check("workspace permission and provider requests are conditional", async () => {
   for (const workspace of [false, true]) for (const workspaceGate of [false, true]) for (const providerGate of [false, true]) {
     const h = client(); h.control.payload = snapshot({ workspaceGate, providerGate });
-    h.control.accounts.accounts[0].structure = workspace ? "workspace" : "personal";
+    h.control.accounts.accounts[identity.accountId].account.structure = workspace ? "workspace" : "personal";
     const result = await h.images.readImagesAccess(signal()); assert.equal(result.available, true);
     assert.equal(reads(h).filter(r => r.operation === "images_workspace_settings").length, Number(workspace && workspaceGate));
     assert.equal(h.calls.filter(c => c.method === "config/read").length, Number(providerGate));
   }
 });
 await check("selected identity need not be first in ordering or a Library-supported plan", async () => {
-  const h = client(); h.control.accounts.accounts[0].plan_type = "future-plan";
-  h.control.accounts.account_ordering = ["another-account"];
+  const h = client(); h.control.accounts.accounts[identity.accountId].account.plan_type = "future-plan";
+  h.control.accounts.account_ordering = ["another-account", identity.accountId];
+  h.control.accounts.accounts["another-account"] = { account: { ...h.control.accounts.accounts[identity.accountId].account, account_id: "another-account" } };
   assert.equal((await h.images.readImagesAccess(signal())).available, true);
 });
 await check("account auth, selected uniqueness, structure and routing must be known", async () => {
   for (const change of [h => { h.control.account.account.type = "apiKey"; },
     h => { delete h.control.account.workspaceRouting; }, h => { h.control.account.workspaceRouting.chatgptAccountId = "other"; },
-    h => { h.control.accounts.accounts = []; }, h => { h.control.accounts.accounts.push(h.control.accounts.accounts[0]); },
-    h => { delete h.control.accounts.accounts[0].structure; }]) {
+    h => { h.control.accounts.accounts = []; }, h => { h.control.accounts.account_ordering.push(identity.accountId); },
+    h => { delete h.control.accounts.accounts[identity.accountId].account.structure; }]) {
     const h = client(); change(h); await assert.rejects(h.images.readImagesAccess(signal()));
     assert.equal(reads(h).filter(r => r.operation === "images_workspace_settings").length, 0);
   }
@@ -122,7 +124,7 @@ await check("unknown/partial/delta/foreign snapshots and required gates fail clo
     p => { delete p.feature_gates["3683713372"]; }, p => { p.feature_gates["3683713372"].value = "true"; }]) {
     const h = client(); change(h.control.payload); await assert.rejects(h.images.readImagesAccess(signal()));
   }
-  const h = client(); h.control.accounts.accounts[0].structure = "workspace";
+  const h = client(); h.control.accounts.accounts[identity.accountId].account.structure = "workspace";
   delete h.control.payload.feature_gates["1355972088"];
   await assert.rejects(h.images.readImagesAccess(signal()));
 });
@@ -133,7 +135,7 @@ await check("personal does not require unused workspace gate; missing layout con
   assert.equal(result.myImagesTabEnabled, undefined); assert.equal(result.newLayout, undefined); assert.equal(result.sectionOrder, undefined);
 });
 await check("workspace permission denial and explicit non-openai are unavailable", async () => {
-  const h = client(); h.control.accounts.accounts[0].structure = "workspace";
+  const h = client(); h.control.accounts.accounts[identity.accountId].account.structure = "workspace";
   h.control.payload = snapshot({ workspaceGate: true });
   const read = h.control.read; h.control.read = request => request.operation === "images_workspace_settings" ? {} : read(request);
   assert.equal((await h.images.readImagesAccess(signal())).available, false);
@@ -149,14 +151,14 @@ await check("invalid or failed raw effective config is never a fallback openai s
 });
 await check("explicit account restrictions deny, malformed flags and workspace permissions reject", async () => {
   for (const [key, value] of [["can_access_with_session", false], ["is_deactivated", true]]) {
-    const h = client(); h.control.accounts.accounts[0][key] = value;
+    const h = client(); (key === "can_access_with_session" ? h.control.accounts.accounts[identity.accountId] : h.control.accounts.accounts[identity.accountId].account)[key] = value;
     assert.equal((await h.images.readImagesAccess(signal())).available, false);
   }
   for (const key of ["can_access_with_session", "is_deactivated"]) {
-    const h = client(); h.control.accounts.accounts[0][key] = "false"; await assert.rejects(h.images.readImagesAccess(signal()));
+    const h = client(); (key === "can_access_with_session" ? h.control.accounts.accounts[identity.accountId] : h.control.accounts.accounts[identity.accountId].account)[key] = "false"; await assert.rejects(h.images.readImagesAccess(signal()));
   }
   for (const permissions of ["image-gen", [4]]) {
-    const h = client(); h.control.accounts.accounts[0].structure = "workspace"; h.control.payload = snapshot({ workspaceGate: true });
+    const h = client(); h.control.accounts.accounts[identity.accountId].account.structure = "workspace"; h.control.payload = snapshot({ workspaceGate: true });
     const read = h.control.read; h.control.read = request => request.operation === "images_workspace_settings" ? { permissions } : read(request);
     await assert.rejects(h.images.readImagesAccess(signal()));
   }

@@ -1,3 +1,5 @@
+.full-route-view.images-route-view { padding:0; display:flex; min-height:0; overflow:hidden; }
+.full-route-container.images-route-container { flex:1; min-width:0; min-height:0; width:100%; max-width:none; height:100%; margin:0; }
 .images-view-container { position:relative; flex:1; min-width:0; min-height:0; height:100%; color:var(--text-primary); }
 .images-scroll { height:100%; overflow:auto; scrollbar-gutter:stable; }
 .images-page-content { max-width:var(--thread-content-max-width,768px); margin-inline:auto; padding:24px 20px calc(var(--images-composer-height,160px) + 40px); box-sizing:border-box; }

@@ -6,7 +6,7 @@ import ts from "typescript";
 const identity = { accountId: "account-fixture", userId: "user-fixture", generation: 0 };
 const account = planType => ({ account: { type: "chatgpt", planType }, workspaceRouting: { chatgptAccountId: identity.accountId } });
 const hash = key => { let value = 0; for (const c of key) value = (Math.imul(value, 31) + c.charCodeAt(0)) >>> 0; return String(value); };
-const accounts = plan_type => ({ account_ordering: [identity.accountId], accounts: [{ id: identity.accountId, plan_type, can_access_with_session: true, is_deactivated: false }] });
+const accounts = plan_type => ({ account_ordering: [identity.accountId], accounts: { [identity.accountId]: { account: { account_id: identity.accountId, account_user_id: "member", account_user_role: "account-owner", is_zdr: false, structure: "personal", plan_type, is_deactivated: false }, can_access_with_session: true } } });
 function payload({ compact = false, hashed = false, file = true, layer = false, onedrive = false } = {}) {
   const key = value => hashed ? hash(value) : value;
   return { user: { userID: identity.userId, customIDs: { account_id: identity.accountId } }, has_updates: true,
@@ -49,7 +49,8 @@ export function client(requestId = "fixed-library-id") {
   const service = load("src/chatgptService.ts", name => name === "./bridge" ? bridge : {}, () => requestId);
   const data = load("src/libraryData.ts", () => { throw Error("unexpected data dependency"); }, () => requestId);
   const preview = load("src/libraryPreview.ts", () => { throw Error("unexpected preview dependency"); }, () => requestId);
-  const library = load("src/libraryClient.ts", name => ({ "./bridge": bridge, "./chatgptService": service, "./libraryData": data, "./libraryPreview": preview })[name], () => requestId);
+  const memberships = load("src/serviceAccounts.ts", () => { throw Error("unexpected membership dependency"); }, () => requestId);
+  const library = load("src/libraryClient.ts", name => ({ "./bridge": bridge, "./chatgptService": service, "./libraryData": data, "./libraryPreview": preview, "./serviceAccounts": memberships })[name], () => requestId);
   return { library, control, calls, cancelled };
 }
 const productionDecode = client().library.decodeLibraryAccess;
@@ -105,16 +106,18 @@ const plans = ["free", "go", "plus", "pro", "promax", "prolite", "free_workspace
   "edu_plus", "edu_pro", "quorum", "enterprise", "hc", "hc_consumption", "deprecated_enterprise", "edu", "deprecated_edu", "k12"];
 for (const plan of plans) assert.equal(decodeLibraryAccess(bootstrap(payload()), settings, account("unknown"), identity, accounts(plan)).available, true);
 assert.equal(decodeLibraryAccess(bootstrap(payload()), settings, account("unknown"), identity,
-  { account_ordering: ["other-account", identity.accountId], accounts: [{ id: "other-account", plan_type: "unsupported" }, ...accounts("team").accounts] }).available, true);
+  { account_ordering: ["other-account", identity.accountId], accounts: { "other-account": { account: { ...accounts("plus").accounts[identity.accountId].account, account_id: "other-account", plan_type: "unsupported" } }, ...accounts("team").accounts } }).available, true);
 for (const value of [{ account: { type: "apiKey", planType: "plus" } },
   { ...account("plus"), workspaceRouting: { chatgptAccountId: "other" } }]) assert.throws(() => decodeLibraryAccess(bootstrap(payload()), settings, value, identity));
+const mutateInventory = change => { const value = accounts("plus"); change(value); return value; };
 for (const inventory of [null, {}, { ...accounts("plus"), accounts: {} }, { ...accounts("plus"), accounts: [] },
-  { ...accounts("plus"), accounts: [{ id: "other", plan_type: "plus" }] },
-  { ...accounts("plus"), accounts: [...accounts("plus").accounts, ...accounts("plus").accounts] }, accounts("unsupported"),
-  { ...accounts("plus"), accounts: [{ ...accounts("plus").accounts[0], can_access_with_session: false }] },
-  { ...accounts("plus"), accounts: [{ ...accounts("plus").accounts[0], is_deactivated: true }] },
+  mutateInventory(v => { v.accounts[identity.accountId].account.account_id = "other"; }),
+  mutateInventory(v => { v.account_ordering.push(identity.accountId); }), accounts("unsupported"),
+  mutateInventory(v => { v.accounts[identity.accountId].can_access_with_session = false; }),
+  mutateInventory(v => { v.accounts[identity.accountId].account.is_deactivated = true; }),
   { ...accounts("plus"), account_ordering: undefined }, { ...accounts("plus"), account_ordering: ["other-account"] }])
   assert.throws(() => decodeLibraryAccess(bootstrap(payload()), settings, account("unknown"), identity, inventory));
+
 {
   const c = client(); assert.equal((await c.library.readLibraryAccess(new AbortController().signal)).available, true);
   assert.equal(c.calls.filter(call => call.command === "chatgpt_service_identity").length, 2);

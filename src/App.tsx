@@ -5486,14 +5486,14 @@ export const App: React.FC = () => {
             </div>
           </div>
         ) : activeRoute === "images" ? (
-          <div className="full-route-view">
-            <div className="full-route-container">
+          <div className="full-route-view images-route-view">
+            <div className="full-route-container images-route-container">
               <ImagesView />
             </div>
           </div>
         ) : activeRoute === "gpts" ? (
-          <div className="full-route-view">
-            <div className="full-route-container">
+          <div className="full-route-view gpts-route-view">
+            <div className="full-route-container gpts-route-container">
               <GptsView />
             </div>
           </div>

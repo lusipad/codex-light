@@ -27,7 +27,7 @@ const identity={accountId:'a',userId:'u',generation:1},access={identity,availabl
 const calls=[];let respond=async request=>({requestId:request.requestId,identity,body:{requestedFileId:'file-a',file:original}});
 const bridge={tauriInvoke:async(command,args)=>{calls.push({command,args});if(command==='chatgpt_service_cancel')return;assert.equal(command,'chatgpt_service_read');return respond(args.request);}};
 const service=load('src/chatgptService.ts',name=>name==='./bridge'?bridge:{});
-const library=load('src/libraryClient.ts',name=>({'./bridge':bridge,'./chatgptService':service,'./libraryData':load('src/libraryData.ts'),'./libraryPreview':model})[name]);
+const library=load('src/libraryClient.ts',name=>({'./bridge':bridge,'./chatgptService':service,'./libraryData':load('src/libraryData.ts'),'./libraryPreview':model,'./serviceAccounts':load('src/serviceAccounts.ts')})[name]);
 assert.equal((await library.readLibraryFile(access,'file-a',new AbortController().signal)).file_name,'A');
 assert.equal(calls[0].args.request.operation,'library_file');assert.equal(JSON.stringify(calls[0].args.request.params),'{"library_file_id":"file-a"}');
 assert.equal(calls[0].args.request.expectedIdentity,identity);

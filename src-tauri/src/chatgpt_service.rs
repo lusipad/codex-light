@@ -19,6 +19,8 @@ pub use archive_unarchive::{ArchiveUnarchiveRequest, ArchiveUnarchiveResponse};
 mod archive_delete;
 pub use archive_delete::{ArchiveDeleteRequest, ArchiveDeleteResponse};
 mod images_assets;
+mod gpts_assets;
+pub use gpts_assets::GptAssetRef;
 pub use images_assets::ImagesAssetRef;
 
 const MAX_RESPONSE: u64 = 8 * 1024 * 1024;
@@ -55,6 +57,8 @@ pub enum ServiceOperation {
     ImagesRecent,
     ImagesWorkspaceSettings,
     ImagesAsset,
+    GptsAvatar,
+    GptsWorkspaceSettings,
     GptsDiscovery,
     GptsCategory,
     GptsSearch,
@@ -410,6 +414,8 @@ pub struct ServiceResponse {
     pub headers: BTreeMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assets: Option<Vec<ImagesAssetRef>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpt_assets: Option<Vec<GptAssetRef>>,
 }
 
 // Intentionally neither Debug nor Serialize.
@@ -443,6 +449,7 @@ pub struct ChatgptService {
     pinned_reviews: Mutex<VecDeque<(String, PinnedReview)>>,
     images_assets: Mutex<images_assets::ImagesRegistry>,
     images_snapshot: AtomicU64,
+    gpts_assets: Mutex<gpts_assets::GptsRegistry>,
 }
 
 struct Registration<'a> {
@@ -938,6 +945,7 @@ impl ChatgptService {
         }
         if let Ok(mut reviews) = self.pinned_reviews.lock() { reviews.clear(); }
         if let Ok(mut assets) = self.images_assets.lock() { *assets = images_assets::ImagesRegistry::default(); }
+        if let Ok(mut assets) = self.gpts_assets.lock() { *assets = gpts_assets::GptsRegistry::default(); }
         // Pending credential-bearing futures are dropped by cancellation. Cached
         // credentials are dropped synchronously whenever the session is unlocked.
         if let Ok(mut session) = self.session.try_lock() {
@@ -1449,6 +1457,9 @@ impl ChatgptService {
         Fut: Future<Output = Result<Value, String>>,
         T: Transport,
     {
+        if matches!(request.operation, ServiceOperation::GptsAvatar) {
+            return self.gpts_avatar_with(request, call, transport).await;
+        }
         if matches!(request.operation, ServiceOperation::ImagesAsset) {
             return self.images_asset_with(request, call, transport).await;
         }
@@ -1458,6 +1469,7 @@ impl ChatgptService {
         // Resolve before credential acquisition: unsupported parameters cannot invoke auth.
         let route = resolve_read_route(&request.operation, &request.params, &request.expected_identity)?;
         let archive_tasks = matches!(request.operation, ServiceOperation::ArchiveCloudTasks);
+        let gpts_read = matches!(request.operation, ServiceOperation::GptsDiscovery | ServiceOperation::GptsCategory | ServiceOperation::GptsSearch | ServiceOperation::GptsDetail | ServiceOperation::GptsAbout | ServiceOperation::GptsWorkspaceSettings);
         let images_read = matches!(request.operation, ServiceOperation::ImagesInit | ServiceOperation::ImagesStyles | ServiceOperation::ImagesRecent | ServiceOperation::ImagesWorkspaceSettings);
         // Order snapshots before the session lock, not when a possibly late response arrives.
         let images_snapshot = self.images_snapshot.fetch_add(1, Ordering::SeqCst) + 1;
@@ -1495,7 +1507,7 @@ impl ChatgptService {
                         http_request.headers.insert("X-Codex-Expected-User-Id".into(), request.expected_identity.user_id.clone());
                         http_request.headers.insert("X-Codex-Expected-Account-Id".into(), request.expected_identity.account_id.clone());
                     }
-                    if images_read || archive_tasks || profile_read || review_connections || matches!(request.operation, ServiceOperation::StorageUsage | ServiceOperation::LibraryNodes | ServiceOperation::LibraryDirectoryPath | ServiceOperation::LibraryFavorites | ServiceOperation::LibraryImages | ServiceOperation::LibrarySuggested | ServiceOperation::LibrarySettings | ServiceOperation::LibraryImage | ServiceOperation::ShareAccounts) {
+                    if gpts_read || images_read || archive_tasks || profile_read || review_connections || matches!(request.operation, ServiceOperation::StorageUsage | ServiceOperation::LibraryNodes | ServiceOperation::LibraryDirectoryPath | ServiceOperation::LibraryFavorites | ServiceOperation::LibraryImages | ServiceOperation::LibrarySuggested | ServiceOperation::LibrarySettings | ServiceOperation::LibraryImage | ServiceOperation::ShareAccounts) {
                         share_network_allowed(&call, &http_request.url).await?;
                         self.check_share_current(&request.expected_identity, &registration)?;
                     }
@@ -1506,7 +1518,7 @@ impl ChatgptService {
                         share_network_allowed(&call, &http_request.url).await?;
                         self.check_share_current(&request.expected_identity, &registration)?;
                     }
-                    let images_destination = images_read.then(|| http_request.url.clone());
+                    let images_destination = (images_read || gpts_read).then(|| http_request.url.clone());
                     let response = send_bounded(transport, http_request, registration.cancelled.clone(), Duration::from_secs(if usage { 10 } else if review_connections { 15 } else { 50 })).await?;
                     if self.generation() != generation {
                         return Err(failure("account_changed", "Authenticated identity changed"));
@@ -1515,7 +1527,7 @@ impl ChatgptService {
                         self.check_share_current(&request.expected_identity, &registration)?;
                         share_network_allowed(&call, &destination).await?;
                     }
-                    if images_read || archive_tasks || matches!(request.operation, ServiceOperation::LibraryDirectoryPath | ServiceOperation::LibrarySuggested) { self.check_share_current(&request.expected_identity, &registration)?; }
+                    if gpts_read || images_read || archive_tasks || matches!(request.operation, ServiceOperation::LibraryDirectoryPath | ServiceOperation::LibrarySuggested) { self.check_share_current(&request.expected_identity, &registration)?; }
                     apply_integrity(&mut session.integrity, sent_integrity.as_deref(), response.headers.get("x-oai-is-update"));
                     if archive_tasks && account_instructions_ip_denied(&response) {
                         // A workspace IP refusal is not NDn's unavailable/unsupported source.
@@ -1528,9 +1540,12 @@ impl ChatgptService {
                     if ((usage || archive_tasks) && matches!(response.status, 401 | 403 | 404)) ||
                         (matches!(request.operation, ServiceOperation::ProfileIdentity | ServiceOperation::ProfilePage) && matches!(response.status, 403 | 404)) {
                         return Ok(ServiceResponse { request_id:request.request_id.clone(), identity:request.expected_identity.clone(),
-                            status:response.status, body:Value::Null, headers:BTreeMap::new(), assets:None });
+                            status:response.status, body:Value::Null, headers:BTreeMap::new(), assets:None, gpt_assets:None });
                     }
                     let mut decoded = decode_response(response, request.request_id.clone(), request.expected_identity.clone())?;
+                    if matches!(request.operation, ServiceOperation::GptsDiscovery | ServiceOperation::GptsCategory | ServiceOperation::GptsSearch | ServiceOperation::GptsDetail) {
+                        decoded.gpt_assets = Some(self.register_gpts_assets(&request, &decoded.body, &session.credentials.as_ref().unwrap().origin, images_snapshot)?);
+                    }
                     if matches!(request.operation, ServiceOperation::ImagesInit | ServiceOperation::ImagesStyles | ServiceOperation::ImagesRecent) {
                         decoded.assets = Some(self.register_images_assets(&request, &decoded.body,
                             &session.credentials.as_ref().unwrap().origin, images_snapshot)?);
@@ -1585,7 +1600,7 @@ impl ChatgptService {
             }
             return Err(failure("account_changed", "Authenticated identity changed"));
         }
-        if images_read || archive_tasks || matches!(request.operation, ServiceOperation::LibraryDirectoryPath | ServiceOperation::LibrarySuggested) { self.check_share_current(&request.expected_identity, &registration)?; }
+        if gpts_read || images_read || archive_tasks || matches!(request.operation, ServiceOperation::LibraryDirectoryPath | ServiceOperation::LibrarySuggested) { self.check_share_current(&request.expected_identity, &registration)?; }
         result
     }
 
@@ -1663,7 +1678,7 @@ impl ChatgptService {
         };
         self.check_share_current(&request.expected_identity,&registration)?;
         result.map(|body|ServiceResponse{request_id:request.request_id,identity:request.expected_identity,status:200,
-            body:if content {body} else {json!({"requestedFileId":id,"file":body})},headers:BTreeMap::new(),assets:None})
+            body:if content {body} else {json!({"requestedFileId":id,"file":body})},headers:BTreeMap::new(),assets:None,gpt_assets:None})
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2349,9 +2364,9 @@ fn encode_segment(segment: &str) -> ServiceResult<String> {
 }
 
 fn resolve_read_route(operation: &ServiceOperation, params: &Value, identity: &ServiceIdentity) -> ServiceResult<String> {
-    if matches!(operation, ServiceOperation::ImagesWorkspaceSettings) {
+    if matches!(operation, ServiceOperation::ImagesWorkspaceSettings | ServiceOperation::GptsWorkspaceSettings) {
         if !params.as_object().is_some_and(|params| params.is_empty()) {
-            return Err(failure("invalid_request", "Images workspace settings does not accept parameters"));
+            return Err(failure("invalid_request", "Workspace settings does not accept parameters"));
         }
         return Ok(format!("/backend-api/accounts/{}/settings", encode_segment(&identity.account_id)?));
     }
@@ -2437,6 +2452,7 @@ fn resolve_route(operation: &ServiceOperation, params: &Value) -> ServiceResult<
         ServiceOperation::ProfileIdentity => ("/backend-api/profiles/me".into(), &[]),
         ServiceOperation::ProfilePage => ("/backend-api/profiles/me/page".into(), &[]),
         ServiceOperation::ImagesInit => ("/backend-api/images/init".into(), &[]),
+        ServiceOperation::GptsAvatar => return Err(failure("invalid_request", "Registered GPT avatar reference required")),
         ServiceOperation::ImagesAsset => return Err(failure("invalid_request", "Registered image reference required")),
         ServiceOperation::ImagesStyles => (
             "/backend-api/images/styles".into(),
@@ -2480,7 +2496,7 @@ fn resolve_route(operation: &ServiceOperation, params: &Value) -> ServiceResult<
             )
         }
         ServiceOperation::SitesAccess => ("/backend-api/websites/access".into(), &[]),
-        ServiceOperation::ImagesWorkspaceSettings | ServiceOperation::ShareAccounts | ServiceOperation::ShareUsers | ServiceOperation::ShareGroups => {
+        ServiceOperation::ImagesWorkspaceSettings | ServiceOperation::GptsWorkspaceSettings | ServiceOperation::ShareAccounts | ServiceOperation::ShareUsers | ServiceOperation::ShareGroups => {
             return Err(failure("invalid_request", "Identity-bound share route required"));
         }
         ServiceOperation::GithubRepository => {
@@ -3358,10 +3374,12 @@ fn wham_usage_identity(body: &Value, identity: &ServiceIdentity) -> ServiceResul
 }
 
 fn wham_usage_personal_account(body: &Value, identity: &ServiceIdentity) -> bool {
-    let Some(accounts) = body.get("accounts").and_then(Value::as_array) else { return false; };
-    let matching = accounts.iter().filter(|account| account.get("id").and_then(Value::as_str) == Some(identity.account_id.as_str())).collect::<Vec<_>>();
-    matching.len() == 1 && matching[0]["structure"] == "personal" && matching[0]["is_deactivated"] != true &&
-        matching[0]["can_access_with_session"] != false
+    let Some(entry) = body.get("accounts").and_then(Value::as_object).and_then(|accounts| accounts.get(&identity.account_id)) else { return false; };
+    let Some(account) = entry.get("account").and_then(Value::as_object) else { return false; };
+    account.get("account_id").and_then(Value::as_str) == Some(identity.account_id.as_str()) &&
+        account.get("structure").and_then(Value::as_str) == Some("personal") &&
+        account.get("is_deactivated") != Some(&Value::Bool(true)) &&
+        entry.get("can_access_with_session") != Some(&Value::Bool(false))
 }
 
 // early-bootstrap-339 hT: a workspace IP refusal is not an expired-token response.
@@ -3509,6 +3527,7 @@ fn decode_response(
         body,
         headers,
         assets: None,
+        gpt_assets: None,
     })
 }
 
@@ -4702,7 +4721,9 @@ mod tests {
         let service = ChatgptService::default();
         let transport = FakeTransport::new(&[200]);
         let rpc = |method, _: Value| async move {
-            if method == "getAuthStatus" {
+            if method == "configRequirements/read" {
+                Ok(json!({"requirements":null}))
+            } else if method == "getAuthStatus" {
                 Ok(auth(&fixture_token()))
             } else {
                 Ok(json!({"account":{"type":"chatgpt"},"workspaceRouting":{
@@ -5580,12 +5601,19 @@ mod tests {
         assert!(transport.requests.lock().unwrap().is_empty());
     }
 
+    fn raw_personal_usage_accounts() -> Value {
+        json!({"account_ordering":["account-fixture"],"accounts":{"account-fixture":{
+            "account":{"account_id":"account-fixture","structure":"personal","plan_type":"plus","is_deactivated":false},
+            "can_access_with_session":true,"features":[]}}})
+    }
+
     #[tokio::test]
     async fn wham_usage_empty_account_requires_current_personal_membership_not_a_plan_guess() {
         for structure in ["personal", "workspace", "unknown"] {
             let service = ChatgptService::default();
             let mut body = usage_body(); body["account_id"] = json!("");
-            let accounts = json!({"accounts":[{"id":"account-fixture","structure":structure}],"account_ordering":["account-fixture"]});
+            let mut accounts = raw_personal_usage_accounts();
+            accounts["accounts"]["account-fixture"]["account"]["structure"] = json!(structure);
             let transport = instructions_transport(&[200,200], &[body.clone(),accounts]);
             let result = service.read_with(usage_request("usage-personal"), share_rpc, &transport).await;
             if structure == "personal" { assert_eq!(result.unwrap().body, body); }
@@ -5594,6 +5622,20 @@ mod tests {
             assert_eq!(requests.len(), 2);
             assert_eq!(requests[1].url, "https://chatgpt.com/backend-api/wham/accounts/check");
         }
+    }
+
+    #[test]
+    fn wham_usage_personal_membership_uses_raw_account_map_and_outer_session_access() {
+        let raw=raw_personal_usage_accounts();
+        assert!(wham_usage_personal_account(&raw,&identity()),"the real accounts/check object map must authorize the matching active personal account");
+        let mut denied=Vec::new();
+        let mut workspace=raw.clone();workspace["accounts"]["account-fixture"]["account"]["structure"]=json!("workspace");denied.push(workspace);
+        let mut deactivated=raw.clone();deactivated["accounts"]["account-fixture"]["account"]["is_deactivated"]=json!(true);denied.push(deactivated);
+        let mut session_denied=raw.clone();session_denied["accounts"]["account-fixture"]["can_access_with_session"]=json!(false);denied.push(session_denied);
+        let mut wrong_key=raw.clone();let entry=wrong_key["accounts"].as_object_mut().unwrap().remove("account-fixture").unwrap();wrong_key["accounts"]["another-key"]=entry;denied.push(wrong_key);
+        let mut wrong_nested_id=raw.clone();wrong_nested_id["accounts"]["account-fixture"]["account"]["account_id"]=json!("another-account");denied.push(wrong_nested_id);
+        denied.push(json!({"account_ordering":["account-fixture"],"accounts":[{"id":"account-fixture","structure":"personal"}]}));
+        for raw in denied {assert!(!wham_usage_personal_account(&raw,&identity()),"must not infer personal membership from {raw}");}
     }
 
     #[tokio::test]
@@ -7741,4 +7783,187 @@ mod tests {
         let get_with_body = HttpRequest { url:"https://chatgpt.com".into(), headers:BTreeMap::new(), method:HttpMethod::Get, body:vec![1] };
         assert_eq!(curl_config(&get_with_body).err().unwrap().code, "invalid_request");
     }
+
+#[cfg(test)]
+mod gpts20e_regression {
+    use super::*;
+
+
+    #[tokio::test]
+    async fn gpts_avatar_metadata_requires_explicit_refs_and_fixed_bytes_operation() {
+        let service=ChatgptService::default();
+        let mut req=request("gpts-metadata"); req.operation=ServiceOperation::GptsDiscovery;
+        let transport=FakeTransport::new(&[200]);
+        transport.responses.lock().unwrap()[0].body=serde_json::to_vec(&json!({"cuts":[{"list":{"items":[{"resource":{"gizmo":{"id":"g-one","display":{"profile_picture_url":"https://images.example.test/avatar.png"}}}}]}}]})).unwrap();
+        let value=serde_json::to_value(service.read_with(req,share_rpc,&transport).await.unwrap()).unwrap();
+        assert!(value["gptAssets"].is_array(), "GPT metadata must explicitly grant avatar references");
+        assert_eq!(value["gptAssets"][0]["id"],"g-one");
+        let mut bytes=request("gpts-avatar"); bytes.operation=serde_json::from_value(json!("gpts_avatar")).expect("fixed avatar operation");
+        bytes.params=json!({"asset_key":value["gptAssets"][0]["assetKey"],"source_request_id":"gpts-metadata"});
+        let transport=FakeTransport::new(&[200]); transport.responses.lock().unwrap()[0].body=b"\x89PNG\r\n\x1a\nfixture".to_vec();
+        let body=service.read_with(bytes,share_rpc,&transport).await.unwrap().body;
+        assert!(body["dataUrl"].as_str().unwrap().starts_with("data:image/png;base64,"));
+        assert!(transport.requests.lock().unwrap()[0].headers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn gpts_metadata_network_policy_prevents_transport() {
+        for operation in [ServiceOperation::GptsDiscovery,ServiceOperation::GptsCategory,ServiceOperation::GptsSearch,ServiceOperation::GptsDetail,ServiceOperation::GptsAbout,ServiceOperation::GptsWorkspaceSettings] {
+            let service=ChatgptService::default(); let mut req=request("gpts-policy");req.operation=operation;
+            req.params=match req.operation {ServiceOperation::GptsCategory=>json!({"id":"cut"}),ServiceOperation::GptsSearch=>json!({"q":"test"}),ServiceOperation::GptsDetail|ServiceOperation::GptsAbout=>json!({"id":"g-one"}),_=>json!({})};
+            let transport=FakeTransport::new(&[200]);
+            let denied=|method,params| if method=="configRequirements/read" {std::future::ready(Ok(json!({"requirements":{"application":{"network":{"enabled":true,"domains":{}}}}})))} else {share_rpc(method,params)};
+            let result=service.read_with(req,denied,&transport).await;
+            assert!(result.is_err()); assert!(transport.requests.lock().unwrap().is_empty(),"policy before transport");
+        }
+    }
+    fn metadata_request(id:&str,operation:ServiceOperation)->ServiceRequest {
+        let mut req=request(id); req.params=match operation {ServiceOperation::GptsCategory=>json!({"id":"cut"}),ServiceOperation::GptsSearch=>json!({"q":"test"}),ServiceOperation::GptsDetail|ServiceOperation::GptsAbout=>json!({"id":"g-one"}),_=>json!({})};req.operation=operation;req
+    }
+    fn gpts_operations()->Vec<ServiceOperation> {vec![ServiceOperation::GptsDiscovery,ServiceOperation::GptsCategory,ServiceOperation::GptsSearch,ServiceOperation::GptsDetail,ServiceOperation::GptsAbout,ServiceOperation::GptsWorkspaceSettings]}
+    fn avatar_body(url:Option<&str>)->Value {json!({"gizmo":{"id":"g-one","display":{"profile_picture_url":url}},"tools":[]})}
+    async fn avatar_fixture(service:&ChatgptService,id:&str,url:&str)->Value {
+        let transport=FakeTransport::new(&[200]);transport.responses.lock().unwrap()[0].body=serde_json::to_vec(&avatar_body(Some(url))).unwrap();
+        serde_json::to_value(service.read_with(metadata_request(id,ServiceOperation::GptsDetail),share_rpc,&transport).await.unwrap()).unwrap()["gptAssets"][0].clone()
+    }
+    fn avatar_request(id:&str,asset:&Value)->ServiceRequest {let mut req=request(id);req.operation=ServiceOperation::GptsAvatar;req.params=json!({"asset_key":asset["assetKey"],"source_request_id":asset["sourceRequestId"]});req}
+
+    #[tokio::test]
+    async fn gpts_metadata_ready_cancel_and_completion_policy_never_deliver_body() {
+        struct CancelOnComplete;
+        impl Transport for CancelOnComplete {fn send(&self,_:HttpRequest,cancel:Arc<AtomicBool>)->TransportFuture<'_> {Box::pin(async move {cancel.store(true,Ordering::SeqCst);Ok(HttpResponse{status:200,headers:BTreeMap::new(),body:br#"{}"#.to_vec()})})}}
+        for operation in gpts_operations() {
+            let service=ChatgptService::default();let result=service.read_with(metadata_request("gpts-ready-cancel",operation.clone()),share_rpc,&CancelOnComplete).await;
+            assert_eq!(result.err().unwrap().code,"cancelled");assert!(service.active.lock().unwrap().is_empty());
+            let service=ChatgptService::default();let calls=AtomicUsize::new(0);let transport=FakeTransport::new(&[200]);
+            let rpc=|method,params| if method=="configRequirements/read" {let completed=calls.fetch_add(1,Ordering::SeqCst)>0;std::future::ready(Ok(if completed {json!({"requirements":{"application":{"network":{"enabled":true,"domains":{}}}}})} else {json!({"requirements":null})}))} else {share_rpc(method,params)};
+            assert_eq!(service.read_with(metadata_request("gpts-complete-policy",operation),rpc,&transport).await.err().unwrap().code,"network_restricted");
+            assert_eq!(transport.requests.lock().unwrap().len(),1);assert_eq!(calls.load(Ordering::SeqCst),2);
+        }
+    }
+    #[tokio::test]
+    async fn gpts_metadata_shapes_and_empty_refs_are_explicit_and_about_is_separate() {
+        let gizmo=json!({"id":"g-one","display":{"profile_picture_url":"https://images.example.test/avatar"}});
+        let wrapped=json!({"resource":{"gizmo":gizmo}});
+        for (operation,body) in [
+            (ServiceOperation::GptsDiscovery,json!({"cuts":[{"list":{"items":[wrapped.clone()]}}]})),
+            (ServiceOperation::GptsCategory,json!({"list":{"items":[wrapped.clone()]}})),
+            (ServiceOperation::GptsSearch,json!({"items":[{"gizmo":gizmo}]})),
+            (ServiceOperation::GptsDetail,json!({"gizmo":gizmo,"tools":[]})),
+            // Keep the previously accepted wrapper as an explicit compatibility input.
+            (ServiceOperation::GptsDetail,wrapped),
+        ] {
+            let service=ChatgptService::default();let transport=FakeTransport::new(&[200,200]);
+            transport.responses.lock().unwrap()[0].body=serde_json::to_vec(&body).unwrap();
+            let first=serde_json::to_value(service.read_with(metadata_request("shape",operation.clone()),share_rpc,&transport).await.unwrap()).unwrap();
+            assert_eq!(first["gptAssets"].as_array().unwrap().len(),1);assert_eq!(first["gptAssets"][0]["id"],"g-one");
+            { let requests=transport.requests.lock().unwrap();
+                assert!(!requests[0].headers.contains_key("X-OpenAI-Attach-Auth"), "the official desktop adapter consumes this internal marker before HTTP");
+                assert!(requests[0].headers.contains_key("Authorization"));
+                assert_eq!(requests[0].headers["ChatGPT-Account-Id"], "account-fixture");
+            }
+            let empty=serde_json::to_value(service.read_with(metadata_request("empty",operation),share_rpc,&transport).await.unwrap()).unwrap();assert_eq!(empty["gptAssets"],json!([]));
+        }
+        let service=ChatgptService::default();let transport=FakeTransport::new(&[200]);
+        transport.responses.lock().unwrap()[0].body=serde_json::to_vec(&avatar_body(Some("https://images.example.test/about"))).unwrap();
+        let about=serde_json::to_value(service.read_with(metadata_request("about",ServiceOperation::GptsAbout),share_rpc,&transport).await.unwrap()).unwrap();assert!(about.get("gptAssets").is_none());
+    }
+    #[tokio::test]
+    async fn gpts_workspace_settings_identity_path_and_parameters_are_fixed() {
+        let service=ChatgptService::default();let transport=FakeTransport::new(&[200]);
+        service.read_with(metadata_request("settings",ServiceOperation::GptsWorkspaceSettings),share_rpc,&transport).await.unwrap();
+        assert_eq!(transport.requests.lock().unwrap()[0].url,"https://chatgpt.com/backend-api/accounts/account-fixture/settings");
+        for params in [Value::Null,json!([]),json!({"account_id":"other"}),json!({"url":"https://evil.test"})] {
+            let mut req=metadata_request("invalid-settings",ServiceOperation::GptsWorkspaceSettings);req.params=params;
+            assert_eq!(service.read_with(req,|_,_|std::future::ready(Err("auth must not run".into())),&FakeTransport::new(&[])).await.err().unwrap().code,"invalid_request");
+        }
+    }
+    #[tokio::test]
+    async fn gpts_avatar_authenticated_subdomain_and_external_redirect_drop_headers_permanently() {
+        let service=ChatgptService::default();let asset=avatar_fixture(&service,"protected","https://cdn.chatgpt.com/backend-api/estuary/content?id=a").await;
+        let transport=FakeTransport::new(&[302,302,200]);
+        {let mut responses=transport.responses.lock().unwrap();responses[0].headers.insert("location".into(),"https://images.example.test/a".into());responses[1].headers.insert("location".into(),"https://chatgpt.com/backend-api/estuary/content?id=b".into());responses[2].body=b"\x89PNG\r\n\x1a\nfixture".to_vec();}
+        service.read_with(avatar_request("redirect",&asset),share_rpc,&transport).await.unwrap();
+        let requests=transport.requests.lock().unwrap();assert!(requests[0].url.starts_with("https://cdn.chatgpt.com/"));assert!(requests[0].headers.contains_key("Authorization"));assert!(requests[0].headers.contains_key("ChatGPT-Account-Id"));
+        assert!(requests[1].headers.is_empty());assert!(requests[2].headers.is_empty());
+    }
+    #[tokio::test]
+    async fn gpts_avatar_rejects_unregistered_cross_role_source_and_bad_payloads() {
+        let service=ChatgptService::default();
+        for params in [json!({"url":"https://chatgpt.com"}),json!({"asset_key":"unknown","source_request_id":"unknown"}),json!({"asset_key":"unknown","source_request_id":"unknown","headers":{}})] {
+            let mut req=request("bad-avatar");req.operation=ServiceOperation::GptsAvatar;req.params=params;
+            assert!(service.read_with(req,|_,_|std::future::ready(Err("auth must not run".into())),&FakeTransport::new(&[])).await.is_err());
+        }
+        let asset=avatar_fixture(&service,"payload","https://images.example.test/a").await;
+        let mut wrong_source=avatar_request("wrong-source",&asset);wrong_source.params["source_request_id"]=json!("other");assert_eq!(service.read_with(wrong_source,share_rpc,&FakeTransport::new(&[])).await.err().unwrap().code,"asset_unavailable");
+        let mut images_req=request("images-role");images_req.operation=ServiceOperation::ImagesInit;
+        let image=service.register_images_assets(&images_req,&json!({"groups":[{"items":[{"id":"g-one","image_url":"https://images.example.test/a"}]}]}),"https://chatgpt.com",1).unwrap();
+        assert_eq!(service.read_with(avatar_request("images-key",&serde_json::to_value(&image[0]).unwrap()),share_rpc,&FakeTransport::new(&[])).await.err().unwrap().code,"asset_unavailable");
+        for (mime,bytes) in [("image/png",b"<svg/>".to_vec()),("text/html",b"\x89PNG\r\n\x1a\nfixture".to_vec()),("image/png",vec![0;MAX_RESPONSE as usize+1])] {
+            let transport=FakeTransport::new(&[200]);{let mut responses=transport.responses.lock().unwrap();responses[0].body=bytes;responses[0].headers.insert("content-type".into(),mime.into());}
+            assert_eq!(service.read_with(avatar_request("invalid-bytes",&asset),share_rpc,&transport).await.err().unwrap().code,"invalid_response");
+        }
+    }
+    #[tokio::test]
+    async fn gpts_avatar_policy_cancel_identity_and_redirect_limits_hold() {
+        let service=ChatgptService::default();let asset=avatar_fixture(&service,"bounded","https://images.example.test/a").await;
+        service.cancel("pre-cancel-avatar");assert_eq!(service.read_with(avatar_request("pre-cancel-avatar",&asset),share_rpc,&FakeTransport::new(&[])).await.err().unwrap().code,"cancelled");
+        let denied=|method,params|if method=="configRequirements/read" {std::future::ready(Ok(json!({"requirements":{"application":{"network":{"enabled":true,"domains":{}}}}})))} else {share_rpc(method,params)};
+        assert_eq!(service.read_with(avatar_request("policy-avatar",&asset),denied,&FakeTransport::new(&[])).await.err().unwrap().code,"network_restricted");
+        let transport=FakeTransport::new(&[302,302,302,302,302,302]);for response in transport.responses.lock().unwrap().iter_mut(){response.headers.insert("location".into(),"https://images.example.test/a".into());}
+        assert_eq!(service.read_with(avatar_request("loop-avatar",&asset),share_rpc,&transport).await.err().unwrap().code,"invalid_response");assert_eq!(transport.requests.lock().unwrap().len(),6);
+        service.invalidate();assert!(service.read_with(avatar_request("old-generation",&asset),share_rpc,&FakeTransport::new(&[])).await.is_err());
+    }
+    #[tokio::test]
+    async fn gpts_avatar_new_metadata_withdraws_old_keys_and_late_response_cannot_restore() {
+        let service=ChatgptService::default();let req=metadata_request("registration",ServiceOperation::GptsDetail);
+        let old=service.register_gpts_assets(&req,&avatar_body(Some("https://images.example.test/a")),"https://chatgpt.com",1).unwrap();
+        service.register_gpts_assets(&req,&avatar_body(None),"https://chatgpt.com",3).unwrap();
+        assert!(service.register_gpts_assets(&req,&avatar_body(Some("https://images.example.test/a")),"https://chatgpt.com",2).unwrap().is_empty());
+        assert_eq!(service.read_with(avatar_request("revoked",&serde_json::to_value(&old[0]).unwrap()),share_rpc,&FakeTransport::new(&[])).await.err().unwrap().code,"asset_unavailable");
+        assert_eq!(service.register_gpts_assets(&req,&avatar_body(Some("https://images.example.test/new")),"https://chatgpt.com",4).unwrap().len(),1);
+    }
+    #[tokio::test]
+    async fn gpts_avatar_inflight_download_is_revoked_by_new_metadata() {
+        let service=Arc::new(ChatgptService::default());let asset=avatar_fixture(&service,"inflight","https://images.example.test/a").await;
+        let transport=Arc::new(FakeTransport{delay_ms:100,..FakeTransport::new(&[200])});transport.responses.lock().unwrap()[0].body=b"\x89PNG\r\n\x1a\nfixture".to_vec();
+        let task={let service=service.clone();let transport=transport.clone();tokio::spawn(async move {service.read_with(avatar_request("downloading",&asset),share_rpc,transport.as_ref()).await})};
+        while !transport.entered.load(Ordering::SeqCst) {tokio::task::yield_now().await;}
+        service.register_gpts_assets(&metadata_request("withdraw",ServiceOperation::GptsDetail),&avatar_body(None),"https://chatgpt.com",100).unwrap();
+        assert_eq!(task.await.unwrap().err().unwrap().code,"asset_unavailable");
+    }
+    #[tokio::test]
+    async fn gpts_avatar_fifo_capacity_refresh_recovers_without_reviving_evicted_keys() {
+        let service=ChatgptService::default();let mut first=None;let mut latest=None;
+        for seq in 1..=5 {let req=metadata_request(&format!("capacity-{seq}"),ServiceOperation::GptsCategory);let body=json!({"list":{"items":(0..1024).map(|id|json!({"resource":{"gizmo":{"id":format!("g-{id}"),"display":{"profile_picture_url":"https://images.example.test/a"}}}})).collect::<Vec<_>>()}});
+            let refs=service.register_gpts_assets(&req,&body,"https://chatgpt.com",seq).unwrap();assert_eq!(refs.len(),1024);if seq==1 {first=Some(serde_json::to_value(&refs[0]).unwrap());}latest=Some(serde_json::to_value(&refs[0]).unwrap());}
+        assert_eq!(service.read_with(avatar_request("evicted",&first.unwrap()),share_rpc,&FakeTransport::new(&[])).await.err().unwrap().code,"asset_unavailable");
+        let transport=FakeTransport::new(&[200]);transport.responses.lock().unwrap()[0].body=b"\x89PNG\r\n\x1a\nfixture".to_vec();service.read_with(avatar_request("latest",&latest.unwrap()),share_rpc,&transport).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn gpts_metadata_generation_change_and_http_errors_are_not_success() {
+        struct InvalidateOnComplete<'a>(&'a ChatgptService);
+        impl Transport for InvalidateOnComplete<'_> {fn send(&self,_:HttpRequest,_:Arc<AtomicBool>)->TransportFuture<'_> {Box::pin(async move {self.0.invalidate();Ok(HttpResponse{status:200,headers:BTreeMap::new(),body:br#"{}"#.to_vec()})})}}
+        for operation in gpts_operations() {
+            let service=ChatgptService::default();assert_eq!(service.read_with(metadata_request("changed",operation.clone()),share_rpc,&InvalidateOnComplete(&service)).await.err().unwrap().code,"account_changed");
+            for (status,code) in [(403,"forbidden"),(404,"not_found"),(429,"rate_limited")] {let service=ChatgptService::default();assert_eq!(service.read_with(metadata_request("http-error",operation.clone()),share_rpc,&FakeTransport::new(&[status])).await.err().unwrap().code,code);}
+        }
+    }
+    #[tokio::test]
+    async fn gpts_avatar_completion_policy_cancellation_and_snapshot_limit_are_visible() {
+        let service=ChatgptService::default();let asset=avatar_fixture(&service,"completion","https://images.example.test/a").await;
+        let transport=FakeTransport::new(&[200]);transport.responses.lock().unwrap()[0].body=b"\x89PNG\r\n\x1a\nfixture".to_vec();
+        let calls=AtomicUsize::new(0);let rpc=|method,params| if method=="configRequirements/read" {let completed=calls.fetch_add(1,Ordering::SeqCst)>0;std::future::ready(Ok(if completed {json!({"requirements":{"application":{"network":{"enabled":true,"domains":{}}}}})} else {json!({"requirements":null})}))} else {share_rpc(method,params)};
+        assert_eq!(service.read_with(avatar_request("completion-policy",&asset),rpc,&transport).await.err().unwrap().code,"network_restricted");assert_eq!(calls.load(Ordering::SeqCst),2);
+        struct CancelOnComplete;
+        impl Transport for CancelOnComplete {fn send(&self,_:HttpRequest,cancel:Arc<AtomicBool>)->TransportFuture<'_> {Box::pin(async move {cancel.store(true,Ordering::SeqCst);Ok(HttpResponse{status:200,headers:BTreeMap::new(),body:b"\x89PNG\r\n\x1a\nfixture".to_vec()})})}}
+        assert_eq!(service.read_with(avatar_request("completion-cancel",&asset),share_rpc,&CancelOnComplete).await.err().unwrap().code,"cancelled");
+        let req=metadata_request("snapshot-limit",ServiceOperation::GptsCategory);let body=json!({"list":{"items":(0..1025).map(|id|json!({"resource":{"gizmo":{"id":format!("g-{id}"),"display":{"profile_picture_url":"https://images.example.test/a"}}}})).collect::<Vec<_>>()}});
+        assert_eq!(service.register_gpts_assets(&req,&body,"https://chatgpt.com",100).err().unwrap().code,"asset_limit");
+        assert_eq!(service.register_gpts_assets(&metadata_request("recover",ServiceOperation::GptsDetail),&avatar_body(Some("https://images.example.test/new")),"https://chatgpt.com",101).unwrap().len(),1);
+    }
+
+}
+
 }

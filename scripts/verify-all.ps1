@@ -94,6 +94,8 @@ try {
   Invoke-Step "Images direct access, metadata grants and image bytes" { node scripts/verify-images-assets.mjs }
   Invoke-Step "Images readonly workface and lifecycle" { node scripts/verify-images-view.mjs }
   Invoke-Step "GPTs service and identity boundary regression" { node scripts/verify-gpts-service.mjs }
+  Invoke-Step "GPT metadata and restriction decoding regression" { node scripts/verify-gpts-data.mjs }
+  Invoke-Step "GPT direct access and read contracts regression" { node scripts/verify-gpts-read.mjs }
   Invoke-Step "Sites authenticated catalog and readonly settings regression" { node scripts/verify-sites-service.mjs }
   Invoke-Step "Codex Cloud authenticated configuration regression" { node scripts/verify-cloud-environments.mjs }
   Invoke-Step "Authenticated service renderer contracts" { node scripts/verify-chatgpt-service.mjs }

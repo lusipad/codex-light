@@ -30,3 +30,5 @@
 当前生产 EXE 私有 CODEX_HOME/WebView、CLI 0.165.0 的图像入口、未登录错误、重试和退出已验证，隔离数据库只读核验0会话，进程退出。构建位于 `dist-artifacts/images-19E-20261106/CodexNative.exe`，SHA-256 `d8a8f5c0ab38737e0d90a20006c6a2641efacd33f21afdd6496c582f6aeef192`，附3前端资产和5许可收据；未新打安装包。证据 final-result.json、native-product-result.json，原生截图为JPEG。正常界面另有离线组件证据，不将未登录路径冒充真实账号图像链路。
 
 真实账号 gate/config/HTTP、物理中文 IME、多窗口、同环境官方配对图与用户验收仍待完成。visual score=null；不能宣称整页 1:1。完整检查失败则继续修复，阶段提交如实保留未验项。
+
+后续20E纠正：本阶段旧隔离账号fixture曾使用整理后的数组，不能证明宿主原始accounts/check的准入兼容。20E已以准确raw map分别复现图像/资料库/分享拒绝并修正；修后真实图像client和App路由wrapper在新的browser-images夹具进入正常页并解码11图，无错误。旧证据不覆盖或更新为新基准，精确范围见[20E记录](20E-gpts.md)。

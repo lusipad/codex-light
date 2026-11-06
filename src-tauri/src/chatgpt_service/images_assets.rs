@@ -196,7 +196,7 @@ impl ChatgptService {
             }=>result,
         };
         self.check_image_asset(&entry, &request, &registration)?;
-        result.map(|body|ServiceResponse {request_id:request.request_id, identity:request.expected_identity, status:200, body, headers:BTreeMap::new(), assets:None})
+        result.map(|body|ServiceResponse {request_id:request.request_id, identity:request.expected_identity, status:200, body, headers:BTreeMap::new(), assets:None, gpt_assets:None})
     }
 }
 

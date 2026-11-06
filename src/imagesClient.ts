@@ -1,3 +1,4 @@
+import { selectedServiceAccount } from "./serviceAccounts";
 import { callAppServer } from "./bridge";
 import { isImagesAssetRef, readChatgptService, readImagesMetadata, serviceIdentity, shareAccessBootstrap, type ImagesAssetRef, type ServiceIdentity } from "./chatgptService";
 import { parseImagesCatalog, parseImagesHistory, parseImagesStyles, type ImagesCatalog, type ImagesHistoryPage, type ImagesStyles } from "./imagesData";
@@ -31,12 +32,7 @@ export async function readImagesAccess(signal: AbortSignal): Promise<ImagesAcces
   if (!object(account) || account.account?.type !== "chatgpt"
     || account.workspaceRouting?.chatgptAccountId !== identity.accountId)
     throw Error("无法确认当前图像账号。");
-  if (!object(accounts) || !Array.isArray(accounts.accounts)) throw Error("无法确认图像账号信息。");
-  const selected = accounts.accounts.filter((value: unknown) => object(value) && value.id === identity.accountId);
-  if (selected.length !== 1 || !["personal", "workspace"].includes(selected[0].structure))
-    throw Error("图像账号结构尚未确认。");
-  for (const key of ["can_access_with_session", "is_deactivated"]) if (selected[0][key] != null && typeof selected[0][key] !== "boolean")
-    throw Error("图像账号状态格式无效。");
+  const selected = selectedServiceAccount(accounts, identity.accountId);
   if (!object(bootstrap) || typeof bootstrap.statsigPayload !== "string") throw Error("无法读取图像访问权限。");
   const payload = JSON.parse(bootstrap.statsigPayload);
   // Supported full-snapshot adaptation, not a claim that official responses require has_updates.
@@ -55,8 +51,8 @@ export async function readImagesAccess(signal: AbortSignal): Promise<ImagesAcces
     if ((required || value !== undefined) && typeof value !== "boolean") throw Error("图像访问资格尚未确认，请重试。");
     return value;
   };
-  let available = selected[0].can_access_with_session !== false && selected[0].is_deactivated !== true;
-  if (selected[0].structure === "workspace" && gate("1355972088")) {
+  let available = selected.can_access_with_session !== false && selected.account.is_deactivated !== true;
+  if (selected.account.structure === "workspace" && gate("1355972088")) {
     const settings = await readChatgptService("images_workspace_settings", {}, identity, signal);
     if (!object(settings) || (settings.permissions != null && (!Array.isArray(settings.permissions)
       || !settings.permissions.every((value: unknown) => typeof value === "string"))))

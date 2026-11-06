@@ -3,6 +3,7 @@ import "./LibraryStickyHeader.css";
 
 interface LibraryStickyHeaderProps {
   title: ReactNode;
+  description?: ReactNode;
   actions?: ReactNode;
   navigation?: ReactNode;
   newLayout: boolean;
@@ -10,7 +11,7 @@ interface LibraryStickyHeaderProps {
   bodyRef: RefObject<HTMLDivElement | null>;
 }
 
-export function LibraryStickyHeader({ title, actions, navigation, newLayout, scrollContainerRef, bodyRef }: LibraryStickyHeaderProps) {
+export function LibraryStickyHeader({ title, description, actions, navigation, newLayout, scrollContainerRef, bodyRef }: LibraryStickyHeaderProps) {
   const shellRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const [scrolled, setScrolled] = useState(false);
@@ -86,7 +87,7 @@ export function LibraryStickyHeader({ title, actions, navigation, newLayout, scr
     <div ref={shellRef} className="library-sticky-shell" data-scroll-collapse data-sticky data-scrolled={scrolled || undefined} data-library-new-layout={newLayout || undefined}>
       <div ref={contentRef} className="library-sticky-content">
         <div className="library-view-header library-browse-header">
-          <div className="library-sticky-title"><div className="library-sticky-title-content"><h1>{title}</h1></div></div>
+          <div className="library-sticky-title"><div className="library-sticky-title-content"><h1>{title}</h1>{description != null && <div className="library-sticky-description">{description}</div>}</div></div>
           <div className="library-sticky-actions">{actions != null && <div className="library-header-actions">{actions}</div>}</div>
         </div>
         <div className="library-sticky-navigation">{newLayout ? null : navigation}</div>

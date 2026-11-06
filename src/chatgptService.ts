@@ -19,7 +19,7 @@ export interface ReviewProviderPreferences {
   gitlabConnectorId: string | null;
 }
 export type ServiceOperation = "library_favorites" | "library_nodes" | "library_directory_path" | "library_file" | "library_file_content" | "library_suggested" | "library_images" | "library_settings" | "library_image" | "storage_usage" | "images_init" | "images_styles" |
-  "images_recent" | "images_workspace_settings" | "images_asset" | "gpts_discovery" | "gpts_category" | "gpts_search" | "gpts_detail" | "gpts_about" |
+  "images_recent" | "images_workspace_settings" | "images_asset" | "gpts_discovery" | "gpts_category" | "gpts_search" | "gpts_detail" | "gpts_about" | "gpts_avatar" | "gpts_workspace_settings" |
   "sites_access" | "sites_list" | "sites_shared" | "sites_detail" | "sites_environment" | "sites_domains" | "sites_share_access" | "github_repository" |
   "share_accounts" | "share_users" | "share_groups" | "wham_usage" | "account_me" | "profile_identity" | "profile_page";
 
@@ -90,6 +90,31 @@ export interface ImagesAssetRef {
   id: string;
   groupId: string | null;
   variant: 0;
+}
+
+export interface GptAssetRef { assetKey: string; sourceRequestId: string; id: string }
+
+/** Avatar grants come from the host's GPT metadata response, never from a renderer URL. */
+export async function readGptsMetadata(
+  operation: "gpts_discovery" | "gpts_category" | "gpts_search" | "gpts_detail", params: Record<string, unknown>,
+  identity: ServiceIdentity, signal: AbortSignal,
+): Promise<{ body: unknown; assets: GptAssetRef[] }> {
+  signal.throwIfAborted();
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; body: unknown; gptAssets?: unknown }>(
+    "chatgpt_service_read", requestId,
+    { request: { requestId, operation, params, expectedIdentity: identity, profile: browserProfile() } }, signal,
+  );
+  const body = responseBody(result, requestId, identity);
+  if (!Array.isArray(result.gptAssets)) throw Error("GPT 头像引用缺失，请重试。");
+  const keys = new Set<string>();
+  const valid = (value: unknown) => typeof value === "string" && value.length > 0 && value.length <= 4096 && !/[\u0000-\u001f\u007f-\u009f]/u.test(value);
+  for (const ref of result.gptAssets) {
+    if (!ref || typeof ref !== "object" || Array.isArray(ref) || !valid(ref.assetKey) || !valid(ref.id)
+      || ref.sourceRequestId !== requestId || keys.has(ref.assetKey)) throw Error("GPT 头像引用无效，请重试。");
+    keys.add(ref.assetKey);
+  }
+  return { body, assets: result.gptAssets };
 }
 
 export function isImagesAssetRef(value: unknown): value is ImagesAssetRef {

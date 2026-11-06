@@ -47,8 +47,10 @@ function mount(overrides = {}) {
       }
     },
   };
+  const membershipModule = { exports: {} };
+  vm.runInNewContext(compile("src/serviceAccounts.ts"), { exports: membershipModule.exports, Error, Set });
   const accessModule = { exports: {} };
-  vm.runInNewContext(compile("src/shareAccess.ts"), { exports: accessModule.exports, require: () => ({}), Error, Set });
+  vm.runInNewContext(compile("src/shareAccess.ts"), { exports: accessModule.exports, require: name => name === "./serviceAccounts" ? membershipModule.exports : {}, Error, Set });
   const service = {
     discardSharedThread: async (...args) => { calls.push(["discard", ...args]); },
     prepareSharedThread: async (...args) => { calls.push(["upload", ...args]); return behavior.upload(...args); },

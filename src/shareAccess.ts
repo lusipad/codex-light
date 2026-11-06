@@ -1,3 +1,4 @@
+import { selectedServiceAccount } from "./serviceAccounts";
 import {
   readChatgptService, serviceIdentity, shareAccessBootstrap, type ServiceIdentity,
 } from "./chatgptService";
@@ -40,13 +41,8 @@ export function decodeShareAccess(bootstrap: unknown, accounts: unknown, identit
   const gate = object(entry) ? entry[payload.response_format === "init-v2" ? "v" : "value"] : undefined;
   if (typeof gate !== "boolean") throw Error("当前账号的分享访问权限尚未确认。");
   if (!gate) return { identity, gate: false, account: null };
-  if (!object(accounts) || !Array.isArray(accounts.accounts) || !Array.isArray(accounts.account_ordering) ||
-    accounts.account_ordering[0] !== identity.accountId) throw Error("分享账号与当前账号不符。");
-  const selected = accounts.accounts.filter((account: unknown) => object(account) && account.id === identity.accountId);
-  if (selected.length !== 1) throw Error("无法确认分享账号。");
-  const account = selected[0];
-  if (!nonempty(account.account_user_id) || !["personal", "workspace"].includes(account.structure) ||
-    account.is_deactivated === true || account.can_access_with_session === false ||
+  const selected = selectedServiceAccount(accounts, identity.accountId), account = selected.account;
+  if (account.is_deactivated === true || selected.can_access_with_session === false ||
     (account.name != null && typeof account.name !== "string")) throw Error("当前账号不支持此分享访问范围。");
   return {
     identity, gate: true,
