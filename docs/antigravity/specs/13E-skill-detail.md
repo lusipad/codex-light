@@ -1,6 +1,6 @@
 # 13E 已安装技能详情：开发前合同
 
-日期：2026-11-06。状态：**待调研（已完成本次静态追链；运行时与未知项待补），未开发、未自验、未用户验收**。
+日期：2026-11-06。状态：**静态合同已用于开发，阶段自验完成；整页仍有差异，未用户验收**。本文件保留开发前预期；实际结果与差异见[13E阶段验收记录](../acceptance/13E-skill-preview.md)。
 
 本单元接续[12/13D](12-13D-extensions-ui-correction.md)，只解决独立技能目录中已安装技能的详情预览与既有真实动作。先建立“卡片→预览→内容→动作→关闭”的完整链，不能把现有textarea包进弹窗便称完成。推荐安装、完整插件目录、远端Showcase、设置内技能管理布局不是本单元主工作面。
 
@@ -92,7 +92,7 @@ skill-card传 `{hostId,isOpen,skillPath,titleText,presentation}` 给initial `n9s
 | “打开” | Pe(scope,path,cwd:null,hostId,openInSidePanel:true)，modal菜单路径执行后closePreview（010、006） | 现“打开目录”只调用reveal_path_in_explorer，不等价。需宿主文件侧板回调；路径必须SKILL.md实际路径，不换成目录或跨host误打开 |
 | “在文件资源管理器中显示” | Windows专用菜单，target:fileManager；远程host禁用；不调用closePreview（006、056） | 可复用真实reveal IPC，但须核目录/文件语义；不能和“打开”合并成一颗按钮 |
 | “复制 Markdown” | 复制原始contents；不可读禁用、成功反馈（013、050） | 复用剪贴板真实链，禁止复制清理后正文或错误文本 |
-| “立即试用” | enabled且非updating才能点击；当前项目下prefillPrompt、startInSidebar:true（014–016）；共享MNn优先interface.defaultPrompt，并补技能引用/路径链接及尾空格（044、061–062） | **准备新聊天草稿，不是执行turn**。不能复用 `$skill-creator`提示冒充试用；App应提供准确技能身份/默认prompt的宿主动作。主会话/侧栏布局差异另记，未接真实草稿不得显示成功 |
+| “立即试用” | enabled且非updating才能点击；当前项目下prefillPrompt、startInSidebar:true（014–016）；共享MNn优先interface.defaultPrompt，并补技能引用/路径链接及尾空格（044、061–062） | **准备新聊天草稿，不是执行turn**。不能复用 `$skill-creator`提示冒充试用；App应提供准确技能身份/默认prompt的宿主动作。13F下游补证表明同版本本地宿主未消费startInSidebar、实际准备首页导航，不能凭参数推侧栏；nonce草稿作用域与目标文本替换另验 |
 | 卸载 | 非remote host且scope不为admin，且showModalUninstall=true时有；pending禁用；调用已有remove并关闭modal；成功/失败通知与查询失效（009、014） | 当前本地skill_delete有确认及刷新；官方下游host remove是否另有确认未追完整，不能据卡片未见confirm便删除现有保护。仅隔离测试技能允许实际写/删，失败不得toast成功 |
 | 关闭 | shell setOpen(false)，外壳支持关闭按钮、onOpenChange；更多“打开”主动关闭；卸载主动关闭（017、040、046–048） | 写入中关闭不等价取消已提交写；按真实完成更新列表，不能重新打开modal或污染下一identity |
 
@@ -147,6 +147,8 @@ Escape/遮罩关闭、嵌套更多菜单优先关闭、Tab圈定来自共享moda
 ## 10. 开发前待补与交付门槛
 
 1. 选定固定官方目录运行时分支，确认check/toggle及实际header/footer可见；补同客户区/中文/主题/DPI/缩放的官方图与DOM。可先开发明确静态主路径，但缺证项不能算已验收。
-2. 补当前原包Retry中文fallback、精确关闭焦点、Try now侧栏布局、宿主remove确认/反馈下游。现有保护不因静态未见而删除。
+2. 补当前原包Retry中文fallback、精确关闭焦点、Try now草稿作用域、宿主remove确认/反馈下游。现有保护不因静态未见而删除。
 3. 本地已安装主链、纯远程插件技能、设置contents、Showcase各自记录；不拿不同surface的加载字段、权限、布局互相证明。
-4. 功能、结构/交互、配对像素、原生与用户验收分别记录。部署一个modal或通过回调测试不等于整页完成；本文件现在只是开发前合同。
+4. 功能、结构/交互、配对像素、原生与用户验收分别记录。部署一个modal或通过回调测试不等于整页完成；本文件定义预期，不自动代表用例已通过。
+
+补证：`reference/supplement-actions.json`已收敛精确Try now引用构造及宿主remove下游；13F只读合同进一步追到本地宿主忽略startInSidebar并准备首页导航。当前实施保留ID-only删除和额外确认，主Composer保留已有草稿并追加，与官方nonce分槽及目标文本替换仍有差异。Retry官方中文、实际账号分支、官方焦点与草稿往返仍需运行时对照。

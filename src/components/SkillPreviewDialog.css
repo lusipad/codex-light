@@ -1,0 +1,58 @@
+.pm-skill-preview {
+  width: min(600px, calc(100vw - 32px));
+  height: min(720px, calc(100vh - 32px));
+  max-width: 100%;
+  max-height: 100%;
+  margin: auto;
+  padding: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--border-default);
+  border-radius: 24px;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  overflow: visible;
+}
+.pm-skill-preview::backdrop { background: rgba(0, 0, 0, 0.45); }
+.pm-skill-preview-inner { position: relative; display: flex; flex-direction: column; height: 100%; min-height: 0; padding: 20px; box-sizing: border-box; }
+.pm-skill-preview-header { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; min-width: 0; }
+.pm-skill-preview-icon { display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; flex-shrink: 0; border: 1px solid var(--border-default); border-radius: 50%; color: var(--text-secondary); }
+.pm-skill-preview-heading { display: flex; flex-direction: column; gap: 4px; min-width: 0; align-self: stretch; }
+.pm-skill-preview-heading h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 18px; font-weight: 600; line-height: 28px; }
+.pm-skill-preview-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pm-skill-preview-actions { position: absolute; top: 20px; right: 20px; display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.pm-skill-preview-icon-button { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); cursor: pointer; }
+.pm-skill-preview-icon-button:hover { background: var(--bg-hover); }
+.pm-skill-preview-description { margin: 0; font-size: 16px; line-height: 1.5; color: var(--text-secondary); overflow-wrap: anywhere; }
+.pm-skill-preview-body { flex: 1; min-height: 0; margin-top: 28px; padding: 16px; overflow: auto; border: 1px solid color-mix(in srgb, var(--border-default) 70%, transparent); border-radius: 12px; background: color-mix(in srgb, var(--bg-secondary) 40%, transparent); font-size: 13px; overflow-wrap: anywhere; }
+.pm-skill-preview-body .markdown-body { font-size: 13px; }
+.pm-skill-preview-body h1 { font-size: 14px; line-height: 1.4; font-weight: 600; margin-top: 16px; margin-bottom: 8px; }
+.pm-skill-preview-body h2 { font-size: 13px; font-weight: 600; margin-top: 12px; margin-bottom: 6px; }
+.pm-skill-preview-state { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; min-height: 100%; color: var(--text-secondary); }
+.pm-skill-preview-state > span { font-size: 12px; }
+.pm-skill-preview-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 20px; }
+.pm-skill-preview-more { position: relative; }
+.pm-skill-preview-menu { position: absolute; top: calc(100% + 6px); right: 0; width: max-content; max-width: calc(100vw - 64px); z-index: 1; padding: 4px; background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: 8px; box-shadow: var(--shadow-lg); }
+.pm-skill-preview-menu button { display: block; width: 100%; border: 0; border-radius: 4px; padding: 7px 10px; text-align: left; background: transparent; color: var(--text-primary); cursor: pointer; }
+.pm-skill-preview-menu button:hover:not(:disabled) { background: var(--bg-hover); }
+.pm-skill-preview-menu button:disabled { opacity: .45; cursor: default; }
+.pm-skill-preview-feedback { font-size: 12px; color: var(--text-secondary); }
+.pm-skill-preview .primary-btn-sm,
+.pm-skill-preview .secondary-btn-sm {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 16px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 18px;
+  cursor: pointer;
+}
+.pm-skill-preview .primary-btn-sm { background: var(--text-primary); color: var(--bg-primary); }
+.pm-skill-preview .secondary-btn-sm { background: var(--bg-tertiary); color: var(--text-primary); }
+.pm-skill-preview .primary-btn-sm:hover:not(:disabled) { opacity: .9; }
+.pm-skill-preview .secondary-btn-sm:hover:not(:disabled) { background: var(--bg-hover); }
+.pm-skill-preview .primary-btn-sm:disabled,
+.pm-skill-preview .secondary-btn-sm:disabled { opacity: .45; cursor: default; }

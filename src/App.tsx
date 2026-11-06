@@ -21,6 +21,7 @@ import { McpCallCard } from "./components/McpCallCard";
 import { extractTextFromItem } from "./threadText";
 import { pendingRequestKey, requestThreadId, requestsForThread, type RequestResponseState } from "./approvalRequests";
 import { copyTextToClipboard } from "./clipboard";
+import { buildSkillTrialPrompt } from "./skillTrialPrompt";
 import { ShareThreadDialog } from "./components/ShareThreadDialog";
 import { readShareAccess } from "./shareAccess";
 import { installDeepLinkReceiver } from "./deepLinks";
@@ -495,6 +496,18 @@ export const App: React.FC = () => {
   const [reviewRuns, setReviewRuns] = useState<ReviewRun[]>([]);
   const [selectedReviewFinding, setSelectedReviewFinding] = useState<ModelReviewComment | null>(null);
   const [previewRequestId, setPreviewRequestId] = useState(0);
+  const skillFilePreviewHandlerRef = useRef<((path: string) => Promise<boolean>) | null>(null);
+  const registerSkillFilePreviewHandler = useCallback((handler: ((path: string) => Promise<boolean>) | null) => {
+    skillFilePreviewHandlerRef.current = handler;
+  }, []);
+  const handleOpenSkillFile = useCallback(async (path: string): Promise<boolean> => {
+    flushSync(() => {
+      setSelectedReviewFinding(null);
+      setSelectedPreviewFile(null);
+      setShowRightDrawer(true);
+    });
+    return await skillFilePreviewHandlerRef.current?.(path) ?? false;
+  }, []);
   const openPreviewFile = useCallback((filePath: string) => {
     setSelectedReviewFinding(null);
     setSelectedPreviewFile(filePath);
@@ -2374,6 +2387,17 @@ export const App: React.FC = () => {
     },
     [handleSelectWorkspace, showAppToast]
   );
+
+  const handleTrySkill = useCallback(async (skill: { name: string; path: string; defaultPrompt?: string | null }): Promise<boolean> => {
+    if (personalizationNavigationGuardRef.current?.(() => { void handleTrySkill(skill); }) === false) return false;
+    const identity = executionIdentityRef.current;
+    await startNewThread();
+    if (identity !== executionIdentityRef.current || activeThreadIdRef.current !== null || activeRouteRef.current !== "home") return false;
+    const prompt = buildSkillTrialPrompt(skill);
+    setThreadPrompt(null, previous => previous.trim() ? `${previous}\n\n${prompt}` : prompt);
+    setComposerFocusRequest(request => request + 1);
+    return true;
+  }, [startNewThread, setThreadPrompt]);
 
   const selectThread = useCallback(async (threadId: string): Promise<void> => {
     if (personalizationNavigationGuardRef.current?.(() => { void selectThread(threadId); }) === false) return;
@@ -5341,6 +5365,8 @@ export const App: React.FC = () => {
                 onRestartAppServer={() => tauriInvoke("app_server_restart", { customCliPath: null })}
                 onNavigationGuardChange={setPersonalizationNavigationGuard}
                 initialTab={activeRoute === "skills" ? "skills" : "plugins"}
+                onOpenSkillFile={handleOpenSkillFile}
+                onTrySkill={handleTrySkill}
                 initialPluginMode={pluginDirectoryMode}
                 onManagePlugins={() => {
                   setSettingsInitialSection("plugins-settings");
@@ -6277,6 +6303,7 @@ export const App: React.FC = () => {
         onClose={() => setShowRightDrawer(false)}
         selectedPreviewFile={selectedPreviewFile}
         previewRequestId={previewRequestId}
+        onFilePreviewHandlerChange={registerSkillFilePreviewHandler}
         onSelectPreviewFile={setSelectedPreviewFile}
         onSendReviewComment={(comment) => handleSendMessage(comment)}
         reviewTarget={reviewDiffTarget}

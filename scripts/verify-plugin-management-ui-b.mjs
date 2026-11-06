@@ -48,6 +48,7 @@ export function harness(options = {}) {
   };
   Object.assign(plugins, options.plugins);
   const bridge = { tauriInvoke: async method => method === "skills_list_local" ? [] : {}, callAppServer: async () => ({}), tauriListen: async (event, callback) => { events.set(event, callback); return () => events.delete(event); } };
+  Object.assign(bridge, options.bridge);
   const window = { addEventListener: (name, callback) => windows.set(name, callback), removeEventListener: name => windows.delete(name), setTimeout: () => 1, clearTimeout() {} };
   const load = (file, imports) => {
     const exports = {};
@@ -59,10 +60,10 @@ export function harness(options = {}) {
   const remote = { loadRemotePlugins: async () => ({ identity: null, marketplace: null, error: null, unsupported: true }),
     mergePluginInventories: cli => cli ?? { marketplaces: [] }, ...options.remote };
   const McpSettings = () => null;
-  const { SkillsMcpView } = load("src/components/SkillsMcpView.tsx", { "lucide-react": new Proxy({}, { get: (_, name) => String(name) }), "../bridge": bridge, "../fsClient": {},
+  const { SkillsMcpView } = load("src/components/SkillsMcpView.tsx", { "lucide-react": new Proxy({}, { get: (_, name) => String(name) }), "../bridge": bridge, "../fsClient": options.fs ?? {},
     "../config": { experimentalFeatureListAll: () => featureRead() }, "../mcpSettings": { readMcpSettings: async () => ({ entries: [{ name: "MCP" }] }) },
     "../pluginManagement": client, "../pluginManagementState": { ...core, useMarketplaceRemoval: (...args) => (removal = core.useMarketplaceRemoval(...args)) },
-    "../plugins": plugins, "../remotePlugins": remote, "./McpSettings": { McpSettings }, "./PluginPreparationPanel": {}, "./RecommendedSkillsPanel": {} });
+    "../plugins": plugins, "../remotePlugins": remote, "./McpSettings": { McpSettings }, "./PluginPreparationPanel": {}, "./RecommendedSkillsPanel": {}, "./SkillPreviewDialog": { SkillPreviewDialog: "SkillPreviewDialog" } });
   const nodes = node => node && typeof node === "object" ? [node, ...(node.children || []).flatMap(nodes)] : [];
   const text = node => typeof node === "string" || typeof node === "number" ? String(node) : (node?.children || []).map(text).join("");
   const modal = { open: false, showModal() { this.open = true; }, close() { this.open = false; } };

@@ -262,6 +262,11 @@ try {
   Invoke-Step "Plugin catalog capability and bounded rendering regression" { node scripts/verify-plugin-catalog.mjs }
   Invoke-Step "Skills management & editor parity" { node scripts/verify-skills.mjs }
   Invoke-Step "Skill content, identity and mutation regression" { node scripts/verify-skill-actions.mjs }
+  Invoke-Step "Installed skill preview and raw content actions" { node scripts/verify-skill-preview-ui.mjs }
+  Invoke-Step "Namespaced skill enable selector" { node scripts/verify-skill-selector.mjs }
+  Invoke-Step "Skill trial prompt reference construction" { node scripts/verify-skill-trial.mjs }
+  Invoke-Step "Skill trial real draft host" { node scripts/verify-skill-trial-host.mjs }
+  Invoke-Step "Skill file host acknowledgment and dirty guard" { node scripts/verify-skill-file-host.mjs }
   Invoke-Step "Code review targets parity" { node scripts/verify-code-review.mjs }
   Invoke-Step "Review start, delivery and navigation regression" { node scripts/verify-review-actions.mjs }
   Invoke-Step "Model review prompt and findings regression" { node scripts/verify-review-findings.mjs }

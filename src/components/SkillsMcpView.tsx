@@ -38,6 +38,7 @@ import {
 import "./PluginsMarket.css";
 import { PluginPreparationPanel } from "./PluginPreparationPanel";
 import { RecommendedSkillsPanel } from "./RecommendedSkillsPanel";
+import { SkillPreviewDialog } from "./SkillPreviewDialog";
 import {
   AppInfo,
   InstalledApp,
@@ -90,6 +91,8 @@ interface SkillsMcpViewProps {
   onBrowseDirectory?: (tab: "plugins" | "skills") => void;
   onManagePlugins?: () => void;
   onStartSkillCreatorSession?: (prompt: string) => void;
+  onOpenSkillFile?: (path: string) => boolean | Promise<boolean>;
+  onTrySkill?: (skill: { name: string; path: string; defaultPrompt?: string | null }) => boolean | Promise<boolean>;
 }
 
 type SubTab = "plugins" | "skills" | "mcp" | "apps" | "marketplaces";
@@ -222,6 +225,8 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   onBrowseDirectory,
   onManagePlugins,
   onStartSkillCreatorSession,
+  onOpenSkillFile,
+  onTrySkill,
 }) => {
   const [subTab, setSubTab] = useState<SubTab>(initialTab || "plugins");
 
@@ -249,6 +254,8 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   const localSkillsRequestRef = useRef(0);
   const skillWritePendingRef = useRef(false);
   const [skillWriteBusy, setSkillWriteBusy] = useState(false);
+  const [skillPreview, setSkillPreview] = useState<{ row: SkillRow; identity: string } | null>(null);
+  const skillPreviewSequence = useRef(0);
 
   const [mcpCount, setMcpCount] = useState(0);
   const [configuredMarkets, setConfiguredMarkets] = useState<ConfiguredMarketplace[]>([]);
@@ -405,6 +412,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     setSkillContent("");
     setSkillContentError(null);
     setSkillContentLoading(false);
+    setSkillPreview(null);
     return () => {
       serviceRead.current?.abort(); remoteWrites.current.forEach(controller => controller.abort());
       pluginMountedRef.current = false;
@@ -995,7 +1003,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     }
   };
 
-  const handleDeleteSkill = async (skill: SkillInfoItem) => {
+  const handleDeleteSkill = async (skill: SkillInfoItem, onRemoved?: () => void) => {
     if (skillWritePendingRef.current) return;
     if (!confirm(`确定要卸载技能 ${skill.name} 吗？`)) return;
     skillWritePendingRef.current = true;
@@ -1005,6 +1013,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     try {
       await tauriInvoke("skill_delete", { id: skill.id });
       if (!isPluginContextCurrent(context)) return;
+      onRemoved?.();
       if (revision === skillEditorRevisionRef.current && selectedSkill?.path === skill.path) {
         ++skillSelectionRequestRef.current;
         skillSelectionRef.current = null;
@@ -1037,7 +1046,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       await writeSkillEnabled({
         enabled: !row.enabled,
         path: row.remote.path || undefined,
-        name: row.remote.path ? undefined : row.remote.name,
+        name: row.remote.name,
       });
       if (!isPluginContextCurrent(context)) return;
       notify(`✓ 已${row.enabled ? "禁用" : "启用"}技能 ${row.name}`);
@@ -1186,6 +1195,12 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   const matchingBrowseCount = browseGroups.reduce((sum, group) => sum + group.plugins.length, 0);
 
   const skillRows = buildSkillRows(manageOnly ? skills.filter(skill => skill.installed) : skills, remoteSkills);
+  const previewRow = skillPreview ? skillRows.find(row => row.key === skillPreview.row.key) ?? skillPreview.row : null;
+  const openSkillRow = (row: SkillRow) => {
+    if (manageOnly || row.scope === "seed") { void handleSelectSkillRow(row); return; }
+    setToast(null);
+    setSkillPreview({ row, identity: JSON.stringify([activeWorkspaceRoot, connectionIdentity, row.key, ++skillPreviewSequence.current]) });
+  };
   const filteredSkillRows = skillRows.filter(
     (row) => matchesSearch(row.name) || matchesSearch(row.description)
   );
@@ -1922,10 +1937,10 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
                     if (event.target !== event.currentTarget) return;
                     if (event.key === "Enter" || event.key === " ") {
                       event.preventDefault();
-                      void handleSelectSkillRow(row);
+                      openSkillRow(row);
                     }
                   }}
-                  onClick={() => handleSelectSkillRow(row)}
+                  onClick={() => openSkillRow(row)}
                 >
                   <div className="skill-row-top">
                     <strong>{row.name}</strong>
@@ -1934,7 +1949,8 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
                       <span className="tag-badge">
                         {skillScopeLabel(row.scope)}
                       </span>
-                      {row.enabled !== undefined && (
+                      {!manageOnly && row.enabled !== undefined && <CheckCircle2 size={16} aria-label={row.enabled ? "技能已启用" : "技能已禁用"} className={row.enabled ? "pm-skill-check" : "pm-skill-check disabled"} />}
+                      {manageOnly && row.enabled !== undefined && (
                         <button
                           type="button"
                           className={`pm-skill-toggle ${row.enabled ? "on" : ""}`}
@@ -2063,6 +2079,33 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
           </div>}
         </div>
       )}
+
+      {!manageOnly && subTab === "skills" && skillPreview && previewRow && <SkillPreviewDialog
+        key={skillPreview.identity} identity={skillPreview.identity}
+        name={previewRow.name} rawName={previewRow.remote?.name ?? previewRow.local?.name ?? previewRow.name}
+        description={previewRow.remote?.interface?.shortDescription?.trim() || previewRow.remote?.shortDescription?.trim() || previewRow.description}
+        path={previewRow.remote?.path || previewRow.local?.path || ""}
+        enabled={previewRow.enabled} busy={skillWriteBusy} localHost={true}
+        canRetry={!!(previewRow.remote?.path || previewRow.local?.path)}
+        actionFeedback={toast}
+        loadContents={async () => {
+          const path = previewRow.remote?.path || previewRow.local?.path;
+          if (path) return readFileText(path);
+          // Plugin IDs alone do not supply the official remote read identity.
+          throw new Error("此技能没有可读取的内容路径");
+        }}
+        onClose={() => setSkillPreview(current => current === skillPreview ? null : current)}
+        onToggle={previewRow.remote && previewRow.enabled !== undefined ? () => { void handleToggleSkill(previewRow); } : undefined}
+        onOpen={onOpenSkillFile ? () => onOpenSkillFile(previewRow.remote?.path || previewRow.local?.path || "") : undefined}
+        onTry={onTrySkill ? () => onTrySkill({
+          name: previewRow.remote?.name ?? previewRow.local?.name ?? previewRow.name,
+          path: previewRow.remote?.path || previewRow.local?.path || "",
+          defaultPrompt: previewRow.remote?.interface?.defaultPrompt,
+        }) : undefined}
+        onUninstall={previewRow.scope !== "admin" && previewRow.local?.installed ? () => {
+          void handleDeleteSkill(previewRow.local!, () => setSkillPreview(current => current === skillPreview ? null : current));
+        } : undefined}
+      />}
 
       {subTab === "skills" && !manageOnly && <RecommendedSkillsPanel key={activeWorkspaceRoot}
         workspaceRoot={activeWorkspaceRoot} onInstalled={refreshAll} writeBusy={skillWriteBusy}

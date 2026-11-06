@@ -91,7 +91,8 @@
 
 ## 2026-11-06 后续增量
 
-- [15I云端删除](acceptance/15I-cloud-delete.md)：后续已接固定DELETE及来源差异的确认/404/Retry，阶段完整非Fast385项、32协议探针及全库512 Rust通过；原生仅未登录路径，真实账号删除/配对像素/物理IME与完整viewer/cache广播仍未验。debug阶段本地提交，不包含于已发布preview.2。下一[13E技能详情](specs/13E-skill-detail.md)仅静态合同与动作编号，尚未开发或验收。
+- [15I云端删除](acceptance/15I-cloud-delete.md)：后续已接固定DELETE及来源差异的确认/404/Retry，阶段完整非Fast385项、32协议探针及全库512 Rust通过；原生仅未登录路径，真实账号删除/配对像素/物理IME与完整viewer/cache广播仍未验。本地阶段不包含于preview.2，拟随13E一并发布preview.3，发布结果另核。
+- [13E技能详情](acceptance/13E-skill-preview.md)：已实现独立预览、原文复制、真实启禁、文件打开确认与焦点、试用草稿；管理/模版及其草稿保留。完整标准exit0/32协议、最终42组前端回归与原生隔离读/打开/dirty/试用验证通过；最终619输入稳定。官方像素/物理IME、项目路径卸载和远端正文仍缺；不是整页已验收。[13F合同](specs/13F-skill-trial-drafts.md)已补追本地宿主首页导航和nonce草稿消费，纠正仅据startInSidebar猜侧聊，后续实现草稿作用域。
 
 - [04E项目排序](acceptance/04E-project-sort.md)：名称/更新时间排序、统一时间与只读投影已开发，宽窄浏览器和真实本地项目原生键盘通过限定验证；时间列、图标与官方配对像素仍待校准。
 - [15E-A设置归档](acceptance/15E-settings-archive.md)：先补官方类型/资格/三来源合同，再实施设置内本地分组、项目筛选、排序、日期及Windows/WSL项目身份。宽窄与原生真实归档/恢复读回已留证；云端、历史定时任务身份、模糊搜索及整页像素仍明确未完成。全局归档没有套用设置工作面。

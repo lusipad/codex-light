@@ -770,14 +770,15 @@ export interface SetSkillEnabledParams {
   enabled: boolean;
   /** Name-based selector (`SkillMetadata.name`). */
   name?: string;
-  /** Path-based selector (`SkillMetadata.path`), preferred over name when both are known. */
+  /** Path-based selector (`SkillMetadata.path`), preferred unless name contains a colon. */
   path?: string;
 }
 
 /** `skills/config/write` — enable/disable a skill by path or name. */
 export async function setSkillEnabled(params: SetSkillEnabledParams): Promise<void> {
   const payload: Record<string, unknown> = { enabled: params.enabled };
-  if (params.path) payload.path = params.path;
+  if (params.name?.includes(":")) payload.name = params.name;
+  else if (params.path) payload.path = params.path;
   else if (params.name) payload.name = params.name;
   else throw new Error("skills/config/write 需要 name 或 path 之一");
   await call<unknown>("skills/config/write", payload);

@@ -176,6 +176,7 @@ export interface DiffDrawerProps {
   selectedPreviewFile?: string | null;
   previewRequestId?: number;
   onSelectPreviewFile?: (file: string | null) => void;
+  onFilePreviewHandlerChange?: (handler: ((path: string) => Promise<boolean>) | null) => void;
   onSendReviewComment?: (commentPrompt: string) => void;
   modelReviewComments?: ModelReviewComment[];
   selectedReviewFinding?: ModelReviewComment | null;
@@ -521,6 +522,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   selectedPreviewFile,
   previewRequestId,
   onSelectPreviewFile,
+  onFilePreviewHandlerChange,
   onSendReviewComment,
   modelReviewComments = [],
   selectedReviewFinding,
@@ -791,6 +793,10 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   const [filePreview, setFilePreview] = useState<FilePreviewResult | null>(null);
   const [activeReviewFinding, setActiveReviewFinding] = useState<ModelReviewComment | null>(null);
   const fileEditorRef = useRef<HTMLTextAreaElement | null>(null);
+  const filePreviewPaneRef = useRef<HTMLDivElement | null>(null);
+  const [previewFocusRequest, setPreviewFocusRequest] = useState<{
+    context: typeof gitContextRef.current; request: number; path: string;
+  } | null>(null);
   const [editedContent, setEditedContent] = useState<string>("");
   const [inFileSearch, setInFileSearch] = useState("");
   const [isDirty, setIsDirty] = useState(false);
@@ -1344,27 +1350,37 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
    */
   const openFilePreview = async (
     path: string,
-    options?: { silent?: boolean }
-  ) => {
+    options?: { silent?: boolean; reveal?: boolean }
+  ): Promise<boolean> => {
     if (isDirtyRef.current) {
       if (!options?.silent) showToast("请先保存当前文件的修改，再打开其他文件。");
-      return;
+      return false;
     }
+    if (!editorOpenRef.current) return false;
+    const context = gitContextRef.current;
     const request = ++previewRequestRef.current;
     const revision = editRevisionRef.current;
+    const isCurrent = () => request === previewRequestRef.current
+      && revision === editRevisionRef.current
+      && context === gitContextRef.current && editorOpenRef.current;
     const applyPreview = (preview: FilePreviewResult) => {
-      if (request !== previewRequestRef.current || revision !== editRevisionRef.current) return;
+      if (!isCurrent()) return false;
       filePreviewRef.current = preview;
       isDirtyRef.current = false;
       setFilePreview(preview);
       editedContentRef.current = preview.content ?? "";
       setEditedContent(preview.content ?? "");
       setIsDirty(false);
+      if (options?.reveal) {
+        setActiveTab("files");
+        setSelectedTreePath(preview.path);
+        setPreviewFocusRequest({ context, request, path: preview.path });
+      }
+      return true;
     };
     try {
       const preview = await readTextPreviewViaProtocol(path);
-      applyPreview(preview);
-      return;
+      return applyPreview(preview);
     } catch (protocolError) {
       if (!isPreviewFallbackError(protocolError)) {
         console.warn(
@@ -1373,17 +1389,37 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
         );
       }
     }
-    if (request !== previewRequestRef.current || revision !== editRevisionRef.current) return;
+    if (!isCurrent()) return false;
     try {
       const res = await invoke<FilePreviewResult>("fs_read_preview", {
         path,
         maxBytes: MAX_TEXT_PREVIEW_BYTES,
       });
-      applyPreview(res);
+      return applyPreview(res);
     } catch (e) {
-      if (request === previewRequestRef.current && revision === editRevisionRef.current && !options?.silent) showToast(`读取文件失败: ${String(e)}`);
+      if (isCurrent() && !options?.silent) showToast(`读取文件失败: ${String(e)}`);
+      return false;
     }
   };
+
+  useEffect(() => {
+    const context = gitContextRef.current;
+    onFilePreviewHandlerChange?.(path => context === gitContextRef.current && open
+      ? openFilePreview(path, { reveal: true }) : Promise.resolve(false));
+    return () => onFilePreviewHandlerChange?.(null);
+  }, [open, cwd, connectionIdentity, onFilePreviewHandlerChange]);
+
+  useEffect(() => {
+    if (!previewFocusRequest || !open || activeKind !== "files") return;
+    const { context, request, path } = previewFocusRequest;
+    const frame = window.requestAnimationFrame(() => {
+      const preview = filePreviewRef.current;
+      if (!editorOpenRef.current || context !== gitContextRef.current
+        || request !== previewRequestRef.current || preview?.path !== path) return;
+      (preview.isBinary || preview.isImage ? filePreviewPaneRef.current : fileEditorRef.current)?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [previewFocusRequest, open, activeKind, cwd, connectionIdentity]);
 
   const saveEditedFile = (): Promise<boolean> => {
     if (savePromiseRef.current) return savePromiseRef.current;
@@ -2697,7 +2733,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
           </WorkspaceFileTree>}
           {!filePreview && <div className="workspace-file-empty">从文件树选择文件，双击打开</div>}
           {filePreview && (
-            <div className="file-editor-pane">
+            <div className="file-editor-pane" ref={filePreviewPaneRef} tabIndex={-1}>
               <div className="file-editor-header">
                 <span className="file-editor-title" title={filePreview.path}>
                   {filePreview.path.split(/[\\/]/).pop()}
