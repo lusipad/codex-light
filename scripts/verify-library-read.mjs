@@ -110,6 +110,16 @@ for (const change of [{ accountId: "other" }, { userId: "other" }, { generation:
   await assert.rejects(c.library.readLibraryAccess(abort.signal), /取消/); assert.equal(c.calls.length, 0);
 }
 const access = { identity, available: true, onedrive: true };
+for (const directoryId of [null, "directory-search"]) {
+  const c = client();
+  await c.library.readLibraryPage(access, "all", "search-cursor", new AbortController().signal, directoryId, "中文 & term");
+  const params = c.calls[0].args.request.params;
+  assert.equal(params.q, "中文 & term", "native search must reach the authenticated service, not filter loaded rows");
+  assert.equal(params.parent_directory_id, directoryId ?? undefined);
+  assert.equal(params.cursor, "search-cursor");
+  await c.library.readLibraryPage(access, "all", null, new AbortController().signal, directoryId, "");
+  assert.equal("q" in c.calls[1].args.request.params, false, "cleared search omits q");
+}
 {
   const c = client(); await c.library.readLibraryPage(access, "all", "cursor-2", new AbortController().signal);
   const request = c.calls[0].args.request;

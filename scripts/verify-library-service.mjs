@@ -20,6 +20,7 @@ export function harness(listenerError = null) {
   const exports = {};
   vm.runInNewContext(compile("src/components/LibraryView.tsx"), { exports, AbortController, require: name => {
     if (name === "react") return React;
+    if (name === "lucide-react") return { Search: "Search", X: "X" };
     if (name.endsWith(".css")) return {};
     if (name === "./ThreadActionsMenu") return { ThreadActionsMenu: "ThreadActionsMenu" };
     if (name === "./LibraryPreviewPane") return { LibraryPreviewPane: "LibraryPreviewPane" };
@@ -29,7 +30,7 @@ export function harness(listenerError = null) {
     if (name === "../storageUsage") return { formatStorageBytes: value => `${value} bytes` };
     if (name === "../libraryClient") return {
       readLibraryAccess: signal => { const pending = deferred(); accesses.push({ signal, ...pending }); return pending.promise; },
-      readLibraryPage: (access, tab, cursor, signal, directoryId) => { const pending = deferred(); reads.push({ access, tab, cursor, signal, directoryId, ...pending }); return pending.promise; },
+      readLibraryPage: (access, tab, cursor, signal, directoryId, search) => { const pending = deferred(); reads.push({ access, tab, cursor, signal, directoryId, search, ...pending }); return pending.promise; },
       readLibraryDirectoryPath: (access, directoryId, signal) => { const pending = deferred(); paths.push({ access, directoryId, signal, ...pending }); return pending.promise; },
     }; assert.fail(name);
   } });
@@ -49,9 +50,9 @@ button(h.render(), "重试加载").props.onClick(); h.reads.at(-1).resolve(page(
 button(h.render(), "加载更多").props.onClick(); h.reads.at(-1).resolve(page(["third.pdf"], "last")); await flush(); assert.match(text(h.render()), /重复分页/); assert.doesNotMatch(text(h.render()), /third.pdf/);
 button(h.render(), "重试加载").props.onClick(); const oldRead = h.reads.at(-1); h.invalidate(); assert.equal(oldRead.signal.aborted, true); h.render(); oldRead.resolve(page(["old account"])); await flush(); assert.doesNotMatch(text(h.render()), /old account|real.pdf/);
 h.accesses.at(-1).resolve(access); await flush(); const last = h.reads.at(-1); h.unmount(); const writes = h.writes; last.resolve(page(["unmounted"])); await flush(); assert.equal(h.writes, writes);
-h = harness(); h.render(); await flush(); h.accesses[0].resolve(access); await flush(); h.reads[0].resolve(page([])); await flush(); assert.match(text(h.render()), /暂无内容/);
+h = harness(); h.render(); await flush(); h.accesses[0].resolve(access); await flush(); h.reads[0].resolve(page([])); await flush(); assert.match(text(h.render()), /创建新内容/);
 h = harness(); h.render(); await flush(); h.accesses[0].resolve(access); await flush(); h.reads[0].resolve(page([], "page-2")); await flush();
-assert.doesNotMatch(text(h.render()), /资料库中暂无内容/, "empty nonterminal page must not claim entire library is empty");
+assert.doesNotMatch(text(h.render()), /创建新内容/, "empty nonterminal page must not claim entire library is empty");
 assert.ok(button(h.render(), "加载更多"));
 button(h.render(), "加载更多").props.onClick(); h.reads.at(-1).resolve(page(["after-empty.pdf"])); await flush();
 assert.match(text(h.render()), /after-empty.pdf/);

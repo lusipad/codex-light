@@ -71,11 +71,12 @@ export async function readLibraryAccess(signal: AbortSignal): Promise<LibraryAcc
   return decodeLibraryAccess(bootstrap, settings, account, identity, accounts);
 }
 
-export async function readLibraryPage(access: LibraryAccess, tab: LibraryTab, cursor: string | null, signal: AbortSignal, directoryId?: string | null): Promise<LibraryPage> {
+export async function readLibraryPage(access: LibraryAccess, tab: LibraryTab, cursor: string | null, signal: AbortSignal, directoryId?: string | null, search = ""): Promise<LibraryPage> {
   if (!access.available) throw Error("当前账号暂不支持资料库。");
   if (tab === "images") return parseLibraryImagesPage(await readChatgptService("library_images", { cursor }, access.identity, signal));
   return parseLibraryNodesPage(await readChatgptService("library_nodes", {
     ...(directoryId != null ? { parent_directory_id: directoryId } : {}),
+    ...(search ? { q: search } : {}),
     entry_surface: "library", cursor, categories: [], source: null, include_hidden_files: false, include_files: true,
     include_saved_entities: true, defer_sharing_badges: true, include_sites: false,
     include_folder_counts: false, include_onedrive: access.onedrive, hydrate_folder_thumbnails: true,

@@ -6,6 +6,7 @@ const scripts = [
   'verify-library-data.mjs', 'verify-library-read.mjs', 'verify-library-service.mjs',
   'verify-library-navigation.mjs', 'verify-library-host-navigation.mjs', 'verify-library-cleanup.mjs',
   'verify-library-preview.mjs', 'verify-library-preview-ui.mjs', 'verify-library-preview-media.mjs',
+  'verify-library-search.mjs',
   'verify-appearance-color.mjs', 'verify-system-fonts.mjs', 'verify-general-preference-select.mjs',
   'verify-settings-ui-correction.mjs', 'verify-appearance-theme-state.mjs', 'verify-appearance-theme-ui.mjs',
   'verify-general-open.mjs', 'verify-notification-settings-ui.mjs',

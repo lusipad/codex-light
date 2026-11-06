@@ -105,3 +105,5 @@
 - [15H云端恢复](acceptance/15H-cloud-unarchive.md)：后续已按固定来源接入两类取消归档，补操作身份、重复点击与不确定结果保护。最终完整非Fast382项、32协议探针及原生未登录限定路径通过；内部查看、云端删除、真实账号HTTP、自动刷新保留后页与官方像素仍有缺口。15G以上“仅取证”是当时状态，本阶段更新不改变用户验收状态。04E及15E–15H拟纳入preview.2，尚待远端发布终态。
 
 - [18E目录导航](acceptance/18E-library-navigation.md)：按同版12条目/25锚点及CSS补证恢复目录与祖先链，复用现有reader和菜单；三项身份/旧回调红转绿，58组前端与全库Rust519项通过，完整标准32探针/最终构建退出0，私有原生未登录导航/重试/标题栏往返通过。[18F预览合同](specs/18F-library-preview.md)后续已推进普通图片/文本/Markdown真metadata/bytes与右侧面板，阶段状态见[18F-A记录](acceptance/18F-library-preview.md)；PDF/Office/HTML/special全矩阵、真实账号与官方像素仍未完成，不把子范围当整页通过。
+- 09C、18E及18F-A后续已随b45727a推送并发布[preview.5](https://github.com/lusipad/codex-desktop-native/releases/tag/v0.2.0-preview.5)：run42208606694最终success，61组前端/全库527 Rust、通知适配器、原生安装包与发布全通过；四个实际下载文件API digest/清单hash一致，ZIP五份许可对标签Git blob规范化后匹配。发布不改变真实账号/像素/原生认证预览与用户验收缺口。[18G搜索](specs/18G-library-search.md)为该标签之后的本地开发，不计入preview.5。
+- [18G普通资料库搜索](acceptance/18G-library-search.md)：已接根/目录真实q请求、分页与取消，搜索替换保留预览及首次返回位置，补标题/中文空态/窄窗结构。两项持续加载缺陷先红后绿；62组前端、完整非Fast319段/32探针、当前原生构建及私有未登录路径通过。原生组件夹具另验中文输入/清空焦点；真实账号、官方配对像素、物理IME、完整URL路由/GridList及用户验收仍未完成。阶段本地提交，不计入preview.5。

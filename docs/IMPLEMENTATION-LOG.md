@@ -1,5 +1,20 @@
 # 实施日志（按轮次）
 
+## 2026-11-06 — 18G普通资料库搜索与预览返回
+
+- 开发前直接核同版17资源integrity、24原函数、14中文与字体/尺寸锚点；区分输入原始空白和scope trim、普通native即时请求与其他分支防抖，不凭印象加计时器。
+- 复用LibraryNodes已有q白名单、身份和取消通道，根/目录分页发送真实查询；搜索replace保留预览和首次returnLocation，目录/面包屑/前后退按原合同恢复查询。唯一h1、32px/13px搜索、窄窗换行与真实中文空态同步调整，无新依赖或Rust修改。
+- 缺失q、仅空白不同的预览返回持续加载、根目录身份兜底持续加载均有真实红绿回归。62组前端、完整非Fast319段/32隔离协议探针、类型/生产构建及当前原生debug构建退出0；636冻结输入构建前后一致。Rust为分组，不冒称本轮重跑全库527。
+- 实际组件宽窄/取消/历史/重试/焦点有DOM与JPEG证据，独立WebView2文件来源组件夹具另验中文输入及清空后继续输入。当前产品EXE私有配置未登录进入/隐藏搜索/重试/退出通过，0会话；完整认证HTTP、物理IME、官方配对像素与用户验收仍未完成。
+- 产物`dist-artifacts/library-18G-20261106/CodexNative.exe`，SHA256 `4af66d11f5c4067809381648972571d42a538bf8dfffd88aff7038431adcf0d7`，3前端产物及5许可；详见[18G阶段记录](antigravity/acceptance/18G-library-search.md)。阶段留本地，不包含于已发布preview.5，完整GridList/URL路由和预览矩阵仍有缺口。
+
+## 2026-11-06 — preview.5发布与实际下载核验
+
+- 将09C、18E、18F-A累计阶段及明确未验项写入发布说明，推送b45727a并派发既有CI。普通push run42208594768被同ref发布流程按concurrency取消，没有跳过发布流水线的检查。
+- run42208606694/job127861940746全成功：61组前端、527 Rust零失败/忽略/过滤、通知适配器、Tauri release/MSI/NSIS、产物上传、标签复核及发布通过。标签v0.2.0-preview.5明确指向b45727aacb6245c80c15114357e8a83f712365ef。
+- 实际下载四资源，逐个核API digest/大小，三个载荷另核SHA256SUMS；ZIP成员只含EXE与五许可，许可对精确标签Git blob规范化CRLF后相符，PE FileVersion/ProductVersion均0.2.0。云端便携EXE SHA256 de4a776d9c4e5096c9bf3761d27065cfbd60d05c7f90bcf12a29975e78cdd81c。证据.ref/releases/v0.2.0-preview.5/verification.json、test-evidence.txt与final-run.json。
+- Node20 action弃用提示仍存在，不影响本次成功；没有以发布宣称全软件1:1。18G搜索为后续本地开发，不包含于preview.5，PDF依赖仍待明确授权。
+
 ## 2026-11-06 — 18F-A 资料库普通文件真内容与右侧预览
 
 - 承接18F预先合同补齐原函数/中文、native metadata与字节链取证，再接固定library_file/library_file_content，复用鉴权、网络策略、取消与原目录。普通图片/文本/Markdown使用真实内容和右侧面板，保留40MiB边界、宽比保存、URL释放、旧回调/身份隔离；cleanup容器未放宽。
