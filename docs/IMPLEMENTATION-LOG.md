@@ -1,5 +1,11 @@
 # 实施日志（按轮次）
 
+## 2026-11-07 — preview.9自动发布核验与21J开发前补证
+
+- 累计21G/H/I及附注标签复核修复已推送，preview.9精确指向524b1098f330157cdd0864b2703a7096ef62b13c。tag run42301352561/job128179653827、branch run42301352720最终均success：88前端、602全库Rust零失败/忽略/过滤、通知SDK、EXE/MSI/NSIS、远端标签复核、自动发布及缓存收尾全部通过。原preview.8未移动或覆盖。
+- [preview.9](https://github.com/lusipad/codex-desktop-native/releases/tag/v0.2.0-preview.9)四实际资源核API大小/摘要、清单、ZIP六成员与五份精确标签许可；原始CI产物13544358998摘要匹配API，四内部载荷与发布下载逐字节一致。便携EXE产品版本0.2.0、SHA256 `85e043d05608dcf70a343b8cd954417f471a8eba3435c8c15858cf4a77e0556a`；未运行下载程序。证据`.ref/releases/v0.2.0-preview.9/`，没有把发布成功当整软件1:1或用户验收。
+- 下一[21J共享参与者/邀请规格](antigravity/specs/21J-sites-sharing-members.md)仅只读取证，11份不重复资源、基础55及补充28锚点核验无误。明确viewer/group/editor权限分支、PATCH/ACK、移除确认512px及缺译defaultMessage回退；第一闭环为已有参与者移除，其后角色变更、邀请、groups/teams、外部邮箱仍保留。没有开发21J、真实HTTP或GUI，不以规格发布解锁gate或宣称功能通过。
+
 ## 2026-11-07 — 21I Sites共享权限与模式保存
 
 - 先补固定官方共享Dialog、模式菜单、身份规范化、share_access和preferred_live_url完整合同及原函数向量，再接真实读取、owner判断、草稿/取消/保存、严格ACK与GET收敛。复用现有请求追踪、身份、剪贴板和metadata/截图授权，不新增依赖。邀请、成员角色管理、首次发布和真实头像桥未完成。

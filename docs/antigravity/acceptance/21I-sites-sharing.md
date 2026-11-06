@@ -29,6 +29,8 @@
 
 本阶段先本地提交，未推送、未创建标签，preview.9 仍为候选。
 
+发布补记（2026-11-07）：阶段提交524b109已随累计21G/H/I推送，preview.9标签精确对应524b1098f330157cdd0864b2703a7096ef62b13c。[标签CI42301352561](https://github.com/lusipad/codex-desktop-native/actions/runs/42301352561)和分支CI42301352720均最终success，远端88前端/602全库Rust零失败/忽略/过滤、通知SDK、原生EXE/MSI/NSIS、远端附注标签复核、自动发布及缓存收尾通过。四实际资源下载核API大小/摘要、SHA256SUMS、ZIP六成员/五份精确标签许可；与成功tag产物13544358998的四载荷逐字节一致，原始产物ZIP摘要也匹配API。便携EXE版本0.2.0、SHA256 `85e043d05608dcf70a343b8cd954417f471a8eba3435c8c15858cf4a77e0556a`，未运行下载程序。证据`.ref/releases/v0.2.0-preview.9/`，含CI日志、verification、artifact-equivalence；[发布下载](https://github.com/lusipad/codex-desktop-native/releases/tag/v0.2.0-preview.9)。这不改写本地完整标准的历史退出1，也不表示正常共享原生、真实HTTP、像素或用户验收通过。
+
 ## 未完成与未验
 
 邀请、角色管理、团队建议、首次发布等完整共享功能保留后续；头像暂用首字/图标，没有真实受控头像资源桥。Add/DNS 的后缀解析依赖尚未获明确授权，未安装或以手写 PSL 替代。
