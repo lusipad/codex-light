@@ -192,7 +192,7 @@ const draftBody = (id = binding.draftId) => ({
   draft: { id, base_version_id: "v1", revision: 3, repositories: [], network_policy: { type: "disabled" }, start_skill: "retained" },
 });
 const baseline = { ...environment.parseCloudDetail(draftBody(), binding.configId, binding.draftId).draft, revision: 2, installScript: "old" };
-const values = { installScript: "", startSkill: "retained", network: baseline.network };
+const values = { installScript: "", startSkill: "retained", network: baseline.network, repositories: baseline.repositories };
 savedBody = draftBody();
 const saved = await saveBoundDraftFields(binding, baseline, values, identity, signal);
 assert.equal(saved.draft.revision, 3);
@@ -246,3 +246,23 @@ metadataReadback = { ...root, draft: { ...root.draft, revision: 4 } };
 await assert.rejects(saveBoundDraftMetadata(binding, root.draft, metadataBase, metadataEdit, identity, signal), { code: "conflict" });
 assert.equal(saves.length, saveCount, "preflight must not replay applied or conflicting metadata");
 console.log("PASS cloud root metadata: exact field differences, trimmed name, preflight conflict and already-applied handling");
+
+const currentRepositories = [{ id: "github-existing", ref: "pinned", depth: 3 }, { id: "github-old", ref: "stable" }];
+const selectedRepositories = [currentRepositories[0], { id: "github-new", ref: "release" }];
+const beforeRepositories = { ...original, repositories: currentRepositories };
+const afterRepositories = { ...original, repositories: selectedRepositories };
+savedBody = draftBody();
+savedBody.draft.repositories = [{ repository_id: "github-new", ref: "release" }, { repository_id: "github-existing", ref: "pinned", depth: 3 }];
+const repositoryResult = await saveBoundDraftFields(binding, { ...baseline, repositories: currentRepositories }, afterRepositories, identity, signal);
+assert.deepEqual(saves.at(-1), {
+  configId: binding.configId, draftId: binding.draftId, baseVersionId: "v1", expectedRevision: 2, expectedIdentity: identity,
+  repositories: [{ repository_id: "github-existing", ref: "pinned", depth: 3 }, { repository_id: "github-new", ref: "release" }],
+});
+const confirmedFields = { ...afterRepositories, repositories: repositoryResult.draft.repositories };
+assert(draftFieldsMatch(beforeRepositories, afterRepositories, confirmedFields));
+assert.equal(Object.keys(draftFieldChanges(afterRepositories, confirmedFields)).length, 0);
+assert(!draftFieldsMatch(beforeRepositories, afterRepositories, { ...confirmedFields, repositories: [{ ...selectedRepositories[0], depth: 1 }, selectedRepositories[1]] }));
+assert.equal(draftFieldChanges(afterRepositories, { ...afterRepositories, repositories: [] }).repositories.length, 0);
+const olderData = { ...beforeRepositories, repositories: [currentRepositories[0], currentRepositories[0]] };
+assert.deepEqual(JSON.parse(JSON.stringify(draftFieldChanges(olderData, { ...olderData, startSkill: "changed" }))), { startSkill: "changed" });
+console.log("PASS cloud draft repositories: exact payload, retained ref and depth, reordered readback and explicit clear");

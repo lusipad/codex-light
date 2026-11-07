@@ -317,6 +317,7 @@ export async function createCloudDraft(configId: string, identity: ServiceIdenti
 export async function saveCloudDraftFields(request: {
   configId: string; draftId: string; baseVersionId: string; expectedRevision: number;
   installScript?: string; startSkill?: string; networkPolicy?: CloudNetworkPolicy;
+  repositories?: { repository_id: string; ref: string; depth?: number }[];
   metadata?: { name?: string; description?: string; shareSettings?: "private" | "workspace" };
 }, identity: ServiceIdentity, signal: AbortSignal): Promise<unknown> {
   const requestId = crypto.randomUUID();

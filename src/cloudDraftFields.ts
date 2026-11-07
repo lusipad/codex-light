@@ -1,10 +1,10 @@
 import { saveCloudDraftFields, type ServiceIdentity } from "./chatgptService";
 import { readBoundCloudDraft, type CloudDraftBinding } from "./cloudDraftBindings";
-import { parseCloudDetail, type CloudDetail } from "./cloudEnvironmentService";
+import { parseCloudDetail, type CloudDetail, type CloudRepository } from "./cloudEnvironmentService";
 import { draftNetworkPolicy, sameDraftNetwork } from "./cloudDraftNetwork";
 
 export function draftFieldValues(draft: NonNullable<CloudDetail["draft"]>) {
-  return { installScript: draft.installScript ?? "", startSkill: draft.startSkill ?? "", network: draft.network };
+  return { installScript: draft.installScript ?? "", startSkill: draft.startSkill ?? "", network: draft.network, repositories: draft.repositories };
 }
 type Fields = ReturnType<typeof draftFieldValues>;
 type Draft = NonNullable<CloudDetail["draft"]>;
@@ -30,11 +30,24 @@ export function compareDraftMetadata(previous: Metadata, values: Metadata, curre
   return keys.every(key => current[key] === previous[key]) ? "unchanged" : "conflict";
 }
 
+function sameRepositoryFields(left: CloudRepository[], right: CloudRepository[]) {
+  if (left === right) return true;
+  const rows = new Map(right.map(repo => [repo.id, repo]));
+  return rows.size === right.length && left.length === right.length
+    && new Set(left.map(repo => repo.id)).size === left.length && left.every(repo => {
+      const current = rows.get(repo.id);
+      return current?.ref === repo.ref && current?.depth === repo.depth;
+    });
+}
+
 export function draftFieldChanges(previous: Fields, values: Fields) {
   return {
     ...(values.installScript === previous.installScript ? {} : { installScript: values.installScript }),
     ...(values.startSkill === previous.startSkill ? {} : { startSkill: values.startSkill }),
     ...(sameDraftNetwork(previous.network, values.network) ? {} : { networkPolicy: draftNetworkPolicy(values.network) }),
+    ...(sameRepositoryFields(previous.repositories, values.repositories) ? {} : {
+      repositories: values.repositories.map(({ id, ref, depth }) => ({ repository_id: id, ref, ...(depth === undefined ? {} : { depth }) })),
+    }),
   };
 }
 
@@ -42,7 +55,8 @@ export function draftFieldsMatch(previous: Fields, values: Fields, current: Fiel
   const changes = draftFieldChanges(previous, values);
   return (changes.installScript === undefined || current.installScript === values.installScript)
     && (changes.startSkill === undefined || current.startSkill === values.startSkill)
-    && (changes.networkPolicy === undefined || sameDraftNetwork(current.network, values.network));
+    && (changes.networkPolicy === undefined || sameDraftNetwork(current.network, values.network))
+    && (changes.repositories === undefined || sameRepositoryFields(current.repositories, values.repositories));
 }
 
 export async function saveBoundDraftFields(binding: CloudDraftBinding, baseline: NonNullable<CloudDetail["draft"]>, values: Fields, identity: ServiceIdentity, signal: AbortSignal) {

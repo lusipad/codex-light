@@ -117,3 +117,15 @@ Windows 调试构建通过，产物为 `dist-artifacts/cloud-f05-network-2026110
 使用实际组件与隔离 IPC 验证原连接和组织的晚到响应被丢弃、第二页去重、查询去除空白、断连提示、缺默认分支禁用、Escape 取消回焦、相同集合不产生改动、暂存零写入和撤销。已有仓库保留 `pinned`，新仓库使用服务端 `release`。440×800 实测弹窗宽 408px，选满 16 项后第 17 项禁用，无横向溢出。连接和组织当前用原生下拉，未做官方像素匹配。
 
 99 个前端回放入口、生产构建和 Windows 调试构建通过。浏览器结果见 `verification/repository-picker-browser.json`。本地调试版为 `dist-artifacts/cloud-f05-repository-picker-20261107/CodexNative.exe`，SHA-256 为 `46ea408ce65d245fc590e2d9320c3d00dae91334b6e1462d1913b322d13562b1`。
+
+### 仓库草稿写入
+
+固定安装包已重验。原生配置 schema 和 `app-primary:vHn` 使用同一私有草稿 PATCH。请求带 `base_version_id`、`expected_revision` 和变更后的 `repositories:[{repository_id,ref,depth?}]`。清空仓库显式发送空数组，无变更时省略。读取确认按仓库 ID 匹配分支和深度，允许响应重排，拒绝缺项、多项、重复或不一致字段。此阶段验证配置协议，侧栏仍保留应用步骤就绪前的保存保护。
+
+`app-primary:ZVn/KVn` 把应用消息交给 turn coordinator。`app-initial:Imn` 在 queue 模式遇到活动轮次、待启动或排队工作时使用 enqueue，空闲时准备启动。已观察到 `Vhn` 的服务端队列分支和本地队列回退，需按 durable 会话实际资格选择。请求超时后的投递确认、断线恢复与重复防护单独验收。
+
+隔离执行官方原函数验证五种投递意图。空闲进入 start 准备，活动轮次、待启动和已有排队项进入 queue，需恢复的线程先准备恢复。另执行 `ZVn`，核对读回后过滤已失效的增删项、固定会话和工作目录、首次发送失败、仅重发消息和成功后拦截重复点击。证据见 `verification/repository-apply-replay.json`。
+
+在 `renderer-app-server-managers-115e3136926e.js` 的 `Gm` 中，云端服务端队列受 gate `1189013788` 控制。原生 `early-bootstrap-491-e75c34fa1b2c0832.js` 的对应分支检查 `codex-app-cca-queued-follow-ups`。本地队列另用 gate `2120612410` 和 `threadQueue` 能力判断。不能从当前会话拥有 durable ID 直接推断已开启服务端队列。
+
+本地 664 项 Rust 测试及 99 个前端回放入口通过。新增传输用例检查清空数组、重排读回、分支或深度不一致、重复仓库与无效数据零派发。前端复验同值省略，以及已有旧数据重复项时仍可修改其他字段。Rust 日志见 `verification/repository-patch-rust.log`。

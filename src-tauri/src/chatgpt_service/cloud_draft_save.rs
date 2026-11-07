@@ -12,7 +12,43 @@ pub struct CloudDraftSaveRequest {
     install_script: Option<String>,
     start_skill: Option<String>,
     network_policy: Option<DraftNetworkPolicy>,
+    repositories: Option<Vec<DraftRepository>>,
     metadata: Option<DraftMetadataPatch>,
+}
+
+#[derive(Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct DraftRepository {
+    repository_id: String,
+    #[serde(rename = "ref")]
+    reference: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    depth: Option<std::num::NonZeroU32>,
+}
+
+fn valid_repositories(repositories: &[DraftRepository]) -> bool {
+    let valid_text = |text: &str| {
+        !text.trim().is_empty() && text.len() <= 2048 && !text.chars().any(char::is_control)
+    };
+    let mut ids = std::collections::HashSet::new();
+    repositories.len() <= 16
+        && repositories.iter().all(|repo| {
+            valid_text(&repo.repository_id)
+                && valid_text(&repo.reference)
+                && ids.insert(&repo.repository_id)
+                && repo
+                    .depth
+                    .is_none_or(|depth| depth.get() <= i32::MAX as u32)
+        })
+}
+
+fn repositories_match(expected: &[DraftRepository], value: &Value) -> bool {
+    let Ok(actual) = serde_json::from_value::<Vec<DraftRepository>>(value.clone()) else {
+        return false;
+    };
+    valid_repositories(&actual)
+        && actual.len() == expected.len()
+        && expected.iter().all(|repo| actual.contains(repo))
 }
 
 #[derive(Deserialize, Serialize)]
@@ -151,12 +187,17 @@ impl CloudDraftSaveRequest {
     fn payload(&self) -> ServiceResult<Value> {
         let draft_changes = self.install_script.is_some()
             || self.start_skill.is_some()
-            || self.network_policy.is_some();
+            || self.network_policy.is_some()
+            || self.repositories.is_some();
         if self.base_version_id.trim().is_empty()
             || self.base_version_id.len() > 512
             || self.base_version_id.chars().any(char::is_control)
             || self.expected_revision > 9_007_199_254_740_991
             || self.metadata.is_some() == draft_changes
+            || self
+                .repositories
+                .as_ref()
+                .is_some_and(|repos| !valid_repositories(repos))
             || self
                 .metadata
                 .as_ref()
@@ -189,6 +230,9 @@ impl CloudDraftSaveRequest {
         if let Some(value) = &self.network_policy {
             body["network_policy"] = json!(value);
         }
+        if let Some(repos) = &self.repositories {
+            body["repositories"] = json!(repos);
+        }
         Ok(body)
     }
 
@@ -214,6 +258,10 @@ impl CloudDraftSaveRequest {
                 .network_policy
                 .as_ref()
                 .is_none_or(|policy| policy.matches(&draft["network_policy"]))
+            && self
+                .repositories
+                .as_ref()
+                .is_none_or(|repos| repositories_match(repos, &draft["repositories"]))
             && [
                 ("install_script", &self.install_script),
                 ("start_skill", &self.start_skill),

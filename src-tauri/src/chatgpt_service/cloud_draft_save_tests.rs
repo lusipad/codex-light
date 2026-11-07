@@ -185,4 +185,99 @@ mod cloud_draft_save_tests {
                 .ends_with("/config_fixture/drafts/draft_fixture"));
         }
     }
+
+    fn repositories_request(repositories: Value) -> CloudDraftSaveRequest {
+        serde_json::from_value(json!({
+            "requestId":"save-fixture", "expectedIdentity":identity(), "configId":"config_fixture",
+            "draftId":"draft_fixture", "baseVersionId":"version-A", "expectedRevision":4,
+            "repositories":repositories
+        }))
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn cloud_draft_save_repository_readback_preserves_ref_and_depth_without_replaying() {
+        let existing = json!({"repository_id":"github-existing","ref":"pinned","depth":3});
+        let new = json!({"repository_id":"github-new","ref":"release"});
+        let selected = json!([existing.clone(), new.clone()]);
+        for (expected, actual, accepted) in [
+            (
+                selected.clone(),
+                json!([new.clone(), existing.clone()]),
+                true,
+            ),
+            (
+                selected.clone(),
+                json!([existing.clone(), {"repository_id":"github-new","ref":"main"}]),
+                false,
+            ),
+            (
+                selected.clone(),
+                json!([{"repository_id":"github-existing","ref":"pinned","depth":1}, new]),
+                false,
+            ),
+            (selected.clone(), json!([existing.clone(), existing]), false),
+            (json!([]), json!([]), true),
+        ] {
+            let transport = FakeTransport::new(&[200, 200]);
+            {
+                let mut responses = transport.responses.lock().unwrap();
+                responses[0].body = serde_json::to_vec(&readback(5, "existing")).unwrap();
+                let mut current = readback(5, "existing");
+                current["draft"]["repositories"] = actual;
+                responses[1].body = serde_json::to_vec(&current).unwrap();
+            }
+            let result = ChatgptService::default()
+                .cloud_save_draft_with(
+                    repositories_request(expected.clone()),
+                    cloud_profile(),
+                    share_rpc,
+                    &transport,
+                )
+                .await;
+            if accepted {
+                assert!(result.is_ok());
+            } else {
+                assert_eq!(result.err().unwrap().code, "cloud_draft_save_unconfirmed");
+            }
+            let calls = transport.requests.lock().unwrap();
+            assert_eq!(calls.len(), 2);
+            assert_eq!(calls[0].method, HttpMethod::Patch);
+            assert_eq!(calls[1].method, HttpMethod::Get);
+            assert_eq!(calls[0].url, calls[1].url);
+            assert!(calls[0]
+                .url
+                .ends_with("/config_fixture/drafts/draft_fixture"));
+            assert_eq!(
+                serde_json::from_slice::<Value>(&calls[0].body).unwrap(),
+                json!({"base_version_id":"version-A","expected_revision":4,"repositories":expected})
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn cloud_draft_save_invalid_repositories_do_not_dispatch() {
+        let duplicate = json!({"repository_id":"github-existing","ref":"pinned"});
+        let too_many = (0..17)
+            .map(|id| json!({"repository_id":format!("github-{id}"),"ref":"pinned"}))
+            .collect::<Vec<_>>();
+        for invalid in [
+            json!([duplicate.clone(), duplicate]),
+            json!(too_many),
+            json!([{"repository_id":"github-existing","ref":" "}]),
+            json!([{"repository_id":"github-existing","ref":"pinned","depth":2147483648u32}]),
+        ] {
+            let transport = FakeTransport::new(&[]);
+            let result = ChatgptService::default()
+                .cloud_save_draft_with(
+                    repositories_request(invalid),
+                    cloud_profile(),
+                    share_rpc,
+                    &transport,
+                )
+                .await;
+            assert_eq!(result.err().unwrap().code, "invalid_request");
+            assert!(transport.requests.lock().unwrap().is_empty());
+        }
+    }
 }
