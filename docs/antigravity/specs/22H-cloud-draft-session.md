@@ -1,0 +1,67 @@
+# 22H 云端草稿会话恢复
+
+承接 [22F](22F-cloud-environment-editor.md) 与 [22G](22G-durable-host.md)，继续完成 F04 的真实编辑入口。已复核当前安装的 Windows Store 26.1027.3384.0 和 674,296,148 字节 asar 整包 SHA-256 `6fbedf054a8d8cafaf5c745b40aa59176512e106e0bd6308275ae123b60fd074`。6 份新增源、111 个精确锚点和 33 组原函数隔离回放保存在 `.ref/parity/22/actual/22H-cloud-draft-session/reference/`，当前处于开发中。
+
+## 修改前合同
+
+现有环境的编辑入口创建真实草稿，保存 config/draft/environment/thread 回执，导航真实聊天并要求打开设置侧栏。该路径不能套用新建环境 onboarding 的自动发起 turn。恢复调用不携带伪造线程 ID，不经本地 CLI，不把路由内部名当成实际宿主。
+
+| 用例 | 成功条件 |
+|---|---|
+| H01 | 按官方现有编辑链的精确顺序读取并恢复真实远端 thread；最终参数来自原函数回放，保留服务端权限默认值。 |
+| H02 | 创建成功而恢复失败时保留同一回执，只重试恢复，不再次 POST 创建草稿。线程为空或创建结果未知继续阻止重复写。 |
+| H03 | config/draft/thread 与 account/user/generation 绑定。旧账号、旧导航、旧连接的返回和通知不能覆盖当前状态。 |
+| H04 | 加载与历史分页按 durable 宿主派发。真实模型目录及选择缓存不与本地同 ID 会话混用。 |
+| H05 | 设置独立页面和嵌入设置的编辑入口均打开同一个真实聊天及侧栏，加载、错误、重试和关闭焦点有可观察结果。 |
+| H06 | 完成适用原生、宽窄和键盘检查。缺少官方配对图时保持像素未验证；真实云端账号与模型任务另行验证，不用隔离样本冒充。 |
+
+## 实现边界
+
+原生 IPC 只开放经取证的固定动作和参数，不允许任意地址、凭证或 RPC 方法透传。每次请求复用 22G 的身份、网络策略、取消与通知准入边界。恢复不等于 turn 启动成功；审批、工具与 elicitation 未处理前不开启发送。
+
+## 已核实的恢复和历史边界
+
+- 现有编辑走共享恢复 hook。`Ndn` 先发送 `thread/read`，`includeTurns:false`，准备配置后并行读取历史和恢复。最终 `thread/resume` 带 `model:null`、云端 `excludeTurns:true`；不会直接发 hook 的 `reasoningEffort` 和 `collaborationMode`。派生 tier 为 undefined 时省略、null 时保留 null。
+- 未显式指定权限时 durable 保留服务端默认权限。原函数回放覆盖 gate `4226282475` 的 true/false，两种都省略恢复请求中的 `approvalPolicy`、`sandbox`、`permissions` 和 `approvalsReviewer`。不能借用本地 Windows cwd 和沙箱配置。
+- 普通云端历史先发 `thread/turns/list`，首屏 `cursor:null`、`limit:5`、`itemsView:'notLoaded'`、`sortDirection:'desc'`，随后用 `thread/items/list` 分页补实际内容。受限模式的 turn 与 item 上限不同。仅取 turn 元数据不能显示为无历史。
+- 草稿关联存于 renderer 的身份限定配置记录与聊天状态，按 config/draft/thread 核对侧栏 GET。配置准备调用和字段来源已录入证据目录 `config-preparation.md`：正常 F04 用当前 durable 的配置缓存，按非空 tier 条件读 requirements，按身份和 host 准备实验值及开发者指令。接入时不能复用本地模型偏好的 Windows 路径、profile、沙箱、MCP 或工作树覆盖，也不能把空配置和新建 onboarding 参数当成现有编辑的实现。
+- 原始 `PZ` 按 thread ID 更新 `environment-setup-server-configs-v1`，保留最近 100 项。重进时核当前账号和用户；当期 generation 用于阻止晚到事件，不能把历史 generation 当成跨重启身份。已有编辑在关联后发起标题更新，未等待结果即导航；现有编辑没有新建 onboarding 的 `onlyIfUntitled` 选项。
+- 侧栏消费匹配聊天的 `openEnvironmentSetup:true` 并请求显示和焦点，不要求工作区已就绪。侧栏的真实草稿配置加载、标题更新和聊天恢复可交错；最终焦点、关闭和窄窗表现单独取证验收。
+
+## 已实现的回执和恢复参数适配
+
+`src/cloudDraftBindings.ts` 提供已确认回执的持久绑定，以及用同账号、同用户读取实际私有草稿的适配。GET 复用现有 `readCloudService` 和 `parseCloudDetail`，核对配置和草稿 ID；活动请求继续使用当前身份代次和取消信号。历史记录不保存代次或凭证，读取失败可见，写入失败返回给调用方以便保留已确认回执。未接编辑入口，尚不具备完整的 F04 恢复、重试、侧栏和焦点行为。
+
+`node scripts/verify-cloud-draft-bindings.mjs` 从缺失实现失败到通过，覆盖最近 100 项、同账号跨代读回、不同账号或用户拒绝、正确 GET、错 ID 和晚取消。原有云环境组件回归、TypeScript 检查和前端构建通过。新增回归已登记到标准及发布检查入口；本增量未纳入 preview.11 标签。
+
+`src/cloudDraftResume.ts` 负责普通 durable 分支的最终参数序列化，输入必须是已解析的 metadata、偏好和配置结果。保留服务端权限，区分 tier 省略与 null，并处理空覆盖及复用 idle thread 时省略指令和 config。原始 Ndn 的 6 个 gate×tier 输出与产品参数逐对象匹配。证据为 `source-wire-comparison.json`。
+
+## 原生协议与历史聚合
+
+`cloud_service_thread` 使用固定操作派发 `thread/read`、`thread/resume`、`thread/turns/list`、`thread/items/list` 和恢复所需的两种配置读取。连接复用模型目录的认证、网络策略、取消和身份代次校验。恢复请求保留 `null`，拒绝本地 cwd、权限覆盖和未证实的配置键。原生配置读取仅返回当前准备逻辑需要的偏好与速度能力。原生会话响应核对 thread ID，包装的 item 核对 turn ID。
+
+`src/cloudDraftHistory.ts` 通过真实 IPC 适配层读取两级分页。支持直接和包装条目，保留完成状态及时间戳，按时间正序返回并去重，记录每轮较早游标，拒绝重复游标和错误宿主。当前覆盖普通私有会话的快照，通知缓冲、实时合并、opening user message 补查、超大消息降页和特殊线程分支仍需集成。
+
+Windows 回环覆盖同一连接上的模型目录、会话读取、恢复和历史请求。全库 Rust 通过 652 项。随后按 Mun 和 339 宿主封装修正 `configRequirements/read` 的无参数形态，最终 24 项 durable 专项复验通过，其中回环断言线上请求省略 `params`。前端 95 项回归和生产构建通过。证据在 `.ref/parity/22/actual/22H-cloud-draft-session/verification/`。
+
+## 创建与恢复流程
+
+`src/cloudDraftSession.ts` 通过原生创建接口取得回执，校验账号与请求，保存绑定后发出标题更新。调用方可在标题请求完成前取得会话，存储失败时仍可持有确认过的回执。无有效 thread ID 的回执产生未确认错误。
+
+恢复流程先读同一 durable 线程的 metadata 与偏好，然后使用调用方的配置准备结果，并行发起历史和恢复。按 Ndn 的顺序先等待恢复结果，再收取历史结果。已发出的恢复请求超时才可按 120、240、480 秒期限重试。收到当前线程的关闭错误时，按 750、1500、3000、6000 毫秒等待，随后重试。取消终止等待，恢复和重试沿用已确认的 thread ID。Windows 回环验证错线程的关闭信息保持普通远端错误，前端验证了标题异步处理、取消及无重复创建。
+
+运行时配置和指令提供方、聊天编辑入口与侧栏仍在开发。真实云端恢复和像素对照待验。本增量留待编辑流程接通后再纳入发布。
+
+本轮全库 Rust 653 项通过，含已派发恢复超时分类和 Windows 回环标题及关闭错误回执。前端 95 项回归及生产构建通过。`verification/session-full-rust.log` 和 `verification/session-frontend.log` 保留此次结果。
+
+## 普通环境编辑入口
+
+独立环境列表和设置内嵌列表的有权菜单可创建草稿。创建期间拦截重复点击，确认后传入真实回执，进入独立的 durable 聊天路由。账号失效会取消进行中的读取并清除路由状态。原生快捷键仍可导航和缩放，当前云端页的发送、终端、工作树和线程操作与本地线程隔离。
+
+普通恢复准备从 durable metadata 取得 path 和 cwd，从同一宿主的配置读取取得 personality，沿用取证中的普通分支和服务端权限。当前覆盖新草稿的无显式 tier 入口。完整开发者指令、模型代理与实验覆盖仍待接。侧栏并行读取绑定的私有配置，复用环境字段展示，支持关闭、焦点返回和读取重试。窄窗使用全宽侧栏并隐藏背后的聊天区。
+
+页面当前可恢复会话、查看文本历史、加载更早的轮次并查看绑定配置。编辑字段保存、会话发送、非文本历史卡片、实时通知合并和跨重启从聊天列表重进仍待接。已确认草稿的界面重试沿用相同 thread ID。
+
+隔离验证覆盖 14 项环境组件场景、实际 App 快捷键派发、首次恢复失败后重试、配置先于会话恢复显示、历史分页及 Escape 焦点。1280×800 和 440×800 的浏览器视口无横向溢出。`verification/browser-result.json` 保留完整视口测量，`cloud-draft-wide.jpg` 是完整宽窗截图，`cloud-draft-narrow-cropped.jpg` 只有 440×275，仅用于查看局部。浏览器使用明确的隔离数据边界，当前没有官方配对图、真实账号和原生 GUI 验收。
+
+阶段构建通过前端生产构建、95 项前端回归、收尾后的快捷键派发与环境菜单专项以及 Windows debug 构建。原生候选位于 `dist-artifacts/cloud-22H-entry-20261107/CodexNative.exe`，SHA-256 为 `c9fae72da16f9adb8529075d989f5bf84cdc0e79d84983e2b8c981c20aa6f0e4`。阶段仅本地提交，发布验收仍待后续交互闭环。

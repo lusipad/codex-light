@@ -36,6 +36,7 @@ function frame(payload, opcode = 1, final = true) {
 
 function sessionPeer(socket) {
   const session = metrics.session;
+  let resumeAttempt = 0;
   session.connections++;
   socket.on("close", () => { session.closed++; });
   socket.on("end", () => socket.end());
@@ -77,8 +78,32 @@ function sessionPeer(socket) {
       socket.write(frame({ id: initialize.id, result: { userAgent: "loopback-app-server", platformFamily: "windows" } }));
       return;
     }
-    assert.equal(message.method, "model/list");
     assert.ok(attested);
+    if (message.method !== "model/list") {
+      const threadId = "thread-fixture";
+      const turnId = "turn-fixture";
+      const operations = {
+        "configRequirements/read": [undefined, { requirements: null }],
+        "thread/name/set": [{ threadId, name: "编辑 fixture" }, {}],
+        "thread/read": [{ threadId, includeTurns: false }, { thread: { id: threadId } }],
+        "thread/resume": [{ threadId, history: null, model: null, serviceTier: null, excludeTurns: true }, { thread: { id: threadId } }],
+        "thread/turns/list": [{ threadId, limit: 5, cursor: null, sortDirection: "desc", itemsView: "notLoaded" }, { data: [{ id: turnId }], nextCursor: null }],
+        "thread/items/list": [{ threadId, turnId, limit: 98, cursor: null, sortDirection: "desc" }, { data: [{ turnId, item: { id: "item-fixture" } }], nextCursor: null }],
+      };
+      assert.ok(Object.hasOwn(operations, message.method));
+      assert.ok(message.id.startsWith(`${message.method}:`));
+      const [expected, result] = operations[message.method];
+      assert.deepEqual(message.params, expected);
+      if (message.method === "thread/resume" && resumeAttempt < 2) {
+        const closingThread = resumeAttempt++ === 0 ? "another-thread" : threadId;
+        socket.write(frame({ id: message.id, error: {
+          code: -32603, message: `thread ${closingThread} is closing; retry thread/resume after the thread is closed`,
+        } }));
+        return;
+      }
+      socket.write(frame({ id: message.id, result }));
+      return;
+    }
     assert.match(message.id, /^model\/list:/);
     assert.equal(message.params.limit, 100);
     assert.equal(message.params.includeHidden, true);

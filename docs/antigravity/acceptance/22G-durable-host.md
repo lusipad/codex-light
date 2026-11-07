@@ -16,7 +16,7 @@
 
 完整检查后的唯一代码收尾是给三个仅用于测试的传输辅助接口增加 `cfg(test)`，收窄生产接口并消除本轮新增的未使用告警。该调整后单独复验 22 项宿主专项和原生构建；完整标准检查未重复。两份输入清单保留调整前后差异。
 
-最终 Windows debug 构建退出 0，722 个产品输入在最终专项与构建前后保持稳定。候选包 `dist-artifacts/cloud-22G-20261107/CodexNative.exe`，SHA-256 `4dff34a3ff169714c94c412377d75f8114aa652b3ff584249f5c5d5b4d4eafa0`。保留原有 Vite 分块及 `worktree_archive_queue::cancel_owner` 告警，未顺手修改。阶段提交 `51b370e` 已推送；补充 preview.11 发布说明后，以最终提交的远端 CI 为发布依据，当前尚未确认本增量的远端 CI 或发布成功。
+最终 Windows debug 构建退出 0，722 个产品输入在最终专项与构建前后保持稳定。候选包 `dist-artifacts/cloud-22G-20261107/CodexNative.exe`，SHA-256 `4dff34a3ff169714c94c412377d75f8114aa652b3ff584249f5c5d5b4d4eafa0`。保留原有 Vite 分块及 `worktree_archive_queue::cancel_owner` 告警，未顺手修改。阶段提交 `51b370e` 已推送，随后用包含发布说明的最终提交执行分支和标签 CI。
 
 首次全库检查使用仓库内临时目录，648 项通过、2 项失败：该卷未提供 8.3 别名，并且 Git 向父目录发现了本仓库，破坏“非 Git 目录”用例的前提。失败日志保留为 `full-rust-invalid-temp.log`，后续验证改用仓库外 C 盘私有临时目录；产品代码和测试断言未为此修改。
 
@@ -24,4 +24,10 @@
 
 真实服务鉴权、企业代理、官方 heartbeat 时序、自动重连和原生热连接退出尚待验证。WinHTTP 保活与官方 10 秒 ping 有已登记差异；当前失败连接只在后续显式读取时重建。未使用真实云端凭证或创建真实任务。
 
-F04 的草稿会话恢复、聊天主链按宿主分派、模型缓存隔离及设置侧栏继续开发。当前除 attestation 外的服务端请求统一返回 `-32601`，启用聊天发送前还需完成审批、工具和 elicitation 等适用请求；初始化能力与官方一致不等于这些交互已实现。此阶段无界面改动，未产生官方配对像素证据，未完成用户验收。远端此前版本的成功 CI 不代表本阶段已通过远端检查。
+F04 的草稿会话恢复、聊天主链按宿主分派、模型缓存隔离及设置侧栏继续开发。当前除 attestation 外的服务端请求统一返回 `-32601`，启用聊天发送前还需完成审批、工具和 elicitation 等适用请求；初始化能力与官方一致不等于这些交互已实现。此阶段无界面改动，未产生官方配对像素证据，未完成用户验收。
+
+## 发布回执
+
+[preview.11](https://github.com/lusipad/codex-desktop-native/releases/tag/v0.2.0-preview.11) 已由标签 CI 自动发布。精确源提交 `25f290a6d75d2e5c867f932540ef7f470c17daa5`，远端注解标签对象 `00dc28f05cc3eed010e32865c8e1429ecf6058fc`。[分支 CI](https://github.com/lusipad/codex-desktop-native/actions/runs/42340977060) 和 [标签 CI](https://github.com/lusipad/codex-desktop-native/actions/runs/42341884129) 均终态 success，分别有 93 项前端回归、650 项全库 Rust 零失败/忽略/过滤，以及 Windows 打包、上传和收尾证据。更早的 `51b370e` 流水线由包含发布说明的新提交替代并取消。
+
+实际下载的四个发布文件与标签 CI 产物 `13561988850` 逐字节匹配。已核原始 CI ZIP 大小和 SHA-256、发布 API 摘要、SHA256SUMS、便携 ZIP 及五份许可；未运行下载的二进制。证据保存在 `.ref/releases/v0.2.0-preview.11/`。发布不改变本阶段的真实云端、页面和像素待验状态。

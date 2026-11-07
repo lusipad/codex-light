@@ -3,7 +3,7 @@ import { flushSync } from "react-dom";
 import { ChevronDownIcon } from "./Icons";
 import { MarkdownView } from "./MarkdownView";
 
-export const UserMessageBubble: React.FC<{ text: string; onOpenFile?: (path: string) => void }> = ({ text, onOpenFile }) => {
+export const UserMessageBubble: React.FC<{ text: string; onOpenFile?: (path: string) => void; remoteContent?: boolean | "no-remote-images" }> = ({ text, onOpenFile, remoteContent }) => {
   const contentId = useId();
   const contentRef = useRef<HTMLDivElement>(null);
   const clipRef = useRef<HTMLDivElement>(null);
@@ -113,7 +113,7 @@ export const UserMessageBubble: React.FC<{ text: string; onOpenFile?: (path: str
         className="user-message-content"
         style={collapsed ? { maxHeight: `${measurement.clipHeight}px`, overflow: "hidden" } : undefined}
       >
-        <div ref={contentRef}><MarkdownView content={text} variant="user-message" onOpenFile={onOpenFile} /></div>
+        <div ref={contentRef}><MarkdownView content={text} variant="user-message" onOpenFile={onOpenFile} remoteContent={remoteContent} /></div>
       </div>
       {collapsed && <span className="user-message-ellipsis" aria-hidden="true">…</span>}
       {!printing && measurement.collapsible && (

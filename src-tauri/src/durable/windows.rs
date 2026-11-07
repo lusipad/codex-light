@@ -932,8 +932,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn manager_reuses_the_windows_session_with_attestation_and_correlated_models() {
-        use super::super::{ConnectionConfig, Error, Manager, Notification, Notify, Wire};
+    async fn manager_reuses_the_windows_session_for_models_and_thread_hydration() {
+        use super::super::{ConnectionConfig, Error, Manager, Notification, Notify, Request, Wire};
         use crate::chatgpt_service::ServiceIdentity;
         use serde_json::Value;
         use std::sync::{Arc, Mutex};
@@ -978,14 +978,14 @@ mod tests {
             tokio::join!(
                 manager.request_with(
                     config(),
-                    None,
+                    Request::models(None),
                     Arc::new(AtomicBool::new(false)),
                     notify.clone(),
                     connect()
                 ),
                 manager.request_with(
                     config(),
-                    Some(cursor.clone()),
+                    Request::models(Some(cursor.clone())),
                     Arc::new(AtomicBool::new(false)),
                     notify.clone(),
                     connect()
@@ -996,6 +996,27 @@ mod tests {
         .expect("both concurrent model reads must complete");
         assert_eq!(first.unwrap()["data"][0]["id"], "first-page");
         assert_eq!(second.unwrap()["data"][0]["id"], cursor);
+        let thread = "thread-fixture";
+        let requests = [
+            ("configRequirements/read", Value::Null, serde_json::json!({"requirements":null})),
+            ("thread/name/set", serde_json::json!({"threadId":thread,"name":"编辑 fixture"}), serde_json::json!({})),
+            ("thread/read", serde_json::json!({"threadId":thread,"includeTurns":false}), serde_json::json!({"thread":{"id":thread}})),
+            ("thread/resume", serde_json::json!({"threadId":thread,"history":null,"model":null,"serviceTier":null,"excludeTurns":true}), serde_json::json!({"thread":{"id":thread}})),
+            ("thread/turns/list", serde_json::json!({"threadId":thread,"limit":5,"cursor":null,"sortDirection":"desc","itemsView":"notLoaded"}), serde_json::json!({"data":[{"id":"turn-fixture"}],"nextCursor":null})),
+            ("thread/items/list", serde_json::json!({"threadId":thread,"turnId":"turn-fixture","limit":98,"cursor":null,"sortDirection":"desc"}), serde_json::json!({"data":[{"turnId":"turn-fixture","item":{"id":"item-fixture"}}],"nextCursor":null})),
+        ];
+        for (method, params, expected) in requests {
+            if method == "thread/resume" {
+                for error in [Error::Remote(-32603), Error::ThreadClosing] {
+                    let result = manager.request_with(config(), Request { method, params: params.clone(), timeout: Duration::from_secs(3) },
+                        Arc::new(AtomicBool::new(false)), notify.clone(), connect()).await;
+                    assert_eq!(result, Err(error));
+                }
+            }
+            let response = manager.request_with(config(), Request { method, params, timeout: Duration::from_secs(3) },
+                Arc::new(AtomicBool::new(false)), notify.clone(), connect()).await.unwrap();
+            assert_eq!(response, expected);
+        }
         {
             let notifications = notifications.lock().unwrap();
             assert_eq!(

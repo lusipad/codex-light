@@ -10,7 +10,7 @@ const scripts = [
   'verify-library-browse.mjs', 'verify-library-browse-ui.mjs',
   'verify-library-sticky-header.mjs', 'verify-library-pagination.mjs',
   'verify-images-data.mjs', 'verify-images-assets.mjs', 'verify-images-view.mjs',
-  'verify-cloud-environments.mjs', 'verify-cloud-environment-access.mjs', 'verify-cloud-environment-data.mjs',
+  'verify-cloud-environments.mjs', 'verify-cloud-draft-bindings.mjs', 'verify-cloud-draft-resume.mjs', 'verify-cloud-environment-access.mjs', 'verify-cloud-environment-data.mjs',
   'verify-gpts-data.mjs', 'verify-gpts-read.mjs', 'verify-gpts-service.mjs',
   'verify-sites-data.mjs', 'verify-sites-read.mjs', 'verify-sites-service.mjs', 'verify-sites-navigation.mjs',
   'verify-sites-settings-client.mjs', 'verify-sites-settings-ui.mjs',

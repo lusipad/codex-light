@@ -147,6 +147,8 @@ import { parseSitesLocation, type SitesNavigation } from "./sitesNavigation";
 import { LibraryView, type LibraryNavigation } from "./components/LibraryView";
 import { LibraryCleanupView } from "./components/LibraryCleanupView";
 import { CloudEnvironmentsView } from "./components/CloudEnvironmentsView";
+import { CloudDraftView } from "./components/CloudDraftView";
+import type { CloudDraftSession } from "./cloudDraftSession";
 import { ThreadActionsMenu, ThreadActionItem } from "./components/ThreadActionsMenu";
 import { ThreadFindBar } from "./components/ThreadFindBar";
 import {
@@ -330,6 +332,7 @@ export const App: React.FC = () => {
   const promptStorageKey = isQuickChatWindow ? "codex_quick_chat_prompt_drafts_v1" : threadWindowId ? `codex_thread_window_drafts_v1:${threadWindowId}` : "codex_composer_prompt_drafts_v1";
   // Primary Route & Shell Layout State
   const [activeRoute, commitActiveRoute] = useState<MainViewRoute>(() => window.location.pathname === "/code-review" ? "code-review" : parseSitesLocation(window.location.href) ? "sites" : "home");
+  const [cloudDraft, setCloudDraft] = useState<{ session: CloudDraftSession; persisted: boolean; origin: "settings" | "cloud-environments" } | null>(null);
   const [libraryCleanupTab, setLibraryCleanupTab] = useState<"all" | "images" | null>(null);
   const [libraryNavigation, setLibraryNavigation] = useState<LibraryNavigation | null>(null);
   const libraryNavigationRef = useRef<LibraryNavigation | null>(null);
@@ -632,11 +635,14 @@ export const App: React.FC = () => {
       }).catch(() => {});
     }
     const listener = tauriListen("chatgpt-service:invalidated", () => {
+      if (pending.signal.aborted) return;
       pending.abort(); setShareAvailable(false); setShareThreadId(null);
+      setCloudDraft(null);
+      if (activeRouteRef.current === "cloud-draft") setActiveRoute("cloud-environments");
       setShareAccessRevision(value => value + 1);
     });
     return () => { pending.abort(); void listener.then(unlisten => unlisten()).catch(() => {}); };
-  }, [appServerStatus.connected, accountInfo, shareAccessRevision]);
+  }, [appServerStatus.connected, accountInfo, shareAccessRevision, setActiveRoute]);
   const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(false);
   const keyboardShortcutsOpenRef = useRef(showKeyboardShortcuts);
   keyboardShortcutsOpenRef.current = showKeyboardShortcuts;
@@ -2193,6 +2199,9 @@ export const App: React.FC = () => {
    * 可能对同一次按键各触发一次（toggle 类动作会互相抵消）。
    */
   const runShortcutAction = useCallback((id: string, arg?: any) => {
+    if (keyboardContextRef.current.activeRoute === "cloud-draft"
+      && !["zoom-in", "zoom-out", "zoom-reset", "new-chat", "new-standalone-chat", "open-settings", "toggle-sidebar", "show-keyboard-shortcuts", "open-recent-thread"].includes(id)
+      && !id.startsWith("sidebar-thread-") && !id.startsWith("recent-thread-")) return false;
     const now = Date.now();
     const last = shortcutTimestampsRef.current[id];
     if (last !== undefined && now - last < 250) return true;
@@ -2995,6 +3004,7 @@ export const App: React.FC = () => {
 
   // Send or Steer Message
   const handleSendMessage = useCallback(async (overrideText?: string) => {
+    if (activeRouteRef.current === "cloud-draft") return;
     const rawText = (typeof overrideText === "string" ? overrideText : promptInput).trim();
     if (!rawText && attachedFiles.length === 0) return;
     if (sendStartPendingRef.current.has(threadRequestRef.current)) return;
@@ -3400,6 +3410,7 @@ export const App: React.FC = () => {
   }, [showAppToast]);
 
   const handleInterruptTurn = useCallback(async () => {
+    if (activeRouteRef.current === "cloud-draft") return;
     const threadId = activeThreadIdRef.current;
     const turnId = activeTurnIdRef.current;
     const request = threadRequestRef.current;
@@ -5026,7 +5037,7 @@ export const App: React.FC = () => {
       />
 
       {/* ── 3. Main Workspace Area ── */}
-      <main className={`codex-main-area ${showTerminal ? "has-terminal-dock" : ""}`}>
+      <main className={`codex-main-area ${showTerminal && activeRoute !== "cloud-draft" ? "has-terminal-dock" : ""}`}>
         {/* Top Window / Thread Chrome Header */}
         <header
           className="main-top-navbar"
@@ -5179,7 +5190,7 @@ export const App: React.FC = () => {
                   </div>
                 )}
               </>
-            ) : activeRoute !== "home" && activeRoute !== "thread" ? (
+            ) : activeRoute !== "home" && activeRoute !== "thread" && activeRoute !== "cloud-draft" ? (
               <button
                 type="button"
                 className="back-to-app-pill"
@@ -5193,7 +5204,7 @@ export const App: React.FC = () => {
           </div>
 
           {/* Top Right Panel Toggle Icons & Environment Actions */}
-          <div className="top-nav-right">
+          {activeRoute !== "cloud-draft" && <div className="top-nav-right">
             <div className={`thread-header-actions-group ${activeRoute === "home" || turns.length === 0 ? "home-active" : ""}`}>
               {(activeRoute === "thread" || activeRoute === "home") && <EnvironmentActions
                 cwd={(activeThreadId ? activeThreadObj?.cwd || workspaceHintsRef.current[activeThreadId] : null) || activeWorkspace?.path || ""}
@@ -5313,7 +5324,7 @@ export const App: React.FC = () => {
                 <SquarePlusIcon size={16} />
               </button>
             </div>
-          </div>
+          </div>}
         </header>
 
         {/* Pinned Summary Banner (置顶摘要 1:1) */}
@@ -5544,10 +5555,18 @@ export const App: React.FC = () => {
                 scope={JSON.stringify([modelAccountIdentity, appServerStatus.connected, appServerStatus.binaryPath, appServerStatus.appServerVersion])} /> : <LibraryView onNavigationChange={updateLibraryNavigation} />}
             </div>
           </div>
-        ) : activeRoute === "cloud-environments" ? (
+        ) : activeRoute === "cloud-draft" && cloudDraft ? (
+          <CloudDraftView key={cloudDraft.session.threadId} session={cloudDraft.session} persisted={cloudDraft.persisted} onBack={() => {
+            if (cloudDraft.origin === "settings") setSettingsInitialSection("codex-cloud");
+            setActiveRoute(cloudDraft.origin);
+          }} />
+        ) : activeRoute === "cloud-environments" || activeRoute === "cloud-draft" ? (
           <div className="full-route-view cloud-envs-route-view">
             <div className="full-route-container cloud-envs-route-container">
-              <CloudEnvironmentsView />
+              <CloudEnvironmentsView returnFocusId={cloudDraft?.origin === "cloud-environments" ? cloudDraft.session.binding.configId : undefined} onOpenDraft={(session, persisted) => {
+                setCloudDraft({ session, persisted, origin: "cloud-environments" });
+                setActiveRoute("cloud-draft");
+              }} />
             </div>
           </div>
         ) : activeRoute === "worktrees" ? (
@@ -5588,6 +5607,11 @@ export const App: React.FC = () => {
         ) : activeRoute === "settings" ? (
           <div className="settings-full-route-view">
             <SettingsView
+              cloudEnvironmentFocusId={cloudDraft?.origin === "settings" ? cloudDraft.session.binding.configId : undefined}
+              onOpenCloudDraft={(session, persisted) => {
+                setCloudDraft({ session, persisted, origin: "settings" });
+                setActiveRoute("cloud-draft");
+              }}
               onOpenLibraryStorage={(tab) => { setLibraryCleanupTab(tab); setActiveRoute("library"); }}
               environmentTarget={environmentTarget}
               onRunEnvironmentAction={runEnvironmentAction}
@@ -6411,7 +6435,7 @@ export const App: React.FC = () => {
         )}
 
         {/* Bottom Interactive PTY Terminal Dock */}
-        {terminalWasOpened.current && (
+        {activeRoute !== "cloud-draft" && terminalWasOpened.current && (
           <TerminalDock
             open={showTerminal}
             cwd={terminalTargetCwd ?? activeWorkspace?.path ?? ""}
@@ -6428,7 +6452,7 @@ export const App: React.FC = () => {
       <DiffDrawer
         workspaceRoots={workbenchWorkspaceRoots}
         connectionIdentity={JSON.stringify([modelAccountIdentity, appServerStatus.connected, appServerStatus.binaryPath, appServerStatus.appServerVersion, appServerStatus.userAgent])}
-        open={showRightDrawer}
+        open={showRightDrawer && activeRoute !== "cloud-draft"}
         shortcutRequest={workbenchShortcutRequest ?? undefined}
         onShortcutHandled={requestId => setWorkbenchShortcutRequest(current => current?.requestId === requestId ? null : current)}
         gitPreferences={gitPreferencesState.preferences}

@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::oneshot;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Error { Unavailable, Busy, Cancelled, Closed, Timeout, Protocol, Remote(i64) }
+pub(crate) enum Error { Unavailable, Busy, Cancelled, Closed, Timeout, ResumeTimeout, ThreadClosing, Protocol, Remote(i64) }
 type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Clone, Serialize)]
@@ -31,12 +31,30 @@ pub(crate) struct ConnectionConfig {
     pub user_agent: String,
 }
 
+pub(crate) struct Request {
+    pub method: &'static str,
+    pub params: Value,
+    pub timeout: Duration,
+}
+
+impl Request {
+    pub(crate) fn models(cursor: Option<String>) -> Self {
+        Self { method: "model/list", params: json!({"cursor":cursor,"includeHidden":true,"limit":100}), timeout: Duration::from_secs(75) }
+    }
+}
+
 struct Command {
     id: String,
-    cursor: Option<String>,
+    request: Request,
     cancel: Arc<AtomicBool>,
     expires: Instant,
     reply: oneshot::Sender<Result<Value>>,
+}
+
+impl Command {
+    fn response_timeout(&self) -> Error {
+        if self.request.method == "thread/resume" { Error::ResumeTimeout } else { Error::Timeout }
+    }
 }
 
 struct Session {
@@ -82,20 +100,20 @@ impl Manager {
         stop
     }
 
-    pub(crate) async fn models(&self, config: ConnectionConfig, cursor: Option<String>, cancel: Arc<AtomicBool>, notify: Notify) -> Result<Value> {
+    pub(crate) async fn request(&self, config: ConnectionConfig, request: Request, cancel: Arc<AtomicBool>, notify: Notify) -> Result<Value> {
         #[cfg(windows)]
         {
-            self.request_with(config, cursor, cancel, notify, |config, stop| {
+            self.request_with(config, request, cancel, notify, |config, stop| {
                 windows::DurableSocket::connect(&config.token, &config.identity.account_id, &config.user_agent, stop)
                     .map(|socket| Box::new(socket) as Box<dyn Wire>)
                     .map_err(|_| Error::Unavailable)
             }).await
         }
         #[cfg(not(windows))]
-        { let _ = (config, cursor, cancel, notify); Err(Error::Unavailable) }
+        { let _ = (config, request, cancel, notify); Err(Error::Unavailable) }
     }
 
-    async fn request_with<F>(&self, config: ConnectionConfig, cursor: Option<String>, cancel: Arc<AtomicBool>, notify: Notify, connect: F) -> Result<Value>
+    async fn request_with<F>(&self, config: ConnectionConfig, request: Request, cancel: Arc<AtomicBool>, notify: Notify, connect: F) -> Result<Value>
     where F: FnOnce(&ConnectionConfig, &AtomicBool) -> Result<Box<dyn Wire>> + Send + 'static {
         if cancel.load(Ordering::SeqCst) { return Err(Error::Cancelled); }
         let sender = {
@@ -122,7 +140,7 @@ impl Manager {
             current.as_ref().ok_or(Error::Unavailable)?.sender.clone()
         };
         let (reply, result) = oneshot::channel();
-        let command = Command { id: format!("model/list:{}", uuid::Uuid::new_v4()), cursor, cancel: cancel.clone(), expires: Instant::now() + Duration::from_secs(75), reply };
+        let command = Command { id: format!("{}:{}", request.method, uuid::Uuid::new_v4()), request, cancel: cancel.clone(), expires: Instant::now() + Duration::from_secs(75), reply };
         sender.try_send(command).map_err(|error| match error { mpsc::TrySendError::Full(_) => Error::Busy, mpsc::TrySendError::Disconnected(_) => Error::Closed })?;
         let cancelled = async {
             while !cancel.load(Ordering::SeqCst) { tokio::time::sleep(Duration::from_millis(20)).await; }
@@ -176,18 +194,24 @@ fn run_actor(wire: &mut dyn Wire, identity: &ServiceIdentity, stop: &AtomicBool,
                     .map(|(id, _)| id.clone()).collect();
                 for id in expired {
                     if let Some(command) = pending.remove(&id) {
-                        let error = if command.cancel.load(Ordering::SeqCst) { Error::Cancelled } else { Error::Timeout };
+                        let error = if command.cancel.load(Ordering::SeqCst) { Error::Cancelled } else { command.response_timeout() };
                         let _ = command.reply.send(Err(error));
                     }
                 }
                 if pending.len() < 64 {
                     match incoming.try_recv() {
-                        Ok(command) => {
+                        Ok(mut command) => {
                             if command.cancel.load(Ordering::SeqCst) || Instant::now() >= command.expires {
                                 let error = if command.cancel.load(Ordering::SeqCst) { Error::Cancelled } else { Error::Timeout };
                                 let _ = command.reply.send(Err(error));
                             } else {
-                                let message = json!({"id":command.id,"method":"model/list","params":{"cursor":command.cursor,"includeHidden":true,"limit":100}});
+                                let mut message = json!({"id":command.id,"method":command.request.method});
+                                if !command.request.params.is_null() {
+                                    message["params"] = command.request.params.clone();
+                                }
+                                if command.request.method != "model/list" {
+                                    command.expires = Instant::now() + command.request.timeout;
+                                }
                                 let id = command.id.clone();
                                 pending.insert(id, command);
                                 send(wire, message, stop)?;
@@ -221,7 +245,20 @@ fn run_actor(wire: &mut dyn Wire, identity: &ServiceIdentity, stop: &AtomicBool,
                         ready = true;
                     } else if ready {
                         if let Some(command) = pending.remove(&id) {
-                            let response = if command.cancel.load(Ordering::SeqCst) { Err(Error::Cancelled) } else { result };
+                            let response = if command.cancel.load(Ordering::SeqCst) {
+                                Err(Error::Cancelled)
+                            } else if Instant::now() >= command.expires {
+                                Err(command.response_timeout())
+                            } else if command.request.method == "thread/resume" && matches!(result, Err(Error::Remote(_)))
+                                && command.request.params["threadId"].as_str().is_some_and(|thread_id| {
+                                    message["error"]["message"].as_str().is_some_and(|message| {
+                                        message.contains(&format!("thread {thread_id} is closing; retry thread/resume after the thread is closed"))
+                                    })
+                                }) {
+                                Err(Error::ThreadClosing)
+                            } else {
+                                result
+                            };
                             let _ = command.reply.send(response);
                         }
                     }

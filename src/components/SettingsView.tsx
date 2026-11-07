@@ -1,5 +1,5 @@
 import { CloudPreferencesSettings } from "./CloudPreferencesSettings";
-import { CloudEnvironmentsView } from "./CloudEnvironmentsView";
+import { CloudEnvironmentsView, type OpenCloudDraft } from "./CloudEnvironmentsView";
 import { PetsSettings } from "./PetsSettings";
 import type { PetPreferencesState } from "../petPreferences";
 import { ComputerUseSettings, AppshotsSettings, BrowserUseSettings } from "./ControlCapabilitySettings";
@@ -107,6 +107,8 @@ const SETTINGS_NAV_ICONS = {
 };
 
 interface SettingsViewProps {
+  onOpenCloudDraft?: OpenCloudDraft;
+  cloudEnvironmentFocusId?: string;
   petPreferencesState: PetPreferencesState;
   archiveViewProps: ArchiveViewProps;
   notificationState: NotificationState;
@@ -141,6 +143,8 @@ interface SettingsViewProps {
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
+  onOpenCloudDraft,
+  cloudEnvironmentFocusId,
   petPreferencesState,
   archiveViewProps,
   onRunEnvironmentCommand, environmentTarget, onRunEnvironmentAction,
@@ -448,7 +452,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         {activeSection === "browser-use" && <BrowserUseSettings />}
 
         {activeSection === "cloud-settings" && <CloudPreferencesSettings />}
-        {activeSection === "codex-cloud" && <div className="settings-scroll-container"><CloudEnvironmentsView embedded /></div>}
+        {activeSection === "codex-cloud" && <div className="settings-scroll-container"><CloudEnvironmentsView embedded onOpenDraft={onOpenCloudDraft} returnFocusId={cloudEnvironmentFocusId} /></div>}
 
       </div>
     </div>

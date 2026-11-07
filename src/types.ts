@@ -352,6 +352,7 @@ export type MainViewRoute =
   | "gpts"
   | "sites"
   | "library"
+  | "cloud-draft"
   | "cloud-environments";
 
 export type TurnCompletionPolicy = "always" | "unfocused" | "off";

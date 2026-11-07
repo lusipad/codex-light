@@ -4,11 +4,28 @@ import { ChevronRight, Ellipsis, Plus, Search } from "lucide-react";
 import { tauriListen } from "../bridge";
 import { readCloudEnvironmentAccess, type CloudEnvironmentAccess } from "../cloudEnvironmentAccess";
 import { readCloudService, serviceErrorMessage } from "../chatgptService";
+import { createCloudDraftSession, type CloudDraftSession } from "../cloudDraftSession";
 import { cloudSharingLabel, filterCloudCatalog, loadCloudCatalog, loadRepositoryName, parseCloudDetail,
   type CloudCatalog, type CloudDetail, type CloudSummary, type RepositoryName } from "../cloudEnvironmentService";
 import "./CloudEnvironmentsView.css";
 
-export const CloudEnvironmentsView: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
+export function renderCloudEnvironmentFields({ detail, repository }: { detail: CloudDetail; repository: (id: string) => React.ReactNode }) {
+  const effective = detail.draft ?? detail;
+  return <div aria-label="环境设置" className="cloud-envs-config">
+    {detail.description && <p className="cloud-envs-description">{detail.description}</p>}
+    <section><h3>共享</h3><p>{cloudSharingLabel(detail)}</p></section>
+    <section><h3>代码仓库</h3>{effective.repositories.map(repo => <div className="cloud-envs-config-repo" key={repo.id}>{repository(repo.id)}<span>{repo.ref}</span></div>)}</section>
+    <section><h3>网络</h3><p>{effective.network.type === "disabled" ? "禁用" : effective.network.type === "unrestricted" ? "不受限" : "受限"}</p>{effective.network.packageManagers && <p>允许软件包管理器</p>}{effective.network.hosts.map(host => <p key={host}>{host}</p>)}</section>
+    {effective.cwd != null && <section><h3>工作目录</h3><pre>{effective.cwd}</pre></section>}
+    {effective.installScript != null && <section><h3>安装脚本</h3><pre>{effective.installScript}</pre></section>}
+    {effective.startSkill != null && <section><h3>启动技能</h3><pre>{effective.startSkill}</pre></section>}
+    <section><h3>密钥</h3>{!effective.secrets.length && <p>暂无密钥。</p>}{effective.secrets.map((secret, index) => <div key={index}><p>{secret.name} · {secret.source} · {secret.target}</p>{secret.domains.map(domain => <p key={domain}>{domain}</p>)}{secret.error && <p role="alert">{secret.error}</p>}</div>)}</section>
+  </div>;
+}
+
+export type OpenCloudDraft = (session: CloudDraftSession, persisted: boolean) => void;
+
+export const CloudEnvironmentsView: React.FC<{ embedded?: boolean; onOpenDraft?: OpenCloudDraft; returnFocusId?: string }> = ({ embedded = false, onOpenDraft, returnFocusId }) => {
   const [revision, setRevision] = useState(0);
   const [access, setAccess] = useState<CloudEnvironmentAccess | null>(null);
   const [catalog, setCatalog] = useState<CloudCatalog | null>(null);
@@ -22,6 +39,10 @@ export const CloudEnvironmentsView: React.FC<{ embedded?: boolean }> = ({ embedd
   const [menu, setMenu] = useState<{ item: CloudSummary; left: number; top: number; trigger: HTMLButtonElement } | null>(null);
   const source = useRef<AbortController | null>(null);
   const detailSource = useRef<AbortController | null>(null);
+  const creating = useRef<AbortController | null>(null);
+  const [creatingId, setCreatingId] = useState<string | null>(null);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const returnedFocus = useRef(false);
   const catalogBusy = useRef(false);
   const catalogSequence = useRef(0);
   const noResultRefresh = useRef<string | null>(null);
@@ -58,7 +79,7 @@ export const CloudEnvironmentsView: React.FC<{ embedded?: boolean }> = ({ embedd
       try {
         const stop = await tauriListen("chatgpt-service:invalidated", () => {
           if (disposed) return;
-          controller.abort(); detailSource.current?.abort(); setAccess(null); setCatalog(null); setNames({}); setSelectedId(null); setDetail(null); setMenu(null);
+          controller.abort(); detailSource.current?.abort(); creating.current?.abort(); setCreatingId(null); setCreateError(null); setAccess(null); setCatalog(null); setNames({}); setSelectedId(null); setDetail(null); setMenu(null);
           restoreFocus.current = null; setRevision(value => value + 1);
         });
         if (disposed) { stop(); return; }
@@ -69,7 +90,7 @@ export const CloudEnvironmentsView: React.FC<{ embedded?: boolean }> = ({ embedd
         if (current.available) await readCatalog(current); else setLoading(false);
       } catch (cause) { if (!controller.signal.aborted) { setError(serviceErrorMessage(cause)); setLoading(false); } }
     })();
-    return () => { disposed = true; controller.abort(); detailSource.current?.abort(); unlisten?.(); };
+    return () => { disposed = true; controller.abort(); detailSource.current?.abort(); creating.current?.abort(); unlisten?.(); };
   }, [revision]);
   useEffect(() => { noResultRefresh.current = null; }, [query]);
   useEffect(() => {
@@ -82,6 +103,11 @@ export const CloudEnvironmentsView: React.FC<{ embedded?: boolean }> = ({ embedd
     if (selectedId) detailTitle.current?.focus();
     else if (restoreFocus.current) { rowTriggers.current.get(restoreFocus.current)?.focus(); restoreFocus.current = null; }
   }, [selectedId]);
+  useLayoutEffect(() => {
+    if (!returnFocusId || returnedFocus.current) return;
+    const trigger = rowTriggers.current.get(returnFocusId);
+    if (trigger) { trigger.focus(); returnedFocus.current = true; }
+  }, [returnFocusId, catalog, loading]);
   useLayoutEffect(() => {
     if (!menu) return;
     menuRef.current?.querySelector<HTMLButtonElement>("[role=menuitem]:not(:disabled)")?.focus();
@@ -118,25 +144,32 @@ export const CloudEnvironmentsView: React.FC<{ embedded?: boolean }> = ({ embedd
   const repository = (id: string) => names[id] ? <span title={repositoryLabel(id)}>{repositoryLabel(id)}</span>
     : <span className="cloud-envs-repo-loading" role="status" aria-label="正在加载代码仓库…"><span /></span>;
   const selected = catalog?.items.find(item => item.id === selectedId);
-  const effective = detail?.draft ?? detail;
   const menuCanEdit = menu && access && (access.rbacEnabled === false || access.available
     && (menu.item.shareSettings === "workspace" ? access.canManage : menu.item.isOwner !== false));
+  const openEdit = async () => {
+    if (!menuCanEdit || !menu || !access?.available || !onOpenDraft || creating.current || source.current?.signal.aborted) return;
+    const { item, trigger } = menu;
+    const controller = new AbortController();
+    creating.current = controller;
+    setCreatingId(item.id); setCreateError(null); setMenu(null);
+    try {
+      const repositoryNames = Object.fromEntries(item.repositories.flatMap(({ id }) => names[id]?.name ? [[id, names[id].name]] : []));
+      const { session, persisted } = await createCloudDraftSession(item, repositoryNames, access.identity, controller.signal);
+      if (!controller.signal.aborted) onOpenDraft(session, persisted);
+    } catch (cause) {
+      if (!controller.signal.aborted) { setCreateError(serviceErrorMessage(cause)); trigger.focus(); }
+    } finally {
+      if (creating.current === controller) creating.current = null;
+      if (!controller.signal.aborted) setCreatingId(null);
+    }
+  };
   return <div className={`cloud-envs-page${embedded ? " cloud-envs-embedded" : ""}`}>
     <div className="cloud-envs-content">
       {selectedId ? <>
         <nav className="cloud-envs-breadcrumb" aria-label="环境导航"><button type="button" onClick={closeDetail}>环境</button><ChevronRight size={14} /><span>{detail?.name ?? selected?.name}</span></nav>
         <h2 ref={detailTitle} tabIndex={-1} className="cloud-envs-detail-title">{detail?.name ?? selected?.name}</h2>
-        {!detail || !effective ? <div className="cloud-envs-state" role={detailError ? "alert" : "status"}>{detailError ? <><span>未能加载环境</span><p>{detailError}</p><button type="button" onClick={() => void openDetail(selectedId)}>重试</button></> : "正在载入环境…"}<button type="button" onClick={closeDetail}>取消</button></div> : <>
-          <form aria-label="环境设置" className="cloud-envs-config" onSubmit={event => event.preventDefault()}>
-            {detail.description && <p className="cloud-envs-description">{detail.description}</p>}
-            <section><h3>共享</h3><p>{cloudSharingLabel(detail)}</p></section>
-            <section><h3>代码仓库</h3>{effective.repositories.map(repo => <div className="cloud-envs-config-repo" key={repo.id}>{repository(repo.id)}<span>{repo.ref}</span></div>)}</section>
-            <section><h3>网络</h3><p>{effective.network.type === "disabled" ? "禁用" : effective.network.type === "unrestricted" ? "不受限" : "受限"}</p>{effective.network.packageManagers && <p>允许软件包管理器</p>}{effective.network.hosts.map(host => <p key={host}>{host}</p>)}</section>
-            {effective.cwd != null && <section><h3>工作目录</h3><pre>{effective.cwd}</pre></section>}
-            {effective.installScript != null && <section><h3>安装脚本</h3><pre>{effective.installScript}</pre></section>}
-            {effective.startSkill != null && <section><h3>启动技能</h3><pre>{effective.startSkill}</pre></section>}
-            <section><h3>密钥</h3>{!effective.secrets.length && <p>暂无密钥。</p>}{effective.secrets.map((secret, index) => <div key={index}><p>{secret.name} · {secret.source} · {secret.target}</p>{secret.domains.map(domain => <p key={domain}>{domain}</p>)}{secret.error && <p role="alert">{secret.error}</p>}</div>)}</section>
-          </form>
+        {!detail ? <div className="cloud-envs-state" role={detailError ? "alert" : "status"}>{detailError ? <><span>未能加载环境</span><p>{detailError}</p><button type="button" onClick={() => void openDetail(selectedId)}>重试</button></> : "正在载入环境…"}<button type="button" onClick={closeDetail}>取消</button></div> : <>
+          {renderCloudEnvironmentFields({ detail, repository })}
           <footer className="cloud-envs-footer"><button type="button" onClick={closeDetail}>取消</button><button type="button" disabled title="环境配置保存尚未接入">保存更改</button></footer>
         </>}
       </> : <>
@@ -145,6 +178,8 @@ export const CloudEnvironmentsView: React.FC<{ embedded?: boolean }> = ({ embedd
           <div className="cloud-envs-toolbar"><label className="cloud-envs-search"><Search size={16} aria-hidden="true" /><input aria-label="搜索环境" maxLength={128} placeholder="搜索" value={query} onChange={event => setQuery(event.target.value.slice(0, 128))} /></label><button type="button" className="cloud-envs-create" disabled title="云环境设置聊天尚未接入"><Plus size={16} aria-hidden="true" />创建环境</button></div>
         </div>
         {loading && <p className="cloud-envs-state" role="status">正在加载已保存的环境…</p>}
+        {creatingId && <p className="cloud-envs-state" role="status">正在创建环境草稿…</p>}
+        {createError && <p className="cloud-envs-state" role="alert">{createError}</p>}
         {error && <section className="cloud-envs-state" role="alert"><span>无法加载已保存的环境</span><p>{error}</p><button type="button" onClick={() => setRevision(value => value + 1)}>重试</button></section>}
         {access && !access.available && !loading && <p className="cloud-envs-state" role="status">此工作空间无法设置云环境</p>}
         {access?.available && catalog && !loading && !error && <section className="cloud-envs-list" aria-label="已保存的环境">
@@ -157,6 +192,6 @@ export const CloudEnvironmentsView: React.FC<{ embedded?: boolean }> = ({ embedd
         </section>}
       </>}
     </div>
-    {menu && createPortal(<div ref={menuRef} className="cloud-envs-menu" role="menu" aria-label={`针对 ${menu.item.name} 的操作`} style={{ left: menu.left, top: menu.top }}>{menuCanEdit && <button type="button" role="menuitem" disabled title="环境编辑聊天尚未接入">{menu.item.versionRevision === 1 ? "继续设置" : "编辑"}</button>}<button type="button" role="menuitem" onClick={() => void openDetail(menu.item.id)}>查看</button><button type="button" role="menuitem" disabled title="环境删除尚未接入">删除环境</button></div>, document.body)}
+    {menu && createPortal(<div ref={menuRef} className="cloud-envs-menu" role="menu" aria-label={`针对 ${menu.item.name} 的操作`} style={{ left: menu.left, top: menu.top }}>{menuCanEdit && <button type="button" role="menuitem" disabled={!onOpenDraft || !!creatingId} onClick={() => void openEdit()}>{menu.item.versionRevision === 1 ? "继续设置" : "编辑"}</button>}<button type="button" role="menuitem" onClick={() => void openDetail(menu.item.id)}>查看</button><button type="button" role="menuitem" disabled title="环境删除尚未接入">删除环境</button></div>, document.body)}
   </div>;
 };

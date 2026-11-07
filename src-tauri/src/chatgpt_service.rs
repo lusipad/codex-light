@@ -26,6 +26,8 @@ mod cloud_drafts;
 pub use cloud_drafts::{CloudDraftRequest, CloudDraftResponse};
 mod durable_models;
 pub use durable_models::{DurableModelsRequest, DurableModelsResponse};
+mod durable_thread;
+pub use durable_thread::DurableThreadRequest;
 pub use sites_settings::{SitesSettingsRequest, SitesSettingsResponse};
 pub use sites_assets::{SiteAssetRef, SitesPinRequest, SitesPinResponse};
 pub use gpts_assets::GptAssetRef;

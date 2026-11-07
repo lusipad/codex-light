@@ -282,6 +282,36 @@ export async function readCloudService(
   return responseBody(result, requestId, identity);
 }
 
+export type CloudThreadOperation =
+  | { kind: "read"; threadId: string }
+  | { kind: "resume"; params: ReturnType<typeof import("./cloudDraftResume").cloudDraftResumeParams>; timeoutSeconds?: 120 | 240 | 480 }
+  | { kind: "title"; threadId: string; name: string }
+  | { kind: "turns"; threadId: string; cursor: string | null; limit: number }
+  | { kind: "items"; threadId: string; turnId: string; cursor: string | null; limit: number }
+  | { kind: "preferences" | "requirements" };
+
+export async function callCloudThread(operation: CloudThreadOperation, identity: ServiceIdentity, signal: AbortSignal): Promise<unknown> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; hostId: string; body: unknown }>(
+    "cloud_service_thread", requestId, { request: { requestId, operation, expectedIdentity: identity } }, signal,
+  );
+  if (result.hostId !== "durable") throw Error("云端会话宿主不匹配。");
+  return responseBody(result, requestId, identity);
+}
+
+export async function createCloudDraft(configId: string, identity: ServiceIdentity, signal: AbortSignal) {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; receipt: {
+    draft_id: string; environment_id: string; thread_id: string | null;
+  } }>("cloud_service_create_draft", requestId, { request: { requestId, configId, expectedIdentity: identity } }, signal);
+  responseBody({ ...result, body: result.receipt }, requestId, identity);
+  const { draft_id, environment_id, thread_id } = result.receipt;
+  if (![draft_id, environment_id, thread_id].every(value => typeof value === "string" && value.trim())) {
+    throw { code: "cloud_draft_unconfirmed" };
+  }
+  return { draftId: draft_id, environmentId: environment_id, threadId: thread_id as string };
+}
+
 export async function readChatgptService(
   operation: ServiceOperation, params: Record<string, unknown>, identity: ServiceIdentity, signal: AbortSignal,
 ): Promise<unknown> {
@@ -629,6 +659,9 @@ export function serviceErrorMessage(error: unknown): string {
     account_changed: "读取期间账号发生变化，请重新刷新。", routing_unavailable: "账号服务路由暂不可用，请重新登录或重试。",
     forbidden: "当前账号无权访问此服务。", rate_limited: "请求过于频繁，请稍后重试。",
     cancelled: "请求已取消。", transport_unavailable: "系统 HTTP 组件不可用。",
+    cloud_draft_unconfirmed: "无法确认环境草稿，请先检查聊天列表。",
+    cloud_draft_pending: "此环境已有正在处理或尚未确认的草稿请求，请检查聊天列表。",
+    cloud_resume_timeout: "恢复云端会话超时。", cloud_thread_closing: "云端会话正在关闭。",
     network_error: "服务连接失败，请检查网络后重试。", timeout: "服务请求超时，请重试。",
     desktop_context_unavailable: "应用服务尚未连接，请连接后重试。",
     publish_unknown: "无法确认分享是否已发布。为避免重复发布，请先检查已有分享。",

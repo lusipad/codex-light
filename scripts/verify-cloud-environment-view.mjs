@@ -15,7 +15,7 @@ const access = { identity, available: true, canManage: true, rbacEnabled: false,
 const summary = (id = "one", extra = {}) => ({ id, name: `环境 ${id}`, version_id: "v1", share_settings: "private", repositories: [{ repository_id: "repo", ref: "main" }], ...extra });
 const config = (id = "one", extra = {}) => ({ ...summary(id), status: "ready", network_policy: { type: "disabled" }, ...extra });
 
-export function cloudEnvironmentHarness({ listenerError, deferredListener = false, embedded = false } = {}) {
+export function cloudEnvironmentHarness({ listenerError, deferredListener = false, embedded = false, onOpenDraft } = {}) {
   const hooks = [], effects = [], layouts = [], calls = [], listeners = [], timers = new Map(), elements = new Map(), events = new Map();
   let cursor = 0, domIndex = 0, writes = 0, clock = 0, nextTimer = 0, tree, unlistened = 0;
   const document = { body: {}, activeElement: null,
@@ -66,13 +66,14 @@ export function cloudEnvironmentHarness({ listenerError, deferredListener = fals
         return listenerError ? Promise.reject(listenerError) : deferredListener ? pending.promise : Promise.resolve(() => unlistened++);
       } };
       if (name === "../cloudEnvironmentAccess") return { readCloudEnvironmentAccess: signal => call("access", [], signal) };
+      if (name === "../cloudDraftSession") return { createCloudDraftSession: (environment, names, current, signal) => call("create", [environment, names, current], signal) };
       if (name === "../chatgptService") return { readCloudService: (operation, params, current, signal) => call(operation, [params, current], signal), serviceErrorMessage: cause => cause.message || cause.code };
       if (name === "../cloudEnvironmentService") return { ...data, loadCloudCatalog: (current, signal) => call("catalog", [current], signal), loadRepositoryName: (id, current, signal) => call("repository", [id, current], signal) };
       assert.fail(name);
     },
   });
   return { calls, listeners, document, data,
-    render() { cursor = 0; domIndex = 0; tree = view.CloudEnvironmentsView({ embedded }); while (layouts.length) layouts.shift()(); while (effects.length) effects.shift()(); return tree; },
+    render() { cursor = 0; domIndex = 0; tree = view.CloudEnvironmentsView({ embedded, onOpenDraft }); while (layouts.length) layouts.shift()(); while (effects.length) effects.shift()(); return tree; },
     tick(ms) { clock += ms; for (const [id, timer] of [...timers]) if (timer.due <= clock) { timers.delete(id); timer.callback(); } },
     invalidate() { listeners.at(-1).callback(); },
     key(value) { for (const fn of events.get("keydown") ?? []) fn({ preventDefault() {}, stopPropagation() {}, ...value }); },
@@ -168,5 +169,34 @@ await check("readonly environment menus omit editing while keeping the real deta
     assert.equal(walk(menu).some(node => node.props.role === "menuitem" && text(node) === "继续设置"), editable);
     button(h, "查看").props.onClick(); await flush(); assert.equal(count(h, "detail"), 1); h.unmount();
   }
+});
+await check("edit and continue create once, then navigate with the confirmed session", async () => {
+  for (const embedded of [false, true]) {
+    const opened = [];
+    const h = await boot(cloudEnvironmentHarness({ embedded, onOpenDraft: (...args) => opened.push(args) }), [summary("one", { version_revision: 1 })]);
+    const trigger = button(h, "针对 环境 one 的操作");
+    trigger.props.onClick({ currentTarget: trigger.element });
+    const action = button(h, "继续设置");
+    assert.equal(action.props.disabled, false);
+    action.props.onClick(); action.props.onClick();
+    assert.equal(count(h, "create"), 1);
+    assert.match(text(h.render()), /正在创建环境草稿/);
+    assert.equal(latest(h, "create").args[0].id, "one");
+    assert.equal(latest(h, "create").args[1].repo, "owner/actual-repository");
+    const session = { threadId: "thread-one", binding: { configId: "one" }, identity };
+    latest(h, "create").resolve({ session, persisted: true }); await flush();
+    assert.deepEqual(opened, [[session, true]]);
+    h.unmount();
+  }
+});
+await check("an invalidated edit request cannot open its late receipt", async () => {
+  const h = await boot(cloudEnvironmentHarness({ onOpenDraft: () => assert.fail("stale navigation") }));
+  const trigger = button(h, "针对 环境 one 的操作");
+  trigger.props.onClick({ currentTarget: trigger.element });
+  button(h, "编辑").props.onClick();
+  const pending = latest(h, "create");
+  h.invalidate(); assert.equal(pending.signal.aborted, true);
+  pending.resolve({ session: { threadId: "previous-account" }, persisted: true }); await flush();
+  h.unmount();
 });
 console.log(`PASS ${passed} cloud environment production JSX/hook scenarios; ReactDOM, bridge/access/service transport and lucide are explicit offline boundaries. HTTP, native UI, physical IME and pixel parity remain unverified.`);

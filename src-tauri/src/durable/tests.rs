@@ -54,6 +54,22 @@ fn connect(peer: Arc<Mutex<Peer>>, count: Arc<AtomicUsize>) -> impl FnOnce(&Conn
 }
 fn notify() -> Notify { Arc::new(|_| {}) }
 fn cancel() -> Arc<AtomicBool> { Arc::new(AtomicBool::new(false)) }
+
+#[tokio::test]
+async fn durable_dispatched_resume_timeout_has_a_retryable_code() {
+    let manager = Manager::default();
+    let peer = Arc::new(Mutex::new(Peer::default()));
+    let connects = Arc::new(AtomicUsize::new(0));
+    let request = Request {
+        method: "thread/resume",
+        params: json!({"threadId":"thread-fixture"}),
+        timeout: Duration::ZERO,
+    };
+    let result = tokio::time::timeout(Duration::from_secs(3),
+        manager.request_with(config(1), request, cancel(), notify(), connect(peer.clone(), connects))).await.unwrap();
+    assert_eq!(result, Err(Error::ResumeTimeout));
+    assert_eq!(peer.lock().unwrap().sent.iter().filter(|entry| entry["method"] == "thread/resume").count(), 1);
+}
 async fn until(mut condition: impl FnMut() -> bool) {
     tokio::time::timeout(Duration::from_secs(3), async {
         while !condition() { tokio::time::sleep(Duration::from_millis(1)).await; }
@@ -72,8 +88,8 @@ async fn durable_concurrent_reads_initialize_once_and_keep_credential_out_of_mes
     let peer = Arc::new(Mutex::new(Peer::default()));
     let calls = Arc::new(AtomicUsize::new(0));
     let (first, second) = tokio::join!(
-        manager.request_with(config(1), None, cancel(), notify(), connect(peer.clone(), calls.clone())),
-        manager.request_with(config(1), Some("cursor-fixture".into()), cancel(), notify(), connect(peer.clone(), calls.clone()))
+        manager.request_with(config(1), Request::models(None), cancel(), notify(), connect(peer.clone(), calls.clone())),
+        manager.request_with(config(1), Request::models(Some("cursor-fixture".into())), cancel(), notify(), connect(peer.clone(), calls.clone()))
     );
     assert_eq!(first.unwrap()["data"][0]["id"], "model-fixture");
     assert!(second.is_ok());
@@ -93,7 +109,7 @@ async fn durable_out_of_order_and_unmatched_responses_stay_with_their_request() 
     let calls = Arc::new(AtomicUsize::new(0));
     let spawn = |cursor: &'static str| {
         let manager = manager.clone(); let peer = peer.clone(); let calls = calls.clone();
-        tokio::spawn(async move { manager.request_with(config(1), Some(cursor.into()), cancel(), notify(), connect(peer, calls)).await })
+        tokio::spawn(async move { manager.request_with(config(1), Request::models(Some(cursor.into())), cancel(), notify(), connect(peer, calls)).await })
     };
     let one = spawn("first"); let two = spawn("second");
     until(|| model_requests(&peer).len() == 2).await;
@@ -115,7 +131,7 @@ async fn durable_cancelled_read_does_not_replay_or_consume_another_reply() {
     let cancellation = cancel();
     let task = {
         let manager = manager.clone(); let peer = peer.clone(); let calls = calls.clone(); let cancellation = cancellation.clone();
-        tokio::spawn(async move { manager.request_with(config(1), None, cancellation, notify(), connect(peer, calls)).await })
+        tokio::spawn(async move { manager.request_with(config(1), Request::models(None), cancellation, notify(), connect(peer, calls)).await })
     };
     until(|| model_requests(&peer).len() == 1).await;
     let old = model_requests(&peer)[0].clone();
@@ -123,7 +139,7 @@ async fn durable_cancelled_read_does_not_replay_or_consume_another_reply() {
     assert_eq!(task.await.unwrap(), Err(Error::Cancelled));
     let next = {
         let manager = manager.clone(); let peer = peer.clone(); let calls = calls.clone();
-        tokio::spawn(async move { manager.request_with(config(1), None, cancel(), notify(), connect(peer, calls)).await })
+        tokio::spawn(async move { manager.request_with(config(1), Request::models(None), cancel(), notify(), connect(peer, calls)).await })
     };
     until(|| model_requests(&peer).len() == 2).await;
     reply(&peer, json!({"id":old["id"],"result":{"marker":"cancelled"}}));
@@ -141,7 +157,7 @@ async fn durable_identity_invalidation_retires_pending_requests_and_old_notifica
     let listener: Notify = { let events = events.clone(); Arc::new(move |event| events.lock().unwrap().push(event)) };
     let task = {
         let manager = manager.clone(); let peer = peer.clone(); let calls = calls.clone();
-        tokio::spawn(async move { manager.request_with(config(1), None, cancel(), listener, connect(peer, calls)).await })
+        tokio::spawn(async move { manager.request_with(config(1), Request::models(None), cancel(), listener, connect(peer, calls)).await })
     };
     until(|| model_requests(&peer).len() == 1).await;
     reply(&peer, json!({"method":"item/agentMessage/delta","params":{"delta":"current"}}));
@@ -153,7 +169,7 @@ async fn durable_identity_invalidation_retires_pending_requests_and_old_notifica
     assert!(matches!(task.await.unwrap(), Err(Error::Cancelled | Error::Closed)));
     assert_eq!(events.lock().unwrap().len(), 1);
     let next_peer = Arc::new(Mutex::new(Peer::default()));
-    assert!(manager.request_with(config(2), None, cancel(), notify(), connect(next_peer, calls.clone())).await.is_ok());
+    assert!(manager.request_with(config(2), Request::models(None), cancel(), notify(), connect(next_peer, calls.clone())).await.is_ok());
     assert_eq!(calls.load(Ordering::SeqCst), 2);
 }
 
@@ -162,7 +178,7 @@ async fn durable_initialize_error_finishes_queued_reads_without_dispatching_them
     let manager = Manager::default();
     let peer = Arc::new(Mutex::new(Peer { initialize_error: true, ..Peer::default() }));
     let calls = Arc::new(AtomicUsize::new(0));
-    let error = manager.request_with(config(1), None, cancel(), notify(), connect(peer.clone(), calls)).await.unwrap_err();
+    let error = manager.request_with(config(1), Request::models(None), cancel(), notify(), connect(peer.clone(), calls)).await.unwrap_err();
     assert!(matches!(error, Error::Remote(-32001) | Error::Closed));
     assert!(model_requests(&peer).is_empty());
 }

@@ -115,6 +115,8 @@ try {
   Invoke-Step "Sites invitation search lifecycle contracts" { node scripts/verify-sites-sharing-invitation-search.mjs }
   Invoke-Step "Sites invitation actual input and keyboard contracts" { node scripts/verify-sites-sharing-invite-input.mjs }
   Invoke-Step "Codex Cloud authenticated configuration regression" { node scripts/verify-cloud-environments.mjs }
+  Invoke-Step "Codex Cloud draft binding and scoped readback" { node scripts/verify-cloud-draft-bindings.mjs }
+  Invoke-Step "Codex Cloud draft resume parameter contract" { node scripts/verify-cloud-draft-resume.mjs }
   Invoke-Step "Codex Cloud current access contract" { node scripts/verify-cloud-environment-access.mjs }
   Invoke-Step "Codex Cloud settings data contract" { node scripts/verify-cloud-environment-data.mjs }
   Invoke-Step "Rust cloud draft creation and unknown outcomes" { cargo test --locked --manifest-path src-tauri/Cargo.toml cloud_draft_tests }

@@ -701,6 +701,27 @@ async fn cloud_service_models(
     state: State<'_, AppState>,
     request: chatgpt_service::DurableModelsRequest,
 ) -> Result<chatgpt_service::DurableModelsResponse, chatgpt_service::ServiceError> {
+    let (profile, notify) = durable_service_context(&app, &state).await?;
+    state.chatgpt_service.durable_models(request, profile, |method, params| {
+        let app = &app; let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }, notify).await
+}
+
+#[tauri::command]
+async fn cloud_service_thread(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: chatgpt_service::DurableThreadRequest,
+) -> Result<chatgpt_service::DurableModelsResponse, chatgpt_service::ServiceError> {
+    let (profile, notify) = durable_service_context(&app, &state).await?;
+    state.chatgpt_service.durable_thread(request, profile, |method, params| {
+        let app = &app; let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }, notify).await
+}
+
+async fn durable_service_context(app: &AppHandle, state: &AppState) -> Result<(chatgpt_service::CloudProfile, durable::Notify), chatgpt_service::ServiceError> {
     let status = state.app_server.get_status().await;
     let user_agent = status.user_agent.filter(|value| !value.is_empty()).ok_or(chatgpt_service::ServiceError {
         code: "desktop_context_unavailable", message: "Desktop app-server context unavailable", status: None,
@@ -714,10 +735,7 @@ async fn cloud_service_models(
             }
         }
     });
-    state.chatgpt_service.durable_models(request, profile, |method, params| {
-        let app = &app; let state = &state;
-        async move { state.app_server.call(app, method, Some(params)).await }
-    }, notify).await
+    Ok((profile, notify))
 }
 
 #[tauri::command]
@@ -2267,6 +2285,7 @@ pub fn run() {
             cloud_service_read,
             cloud_service_create_draft,
             cloud_service_models,
+            cloud_service_thread,
             shortcut_menu_sync,
             keybindings::keyboard_bindings_read,
             keybindings::keyboard_bindings_write,
