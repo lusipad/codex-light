@@ -674,6 +674,27 @@ async fn cloud_service_read(
 }
 
 #[tauri::command]
+async fn cloud_service_create_draft(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: chatgpt_service::CloudDraftRequest,
+) -> Result<chatgpt_service::CloudDraftResponse, chatgpt_service::ServiceError> {
+    let status = state.app_server.get_status().await;
+    let user_agent = status.user_agent.filter(|value| !value.is_empty())
+        .ok_or(chatgpt_service::ServiceError {
+            code: "desktop_context_unavailable",
+            message: "Desktop app-server context unavailable",
+            status: None,
+        })?;
+    let profile = chatgpt_service::CloudProfile { user_agent, originator: "codex-tauri-native".to_owned() };
+    state.chatgpt_service.cloud_create_draft(request, profile, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
 fn chatgpt_service_cancel(state: State<'_, AppState>, request_id: String) -> bool {
     state.chatgpt_service.cancel(&request_id)
 }
@@ -2218,6 +2239,7 @@ pub fn run() {
             cloud_service_identity,
             cloud_service_access,
             cloud_service_read,
+            cloud_service_create_draft,
             shortcut_menu_sync,
             keybindings::keyboard_bindings_read,
             keybindings::keyboard_bindings_write,

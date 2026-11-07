@@ -119,6 +119,8 @@ export const CloudEnvironmentsView: React.FC<{ embedded?: boolean }> = ({ embedd
     : <span className="cloud-envs-repo-loading" role="status" aria-label="正在加载代码仓库…"><span /></span>;
   const selected = catalog?.items.find(item => item.id === selectedId);
   const effective = detail?.draft ?? detail;
+  const menuCanEdit = menu && access && (access.rbacEnabled === false || access.available
+    && (menu.item.shareSettings === "workspace" ? access.canManage : menu.item.isOwner !== false));
   return <div className={`cloud-envs-page${embedded ? " cloud-envs-embedded" : ""}`}>
     <div className="cloud-envs-content">
       {selectedId ? <>
@@ -155,6 +157,6 @@ export const CloudEnvironmentsView: React.FC<{ embedded?: boolean }> = ({ embedd
         </section>}
       </>}
     </div>
-    {menu && createPortal(<div ref={menuRef} className="cloud-envs-menu" role="menu" aria-label={`针对 ${menu.item.name} 的操作`} style={{ left: menu.left, top: menu.top }}><button type="button" role="menuitem" disabled title="环境编辑聊天尚未接入">{menu.item.versionRevision === 1 ? "继续设置" : "编辑"}</button><button type="button" role="menuitem" onClick={() => void openDetail(menu.item.id)}>查看</button><button type="button" role="menuitem" disabled title="环境删除尚未接入">删除环境</button></div>, document.body)}
+    {menu && createPortal(<div ref={menuRef} className="cloud-envs-menu" role="menu" aria-label={`针对 ${menu.item.name} 的操作`} style={{ left: menu.left, top: menu.top }}>{menuCanEdit && <button type="button" role="menuitem" disabled title="环境编辑聊天尚未接入">{menu.item.versionRevision === 1 ? "继续设置" : "编辑"}</button>}<button type="button" role="menuitem" onClick={() => void openDetail(menu.item.id)}>查看</button><button type="button" role="menuitem" disabled title="环境删除尚未接入">删除环境</button></div>, document.body)}
   </div>;
 };

@@ -159,4 +159,14 @@ await check("account invalidation/unmount abort details and repository names wit
 await check("menu Escape restores focus while IME composition does not close menu", async () => {
   const h = await boot(); const trigger = button(h, "针对 环境 one 的操作"); trigger.props.onClick({ currentTarget: trigger.element }); h.render(); h.key({ key: "Escape", isComposing: true }); assert.ok(walk(h.render()).some(n => n.props.role === "menu")); h.key({ key: "Escape" }); assert.equal(walk(h.render()).some(n => n.props.role === "menu"), false); assert.equal(h.document.activeElement, trigger.element); h.unmount();
 });
+await check("readonly environment menus omit editing while keeping the real detail entry", async () => {
+  for (const share of ["private", "workspace"]) for (const owner of [undefined, true, false]) for (const manages of [true, false]) {
+    const h = await boot(undefined, [summary("one", { share_settings: share, ...(owner === undefined ? {} : { is_owner: owner }), version_revision: 1 })], { rbacEnabled: true, canManage: manages });
+    const trigger = button(h, "针对 环境 one 的操作"); trigger.props.onClick({ currentTarget: trigger.element });
+    const menu = walk(h.render()).find(node => node.props.role === "menu");
+    const editable = share === "workspace" ? manages : owner !== false;
+    assert.equal(walk(menu).some(node => node.props.role === "menuitem" && text(node) === "继续设置"), editable);
+    button(h, "查看").props.onClick(); await flush(); assert.equal(count(h, "detail"), 1); h.unmount();
+  }
+});
 console.log(`PASS ${passed} cloud environment production JSX/hook scenarios; ReactDOM, bridge/access/service transport and lucide are explicit offline boundaries. HTTP, native UI, physical IME and pixel parity remain unverified.`);

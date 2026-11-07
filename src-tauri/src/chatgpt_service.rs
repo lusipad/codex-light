@@ -22,6 +22,8 @@ mod images_assets;
 mod gpts_assets;
 mod sites_assets;
 mod sites_settings;
+mod cloud_drafts;
+pub use cloud_drafts::{CloudDraftRequest, CloudDraftResponse};
 pub use sites_settings::{SitesSettingsRequest, SitesSettingsResponse};
 pub use sites_assets::{SiteAssetRef, SitesPinRequest, SitesPinResponse};
 pub use gpts_assets::GptAssetRef;
@@ -469,6 +471,7 @@ pub struct ChatgptService {
     sites_assets: Mutex<sites_assets::SitesRegistry>,
     site_pin_active: Mutex<std::collections::HashSet<String>>,
     site_settings_active: Mutex<std::collections::HashSet<(String,String,u64,String,&'static str)>>,
+    cloud_drafts: Mutex<cloud_drafts::CloudDraftRegistry>,
 }
 
 struct Registration<'a> {
@@ -966,6 +969,7 @@ impl ChatgptService {
         if let Ok(mut assets) = self.images_assets.lock() { *assets = images_assets::ImagesRegistry::default(); }
         if let Ok(mut assets) = self.sites_assets.lock() { *assets = sites_assets::SitesRegistry::default(); }
         if let Ok(mut assets) = self.gpts_assets.lock() { *assets = gpts_assets::GptsRegistry::default(); }
+        if let Ok(mut drafts) = self.cloud_drafts.lock() { drafts.invalidate(); }
         // Pending credential-bearing futures are dropped by cancellation. Cached
         // credentials are dropped synchronously whenever the session is unlocked.
         if let Ok(mut session) = self.session.try_lock() {
@@ -3579,6 +3583,7 @@ fn decode_response(
 trait Transport {
     fn send(&self, request: HttpRequest, cancel: Arc<AtomicBool>) -> TransportFuture<'_>;
     fn send_library_file(&self, request: HttpRequest, cancel: Arc<AtomicBool>) -> TransportFuture<'_> { self.send(request, cancel) }
+    fn send_cloud_draft(&self, request: HttpRequest, cancel: Arc<AtomicBool>) -> TransportFuture<'_> { self.send(request, cancel) }
 }
 
 struct CurlTransport;
@@ -3588,6 +3593,9 @@ impl Transport for CurlTransport {
     }
     fn send_library_file(&self, request: HttpRequest, cancel: Arc<AtomicBool>) -> TransportFuture<'_> {
         Box::pin(curl_request_limit(request, cancel, MAX_LIBRARY_FILE))
+    }
+    fn send_cloud_draft(&self, request: HttpRequest, cancel: Arc<AtomicBool>) -> TransportFuture<'_> {
+        Box::pin(curl_request_timed(request, cancel, MAX_RESPONSE, 600))
     }
 }
 
@@ -3689,6 +3697,10 @@ async fn curl_request(
 }
 
 async fn curl_request_limit(request: HttpRequest, cancel: Arc<AtomicBool>, limit: u64) -> ServiceResult<HttpResponse> {
+    curl_request_timed(request, cancel, limit, 45).await
+}
+
+async fn curl_request_timed(request: HttpRequest, cancel: Arc<AtomicBool>, limit: u64, timeout_seconds: u64) -> ServiceResult<HttpResponse> {
     if cancel.load(Ordering::SeqCst) {
         return Err(failure("cancelled", "Service request cancelled"));
     }
@@ -3724,7 +3736,7 @@ async fn curl_request_limit(request: HttpRequest, cancel: Arc<AtomicBool>, limit
             "--connect-timeout",
             "15",
             "--max-time",
-            "45",
+            &timeout_seconds.to_string(),
             "--max-filesize",
             &limit.to_string(),
             "--include",
@@ -3837,6 +3849,7 @@ mod tests {
     use super::*;
     use std::collections::VecDeque;
     use std::sync::atomic::AtomicUsize;
+    include!("chatgpt_service/cloud_drafts_tests.rs");
 
     fn identity() -> ServiceIdentity {
         ServiceIdentity {

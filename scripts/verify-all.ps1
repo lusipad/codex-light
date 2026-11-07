@@ -117,6 +117,7 @@ try {
   Invoke-Step "Codex Cloud authenticated configuration regression" { node scripts/verify-cloud-environments.mjs }
   Invoke-Step "Codex Cloud current access contract" { node scripts/verify-cloud-environment-access.mjs }
   Invoke-Step "Codex Cloud settings data contract" { node scripts/verify-cloud-environment-data.mjs }
+  Invoke-Step "Rust cloud draft creation and unknown outcomes" { cargo test --locked --manifest-path src-tauri/Cargo.toml cloud_draft_tests }
   Invoke-Step "Authenticated service renderer contracts" { node scripts/verify-chatgpt-service.mjs }
   Invoke-Step "Cloud archive fixed transport and identity envelopes" { node scripts/verify-archive-cloud-transport.mjs }
   Invoke-Step "Cloud archive pagination, account changes and listener lifecycle" { node scripts/verify-archive-cloud-tasks.mjs }
