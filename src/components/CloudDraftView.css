@@ -48,6 +48,19 @@
 .cloud-draft-timeline { padding-bottom: 24px; }
 .cloud-draft-fields { overflow: auto; padding: 16px; overflow-wrap: anywhere; }
 .cloud-draft-turn { display: flex; flex-direction: column; gap: 12px; }
+.cloud-draft-script-form { margin-top: 24px; gap: 12px; }
+.cloud-draft-script-form label { display: grid; gap: 6px; }
+.cloud-draft-script-form :is(input, textarea) {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-surface-2);
+  color: var(--text-primary);
+  font: inherit;
+}
+.cloud-draft-script-form textarea { resize: vertical; font-family: monospace; }
 
 @media (max-width: 720px) {
   .cloud-draft-view { position: relative; }

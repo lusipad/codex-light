@@ -23,6 +23,8 @@ mod gpts_assets;
 mod sites_assets;
 mod sites_settings;
 mod cloud_drafts;
+mod cloud_draft_save;
+pub use cloud_draft_save::CloudDraftSaveRequest;
 pub use cloud_drafts::{CloudDraftRequest, CloudDraftResponse};
 mod durable_models;
 pub use durable_models::{DurableModelsRequest, DurableModelsResponse};
@@ -3856,6 +3858,7 @@ mod tests {
     use std::collections::VecDeque;
     use std::sync::atomic::AtomicUsize;
     include!("chatgpt_service/cloud_drafts_tests.rs");
+    include!("chatgpt_service/cloud_draft_save_tests.rs");
     include!("chatgpt_service/durable_models_tests.rs");
 
     fn identity() -> ServiceIdentity {

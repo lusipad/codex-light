@@ -48,9 +48,16 @@ let responseIdentity = identity;
 let hostId = "durable";
 let receipt = { draft_id: "draft-A", environment_id: "environment-A", thread_id: "thread-A" };
 let creationCount = 0;
+const saves = [];
+let savedBody;
 const service = load("src/chatgptService.ts", {
   "./bridge": { tauriInvoke: async (command, { request }) => {
     if (command === "chatgpt_service_cancel") return true;
+    if (command === "cloud_service_save_draft") {
+      const { requestId, ...params } = request;
+      saves.push(JSON.parse(JSON.stringify(params)));
+      return { requestId, identity: responseIdentity, body: savedBody };
+    }
     if (command === "cloud_service_create_draft") {
       creationCount++;
       assert.equal(request.configId, "config-A");
@@ -169,3 +176,26 @@ await assert.rejects(restoreCloudDraftSession(session, prepared, options, cancel
 assert.equal(calls.filter(op => op.kind === "resume").length, 1);
 assert.equal(creationCount, 2, "resume retries must not issue draft creation requests");
 console.log("PASS cloud draft session: confirmed receipt precedes nonblocking title, bounded resume retries and cancellation without duplicate creation");
+
+const environment = load("src/cloudEnvironmentService.ts", { "./chatgptService": service });
+const { saveBoundDraftScripts } = load("src/cloudDraftScripts.ts", { "./chatgptService": service, "./cloudEnvironmentService": environment });
+const binding = session.binding;
+const draftBody = (id = binding.draftId) => ({
+  id: binding.configId, name: binding.name, version_id: "v1", status: "ready", share_settings: "private",
+  repositories: [], network_policy: { type: "disabled" },
+  draft: { id, base_version_id: "v1", revision: 3, repositories: [], network_policy: { type: "disabled" }, start_skill: "retained" },
+});
+const baseline = { ...environment.parseCloudDetail(draftBody(), binding.configId, binding.draftId).draft, revision: 2, installScript: "old" };
+const values = { installScript: "", startSkill: "retained" };
+savedBody = draftBody();
+const saved = await saveBoundDraftScripts(binding, baseline, values, identity, signal);
+assert.equal(saved.draft.revision, 3);
+assert.deepEqual(saves, [{ configId: binding.configId, draftId: binding.draftId, baseVersionId: "v1",
+  expectedRevision: 2, installScript: "", expectedIdentity: identity }]);
+await assert.rejects(saveBoundDraftScripts(binding, baseline, { ...values, installScript: "old" }, identity, signal), /没有更改/);
+await assert.rejects(saveBoundDraftScripts(binding, baseline, values, { ...identity, userId: "other" }, signal), /不匹配/);
+assert.equal(saves.length, 1);
+savedBody = draftBody("wrong-draft");
+await assert.rejects(saveBoundDraftScripts(binding, baseline, values, identity, signal), { code: "cloud_draft_save_unconfirmed" });
+assert.equal(saves.length, 2, "malformed confirmed readback must not trigger another save");
+console.log("PASS cloud draft save: changed fields only, explicit clear, no-op and identity rejection, malformed readback does not replay");

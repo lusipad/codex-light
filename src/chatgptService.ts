@@ -312,6 +312,17 @@ export async function createCloudDraft(configId: string, identity: ServiceIdenti
   return { draftId: draft_id, environmentId: environment_id, threadId: thread_id as string };
 }
 
+export async function saveCloudDraftScripts(request: {
+  configId: string; draftId: string; baseVersionId: string; expectedRevision: number;
+  installScript?: string; startSkill?: string;
+}, identity: ServiceIdentity, signal: AbortSignal): Promise<unknown> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; body: unknown }>(
+    "cloud_service_save_draft", requestId, { request: { ...request, requestId, expectedIdentity: identity } }, signal,
+  );
+  return responseBody(result, requestId, identity);
+}
+
 export async function readChatgptService(
   operation: ServiceOperation, params: Record<string, unknown>, identity: ServiceIdentity, signal: AbortSignal,
 ): Promise<unknown> {
@@ -660,6 +671,7 @@ export function serviceErrorMessage(error: unknown): string {
     forbidden: "当前账号无权访问此服务。", rate_limited: "请求过于频繁，请稍后重试。",
     cancelled: "请求已取消。", transport_unavailable: "系统 HTTP 组件不可用。",
     cloud_draft_unconfirmed: "无法确认环境草稿，请先检查聊天列表。",
+    cloud_draft_save_unconfirmed: "保存结果尚未确认，请先核对服务端草稿。",
     cloud_draft_pending: "此环境已有正在处理或尚未确认的草稿请求，请检查聊天列表。",
     cloud_resume_timeout: "恢复云端会话超时。", cloud_thread_closing: "云端会话正在关闭。",
     network_error: "服务连接失败，请检查网络后重试。", timeout: "服务请求超时，请重试。",
