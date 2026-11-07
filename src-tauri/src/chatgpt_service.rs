@@ -24,6 +24,7 @@ mod sites_assets;
 mod sites_settings;
 mod cloud_drafts;
 mod cloud_draft_save;
+mod cloud_repositories;
 pub use cloud_draft_save::CloudDraftSaveRequest;
 pub use cloud_drafts::{CloudDraftRequest, CloudDraftResponse};
 mod durable_models;
@@ -95,6 +96,11 @@ pub enum ServiceOperation {
     SitesTeams,
     GithubRepository,
     GithubConnections,
+    CloudGithubDefault,
+    CloudGithubEnterprise,
+    CloudGithubLinks,
+    CloudGithubInstallations,
+    CloudGithubRepositories,
     ShareAccounts,
     ShareUsers,
     ShareGroups,
@@ -1505,6 +1511,7 @@ impl ChatgptService {
         let gpts_read = matches!(request.operation, ServiceOperation::GptsDiscovery | ServiceOperation::GptsCategory | ServiceOperation::GptsSearch | ServiceOperation::GptsDetail | ServiceOperation::GptsAbout | ServiceOperation::GptsWorkspaceSettings);
         let sites_read = matches!(request.operation, ServiceOperation::SitesEntryAccess | ServiceOperation::SitesPinned | ServiceOperation::SitesPin | ServiceOperation::SitesAccess | ServiceOperation::SitesList | ServiceOperation::SitesShared | ServiceOperation::SitesDetail | ServiceOperation::SitesEnvironment | ServiceOperation::SitesDomains | ServiceOperation::SitesShareAccess | ServiceOperation::SitesPreferredLiveUrl | ServiceOperation::SitesWorkspaceSettings | ServiceOperation::SitesUsers | ServiceOperation::SitesGroups | ServiceOperation::SitesTeams);
         let cloud_read = matches!(request.operation, ServiceOperation::CloudWorkspaceSettings);
+        let repository_read = cloud_repositories::repository_read(&request.operation);
         let images_read = matches!(request.operation, ServiceOperation::ImagesInit | ServiceOperation::ImagesStyles | ServiceOperation::ImagesRecent | ServiceOperation::ImagesWorkspaceSettings);
         // Order snapshots before the session lock, not when a possibly late response arrives.
         let images_snapshot = self.images_snapshot.fetch_add(1, Ordering::SeqCst) + 1;
@@ -1542,7 +1549,18 @@ impl ChatgptService {
                         http_request.headers.insert("X-Codex-Expected-User-Id".into(), request.expected_identity.user_id.clone());
                         http_request.headers.insert("X-Codex-Expected-Account-Id".into(), request.expected_identity.account_id.clone());
                     }
-                    if sites_read || cloud_read || gpts_read || images_read || archive_tasks || profile_read || review_connections || matches!(request.operation, ServiceOperation::StorageUsage | ServiceOperation::LibraryNodes | ServiceOperation::LibraryDirectoryPath | ServiceOperation::LibraryFavorites | ServiceOperation::LibraryImages | ServiceOperation::LibrarySuggested | ServiceOperation::LibrarySettings | ServiceOperation::LibraryImage | ServiceOperation::ShareAccounts) {
+                    if repository_read {
+                        http_request.headers.insert("OAI-Product-Sku".into(), "CODEX".into());
+                        if matches!(request.operation, ServiceOperation::CloudGithubDefault | ServiceOperation::CloudGithubEnterprise | ServiceOperation::CloudGithubLinks) {
+                            http_request.headers.insert("X-Codex-Surface".into(), "other".into());
+                        }
+                        if matches!(request.operation, ServiceOperation::CloudGithubLinks) {
+                            http_request.method = HttpMethod::Post;
+                            http_request.headers.insert("Content-Type".into(), "application/json".into());
+                            http_request.body = br#"{"principals":[],"link_refresh_strategy":"NONE"}"#.to_vec();
+                        }
+                    }
+                    if sites_read || cloud_read || repository_read || gpts_read || images_read || archive_tasks || profile_read || review_connections || matches!(request.operation, ServiceOperation::StorageUsage | ServiceOperation::LibraryNodes | ServiceOperation::LibraryDirectoryPath | ServiceOperation::LibraryFavorites | ServiceOperation::LibraryImages | ServiceOperation::LibrarySuggested | ServiceOperation::LibrarySettings | ServiceOperation::LibraryImage | ServiceOperation::ShareAccounts) {
                         share_network_allowed(&call, &http_request.url).await?;
                         self.check_share_current(&request.expected_identity, &registration)?;
                     }
@@ -1553,7 +1571,7 @@ impl ChatgptService {
                         share_network_allowed(&call, &http_request.url).await?;
                         self.check_share_current(&request.expected_identity, &registration)?;
                     }
-                    let images_destination = (sites_read || images_read || gpts_read || cloud_read).then(|| http_request.url.clone());
+                    let images_destination = (sites_read || images_read || gpts_read || cloud_read || repository_read).then(|| http_request.url.clone());
                     let response = send_bounded(transport, http_request, registration.cancelled.clone(), Duration::from_secs(if usage { 10 } else if review_connections || matches!(request.operation, ServiceOperation::SitesUsers | ServiceOperation::SitesGroups) { 15 } else { 50 })).await?;
                     if self.generation() != generation {
                         return Err(failure("account_changed", "Authenticated identity changed"));
@@ -1568,16 +1586,20 @@ impl ChatgptService {
                         // A workspace IP refusal is not NDn's unavailable/unsupported source.
                         return Err(ServiceError { code:"ip_not_authorized", message:"Current IP address is not authorized for this workspace", status:Some(401) });
                     }
-                    if response.status == 401 && attempt == 0 && !((usage || profile_read || review_connections) && account_instructions_ip_denied(&response)) {
+                    if response.status == 401 && attempt == 0 && !((usage || profile_read || review_connections || repository_read) && account_instructions_ip_denied(&response)) {
                         self.prepare(&mut session, generation, &call, true).await?;
                         continue;
                     }
                     if ((usage || archive_tasks) && matches!(response.status, 401 | 403 | 404)) ||
+                        (matches!(request.operation, ServiceOperation::CloudGithubDefault) && matches!(response.status, 403 | 404)) ||
                         (matches!(request.operation, ServiceOperation::ProfileIdentity | ServiceOperation::ProfilePage) && matches!(response.status, 403 | 404)) {
                         return Ok(ServiceResponse { request_id:request.request_id.clone(), identity:request.expected_identity.clone(),
                             status:response.status, body:Value::Null, headers:BTreeMap::new(), assets:None, gpt_assets:None,site_assets:None });
                     }
                     let mut decoded = decode_response(response, request.request_id.clone(), request.expected_identity.clone())?;
+                    if repository_read {
+                        decoded.body = cloud_repositories::repository_body(&request.operation, &decoded.body)?;
+                    }
                     if matches!(request.operation, ServiceOperation::SitesList | ServiceOperation::SitesShared | ServiceOperation::SitesPinned | ServiceOperation::SitesDetail) { decoded.site_assets = Some(self.register_sites_assets(&request, &decoded.body, &session.credentials.as_ref().unwrap().origin, images_snapshot)?); }
                     if matches!(request.operation, ServiceOperation::GptsDiscovery | ServiceOperation::GptsCategory | ServiceOperation::GptsSearch | ServiceOperation::GptsDetail) {
                         decoded.gpt_assets = Some(self.register_gpts_assets(&request, &decoded.body, &session.credentials.as_ref().unwrap().origin, images_snapshot)?);
@@ -1636,7 +1658,7 @@ impl ChatgptService {
             }
             return Err(failure("account_changed", "Authenticated identity changed"));
         }
-        if sites_read || cloud_read || gpts_read || images_read || archive_tasks || matches!(request.operation, ServiceOperation::LibraryDirectoryPath | ServiceOperation::LibrarySuggested) { self.check_share_current(&request.expected_identity, &registration)?; }
+        if sites_read || cloud_read || repository_read || gpts_read || images_read || archive_tasks || matches!(request.operation, ServiceOperation::LibraryDirectoryPath | ServiceOperation::LibrarySuggested) { self.check_share_current(&request.expected_identity, &registration)?; }
         result
     }
 
@@ -2552,6 +2574,10 @@ fn resolve_route(operation: &ServiceOperation, params: &Value) -> ServiceResult<
             (format!("/backend-api/wham/github/repositories/{}", encode_segment(id)?), &["id"])
         }
         ServiceOperation::GithubConnections => ("/backend-api/wham/github/connections".into(), &[]),
+        ServiceOperation::CloudGithubDefault | ServiceOperation::CloudGithubEnterprise | ServiceOperation::CloudGithubLinks
+        | ServiceOperation::CloudGithubInstallations | ServiceOperation::CloudGithubRepositories => {
+            return cloud_repositories::repository_route(operation, &Value::Object(params.clone()));
+        }
         ServiceOperation::SitesList => (
             "/backend-api/websites".into(),
             &["limit", "include_editable", "after"],
@@ -5584,6 +5610,87 @@ mod tests {
         assert_eq!(requests[0].headers["X-Codex-Expected-Account-Id"], "account-fixture");
         assert!(resolve_route(&ServiceOperation::GithubConnections, &json!({"url":"https://other.invalid"})).is_err());
         assert!(resolve_route(&ServiceOperation::GithubConnections, &json!({"accountId":"other"})).is_err());
+    }
+
+    #[test]
+    fn cloud_repository_discovery_maps_official_list_and_search_scopes() {
+        let operation = ServiceOperation::CloudGithubRepositories;
+        let installation = json!({"id":"37","accountLogin":"example-org","accountType":"Organization"});
+        for (query, scope, expected) in [
+            ("", Value::Null, "/backend-api/wham/github/list-repositories?connector_id=connector&link_id=link&page=2&per_page=20"),
+            ("", installation.clone(), "/backend-api/wham/github/repositories/v2/37?connector_id=connector&link_id=link&page=2&per_page=20"),
+            (" repo & 中 ", Value::Null, "/backend-api/wham/github/repositories/search/all-installations?connector_id=connector&link_id=link&page=2&limit=20&query=repo+%26+%E4%B8%AD"),
+            ("repo", installation, "/backend-api/wham/github/repositories/search?connector_id=connector&link_id=link&page=2&per_page=20&query=repo&account_login=example-org&account_type=Organization"),
+        ] {
+            let args = json!({"connectorId":"connector","linkId":"link","page":2,"query":query,"installation":scope});
+            assert_eq!(resolve_route(&operation, &args).unwrap(), expected);
+        }
+        let args = json!({"connectorId":"connector"});
+        assert_eq!(resolve_route(&ServiceOperation::CloudGithubInstallations, &args).unwrap(),
+            "/backend-api/wham/github/installations/v2?connector_id=connector");
+        for args in [
+            json!({"connectorId":"connector","page":0,"query":""}),
+            json!({"connectorId":"connector","page":1,"query":"","url":"https://other.invalid"}),
+            json!({"connectorId":"connector","page":1,"query":"","installation":{"id":"../secret","accountLogin":"a","accountType":"User"}}),
+            json!({"connectorId":"connector","page":1,"query":"x\r\ny"}),
+        ] {
+            assert_eq!(resolve_route(&operation, &args).unwrap_err().code, "invalid_request");
+        }
+    }
+
+    #[tokio::test]
+    async fn cloud_repository_discovery_reads_links_without_refresh_and_binds_identity() {
+        let service = ChatgptService::default();
+        let body = json!({"links":[
+            {"id":"connected","connector_id":"connector","owner_profile":{"nickname":" Alex ","email":"private@example.invalid"},"credential":"fixture-private-value"},
+            {"id":"reauth","connector_id":"connector","auth_status":"REAUTH_REQUIRED"},
+            {"id":"hidden","connector_id":"connector","visibility":"HIDDEN"},
+            {"id":"implicit_link::connector","connector_id":"connector"}
+        ]});
+        let transport = instructions_transport(&[200], &[body]);
+        let mut input = request("cloud-github-links");
+        input.operation = ServiceOperation::CloudGithubLinks;
+        let result = service.read_with(input, share_rpc, &transport).await.unwrap();
+        assert_eq!(result.body, json!({"links":[
+            {"id":"connected","connector_id":"connector","available":true,"nickname":"Alex"},
+            {"id":"reauth","connector_id":"connector","available":false,"nickname":null}
+        ]}));
+        assert!(!serde_json::to_string(&result).unwrap().contains(&fixture_token()));
+        {
+            let calls = transport.requests.lock().unwrap();
+            assert_eq!(calls.len(), 1);
+            assert_eq!(calls[0].url, "https://chatgpt.com/backend-api/aip/connectors/links/list_accessible");
+            assert_eq!(calls[0].method, HttpMethod::Post);
+            assert_eq!(calls[0].headers["OAI-Product-Sku"], "CODEX");
+            assert_eq!(calls[0].headers["X-Codex-Surface"], "other");
+            assert_eq!(calls[0].headers["ChatGPT-Account-Id"], "account-fixture");
+            assert_eq!(serde_json::from_slice::<Value>(&calls[0].body).unwrap(), json!({"principals":[],"link_refresh_strategy":"NONE"}));
+        }
+        let mut rejected = request("cloud-github-links-other");
+        rejected.operation = ServiceOperation::CloudGithubLinks;
+        rejected.expected_identity.account_id = "other".into();
+        assert_eq!(service.read_with(rejected, share_rpc, &transport).await.err().unwrap().code, "account_changed");
+        assert_eq!(transport.requests.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn cloud_repository_discovery_reads_repository_pages_and_omits_foreign_fields() {
+        let service = ChatgptService::default();
+        let raw = json!({"repositories":[{"id":"github-42","repository_full_name":"example/one","default_branch":"release","unrelated":"omitted"},
+            {"id":"github-51","repository_full_name":"example/two"}]});
+        let transport = instructions_transport(&[200], &[raw]);
+        let mut input = request("cloud-github-page");
+        input.operation = ServiceOperation::CloudGithubRepositories;
+        input.params = json!({"connectorId":"connector","linkId":"link","page":1,"query":""});
+        let result = service.read_with(input, share_rpc, &transport).await.unwrap();
+        assert_eq!(result.body, json!({"repositories":[
+            {"id":"github-42","repository_full_name":"example/one","default_branch":"release"},
+            {"id":"github-51","repository_full_name":"example/two","default_branch":null}
+        ]}));
+        let calls = transport.requests.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].method, HttpMethod::Get);
+        assert!(calls[0].url.ends_with("/backend-api/wham/github/list-repositories?connector_id=connector&link_id=link&page=1&per_page=20"));
     }
 
     #[tokio::test]
