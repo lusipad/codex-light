@@ -16,7 +16,7 @@
 
 完整检查后的唯一代码收尾是给三个仅用于测试的传输辅助接口增加 `cfg(test)`，收窄生产接口并消除本轮新增的未使用告警。该调整后单独复验 22 项宿主专项和原生构建；完整标准检查未重复。两份输入清单保留调整前后差异。
 
-最终 Windows debug 构建退出 0，722 个产品输入在最终专项与构建前后保持稳定。候选包 `dist-artifacts/cloud-22G-20261107/CodexNative.exe`，SHA-256 `4dff34a3ff169714c94c412377d75f8114aa652b3ff584249f5c5d5b4d4eafa0`。保留原有 Vite 分块及 `worktree_archive_queue::cancel_owner` 告警，未顺手修改。本阶段先本地提交，未推送、未发布，尚无本增量的远端 CI 结果。
+最终 Windows debug 构建退出 0，722 个产品输入在最终专项与构建前后保持稳定。候选包 `dist-artifacts/cloud-22G-20261107/CodexNative.exe`，SHA-256 `4dff34a3ff169714c94c412377d75f8114aa652b3ff584249f5c5d5b4d4eafa0`。保留原有 Vite 分块及 `worktree_archive_queue::cancel_owner` 告警，未顺手修改。阶段提交 `51b370e` 已推送；补充 preview.11 发布说明后，以最终提交的远端 CI 为发布依据，当前尚未确认本增量的远端 CI 或发布成功。
 
 首次全库检查使用仓库内临时目录，648 项通过、2 项失败：该卷未提供 8.3 别名，并且 Git 向父目录发现了本仓库，破坏“非 Git 目录”用例的前提。失败日志保留为 `full-rust-invalid-temp.log`，后续验证改用仓库外 C 盘私有临时目录；产品代码和测试断言未为此修改。
 
