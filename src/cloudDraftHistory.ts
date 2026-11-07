@@ -2,6 +2,7 @@ import { callCloudThread, type ServiceIdentity } from "./chatgptService";
 import { tauriListen } from "./bridge";
 
 interface HistoryEntry { id: string; [key: string]: unknown }
+interface HistoryTurn extends HistoryEntry { status?: unknown }
 interface Page<T> { data: T[]; nextCursor?: string | null }
 type Item = HistoryEntry | { item: HistoryEntry; turnId: string; startedAtMs?: number | null; completedAtMs?: number | null };
 
@@ -10,7 +11,7 @@ export async function readCloudDraftHistory(threadId: string, identity: ServiceI
 }) {
   const { cursor, turnLimit, itemLimit } = options;
   if (!Number.isInteger(itemLimit) || itemLimit < 1 || itemLimit > 100) throw Error("云端消息分页上限无效。");
-  const page = await callCloudThread({ kind: "turns", threadId, cursor, limit: turnLimit }, identity, signal) as Page<HistoryEntry>;
+  const page = await callCloudThread({ kind: "turns", threadId, cursor, limit: turnLimit }, identity, signal) as Page<HistoryTurn>;
   if (cursor !== null && page.nextCursor === cursor) throw Error("云端会话历史返回了重复游标。");
   const turns = [];
   const turnIds = new Set<string>();
@@ -109,12 +110,16 @@ export async function watchCloudDraftHistory(
     void refresh();
   };
   signal.throwIfAborted();
-  const stop = await tauriListen<{ hostId?: string; identity?: ServiceIdentity; method?: string; params?: { threadId?: string } }>(
+  const stop = await tauriListen<{
+    hostId?: string; identity?: ServiceIdentity; method?: string;
+    params?: { threadId?: string; status?: { type?: string } };
+  }>(
     "cloud-app-server:notification", event => {
       if (signal.aborted || event?.hostId !== "durable" || event.params?.threadId !== threadId
         || event.identity?.accountId !== identity.accountId || event.identity.userId !== identity.userId
         || event.identity.generation !== identity.generation
-        || (event.method !== "turn/started" && event.method !== "turn/completed")) return;
+        || (event.method !== "turn/started" && event.method !== "turn/completed"
+          && !(event.method === "thread/status/changed" && event.params.status?.type === "idle"))) return;
       requestRefresh();
     },
   );

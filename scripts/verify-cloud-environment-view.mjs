@@ -15,7 +15,7 @@ const access = { identity, available: true, canManage: true, rbacEnabled: false,
 const summary = (id = "one", extra = {}) => ({ id, name: `环境 ${id}`, version_id: "v1", share_settings: "private", repositories: [{ repository_id: "repo", ref: "main" }], ...extra });
 const config = (id = "one", extra = {}) => ({ ...summary(id), status: "ready", network_policy: { type: "disabled" }, ...extra });
 
-export function cloudEnvironmentHarness({ listenerError, deferredListener = false, embedded = false, onOpenDraft } = {}) {
+export function cloudEnvironmentHarness({ listenerError, deferredListener = false, embedded = false, onOpenDraft, pendingDraft = null } = {}) {
   const hooks = [], effects = [], layouts = [], calls = [], listeners = [], timers = new Map(), elements = new Map(), events = new Map();
   let cursor = 0, domIndex = 0, writes = 0, clock = 0, nextTimer = 0, tree, unlistened = 0;
   const document = { body: {}, activeElement: null,
@@ -67,6 +67,7 @@ export function cloudEnvironmentHarness({ listenerError, deferredListener = fals
       } };
       if (name === "../cloudEnvironmentAccess") return { readCloudEnvironmentAccess: signal => call("access", [], signal) };
       if (name === "../cloudDraftSession") return { createCloudDraftSession: (environment, names, current, signal) => call("create", [environment, names, current], signal) };
+      if (name === "../cloudDraftRepositoryApply") return { pendingRepositoryApplySession: () => pendingDraft };
       if (name === "../chatgptService") return { readCloudService: (operation, params, current, signal) => call(operation, [params, current], signal), serviceErrorMessage: cause => cause.message || cause.code };
       if (name === "../cloudEnvironmentService") return { ...data, loadCloudCatalog: (current, signal) => call("catalog", [current], signal), loadRepositoryName: (id, current, signal) => call("repository", [id, current], signal) };
       assert.fail(name);
@@ -197,6 +198,18 @@ await check("an invalidated edit request cannot open its late receipt", async ()
   const pending = latest(h, "create");
   h.invalidate(); assert.equal(pending.signal.aborted, true);
   pending.resolve({ session: { threadId: "previous-account" }, persisted: true }); await flush();
+  h.unmount();
+});
+await check("a pending repository application reopens its existing draft instead of creating a new one", async () => {
+  const pendingDraft = { threadId: "existing", binding: { configId: "one" }, identity };
+  const opened = [];
+  const h = await boot(cloudEnvironmentHarness({ pendingDraft, onOpenDraft: (...args) => opened.push(args) }));
+  const trigger = button(h, "针对 环境 one 的操作");
+  trigger.props.onClick({ currentTarget: trigger.element });
+  button(h, "编辑").props.onClick();
+  await flush();
+  assert.deepEqual(opened, [[pendingDraft, true]]);
+  assert.equal(count(h, "create"), 0);
   h.unmount();
 });
 console.log(`PASS ${passed} cloud environment production JSX/hook scenarios; ReactDOM, bridge/access/service transport and lucide are explicit offline boundaries. HTTP, native UI, physical IME and pixel parity remain unverified.`);

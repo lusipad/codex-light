@@ -5,6 +5,7 @@ import { tauriListen } from "../bridge";
 import { readCloudEnvironmentAccess, type CloudEnvironmentAccess } from "../cloudEnvironmentAccess";
 import { readCloudService, serviceErrorMessage } from "../chatgptService";
 import { createCloudDraftSession, type CloudDraftSession } from "../cloudDraftSession";
+import { pendingRepositoryApplySession } from "../cloudDraftRepositoryApply";
 import { cloudSharingLabel, filterCloudCatalog, loadCloudCatalog, loadRepositoryName, parseCloudDetail,
   type CloudCatalog, type CloudDetail, type CloudSummary, type RepositoryName } from "../cloudEnvironmentService";
 import "./CloudEnvironmentsView.css";
@@ -153,6 +154,8 @@ export const CloudEnvironmentsView: React.FC<{ embedded?: boolean; onOpenDraft?:
     creating.current = controller;
     setCreatingId(item.id); setCreateError(null); setMenu(null);
     try {
+      const pending = pendingRepositoryApplySession(item.id, access.identity);
+      if (pending) { onOpenDraft(pending, true); return; }
       const repositoryNames = Object.fromEntries(item.repositories.flatMap(({ id }) => names[id]?.name ? [[id, names[id].name]] : []));
       const { session, persisted } = await createCloudDraftSession(item, repositoryNames, access.identity, controller.signal);
       if (!controller.signal.aborted) onOpenDraft(session, persisted);

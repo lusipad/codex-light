@@ -180,11 +180,12 @@ console.log("PASS cloud draft session: confirmed receipt precedes nonblocking ti
 const environment = load("src/cloudEnvironmentService.ts", { "./chatgptService": service });
 const network = load("src/cloudDraftNetwork.ts", {});
 let metadataReadback;
-const { saveBoundDraftFields, draftFieldChanges, draftFieldsMatch, saveBoundDraftMetadata,
-  draftMetadataValues, compareDraftMetadata } = load("src/cloudDraftFields.ts", {
+const fields = load("src/cloudDraftFields.ts", {
   "./chatgptService": service, "./cloudEnvironmentService": environment, "./cloudDraftNetwork": network,
   "./cloudDraftBindings": { readBoundCloudDraft: async () => metadataReadback },
 });
+const { saveBoundDraftFields, draftFieldChanges, draftFieldsMatch, saveBoundDraftMetadata,
+  draftMetadataValues, compareDraftMetadata } = fields;
 const binding = session.binding;
 const draftBody = (id = binding.draftId) => ({
   id: binding.configId, name: binding.name, version_id: "v1", status: "ready", share_settings: "private",
@@ -352,3 +353,98 @@ finishRegistration();
 await assert.rejects(registration, { name: "AbortError" });
 assert.equal(stopped, 2, "late registration must release its listener");
 console.log("PASS cloud draft live history: listener-before-resume, scoped notification bursts, refresh retry, pagination preservation and cancellation");
+
+const journal = new Map();
+const applyCalls = [];
+let lockTail = Promise.resolve(), status = "active", startFailure, savedFailure, failStorage = false;
+let currentDraft;
+const applySession = { ...session, identity, threadId: "apply-thread" };
+const repositoryBaseline = { ...baseline, repositories: currentRepositories };
+const applyValues = { ...fields.draftFieldValues(repositoryBaseline), repositories: selectedRepositories };
+const applyStorage = {
+  getItem: key => journal.get(key) ?? null,
+  setItem: (key, value) => { if (failStorage) throw Error("storage unavailable"); journal.set(key, value); },
+  removeItem: key => journal.delete(key),
+};
+const journalState = () => JSON.parse([...journal.values()][0] ?? "null");
+const bindingsForApply = {
+  rememberCloudDraftBinding: () => true,
+  listCloudDraftBindings: (configId, owner) => configId === binding.configId && owner.accountId === identity.accountId
+    ? [[applySession.threadId, binding]] : [],
+  readBoundCloudDraft: async () => ({ draft: currentDraft }),
+};
+const application = load("src/cloudDraftRepositoryApply.ts", {
+  "./chatgptService": { callCloudThread: async (operation, owner) => {
+    assert.equal(owner, identity);
+    if (operation.kind === "read") return { thread: { id: operation.threadId, status: { type: status } } };
+    assert.equal(journalState().state, "unconfirmed");
+    applyCalls.push(operation);
+    if (startFailure) throw startFailure;
+    return { turn: { id: "accepted-turn" } };
+  } },
+  "./cloudDraftBindings": bindingsForApply,
+  "./cloudDraftFields": { ...fields, saveBoundDraftFields: async (...args) => {
+    assert.equal(journalState().state, "saving");
+    if (savedFailure) throw savedFailure;
+    const value = await saveBoundDraftFields(...args);
+    currentDraft = value.draft;
+    return value;
+  } },
+}, { localStorage: applyStorage, navigator: { locks: { request: (_key, { signal: active }, work) => {
+  const operation = lockTail.then(() => { active.throwIfAborted(); return work(); });
+  lockTail = operation.catch(() => {});
+  return operation;
+} } } });
+const stageRepositories = () => application.saveDraftWithRepositoryApply(applySession, repositoryBaseline, applyValues,
+  { "github-new": "org/new", "github-old": "org/old" }, signal);
+const readyHistory = { turns: [{ turn: { id: "last", status: "completed", items: [{ type: "agentMessage" }] } }] };
+const advanceApply = (history = readyHistory, retry = false) => application.advanceRepositoryApply(applySession, history, retry, signal);
+failStorage = true;
+const beforeApplySaves = saves.length;
+await assert.rejects(stageRepositories(), /storage unavailable/);
+assert.equal(saves.length, beforeApplySaves, "storage failure must not dispatch a write");
+failStorage = false;
+await stageRepositories();
+const firstApplyId = journalState().id;
+assert.equal(application.pendingRepositoryApplySession(binding.configId, identity).threadId, applySession.threadId);
+assert.equal(application.pendingRepositoryApplySession(binding.configId, { ...identity, accountId: "other" }), null);
+assert.equal(await advanceApply(), "queued");
+assert.equal(applyCalls.length, 0);
+status = "idle";
+assert.equal(await advanceApply({ turns: [{ turn: { status: "interrupted", items: [] } }] }), "paused");
+assert.equal(await advanceApply(), "paused");
+assert.deepEqual(await Promise.all([advanceApply(readyHistory, true), advanceApply(readyHistory, true)]), ["sent", null]);
+assert.equal(applyCalls.length, 1);
+assert.equal(applyCalls[0].clientUserMessageId, firstApplyId);
+assert.equal(JSON.stringify(applyCalls[0].added), '["org/new"]');
+assert.equal(JSON.stringify(applyCalls[0].removed), '["org/old"]');
+assert.equal(saves.length, beforeApplySaves + 1, "message retry must not rewrite the draft");
+
+await stageRepositories();
+const unknownApplyId = journalState().id;
+startFailure = { code: "cloud_repository_apply_unconfirmed" };
+assert.equal(await advanceApply(), "unconfirmed");
+assert.equal(await advanceApply({ turns: [{ turn: { items: [{ type: "userMessage", clientId: "other-id" }] } }] }, true), "unconfirmed");
+assert.equal(applyCalls.length, 2, "ambiguous delivery must never be replayed");
+assert.equal(await advanceApply({ turns: [{ turn: { items: [{ type: "userMessage", clientId: unknownApplyId }] } }] }), "sent");
+
+savedFailure = { code: "cloud_draft_save_unconfirmed" };
+await assert.rejects(stageRepositories(), { code: "cloud_draft_save_unconfirmed" });
+assert.equal(journalState().state, "saving");
+currentDraft = repositoryBaseline;
+assert.equal(await advanceApply(), "saving");
+currentDraft = { ...repositoryBaseline, revision: repositoryBaseline.revision + 1, repositories: selectedRepositories };
+startFailure = { code: "desktop_context_unavailable" };
+assert.equal(await advanceApply(), "retry");
+assert.equal(await advanceApply(), "retry");
+startFailure = undefined;
+currentDraft = { ...currentDraft, repositories: currentRepositories };
+assert.equal(await advanceApply(readyHistory, true), "obsolete");
+assert.equal(applyCalls.length, 3, "reverted changes must not send obsolete work");
+assert.equal(journal.size, 0);
+await assert.rejects(stageRepositories(), { code: "cloud_draft_save_unconfirmed" });
+currentDraft = { ...repositoryBaseline, revision: repositoryBaseline.revision + 1 };
+assert.equal(await advanceApply(), "superseded");
+assert.equal(journal.size, 0);
+assert.equal(applyCalls.length, 3, "a new revision with a different selection must not wake the saved message");
+console.log("PASS cloud repository save and apply: journal-before-write, restart binding, queue, interruption, single dispatch, UUID recovery and obsolete filtering");

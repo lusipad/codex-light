@@ -30,7 +30,7 @@ export function compareDraftMetadata(previous: Metadata, values: Metadata, curre
   return keys.every(key => current[key] === previous[key]) ? "unchanged" : "conflict";
 }
 
-function sameRepositoryFields(left: CloudRepository[], right: CloudRepository[]) {
+export function sameRepositoryFields(left: CloudRepository[], right: CloudRepository[]) {
   if (left === right) return true;
   const rows = new Map(right.map(repo => [repo.id, repo]));
   return rows.size === right.length && left.length === right.length

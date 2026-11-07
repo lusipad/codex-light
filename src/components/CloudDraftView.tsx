@@ -7,6 +7,7 @@ import { compareDraftMetadata, draftFieldChanges, draftFieldsMatch, draftFieldVa
   saveBoundDraftFields, saveBoundDraftMetadata } from "../cloudDraftFields";
 import { readCloudEnvironmentAccess } from "../cloudEnvironmentAccess";
 import { mergeCloudDraftHistory, readCloudDraftHistory, watchCloudDraftHistory } from "../cloudDraftHistory";
+import { advanceRepositoryApply, saveDraftWithRepositoryApply, type RepositoryApplyStatus } from "../cloudDraftRepositoryApply";
 import { prepareCloudDraftContext, restoreCloudDraftSession, type CloudDraftSession } from "../cloudDraftSession";
 import type { CloudDetail } from "../cloudEnvironmentService";
 import { extractTextFromItem } from "../threadText";
@@ -22,6 +23,16 @@ type History = Awaited<ReturnType<typeof readCloudDraftHistory>>;
 type Metadata = ReturnType<typeof draftMetadataValues>;
 type SavePhase = "draft" | "metadata";
 const historyLimits = { turnLimit: 5, itemLimit: 100 };
+const repositoryApplyMessages: Record<RepositoryApplyStatus, string> = {
+  saving: "仓库保存结果尚未确认。",
+  queued: "仓库已保存，应用消息等待会话空闲。",
+  paused: "上一轮已中断，应用消息已暂停。",
+  retry: "仓库已保存，应用消息发送失败。",
+  unconfirmed: "应用消息的投递结果尚未确认。",
+  sent: "仓库应用消息已发送。",
+  obsolete: "仓库配置已更新，无需发送此前的应用消息。",
+  superseded: "服务端草稿已变更，此前的仓库应用记录已结束。",
+};
 
 export function CloudDraftView({ session, persisted, onBack }: { session: CloudDraftSession; persisted: boolean; onBack: () => void }) {
   const [scope, setScope] = useState<AbortSignal | null>(null);
@@ -50,6 +61,10 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
   const [saveError, setSaveError] = useState<string | null>(null);
   const [checkRequired, setCheckRequired] = useState<SavePhase | null>(null);
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
+  const [repositoryNames, setRepositoryNames] = useState(session.binding.repositoryNamesById);
+  const [repositoryApply, setRepositoryApply] = useState<RepositoryApplyStatus | null>(null);
+  const [repositoryApplyError, setRepositoryApplyError] = useState<string | null>(null);
+  const [applyWake, wakeRepositoryApply] = useState(0);
   const editing = editor !== null;
   const panelHeading = useRef<HTMLHeadingElement>(null);
   const panelButton = useRef<HTMLButtonElement>(null);
@@ -83,6 +98,7 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
         onRefresh: latest => {
           setHistory(current => current ? mergeCloudDraftHistory(current, latest) : latest);
           setHistoryRefreshError(null);
+          wakeRepositoryApply(value => value + 1);
         },
         onRefreshError: cause => setHistoryRefreshError(serviceErrorMessage(cause)),
       }).then(refresh => {
@@ -90,6 +106,32 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
     }, cause => { if (!request.signal.aborted) setRestoreError(serviceErrorMessage(cause)); });
     return () => { cancel(); refreshHistory.current = null; scope.removeEventListener("abort", cancel); };
   }, [scope, session, restoreAttempt]);
+
+  useEffect(() => {
+    if (!scope || scope.aborted || !history || saveBusy) return;
+    void advanceRepositoryApply(session, history, false, scope).then(status => {
+      if (scope.aborted) return;
+      if (status) setRepositoryApply(status);
+      setRepositoryApplyError(null);
+      if (status === "sent") refreshHistory.current?.();
+    }, cause => {
+      if (!scope.aborted) setRepositoryApplyError(serviceErrorMessage(cause));
+    });
+  }, [scope, session, history, saveBusy, applyWake]);
+
+  const retryRepositoryApply = async () => {
+    if (!scope || scope.aborted || !history || saveBusy) return;
+    if (repositoryApply === "unconfirmed") { refreshHistory.current?.(); return; }
+    try {
+      const status = await advanceRepositoryApply(session, history, repositoryApply === "paused" || repositoryApply === "retry", scope);
+      if (!scope.aborted && status) {
+        setRepositoryApply(status); setRepositoryApplyError(null);
+        if (status === "sent") refreshHistory.current?.();
+      }
+    } catch (cause) {
+      if (!scope.aborted) setRepositoryApplyError(serviceErrorMessage(cause));
+    }
+  };
 
   useEffect(() => {
     if (!scope || scope.aborted || !panelOpen || editing) return;
@@ -146,7 +188,7 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
   };
 
   const runSave = async (check: boolean) => {
-    if (!scope || scope.aborted || !detail || !editor || editor.repositories || savePending.current) return;
+    if (!scope || scope.aborted || !detail || !editor || savePending.current) return;
     savePending.current = true;
     setSaveBusy(true); setSaveError(null); setSaveNotice(null);
     let phase: SavePhase = checkRequired ?? "draft";
@@ -173,7 +215,7 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
           if (sameBase && current.draft.revision > editor.base.revision
             && draftFieldsMatch(draftFieldValues(editor.base), editor.values, draftFieldValues(current.draft))) {
             if (metadataDirty) {
-              setDetail(current); setEditor({ ...editor, base: current.draft, values: draftFieldValues(current.draft) });
+              setDetail(current); setEditor({ ...editor, base: current.draft, values: draftFieldValues(current.draft), repositories: undefined });
               setCheckRequired(null); setSaveNotice("草稿字段已保存，环境设置仍待保存。");
             } else confirmed(current, "已核对服务端草稿。");
             return;
@@ -204,10 +246,14 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
       let saved = detail;
       let base = editor.base;
       if (Object.keys(draftFieldChanges(draftFieldValues(base), editor.values)).length) {
-        saved = await saveBoundDraftFields(session.binding, base, editor.values, identity, scope);
+        if (editor.repositories) {
+          const names = Object.fromEntries(editor.repositories.map(({ id, name }) => [id, name]));
+          saved = await saveDraftWithRepositoryApply(session, base, editor.values, { ...repositoryNames, ...names }, scope);
+          setRepositoryNames(current => ({ ...current, ...names }));
+        } else saved = await saveBoundDraftFields(session.binding, base, editor.values, identity, scope);
         base = saved.draft!;
         setDetail(saved);
-        setEditor({ ...editor, base, values: draftFieldValues(base) });
+        setEditor({ ...editor, base, values: draftFieldValues(base), repositories: undefined });
         if (metadataDirty) setSaveNotice("草稿字段已保存，环境设置仍待保存。");
       }
       if (metadataDirty) {
@@ -229,10 +275,10 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
   const dirty = editor && (Object.keys(draftFieldChanges(draftFieldValues(editor.base), editor.values)).length > 0
     || Object.keys(draftMetadataChanges(editor.metadataBase, editor.metadata)).length > 0);
   const editLocked = saveBusy || checkRequired !== null;
-  const originalRepositories = editor?.base.repositories.map(repo => ({ ...repo, name: session.binding.repositoryNamesById[repo.id] ?? repo.id })) ?? [];
+  const originalRepositories = editor?.base.repositories.map(repo => ({ ...repo, name: repositoryNames[repo.id] ?? repo.id })) ?? [];
   const environmentFields = detail && renderCloudEnvironmentFields({ detail, showScripts: !editing, showNetwork: !editing, showMetadata: !editing,
     showRepositories: !editing || !scope,
-    repository: id => <span>{session.binding.repositoryNamesById[id] ?? "未知代码仓库"}</span> });
+    repository: id => <span>{repositoryNames[id] ?? "未知代码仓库"}</span> });
 
   return <div className="cloud-draft-view" data-chat-host="durable">
     <section className="cloud-draft-chat" aria-label="云端会话">
@@ -248,6 +294,9 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
             {history.olderCursor && <button type="button" className="turn-action-mini-btn" disabled={olderBusy} onClick={() => void loadEarlier()}>加载更早的轮次</button>}
             {olderError && <p role="alert">{olderError}</p>}
             {historyRefreshError && <div role="alert">{historyRefreshError} <button type="button" onClick={() => refreshHistory.current?.()}>重试刷新</button></div>}
+            {repositoryApply && <p role="status">{repositoryApplyMessages[repositoryApply]} {repositoryApply !== "sent" && repositoryApply !== "obsolete" && repositoryApply !== "superseded"
+              && <button type="button" disabled={saveBusy} onClick={() => void retryRepositoryApply()}>{repositoryApply === "paused" ? "继续发送" : repositoryApply === "retry" ? "重试消息" : "核对状态"}</button>}</p>}
+            {repositoryApplyError && <p role="alert">{repositoryApplyError} <button type="button" disabled={saveBusy} onClick={() => void retryRepositoryApply()}>重试核对</button></p>}
             {!history.turns.length && <p role="status">暂无历史消息</p>}
             {history.turns.map(({ turn }) => <div className="cloud-draft-turn" key={turn.id}>{turn.items.map(raw => {
               const item = raw as unknown as TurnItem;
@@ -279,7 +328,7 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
                   }
                   if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); nameTrigger.current?.click(); }
                 }} />}
-              {nameBeforeEdit !== null && <button type="submit" className="window-chrome-icon-btn" aria-label="保存环境设置" disabled={!dirty || editLocked || !!editor.repositories}><Check size={14} /></button>}
+              {nameBeforeEdit !== null && <button type="submit" className="window-chrome-icon-btn" aria-label="保存环境设置" disabled={!dirty || editLocked}><Check size={14} /></button>}
               <button ref={nameTrigger} type="button" className="window-chrome-icon-btn" disabled={editLocked}
                 aria-label={nameBeforeEdit === null ? "重命名环境" : "取消重命名"} onClick={() => {
                   if (nameBeforeEdit === null) setNameBeforeEdit(editor.metadata.name);
@@ -291,10 +340,12 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
             }} /></label>
             {scope && <CloudDraftRepositories original={originalRepositories} selection={editor.repositories ?? originalRepositories}
               disabled={editLocked} identity={session.identity} scope={scope} onChange={repositories => {
-                setEditor({ ...editor, repositories: sameRepositorySelection(originalRepositories, repositories) ? undefined : repositories });
+                const changed = !sameRepositorySelection(originalRepositories, repositories);
+                setEditor({ ...editor, values: { ...editor.values, repositories: changed ? repositories : editor.base.repositories },
+                  repositories: changed ? repositories : undefined });
               }} />}
-            {editor.repositories && <p role="status">仓库变更已暂存。会话应用功能接通后才能保存。 <button type="button"
-              onClick={() => setEditor({ ...editor, repositories: undefined })}>撤销仓库变更</button></p>}
+            {editor.repositories && <p role="status">仓库变更已暂存。 <button type="button" disabled={editLocked}
+              onClick={() => setEditor({ ...editor, values: { ...editor.values, repositories: editor.base.repositories }, repositories: undefined })}>撤销仓库变更</button></p>}
             {environmentFields}
             <section><h3>隐私</h3><label>谁可以使用<select value={editor.metadata.shareSettings} disabled={editLocked} onChange={event =>
               setEditor({ ...editor, metadata: { ...editor.metadata, shareSettings: event.target.value === "workspace" ? "workspace" : "private" } })}>
@@ -307,7 +358,7 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
             {saveError && <p role="alert">{saveError}</p>}
             <footer className="cloud-envs-footer">
               <button type="button" disabled={saveBusy} onClick={() => { setDetail(null); setEditor(null); setNameBeforeEdit(null); setSaveError(null); setSaveNotice(null); }}>取消</button>
-              {checkRequired ? <button key="check" type="button" disabled={saveBusy} onClick={event => { event.preventDefault(); void runSave(true); }}>核对服务端草稿</button> : <button key="save" type="submit" disabled={!dirty || saveBusy || !!editor.repositories}>{saveBusy ? "正在保存…" : "保存草稿"}</button>}
+              {checkRequired ? <button key="check" type="button" disabled={saveBusy} onClick={event => { event.preventDefault(); void runSave(true); }}>核对服务端草稿</button> : <button key="save" type="submit" disabled={!dirty || saveBusy}>{saveBusy ? "正在保存…" : "保存草稿"}</button>}
             </footer>
           </form> : detail.draft && <button type="button" className="back-to-app-pill" onClick={() => {
             if (!detail.draft) return;

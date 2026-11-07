@@ -44,6 +44,10 @@ export function readCloudDraftBinding(threadId: string, identity: Account): Clou
   return binding && sameAccount(binding, identity) ? binding : null;
 }
 
+export function listCloudDraftBindings(configId: string, identity: Account) {
+  return [...bindings()].reverse().filter(([, binding]) => binding.configId === configId && sameAccount(binding, identity));
+}
+
 // Store only confirmed receipts. Generation is checked by the active operation, not persisted.
 export function rememberCloudDraftBinding(threadId: string, value: CloudDraftBinding): boolean {
   const binding = bindingFrom(value);
