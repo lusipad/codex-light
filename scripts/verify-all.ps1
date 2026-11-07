@@ -120,6 +120,7 @@ try {
   Invoke-Step "Codex Cloud current access contract" { node scripts/verify-cloud-environment-access.mjs }
   Invoke-Step "Codex Cloud settings data contract" { node scripts/verify-cloud-environment-data.mjs }
   Invoke-Step "Codex Cloud repository discovery transport" { cargo test --locked --manifest-path src-tauri/Cargo.toml --lib cloud_repository_discovery }
+  Invoke-Step "Codex Cloud repository picker data" { node scripts/verify-cloud-repository-discovery.mjs }
   Invoke-Step "Rust cloud draft creation and unknown outcomes" { cargo test --locked --manifest-path src-tauri/Cargo.toml cloud_draft_tests }
   Invoke-Step "Rust cloud draft save, conflict and readback" { cargo test --locked --manifest-path src-tauri/Cargo.toml cloud_draft_save_tests }
   Invoke-Step "Rust durable host lifecycle and Windows loopback transport" { cargo test --locked --manifest-path src-tauri/Cargo.toml --lib durable }

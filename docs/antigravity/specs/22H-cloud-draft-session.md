@@ -107,3 +107,13 @@ Windows 调试构建通过，产物为 `dist-artifacts/cloud-f05-network-2026110
 已执行四条官方 `TLn` 原函数路由分支，并保留 `ZVn` 定位，证据见 `verification/repository-official-contract.json`。本增量实现原生发现协议。连接组合与选择器界面、仓库写入和 durable 应用消息仍需接入，真实账号与像素另行验收。
 
 本地 Rust 全库 662 项通过，包含新加的三项仓库发现回归。用例核对四类路由、参数和转义、授权请求体、账号不匹配拦截及返回字段过滤。日志见 `verification/repository-rust.log`。
+
+### 仓库选择器界面
+
+同版本 asar 已复核。侧栏 `configuration-fields:ka` 用 Manage 打开 `Ca` 紧凑弹窗，复制已有选择，最多 16 项，按集合判定更改。弹窗 Save 只暂存，关闭或 Escape 丢弃弹窗内改动。已有仓库按保存记录保留分支和深度，新仓库缺默认分支时不可暂存。搜索与分页的验收覆盖晚到旧连接、组织和关键字结果不覆盖当前列表。
+
+本地阶段先接选择与暂存。存在暂存的仓库差异时，阻止外层提交并显示原因，用户可撤销该差异。仓库变更正式启用前，必须完成私有 PATCH、服务读回和 durable 应用消息。GitHub OAuth 回调、官方配对像素另验。
+
+使用实际组件与隔离 IPC 验证原连接和组织的晚到响应被丢弃、第二页去重、查询去除空白、断连提示、缺默认分支禁用、Escape 取消回焦、相同集合不产生改动、暂存零写入和撤销。已有仓库保留 `pinned`，新仓库使用服务端 `release`。440×800 实测弹窗宽 408px，选满 16 项后第 17 项禁用，无横向溢出。连接和组织当前用原生下拉，未做官方像素匹配。
+
+99 个前端回放入口、生产构建和 Windows 调试构建通过。浏览器结果见 `verification/repository-picker-browser.json`。本地调试版为 `dist-artifacts/cloud-f05-repository-picker-20261107/CodexNative.exe`，SHA-256 为 `46ea408ce65d245fc590e2d9320c3d00dae91334b6e1462d1913b322d13562b1`。

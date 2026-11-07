@@ -91,6 +91,12 @@
 .cloud-draft-domain-dialog > div { padding: 24px; }
 .cloud-draft-domain-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 .cloud-draft-domain-tags > span { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding-inline: 6px; border: 1px solid var(--border-subtle); border-radius: 6px; overflow-wrap: anywhere; }
+.cloud-draft-repository-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.cloud-draft-repository-dialog { width: min(480px, calc(100vw - 32px)); }
+.cloud-draft-repository-dialog > div { display: grid; gap: 12px; }
+.cloud-draft-repository-dialog .cloud-draft-repository-option { display: flex; align-items: center; gap: 8px; padding-block: 4px; overflow-wrap: anywhere; }
+.cloud-draft-repository-option input[type="checkbox"] { width: auto; flex-shrink: 0; }
+.cloud-draft-repository-dialog .cloud-envs-footer { bottom: -24px; margin-top: 0; }
 
 @media (max-width: 720px) {
   .cloud-draft-view { position: relative; }

@@ -13,6 +13,7 @@ import { extractTextFromItem } from "../threadText";
 import type { TurnItem } from "../types";
 import { renderCloudEnvironmentFields } from "./CloudEnvironmentsView";
 import { CloudDraftNetworkFields } from "./CloudDraftNetworkFields";
+import { CloudDraftRepositories, sameRepositorySelection, type RepositorySelection } from "./CloudDraftRepositories";
 import { MarkdownView } from "./MarkdownView";
 import { UserMessageBubble } from "./UserMessageBubble";
 import "./CloudDraftView.css";
@@ -37,7 +38,7 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
   const [detailError, setDetailError] = useState<string | null>(null);
   const panelRequest = useRef<AbortController | null>(null);
   const [editor, setEditor] = useState<{ base: NonNullable<CloudDetail["draft"]>; values: ReturnType<typeof draftFieldValues>;
-    metadataBase: Metadata; metadata: Metadata } | null>(null);
+    metadataBase: Metadata; metadata: Metadata; repositories?: RepositorySelection[] } | null>(null);
   const [canManage, setCanManage] = useState(false);
   const [nameBeforeEdit, setNameBeforeEdit] = useState<string | null>(null);
   const nameTrigger = useRef<HTMLButtonElement>(null);
@@ -131,7 +132,7 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
   };
 
   const runSave = async (check: boolean) => {
-    if (!scope || scope.aborted || !detail || !editor || savePending.current) return;
+    if (!scope || scope.aborted || !detail || !editor || editor.repositories || savePending.current) return;
     savePending.current = true;
     setSaveBusy(true); setSaveError(null); setSaveNotice(null);
     let phase: SavePhase = checkRequired ?? "draft";
@@ -214,7 +215,9 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
   const dirty = editor && (Object.keys(draftFieldChanges(draftFieldValues(editor.base), editor.values)).length > 0
     || Object.keys(draftMetadataChanges(editor.metadataBase, editor.metadata)).length > 0);
   const editLocked = saveBusy || checkRequired !== null;
+  const originalRepositories = editor?.base.repositories.map(repo => ({ ...repo, name: session.binding.repositoryNamesById[repo.id] ?? repo.id })) ?? [];
   const environmentFields = detail && renderCloudEnvironmentFields({ detail, showScripts: !editing, showNetwork: !editing, showMetadata: !editing,
+    showRepositories: !editing || !scope,
     repository: id => <span>{session.binding.repositoryNamesById[id] ?? "未知代码仓库"}</span> });
 
   return <div className="cloud-draft-view" data-chat-host="durable">
@@ -261,7 +264,7 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
                   }
                   if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); nameTrigger.current?.click(); }
                 }} />}
-              {nameBeforeEdit !== null && <button type="submit" className="window-chrome-icon-btn" aria-label="保存环境设置" disabled={!dirty || editLocked}><Check size={14} /></button>}
+              {nameBeforeEdit !== null && <button type="submit" className="window-chrome-icon-btn" aria-label="保存环境设置" disabled={!dirty || editLocked || !!editor.repositories}><Check size={14} /></button>}
               <button ref={nameTrigger} type="button" className="window-chrome-icon-btn" disabled={editLocked}
                 aria-label={nameBeforeEdit === null ? "重命名环境" : "取消重命名"} onClick={() => {
                   if (nameBeforeEdit === null) setNameBeforeEdit(editor.metadata.name);
@@ -271,6 +274,12 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
             <label>Description<textarea className="cloud-draft-description" rows={2} placeholder="Describe when to use this environment" value={editor.metadata.description} readOnly={editLocked} onChange={event => {
               if (Array.from(event.target.value).length <= 512) setEditor({ ...editor, metadata: { ...editor.metadata, description: event.target.value } });
             }} /></label>
+            {scope && <CloudDraftRepositories original={originalRepositories} selection={editor.repositories ?? originalRepositories}
+              disabled={editLocked} identity={session.identity} scope={scope} onChange={repositories => {
+                setEditor({ ...editor, repositories: sameRepositorySelection(originalRepositories, repositories) ? undefined : repositories });
+              }} />}
+            {editor.repositories && <p role="status">仓库变更已暂存。会话应用功能接通后才能保存。 <button type="button"
+              onClick={() => setEditor({ ...editor, repositories: undefined })}>撤销仓库变更</button></p>}
             {environmentFields}
             <section><h3>隐私</h3><label>谁可以使用<select value={editor.metadata.shareSettings} disabled={editLocked} onChange={event =>
               setEditor({ ...editor, metadata: { ...editor.metadata, shareSettings: event.target.value === "workspace" ? "workspace" : "private" } })}>
@@ -283,7 +292,7 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
             {saveError && <p role="alert">{saveError}</p>}
             <footer className="cloud-envs-footer">
               <button type="button" disabled={saveBusy} onClick={() => { setDetail(null); setEditor(null); setNameBeforeEdit(null); setSaveError(null); setSaveNotice(null); }}>取消</button>
-              {checkRequired ? <button key="check" type="button" disabled={saveBusy} onClick={event => { event.preventDefault(); void runSave(true); }}>核对服务端草稿</button> : <button key="save" type="submit" disabled={!dirty || saveBusy}>{saveBusy ? "正在保存…" : "保存草稿"}</button>}
+              {checkRequired ? <button key="check" type="button" disabled={saveBusy} onClick={event => { event.preventDefault(); void runSave(true); }}>核对服务端草稿</button> : <button key="save" type="submit" disabled={!dirty || saveBusy || !!editor.repositories}>{saveBusy ? "正在保存…" : "保存草稿"}</button>}
             </footer>
           </form> : detail.draft && <button type="button" className="back-to-app-pill" onClick={() => {
             if (!detail.draft) return;
