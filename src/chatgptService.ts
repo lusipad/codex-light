@@ -1,4 +1,5 @@
 import { tauriInvoke } from "./bridge";
+import type { CloudNetworkPolicy } from "./cloudDraftNetwork";
 import { parseSiteDomains, type SiteDomain } from "./sitesService";
 import { parsePinnedReviewComparison, parsePinnedReviewFile, parseRemotePullRequest, parseRemotePullRequestUrl,
   type PinnedReviewComparison, type PinnedReviewFile, type RemotePullRequest } from "./remoteReview";
@@ -312,9 +313,9 @@ export async function createCloudDraft(configId: string, identity: ServiceIdenti
   return { draftId: draft_id, environmentId: environment_id, threadId: thread_id as string };
 }
 
-export async function saveCloudDraftScripts(request: {
+export async function saveCloudDraftFields(request: {
   configId: string; draftId: string; baseVersionId: string; expectedRevision: number;
-  installScript?: string; startSkill?: string;
+  installScript?: string; startSkill?: string; networkPolicy?: CloudNetworkPolicy;
 }, identity: ServiceIdentity, signal: AbortSignal): Promise<unknown> {
   const requestId = crypto.randomUUID();
   const result = await invokeService<{ requestId: string; identity: ServiceIdentity; body: unknown }>(

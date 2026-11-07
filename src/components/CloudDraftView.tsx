@@ -3,7 +3,7 @@ import { X } from "lucide-react";
 import { tauriListen } from "../bridge";
 import { serviceErrorMessage } from "../chatgptService";
 import { readBoundCloudDraft } from "../cloudDraftBindings";
-import { draftScriptValues, saveBoundDraftScripts } from "../cloudDraftScripts";
+import { draftFieldChanges, draftFieldsMatch, draftFieldValues, saveBoundDraftFields } from "../cloudDraftFields";
 import { readCloudEnvironmentAccess } from "../cloudEnvironmentAccess";
 import { readCloudDraftHistory } from "../cloudDraftHistory";
 import { prepareCloudDraftContext, restoreCloudDraftSession, type CloudDraftSession } from "../cloudDraftSession";
@@ -11,6 +11,7 @@ import type { CloudDetail } from "../cloudEnvironmentService";
 import { extractTextFromItem } from "../threadText";
 import type { TurnItem } from "../types";
 import { renderCloudEnvironmentFields } from "./CloudEnvironmentsView";
+import { CloudDraftNetworkFields } from "./CloudDraftNetworkFields";
 import { MarkdownView } from "./MarkdownView";
 import { UserMessageBubble } from "./UserMessageBubble";
 import "./CloudDraftView.css";
@@ -32,7 +33,7 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
   const [detail, setDetail] = useState<CloudDetail | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const panelRequest = useRef<AbortController | null>(null);
-  const [editor, setEditor] = useState<{ base: NonNullable<CloudDetail["draft"]>; values: ReturnType<typeof draftScriptValues> } | null>(null);
+  const [editor, setEditor] = useState<{ base: NonNullable<CloudDetail["draft"]>; values: ReturnType<typeof draftFieldValues> } | null>(null);
   const [saveBusy, setSaveBusy] = useState(false);
   const savePending = useRef(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -129,10 +130,8 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
       if (check) {
         const current = await readBoundCloudDraft(session.binding, session.identity, scope);
         if (!current.draft) throw Error("服务端草稿已不可用。");
-        const previous = draftScriptValues(editor.base);
-        const confirmed = draftScriptValues(current.draft);
         if (current.draft.baseVersionId === editor.base.baseVersionId && current.draft.revision > editor.base.revision
-          && (Object.keys(previous) as (keyof typeof previous)[]).every(key => editor.values[key] === previous[key] || editor.values[key] === confirmed[key])) {
+          && draftFieldsMatch(draftFieldValues(editor.base), editor.values, draftFieldValues(current.draft))) {
           setDetail(current); setEditor(null); setSaveNotice("已核对服务端草稿。");
         } else if (current.draft.baseVersionId === editor.base.baseVersionId && current.draft.revision === editor.base.revision) {
           setCheckRequired(false); setSaveNotice("服务端草稿版本未变化，可以重试保存。");
@@ -149,7 +148,7 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
           && (detail.shareSettings === "workspace" ? !access.canManage : detail.isOwner === false))) {
         throw Error("当前账号无权保存此环境草稿。");
       }
-      const saved = await saveBoundDraftScripts(session.binding, editor.base, editor.values, identity, scope);
+      const saved = await saveBoundDraftFields(session.binding, editor.base, editor.values, identity, scope);
       setDetail(saved); setEditor(null); setSaveNotice("草稿已保存。");
     } catch (cause) {
       if (!scope.aborted) {
@@ -162,8 +161,7 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
       if (!scope.aborted) setSaveBusy(false);
     }
   };
-  const previousScripts = editor && draftScriptValues(editor.base);
-  const dirtyScripts = editor && previousScripts && (editor.values.installScript !== previousScripts.installScript || editor.values.startSkill !== previousScripts.startSkill);
+  const dirty = editor && Object.keys(draftFieldChanges(draftFieldValues(editor.base), editor.values)).length > 0;
 
   return <div className="cloud-draft-view" data-chat-host="durable">
     <section className="cloud-draft-chat" aria-label="云端会话">
@@ -196,21 +194,22 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
       <header className="cloud-draft-heading"><h2 id="cloud-draft-environment-heading" tabIndex={-1} ref={panelHeading}>环境</h2><button type="button" className="window-chrome-icon-btn" aria-label="关闭环境侧栏" disabled={editing} onClick={() => setPanelOpen(false)}><X size={16} aria-hidden="true" /></button></header>
       <div className="cloud-draft-fields">
         {scopeError ? <p role="alert">{scopeError}</p> : detailError ? <div role="alert">{detailError} <button type="button" onClick={() => setPanelAttempt(value => value + 1)}>重试</button></div> : detail ? <>
-          {renderCloudEnvironmentFields({ detail, showScripts: !editing, repository: id => <span>{session.binding.repositoryNamesById[id] ?? "未知代码仓库"}</span> })}
-          {editor ? <form className="cloud-envs-config cloud-draft-script-form" aria-label="编辑草稿脚本" onSubmit={event => { event.preventDefault(); if (dirtyScripts && !checkRequired) void runSave(false); }}>
+          {renderCloudEnvironmentFields({ detail, showScripts: !editing, showNetwork: !editing, repository: id => <span>{session.binding.repositoryNamesById[id] ?? "未知代码仓库"}</span> })}
+          {editor ? <form className="cloud-envs-config cloud-draft-script-form" aria-label="编辑草稿配置" onSubmit={event => { event.preventDefault(); if (dirty && !checkRequired) void runSave(false); }}>
             <label>安装脚本<textarea autoFocus rows={6} value={editor.values.installScript} readOnly={saveBusy || checkRequired} onChange={event => setEditor({ ...editor, values: { ...editor.values, installScript: event.target.value } })} /></label>
             <label>启动技能<input value={editor.values.startSkill} maxLength={2048} readOnly={saveBusy || checkRequired} onChange={event => setEditor({ ...editor, values: { ...editor.values, startSkill: event.target.value } })} /></label>
+            <CloudDraftNetworkFields network={editor.values.network} disabled={saveBusy || checkRequired} onChange={network => setEditor({ ...editor, values: { ...editor.values, network } })} />
             {saveError && <p role="alert">{saveError}</p>}
             <footer className="cloud-envs-footer">
               <button type="button" disabled={saveBusy} onClick={() => { setDetail(null); setEditor(null); setSaveError(null); setSaveNotice(null); }}>取消</button>
-              {checkRequired ? <button key="check" type="button" disabled={saveBusy} onClick={event => { event.preventDefault(); void runSave(true); }}>核对服务端草稿</button> : <button key="save" type="submit" disabled={!dirtyScripts || saveBusy}>{saveBusy ? "正在保存…" : "保存草稿"}</button>}
+              {checkRequired ? <button key="check" type="button" disabled={saveBusy} onClick={event => { event.preventDefault(); void runSave(true); }}>核对服务端草稿</button> : <button key="save" type="submit" disabled={!dirty || saveBusy}>{saveBusy ? "正在保存…" : "保存草稿"}</button>}
             </footer>
           </form> : detail.draft && <button type="button" className="back-to-app-pill" onClick={() => {
             if (!detail.draft) return;
             panelRequest.current?.abort();
             setCheckRequired(false); setSaveError(null); setSaveNotice(null);
-            setEditor({ base: detail.draft, values: draftScriptValues(detail.draft) });
-          }}>编辑脚本与技能</button>}
+            setEditor({ base: detail.draft, values: draftFieldValues(detail.draft) });
+          }}>编辑草稿配置</button>}
           {saveNotice && <p role="status">{saveNotice}</p>}
         </> : <p role="status">正在载入环境…</p>}
       </div>

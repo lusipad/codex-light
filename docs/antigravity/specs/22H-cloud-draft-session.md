@@ -68,8 +68,20 @@ Windows 回环覆盖同一连接上的模型目录、会话读取、恢复和历
 
 ## F05 安装脚本与启动技能
 
-固定版本的 `vHn` 与原生配置 wire schema 证据位于 `.ref/parity/22/actual/22F-cloud-editor/reference/`。保存使用私有草稿固定路径 `PATCH /v1/environment-configs/{configId}/drafts/{draftId}`，携带 `base_version_id` 和 `expected_revision`，按实际差异发送 `install_script` 与 `start_skill`。清空发送空字符串。正式版配置、网络、元数据与发布仍属后续范围。
+固定版本的 `vHn` 与原生配置 wire schema 证据位于 `.ref/parity/22/actual/22F-cloud-editor/reference/`。保存使用私有草稿固定路径 `PATCH /v1/environment-configs/{configId}/drafts/{draftId}`，携带 `base_version_id` 和 `expected_revision`，按实际差异发送 `install_script` 与 `start_skill`。清空发送空字符串。正式版配置、元数据与发布仍属后续范围。
 
 打开编辑时冻结版本并暂停轮询。保存前重新核验权限和身份。Windows 桥验证回执，并用同一路径 GET 校验目标、基准版本、修订推进和变更字段。额外读回是本项目的确认步骤。冲突或结果不明时保留可复制的输入，先用只读核对确定草稿状态。版本未变时由用户明确点击重试。
 
 隔离浏览器验证核对前后写入次数均为 1，手动重试后为 2，并展示读回的两个字段。首轮发现按钮类型在点击期间切换导致表单误提交，修复后用同一序列复测。全库 Rust 656 项通过，前端回归包含差异字段、显式清空、身份和读回形状校验。真实云端写入、全局导航草稿保留、原生 GUI 和官方配对像素待验。
+
+## F05 互联网访问
+
+重验官方 Windows 26.1027.3384.0 的 asar，SHA-256 为 `6fbedf054a8d8cafaf5c745b40aa59176512e106e0bd6308275ae123b60fd074`。以 22E 提取的 `configuration-fields-df76627e4826.js` 中的 `go`、`ir`、`In`，以及 `app-primary-998934e837fc.js` 中的 `TBn`、`EBn`、`XBn`、`YZ` 为依据。按钮和域名错误使用已知中文资源，包管理器标签在本次提取的中文资源缺少对应值，使用默认英文。
+
+- 全量访问开启时禁用包管理器开关和域名编辑，恢复关闭时保留本次编辑的下层选项。关闭全部访问发送 `disabled`。包管理器或域名启用时发送 `restricted`，带 `presets` 和 `egress_rules`。全量访问发送 `unrestricted`。
+- 域名弹窗复制当前列表，支持 Enter、逗号与多行粘贴。主机名小写，移除一个末尾点，校验长度、完整 IPv4、重复、URL 与端口。无待提交输入时才可应用，取消或 Escape 保留外层草稿。
+- 仅外层保存可发 PATCH。网络同值或仅域名顺序变化不写入，结果不明时只读核对模式、预设与域名，再决定是否允许重试。VPN、TCP 和发布另行实现。官方原生弹窗焦点、像素与真实账号写入待验。
+
+回归通过 30 个官方 `XBn/YZ` 原函数向量、98 个前端回放入口与 658 项全库 Rust 测试。Rust 验证非法策略在发请求前拒绝、网络单字段请求、乱序读回及预设不匹配。隔离浏览器验证域名取消、回焦、批量粘贴和内外层写入次数。全量模式下禁用细分控件，关闭后恢复原选项。修复全局外边距重置造成的弹窗偏移后，1280×720 和 440×800 的弹窗居中且无横向溢出。证据见 `verification/network-official-vectors.json`、`verification/network-browser-result.json` 和 `verification/network-rust-final.log`。
+
+Windows 调试构建通过，产物为 `dist-artifacts/cloud-f05-network-20261107/CodexNative.exe`，SHA-256 为 `950160d80ef1d0a3c2e5f209e95ebb5781ef27fea2e84abc2ff50869503274b1`。此增量保留本地提交，完整标准检查、远端 CI 和预览发布在下一发布候选上执行。

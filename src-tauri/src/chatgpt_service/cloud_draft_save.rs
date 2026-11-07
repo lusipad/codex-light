@@ -11,6 +11,96 @@ pub struct CloudDraftSaveRequest {
     expected_revision: u64,
     install_script: Option<String>,
     start_skill: Option<String>,
+    network_policy: Option<DraftNetworkPolicy>,
+}
+
+#[derive(Deserialize, Serialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+enum DraftNetworkPolicy {
+    Disabled,
+    Unrestricted,
+    Restricted {
+        #[serde(default)]
+        presets: Vec<DraftNetworkPreset>,
+        egress_rules: Vec<DraftEgressRule>,
+    },
+}
+
+#[derive(Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum DraftNetworkPreset {
+    PackageManagers,
+}
+
+#[derive(Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct DraftEgressRule {
+    host: String,
+}
+
+fn valid_egress_host(host: &str) -> bool {
+    if host == "*" {
+        return true;
+    }
+    let name = host.strip_prefix("*.").unwrap_or(host);
+    let valid_char = |byte: u8| byte.is_ascii_lowercase() || byte.is_ascii_digit();
+    if host.len() > 253
+        || !name.split('.').all(|label| {
+            label.len() <= 63
+                && label.bytes().next().is_some_and(valid_char)
+                && label.bytes().last().is_some_and(valid_char)
+                && label.bytes().all(|byte| valid_char(byte) || byte == b'-')
+        })
+    {
+        return false;
+    }
+    let last = name.rsplit('.').next().unwrap_or_default();
+    let numeric = last.bytes().all(|byte| byte.is_ascii_digit())
+        || last
+            .strip_prefix("0x")
+            .is_some_and(|hex| !hex.is_empty() && hex.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    !numeric || (name == host && name.parse::<std::net::Ipv4Addr>().is_ok())
+}
+
+impl DraftNetworkPolicy {
+    fn valid(&self) -> bool {
+        if let Self::Restricted {
+            presets,
+            egress_rules,
+        } = self
+        {
+            let mut hosts = std::collections::HashSet::new();
+            return presets.len() <= 1
+                && egress_rules
+                    .iter()
+                    .all(|rule| valid_egress_host(&rule.host) && hosts.insert(&rule.host));
+        }
+        true
+    }
+
+    fn matches(&self, body: &Value) -> bool {
+        let Ok(other) = serde_json::from_value::<Self>(body.clone()) else {
+            return false;
+        };
+        match (self, &other) {
+            (
+                Self::Restricted {
+                    presets,
+                    egress_rules,
+                },
+                Self::Restricted {
+                    presets: actual_presets,
+                    egress_rules: actual_rules,
+                },
+            ) => {
+                let hosts: std::collections::HashSet<_> =
+                    egress_rules.iter().map(|rule| &rule.host).collect();
+                let actual_hosts = actual_rules.iter().map(|rule| &rule.host).collect();
+                presets == actual_presets && hosts == actual_hosts
+            }
+            _ => self == &other,
+        }
+    }
 }
 
 impl CloudDraftSaveRequest {
@@ -19,7 +109,13 @@ impl CloudDraftSaveRequest {
             || self.base_version_id.len() > 512
             || self.base_version_id.chars().any(char::is_control)
             || self.expected_revision > 9_007_199_254_740_991
-            || (self.install_script.is_none() && self.start_skill.is_none())
+            || (self.install_script.is_none()
+                && self.start_skill.is_none()
+                && self.network_policy.is_none())
+            || self
+                .network_policy
+                .as_ref()
+                .is_some_and(|policy| !policy.valid())
             || self
                 .install_script
                 .as_ref()
@@ -37,6 +133,9 @@ impl CloudDraftSaveRequest {
         }
         if let Some(value) = &self.start_skill {
             body["start_skill"] = json!(value);
+        }
+        if let Some(value) = &self.network_policy {
+            body["network_policy"] = json!(value);
         }
         Ok(body)
     }
@@ -56,6 +155,10 @@ impl CloudDraftSaveRequest {
             && draft["revision"]
                 .as_u64()
                 .is_some_and(|revision| revision > self.expected_revision)
+            && self
+                .network_policy
+                .as_ref()
+                .is_none_or(|policy| policy.matches(&draft["network_policy"]))
             && [
                 ("install_script", &self.install_script),
                 ("start_skill", &self.start_skill),

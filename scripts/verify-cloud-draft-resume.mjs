@@ -178,7 +178,10 @@ assert.equal(creationCount, 2, "resume retries must not issue draft creation req
 console.log("PASS cloud draft session: confirmed receipt precedes nonblocking title, bounded resume retries and cancellation without duplicate creation");
 
 const environment = load("src/cloudEnvironmentService.ts", { "./chatgptService": service });
-const { saveBoundDraftScripts } = load("src/cloudDraftScripts.ts", { "./chatgptService": service, "./cloudEnvironmentService": environment });
+const network = load("src/cloudDraftNetwork.ts", {});
+const { saveBoundDraftFields, draftFieldChanges, draftFieldsMatch } = load("src/cloudDraftFields.ts", {
+  "./chatgptService": service, "./cloudEnvironmentService": environment, "./cloudDraftNetwork": network,
+});
 const binding = session.binding;
 const draftBody = (id = binding.draftId) => ({
   id: binding.configId, name: binding.name, version_id: "v1", status: "ready", share_settings: "private",
@@ -186,16 +189,38 @@ const draftBody = (id = binding.draftId) => ({
   draft: { id, base_version_id: "v1", revision: 3, repositories: [], network_policy: { type: "disabled" }, start_skill: "retained" },
 });
 const baseline = { ...environment.parseCloudDetail(draftBody(), binding.configId, binding.draftId).draft, revision: 2, installScript: "old" };
-const values = { installScript: "", startSkill: "retained" };
+const values = { installScript: "", startSkill: "retained", network: baseline.network };
 savedBody = draftBody();
-const saved = await saveBoundDraftScripts(binding, baseline, values, identity, signal);
+const saved = await saveBoundDraftFields(binding, baseline, values, identity, signal);
 assert.equal(saved.draft.revision, 3);
 assert.deepEqual(saves, [{ configId: binding.configId, draftId: binding.draftId, baseVersionId: "v1",
   expectedRevision: 2, installScript: "", expectedIdentity: identity }]);
-await assert.rejects(saveBoundDraftScripts(binding, baseline, { ...values, installScript: "old" }, identity, signal), /没有更改/);
-await assert.rejects(saveBoundDraftScripts(binding, baseline, values, { ...identity, userId: "other" }, signal), /不匹配/);
+await assert.rejects(saveBoundDraftFields(binding, baseline, { ...values, installScript: "old" }, identity, signal), /没有更改/);
+await assert.rejects(saveBoundDraftFields(binding, baseline, values, { ...identity, userId: "other" }, signal), /不匹配/);
 assert.equal(saves.length, 1);
 savedBody = draftBody("wrong-draft");
-await assert.rejects(saveBoundDraftScripts(binding, baseline, values, identity, signal), { code: "cloud_draft_save_unconfirmed" });
+await assert.rejects(saveBoundDraftFields(binding, baseline, values, identity, signal), { code: "cloud_draft_save_unconfirmed" });
 assert.equal(saves.length, 2, "malformed confirmed readback must not trigger another save");
 console.log("PASS cloud draft save: changed fields only, explicit clear, no-op and identity rejection, malformed readback does not replay");
+
+for (const [raw, normalized] of [[" *.Example.COM. ", "*.example.com"], ["192.0.2.1", "192.0.2.1"], ["*", "*"]])
+  assert.equal(network.networkDomainEntry(raw, []).host, normalized);
+for (const raw of ["https://example.com", "example.com:8080", "-bad", "192.1", "0x0a", "192.0.2.001", "*.192.0.2.1", "a".repeat(64)])
+  assert.ok(network.networkDomainEntry(raw, []).error, raw);
+assert.ok(network.networkDomainEntry("EXAMPLE.COM.", ["example.com"]).error);
+const original = { ...values, installScript: "old" };
+const restricted = { ...original, network: { type: "restricted", packageManagers: true, hosts: ["*.example.com", "192.0.2.1"] } };
+const reversed = { ...restricted, network: { ...restricted.network, hosts: [...restricted.network.hosts].reverse() } };
+const policy = { type: "restricted", presets: ["package_managers"], egress_rules: [{ host: "*.example.com" }, { host: "192.0.2.1" }] };
+savedBody = draftBody();
+savedBody.draft.network_policy = policy;
+const updated = await saveBoundDraftFields(binding, baseline, restricted, identity, signal);
+assert.deepEqual(saves.at(-1), { configId: binding.configId, draftId: binding.draftId, baseVersionId: "v1",
+  expectedRevision: 2, networkPolicy: policy, expectedIdentity: identity });
+assert.equal(updated.draft.network.type, "restricted");
+assert.equal(Object.keys(draftFieldChanges(restricted, reversed)).length, 0);
+assert(draftFieldsMatch(original, restricted, reversed));
+assert(!draftFieldsMatch(original, restricted, { ...reversed, network: { ...reversed.network, packageManagers: false } }));
+assert.equal(draftFieldChanges(restricted, original).networkPolicy.type, "disabled");
+assert.equal(draftFieldChanges(restricted, { ...restricted, network: { ...restricted.network, type: "unrestricted" } }).networkPolicy.type, "unrestricted");
+console.log("PASS cloud network: official hostname vectors, exact network-only IPC, order-independent readback and mode changes");
