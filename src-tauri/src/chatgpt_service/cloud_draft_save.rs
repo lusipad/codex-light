@@ -12,6 +12,50 @@ pub struct CloudDraftSaveRequest {
     install_script: Option<String>,
     start_skill: Option<String>,
     network_policy: Option<DraftNetworkPolicy>,
+    metadata: Option<DraftMetadataPatch>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all(deserialize = "camelCase"), deny_unknown_fields)]
+struct DraftMetadataPatch {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    share_settings: Option<DraftShareSettings>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum DraftShareSettings {
+    Private,
+    Workspace,
+}
+
+impl DraftMetadataPatch {
+    fn valid(&self) -> bool {
+        (self.name.is_some() || self.description.is_some() || self.share_settings.is_some())
+            && self.name.as_ref().is_none_or(|name| {
+                !name.is_empty()
+                    && name.trim() == name
+                    && name.encode_utf16().count() <= 128
+                    && !name.contains('\0')
+            })
+            && self.description.as_ref().is_none_or(|description| {
+                description.chars().count() <= 512 && !description.contains('\0')
+            })
+    }
+
+    fn matches(&self, body: &Value) -> bool {
+        let requested = json!(self);
+        requested.as_object().is_some_and(|fields| {
+            fields.iter().all(|(key, value)| {
+                &body[key] == value
+                    || (key == "description" && value.as_str() == Some("") && body[key].is_null())
+            })
+        })
+    }
 }
 
 #[derive(Deserialize, Serialize, PartialEq)]
@@ -105,13 +149,18 @@ impl DraftNetworkPolicy {
 
 impl CloudDraftSaveRequest {
     fn payload(&self) -> ServiceResult<Value> {
+        let draft_changes = self.install_script.is_some()
+            || self.start_skill.is_some()
+            || self.network_policy.is_some();
         if self.base_version_id.trim().is_empty()
             || self.base_version_id.len() > 512
             || self.base_version_id.chars().any(char::is_control)
             || self.expected_revision > 9_007_199_254_740_991
-            || (self.install_script.is_none()
-                && self.start_skill.is_none()
-                && self.network_policy.is_none())
+            || self.metadata.is_some() == draft_changes
+            || self
+                .metadata
+                .as_ref()
+                .is_some_and(|metadata| !metadata.valid())
             || self
                 .network_policy
                 .as_ref()
@@ -126,6 +175,9 @@ impl CloudDraftSaveRequest {
                 .is_some_and(|text| text.len() > 2048 || text.chars().any(char::is_control))
         {
             return Err(failure("invalid_request", "Invalid cloud draft changes"));
+        }
+        if let Some(metadata) = &self.metadata {
+            return Ok(json!(metadata));
         }
         let mut body = json!({"base_version_id":self.base_version_id,"expected_revision":self.expected_revision});
         if let Some(value) = &self.install_script {
@@ -151,6 +203,9 @@ impl CloudDraftSaveRequest {
         let Some(draft) = self.draft(value) else {
             return false;
         };
+        if let Some(metadata) = &self.metadata {
+            return metadata.matches(value);
+        }
         draft["base_version_id"].as_str() == Some(&self.base_version_id)
             && draft["revision"]
                 .as_u64()
@@ -211,6 +266,11 @@ impl ChatgptService {
             &json!({"id":request.config_id,"draftId":request.draft_id}),
         )?;
         let payload = request.payload()?;
+        let patch_route = if request.metadata.is_some() {
+            resolve_cloud_route(&CloudOperation::Detail, &json!({"id":request.config_id}))?
+        } else {
+            route.clone()
+        };
         validate_cloud_profile(&profile)?;
         let registration = self.register(&request.request_id)?;
         let generation = request.expected_identity.generation;
@@ -220,7 +280,7 @@ impl ChatgptService {
             result = async {
                 let credentials = self.cloud_credentials(generation, &call).await?;
                 if credentials.identity != request.expected_identity { return Err(failure("account_changed", "Authenticated identity changed")); }
-                let mut patch = build_cloud_http_request(&route, &credentials, &profile);
+                let mut patch = build_cloud_http_request(&patch_route, &credentials, &profile);
                 patch.method = HttpMethod::Patch;
                 patch.body = serde_json::to_vec(&payload).map_err(|_| failure("invalid_request", "Invalid cloud draft changes"))?;
                 share_network_allowed(&call, &patch.url).await?;
@@ -235,7 +295,9 @@ impl ChatgptService {
                 let accepted = (200..300).contains(&response.status);
                 let ack = decode_response(response, request.request_id.clone(), request.expected_identity.clone())
                     .map_err(|error| if accepted { unconfirmed() } else { error })?;
-                if request.draft(&ack.body).is_none() { return Err(unconfirmed()); }
+                if request.metadata.is_some() {
+                    if ack.body["id"].as_str() != Some(&request.config_id) { return Err(unconfirmed()); }
+                } else if request.draft(&ack.body).is_none() { return Err(unconfirmed()); }
                 let read = build_cloud_http_request(&route, &after, &profile);
                 share_network_allowed(&call, &read.url).await.map_err(|_| unconfirmed())?;
                 let response = send_bounded(transport, read, registration.cancelled.clone(), Duration::from_secs(30)).await.map_err(|_| unconfirmed())?;

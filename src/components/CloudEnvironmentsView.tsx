@@ -9,11 +9,11 @@ import { cloudSharingLabel, filterCloudCatalog, loadCloudCatalog, loadRepository
   type CloudCatalog, type CloudDetail, type CloudSummary, type RepositoryName } from "../cloudEnvironmentService";
 import "./CloudEnvironmentsView.css";
 
-export function renderCloudEnvironmentFields({ detail, repository, showScripts = true, showNetwork = true }: { detail: CloudDetail; repository: (id: string) => React.ReactNode; showScripts?: boolean; showNetwork?: boolean }) {
+export function renderCloudEnvironmentFields({ detail, repository, showScripts = true, showNetwork = true, showMetadata = true }: { detail: CloudDetail; repository: (id: string) => React.ReactNode; showScripts?: boolean; showNetwork?: boolean; showMetadata?: boolean }) {
   const effective = detail.draft ?? detail;
   return <div aria-label="环境设置" className="cloud-envs-config">
-    {detail.description && <p className="cloud-envs-description">{detail.description}</p>}
-    <section><h3>共享</h3><p>{cloudSharingLabel(detail)}</p></section>
+    {showMetadata && detail.description && <p className="cloud-envs-description">{detail.description}</p>}
+    {showMetadata && <section><h3>共享</h3><p>{cloudSharingLabel(detail)}</p></section>}
     <section><h3>代码仓库</h3>{effective.repositories.map(repo => <div className="cloud-envs-config-repo" key={repo.id}>{repository(repo.id)}<span>{repo.ref}</span></div>)}</section>
     {showNetwork && <section><h3>网络</h3><p>{effective.network.type === "disabled" ? "禁用" : effective.network.type === "unrestricted" ? "不受限" : "受限"}</p>{effective.network.packageManagers && <p>允许软件包管理器</p>}{effective.network.hosts.map(host => <p key={host}>{host}</p>)}</section>}
     {effective.cwd != null && <section><h3>工作目录</h3><pre>{effective.cwd}</pre></section>}

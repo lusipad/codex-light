@@ -142,4 +142,47 @@ mod cloud_draft_save_tests {
             assert!(transport.requests.lock().unwrap().is_empty());
         }
     }
+
+    #[tokio::test]
+    async fn cloud_draft_save_metadata_patches_root_and_reads_exact_private_draft() {
+        for draft_id in ["draft_fixture", "wrong"] {
+            let request = serde_json::from_value(json!({
+                "requestId":"save-fixture", "expectedIdentity":identity(), "configId":"config_fixture",
+                "draftId":"draft_fixture", "baseVersionId":"version-A", "expectedRevision":4,
+                "metadata":{"name":"新名称","description":"","shareSettings":"workspace"}
+            })).unwrap();
+            let transport = FakeTransport::new(&[200, 200]);
+            {
+                let mut responses = transport.responses.lock().unwrap();
+                responses[0].body = serde_json::to_vec(&json!({"id":"config_fixture"})).unwrap();
+                let mut current = readback(4, "unchanged");
+                current["draft"]["id"] = json!(draft_id);
+                current["name"] = json!("新名称");
+                current["share_settings"] = json!("workspace");
+                responses[1].body = serde_json::to_vec(&current).unwrap();
+            }
+            let result = ChatgptService::default()
+                .cloud_save_draft_with(request, cloud_profile(), share_rpc, &transport)
+                .await;
+            if draft_id == "draft_fixture" {
+                assert!(result.is_ok());
+            } else {
+                assert_eq!(result.err().unwrap().code, "cloud_draft_save_unconfirmed");
+            }
+            let calls = transport.requests.lock().unwrap();
+            assert_eq!(calls.len(), 2);
+            assert_eq!(calls[0].method, HttpMethod::Patch);
+            assert!(calls[0]
+                .url
+                .ends_with("/v1/environment-configs/config_fixture"));
+            assert_eq!(
+                serde_json::from_slice::<Value>(&calls[0].body).unwrap(),
+                json!({"name":"新名称","description":"","share_settings":"workspace"})
+            );
+            assert_eq!(calls[1].method, HttpMethod::Get);
+            assert!(calls[1]
+                .url
+                .ends_with("/config_fixture/drafts/draft_fixture"));
+        }
+    }
 }

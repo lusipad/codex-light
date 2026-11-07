@@ -50,7 +50,7 @@
 .cloud-draft-turn { display: flex; flex-direction: column; gap: 12px; }
 .cloud-draft-script-form { margin-top: 24px; gap: 12px; }
 .cloud-draft-script-form label { display: grid; gap: 6px; }
-.cloud-draft-script-form :is(input, textarea) {
+.cloud-draft-script-form :is(input, textarea, select) {
   box-sizing: border-box;
   width: 100%;
   padding: 8px;
@@ -61,6 +61,12 @@
   font: inherit;
 }
 .cloud-draft-script-form textarea { resize: vertical; font-family: monospace; }
+.cloud-draft-script-form .cloud-draft-description { font-family: inherit; }
+.cloud-draft-name { display: flex; align-items: center; gap: 6px; }
+.cloud-draft-name h3 { flex: 1; margin: 0; }
+.cloud-draft-name input { flex: 1; min-width: 0; }
+.cloud-draft-name button { flex: none; }
+.cloud-draft-environment-name { margin: 0 0 12px; }
 .cloud-draft-network { display: grid; gap: 8px; }
 .cloud-draft-network label { display: flex; flex-direction: row-reverse; justify-content: space-between; align-items: center; }
 .cloud-draft-network input[role="switch"] { appearance: none; position: relative; width: 28px; height: 16px; padding: 0; flex: 0 0 28px; border: 0; border-radius: 999px; background: var(--text-tertiary); cursor: pointer; }

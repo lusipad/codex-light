@@ -179,8 +179,11 @@ console.log("PASS cloud draft session: confirmed receipt precedes nonblocking ti
 
 const environment = load("src/cloudEnvironmentService.ts", { "./chatgptService": service });
 const network = load("src/cloudDraftNetwork.ts", {});
-const { saveBoundDraftFields, draftFieldChanges, draftFieldsMatch } = load("src/cloudDraftFields.ts", {
+let metadataReadback;
+const { saveBoundDraftFields, draftFieldChanges, draftFieldsMatch, saveBoundDraftMetadata,
+  draftMetadataValues, compareDraftMetadata } = load("src/cloudDraftFields.ts", {
   "./chatgptService": service, "./cloudEnvironmentService": environment, "./cloudDraftNetwork": network,
+  "./cloudDraftBindings": { readBoundCloudDraft: async () => metadataReadback },
 });
 const binding = session.binding;
 const draftBody = (id = binding.draftId) => ({
@@ -224,3 +227,22 @@ assert(!draftFieldsMatch(original, restricted, { ...reversed, network: { ...reve
 assert.equal(draftFieldChanges(restricted, original).networkPolicy.type, "disabled");
 assert.equal(draftFieldChanges(restricted, { ...restricted, network: { ...restricted.network, type: "unrestricted" } }).networkPolicy.type, "unrestricted");
 console.log("PASS cloud network: official hostname vectors, exact network-only IPC, order-independent readback and mode changes");
+
+const root = environment.parseCloudDetail(draftBody(), binding.configId, binding.draftId);
+const metadataBase = draftMetadataValues(root);
+const metadataEdit = { ...metadataBase, name: "  新名称  ", description: "说明", shareSettings: "workspace" };
+metadataReadback = root;
+savedBody = { ...draftBody(), name: "新名称", description: "说明", share_settings: "workspace" };
+const changed = await saveBoundDraftMetadata(binding, root.draft, metadataBase, metadataEdit, identity, signal);
+assert.deepEqual(saves.at(-1), { configId: binding.configId, draftId: binding.draftId, baseVersionId: "v1", expectedRevision: 3,
+  expectedIdentity: identity, metadata: { name: "新名称", description: "说明", shareSettings: "workspace" } });
+assert.equal(compareDraftMetadata(metadataBase, metadataEdit, draftMetadataValues(changed)), "applied");
+const saveCount = saves.length;
+metadataReadback = changed;
+assert.equal(await saveBoundDraftMetadata(binding, root.draft, metadataBase, metadataEdit, identity, signal), changed);
+metadataReadback = { ...root, description: "并发修改" };
+await assert.rejects(saveBoundDraftMetadata(binding, root.draft, metadataBase, metadataEdit, identity, signal), { code: "conflict" });
+metadataReadback = { ...root, draft: { ...root.draft, revision: 4 } };
+await assert.rejects(saveBoundDraftMetadata(binding, root.draft, metadataBase, metadataEdit, identity, signal), { code: "conflict" });
+assert.equal(saves.length, saveCount, "preflight must not replay applied or conflicting metadata");
+console.log("PASS cloud root metadata: exact field differences, trimmed name, preflight conflict and already-applied handling");

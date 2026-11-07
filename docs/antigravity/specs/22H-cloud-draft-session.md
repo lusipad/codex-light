@@ -85,3 +85,11 @@ Windows 回环覆盖同一连接上的模型目录、会话读取、恢复和历
 回归通过 30 个官方 `XBn/YZ` 原函数向量、98 个前端回放入口与 658 项全库 Rust 测试。Rust 验证非法策略在发请求前拒绝、网络单字段请求、乱序读回及预设不匹配。隔离浏览器验证域名取消、回焦、批量粘贴和内外层写入次数。全量模式下禁用细分控件，关闭后恢复原选项。修复全局外边距重置造成的弹窗偏移后，1280×720 和 440×800 的弹窗居中且无横向溢出。证据见 `verification/network-official-vectors.json`、`verification/network-browser-result.json` 和 `verification/network-rust-final.log`。
 
 Windows 调试构建通过，产物为 `dist-artifacts/cloud-f05-network-20261107/CodexNative.exe`，SHA-256 为 `950160d80ef1d0a3c2e5f209e95ebb5781ef27fea2e84abc2ff50869503274b1`。此增量保留本地提交，完整标准检查、远端 CI 和预览发布在下一发布候选上执行。
+
+## F05 环境元数据
+
+重验同版本 asar。依据 `tab-panel:Kt` 的内联名称编辑、`configuration-fields:go` 的描述和隐私控件、`app-initial:svt/cvt` 的工作区管理资格，以及 `app-primary:vHn` 和原生 `environmentConfigs.request` 的写入顺序。名称输入上限 128 个 UTF-16 单元，提交时 trim，空名称拦截。描述两行，上限 512 个 Unicode 码点。共享到工作区要求管理资格，非所有者不能设为私密。
+
+有两类差异时先保存私有草稿，确认后才 PATCH 根配置的实际元数据差异，根请求不携带草稿版本字段。根 PATCH 确认后 GET 原私有草稿，校验同一配置、草稿及变更字段。第一次成功而第二次失败时保留确认的草稿修订与待保存的元数据。结果不明时只读区分已应用、仍可重试和冲突。根接口缺少条件写参数，发送前对比将改动的根字段，仍有读写之间并发变更的窗口。
+
+隔离浏览器验证空名称零写入、Escape 恢复名称并回焦、草稿和元数据依次发出、只读核对保持写入次数 `1/1`、显式重试后为 `1/2`。1280×720 和 440×800 均无横向溢出。Rust 传输测试核验根 PATCH 请求体、私有草稿 GET、错误草稿拒绝。隐私暂用原生下拉和通用工作区文案。真实云端账号、物理 IME 和官方配对像素待验。
