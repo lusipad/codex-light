@@ -6,7 +6,7 @@ import { readBoundCloudDraft } from "../cloudDraftBindings";
 import { compareDraftMetadata, draftFieldChanges, draftFieldsMatch, draftFieldValues, draftMetadataChanges, draftMetadataValues,
   saveBoundDraftFields, saveBoundDraftMetadata } from "../cloudDraftFields";
 import { readCloudEnvironmentAccess } from "../cloudEnvironmentAccess";
-import { readCloudDraftHistory } from "../cloudDraftHistory";
+import { mergeCloudDraftHistory, readCloudDraftHistory, watchCloudDraftHistory } from "../cloudDraftHistory";
 import { prepareCloudDraftContext, restoreCloudDraftSession, type CloudDraftSession } from "../cloudDraftSession";
 import type { CloudDetail } from "../cloudEnvironmentService";
 import { extractTextFromItem } from "../threadText";
@@ -29,6 +29,8 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
   const [history, setHistory] = useState<History | null>(null);
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [restoreAttempt, setRestoreAttempt] = useState(0);
+  const [historyRefreshError, setHistoryRefreshError] = useState<string | null>(null);
+  const refreshHistory = useRef<(() => void) | null>(null);
   const [olderBusy, setOlderBusy] = useState(false);
   const [olderError, setOlderError] = useState<string | null>(null);
   const olderRequest = useRef<AbortController | null>(null);
@@ -73,11 +75,20 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
     const request = new AbortController();
     const cancel = () => request.abort();
     scope.addEventListener("abort", cancel, { once: true });
-    setRestoreError(null); setHistory(null); setOlderError(null);
-    void restoreCloudDraftSession(session, prepareCloudDraftContext, historyLimits, request.signal).then(result => {
-      if (!request.signal.aborted) setHistory(result.history);
+    setRestoreError(null); setHistory(null); setOlderError(null); setHistoryRefreshError(null);
+    void watchCloudDraftHistory(session.threadId, session.identity, request.signal,
+      async () => (await restoreCloudDraftSession(session, prepareCloudDraftContext, historyLimits, request.signal)).history,
+      historyLimits, {
+        onInitial: setHistory,
+        onRefresh: latest => {
+          setHistory(current => current ? mergeCloudDraftHistory(current, latest) : latest);
+          setHistoryRefreshError(null);
+        },
+        onRefreshError: cause => setHistoryRefreshError(serviceErrorMessage(cause)),
+      }).then(refresh => {
+      if (!request.signal.aborted) refreshHistory.current = refresh;
     }, cause => { if (!request.signal.aborted) setRestoreError(serviceErrorMessage(cause)); });
-    return () => { cancel(); scope.removeEventListener("abort", cancel); };
+    return () => { cancel(); refreshHistory.current = null; scope.removeEventListener("abort", cancel); };
   }, [scope, session, restoreAttempt]);
 
   useEffect(() => {
@@ -122,8 +133,11 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
     try {
       const page = await readCloudDraftHistory(session.threadId, session.identity, request.signal, { ...historyLimits, cursor: history.olderCursor });
       if (request.signal.aborted) return;
-      const currentIds = new Set(history.turns.map(entry => entry.turn.id));
-      setHistory({ turns: [...page.turns.filter(entry => !currentIds.has(entry.turn.id)), ...history.turns], olderCursor: page.olderCursor });
+      setHistory(current => {
+        if (!current || current.olderCursor !== history.olderCursor) return current;
+        const currentIds = new Set(current.turns.map(entry => entry.turn.id));
+        return { turns: [...page.turns.filter(entry => !currentIds.has(entry.turn.id)), ...current.turns], olderCursor: page.olderCursor };
+      });
     } catch (cause) { if (!request.signal.aborted) setOlderError(serviceErrorMessage(cause)); }
     finally {
       if (olderRequest.current === request) olderRequest.current = null;
@@ -233,6 +247,7 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
           {scopeError ? <p role="alert">{scopeError}</p> : restoreError ? <div role="alert">{restoreError} <button type="button" onClick={() => setRestoreAttempt(value => value + 1)}>重试恢复</button></div> : !history ? <p role="status">正在恢复云端会话…</p> : <>
             {history.olderCursor && <button type="button" className="turn-action-mini-btn" disabled={olderBusy} onClick={() => void loadEarlier()}>加载更早的轮次</button>}
             {olderError && <p role="alert">{olderError}</p>}
+            {historyRefreshError && <div role="alert">{historyRefreshError} <button type="button" onClick={() => refreshHistory.current?.()}>重试刷新</button></div>}
             {!history.turns.length && <p role="status">暂无历史消息</p>}
             {history.turns.map(({ turn }) => <div className="cloud-draft-turn" key={turn.id}>{turn.items.map(raw => {
               const item = raw as unknown as TurnItem;

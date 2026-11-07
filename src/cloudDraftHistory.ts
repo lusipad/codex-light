@@ -1,4 +1,5 @@
 import { callCloudThread, type ServiceIdentity } from "./chatgptService";
+import { tauriListen } from "./bridge";
 
 interface HistoryEntry { id: string; [key: string]: unknown }
 interface Page<T> { data: T[]; nextCursor?: string | null }
@@ -54,4 +55,84 @@ export async function readCloudDraftHistory(threadId: string, identity: ServiceI
   }
   signal.throwIfAborted();
   return { turns: turns.reverse(), olderCursor: page.nextCursor ?? null };
+}
+
+type History = Awaited<ReturnType<typeof readCloudDraftHistory>>;
+
+export function mergeCloudDraftHistory(current: History, latest: History): History {
+  if (!latest.turns.length) return current.turns.length ? current : latest;
+  const newestIds = new Set(latest.turns.map(({ turn }) => turn.id));
+  const overlap = current.turns.findIndex(({ turn }) => newestIds.has(turn.id));
+  if (overlap < 0) return latest;
+  const prefix = current.turns.slice(0, overlap);
+  const lastOverlap = current.turns.findIndex(({ turn }) => turn.id === latest.turns.at(-1)?.turn.id);
+  const suffix = lastOverlap < 0 ? [] : current.turns.slice(lastOverlap + 1);
+  return {
+    turns: [...prefix, ...latest.turns, ...suffix],
+    olderCursor: prefix.length || current.turns[0].turn.id === latest.turns[0].turn.id ? current.olderCursor : latest.olderCursor,
+  };
+}
+
+export async function watchCloudDraftHistory(
+  threadId: string,
+  identity: ServiceIdentity,
+  signal: AbortSignal,
+  restore: () => Promise<History>,
+  limits: { turnLimit: number; itemLimit: number },
+  callbacks: {
+    onInitial: (history: History) => void;
+    onRefresh: (history: History) => void;
+    onRefreshError: (cause: unknown) => void;
+  },
+) {
+  let ready = false;
+  let pending = false;
+  let reading = false;
+  const refresh = async () => {
+    if (!ready || reading) return;
+    reading = true;
+    try {
+      while (pending && !signal.aborted) {
+        pending = false;
+        try {
+          const latest = await readCloudDraftHistory(threadId, identity, signal, { ...limits, cursor: null });
+          if (!signal.aborted) callbacks.onRefresh(latest);
+        } catch (cause) {
+          if (!signal.aborted) callbacks.onRefreshError(cause);
+        }
+      }
+    } finally { reading = false; }
+  };
+  const requestRefresh = () => {
+    if (signal.aborted) return;
+    pending = true;
+    void refresh();
+  };
+  signal.throwIfAborted();
+  const stop = await tauriListen<{ hostId?: string; identity?: ServiceIdentity; method?: string; params?: { threadId?: string } }>(
+    "cloud-app-server:notification", event => {
+      if (signal.aborted || event?.hostId !== "durable" || event.params?.threadId !== threadId
+        || event.identity?.accountId !== identity.accountId || event.identity.userId !== identity.userId
+        || event.identity.generation !== identity.generation
+        || (event.method !== "turn/started" && event.method !== "turn/completed")) return;
+      requestRefresh();
+    },
+  );
+  if (signal.aborted) {
+    stop();
+    signal.throwIfAborted();
+  }
+  signal.addEventListener("abort", stop, { once: true });
+  try {
+    const history = await restore();
+    signal.throwIfAborted();
+    callbacks.onInitial(history);
+    ready = true;
+    void refresh();
+    return requestRefresh;
+  } catch (cause) {
+    signal.removeEventListener("abort", stop);
+    if (!signal.aborted) stop();
+    throw cause;
+  }
 }

@@ -266,3 +266,89 @@ assert.equal(draftFieldChanges(afterRepositories, { ...afterRepositories, reposi
 const olderData = { ...beforeRepositories, repositories: [currentRepositories[0], currentRepositories[0]] };
 assert.deepEqual(JSON.parse(JSON.stringify(draftFieldChanges(olderData, { ...olderData, startSkill: "changed" }))), { startSkill: "changed" });
 console.log("PASS cloud draft repositories: exact payload, retained ref and depth, reordered readback and explicit clear");
+
+let notify;
+let stopped = 0;
+let finishRegistration;
+const liveReads = [];
+const liveHistory = load("src/cloudDraftHistory.ts", {
+  "./bridge": { tauriListen: async (name, handler) => {
+    assert.equal(name, "cloud-app-server:notification");
+    notify = handler;
+    if (finishRegistration) await new Promise(resolve => { finishRegistration = resolve; });
+    return () => { stopped++; };
+  } },
+  "./chatgptService": { callCloudThread: (operation, owner, active) => {
+    assert.equal(operation.threadId, "thread-A");
+    assert.equal(operation.cursor, null);
+    assert.equal(owner, identity);
+    if (operation.kind === "items") return Promise.resolve({ data: [{ id: `${operation.turnId}-message` }] });
+    assert.equal(operation.kind, "turns");
+    return new Promise((resolve, reject) => liveReads.push({ resolve, reject, active }));
+  } },
+});
+const snapshot = (ids, olderCursor = null) => ({ turns: ids.map(id => ({ turn: { id, items: [] } })), olderCursor });
+const event = { hostId: "durable", identity, method: "turn/completed", params: { threadId: "thread-A" } };
+const tick = () => new Promise(resolve => setImmediate(resolve));
+const lifetime = new AbortController();
+const seen = [];
+const errors = [];
+let liveSnapshot = snapshot(["old", "current"], "older");
+let initialReady;
+const watching = liveHistory.watchCloudDraftHistory("thread-A", identity, lifetime.signal,
+  () => new Promise(resolve => { initialReady = resolve; }), options, {
+    onInitial: value => { liveSnapshot = value; seen.push("initial"); },
+    onRefresh: value => { liveSnapshot = liveHistory.mergeCloudDraftHistory(liveSnapshot, value); seen.push("refresh"); },
+    onRefreshError: error => errors.push(error),
+  });
+await tick();
+notify(event);
+assert.equal(liveReads.length, 0, "event before restore must wait for its history snapshot");
+initialReady(liveSnapshot);
+const refresh = await watching;
+assert.equal(liveReads.length, 1);
+for (const foreign of [{ ...event, hostId: "local" }, { ...event, identity: { ...identity, generation: 2 } },
+  { ...event, identity: { ...identity, userId: "foreign" } }, { ...event, params: { threadId: "other" } },
+  { ...event, method: "item/started" }]) notify(foreign);
+liveReads[0].resolve({ data: [] });
+await tick();
+assert.equal(liveReads.length, 1, "foreign events must not schedule a refresh");
+assert.deepEqual(liveSnapshot.turns.map(({ turn }) => turn.id), ["old", "current"], "transient empty response retains visible history");
+notify({ ...event, method: "turn/started" });
+notify(event);
+notify(event);
+assert.equal(liveReads.length, 2, "events during refresh must coalesce");
+liveReads[1].reject(Error("transient"));
+await tick();
+assert.equal(errors.length, 1);
+assert.equal(liveReads.length, 3, "queued completion must survive refresh failure");
+liveReads[2].resolve({ data: [{ id: "new" }, { id: "current" }] });
+await tick();
+assert.equal(JSON.stringify(liveSnapshot.turns.map(({ turn }) => turn.id)), '["old","current","new"]');
+assert.equal(liveSnapshot.turns.at(-1).turn.items[0].id, "new-message");
+refresh();
+assert.equal(liveReads.length, 4, "manual retry refreshes without another resume");
+lifetime.abort();
+assert.equal(stopped, 1);
+assert(liveReads[3].active.aborted);
+liveReads[3].resolve({ data: [] });
+notify(event);
+await tick();
+assert.deepEqual(seen, ["initial", "refresh", "refresh"]);
+assert.equal(liveReads.length, 4);
+const replacement = liveHistory.mergeCloudDraftHistory(snapshot(["old", "current"], "older"), snapshot(["current", "new"], "server-cursor"));
+assert.equal(JSON.stringify(replacement), JSON.stringify(snapshot(["old", "current", "new"], "older")));
+const lagged = liveHistory.mergeCloudDraftHistory(replacement, snapshot(["old", "current"], "server-cursor"));
+assert.equal(JSON.stringify(lagged), JSON.stringify(replacement));
+const disjoint = snapshot(["distant-new"], "gap");
+assert.equal(liveHistory.mergeCloudDraftHistory(replacement, disjoint), disjoint);
+
+const registering = new AbortController();
+finishRegistration = true;
+const registration = liveHistory.watchCloudDraftHistory("thread-A", identity, registering.signal,
+  () => assert.fail("aborted registration must not resume"), options, {});
+registering.abort();
+finishRegistration();
+await assert.rejects(registration, { name: "AbortError" });
+assert.equal(stopped, 2, "late registration must release its listener");
+console.log("PASS cloud draft live history: listener-before-resume, scoped notification bursts, refresh retry, pagination preservation and cancellation");
