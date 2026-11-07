@@ -290,6 +290,7 @@ export type CloudThreadOperation =
   | { kind: "title"; threadId: string; name: string }
   | { kind: "turns"; threadId: string; cursor: string | null; limit: number }
   | { kind: "items"; threadId: string; turnId: string; cursor: string | null; limit: number }
+  | { kind: "start_repository_apply"; threadId: string; clientUserMessageId: string; serviceTier: string | null; added: string[]; removed: string[] }
   | { kind: "preferences" | "requirements" };
 
 export async function callCloudThread(operation: CloudThreadOperation, identity: ServiceIdentity, signal: AbortSignal): Promise<unknown> {
@@ -676,6 +677,7 @@ export function serviceErrorMessage(error: unknown): string {
     cancelled: "请求已取消。", transport_unavailable: "系统 HTTP 组件不可用。",
     cloud_draft_unconfirmed: "无法确认环境草稿，请先检查聊天列表。",
     cloud_draft_save_unconfirmed: "保存结果尚未确认，请先核对服务端草稿。",
+    cloud_repository_apply_unconfirmed: "应用消息的投递结果尚未确认。",
     cloud_draft_pending: "此环境已有正在处理或尚未确认的草稿请求，请检查聊天列表。",
     cloud_resume_timeout: "恢复云端会话超时。", cloud_thread_closing: "云端会话正在关闭。",
     network_error: "服务连接失败，请检查网络后重试。", timeout: "服务请求超时，请重试。",

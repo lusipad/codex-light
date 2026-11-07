@@ -3886,6 +3886,7 @@ mod tests {
     include!("chatgpt_service/cloud_drafts_tests.rs");
     include!("chatgpt_service/cloud_draft_save_tests.rs");
     include!("chatgpt_service/durable_models_tests.rs");
+    include!("chatgpt_service/durable_apply_tests.rs");
 
     fn identity() -> ServiceIdentity {
         ServiceIdentity {

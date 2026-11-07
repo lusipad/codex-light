@@ -1,10 +1,17 @@
 use super::{
     failure, ChatgptService, CloudProfile, DurableModelsResponse, ServiceIdentity, ServiceResult,
 };
-use crate::durable::{Notify, Request};
+use crate::durable::{ConnectionConfig, Error as DurableError, Notify, Request};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::{future::Future, time::Duration};
+use std::{
+    future::Future,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -44,12 +51,36 @@ enum Operation {
         cursor: Option<String>,
         limit: u8,
     },
+    StartRepositoryApply {
+        thread_id: String,
+        client_user_message_id: uuid::Uuid,
+        service_tier: Option<String>,
+        added: Vec<String>,
+        removed: Vec<String>,
+    },
     Preferences,
     Requirements,
 }
 
 fn opaque(value: &str) -> bool {
     !value.trim().is_empty() && value.len() <= 2048 && !value.chars().any(char::is_control)
+}
+
+fn repository_apply_text(added: &[String], removed: &[String]) -> ServiceResult<String> {
+    if added.len() > 16
+        || removed.len() > 16
+        || (added.is_empty() && removed.is_empty())
+        || !added.iter().chain(removed).all(|name| opaque(name))
+    {
+        return Err(failure(
+            "invalid_request",
+            "Invalid cloud repository changes",
+        ));
+    }
+    Ok(format!(
+        "I saved repository changes for this environment. Added: {}. Removed: {}. Apply the latest saved repository configuration to this workspace: clone newly added repositories that are still selected, and remove checkouts for repositories that are still removed only if they have no uncommitted or unpushed work. Preserve local work and report anything you could not apply. Do not change the saved repository selection.",
+        json!(added), json!(removed)
+    ))
 }
 
 fn valid_resume_config(config: &Value) -> bool {
@@ -139,6 +170,28 @@ impl Operation {
             }
             Self::Preferences => ("config/read", json!({"cwd":null,"includeLayers":true}), 30),
             Self::Requirements => ("configRequirements/read", Value::Null, 30),
+            Self::StartRepositoryApply {
+                thread_id,
+                client_user_message_id,
+                service_tier,
+                added,
+                removed,
+            } if opaque(&thread_id)
+                && !client_user_message_id.is_nil()
+                && service_tier.as_deref().is_none_or(opaque) =>
+            {
+                (
+                    "turn/start",
+                    json!({
+                        "threadId":thread_id,
+                        "clientUserMessageId":client_user_message_id.to_string(),
+                        "cwd":"/workspace","turnTrigger":"environment_onboarding",
+                        "model":null,"effort":null,"serviceTier":service_tier,"collaborationMode":null,
+                        "input":[{"type":"text","text":repository_apply_text(&added,&removed)?,"text_elements":[]}]
+                    }),
+                    30,
+                )
+            }
             _ => return Err(failure("invalid_request", "Invalid cloud thread operation")),
         };
         Ok(Request {
@@ -147,6 +200,40 @@ impl Operation {
             timeout: Duration::from_secs(seconds),
         })
     }
+}
+
+fn apply_unconfirmed() -> super::ServiceError {
+    failure(
+        "cloud_repository_apply_unconfirmed",
+        "Cloud repository message delivery is unconfirmed",
+    )
+}
+
+fn checked_apply_response(
+    thread_id: Option<&str>,
+    message_id: Option<&str>,
+    body: Value,
+) -> ServiceResult<Value> {
+    let turn = &body["turn"];
+    let id = turn["id"]
+        .as_str()
+        .filter(|id| opaque(id))
+        .ok_or_else(apply_unconfirmed)?;
+    if [
+        (&body, "threadId", thread_id),
+        (turn, "threadId", thread_id),
+        (&body, "clientUserMessageId", message_id),
+        (turn, "clientUserMessageId", message_id),
+    ]
+    .into_iter()
+    .any(|(value, key, expected)| {
+        value
+            .get(key)
+            .is_some_and(|field| !field.is_null() && field.as_str() != expected)
+    }) {
+        return Err(apply_unconfirmed());
+    }
+    Ok(json!({"turn":{"id":id}}))
 }
 
 fn valid_resume(params: &Value) -> bool {
@@ -240,25 +327,66 @@ impl ChatgptService {
         F: Fn(&'static str, Value) -> Fut,
         Fut: Future<Output = Result<Value, String>>,
     {
+        self.durable_thread_with(request, profile, call, |config, wire, cancel| {
+            self.durable.request(config, wire, cancel, notify)
+        })
+        .await
+    }
+
+    pub(super) async fn durable_thread_with<F, Fut, Run, RunFuture>(
+        &self,
+        request: DurableThreadRequest,
+        profile: CloudProfile,
+        call: F,
+        run: Run,
+    ) -> ServiceResult<DurableModelsResponse>
+    where
+        F: Fn(&'static str, Value) -> Fut,
+        Fut: Future<Output = Result<Value, String>>,
+        Run: FnOnce(ConnectionConfig, Request, Arc<AtomicBool>) -> RunFuture,
+        RunFuture: Future<Output = Result<Value, DurableError>>,
+    {
         let wire = request.operation.wire()?;
         let method = wire.method;
         let thread_id = wire.params["threadId"].as_str().map(str::to_owned);
         let turn_id = wire.params["turnId"].as_str().map(str::to_owned);
+        let message_id = wire.params["clientUserMessageId"]
+            .as_str()
+            .map(str::to_owned);
+        let apply_write = method == "turn/start";
+        let handed_off = AtomicBool::new(false);
         let mut response = self
             .durable_call_with(
                 request.request_id,
                 request.expected_identity,
                 profile,
                 call,
-                |config, cancel| self.durable.request(config, wire, cancel, notify),
+                |config, cancel| {
+                    handed_off.store(true, Ordering::SeqCst);
+                    run(config, wire, cancel)
+                },
             )
-            .await?;
-        response.body = checked_response(
-            method,
-            thread_id.as_deref(),
-            turn_id.as_deref(),
-            response.body,
-        )?;
+            .await
+            .map_err(|error| {
+                if apply_write
+                    && handed_off.load(Ordering::SeqCst)
+                    && error.code != "account_changed"
+                {
+                    apply_unconfirmed()
+                } else {
+                    error
+                }
+            })?;
+        response.body = if apply_write {
+            checked_apply_response(thread_id.as_deref(), message_id.as_deref(), response.body)?
+        } else {
+            checked_response(
+                method,
+                thread_id.as_deref(),
+                turn_id.as_deref(),
+                response.body,
+            )?
+        };
         Ok(response)
     }
 }
