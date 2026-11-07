@@ -131,6 +131,7 @@ for (const confirmation of [null, { threadId: "source" }]) {
     let now = 0;
     const context = {
       Date: { now: () => now += 1000 }, shortcutTimestampsRef: { current: {} },
+      keyboardContextRef: { current: { activeRoute: "home" } },
       keyboardState: { capturing: { current: false } },
       projectMoveConfirmation: confirmation, projectMoveBusy: busy,
       shortcutHandlersRef: { current: Object.fromEntries(shortcutNames.map(name =>

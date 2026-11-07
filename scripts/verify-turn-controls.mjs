@@ -50,8 +50,12 @@ console.log("PASS successful Steer clears only unchanged input; invalid turn and
 
 let interrupt;
 const findInterrupt=node=>{if(ts.isVariableDeclaration(node)&&node.name.getText(ast)==="handleInterruptTurn")interrupt=node.initializer.arguments[0].getText(ast);ts.forEachChild(node,findInterrupt)};findInterrupt(ast);assert.ok(interrupt);
-const interruptEnv={...env,activeThreadIdRef:{current:"a"},activeTurnIdRef:{current:"turn-a"},threadRequestRef:{current:1},setIsStreaming:()=>{throw Error("must await completion event")},callAppServer:async()=>{throw Error("interrupt timed out")}};
+let interruptRequests=0;
+const interruptEnv={...env,activeRouteRef:{current:"cloud-draft"},activeThreadIdRef:{current:"a"},activeTurnIdRef:{current:"turn-a"},threadRequestRef:{current:1},setIsStreaming:()=>{throw Error("must await completion event")},callAppServer:async()=>{interruptRequests++;throw Error("interrupt timed out")}};
 let warnings=0;interruptEnv.showAppToast=()=>{warnings++};
 const stop=new Function(...Object.keys(interruptEnv),ts.transpileModule(`return (${interrupt});`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText)(...Object.values(interruptEnv));
-await stop();assert.equal(warnings,1);interruptEnv.activeThreadIdRef.current=null;await stop();assert.equal(warnings,1);
+await stop();assert.equal(interruptRequests,0,"cloud draft must never interrupt a local turn");assert.equal(warnings,0);
+interruptEnv.activeRouteRef.current="thread";
+await stop();assert.equal(interruptRequests,1);assert.equal(warnings,1);
+interruptEnv.activeThreadIdRef.current=null;await stop();assert.equal(interruptRequests,1);assert.equal(warnings,1);
 console.log("PASS interrupt errors are visible without faking turn completion");

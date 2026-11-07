@@ -192,6 +192,7 @@ let rejectOpen = false;
 let now = 0;
 const context = vm.createContext({
   Date: { now: () => now += 1000 }, shortcutTimestampsRef: { current: {} },
+  keyboardContextRef: { current: { activeRoute: "home" } },
   keyboardState: { capturing: { current: false } },
   shortcutHandlersRef: { current: {} }, setShowKeyboardShortcuts: fn => dialogs.push(fn),
   keyboardShortcutsOpenRef: { current: false },
