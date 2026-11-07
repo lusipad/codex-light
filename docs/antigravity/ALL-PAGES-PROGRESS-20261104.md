@@ -184,3 +184,9 @@
 [21K阶段记录](acceptance/21K-sites-sharing-invitations.md)：先补目录/团队资格和真实邮箱schema，再接成员、群组、完整teams100条分页与外部邮箱邀请。修正21J群组当前角色菜单差异；独立审查的关闭重开重复邀请、撤权旧错误、Retry Escape误关父框均实际红→绿。5数据/55源向量、12客户端、8搜索、37状态/共享UI与12输入分组通过。
 
 最终93前端、620全库Rust、完整非Fast347段/32探针和原生debug构建退出0，710输入稳定；生产EXE私有未登录Sites重试/退出、SQLite0线程通过。完整Sites仍开发中，真实服务、正常共享原生、配对像素/IME/用户验收待做，ACK/pending时序仍待官方对照校准。preview.10仅候选，须先分支CI成功，再标签CI发布并核对实际资源；不以本地通过代替远端结论。
+
+[preview.10](https://github.com/lusipad/codex-desktop-native/releases/tag/v0.2.0-preview.10) 已发布。分支 42328860252 与标签 42330508331 均在 `2d57418` 通过 93 项前端回放、620 项 Rust 测试及 Windows 打包。四个发布文件已下载，分别与标签 CI 的产物逐字节校验。
+
+## 21L（2026-11-07）Sites 待处理邀请
+
+收到待处理 ACK 即显示所选对象，同一身份从候选中排除，其他对象可继续邀请。重开时读取真实权限，读到记录后替换临时行。此阶段在 preview.10 之后，仍待官方配对像素及真实账号验收。[规格](specs/21L-sites-sharing-pending.md) · [阶段记录](acceptance/21L-sites-sharing-pending.md)

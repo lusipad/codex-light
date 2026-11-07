@@ -49,6 +49,7 @@ function harness() {
     setClock(ms) { clock = ms; }, unmount() { hooks.forEach(h => h?.cleanup?.()); }, get writes() { return writes; },
   };
 }
+const invitee = target => ({ target, kind: target.kind, source: target.kind === "email" ? "external" : target.kind === "group" ? "teams" : "users", label: "候选对象" });
 const latest = (h, op) => h.calls.filter(c => c.operation === op).at(-1);
 const result = (slug, extra = {}) => ({ site: { ...site, slug, hostedUrl: `https://${slug}.example.invalid`, updatedAt: "2026-11-08T00:00:00Z", ...extra }, assets: [{ id: "one", assetKey: `grant-${slug}`, sourceRequestId: "request" }] });
 let passed = 0; const failures = [];
@@ -222,29 +223,66 @@ await check("owner editable group retains current-role menu when invitee mutatio
 });
 await check("inviting an unshared workspace member uses viewer and actual readback without changing mode draft", async () => {
   const h = harness(), s = h.state(); await ready(h, s); s.change("public");
-  const done = s.invite({ kind: "user", id: "new-member" }); await flush(); assert.equal(latest(h, "member").args[3], "viewer"); assert.equal(s.saving, true); await s.save(); assert.equal(latest(h, "write"), undefined);
+  const done = s.invite(invitee({ kind: "user", id: "new-member" })); await flush(); assert.equal(latest(h, "member").args[3], "viewer"); assert.equal(s.saving, true); await s.save(); assert.equal(latest(h, "write"), undefined);
   latest(h, "member").resolve(null); await flush(); latest(h, "policy").resolve({ ...policy, users: [...policy.users, { account_user_id: "new-member", role: "viewer", editable: true }] }); await flush();
   assert.equal(await done, true); assert.equal(s.draft, "public"); assert.equal(s.canInvite, true); s.dispose();
 });
 await check("existing external visitors do not grant new invitations; non-owner, existing and duplicate targets cannot write", async () => {
   const h = harness(), s = h.state(); await ready(h, s, { ...policy, users: [...policy.users, { email: "guest@example.invalid", role: "viewer", editable: true }] });
-  s.context = { ...context, workspace: false, canInviteExternal: false }; assert.equal(s.canInvite, false); await s.invite({ kind: "user", id: "new-member" }); assert.equal(latest(h, "member"), undefined);
-  s.context = context; await s.invite({ kind: "user", id: "member" }); await s.invite({ kind: "email", email: "GUEST@example.invalid" }); assert.equal(latest(h, "member"), undefined);
-  s.context = { ...context, memberId: "viewer", email: null }; assert.equal(s.canInvite, false); await s.invite({ kind: "group", id: "new-group" }); assert.equal(latest(h, "member"), undefined); s.dispose();
+  s.context = { ...context, workspace: false, canInviteExternal: false }; assert.equal(s.canInvite, false); await s.invite(invitee({ kind: "user", id: "new-member" })); assert.equal(latest(h, "member"), undefined);
+  s.context = context; await s.invite(invitee({ kind: "user", id: "member" })); await s.invite(invitee({ kind: "email", email: "GUEST@example.invalid" })); assert.equal(latest(h, "member"), undefined);
+  s.context = { ...context, memberId: "viewer", email: null }; assert.equal(s.canInvite, false); await s.invite(invitee({ kind: "group", id: "new-group" })); assert.equal(latest(h, "member"), undefined); s.dispose();
 });
-await check("group invitation pending requires explicit readback and never grants editor or repeats the PATCH", async () => {
-  const h = harness(), s = h.state(); await ready(h, s); const done = s.invite({ kind: "group", id: "new-group" }); await flush();
-  latest(h, "member").resolve({ status: "pending" }); await flush(); latest(h, "policy").resolve(policy); await flush(); assert.equal(await done, false); assert.ok(s.memberUnknown);
-  await s.invite({ kind: "group", id: "new-group" }); const recovered = s.recoverMember(); latest(h, "policy").resolve({ ...policy, groups: [{ id: "new-group", editable: true }] }); await flush();
-  assert.equal(await recovered, true); assert.equal(h.calls.filter(c => c.operation === "member").length, 1); s.dispose();
+await check("pending invite renders immediately and later replaces the row with authoritative GET data", async () => {
+  for (const target of [{ kind: "group", id: "new-group" }, { kind: "user", id: "new-user" }, { kind: "email", email: "guest@example.invalid" }]) {
+    const h = harness(); h.render(); const s = h.componentState;
+    latest(h, "context").resolve(context); latest(h, "policy").resolve(policy); latest(h, "url").resolve(null); await flush();
+    const candidate = { ...invitee(target), label: "目录中的对象", email: target.email, size: 0 };
+    const reads = h.calls.filter(c => c.operation === "policy").length;
+    const done = s.invite(candidate); await flush();
+    const editor = target.kind === "user";
+    latest(h, "member").resolve({ status: "pending", ...(editor ? { role_id: "role-site-editor" } : {}) }); await flush();
+    assert.equal(h.calls.filter(c => c.operation === "policy").length, reads, "pending ACK should render without a new GET");
+    assert.equal(await done, true); assert.equal(s.error, null); assert.equal(s.policy, policy); assert.equal(h.updated.length, 0); assert.equal(s.canInvite, true);
+    const row = walk(h.render()).find(node => node.props.className === "site-sharing-person" && text(node).includes(target.email ?? candidate.label));
+    assert.ok(row); assert.match(text(row), editor ? /待处理.*编辑者/ : /待处理.*查看者/);
+    assert.equal(walk(row).some(node => node.type === "button"), false);
+    await s.invite(candidate); assert.equal(h.calls.filter(c => c.operation === "member").length, 1);
+    h.render({ ...h.props, open: false }); h.render();
+    latest(h, "policy").resolve(target.kind === "group" ? { ...policy, groups: [{ id: target.id, name: "服务端名称", size: 3, editable: true }] }
+      : { ...policy, users: [...policy.users, { account_user_id: target.id, email: target.email, name: "服务端名称", role: editor ? "editor" : "viewer" }] });
+    await flush(); assert.equal(s.memberUnknown, null);
+    assert.match(text(h.render()), /服务端名称/); assert.doesNotMatch(text(h.render()), /待处理|目录中的对象/); h.unmount();
+  }
+});
+await check("known pending invites deduplicate without blocking invitations to other recipients", async () => {
+  const h = harness(), s = h.state(); await ready(h, s);
+  for (const id of ["one", "two"]) {
+    const candidate = invitee({ kind: "user", id });
+    const done = s.invite(candidate); await flush(); latest(h, "member").resolve({ status: "pending" });
+    assert.equal(await done, true); assert.equal(await s.invite(candidate), false);
+  }
+  assert.deepEqual(Array.from(s.participantPolicy.users.filter(user => user.pending), user => user.account_user_id), ["one", "two"]);
+  assert.equal(h.calls.filter(c => c.operation === "policy").length, 1);
+  assert.equal(h.calls.filter(c => c.operation === "member").length, 2); s.dispose();
+});
+await check("pending projection disappears when a refresh revokes sharing without repeating the write", async () => {
+  const h = harness(); h.render(); const s = h.componentState;
+  latest(h, "context").resolve(context); latest(h, "policy").resolve(policy); latest(h, "url").resolve(null); await flush();
+  void s.invite(invitee({ kind: "user", id: "new-user" })); await flush();
+  latest(h, "member").resolve({ status: "pending" }); await flush(); assert.match(text(h.render()), /待处理/);
+  const refresh = s.load(true); latest(h, "context").resolve(context);
+  latest(h, "policy").resolve({ ...policy, accessMode: "admins_only" }); latest(h, "url").resolve(null); await refresh;
+  assert.doesNotMatch(text(h.render()), /待处理|候选对象/); assert.equal(h.calls.filter(c => c.operation === "member").length, 1); h.unmount();
 });
 await check("close/reopen cannot drop an in-flight invitation outcome lock or replay its target", async () => {
   for (const result of ["unknown", "pending"]) {
-    const h = harness(), s = h.state(); await ready(h, s); const done = s.invite({ kind: "user", id: "new-member" }); await flush();
+    const h = harness(), s = h.state(); await ready(h, s); const done = s.invite(invitee({ kind: "user", id: "new-member" })); await flush();
     s.setOpen(false); s.setOpen(true); if (result === "unknown") latest(h, "member").reject({ code: "site_sharing_unconfirmed" }); else latest(h, "member").resolve({ status: "pending" }); await flush();
-    latest(h, "policy").resolve(policy); await flush(); await done; assert.ok(s.memberUnknown); assert.equal(s.canInvite, false);
-    await s.invite({ kind: "user", id: "new-member" }); assert.equal(h.calls.filter(c => c.operation === "member").length, 1);
-    const recovered = s.recoverMember(); latest(h, "policy").resolve({ ...policy, users: [...policy.users, { account_user_id: "new-member", role: "viewer", pending: false }] }); await flush(); assert.equal(await recovered, true); s.dispose();
+    latest(h, "policy").resolve(policy); await flush(); await done; assert.equal(Boolean(s.memberUnknown), result === "unknown"); assert.equal(s.canInvite, result === "pending");
+    assert.equal(s.participantPolicy.users.some(user => user.account_user_id === "new-member" && user.pending), result === "pending");
+    await s.invite(invitee({ kind: "user", id: "new-member" })); assert.equal(h.calls.filter(c => c.operation === "member").length, 1);
+    const recovered = result === "unknown" ? s.recoverMember() : s.load(); latest(h, "policy").resolve({ ...policy, users: [...policy.users, { account_user_id: "new-member", role: "viewer", pending: false }] }); await flush(); await recovered; assert.equal(s.memberUnknown, null); assert.equal(s.participantPolicy.users.filter(user => user.account_user_id === "new-member").length, 1); s.dispose();
   }
 });
 assert.equal(failures.length, 0, failures.join("; "));

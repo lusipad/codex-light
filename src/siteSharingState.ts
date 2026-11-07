@@ -4,6 +4,7 @@ import type { SiteSharingWriteResult } from "./chatgptService";
 import { trackRequest } from "./siteSettingsState";
 import type { SitesClientAccess } from "./sitesClient";
 import { writeSiteSharingInvitation } from "./sitesSharingInvitationsClient";
+import type { SiteSharingInviteCandidate } from "./siteSharingInvitationData";
 
 export class SiteSharingState {
   open = false; context: SiteSharingContext | null = null; policy: SiteSharingPolicy | null = null;
@@ -11,6 +12,7 @@ export class SiteSharingState {
   policyError = false; contextError = false; urlError = false; error: string | null = null; unknown = false; pendingMode: SiteSharingMode | null = null;
   memberUnknown: { target: SiteSharingMemberTarget; role: "viewer" | "editor" | null } | null = null; lastMemberAck: SiteSharingWriteResult | undefined;
   private mounted = false; private generation = 0; private policyTime = -Infinity; private contextTime = -Infinity; private urlTime = -Infinity; private changed = false;
+  private pendingInvitations: { candidate: SiteSharingInviteCandidate; role: "viewer" | "editor" }[] = [];
   private reads = new Set<AbortController>(); private writeSource: AbortController | null = null; private listeners = new Set<() => void>();
   private abort = () => { this.reads.forEach(source => source.abort()); this.writeSource?.abort(); this.emit(); };
   constructor(readonly access: SitesClientAccess, readonly siteId: string, readonly scope: AbortSignal,
@@ -26,15 +28,27 @@ export class SiteSharingState {
   get options() { return this.policy ? siteSharingModeOptions(this.policy, this.context?.workspace ?? false) : []; }
   get canSave() { return this.owner && this.dirty && !this.saving && !this.loading && !this.policyError && !this.unknown && !this.memberUnknown && !this.scope.aborted && this.draft !== "admins_only" && this.options.some(option => option.value === this.draft && !option.disabled); }
   get canInvite() { return this.invitationAllowed(this.saving); }
+  get participantPolicy(): SiteSharingPolicy | null {
+    const policy = this.policy;
+    if (!policy || !this.pendingInvitations.length || this.policyError || !this.owner || policy.accessMode === "admins_only" || this.scope.aborted) return policy;
+    const users = [...policy.users], groups = [...policy.groups];
+    for (const { candidate: { target, label, email, size }, role } of this.pendingInvitations) {
+      if (target.kind === "group") groups.push({ id: target.id, name: label, size, pending: true });
+      else if (target.kind === "email") users.push({ email: target.email, role, pending: true });
+      else users.push({ account_user_id: target.id, name: label, email, role, pending: true });
+    }
+    return { ...policy, users, groups };
+  }
   get canShowInvites() { return Boolean(this.open && this.owner && this.policy?.accessMode !== "admins_only" && (this.selected !== "public" || this.context?.sharingManagementAllowed)
     && (this.context?.workspace || this.context?.canInviteExternal) && !this.policyError && !this.scope.aborted); }
   private invitationAllowed(busy: boolean) { return this.canShowInvites && this.mounted && !busy && !this.loading && !this.unknown && !this.memberUnknown; }
   private newInviteTarget(target: SiteSharingMemberTarget) {
-    if (!this.policy || !this.context) return false;
-    if (target.kind === "group") return Boolean(target.id && !this.policy.groups.some(group => group.id === target.id));
-    if (target.kind === "user") return Boolean(target.id && target.id !== this.context.memberId && !this.policy.users.some(user => user.account_user_id === target.id));
+    const participants = this.participantPolicy;
+    if (!this.context || !participants || this.memberEntry(target, participants)) return false;
+    if (target.kind === "group") return Boolean(target.id);
+    if (target.kind === "user") return Boolean(target.id && target.id !== this.context.memberId);
     const email = target.email.trim().toLowerCase();
-    return Boolean(this.context.canInviteExternal && email && email !== this.context.email?.trim().toLowerCase() && !this.policy.users.some(user => user.email?.trim().toLowerCase() === email));
+    return Boolean(this.context.canInviteExternal && email && email !== this.context.email?.trim().toLowerCase());
   }
   setOpen(open: boolean) {
     if (open === this.open) { if (open && !this.loading && !this.saving) void this.load(); return; }
@@ -48,7 +62,7 @@ export class SiteSharingState {
   async load(force = false) {
     if (!this.open || !this.mounted || this.scope.aborted || this.loading || this.saving) return;
     const generation = this.generation, source = new AbortController(); this.reads.add(source); this.loading = true; this.emit();
-    const policyNeeded = force || Date.now() - this.policyTime >= 60000, contextNeeded = force || Date.now() - this.contextTime >= 60000;
+    const policyNeeded = force || this.pendingInvitations.length > 0 || Date.now() - this.policyTime >= 60000, contextNeeded = force || Date.now() - this.contextTime >= 60000;
     const context = contextNeeded ? (async () => {
       try { const result = await readSiteSharingContext(this.access, source.signal); if (this.alive(generation) && !source.signal.aborted) { this.context = result; this.contextError = false; this.contextTime = Date.now(); } }
       catch { if (this.alive(generation) && !source.signal.aborted) { this.contextError = true; this.contextTime = -Infinity; } }
@@ -72,10 +86,14 @@ export class SiteSharingState {
     const generation = this.generation, failed = () => { if (this.alive(generation) && this.open) this.onError?.("无法读取站点最新信息"); };
     try { void Promise.resolve(this.onPolicy(policy)).catch(failed); } catch { failed(); }
   }
-  private accept(policy: SiteSharingPolicy | null, notify = true) { this.lastReadPolicy = policy; this.policy = policy; this.policyError = policy === null; this.policyTime = policy ? Date.now() : -Infinity; if (notify) { this.changed = false; this.notify(policy); } }
+  private accept(policy: SiteSharingPolicy | null, notify = true) {
+    this.lastReadPolicy = policy; this.policy = policy; this.policyError = policy === null; this.policyTime = policy ? Date.now() : -Infinity;
+    this.pendingInvitations = !policy || policy.accessMode === "admins_only" ? [] : this.pendingInvitations.filter(({ candidate }) => !this.memberEntry(candidate.target));
+    if (notify) { this.changed = false; this.notify(policy); }
+  }
   private readError(error: unknown) {
     const status = (error as { status?: number })?.status;
-    if (status === 403 || status === 404) { this.policy = null; this.notify(null); }
+    if (status === 403 || status === 404) { this.policy = null; this.pendingInvitations = []; this.notify(null); }
     this.policyError = true; this.policyTime = -Infinity;
   }
   private async converge(source: AbortController, generation: number, pendingMode: SiteSharingMode | null = null) {
@@ -118,15 +136,18 @@ export class SiteSharingState {
     if (!this.policy || !this.context || this.contextError || this.scope.aborted) return { canOpenMenu: false, canRemove: false, canMakeEditor: false, canMakeViewer: false, role: null };
     return siteSharingMemberActions(this.policy, this.context, this.selected, busy, target);
   }
+  private memberEntry(target: SiteSharingMemberTarget, policy = this.policy) {
+    return target.kind === "group" ? policy?.groups.find(group => group.id === target.id)
+      : policy?.users.find(user => target.kind === "user" ? user.account_user_id === target.id : user.email?.trim().toLowerCase() === target.email.trim().toLowerCase());
+  }
   private memberConfirmed(target: SiteSharingMemberTarget, role: "viewer" | "editor" | null) {
     if (!this.policy) return false;
-    const entry = target.kind === "group" ? this.policy.groups.find(group => group.id === target.id)
-      : this.policy.users.find(user => target.kind === "user" ? user.account_user_id === target.id : user.email?.trim().toLowerCase() === target.email.trim().toLowerCase());
+    const entry = this.memberEntry(target);
     return role === null ? !entry : Boolean(entry && (target.kind === "group" || entry.role === role) && !entry.pending);
   }
-  invite(target: SiteSharingMemberTarget) { return this.updateMember(target, "viewer", undefined, true); }
+  invite(candidate: SiteSharingInviteCandidate) { return this.updateMember(candidate.target, "viewer", undefined, candidate); }
   changeMember(target: SiteSharingMemberTarget, role: "viewer" | "editor" | null, expected?: { label: string; role: string | null }) { return this.updateMember(target, role, expected); }
-  private async updateMember(target: SiteSharingMemberTarget, role: "viewer" | "editor" | null, expected?: { label: string; role: string | null }, invitation = false): Promise<boolean> {
+  private async updateMember(target: SiteSharingMemberTarget, role: "viewer" | "editor" | null, expected?: { label: string; role: string | null }, invitation?: SiteSharingInviteCandidate): Promise<boolean> {
     if (!this.mounted || !this.open || this.scope.aborted || this.saving || this.loading || this.unknown || this.memberUnknown) return false;
     const generation = this.generation, source = new AbortController(), stale = this.policyError || Date.now() - this.policyTime >= 60000;
     this.writeSource = source; this.saving = true; this.error = null; this.emit();
@@ -142,9 +163,16 @@ export class SiteSharingState {
           if (!entry || label !== expected.label || actions.role !== expected.role) { this.error = "当前访问权限已变化，请刷新权限后重试。"; return false; }
         }
         if (!permitted || this.policy?.accessMode === "admins_only") { this.error = "当前访问权限已变化，请刷新权限后重试。"; return false; }
+        const policyTime = this.policyTime;
         this.policyTime = -Infinity; this.changed = true;
         this.memberUnknown = operation;
         this.lastMemberAck = await (invitation ? writeSiteSharingInvitation(this.access, this.siteId, target, source.signal) : writeSiteSharingMember(this.access, this.siteId, target, role, source.signal)); acknowledged = true;
+        if (invitation && this.lastMemberAck?.status === "pending" && this.mounted && !source.signal.aborted && !this.scope.aborted) {
+          this.pendingInvitations.push({ candidate: invitation, role: target.kind !== "group" && this.lastMemberAck.role_id === "role-site-editor" ? "editor" : "viewer" });
+          this.memberUnknown = null;
+          this.policyTime = policyTime;
+          return true;
+        }
         if (!this.alive(generation)) return false;
         if (await this.converge(source, generation) && this.memberConfirmed(target, role)) { this.memberUnknown = null; return true; }
         if (this.alive(generation)) { this.memberUnknown = { target, role }; this.error = "访问权限变更尚未确认，请重新读取共享设置。"; }

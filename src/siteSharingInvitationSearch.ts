@@ -18,7 +18,7 @@ export class SiteSharingInvitationSearch {
   private emit() { if (this.mounted && !this.state.scope.aborted) this.listeners.forEach(listener => listener()); }
   get open() { return Boolean(this.mounted && this.focused && this.state.canInvite && (this.query.trim() || this.state.context?.teamsAllowed)); }
   get candidates(): SiteSharingInviteCandidate[] {
-    const { context, policy } = this.state; if (!this.mounted || !this.state.canInvite || !context || !policy) return [];
+    const { context, participantPolicy: policy } = this.state; if (!this.mounted || !this.state.canInvite || !context || !policy) return [];
     return filterSiteSharingInviteCandidates(policy, context, this.query, this.results);
   }
   attach() {
@@ -89,6 +89,6 @@ export class SiteSharingInvitationSearch {
   async select(candidate: SiteSharingInviteCandidate): Promise<boolean> {
     if (!this.mounted || this.selecting || !this.state.canInvite || !this.candidates.some(item => item.source === candidate.source && JSON.stringify(item.target) === JSON.stringify(candidate.target))) return false;
     this.selecting = true; this.setQuery("");
-    try { return await this.state.invite(candidate.target); } finally { this.selecting = false; this.emit(); }
+    try { return await this.state.invite(candidate); } finally { this.selecting = false; this.emit(); }
   }
 }

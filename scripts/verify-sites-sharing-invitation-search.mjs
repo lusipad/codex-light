@@ -8,6 +8,7 @@ function harness() {
   const state = { access: { identity: { accountId: "account", userId: "user", generation: 1 } }, scope: new AbortController().signal,
     context: { workspace: true, workspaceGroupsAllowed: true, teamsAllowed: false, memberId: "self", email: "self@example.invalid", canInviteExternal: true },
     policy: { users: [{ account_user_id: "self", email: "self@example.invalid" }], groups: [] }, canInvite: true, canShowInvites: true,
+    get participantPolicy() { return this.policy; },
     subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); }, async invite(target) { writes.push(target); return true; } };
   const call = (kind, args) => new Promise((resolve, reject) => calls.push({ kind, args, resolve, reject }));
   const compile = file => ts.transpileModule(fs.readFileSync(file, "utf8"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
@@ -44,7 +45,7 @@ await check("directory errors stay independent, retry is explicit, outside keeps
 });
 await check("selection clears input before one viewer invite and rejects stale or repeated candidates", async () => {
   const h = harness(), s = h.search; h.state.context.workspace = false; h.state.context.workspaceGroupsAllowed = false; s.attach(); s.setFocused(true); s.setQuery("guest@example.invalid"); const item = s.candidates[0];
-  h.state.invite = async target => { assert.equal(s.query, ""); h.writes.push(target); return true; }; assert.equal(await s.select(item), true); await s.select(item); assert.equal(h.writes.length, 1); s.dispose();
+  h.state.invite = async selected => { assert.equal(s.query, ""); h.writes.push(selected); return true; }; assert.equal(await s.select(item), true); await s.select(item); assert.deepEqual(h.writes, [item]); s.dispose();
 });
 await check("rights loss/dispose cancels reads and listeners; late resolve never revives closed scope", async () => {
   const h = harness(), s = h.search; s.attach(); s.setQuery("member"); await h.tick(150); const pending = h.latest("users"); h.state.canInvite = false; h.changed(); assert.equal(pending.args[3].aborted, true); assert.equal(s.open, false);
