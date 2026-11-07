@@ -28,6 +28,7 @@ mod memory_preferences;
 mod agent_configuration;
 mod image_save;
 mod chatgpt_service;
+mod durable;
 mod share_assets;
 mod deep_links;
 mod instance_transport;
@@ -692,6 +693,31 @@ async fn cloud_service_create_draft(
         let state = &state;
         async move { state.app_server.call(app, method, Some(params)).await }
     }).await
+}
+
+#[tauri::command]
+async fn cloud_service_models(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: chatgpt_service::DurableModelsRequest,
+) -> Result<chatgpt_service::DurableModelsResponse, chatgpt_service::ServiceError> {
+    let status = state.app_server.get_status().await;
+    let user_agent = status.user_agent.filter(|value| !value.is_empty()).ok_or(chatgpt_service::ServiceError {
+        code: "desktop_context_unavailable", message: "Desktop app-server context unavailable", status: None,
+    })?;
+    let profile = chatgpt_service::CloudProfile { user_agent, originator: "codex-tauri-native".into() };
+    let emitter = app.clone();
+    let notify: durable::Notify = std::sync::Arc::new(move |notification| {
+        if let Some(state) = emitter.try_state::<AppState>() {
+            if state.chatgpt_service.generation() == notification.identity.generation {
+                let _ = emitter.emit("cloud-app-server:notification", notification);
+            }
+        }
+    });
+    state.chatgpt_service.durable_models(request, profile, |method, params| {
+        let app = &app; let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }, notify).await
 }
 
 #[tauri::command]
@@ -2240,6 +2266,7 @@ pub fn run() {
             cloud_service_access,
             cloud_service_read,
             cloud_service_create_draft,
+            cloud_service_models,
             shortcut_menu_sync,
             keybindings::keyboard_bindings_read,
             keybindings::keyboard_bindings_write,
@@ -2376,6 +2403,11 @@ pub fn run() {
             show_desktop_notification,
             exec_shell_command,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running codex-tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building codex-tauri application")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                app.state::<AppState>().chatgpt_service.invalidate();
+            }
+        });
 }

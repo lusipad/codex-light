@@ -24,6 +24,8 @@ mod sites_assets;
 mod sites_settings;
 mod cloud_drafts;
 pub use cloud_drafts::{CloudDraftRequest, CloudDraftResponse};
+mod durable_models;
+pub use durable_models::{DurableModelsRequest, DurableModelsResponse};
 pub use sites_settings::{SitesSettingsRequest, SitesSettingsResponse};
 pub use sites_assets::{SiteAssetRef, SitesPinRequest, SitesPinResponse};
 pub use gpts_assets::GptAssetRef;
@@ -472,6 +474,7 @@ pub struct ChatgptService {
     site_pin_active: Mutex<std::collections::HashSet<String>>,
     site_settings_active: Mutex<std::collections::HashSet<(String,String,u64,String,&'static str)>>,
     cloud_drafts: Mutex<cloud_drafts::CloudDraftRegistry>,
+    durable: crate::durable::Manager,
 }
 
 struct Registration<'a> {
@@ -957,6 +960,7 @@ impl ChatgptService {
     /// Call before logout/session-switch and on account/connection changes.
     pub fn invalidate(&self) -> u64 {
         let next = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        self.durable.invalidate();
         if let Ok(requests) = self.active.lock() {
             for cancelled in requests.values() {
                 cancelled.store(true, Ordering::SeqCst);
@@ -3850,6 +3854,7 @@ mod tests {
     use std::collections::VecDeque;
     use std::sync::atomic::AtomicUsize;
     include!("chatgpt_service/cloud_drafts_tests.rs");
+    include!("chatgpt_service/durable_models_tests.rs");
 
     fn identity() -> ServiceIdentity {
         ServiceIdentity {
