@@ -28,11 +28,13 @@ function harness() {
       setTimeout(fn, delay) { timers.set(++serial, { fn, due: clock + delay }); return serial; }, clearTimeout: id => timers.delete(id), require: name => {
         if (name === "react") return React; if (name.endsWith(".css")) return {};
         if (name === "react-dom") return { createPortal: (child, target) => { portals.push({ child, target }); return child; } };
+        if (name === "./SiteSharingInviteInput") return { SiteSharingInviteInput: "invite-input" };
         if (name === "lucide-react") return { X: "svg", Check: "svg", ChevronDown: "svg", Copy: "svg", ExternalLink: "svg", Globe: "svg", Lock: "svg", Users: "svg" };
         if (["../siteSharingState"].includes(name)) return load("src/siteSharingState.ts");
         if (["./siteSettingsState"].includes(name)) return load("src/siteSettingsState.ts");
         if (["../sitesService", "./sitesService"].includes(name)) return load("src/sitesService.ts");
         if (name === "./sitesSharingClient") return { readSiteSharingContext: (a,s) => call("context",[a],s), readSiteSharingPolicy: (a,id,s) => call("policy",[a,id],s), readSiteSharingUrl: (a,id,s) => call("url",[a,id],s), writeSiteSharingMode: (a,id,mode,s) => call("write",[a,id,mode],s), writeSiteSharingMember: (a,id,target,role,s) => call("member",[a,id,target,role],s) };
+        if (name === "./sitesSharingInvitationsClient") return { writeSiteSharingInvitation: (a,id,target,s) => call("member",[a,id,target,"viewer"],s) };
         if (["./siteSharingData", "../siteSharingData"].includes(name)) return load("src/siteSharingData.ts");
         if (name === "./sitesClient") return {};
         if (name === "../clipboard") return { copyTextToClipboard: value => call("copy",[value]) };
@@ -211,6 +213,39 @@ await check("email removal readback cannot falsely confirm case-normalized or ac
     latest(h, "policy").resolve({ ...policy, users: [...policy.users, { ...guest, account_user_id: accepted ? "accepted-member" : null, email: " mixedcase@actual.invalid " }] }); await flush();
     assert.equal(await done, false, "same mailbox still has access even after normalization or account binding"); assert.ok(s.memberUnknown);
     const recovery = s.recoverMember(); latest(h, "policy").resolve(policy); await flush(); assert.equal(await recovery, true); assert.equal(h.calls.filter(c => c.operation === "member").length, 1); s.dispose(); }
+});
+await check("owner editable group retains current-role menu when invitee mutations are unavailable", async () => {
+  const h = harness(); h.render(); latest(h, "context").resolve(context); latest(h, "policy").resolve({ ...policy, accessMode: "admins_only", groups: [{ id: "group", name: "实际群组", editable: true }] }); latest(h, "url").resolve(null); await flush();
+  const tree = memberMenu(h, "实际群组"), menu = walk(tree).find(n => n.props.role === "menu" && n.props["aria-label"] === "实际群组 的权限");
+  assert.ok(menu); assert.equal(walk(menu).filter(n => n.props.role === "menuitemradio").length, 1); assert.equal(walk(menu).filter(n => n.props.role === "menuitem").length, 0);
+  walk(menu).find(n => n.props.role === "menuitemradio").props.onClick({ preventDefault() {} }); await flush(); assert.equal(h.calls.filter(c => c.operation === "member").length, 0); h.unmount();
+});
+await check("inviting an unshared workspace member uses viewer and actual readback without changing mode draft", async () => {
+  const h = harness(), s = h.state(); await ready(h, s); s.change("public");
+  const done = s.invite({ kind: "user", id: "new-member" }); await flush(); assert.equal(latest(h, "member").args[3], "viewer"); assert.equal(s.saving, true); await s.save(); assert.equal(latest(h, "write"), undefined);
+  latest(h, "member").resolve(null); await flush(); latest(h, "policy").resolve({ ...policy, users: [...policy.users, { account_user_id: "new-member", role: "viewer", editable: true }] }); await flush();
+  assert.equal(await done, true); assert.equal(s.draft, "public"); assert.equal(s.canInvite, true); s.dispose();
+});
+await check("existing external visitors do not grant new invitations; non-owner, existing and duplicate targets cannot write", async () => {
+  const h = harness(), s = h.state(); await ready(h, s, { ...policy, users: [...policy.users, { email: "guest@example.invalid", role: "viewer", editable: true }] });
+  s.context = { ...context, workspace: false, canInviteExternal: false }; assert.equal(s.canInvite, false); await s.invite({ kind: "user", id: "new-member" }); assert.equal(latest(h, "member"), undefined);
+  s.context = context; await s.invite({ kind: "user", id: "member" }); await s.invite({ kind: "email", email: "GUEST@example.invalid" }); assert.equal(latest(h, "member"), undefined);
+  s.context = { ...context, memberId: "viewer", email: null }; assert.equal(s.canInvite, false); await s.invite({ kind: "group", id: "new-group" }); assert.equal(latest(h, "member"), undefined); s.dispose();
+});
+await check("group invitation pending requires explicit readback and never grants editor or repeats the PATCH", async () => {
+  const h = harness(), s = h.state(); await ready(h, s); const done = s.invite({ kind: "group", id: "new-group" }); await flush();
+  latest(h, "member").resolve({ status: "pending" }); await flush(); latest(h, "policy").resolve(policy); await flush(); assert.equal(await done, false); assert.ok(s.memberUnknown);
+  await s.invite({ kind: "group", id: "new-group" }); const recovered = s.recoverMember(); latest(h, "policy").resolve({ ...policy, groups: [{ id: "new-group", editable: true }] }); await flush();
+  assert.equal(await recovered, true); assert.equal(h.calls.filter(c => c.operation === "member").length, 1); s.dispose();
+});
+await check("close/reopen cannot drop an in-flight invitation outcome lock or replay its target", async () => {
+  for (const result of ["unknown", "pending"]) {
+    const h = harness(), s = h.state(); await ready(h, s); const done = s.invite({ kind: "user", id: "new-member" }); await flush();
+    s.setOpen(false); s.setOpen(true); if (result === "unknown") latest(h, "member").reject({ code: "site_sharing_unconfirmed" }); else latest(h, "member").resolve({ status: "pending" }); await flush();
+    latest(h, "policy").resolve(policy); await flush(); await done; assert.ok(s.memberUnknown); assert.equal(s.canInvite, false);
+    await s.invite({ kind: "user", id: "new-member" }); assert.equal(h.calls.filter(c => c.operation === "member").length, 1);
+    const recovered = s.recoverMember(); latest(h, "policy").resolve({ ...policy, users: [...policy.users, { account_user_id: "new-member", role: "viewer", pending: false }] }); await flush(); assert.equal(await recovered, true); s.dispose();
+  }
 });
 assert.equal(failures.length, 0, failures.join("; "));
 console.log(`PASS actual SiteSharingDialog/state: ${passed} groups; explicit deferred client/clipboard boundary; no HTTP/native/pixel claim`);

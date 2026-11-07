@@ -17,6 +17,7 @@ const scripts = [
   'verify-sites-slug-client.mjs', 'verify-sites-slug-ui.mjs',
   'verify-sites-domain-client.mjs', 'verify-sites-domain-ui.mjs',
   'verify-sites-sharing-data.mjs', 'verify-sites-sharing-members.mjs', 'verify-sites-sharing-client.mjs', 'verify-sites-sharing-ui.mjs',
+  'verify-sites-sharing-invitation-data.mjs', 'verify-sites-sharing-invitations-client.mjs', 'verify-sites-sharing-invitation-search.mjs', 'verify-sites-sharing-invite-input.mjs',
   'verify-appearance-color.mjs', 'verify-system-fonts.mjs', 'verify-general-preference-select.mjs',
   'verify-settings-ui-correction.mjs', 'verify-appearance-theme-state.mjs', 'verify-appearance-theme-ui.mjs',
   'verify-general-open.mjs', 'verify-notification-settings-ui.mjs',

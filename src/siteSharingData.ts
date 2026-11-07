@@ -11,18 +11,18 @@ export function siteSharingMemberTarget(entry: SiteSharingUser | SiteSharingGrou
   if (typeof entry.account_user_id === "string" && entry.account_user_id) return { kind: "user", id: entry.account_user_id };
   return typeof entry.email === "string" && entry.email ? { kind: "email", email: entry.email } : null;
 }
-export function siteSharingMemberActions(policy: SiteSharingPolicy, context: SiteSharingContext, selectedMode: SiteSharingMode | null, busy: boolean, target: SiteSharingMemberTarget): { canRemove: boolean; canMakeEditor: boolean; canMakeViewer: boolean; role: "owner" | "editor" | "viewer" | null } {
+export function siteSharingMemberActions(policy: SiteSharingPolicy, context: SiteSharingContext, selectedMode: SiteSharingMode | null, busy: boolean, target: SiteSharingMemberTarget): { canOpenMenu: boolean; canRemove: boolean; canMakeEditor: boolean; canMakeViewer: boolean; role: "owner" | "editor" | "viewer" | null } {
   const row = target.kind === "group" ? policy.groups.find(entry => entry.id === target.id) : policy.users.find(entry => target.kind === "user" ? entry.account_user_id === target.id : entry.account_user_id == null && entry.email === target.email);
   const role: "owner" | "editor" | "viewer" | null = row == null ? null : target.kind === "group" ? "viewer" : row.role === "owner" ? "owner" : row.role === "editor" ? "editor" : "viewer";
-  const denied = { canRemove: false, canMakeEditor: false, canMakeViewer: false, role };
+  const denied = { canOpenMenu: false, canRemove: false, canMakeEditor: false, canMakeViewer: false, role };
   if (!row || role === "owner" || !isSiteSharingOwner(policy, context.memberId, context.email)) return denied;
   const j = !busy, M = context.workspace && context.canManageEditors && !busy;
-  if (role === "editor") return { ...denied, canRemove: context.workspace && (j || M), canMakeViewer: context.workspace && j && target.kind === "user" };
+  if (role === "editor") return { ...denied, canOpenMenu: context.workspace && (j || M), canRemove: context.workspace && (j || M), canMakeViewer: context.workspace && j && target.kind === "user" };
   const externalVisitors = policy.users.some(entry => entry.role !== "editor" && entry.account_user_id == null);
   const N = !busy && policy.accessMode !== "admins_only" && ((selectedMode ?? policy.accessMode) !== "public" || context.sharingManagementAllowed)
     && (context.workspace || context.canInviteExternal || externalVisitors);
   const editable = row.editable === true;
-  return { ...denied, canRemove: N && editable, canMakeEditor: target.kind === "user" && N && editable && M };
+  return { ...denied, canOpenMenu: editable && (target.kind === "group" ? j : N), canRemove: N && editable, canMakeEditor: target.kind === "user" && N && editable && M };
 }
 const modes = ["admins_only", "workspace_all", "custom", "public"];
 const invalid = () => Error("共享设置返回了无法识别的数据。");

@@ -26,6 +26,7 @@ pub enum SitesSettingsMutation {
     ShareAccess {access_mode:String},
     ShareRecipient {recipient:String,recipient_type:SiteShareRecipientType,role:SiteShareRecipientRole},
     ShareEmailRemove {email:String},
+    ShareEmailInvite {email:String},
     Environment {remove:Vec<String>,set_values:Vec<SiteEnvironmentValue>},
 }
 #[derive(Deserialize)]
@@ -39,7 +40,7 @@ pub struct SitesSettingsRequest {
 pub struct SitesSettingsResponse { pub request_id:String, pub identity:ServiceIdentity, pub body:Value }
 
 fn unknown()->ServiceError {failure("sites_settings_unknown","Site settings write outcome is unknown; read the settings before retrying")}
-fn javascript_trim(raw:&str)->&str {
+pub(super) fn javascript_trim(raw:&str)->&str {
     // Match JavaScript String.trim: BOM is whitespace, NEL is not.
     raw.trim_matches(|c:char|matches!(c,'\u{0009}'|'\u{000a}'|'\u{000b}'|'\u{000c}'|'\u{000d}'|'\u{0020}'|'\u{00a0}'|'\u{1680}'|'\u{2000}'..='\u{200a}'|'\u{2028}'|'\u{2029}'|'\u{202f}'|'\u{205f}'|'\u{3000}'|'\u{feff}'))
 }
@@ -63,6 +64,10 @@ fn request_body(mutation:&SitesSettingsMutation)->ServiceResult<(&'static str,&'
             let recipient_type=match recipient_type {SiteShareRecipientType::User=>"user",SiteShareRecipientType::Group=>"group"};
             let role=match role {SiteShareRecipientRole::Role(SiteShareRole::Viewer)=>json!("viewer"),SiteShareRecipientRole::Role(SiteShareRole::Editor)=>json!("editor"),SiteShareRecipientRole::Remove(())=>Value::Null};
             ("share_access","share_access",json!({"recipient":recipient,"recipient_type":recipient_type,"role":role}))
+        },
+        SitesSettingsMutation::ShareEmailInvite{email}=>{
+            if javascript_trim(email).is_empty() || email.chars().any(char::is_control){return Err(failure("invalid_request","Site sharing invitation email required"));}
+            ("share_access","share_access",json!({"email":email,"role":"viewer"}))
         },
         SitesSettingsMutation::ShareEmailRemove{email}=>{
             if javascript_trim(email).is_empty() || email.chars().any(char::is_control){return Err(failure("invalid_request","Existing site sharing email required"));}
@@ -113,7 +118,7 @@ fn valid_custom_domain(body:&Value,project_id:&str,domain_id:Option<&str>)->bool
 }
 fn validate_body(mutation:&SitesSettingsMutation,id:&str,body:&Value)->ServiceResult<()> {
     let valid=match mutation {
-        SitesSettingsMutation::ShareAccess{..}|SitesSettingsMutation::ShareRecipient{..}|SitesSettingsMutation::ShareEmailRemove{..}=>body.is_null() || body.get("status").and_then(Value::as_str).is_some_and(|status|matches!(status,"pending"|"accepted")),
+        SitesSettingsMutation::ShareAccess{..}|SitesSettingsMutation::ShareRecipient{..}|SitesSettingsMutation::ShareEmailRemove{..}|SitesSettingsMutation::ShareEmailInvite{..}=>body.is_null() || body.get("status").and_then(Value::as_str).is_some_and(|status|matches!(status,"pending"|"accepted")),
         SitesSettingsMutation::DomainAdd{..}=>valid_custom_domain(body,id,None),
         SitesSettingsMutation::DomainRefresh{domain_id}|SitesSettingsMutation::DomainRemove{domain_id}=>valid_custom_domain(body,id,Some(domain_id)),
         SitesSettingsMutation::SlugAvailability{slug}=>body.get("slug").and_then(Value::as_str)==normalized_slug(slug).ok().as_deref() && body.get("available").is_some_and(Value::is_boolean),
@@ -187,7 +192,7 @@ impl ChatgptService {
                 let mut outgoing=build_http_request(&route,credentials,integrity.as_deref(),&request.profile)?;
                 outgoing.method=match request.mutation {
                     SitesSettingsMutation::DomainRemove{..}=>HttpMethod::Delete,
-                    SitesSettingsMutation::ShareAccess{..}|SitesSettingsMutation::ShareRecipient{..}|SitesSettingsMutation::ShareEmailRemove{..}=>HttpMethod::Patch,
+                    SitesSettingsMutation::ShareAccess{..}|SitesSettingsMutation::ShareRecipient{..}|SitesSettingsMutation::ShareEmailRemove{..}|SitesSettingsMutation::ShareEmailInvite{..}=>HttpMethod::Patch,
                     _=>HttpMethod::Post,
                 };
                 if !matches!(request.mutation,SitesSettingsMutation::DomainRefresh{..}|SitesSettingsMutation::DomainRemove{..}) {

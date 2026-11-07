@@ -2245,3 +2245,11 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 - 32状态/JSX、2048来源权限向量、89前端及611全库Rust通过；最终完整非Fast343段/32探针、原生debug构建退出0，700输入稳定。首轮89绿后因审查修复主动中止早期标准，保留原始记录；不把中止当完成。
 - EXE `dist-artifacts/sites-21J-20261107/CodexNative.exe` SHA256 `8ed60b88fd35bd58709ab5b2ad6fd73701035534a6efdc6f52c4ac1aabac2370`；私有未登录Sites重试、正常退出、SQLite0线程通过。真实共享HTTP/原生新弹层、配对像素、物理IME和用户验收未做，另登记群组无动作时菜单呈现差异。
 - [21J阶段记录](antigravity/acceptance/21J-sites-sharing-members.md)保留完整邀请/成员与组搜索/团队/外部邮箱队列及Add/DNS依赖未获答复状态。先本地阶段提交，暂不推送/另发预览，不包含preview.9，不标整页或全软件1:1。
+
+## 2026-11-07 — 21K 共享目录与邀请阶段
+
+- 先恢复固定包目录/API、853110088与Adt28完整团队资格、官方host supportedSurface:true、实际邮箱parser及55个向量，再实现成员/群组/团队/外部邮箱viewer邀请。团队固定100分页、offset+100、独立资格和重试；用户/群组150ms/15秒、身份绑定、旧结果取消，不把groups当teams或造本地成功。无新依赖。
+- 复用21J状态和共享锁，扩充群组当前角色菜单；实际红绿修复过期未知邀请锁、目录撤权旧错误、Retry按钮Escape误关父框。真实浏览器核三类候选、一次写后GET、个人邮箱规范化/零目录读、团队pending只读恢复、宽窄无溢出；输入通用CSS污染与源sm尺寸映射已修，像素score=null。
+- 新5数据/55源向量、12客户端、8搜索、37状态/共享UI、12输入专项；最终93前端、620全库Rust零失败/忽略/过滤，完整非Fast347段/32探针与原生debug构建退出0，710产品输入稳定。
+- EXE `dist-artifacts/sites-21K-20261107/CodexNative.exe` SHA256 `c89e00202eb91c89c08ad91e8f57d7389b3ed4e6fcbb77a98f050dd395244258`。私有未登录Sites重试/退出和0线程通过；真实邀请HTTP、正常共享原生、像素/物理IME/用户验收及其它Sites深层功能未完成，详见[阶段记录](antigravity/acceptance/21K-sites-sharing-invitations.md)。
+- 按用户授权提交并准备preview.10，用户再次强调CI须成功：先跟进分支CI成功，再标签发布CI与实际资源校验；本条记录本地结果和交付计划，不提前宣称远端已通过或已发布。

@@ -6,6 +6,7 @@ import { copyTextToClipboard } from "../clipboard";
 import { siteSharingMemberTarget, type SiteSharingMemberTarget, type SiteSharingMode, type SiteSharingPolicy } from "../siteSharingData";
 import type { SitesClientAccess } from "../sitesClient";
 import "./SiteSharingDialog.css";
+import { SiteSharingInviteInput } from "./SiteSharingInviteInput";
 
 interface Props { access: SitesClientAccess; siteId: string; siteTitle?: string | null; scope: AbortSignal; open: boolean;
   onClose: () => void; onPolicy?: (policy: SiteSharingPolicy | null) => void | Promise<void>; onError?: (message: string) => void }
@@ -62,7 +63,7 @@ export function SiteSharingDialog({ access, siteId, siteTitle, scope, open, onCl
   const ordered = [...displayOwner ? [displayOwner] : [], ...users.filter(user => user !== displayOwner && user.role === "editor"), ...users.filter(user => user !== displayOwner && user.role !== "editor")];
   const roleControl = (target: SiteSharingMemberTarget | null, label: string, displayRole?: string) => {
     const actions = target ? state.memberActions(target) : null, role = displayRole ?? actions?.role ?? "viewer", text = role === "owner" ? "所有者" : role === "editor" ? "编辑者" : "查看者";
-    if (!target || role === "owner" || !actions || !actions.canRemove && !actions.canMakeEditor && !actions.canMakeViewer) return <span className="site-sharing-role">{text}</span>;
+    if (!target || role === "owner" || !actions?.canOpenMenu) return <span className="site-sharing-role">{text}</span>;
     return <button type="button" className="site-sharing-member-trigger" aria-label={`${label} 的权限：${text}`} aria-haspopup="menu" aria-expanded={Boolean(memberMenu && JSON.stringify(memberMenu.target) === JSON.stringify(target))} onMouseDown={event => event.stopPropagation()} onClick={event => { event.preventDefault(); setModeOpen(false); setMemberMenu({ target, label, element: event.currentTarget }); }}>{text}<ChevronDown size={12} /></button>;
   };
   const memberActions = memberMenu ? state.memberActions(memberMenu.target) : null;
@@ -70,6 +71,7 @@ export function SiteSharingDialog({ access, siteId, siteTitle, scope, open, onCl
   return <><dialog ref={dialog} className={`site-sharing-dialog${menuOpen ? " site-sharing-menu-open" : ""}`} aria-labelledby="site-sharing-title" onCancel={event => { event.preventDefault(); event.stopPropagation(); close(); }} onClick={event => { if (event.target !== event.currentTarget || removal) return; const box = event.currentTarget.getBoundingClientRect(); if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) close(); }}>
     <form onSubmit={event => { event.preventDefault(); if (state.canSave) void state.save(); }} onKeyDown={event => { if (event.key === "Enter" && (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229)) event.preventDefault(); }}>
       <header><h2 id="site-sharing-title">分享{siteTitle ? ` ${siteTitle}` : ""}</h2><button type="button" aria-label="关闭" className="site-sharing-close" onClick={close}><X size={20} /></button></header>
+      {open && state.canShowInvites && <div className="site-sharing-invite-header"><SiteSharingInviteInput state={state} portalContainer={dialog.current} /></div>}
       <div className="site-sharing-body">
         {state.loading && !state.policy && <div className="site-sharing-skeleton" role="status" aria-label="正在加载共享设置…"><span /><span /><span /></div>}
         {(state.policyError || state.contextError) && <div role="alert" className="site-sharing-read-error">无法加载共享设置 <button type="button" disabled={state.loading || state.saving} onClick={event => { event.preventDefault(); void state.load(true); }}>刷新权限</button></div>}

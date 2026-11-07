@@ -82,6 +82,9 @@ pub enum ServiceOperation {
     SitesShareAccess,
     SitesPreferredLiveUrl,
     SitesWorkspaceSettings,
+    SitesUsers,
+    SitesGroups,
+    SitesTeams,
     GithubRepository,
     GithubConnections,
     ShareAccounts,
@@ -1488,7 +1491,7 @@ impl ChatgptService {
         let route = resolve_read_route(&request.operation, &request.params, &request.expected_identity)?;
         let archive_tasks = matches!(request.operation, ServiceOperation::ArchiveCloudTasks);
         let gpts_read = matches!(request.operation, ServiceOperation::GptsDiscovery | ServiceOperation::GptsCategory | ServiceOperation::GptsSearch | ServiceOperation::GptsDetail | ServiceOperation::GptsAbout | ServiceOperation::GptsWorkspaceSettings);
-        let sites_read = matches!(request.operation, ServiceOperation::SitesEntryAccess | ServiceOperation::SitesPinned | ServiceOperation::SitesPin | ServiceOperation::SitesAccess | ServiceOperation::SitesList | ServiceOperation::SitesShared | ServiceOperation::SitesDetail | ServiceOperation::SitesEnvironment | ServiceOperation::SitesDomains | ServiceOperation::SitesShareAccess | ServiceOperation::SitesPreferredLiveUrl | ServiceOperation::SitesWorkspaceSettings);
+        let sites_read = matches!(request.operation, ServiceOperation::SitesEntryAccess | ServiceOperation::SitesPinned | ServiceOperation::SitesPin | ServiceOperation::SitesAccess | ServiceOperation::SitesList | ServiceOperation::SitesShared | ServiceOperation::SitesDetail | ServiceOperation::SitesEnvironment | ServiceOperation::SitesDomains | ServiceOperation::SitesShareAccess | ServiceOperation::SitesPreferredLiveUrl | ServiceOperation::SitesWorkspaceSettings | ServiceOperation::SitesUsers | ServiceOperation::SitesGroups | ServiceOperation::SitesTeams);
         let cloud_read = matches!(request.operation, ServiceOperation::CloudWorkspaceSettings);
         let images_read = matches!(request.operation, ServiceOperation::ImagesInit | ServiceOperation::ImagesStyles | ServiceOperation::ImagesRecent | ServiceOperation::ImagesWorkspaceSettings);
         // Order snapshots before the session lock, not when a possibly late response arrives.
@@ -1539,7 +1542,7 @@ impl ChatgptService {
                         self.check_share_current(&request.expected_identity, &registration)?;
                     }
                     let images_destination = (sites_read || images_read || gpts_read || cloud_read).then(|| http_request.url.clone());
-                    let response = send_bounded(transport, http_request, registration.cancelled.clone(), Duration::from_secs(if usage { 10 } else if review_connections { 15 } else { 50 })).await?;
+                    let response = send_bounded(transport, http_request, registration.cancelled.clone(), Duration::from_secs(if usage { 10 } else if review_connections || matches!(request.operation, ServiceOperation::SitesUsers | ServiceOperation::SitesGroups) { 15 } else { 50 })).await?;
                     if self.generation() != generation {
                         return Err(failure("account_changed", "Authenticated identity changed"));
                     }
@@ -2391,7 +2394,14 @@ fn resolve_read_route(operation: &ServiceOperation, params: &Value, identity: &S
         }
         return Ok(format!("/backend-api/accounts/{}/settings", encode_segment(&identity.account_id)?));
     }
-    if !matches!(operation, ServiceOperation::ShareAccounts | ServiceOperation::ShareUsers | ServiceOperation::ShareGroups) {
+    if matches!(operation, ServiceOperation::SitesTeams) {
+        let params=params.as_object().filter(|params|params.len()==1 && params.contains_key("offset"))
+            .ok_or_else(||failure("invalid_request","Sites teams accepts only offset"))?;
+        let offset=params["offset"].as_u64().filter(|offset|*offset<=9_007_199_254_740_991)
+            .ok_or_else(||failure("invalid_request","Invalid Sites teams offset"))?;
+        return Ok(format!("/backend-api/accounts/{}/teams?offset={offset}&limit=100",encode_segment(&identity.account_id)?));
+    }
+    if !matches!(operation, ServiceOperation::ShareAccounts | ServiceOperation::ShareUsers | ServiceOperation::ShareGroups | ServiceOperation::SitesUsers | ServiceOperation::SitesGroups) {
         return resolve_route(operation, params);
     }
     let params = params.as_object()
@@ -2405,12 +2415,13 @@ fn resolve_read_route(operation: &ServiceOperation, params: &Value, identity: &S
     if params.len() != 1 || !params.contains_key("query") {
         return Err(failure("invalid_request", "Share search accepts only query"));
     }
+    let sites_search=matches!(operation,ServiceOperation::SitesUsers|ServiceOperation::SitesGroups);
     let query = params["query"].as_str()
-        .map(str::trim)
-        .filter(|query| !query.is_empty() && query.len() <= 512 && !query.chars().any(char::is_control))
+        .map(|query|if sites_search{sites_settings::javascript_trim(query)}else{query.trim()})
+        .filter(|query| !query.is_empty() && (sites_search || query.len() <= 512) && !query.chars().any(char::is_control))
         .ok_or_else(|| failure("invalid_request", "Invalid share recipient query"))?;
     let account = encode_segment(&identity.account_id)?;
-    let users = matches!(operation, ServiceOperation::ShareUsers);
+    let users = matches!(operation, ServiceOperation::ShareUsers | ServiceOperation::SitesUsers);
     let kind = if users { "users" } else { "groups" };
     let mut url = tauri::Url::parse(&format!("https://chatgpt.com/backend-api/accounts/{account}/{kind}"))
         .map_err(|_| failure("invalid_request", "Invalid share search route"))?;
@@ -2418,7 +2429,7 @@ fn resolve_read_route(operation: &ServiceOperation, params: &Value, identity: &S
     if users {
         url.query_pairs_mut().append_pair("include_profile_photos", "false");
     } else {
-        url.query_pairs_mut().append_pair("include_member_counts", "false").append_pair("include_total", "false");
+        url.query_pairs_mut().append_pair("include_member_counts", if matches!(operation,ServiceOperation::SitesGroups){"true"}else{"false"}).append_pair("include_total", "false");
     }
     Ok(format!("{}?{}", url.path(), url.query().unwrap()))
 }
@@ -2520,7 +2531,7 @@ fn resolve_route(operation: &ServiceOperation, params: &Value) -> ServiceResult<
         ServiceOperation::SitesEntryAccess => ("/backend-api/codex/sites/access".into(), &[]),
         ServiceOperation::SitesPinned => ("/backend-api/websites/pinned".into(), &["limit", "query", "after"]),
         ServiceOperation::SitesAccess => ("/backend-api/websites/access".into(), &[]),
-        ServiceOperation::ImagesWorkspaceSettings | ServiceOperation::GptsWorkspaceSettings | ServiceOperation::CloudWorkspaceSettings | ServiceOperation::SitesWorkspaceSettings | ServiceOperation::ShareAccounts | ServiceOperation::ShareUsers | ServiceOperation::ShareGroups => {
+        ServiceOperation::ImagesWorkspaceSettings | ServiceOperation::GptsWorkspaceSettings | ServiceOperation::CloudWorkspaceSettings | ServiceOperation::SitesWorkspaceSettings | ServiceOperation::SitesUsers | ServiceOperation::SitesGroups | ServiceOperation::SitesTeams | ServiceOperation::ShareAccounts | ServiceOperation::ShareUsers | ServiceOperation::ShareGroups => {
             return Err(failure("invalid_request", "Identity-bound share route required"));
         }
         ServiceOperation::GithubRepository => {
@@ -8413,6 +8424,63 @@ mod sites21j_regression {
         let service=ChatgptService::default();service.cancel("cancel-settings");assert_eq!(service.read_with(settings("cancel-settings"),share_rpc,&FakeTransport::new(&[])).await.err().unwrap().code,"cancelled");
         struct Invalidate<'a>(&'a ChatgptService);impl Transport for Invalidate<'_>{fn send(&self,_:HttpRequest,_:Arc<AtomicBool>)->TransportFuture<'_>{Box::pin(async move{self.0.invalidate();Ok(HttpResponse{status:200,headers:BTreeMap::new(),body:br#"{"permissions":[]}"#.to_vec()})})}}
         let service=ChatgptService::default();assert_eq!(service.read_with(settings("old-settings"),share_rpc,&Invalidate(&service)).await.err().unwrap().code,"account_changed");
+    }
+}
+
+#[cfg(test)]
+mod sites21k_regression {
+    use super::*;
+    fn invite(id:&str,email:&str)->SitesSettingsRequest {serde_json::from_value(json!({"requestId":id,"expectedIdentity":identity(),"profile":{
+        "language":"zh-CN","deviceId":"fixture-device","userAgent":"Mozilla/5.0 Chrome/140.0.0.0","userAgentClientHints":"\"Chromium\";v=\"140\"","platformClientHint":"\"Windows\""},"id":"site/a?b#c%","mutation":{"operation":"share_email_invite","email":email}})).expect("fixed Sites email invitation must deserialize")}
+    fn directory(id:&str,operation:&str,params:Value)->ServiceRequest {let mut req=request(id);req.operation=serde_json::from_value(json!(operation)).expect("fixed Sites directory operation");req.params=params;req}
+    fn response(body:Value)->FakeTransport {let transport=FakeTransport::new(&[200]);transport.responses.lock().unwrap()[0].body=serde_json::to_vec(&body).unwrap();transport}
+    async fn entered(transport:&FakeTransport){tokio::time::timeout(Duration::from_secs(5),async{while !transport.entered.load(Ordering::SeqCst){tokio::task::yield_now().await;}}).await.expect("Sites invitation request did not reach transport");}
+    #[test]
+    fn sites_invitation_and_directories_are_explicit_fixed_typed_entries() {let _=invite("typed","target@example.test");let _=directory("users","sites_users",json!({"query":"real"}));let _=directory("groups","sites_groups",json!({"query":"real"}));let _=directory("teams","sites_teams",json!({"offset":0}));}
+    #[tokio::test]
+    async fn sites_email_invite_uses_only_fixed_viewer_patch_and_original_ack() {
+        for body in [Value::Null,json!({"status":"pending","role_id":"role-site-viewer"}),json!({"status":"accepted","extra":"preserved"})] {let transport=response(body.clone());let result=ChatgptService::default().sites_settings_with(invite("invite","target+tag@example.test"),share_rpc,&transport).await.unwrap();assert_eq!(result.body,body);let calls=transport.requests.lock().unwrap();assert_eq!(calls.len(),1);assert_eq!(calls[0].method,HttpMethod::Patch);assert_eq!(calls[0].url,"https://chatgpt.com/backend-api/websites/site%2Fa%3Fb%23c%25/share_access");assert_eq!(serde_json::from_slice::<Value>(&calls[0].body).unwrap(),json!({"email":"target+tag@example.test","role":"viewer"}));}
+    }
+    #[tokio::test]
+    async fn sites_email_invite_cannot_accept_a_caller_role_or_bypass_empty_input_checks() {
+        for email in [""," \u{feff} ","private\nInjected: value"] {let transport=FakeTransport::new(&[]);assert_eq!(ChatgptService::default().sites_settings_with(invite("invalid",email),|_,_|std::future::ready(Err("must not auth".into())),&transport).await.err().unwrap().code,"invalid_request");assert!(transport.requests.lock().unwrap().is_empty());}
+        // Unknown fields are rejected by the variant; no caller may upgrade the invitation.
+        let mut value=json!({"requestId":"bad-role","expectedIdentity":identity(),"profile":{},"id":"site","mutation":{"operation":"share_email_invite","email":"target@example.test","role":"editor"}});
+        value["profile"]=json!({"language":"zh-CN","deviceId":"fixture-device","userAgent":"Mozilla/5.0 Chrome/140.0.0.0","userAgentClientHints":"\"Chromium\";v=\"140\"","platformClientHint":"\"Windows\""});assert!(serde_json::from_value::<SitesSettingsRequest>(value).is_err());
+    }
+    #[tokio::test]
+    async fn sites_users_use_identity_bound_fixed_query_without_changing_generic_share_users() {
+        let body=json!({"items":[],"extra":"preserved"});let transport=response(body.clone());assert_eq!(ChatgptService::default().read_with(directory("sites-users","sites_users",json!({"query":" \u{feff}真实用户 \u{feff}"})),share_rpc,&transport).await.unwrap().body,body);
+        let calls=transport.requests.lock().unwrap();let url=tauri::Url::parse(&calls[0].url).unwrap();assert_eq!(url.path(),"/backend-api/accounts/account-fixture/users");assert_eq!(calls[0].method,HttpMethod::Get);assert!(calls[0].body.is_empty());let query:BTreeMap<_,_>=url.query_pairs().into_owned().collect();assert_eq!(query,BTreeMap::from([("limit".into(),"10".into()),("offset".into(),"0".into()),("query".into(),"真实用户".into()),("include_profile_photos".into(),"false".into())]));
+        let route=resolve_read_route(&ServiceOperation::ShareUsers,&json!({"query":"user"}),&identity()).unwrap();assert!(route.contains("include_profile_photos=false"));
+    }
+    #[tokio::test]
+    async fn sites_groups_include_member_counts_without_changing_generic_share_groups() {
+        let body=json!({"items":[],"extra":"preserved"});let transport=response(body.clone());let result=ChatgptService::default().read_with(directory("sites-groups","sites_groups",json!({"query":" \u{feff}真实组 &x=2\u{feff} "})),share_rpc,&transport).await.unwrap();assert_eq!(result.body,body);
+        let calls=transport.requests.lock().unwrap();let url=tauri::Url::parse(&calls[0].url).unwrap();assert_eq!(url.path(),"/backend-api/accounts/account-fixture/groups");let query:BTreeMap<_,_>=url.query_pairs().into_owned().collect();assert_eq!(query,BTreeMap::from([("limit".into(),"10".into()),("offset".into(),"0".into()),("query".into(),"真实组 &x=2".into()),("include_member_counts".into(),"true".into()),("include_total".into(),"false".into())]));drop(calls);
+        let route=resolve_read_route(&ServiceOperation::ShareGroups,&json!({"query":"group"}),&identity()).unwrap();assert!(route.contains("include_member_counts=false"));assert!(!route.contains("include_member_counts=true"));
+    }
+    #[tokio::test]
+    async fn sites_teams_use_fixed_identity_limit_and_numeric_offsets_preserving_source_body() {
+        for offset in [0,100,200] {let body=json!({"items":[],"has_more":offset<200,"extra":"preserved"});let transport=response(body.clone());let result=ChatgptService::default().read_with(directory("teams","sites_teams",json!({"offset":offset})),share_rpc,&transport).await.unwrap();assert_eq!(result.body,body);let calls=transport.requests.lock().unwrap();assert_eq!(calls[0].method,HttpMethod::Get);assert!(calls[0].body.is_empty());let url=tauri::Url::parse(&calls[0].url).unwrap();assert_eq!(url.path(),"/backend-api/accounts/account-fixture/teams");let query:BTreeMap<_,_>=url.query_pairs().into_owned().collect();assert_eq!(query,BTreeMap::from([("limit".into(),"100".into()),("offset".into(),offset.to_string())]));}
+    }
+    #[tokio::test]
+    async fn sites_directory_bad_query_or_pagination_cannot_authenticate_or_override_identity() {
+        for (operation,params) in [("sites_users",json!({"query":" "})),("sites_users",json!({"query":"x","include_profile_photos":true})),("sites_users",json!({"query":"x","account_id":"other"})),("sites_groups",json!({"query":" "})),("sites_groups",json!({"query":"x","include_member_counts":false})),("sites_groups",json!({"query":"x","account_id":"other"})),("sites_teams",json!({"offset":-1})),("sites_teams",json!({"offset":1.5})),("sites_teams",json!({"offset":"100"})),("sites_teams",json!({"offset":9007199254740992u64})),("sites_teams",json!({"offset":0,"limit":1000})),("sites_teams",json!({"offset":0,"url":"https://elsewhere.test"}))] {let transport=FakeTransport::new(&[]);assert_eq!(ChatgptService::default().read_with(directory("invalid-directory",operation,params),|_,_|std::future::ready(Err("must not auth".into())),&transport).await.err().unwrap().code,"invalid_request");assert!(transport.requests.lock().unwrap().is_empty());}
+    }
+    #[tokio::test]
+    async fn sites_directories_enforce_network_before_after_and_identity_on_completion() {
+        for (operation,params) in [("sites_users",json!({"query":"user"})),("sites_groups",json!({"query":"group"})),("sites_teams",json!({"offset":0}))] {let denied=|method,params|if method=="configRequirements/read"{std::future::ready(Ok(json!({"requirements":{"application":{"network":{"enabled":true,"domains":{}}}}})))}else{share_rpc(method,params)};let transport=FakeTransport::new(&[]);assert_eq!(ChatgptService::default().read_with(directory("denied",operation,params.clone()),denied,&transport).await.err().unwrap().code,"network_restricted");assert!(transport.requests.lock().unwrap().is_empty());
+            let checks=AtomicUsize::new(0);let rpc=|method,params|if method=="configRequirements/read"{let completed=checks.fetch_add(1,Ordering::SeqCst)>0;std::future::ready(Ok(if completed{json!({"requirements":{"application":{"network":{"enabled":true,"domains":{}}}}})}else{json!({"requirements":null})}))}else{share_rpc(method,params)};let transport=response(json!({"items":[],"has_more":false}));assert_eq!(ChatgptService::default().read_with(directory("complete-policy",operation,params.clone()),rpc,&transport).await.err().unwrap().code,"network_restricted");assert_eq!(transport.requests.lock().unwrap().len(),1);
+            struct Invalidate<'a>(&'a ChatgptService);impl Transport for Invalidate<'_>{fn send(&self,_:HttpRequest,_:Arc<AtomicBool>)->TransportFuture<'_>{Box::pin(async move{self.0.invalidate();Ok(HttpResponse{status:200,headers:BTreeMap::new(),body:br#"{"items":[],"has_more":false}"#.to_vec()})})}}let service=ChatgptService::default();assert_eq!(service.read_with(directory("old-identity",operation,params),share_rpc,&Invalidate(&service)).await.err().unwrap().code,"account_changed");
+        }
+    }
+    #[tokio::test]
+    async fn sites_email_invitation_shares_all_site_access_write_locks_and_never_replays_unknown() {
+        let service=Arc::new(ChatgptService::default());let transport=Arc::new(FakeTransport{delay_ms:100,..response(json!({"status":"accepted"}))});let task={let service=service.clone();let transport=transport.clone();tokio::spawn(async move{service.sites_settings_with(invite("pending","target@example.test"),share_rpc,transport.as_ref()).await})};entered(transport.as_ref()).await;
+        let mut mode=invite("mode","target@example.test");mode.mutation=serde_json::from_value(json!({"operation":"share_access","access_mode":"custom"})).unwrap();assert_eq!(service.sites_settings_with(mode,share_rpc,&FakeTransport::new(&[])).await.err().unwrap().code,"busy");service.cancel("pending");assert_eq!(task.await.unwrap().err().unwrap().code,"sites_settings_unknown");assert_eq!(transport.requests.lock().unwrap().len(),1);
+        for status in [401,403,429,500] {let transport=FakeTransport::new(&[status,200]);assert!(ChatgptService::default().sites_settings_with(invite("http","target@example.test"),share_rpc,&transport).await.is_err());assert_eq!(transport.requests.lock().unwrap().len(),1);}
+        let transport=FakeTransport::new(&[204]);transport.responses.lock().unwrap()[0].body.clear();assert_eq!(ChatgptService::default().sites_settings_with(invite("no-content","target@example.test"),share_rpc,&transport).await.err().unwrap().code,"sites_settings_unknown");
     }
 }
 

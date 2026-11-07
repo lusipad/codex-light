@@ -4,7 +4,9 @@ import { selectedServiceAccount } from "./serviceAccounts";
 import { parseSiteSharing, parseSitePreferredUrl, type SiteSharingPolicy, type SiteSharingMode, type SiteSharingMemberTarget } from "./siteSharingData";
 import type { SitesClientAccess } from "./sitesClient";
 
-export interface SiteSharingContext { memberId: string; email: string | null; workspace: boolean; sharingManagementAllowed: boolean; canManageEditors: boolean; canInviteExternal: boolean; externalPermissionError: string | null }
+export interface SiteSharingContext { memberId: string; email: string | null; workspace: boolean; sharingManagementAllowed: boolean; canManageEditors: boolean; canInviteExternal: boolean; externalPermissionError: string | null; workspaceGroupsAllowed: boolean; teamsAllowed: boolean }
+// Official Odt/Adt direct-chat plans; distinct from Og/Olt workspace permission categories.
+const teamSupportedPlans = new Set(["free", "go", "plus", "pro", "promax", "prolite", "free_workspace", "team", "self_serve_business_prolite", "sci", "rosalind_academic", "business", "enterprise_cbp_trial", "enterprise_cbp_view_only", "finserv", "law", "ent26", "education", "edu_plus", "edu_pro", "quorum", "enterprise", "hc", "hc_consumption", "deprecated_enterprise", "edu", "deprecated_edu", "k12"]);
 const externalPermissionPlans = new Set(["business", "enterprise", "enterprise_cbp_usage_based", "enterprise_cbp_automation", "enterprise_cbp_trial", "enterprise_cbp_view_only", "deprecated_enterprise", "hc", "hc_consumption", "finserv", "law", "ent26", "education", "edu_plus", "edu_pro", "edu", "deprecated_edu", "k12", "quorum"]);
 function allowed(access: SitesClientAccess, signal: AbortSignal) { signal.throwIfAborted(); if (!access.enabled) throw Error("当前账号不可使用站点。"); }
 async function current(access: SitesClientAccess, signal: AbortSignal) {
@@ -14,7 +16,7 @@ async function current(access: SitesClientAccess, signal: AbortSignal) {
 export async function readSiteSharingContext(access: SitesClientAccess, signal: AbortSignal): Promise<SiteSharingContext> {
   allowed(access, signal);
   const [body, authentication] = await Promise.all([readChatgptService("share_accounts", {}, access.identity, signal), accountRead()]);
-  const account = selectedServiceAccount(body, access.identity.accountId).account;
+  const entry = selectedServiceAccount(body, access.identity.accountId), account = entry.account;
   if (authentication.account?.type !== "chatgpt" || authentication.workspaceRouting?.chatgptAccountId != null && authentication.workspaceRouting.chatgptAccountId !== access.identity.accountId) throw Error("当前登录身份与站点账号不符。");
   const workspace = account.structure === "workspace", permissionPlan = externalPermissionPlans.has(account.plan_type);
   let permissions: string[] | null = null, externalPermissionError: string | null = null;
@@ -28,7 +30,11 @@ export async function readSiteSharingContext(access: SitesClientAccess, signal: 
   await current(access, signal);
   return { memberId: account.account_user_id, email: typeof authentication.account.email === "string" ? authentication.account.email : null, workspace,
     sharingManagementAllowed: access.sharingManagementAllowed === true, canManageEditors: workspace && access.sharingManagementAllowed === true,
-    canInviteExternal: access.externalSharingAllowed === true && (!permissionPlan || permissions !== null && (account.account_user_role === "account-owner" || permissions.includes("chatgpt.workspace.feature.sites.invite_external.access"))), externalPermissionError };
+    canInviteExternal: access.externalSharingAllowed === true && (!permissionPlan || permissions !== null && (account.account_user_role === "account-owner" || permissions.includes("chatgpt.workspace.feature.sites.invite_external.access"))), externalPermissionError,
+    workspaceGroupsAllowed: workspace && permissionPlan,
+    // Official Windows host zy passes supportedSurface:true. Both account reads have completed here.
+    teamsAllowed: workspace && access.workspaceTeamsAllowed === true && teamSupportedPlans.has(account.plan_type)
+      && entry.can_access_with_session !== false && account.is_deactivated !== true && authentication.workspaceRouting?.chatgptAccountId === access.identity.accountId };
 }
 export async function writeSiteSharingMember(access: SitesClientAccess, id: string, target: SiteSharingMemberTarget, role: "viewer" | "editor" | null, signal: AbortSignal): Promise<SiteSharingWriteResult> {
   allowed(access, signal);

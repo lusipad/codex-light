@@ -110,6 +110,10 @@ try {
   Invoke-Step "Sites participant permissions and target contracts" { node scripts/verify-sites-sharing-members.mjs }
   Invoke-Step "Sites sharing identity-bound client contracts" { node scripts/verify-sites-sharing-client.mjs }
   Invoke-Step "Sites sharing dialog and recovery contracts" { node scripts/verify-sites-sharing-ui.mjs }
+  Invoke-Step "Sites invitation data and source parser contracts" { node scripts/verify-sites-sharing-invitation-data.mjs }
+  Invoke-Step "Sites invitation identity and directory client contracts" { node scripts/verify-sites-sharing-invitations-client.mjs }
+  Invoke-Step "Sites invitation search lifecycle contracts" { node scripts/verify-sites-sharing-invitation-search.mjs }
+  Invoke-Step "Sites invitation actual input and keyboard contracts" { node scripts/verify-sites-sharing-invite-input.mjs }
   Invoke-Step "Codex Cloud authenticated configuration regression" { node scripts/verify-cloud-environments.mjs }
   Invoke-Step "Codex Cloud current access contract" { node scripts/verify-cloud-environment-access.mjs }
   Invoke-Step "Codex Cloud settings data contract" { node scripts/verify-cloud-environment-data.mjs }
