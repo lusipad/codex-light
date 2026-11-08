@@ -34,7 +34,7 @@ const scripts = [
   'verify-archive-unarchive-transport.mjs', 'verify-archive-unarchive-ui.mjs',
   'verify-archive-delete-transport.mjs', 'verify-archive-delete-ui.mjs', 'verify-toast-action.mjs',
   'verify-workspace-file-tree.mjs', 'verify-workspace-recursive-tree.mjs', 'verify-workbench-app-e.mjs',
-  'verify-file-editor-lifecycle.mjs', 'verify-file-editor-save.mjs',
+  'verify-file-editor-lifecycle.mjs', 'verify-file-editor-save.mjs', 'verify-review-findings-ui.mjs',
   'verify-skill-preview-ui.mjs', 'verify-skill-selector.mjs', 'verify-skill-trial.mjs',
   'verify-skill-trial-host.mjs', 'verify-skill-trial-prefill.mjs', 'verify-skill-file-host.mjs',
   'verify-recommended-skills.mjs', 'verify-recommended-preview.mjs', 'verify-recommended-parent.mjs', 'verify-skill-actions.mjs',

@@ -73,6 +73,32 @@ function nodes(tree) {
   return [tree, ...tree.children.flatMap(nodes)];
 }
 const text = tree => !tree || typeof tree !== "object" ? String(tree ?? "") : typeof tree.tag === "function" ? text(tree.tag(tree.props)) : tree.children.map(text).join("");
+{
+  const uneven = [
+    "--- a/a.ts", "+++ b/a.ts", "@@ -1,4 +1,4 @@", " before", "-old", "+new one", "+new two", " after",
+    "-deleted", "@@ -8 +8,2 @@", "+inserted", " shared",
+    "diff --git a/b.ts b/b.ts", "--- a/b.ts", "+++ b/b.ts", "@@ -1,2 +1 @@", "-before", "-second", "+after",
+  ].join("\n");
+  const split = mount("DiffDrawer", { cwd: "D:/repo", gitStatus: { entries: [{ path: "a.ts" }, { path: "b.ts" }] }, onClose() {}, onRefreshGit() {} },
+    { diffContent: uneven, diffLayout: "split", wordWrap: true });
+  const grid = nodes(split.tree).find(node => node.props.className?.startsWith("diff-split-grid"));
+  assert.ok(grid.props.className.includes("diff-word-wrap"));
+  const [oldColumn, newColumn] = grid.children;
+  assert.equal(oldColumn.props.style.gridRow, newColumn.props.style.gridRow);
+  const pairs = oldColumn.children.slice(1).map((oldCell, index) => [oldCell, newColumn.children[index + 1]].map(cell => ({
+    line: text(nodes(cell).find(node => node.props.className === "diff-ln")),
+    code: text(nodes(cell).find(node => node.props.className === "diff-tx")),
+    gap: cell.props["aria-hidden"] === true,
+  })));
+  const pair = code => pairs.find(row => row.some(cell => cell.code === code));
+  assert.deepEqual(pair("+new one").map(cell => [cell.line, cell.code]), [["2", "-old"], ["2", "+new one"]]);
+  assert.equal(pair("+new two")[0].gap, true);
+  assert.deepEqual(pair(" after").map(cell => cell.line), ["3", "4"]);
+  assert.equal(pair("-deleted")[1].gap, true);
+  assert.equal(pair("+inserted")[0].gap, true);
+  assert.deepEqual(pair(" shared").map(cell => cell.line), ["8", "9"]);
+  assert.equal(pair("-second")[1].gap, true);
+}
 const run = { attempt: 1, sequence: 1, threadId: "thread", turnId: "turn", cwd: "D:/repo", workspaceRoots: ["D:/repo"], status: "failed", text: "Partial **review**\n::code-comment{title=\"keep literal\"}", error: "Service failed" };
 for (const status of ["starting", "running", "completed", "failed", "interrupted", "unknown"]) {
   const ui = mount("CodeReviewView", { workspacePath: "D:/repo", onStartReview() { throw Error("No automatic review"); }, reviewResult: { ...run, status }, reviewFindings: [all[0]], unresolvedFindings: [{ ...all[4], reason: "Unresolved path" }], lastResult: "obsolete" });

@@ -209,6 +209,26 @@ interface ParsedDiffLine {
   newLine: number | null;
 }
 
+function alignSplitDiff(lines: ParsedDiffLine[]): [number | null, number | null][] {
+  const rows: [number | null, number | null][] = [];
+  for (let index = 0; index < lines.length;) {
+    if (lines[index].type !== "add" && lines[index].type !== "del") {
+      rows.push([index, index]);
+      index++;
+      continue;
+    }
+    const deleted: number[] = [];
+    const added: number[] = [];
+    while (lines[index]?.type === "add" || lines[index]?.type === "del") {
+      (lines[index].type === "del" ? deleted : added).push(index++);
+    }
+    for (let offset = 0; offset < Math.max(deleted.length, added.length); offset++) {
+      rows.push([deleted[offset] ?? null, added[offset] ?? null]);
+    }
+  }
+  return rows;
+}
+
 function decodeGitDiffPath(path: string): string {
   if (!path.startsWith('"')) return path;
   if (!path.endsWith('"')) return "";
@@ -1782,6 +1802,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     : "";
 
   const parsedLines = useMemo(() => parseUnifiedDiff(diffContent), [diffContent]);
+  const splitRows = useMemo(() => diffLayout === "split" ? alignSplitDiff(parsedLines) : [], [diffLayout, parsedLines]);
   const unanchoredFindings = modelReviewComments.filter(comment => loadingDiff || !parsedLines.some(line => findingMatchesLine(comment, line, cwd)));
   const renderLineFindings = (line: ParsedDiffLine) => modelReviewComments
     .filter(comment => findingMatchesLine(comment, line, cwd))
@@ -2383,38 +2404,26 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                     <div className="empty-hint-small">选择文件以查看详细差异</div>
                   ) : diffLayout === "split" ? (
                     <div className={`diff-split-grid ${wordWrap ? "diff-word-wrap" : ""}`}>
-                      <div className="diff-split-col">
-                        <div className="diff-split-col-header">旧版本 (Original)</div>
-                        {parsedLines
-                          .filter((l) => l.type !== "add")
-                          .map((line, i) => (
-                            <div
-                              key={i}
-                              className={`diff-line diff-line-${line.type}`}
-                              onClick={() => setCommentLineIdx(i)}
-                            >
-                              <span className="diff-ln">{line.oldLine ?? ""}</span>
-                              <span className="diff-tx">{line.raw}</span>
-                            </div>
-                          ))}
-                      </div>
-                      <div className="diff-split-col">
-                        <div className="diff-split-col-header">新版本 (Modified)</div>
-                        {parsedLines
-                          .filter((l) => l.type !== "del")
-                          .map((line, i) => (
-                            <React.Fragment key={i}>
-                            <div
-                              className={`diff-line diff-line-${line.type}`}
-                              onClick={() => setCommentLineIdx(i)}
-                            >
-                              <span className="diff-ln">{line.newLine ?? ""}</span>
-                              <span className="diff-tx">{line.raw}</span>
-                            </div>
-                            {renderLineFindings(line)}
-                            </React.Fragment>
-                          ))}
-                      </div>
+                      {["旧版本 (Original)", "新版本 (Modified)"].map((title, side) => (
+                        <div key={title} className="diff-split-col" style={{ gridColumn: side + 1, gridRow: `1 / span ${splitRows.length + 1}` }}>
+                          <div className="diff-split-col-header">{title}</div>
+                          {splitRows.map((row, rowIndex) => {
+                            const lineIndex = row[side];
+                            const line = lineIndex === null ? undefined : parsedLines[lineIndex];
+                            return (
+                              <div key={rowIndex} className="diff-split-cell" aria-hidden={line ? undefined : true}>
+                                {line && (
+                                  <div className={`diff-line diff-line-${line.type}`}>
+                                    <span className="diff-ln">{(side === 0 ? line.oldLine : line.newLine) ?? ""}</span>
+                                    <span className="diff-tx">{line.raw || " "}</span>
+                                  </div>
+                                )}
+                                {line && side === 1 && renderLineFindings(line)}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ))}
                     </div>
                   ) : (
                     <div className={`diff-pre ${wordWrap ? "diff-word-wrap" : ""}`}>
@@ -2592,9 +2601,9 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                   />
                   <span>--force-with-lease</span>
                 </label>
-                <span className="muted-text" style={{ marginLeft: "auto", fontSize: "calc(11px * var(--font-ui-scale, 1))" }}>
+                {diffLayout === "unified" && <span className="muted-text" style={{ marginLeft: "auto", fontSize: "calc(11px * var(--font-ui-scale, 1))" }}>
                   点击任意 Diff 行可向 Codex 发送行级评审
-                </span>
+                </span>}
               </div>
             </div>
           )}
