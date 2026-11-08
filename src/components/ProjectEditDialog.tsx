@@ -7,7 +7,7 @@ import { CloseIcon, FolderIcon } from "./Icons";
 export function ProjectEditDialog({ project, onSave, onRemove, onClose }: {
   project: Project;
   onSave: (patch: ProjectPatch) => Promise<void>;
-  onRemove: () => Promise<boolean>;
+  onRemove: () => void;
   onClose: () => void;
 }) {
   const [name, setName] = useState(project.name);
@@ -136,11 +136,67 @@ export function ProjectEditDialog({ project, onSave, onRemove, onClose }: {
       {error && <p className="project-edit-error" role="alert">{error}</p>}
       <footer>
         <button type="button" className="secondary-pill-action-btn project-edit-remove" disabled={busy}
-          onClick={() => void run(onRemove, "移除本地项目失败")}>移除本地项目</button>
+          onClick={onRemove}>移除本地项目</button>
         <div>
           <button type="button" className="secondary-pill-action-btn" disabled={busy} onClick={dismiss}>取消</button>
           <button type="submit" className="primary-pill-action-btn" disabled={busy || !name.trim()}>保存</button>
         </div>
+      </footer>
+    </form>
+  </dialog>;
+}
+
+export function ProjectRemoveDialog({ name, onRemove, onClose, fallbackRef }: {
+  name: string;
+  onRemove: () => Promise<void>;
+  onClose: () => void;
+  fallbackRef: React.RefObject<HTMLInputElement | null>;
+}) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const pending = useRef(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(false);
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    const trigger = document.activeElement as HTMLElement | null;
+    dialog?.showModal();
+    cancelRef.current?.focus();
+    return () => {
+      dialog?.close();
+      (trigger?.isConnected ? trigger : fallbackRef.current)?.focus({ preventScroll: true });
+    };
+  }, [fallbackRef]);
+  const dismiss = () => { if (!pending.current) onClose(); };
+  return <dialog ref={dialogRef} className="project-edit-dialog project-remove-dialog"
+    aria-labelledby="project-remove-title" aria-describedby="project-remove-description" aria-busy={busy}
+    onCancel={event => { event.preventDefault(); dismiss(); }}
+    onMouseDown={event => {
+      if (event.target !== event.currentTarget) return;
+      const rect = event.currentTarget.getBoundingClientRect();
+      if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dismiss();
+    }}>
+    <form onSubmit={async event => {
+      event.preventDefault();
+      if (pending.current) return;
+      pending.current = true;
+      setBusy(true);
+      setError(false);
+      try {
+        await onRemove();
+      } catch {
+        setError(true);
+      } finally {
+        pending.current = false;
+        setBusy(false);
+      }
+    }}>
+      <h2 id="project-remove-title">移除 {name}？</h2>
+      <p id="project-remove-description">这只会从应用中移除该项目。你电脑上的文件和现有聊天不会被删除。</p>
+      {error && <p role="alert" className="project-edit-error">未成功移除 {name}</p>}
+      <footer>
+        <button ref={cancelRef} type="button" className="secondary-pill-action-btn" disabled={busy} onClick={dismiss}>取消</button>
+        <button type="submit" className="secondary-pill-action-btn project-edit-remove" disabled={busy}>{busy ? "移除中…" : "移除项目"}</button>
       </footer>
     </form>
   </dialog>;

@@ -1,5 +1,9 @@
 # 实施日志（按轮次）
 
+## 2026-11-08 — 04I 本地项目移除确认
+
+- 两处入口共用模态确认，取消保留项目与草稿，失败可重试。隔离真实协议验证项目移除保留聊天和文件。[阶段验收](antigravity/acceptance/04E-project-sort.md)
+
 ## 2026-11-08 — Windows durable 测试夹具就绪等待
 
 - [preview.24 标签流水线](https://github.com/lusipad/codex-desktop-native/actions/runs/42485942064) 首次作业 691 过、1 失败。失败在 Node 进程就绪信号，尚未执行该用例的会话复用断言。旧日志合并了超时、通道断开与读错，无法确认远端子进程当时的具体退出状态。

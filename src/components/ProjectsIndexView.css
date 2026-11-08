@@ -145,3 +145,6 @@
 }
 .project-edit-dialog footer { margin-top: 20px; }
 .project-edit-error, .project-edit-dialog .project-edit-remove { color: #fca5a5; }
+.project-remove-dialog { width: min(400px, calc(100vw - 32px)); }
+.project-remove-dialog p { margin: 0; overflow-wrap: anywhere; }
+.project-remove-dialog footer { justify-content: flex-end; }

@@ -22,7 +22,7 @@ import {
   updateProject,
 } from "../projects";
 import { ThreadActionsMenu } from "./ThreadActionsMenu";
-import { ProjectEditDialog } from "./ProjectEditDialog";
+import { ProjectEditDialog, ProjectRemoveDialog } from "./ProjectEditDialog";
 import "./ProjectsIndexView.css";
 
 export interface ProjectsIndexViewProps {
@@ -147,6 +147,7 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
   onShowToast,
 }) => {
   const [search, setSearch] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
   const [expandedChatPages, setExpandedChatPages] = useState<Record<string, boolean>>({});
   const [sort, setSort] = useState<{ column: ProjectSortColumn; direction: "ascending" | "descending" }>({
     column: "modified", direction: "descending",
@@ -171,6 +172,7 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
   /* ── 新建项目表单 ── */
   const [creating, setCreating] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
+  const [removingProject, setRemovingProject] = useState<Project | null>(null);
   const [draftName, setDraftName] = useState("");
   const [draftRoots, setDraftRoots] = useState<string[]>([]);
   const [draftManualRoot, setDraftManualRoot] = useState("");
@@ -425,26 +427,15 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
     onProjectsChanged?.();
   };
 
-  const handleDeleteProject = async (project: Project) => {
-    const confirmed = window.confirm(
-      `删除项目「${project.name}」？\n项目内的聊天不会被删除，只会解除项目关联。`
-    );
-    if (!confirmed) return false;
-    setActionBusyId(project.id);
-    try {
-      await deleteProject(project.id);
-      setProjects((prev) => prev.filter((item) => item.id !== project.id));
-      onProjectsChanged?.();
-      onThreadsChanged?.();
-      notify(`已删除项目「${project.name}」`, "success");
-      return true;
-    } catch (e: any) {
-      notify(`删除项目失败：${e?.message || e}`, "error");
-      await loadProjects();
-      return false;
-    } finally {
-      setActionBusyId(null);
-    }
+  const removeProject = async (project: Project) => {
+    await deleteProject(project.id);
+    ++projectLoadRequestRef.current;
+    setProjects(previous => previous.filter(item => item.id !== project.id));
+    setRemovingProject(null);
+    setEditingProject(previous => previous?.id === project.id ? null : previous);
+    onProjectsChanged?.();
+    onThreadsChanged?.();
+    notify(`已移除项目「${project.name}」`, "success");
   };
 
   const handleMoveProject = async (project: Project, direction: "up" | "down") => {
@@ -748,13 +739,13 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
                 { id: "edit", label: "编辑项目", disabled: isBusy },
                 { id: "up", label: "上移项目", disabled: isBusy || index <= 0 },
                 { id: "down", label: "下移项目", disabled: isBusy || index < 0 || index >= projects.length - 1 },
-                { id: "delete", label: "删除项目（聊天不会被删除）", danger: true, disabled: isBusy },
+                { id: "remove", label: "移除项目", danger: true, disabled: isBusy },
               ]} onSelect={action => {
                 if (isBusy) return;
                 if (action === "reveal") onRevealPath?.(roots[0].path);
                 else if (action === "edit") setEditingProject(project);
                 else if (action === "up" || action === "down") void handleMoveProject(project, action);
-                else if (action === "delete") void handleDeleteProject(project);
+                else if (action === "remove") setRemovingProject(project);
               }} />
             </div>
           </div>
@@ -851,6 +842,7 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
             type="text"
             placeholder="搜索项目"
             aria-label="搜索项目"
+            ref={searchRef}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -1011,10 +1003,12 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
           </div>
         )}
 
-        {editingProject && <ProjectEditDialog key={editingProject.id} project={editingProject}
+        {editingProject && <ProjectEditDialog key={`edit:${editingProject.id}`} project={editingProject}
           onSave={patch => saveProject(editingProject, patch)}
-          onRemove={() => handleDeleteProject(editingProject)}
+          onRemove={() => setRemovingProject(editingProject)}
           onClose={() => setEditingProject(null)} />}
+        {removingProject && <ProjectRemoveDialog key={`remove:${removingProject.id}`} name={removingProject.name} fallbackRef={searchRef}
+          onRemove={() => removeProject(removingProject)} onClose={() => setRemovingProject(null)} />}
 
         {/* 列表：真实项目实体；协议失败时回退 workspace 视图 */}
         {isFallback ? renderWorkspaceFallback() : (

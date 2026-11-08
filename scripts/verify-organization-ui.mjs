@@ -70,14 +70,14 @@ const menuContext = {
   onRevealPath: root => calls.push(["reveal", root]),
   setEditingProject: item => calls.push(["edit", item.id]),
   handleMoveProject: (item, direction) => calls.push([direction, item.id]),
-  handleDeleteProject: item => calls.push(["delete", item.id]),
+  setRemovingProject: item => calls.push(["remove", item.id]),
 };
 const select = vm.runInNewContext(ts.transpileModule(`(${menuAction})`, {
   compilerOptions: { target: ts.ScriptTarget.ES2022 },
 }).outputText, menuContext);
-for (const action of ["reveal", "edit", "up", "down", "delete"]) select(action);
-assert.deepEqual(calls, [["reveal", "isolated-root"], ["edit", project.id], ["up", project.id], ["down", project.id], ["delete", project.id]]);
-menuContext.isBusy = true; select("delete");
+for (const action of ["reveal", "edit", "up", "down", "remove"]) select(action);
+assert.deepEqual(calls, [["reveal", "isolated-root"], ["edit", project.id], ["up", project.id], ["down", project.id], ["remove", project.id]]);
+menuContext.isBusy = true; select("remove");
 assert.equal(calls.length, 5, "Busy menu dispatcher must not start a second mutation");
 
 const projectApi = {};
