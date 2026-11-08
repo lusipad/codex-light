@@ -12,7 +12,7 @@ function load(file) {
 const projects = load('src/sidebarProjects.ts'), roots = load('src/hooksSettingsModel.ts');
 const app = fs.readFileSync('src/App.tsx', 'utf8');
 const ast = ts.createSourceFile('App.tsx', app, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-let callback, passedRoots, openFile, passedRequest;
+let callback, passedRoots, passedSearchRoots, openFile, passedRequest;
 function visit(node) {
   if (ts.isVariableDeclaration(node) && node.name.getText(ast) === 'workbenchWorkspaceRoots') callback = node.initializer.arguments[0];
   if (ts.isVariableDeclaration(node) && node.name.getText(ast) === 'openPreviewFile') openFile = node.initializer.arguments[0];
@@ -21,10 +21,12 @@ function visit(node) {
       passedRoots = node.attributes.properties.find(p => p.name?.getText(ast) === 'workspaceRoots');
       passedRequest = node.attributes.properties.find(p => p.name?.getText(ast) === 'previewRequestId');
     }
+    if (node.tagName.getText(ast) === 'QuickSearchModal') passedSearchRoots = node.attributes.properties.find(p => p.name?.getText(ast) === 'workspaceRoots');
   }
   ts.forEachChild(node, visit);
 }
 visit(ast); assert.ok(callback); assert.equal(passedRoots.initializer.expression.getText(ast), 'workbenchWorkspaceRoots');
+assert.equal(passedSearchRoots.initializer.expression.getText(ast), 'workbenchWorkspaceRoots');
 const membership = {
   selectedProjectId: 'unrelated', threadProjectAssignments: { a: { projectKind: 'local', projectId: 'mine' } },
   workspaceProjectAssignments: {}, projectlessThreadIds: [], localProjects: [

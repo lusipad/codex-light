@@ -125,7 +125,7 @@ import { ComposerBox } from "./components/ComposerBox";
 import { ProjectsIndexView } from "./components/ProjectsIndexView";
 import { InboxView } from "./components/InboxView";
 import { MiniPetWidget } from "./components/MiniPetWidget";
-import { fileDedupeKey, QuickSearchModal } from "./components/QuickSearchModal";
+import { fileDedupeKey, fileSearchRoot, QuickSearchModal } from "./components/QuickSearchModal";
 import type { RecentFile } from "./components/QuickSearchModal";
 import { restoreInboxHistory } from "./inboxState";
 import { CodeReviewView, ReviewRequest } from "./components/CodeReviewView";
@@ -616,7 +616,7 @@ export const App: React.FC = () => {
   const [reviewRuns, setReviewRuns] = useState<ReviewRun[]>([]);
   const [selectedReviewFinding, setSelectedReviewFinding] = useState<ModelReviewComment | null>(null);
   const [previewRequestId, setPreviewRequestId] = useState(0);
-  const [directoryReveal, setDirectoryReveal] = useState<{ cwd: string; path: string } | null>(null);
+  const [directoryReveal, setDirectoryReveal] = useState<{ cwd: string; root?: string; path: string } | null>(null);
   const skillFilePreviewHandlerRef = useRef<((path: string) => Promise<boolean>) | null>(null);
   const registerSkillFilePreviewHandler = useCallback((handler: ((path: string) => Promise<boolean>) | null) => {
     skillFilePreviewHandlerRef.current = handler;
@@ -660,19 +660,6 @@ export const App: React.FC = () => {
     threadProjectAssignments: {}, projectlessThreadIds: [], workspaceProjectAssignments: {},
   });
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
-  const rememberWorkspaceFile = useCallback((workspace: string, path: string) => {
-    if (!workspace) return;
-    const root = fileDedupeKey(workspace);
-    const key = fileDedupeKey(path);
-    if (!key.startsWith(`${root}/`)) return;
-    const updatedAt = Date.now();
-    setRecentFilesByWorkspace(current => {
-      const previous = current[root] ?? [];
-      return { ...current, [root]: [{ path, updatedAt }, ...previous.filter(file => fileDedupeKey(file.path) !== key)].slice(0, 10) };
-    });
-    if (isTauriRuntime()) void tauriInvoke("fs_record_recent_file_access", { root: workspace, path, threadId: activeThreadId ?? "", updatedAt })
-      .catch(error => console.warn("最近文件记录写入失败", error));
-  }, [activeThreadId]);
   const [threadScheduleTask, setThreadScheduleTask] = useState<{ id: string; threadId: string } | null>(null);
   const threadScheduleTrigger = useRef<HTMLButtonElement | null>(null);
   const showThreadSchedule = activeRoute === "thread" && threadScheduleTask?.threadId === activeThreadId;
@@ -4233,6 +4220,22 @@ export const App: React.FC = () => {
     return mergeHookRoots([cwd], matches.length === 1 ? matches[0].rootPaths : []);
   }, [activeWorkspace?.path, activeThreadObj, activeThreadId, workspaces, sidebarProjectMembership, workspaceHints]);
 
+  const rememberWorkspaceFile = useCallback((workspace: string, path: string) => {
+    if (!workspace || !workbenchWorkspaceRoots.some(root => fileDedupeKey(root) === fileDedupeKey(workspace))) return;
+    const matchedRoot = fileSearchRoot(path, workbenchWorkspaceRoots);
+    if (!matchedRoot) return;
+    const root = fileDedupeKey(matchedRoot);
+    const key = fileDedupeKey(path);
+    if (key === root) return;
+    const updatedAt = Date.now();
+    setRecentFilesByWorkspace(current => {
+      const previous = current[root] ?? [];
+      return { ...current, [root]: [{ path, updatedAt }, ...previous.filter(file => fileDedupeKey(file.path) !== key)].slice(0, 10) };
+    });
+    if (isTauriRuntime()) void tauriInvoke("fs_record_recent_file_access", { root: matchedRoot, path, threadId: activeThreadId ?? "", updatedAt })
+      .catch(error => console.warn("最近文件记录写入失败", error));
+  }, [activeThreadId, workbenchWorkspaceRoots]);
+
   const handleOpenQuickChat = useCallback(async () => {
     if (!isTauriRuntime()) {
       setShowPopoutModal(value => !value);
@@ -7028,13 +7031,16 @@ export const App: React.FC = () => {
         skills={skills}
         projectScripts={projectScripts}
         workspacePath={activeWorkspace?.path}
-        recentFiles={activeWorkspace ? recentFilesByWorkspace[fileDedupeKey(activeWorkspace.path)] : undefined}
+        workspaceRoots={workbenchWorkspaceRoots}
+        recentFiles={workbenchWorkspaceRoots.flatMap(root => recentFilesByWorkspace[fileDedupeKey(root)] ?? [])}
         onClose={() => setShowQuickSearch(false)}
         onSelectThread={selectThread}
         onSearchFiles={() => setQuickSearchMode("files")}
         onSelectFile={(filePath, isDirectory) => {
           if (isDirectory && activeWorkspace?.path) {
-            setDirectoryReveal({ cwd: activeWorkspace.path, path: filePath });
+            const root = fileSearchRoot(filePath, workbenchWorkspaceRoots);
+            if (!root) return;
+            setDirectoryReveal({ cwd: activeWorkspace.path, root, path: filePath });
             setShowRightDrawer(true);
           } else {
             openPreviewFile(filePath);

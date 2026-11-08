@@ -29,6 +29,7 @@ export interface QuickSearchModalProps {
    * 当前工作区绝对路径（可选）。files 模式下用真实 fuzzy session 搜索。
    */
   workspacePath?: string;
+  workspaceRoots?: readonly string[];
   recentFiles?: readonly RecentFile[];
   onClose: () => void;
   onSelectThread: (threadId: string) => void;
@@ -114,6 +115,7 @@ interface RemoteSearchResults {
   /** 产生这批结果的查询词（trim 后），用于丢弃与当前输入不匹配的旧结果。 */
   query: string;
   workspacePath?: string;
+  fileScope?: string;
   mode: "root" | "files";
   files: RemoteFileResult[];
   threads: RemoteThreadResult[];
@@ -134,21 +136,28 @@ function fileDedupeKey(filePath: string): string {
   return /^(?:[a-z]:|\/\/)/i.test(normalized) ? normalized.toLowerCase() : normalized;
 }
 
-export { fileDedupeKey };
+function fileSearchRoot(path: string, roots: readonly string[]): string | undefined {
+  const key = fileDedupeKey(path);
+  return roots.reduce<string | undefined>((match, root) => {
+    const prefix = fileDedupeKey(root);
+    return (key === prefix || key.startsWith(`${prefix}/`)) &&
+      (match === undefined || prefix.length > fileDedupeKey(match).length) ? root : match;
+  }, undefined);
+}
 
-async function resolveFileSearchPath(query: string, workspacePath: string): Promise<string | null> {
+export { fileDedupeKey, fileSearchRoot };
+
+async function resolveFileSearchPath(query: string, roots: readonly string[]): Promise<string | null> {
   if (/[\r\n\0]/.test(query) || /^[\\/]{2}[?.][\\/]/.test(query)) return null;
   const fromHome = query === "~" || query.startsWith("~/");
   const path = await normalizeFsPath(fromHome ? joinFsPath(await homeDir(), query.slice(2)) : query);
   if (/^[a-zA-Z]:|^[\\/]{2}/.test(path) && path.split(/[\\/]+/).some(part => /[. ]$/.test(part))) return null;
-  const root = fileDedupeKey(await normalizeFsPath(workspacePath));
-  const key = fileDedupeKey(path);
-  return key === root || key.startsWith(root + "/") ? path : null;
+  return fileSearchRoot(path, await Promise.all(roots.map(root => normalizeFsPath(root)))) !== undefined ? path : null;
 }
 
 function normalizeRemoteFileHits(
   raw: unknown,
-  fallbackRoot: string
+  roots: readonly string[]
 ): RemoteFileResult[] {
   if (!Array.isArray(raw)) return [];
   const results: RemoteFileResult[] = [];
@@ -158,7 +167,7 @@ function normalizeRemoteFileHits(
     if (!entry || typeof entry !== "object") continue;
     const hit = entry as FuzzyFileSearchHit;
     const relativePath = typeof hit.path === "string" ? hit.path.trim() : "";
-    if (!relativePath) continue;
+    if (!relativePath || /^[\\/]|^[a-z]:/i.test(relativePath) || relativePath.split(/[\\/]/).includes("..")) continue;
     if (hit.match_type && hit.match_type !== "file") continue;
     if (relativePath.split(/[\\/]+/).some(part => [
       ".git", ".hg", ".next", ".pnpm-store", ".svn", ".turbo", ".yarn",
@@ -168,7 +177,8 @@ function normalizeRemoteFileHits(
     const root =
       typeof hit.root === "string" && hit.root.trim()
         ? hit.root.trim()
-        : fallbackRoot;
+        : roots.length === 1 ? roots[0] : undefined;
+    if (!root || !roots.some(candidate => fileDedupeKey(candidate) === fileDedupeKey(root))) continue;
     const absPath = joinRootPath(root, relativePath);
     const key = fileDedupeKey(absPath);
     if (seen.has(key)) continue;
@@ -247,6 +257,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   skills,
   projectScripts,
   workspacePath,
+  workspaceRoots,
   recentFiles,
   onClose,
   onSelectThread,
@@ -271,16 +282,18 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   const [pathRetry, setPathRetry] = useState(0);
   const [recentRetry, setRecentRetry] = useState(0);
   const trimmedQuery = query.trim();
-  const recentRequest = useMemo(() => open && mode === "files" && workspacePath && !trimmedQuery
-    ? { workspacePath } : null, [open, mode, workspacePath, trimmedQuery, recentRetry, initialQuery]);
+  const fileScope = JSON.stringify(workspaceRoots?.length ? workspaceRoots : workspacePath ? [workspacePath] : []);
+  const fileRoots = useMemo(() => JSON.parse(fileScope) as string[], [fileScope]);
+  const recentRequest = useMemo(() => open && mode === "files" && fileRoots.length > 0 && !trimmedQuery
+    ? { roots: fileRoots } : null, [open, mode, fileRoots, trimmedQuery, recentRetry, initialQuery]);
   const [recentResult, setRecentResult] = useState<{ request: NonNullable<typeof recentRequest>; files?: RecentFile[] } | null>(null);
   const [historyResult, setHistoryResult] = useState<{ request: NonNullable<typeof recentRequest>; files: RecentFile[] } | null>(null);
   const recentLookup = recentResult?.request === recentRequest ? recentResult : null;
   const recentHistory = historyResult?.request === recentRequest ? historyResult.files : undefined;
   const pathQuery = mode === "files" && /^(?:~(?:\/|$)|[a-zA-Z]:[\\/]|\/|\\\\)/.test(trimmedQuery)
     ? trimmedQuery : null;
-  const pathRequest = useMemo(() => open && workspacePath && pathQuery ? { pathQuery, workspacePath } : null,
-    [open, workspacePath, pathQuery, pathRetry, initialQuery]);
+  const pathRequest = useMemo(() => open && fileRoots.length > 0 && pathQuery ? { pathQuery, roots: fileRoots } : null,
+    [open, fileRoots, pathQuery, pathRetry, initialQuery]);
   const [pathResult, setPathResult] = useState<{
     request: NonNullable<typeof pathRequest>;
     match?: { path: string; isDirectory: boolean };
@@ -318,14 +331,14 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   }, [workspacePath]);
 
   useEffect(() => {
-    if (!open || mode !== "files" || !workspacePath || !isTauriRuntime()) return;
+    if (!open || mode !== "files" || fileRoots.length === 0 || !isTauriRuntime()) return;
     let disposed = false;
     setRemoteResults(null);
-    const search = createFuzzyFileSearch([workspacePath], {
+    const search = createFuzzyFileSearch([...fileRoots], {
       onResults(response) {
         if (!disposed) setRemoteResults({
-          query: response.query, workspacePath, mode: "files",
-          files: normalizeRemoteFileHits(response.files, workspacePath), threads: [],
+          query: response.query, workspacePath, fileScope, mode: "files",
+          files: normalizeRemoteFileHits(response.files, fileRoots), threads: [],
         });
       },
       onLoading(loading) { if (!disposed) setRemoteLoading(loading); },
@@ -337,22 +350,22 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
       fileSearchRef.current = null;
       search.dispose();
     };
-  }, [open, mode, workspacePath]);
+  }, [open, mode, workspacePath, fileRoots, fileScope]);
 
   useEffect(() => {
     if (open && mode === "files") void fileSearchRef.current?.update(pathQuery ? "" : query);
-  }, [open, mode, workspacePath, query, pathQuery]);
+  }, [open, mode, fileRoots, query, pathQuery]);
 
   useEffect(() => {
     if (!recentRequest || !isTauriRuntime()) return;
     const requestId = crypto.randomUUID();
     let disposed = false;
     let settled = false;
-    void tauriInvoke<RecentFile[]>("fs_recent_file_history", { root: recentRequest.workspacePath }).then(
+    void tauriInvoke<RecentFile[]>("fs_recent_file_history", { roots: recentRequest.roots }).then(
       files => { if (!disposed) setHistoryResult({ request: recentRequest, files }); },
       error => { if (!disposed) console.warn("最近文件记录读取失败", error); },
     );
-    void tauriInvoke<RecentFile[]>("fs_recent_workspace_files", { root: recentRequest.workspacePath, requestId }).then(
+    void tauriInvoke<RecentFile[]>("fs_recent_workspace_files", { roots: recentRequest.roots, requestId }).then(
       files => { settled = true; if (!disposed) setRecentResult({ request: recentRequest, files }); },
       () => { settled = true; if (!disposed) setRecentResult({ request: recentRequest }); },
     );
@@ -367,7 +380,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
     let disposed = false;
     void (async () => {
       try {
-        const path = await resolveFileSearchPath(pathRequest.pathQuery, pathRequest.workspacePath);
+        const path = await resolveFileSearchPath(pathRequest.pathQuery, pathRequest.roots);
         if (disposed) return;
         const metadata = path ? await getMetadata(path) : null;
         if (!disposed) setPathResult({
@@ -436,7 +449,8 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
     const trimmedQuery = query.trim();
     // 只采用与当前查询词匹配的协议结果。
     const remote =
-      remoteResults && remoteResults.mode === mode && remoteResults.query === trimmedQuery && remoteResults.workspacePath === workspacePath
+      remoteResults && remoteResults.mode === mode && remoteResults.query === trimmedQuery && remoteResults.workspacePath === workspacePath &&
+      (mode !== "files" || remoteResults.fileScope === fileScope)
         ? remoteResults
         : null;
     const results: SearchResultItem[] = [];
@@ -460,20 +474,21 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
     }
 
     if (mode === "files" && !trimmedQuery) {
-      if (!workspacePath) return results;
-      const root = `${fileDedupeKey(workspacePath)}/`;
       const seen = new Set<string>();
       const section = recentLookup?.files?.length ? "最近文件" : "最近打开";
       const candidates = [...(recentFiles ?? []), ...(recentHistory ?? []), ...(recentLookup?.files ?? [])].sort((a, b) => b.updatedAt - a.updatedAt);
       for (const { path } of candidates) {
         const key = fileDedupeKey(path);
-        if (!key.startsWith(root) || seen.has(key)) continue;
+        const root = fileSearchRoot(path, fileRoots);
+        if (!root || seen.has(key)) continue;
         seen.add(key);
-        const relative = path.replace(/\\/g, "/").slice(root.length);
+        const relative = path.replace(/\\/g, "/").slice(fileDedupeKey(root).length + 1);
         const separator = relative.lastIndexOf("/");
+        const parent = separator < 0 ? "" : relative.slice(0, separator);
+        const subtitle = fileRoots.length > 1 ? [baseNameFsPath(root) || root, parent].filter(Boolean).join("/") : parent;
         results.push({
           id: `recent-file-${key}`, category: "file", section,
-          title: baseNameFsPath(path) || path, subtitle: separator < 0 ? undefined : relative.slice(0, separator),
+          title: baseNameFsPath(path) || path, subtitle: subtitle || undefined,
           icon: <FileText size={14} />,
           onSelect: () => { onSelectFile(path); onClose(); },
         });
@@ -663,12 +678,14 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
     // File hits belong exclusively to files mode; no stale directory-list fallback.
     const remoteFiles = mode === "files" ? remote?.files ?? [] : [];
     remoteFiles.forEach((f) => {
+      const root = fileSearchRoot(f.absPath, fileRoots);
+      const relative = root ? f.absPath.replace(/\\/g, "/").slice(fileDedupeKey(root).length + 1) : f.relPath;
       results.push({
         id: `rfile-${f.absPath}`,
         category: "file",
         section: "文件",
         title: f.fileName,
-        subtitle: f.relPath,
+        subtitle: fileRoots.length > 1 && root ? `${baseNameFsPath(root) || root}/${relative}` : f.relPath,
         rightLabel: "File",
         icon: <FileText size={14} />,
         onSelect: () => {
@@ -888,6 +905,8 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
     query,
     mode,
     workspacePath,
+    fileRoots,
+    fileScope,
     recentFiles,
     recentHistory,
     recentLookup,

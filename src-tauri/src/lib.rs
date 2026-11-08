@@ -973,9 +973,9 @@ async fn workspace_agents_md(cwd: String) -> Result<Value, String> {
 }
 
 #[tauri::command]
-async fn fs_recent_workspace_files(state: State<'_, AppState>, root: String, request_id: String) -> Result<Vec<recent_workspace_files::RecentWorkspaceFile>, String> {
+async fn fs_recent_workspace_files(state: State<'_, AppState>, roots: Vec<String>, request_id: String) -> Result<Vec<recent_workspace_files::RecentWorkspaceFile>, String> {
     let cli = state.app_server.get_status().await.binary_path;
-    recent_workspace_files::list(&root, &cli, request_id).await
+    recent_workspace_files::list(&roots, &cli, request_id).await
 }
 
 #[tauri::command]
@@ -984,8 +984,8 @@ fn fs_cancel_recent_workspace_files(request_id: String) {
 }
 
 #[tauri::command]
-async fn fs_recent_file_history(state: State<'_, AppState>, root: String) -> Result<Vec<recent_workspace_files::RecentWorkspaceFile>, String> {
-    recent_workspace_files::read_history(recent_workspace_files::history_snapshot(&state.desktop_state), &root).await
+async fn fs_recent_file_history(state: State<'_, AppState>, roots: Vec<String>) -> Result<Vec<recent_workspace_files::RecentWorkspaceFile>, String> {
+    recent_workspace_files::read_history(recent_workspace_files::history_snapshot(&state.desktop_state), &roots).await
 }
 
 #[tauri::command]

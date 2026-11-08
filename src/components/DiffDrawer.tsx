@@ -182,7 +182,7 @@ export interface DiffDrawerProps {
   onClose: () => void;
   selectedPreviewFile?: string | null;
   previewRequestId?: number;
-  directoryReveal?: { cwd: string; path: string } | null;
+  directoryReveal?: { cwd: string; root?: string; path: string } | null;
   onSelectPreviewFile?: (file: string | null) => void;
   onFilePreviewHandlerChange?: (handler: ((path: string) => Promise<boolean>) | null) => void;
   onFileAccess?: (workspace: string, path: string) => void;
@@ -1586,13 +1586,14 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     if (!open || !directoryReveal || directoryReveal.cwd !== cwd || lastDirectoryRevealRef.current === directoryReveal) return;
     lastDirectoryRevealRef.current = directoryReveal;
     setActiveTab("files");
-    if (currentDir !== cwd) {
+    const root = directoryReveal.root ?? cwd;
+    if (currentDir !== root) {
       ++dirLoadSeqRef.current;
       setDirEntries([]);
       setDirError(null);
       setExplorerDraft(null);
     }
-    setCurrentDir(cwd);
+    setCurrentDir(root);
     setFileFilterQuery("");
     setSelectedTreePath(directoryReveal.path);
   }, [open, cwd, currentDir, directoryReveal]);
@@ -2756,7 +2757,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
               </div>
             ) : (
               dirEntries.map(item => <WorkspaceDirectoryEntry key={`${connectionIdentity}:${currentDir}:${item.path}`} item={item} depth={0} refreshToken={dirEntries} renderRow={renderFileTreeEntry}
-                reveal={directoryReveal?.cwd === cwd && currentDir === cwd ? directoryReveal : undefined} />)
+                reveal={directoryReveal?.cwd === cwd && currentDir === (directoryReveal.root ?? cwd) ? directoryReveal : undefined} />)
             )}
           </div>
 

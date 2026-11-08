@@ -82,11 +82,11 @@ pub(crate) fn record_access(state: &crate::state::DesktopStateManager, root: &st
     Ok(())
 }
 
-pub(crate) async fn read_history(atoms: Value, root: &str) -> Result<Vec<RecentWorkspaceFile>, String> {
+pub(crate) async fn read_history(atoms: Value, roots: &[String]) -> Result<Vec<RecentWorkspaceFile>, String> {
     let mut atoms = object_or_empty(atoms)?;
     let history = object_or_empty(atoms.remove(HISTORY_KEY).unwrap_or(Value::Null))?;
     let mut records: Vec<FileAccess> = history.into_values().filter_map(|record| serde_json::from_value(record).ok())
-        .filter(|record: &FileAccess| record.host_id == "local" && in_scope(&record.path, root)).collect();
+        .filter(|record: &FileAccess| record.host_id == "local" && roots.iter().any(|root| in_scope(&record.path, root))).collect();
     records.sort_by_key(|record| (std::cmp::Reverse(record.updated_at), !record.deleted));
     let mut seen = std::collections::HashSet::new();
     let mut files = Vec::new();
@@ -113,21 +113,31 @@ pub(crate) fn cancel(request_id: &str) {
     }
 }
 
-pub(crate) async fn list(root: &str, cli_path: &str, request_id: String) -> Result<Vec<RecentWorkspaceFile>, String> {
-    let root = Path::new(root);
-    if !root.is_absolute() {
+pub(crate) async fn list(roots: &[String], cli_path: &str, request_id: String) -> Result<Vec<RecentWorkspaceFile>, String> {
+    if roots.is_empty() || roots.iter().any(|root| !Path::new(root).is_absolute()) {
         return Err("An absolute workspace path is required".into());
     }
     let (send, cancelled) = oneshot::channel();
     *ACTIVE_SCAN.lock().unwrap_or_else(|error| error.into_inner()) = Some((request_id.clone(), send));
     let result = tokio::select! {
         _ = cancelled => Err("Recent file scan cancelled".into()),
-        result = tokio::time::timeout(Duration::from_secs(30), scan(root, cli_path)) => {
-            result.unwrap_or_else(|_| Err("Recent file scan timed out".into()))
-        }
+        result = scan_roots(roots, cli_path) => result,
     };
     cancel(&request_id);
     result
+}
+
+async fn scan_roots(roots: &[String], cli_path: &str) -> Result<Vec<RecentWorkspaceFile>, String> {
+    let mut files = Vec::new();
+    for root in roots {
+        files.extend(tokio::time::timeout(Duration::from_secs(30), scan(Path::new(root), cli_path))
+            .await.map_err(|_| "Recent file scan timed out")??);
+    }
+    files.sort_by_key(|file| std::cmp::Reverse(file.updated_at));
+    let mut seen = std::collections::HashSet::new();
+    files.retain(|file| seen.insert(path_key(&file.path)));
+    files.truncate(MAX_CANDIDATES);
+    Ok(files)
 }
 
 async fn scan(root: &Path, cli_path: &str) -> Result<Vec<RecentWorkspaceFile>, String> {
@@ -228,6 +238,8 @@ mod tests {
         let root = std::env::temp_dir().join(format!("codex-recent-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir(&root).unwrap();
         let path = root.join("测试🚀.txt");
+        let other = root.join("other");
+        let roots = [other.to_string_lossy().into_owned(), root.to_string_lossy().into_owned()];
         std::fs::write(&path, b"private fixture").unwrap();
         let access = |host: &str, thread: &str, updated_at, deleted| FileAccess {
             host_id: host.into(), thread_id: thread.into(), path: path.to_string_lossy().into_owned(), updated_at, deleted,
@@ -236,16 +248,16 @@ mod tests {
         atoms = merge_access(atoms, access("local", "one", 5, false)).unwrap();
         atoms = merge_access(atoms, access("remote", "one", 20, false)).unwrap();
         let serialized = serde_json::to_vec(&atoms).unwrap();
-        let rows = read_history(serde_json::from_slice(&serialized).unwrap(), root.to_str().unwrap()).await.unwrap();
+        let rows = read_history(serde_json::from_slice(&serialized).unwrap(), &roots).await.unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].updated_at, 10);
         atoms = merge_access(atoms, access("local", "other", 10, true)).unwrap();
-        assert!(read_history(atoms.clone(), root.to_str().unwrap()).await.unwrap().is_empty());
+        assert!(read_history(atoms.clone(), &roots).await.unwrap().is_empty());
         atoms = merge_access(atoms, access("local", "one", 30, false)).unwrap();
-        assert_eq!(read_history(atoms.clone(), root.to_str().unwrap()).await.unwrap()[0].updated_at, 30);
+        assert_eq!(read_history(atoms.clone(), &roots).await.unwrap()[0].updated_at, 30);
+        assert!(read_history(atoms.clone(), &roots[..1]).await.unwrap().is_empty());
         std::fs::remove_file(path.clone()).unwrap();
-        assert!(read_history(atoms.clone(), root.to_str().unwrap()).await.unwrap().is_empty());
-        assert!(read_history(atoms.clone(), root.join("other").to_str().unwrap()).await.unwrap().is_empty());
+        assert!(read_history(atoms.clone(), &roots).await.unwrap().is_empty());
         assert_eq!(atoms["unrelated"], 5);
         for i in 1..=110 {
             atoms = merge_access(atoms, access("local", &format!("thread-{i}"), 30 + i, false)).unwrap();

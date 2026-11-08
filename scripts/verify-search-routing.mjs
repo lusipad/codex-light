@@ -11,7 +11,7 @@ const helpers = [];
 function visit(node, ast) {
   if (ast === app && ts.isFunctionDeclaration(node) && node.name?.text === "selectedFileSearchText") selectedFileSearchText = node;
   if (ast === app && ts.isVariableDeclaration(node) && node.name.getText(ast) === "rememberWorkspaceFile") rememberWorkspaceFile = node.initializer.arguments[0];
-  if (ast === page && ts.isFunctionDeclaration(node) && ["fileDedupeKey"].includes(node.name?.text)) helpers.push(node);
+  if (ast === page && ts.isFunctionDeclaration(node) && ["fileDedupeKey", "fileSearchRoot"].includes(node.name?.text)) helpers.push(node);
   if (ts.isVariableDeclaration(node) && ast === page) {
     if (node.name.getText(ast) === "items") items = node.initializer.arguments[0];
     if (node.name.getText(ast) === "handleKeyDown") keydown = node.initializer;
@@ -35,6 +35,7 @@ function mount(overrides = {}) {
   const calls = [];
   const context = {
     query: "goal", mode: "root", workspacePath: "repo-B", remoteResults: null, pathQuery: null, pathLookup: null,
+    fileRoots: [overrides.workspacePath ?? "repo-B"], fileScope: JSON.stringify([overrides.workspacePath ?? "repo-B"]),
     threads: [], workspaceFileHits: [], recentFiles: [], recentHistory: [], recentLookup: null, skills: [], SLASH_COMMANDS: [slash],
     REMOTE_THREAD_LIMIT: 9,
     runCmd: "npm run dev", testCmd: "npm test", buildCmd: "npm run build",
@@ -71,13 +72,15 @@ function mount(overrides = {}) {
   assert.equal(view.results().length, 0, "recent files never mix into a nonempty query");
   view.context.query = "";
   view.context.workspacePath = "C:/another";
+  view.context.fileRoots = ["C:/another"];
   assert.equal(view.results().length, 0, "recent paths cannot leak to another workspace");
   let history = {};
   const writes = [];
-  const remember = execute(rememberWorkspaceFile, app, { fileDedupeKey: view.context.fileDedupeKey, setRecentFilesByWorkspace: update => { history = update(history); },
+  const remember = execute(rememberWorkspaceFile, app, { fileDedupeKey: view.context.fileDedupeKey, fileSearchRoot: view.context.fileSearchRoot,
+    workbenchWorkspaceRoots: ["C:/repo", "C:/other"], setRecentFilesByWorkspace: update => { history = update(history); },
     isTauriRuntime: () => true, activeThreadId: "thread-a", tauriInvoke: (method, args) => { writes.push({ method, args }); return Promise.resolve(); } });
   for (const path of recentFiles.slice().reverse()) remember("C:/repo", path);
-  remember("C:/other", "C:/other/isolated.txt");
+  remember("C:/repo", "C:/other/isolated.txt");
   remember("c:\\REPO", "c:\\repo\\recent-4.txt");
   assert.equal(history["c:/repo"].length, 10);
   assert.equal(history["c:/repo"][0].path, "c:\\repo\\recent-4.txt");
@@ -129,12 +132,14 @@ function mount(overrides = {}) {
 }
 {
   const view = mount({ mode: "files", query: "npm", remoteResults: {
-    mode: "files", query: "npm", workspacePath: "repo-B", threads: [],
+    mode: "files", query: "npm", workspacePath: "repo-B", fileScope: '["repo-B"]', threads: [],
     files: [{ fileName: "npm.txt", relPath: "npm.txt", absPath: "repo-B/npm.txt" }],
   } });
   const result = view.results();
   assert.equal(result.length, 1);
   assert.equal(result[0].category, "file", "SR02: files mode excludes matching run actions");
+  view.context.fileScope = '["repo-B","sibling"]';
+  assert.equal(view.results().length, 0, "same active root and query cannot expose results from a previous root set");
   view.context.mode = "root";
   assert.ok(view.results().some(item => item.category === "action"));
   const modes = [], opened = [];

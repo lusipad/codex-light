@@ -40,7 +40,7 @@ function mount() {
   const timers = new Map(), requests = [], fileControllers = [];
   let clock = 1000, timerId = 0;
   const context = {
-    open: true, query: "target", workspacePath: "C:/repo-A", mode: "root", pathQuery: null, recentRequest: null,
+    open: true, query: "target", workspacePath: "C:/repo-A", fileRoots: ["C:/repo-A"], fileScope: '["C:/repo-A"]', mode: "root", pathQuery: null, recentRequest: null,
     homeDir: async () => "C:\\Users\\tester",
     normalizeFsPath: async value => path.win32.normalize(value),
     joinFsPath: path.win32.join,
@@ -95,9 +95,10 @@ async function check(name, test) {
 await check("SB11 empty file scan cancels on scope change and cannot apply late data", async () => {
   const view = mount();
   assert.equal(view.recent(), undefined);
-  view.context.recentRequest = { workspacePath: "C:/repo-A" };
+  view.context.recentRequest = { roots: ["C:/repo-A", "C:/sibling"] };
   const cleanup = view.recent();
-  assert.equal(view.requests[0].args.root, "C:/repo-A");
+  assert.deepEqual(view.requests[0].args.roots, ["C:/repo-A", "C:/sibling"]);
+  assert.deepEqual(view.requests[1].args.roots, view.requests[0].args.roots);
   cleanup();
   assert.equal(view.requests[2].method, "fs_cancel_recent_workspace_files");
   assert.equal(view.requests[2].args.requestId, "scan-id");
@@ -105,11 +106,11 @@ await check("SB11 empty file scan cancels on scope change and cannot apply late 
   view.requests[1].resolve([{ path: "C:/repo-A/a.txt", updatedAt: 2 }]); await flush();
   assert.equal(view.context.recentResult, undefined);
   assert.equal(view.context.historyResult, undefined);
-  view.context.recentRequest = { workspacePath: "C:/repo-B" };
+  view.context.recentRequest = { roots: ["C:/repo-B"] };
   const finish = view.recent();
   view.requests[3].resolve([{ path: "C:/repo-B/b.txt", updatedAt: 3 }]);
   view.requests[4].reject(Error("missing ripgrep")); await flush();
-  assert.equal(view.context.recentResult.request.workspacePath, "C:/repo-B");
+  assert.deepEqual(view.context.recentResult.request.roots, ["C:/repo-B"]);
   assert.equal(view.context.historyResult.files[0].path, "C:/repo-B/b.txt");
   assert.equal(view.context.recentResult.files, undefined);
   finish();
@@ -119,22 +120,23 @@ await check("SB08 direct paths resolve only inside the selected workspace", asyn
   const view = mount();
   const resolve = view.resolveFileSearchPath;
   assert.equal(typeof resolve, "function", "direct path resolver exists");
-  assert.equal(await resolve("C:/repo-A/src/测试.rs", "c:/repo-a"), "C:\\repo-A\\src\\测试.rs");
-  assert.equal(await resolve("~/project/src", "C:/Users/tester/project"), "C:\\Users\\tester\\project\\src");
+  assert.equal(await resolve("C:/repo-A/src/测试.rs", ["c:/repo-a"]), "C:\\repo-A\\src\\测试.rs");
+  assert.equal(await resolve("~/project/src", ["C:/Users/tester/project"]), "C:\\Users\\tester\\project\\src");
+  assert.equal(await resolve("C:/sibling/src", ["C:/repo-A", "C:/sibling"]), "C:\\sibling\\src");
   for (const query of ["C:/repo-A-other/a", "C:/repo-A/../private/a", "C:/repo-A/dir/.. /a", "//?/C:/repo-A/a"]) {
-    assert.equal(await resolve(query, "C:/repo-A"), null, query);
+    assert.equal(await resolve(query, ["C:/repo-A", "C:/sibling"]), null, query);
   }
 });
 await check("SB09 direct lookups bypass fuzzy and reject late metadata after leaving", async () => {
   const view = mount(), { context } = view;
   Object.assign(context, { mode: "files", query: "C:/repo-A/old", pathQuery: "C:/repo-A/old",
-    pathRequest: { pathQuery: "C:/repo-A/old", workspacePath: "C:/repo-A" } });
+    pathRequest: { pathQuery: "C:/repo-A/old", roots: ["C:/repo-A"] } });
   const filesCleanup = view.files(); view.fileQuery();
   assert.equal(view.fileControllers[0].updates[0], "");
   const oldCleanup = view.lookup(); await flush();
   assert.equal(view.requests[0].path, "C:\\repo-A\\old");
   oldCleanup();
-  context.pathRequest = { pathQuery: "C:/repo-A/new", workspacePath: "C:/repo-A" };
+  context.pathRequest = { pathQuery: "C:/repo-A/new", roots: ["C:/repo-A"] };
   const currentCleanup = view.lookup(); await flush();
   view.requests[1].resolve({ isDirectory: true }); await flush();
   view.requests[0].resolve({ isFile: true }); await flush();
@@ -145,13 +147,25 @@ await check("SB09 direct lookups bypass fuzzy and reject late metadata after lea
 await check("SB10 direct lookup distinguishes absence and errors without automatic retry", async () => {
   for (const [error, failed] of [[Error("系统找不到指定的文件。 (os error 2)"), false], [Error("access denied"), true]]) {
     const view = mount();
-    view.context.pathRequest = { pathQuery: "C:/repo-A/file", workspacePath: "C:/repo-A" };
+    view.context.pathRequest = { pathQuery: "C:/repo-A/file", roots: ["C:/repo-A"] };
     const cleanup = view.lookup(); await flush();
     view.requests[0].reject(error); await flush();
     assert.equal(view.context.pathResult.failed, failed);
     assert.equal(view.requests.length, 1);
     cleanup();
   }
+});
+await check("SB12 file sessions pass both roots and reject unknown or escaping results", async () => {
+  const view = mount();
+  Object.assign(view.context, { mode: "files", fileRoots: ["C:/repo-A", "C:/sibling"], fileScope: '["C:/repo-A","C:/sibling"]' });
+  const cleanup = view.files();
+  assert.deepEqual(Array.from(view.fileControllers[0].roots), view.context.fileRoots);
+  view.fileControllers[0].callbacks.onResults({ query: "target", files: [
+    { root: "C:/sibling", path: "src/target.txt" }, { root: "C:/other", path: "target.txt" },
+    { root: "C:/repo-A", path: "../target.txt" }, { path: "unknown.txt" },
+  ] });
+  assert.deepEqual(Array.from(view.context.results.files, file => file.absPath), ["C:/sibling/src/target.txt"]);
+  cleanup();
 });
 await check("SB01 failed thread empty results have a bounded thirty-second cache", async () => {
   const view = mount(), cleanup = await view.start();
