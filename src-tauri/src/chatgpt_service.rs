@@ -26,7 +26,7 @@ mod cloud_drafts;
 mod cloud_draft_save;
 mod cloud_repositories;
 pub use cloud_draft_save::CloudDraftSaveRequest;
-pub use cloud_drafts::{CloudDraftRequest, CloudDraftResponse};
+pub use cloud_drafts::{CloudConfigRequest, CloudConfigResponse, CloudDraftRequest, CloudDraftResponse};
 mod durable_models;
 pub use durable_models::{DurableModelsRequest, DurableModelsResponse};
 mod durable_thread;

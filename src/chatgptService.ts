@@ -302,6 +302,25 @@ export async function callCloudThread(operation: CloudThreadOperation, identity:
   return responseBody(result, requestId, identity);
 }
 
+export async function createCloudEnvironmentConfig(
+  name: string, repositories: { repositoryId: string; ref: string }[], identity: ServiceIdentity, signal: AbortSignal,
+) {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; receipt: {
+    config_id: string; name: string; version_id: string; environment_id: string | null;
+    thread_id: string | null; draft_id: string | null; onboarding_skill: string | null;
+  } }>("cloud_service_create_config", requestId, {
+    request: { requestId, name, repositories, expectedIdentity: identity },
+  }, signal);
+  const receipt = responseBody({ ...result, body: result.receipt }, requestId, identity) as typeof result.receipt | null;
+  if (!receipt || ![receipt.config_id, receipt.name, receipt.version_id].every(value => typeof value === "string" && value.trim())
+    || ![receipt.environment_id, receipt.thread_id, receipt.draft_id, receipt.onboarding_skill]
+      .every(value => value === null || (typeof value === "string" && value.trim()))) {
+    throw { code: "cloud_config_unconfirmed" };
+  }
+  return receipt;
+}
+
 export async function createCloudDraft(configId: string, identity: ServiceIdentity, signal: AbortSignal) {
   const requestId = crypto.randomUUID();
   const result = await invokeService<{ requestId: string; identity: ServiceIdentity; receipt: {
@@ -676,6 +695,8 @@ export function serviceErrorMessage(error: unknown): string {
     forbidden: "当前账号无权访问此服务。", rate_limited: "请求过于频繁，请稍后重试。",
     cancelled: "请求已取消。", transport_unavailable: "系统 HTTP 组件不可用。",
     cloud_draft_unconfirmed: "无法确认环境草稿，请先检查聊天列表。",
+    cloud_config_unconfirmed: "环境创建结果尚未确认，请先核对环境列表。",
+    cloud_config_pending: "此账号已有正在处理或尚未确认的环境创建请求。",
     cloud_draft_save_unconfirmed: "保存结果尚未确认，请先核对服务端草稿。",
     cloud_repository_apply_unconfirmed: "应用消息的投递结果尚未确认。",
     cloud_draft_pending: "此环境已有正在处理或尚未确认的草稿请求，请检查聊天列表。",

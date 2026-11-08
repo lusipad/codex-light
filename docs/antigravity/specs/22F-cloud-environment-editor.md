@@ -44,3 +44,13 @@ Rust 候选和复现入口在证据目录的 `durable-socket.rs` 和 `winhttp-lo
 当前 `bridge.ts::callAppServer` 经 `app_server_call` 到本地 stdio 管理器。`ThreadSummary` 没有聊天宿主字段，`ThreadProjectAssignment.hostId` 属于项目分配。App 的 `selectThread` 会调用本地 thread/read、resume、历史分页、附件及 goal；直接交给它草稿 thread ID 会使用错误宿主。
 
 下一单元先建立原生 durable manager 与 host/account/generation 事件 envelope，再接聊天宿主分派。加载、发送、打断、引导、队列、模型目录与选择缓存均按宿主及身份区分。复用历史归一化、timeline reducer、消息渲染与 Composer。页面回调需从独立 CloudEnvironmentsView 和嵌入 SettingsView 两处送到 App，携带原生草稿回执；设置侧栏仍需实现。此顺序用于验证完整 F04，源码落点来自本轮独立只读检查。
+
+## F03 配置创建传输验收
+
+复用同版本 `pending-onboarding-actions:re` 和原生 `#e7`。原函数回放 `create-config-sequence-replay.json` 区分带仓库与空列表、连接超时零 POST、缺少草稿会话 ID、已有回执复用 GET，以及会话已显示但启动轮次失败。原生桥的根创建走 30 秒请求，后续私有草稿创建走独立 600 秒请求。
+
+本阶段校验固定根 POST、仓库分支和默认网络策略、服务端配置标识、可空环境与会话标识、账号切换和重复请求。根创建响应丢失或畸形时，保留同账号的未确认登记，等待后续 UI 核对。此处没有服务端幂等键，测试不会以再次 POST 探测结果。前端仍需完成服务档位准备、持久化回执、草稿恢复和启动轮次之后才开放入口。
+
+启动轮次的进一步取证见 `create-onboarding-payload-anchors.json`。`pending-onboarding-actions` 的第一段文本由仓库名称和分支的 JSON 加上共享常量 `## My request:` 组成。第二段来自服务端 skill、私有草稿的固定 skill 回退或本地化默认请求。这里的官方原函数隔离回放把共享常量替换为占位，最终实现以补充锚点和中文资源为准。
+
+原生和前端桥均已接入。隔离回归验证空仓库和带仓库配置、重复仓库零请求、明确拒绝后可重试、异常回执禁止重复 POST、同账号身份刷新保留防重记录，以及原编辑草稿可独立使用。当前未确认登记保留于应用进程，跨重启恢复仍属下一阶段。670 项 Rust 全量、99 个前端回放入口和生产构建通过。真实服务、设置轮次和原生页面未验。

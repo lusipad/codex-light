@@ -26,6 +26,147 @@ mod cloud_draft_tests {
         json!({"draft_id":"draft_fixture","environment_id":"environment_fixture","thread_id":"thread_fixture"})
     }
 
+    fn config_request(id: &str, repositories: Value) -> CloudConfigRequest {
+        serde_json::from_value(json!({
+            "requestId":id,"expectedIdentity":identity(),"name":"Fixture","repositories":repositories
+        })).unwrap()
+    }
+
+    #[tokio::test]
+    async fn cloud_config_posts_private_defaults_and_projects_real_receipt() {
+        for repositories in [json!([]), json!([{"repositoryId":"repo","ref":"main"}])] {
+            let expected_repositories = repositories
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|repo| json!({"repository_id":repo["repositoryId"],"ref":repo["ref"]}))
+                .collect::<Vec<_>>();
+            let service = ChatgptService::default();
+            let transport = response(json!({
+                "id":"config_fixture","name":"Fixture","version_id":"v1",
+                "status":"ready","share_settings":"private","repositories":expected_repositories,
+                "network_policy":{"type":"restricted","presets":["package_managers"],"egress_rules":[]},
+                "environment_id":null,"thread_id":null,"onboarding_skill":"cloud-environment-onboarding:setup",
+                "secrets":[{"value":"never-projected"}]
+            }));
+            let result = service
+                .cloud_create_config_with(
+                    config_request("new-config", repositories),
+                    cloud_profile(),
+                    rpc,
+                    &transport,
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                serde_json::to_value(result).unwrap()["receipt"],
+                json!({
+                    "config_id":"config_fixture","name":"Fixture","version_id":"v1",
+                    "environment_id":null,"thread_id":null,"draft_id":null,"onboarding_skill":"cloud-environment-onboarding:setup"
+                })
+            );
+            let requests = transport.requests.lock().unwrap();
+            assert_eq!(requests.len(), 1);
+            assert_eq!(requests[0].method, HttpMethod::Post);
+            assert_eq!(
+                requests[0].url,
+                "https://codex-cloud-backend.chatgpt.com/v1/environment-configs"
+            );
+            assert_eq!(
+                requests[0].headers["ChatGPT-Account-Id"],
+                identity().account_id
+            );
+            assert_eq!(requests[0].headers["X-OpenAI-Product-Sku"], "codex");
+            assert_eq!(
+                serde_json::from_slice::<Value>(&requests[0].body).unwrap(),
+                json!({
+                    "name":"Fixture","repositories":expected_repositories,
+                    "network_policy":{"type":"restricted","presets":["package_managers"],"egress_rules":[]},
+                    "share_settings":"private","start_onboarding":false
+                })
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn cloud_config_uncertain_outcome_blocks_another_post_without_blocking_known_drafts() {
+        let service = ChatgptService::default();
+        let transport = response(json!({"id":"../../bad","name":"Fixture","version_id":"v1"}));
+        let error = service
+            .cloud_create_config_with(
+                config_request("malformed-config", json!([])),
+                cloud_profile(),
+                rpc,
+                &transport,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "cloud_config_unconfirmed");
+        service.invalidate();
+        let mut retry = config_request("retry-config", json!([]));
+        retry.expected_identity.generation = service.generation();
+        let error = service
+            .cloud_create_config_with(retry, cloud_profile(), rpc, &transport)
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "cloud_config_pending");
+        assert_eq!(transport.requests.lock().unwrap().len(), 1);
+        let mut existing = request("known-draft");
+        existing.expected_identity.generation = service.generation();
+        let draft = service
+            .cloud_create_draft_with(existing, cloud_profile(), rpc, &response(receipt()))
+            .await
+            .unwrap();
+        assert_eq!(draft.receipt.thread_id.as_deref(), Some("thread_fixture"));
+    }
+
+    #[tokio::test]
+    async fn cloud_config_rejects_invalid_repository_and_allows_retry_after_known_http_refusal() {
+        let service = ChatgptService::default();
+        let unused = FakeTransport::new(&[]);
+        let duplicate =
+            json!([{"repositoryId":"repo","ref":"main"},{"repositoryId":"repo","ref":"dev"}]);
+        let error = service
+            .cloud_create_config_with(
+                config_request("duplicate-repo", duplicate),
+                cloud_profile(),
+                rpc,
+                &unused,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "invalid_request");
+        assert!(unused.requests.lock().unwrap().is_empty());
+        let denied = FakeTransport::new(&[403]);
+        let error = service
+            .cloud_create_config_with(
+                config_request("denied-config", json!([])),
+                cloud_profile(),
+                rpc,
+                &denied,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "forbidden");
+        let transport = response(json!({
+            "id":"config","name":"Fixture","version_id":"v1","environment_id":"env",
+            "thread_id":"thread","draft":{"id":"draft"},"status":"ready","share_settings":"private",
+            "repositories":[],"network_policy":{"type":"restricted","egress_rules":[]}
+        }));
+        let result = service
+            .cloud_create_config_with(
+                config_request("retry-after-denial", json!([])),
+                cloud_profile(),
+                rpc,
+                &transport,
+            )
+            .await
+            .unwrap();
+        let wire = serde_json::to_value(result).unwrap();
+        assert_eq!(wire["receipt"]["thread_id"], "thread");
+        assert_eq!(wire["receipt"]["draft_id"], "draft");
+    }
+
     struct DraftTransport(FakeTransport);
     impl Transport for DraftTransport {
         fn send(&self, _: HttpRequest, _: Arc<AtomicBool>) -> TransportFuture<'_> {

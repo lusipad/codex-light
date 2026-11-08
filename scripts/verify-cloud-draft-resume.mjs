@@ -50,6 +50,9 @@ let receipt = { draft_id: "draft-A", environment_id: "environment-A", thread_id:
 let creationCount = 0;
 const saves = [];
 let savedBody;
+const configRequests = [];
+let configReceipt = { config_id: "config-new", name: "Fixture", version_id: "v1", environment_id: null, thread_id: null,
+  draft_id: null, onboarding_skill: null };
 const service = load("src/chatgptService.ts", {
   "./bridge": { tauriInvoke: async (command, { request }) => {
     if (command === "chatgpt_service_cancel") return true;
@@ -64,6 +67,11 @@ const service = load("src/chatgptService.ts", {
       assert.deepEqual(request.expectedIdentity, identity);
       return { requestId: request.requestId, identity: responseIdentity, receipt };
     }
+    if (command === "cloud_service_create_config") {
+      const { requestId, ...fields } = request;
+      configRequests.push(JSON.parse(JSON.stringify(fields)));
+      return { requestId, identity: responseIdentity, receipt: configReceipt };
+    }
     assert.equal(command, "cloud_service_thread");
     assert.deepEqual(request.expectedIdentity, identity);
     calls.push(JSON.parse(JSON.stringify(request.operation)));
@@ -73,6 +81,21 @@ const service = load("src/chatgptService.ts", {
 });
 const { readCloudDraftHistory } = load("src/cloudDraftHistory.ts", { "./chatgptService": service });
 const signal = new AbortController().signal;
+const initialConfigReceipt = configReceipt;
+const selected = [{ repositoryId: "repo-new", ref: "main" }];
+assert.equal(await service.createCloudEnvironmentConfig("Fixture", selected, identity, signal), initialConfigReceipt);
+assert.deepEqual(configRequests, [{ name: "Fixture", repositories: selected, expectedIdentity: identity }]);
+configReceipt = { ...initialConfigReceipt, config_id: "" };
+await assert.rejects(service.createCloudEnvironmentConfig("Fixture", [], identity, signal), { code: "cloud_config_unconfirmed" });
+configReceipt = initialConfigReceipt;
+responseIdentity = { ...identity, generation: identity.generation + 1 };
+await assert.rejects(service.createCloudEnvironmentConfig("Fixture", [], identity, signal), /账号发生变化/);
+responseIdentity = identity;
+const abortedConfig = new AbortController();
+abortedConfig.abort();
+await assert.rejects(service.createCloudEnvironmentConfig("Fixture", [], identity, abortedConfig.signal), /请求已取消/);
+assert.equal(configRequests.length, 3);
+console.log("PASS cloud configuration creation bridge: fixed input, real receipt, malformed response, identity and cancellation");
 const options = { cursor: null, turnLimit: 5, itemLimit: 98 };
 result = ({ kind, turnId, cursor }) => {
   if (kind === "turns") return { data: [{ id: "newer" }, { id: "older" }], nextCursor: "older-turns" };

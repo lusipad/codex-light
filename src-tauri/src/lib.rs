@@ -675,6 +675,20 @@ async fn cloud_service_read(
 }
 
 #[tauri::command]
+async fn cloud_service_create_config(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: chatgpt_service::CloudConfigRequest,
+) -> Result<chatgpt_service::CloudConfigResponse, chatgpt_service::ServiceError> {
+    let (profile, _) = durable_service_context(&app, &state).await?;
+    state.chatgpt_service.cloud_create_config(request, profile, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
 async fn cloud_service_create_draft(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -2297,6 +2311,7 @@ pub fn run() {
             cloud_service_identity,
             cloud_service_access,
             cloud_service_read,
+            cloud_service_create_config,
             cloud_service_create_draft,
             cloud_service_save_draft,
             cloud_service_models,
