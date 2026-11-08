@@ -325,13 +325,16 @@ pub fn git_status_for_path(target_path: &str) -> GitStatusInfo {
     };
 
     let mut entries = Vec::new();
-    if let Ok(raw_status) = run_git(&git_root, &["status", "--porcelain=v1", "-uall"]) {
-        for line in raw_status.lines() {
-            if line.len() < 3 {
+    if let Ok(raw_status) = run_git(&git_root, &["status", "--porcelain=v1", "-z", "-uall"]) {
+        let mut records = raw_status.split_terminator('\0');
+        while let Some(record) = records.next() {
+            let (Some(status_code), Some(file_path)) = (record.get(..2), record.get(3..)) else {
                 continue;
+            };
+            // Porcelain -z puts the destination first and the source in its own record.
+            if status_code.contains(['R', 'C']) {
+                records.next();
             }
-            let status_code = &line[..2];
-            let file_path = line[3..].trim().to_string();
             let b0 = status_code.as_bytes()[0] as char;
             let b1 = status_code.as_bytes()[1] as char;
             let untracked = status_code == "??";
@@ -339,7 +342,7 @@ pub fn git_status_for_path(target_path: &str) -> GitStatusInfo {
             let unstaged = b1 != ' ';
             entries.push(GitFileEntry {
                 status: status_code.trim().to_string(),
-                path: file_path,
+                path: file_path.to_string(),
                 staged,
                 unstaged,
                 untracked,
@@ -400,23 +403,23 @@ pub fn git_diff_for_path(
             &git_root,
             &["rev-parse", "--verify", "--end-of-options", &reference],
         )?;
-        if let Some(fp) = file_path.filter(|f| !f.trim().is_empty()) {
-            return run_git(&git_root, &["diff", resolved.trim(), "--", &fp]);
+        if let Some(fp) = file_path.filter(|f| !f.is_empty()) {
+            return run_git(&git_root, &["--literal-pathspecs", "diff", resolved.trim(), "--", &fp]);
         }
         return run_git(&git_root, &["diff", resolved.trim(), "--"]);
     }
     if let Some(base) = base_branch.filter(|b| !b.trim().is_empty()) {
         let range = format!("{}...HEAD", base.trim());
-        if let Some(fp) = file_path.filter(|f| !f.trim().is_empty()) {
-            return run_git(&git_root, &["diff", &range, "--", &fp]);
+        if let Some(fp) = file_path.filter(|f| !f.is_empty()) {
+            return run_git(&git_root, &["--literal-pathspecs", "diff", &range, "--", &fp]);
         }
         return run_git(&git_root, &["diff", &range]);
     }
 
-    if let Some(fp) = file_path.filter(|f| !f.trim().is_empty()) {
+    if let Some(fp) = file_path.filter(|f| !f.is_empty()) {
         let full_file = Path::new(&git_root).join(&fp);
         // Check if file is untracked; if so, synthesize a unified diff
-        let is_untracked = run_git(&git_root, &["ls-files", "--error-unmatch", "--", &fp]).is_err();
+        let is_untracked = run_git(&git_root, &["--literal-pathspecs", "ls-files", "--error-unmatch", "--", &fp]).is_err();
         if is_untracked && full_file.is_file() {
             if let Ok(content) = fs::read_to_string(&full_file) {
                 let mut synth = format!(
@@ -433,10 +436,10 @@ pub fn git_diff_for_path(
             }
         }
         if staged {
-            return run_git(&git_root, &["diff", "--staged", "--", &fp]);
+            return run_git(&git_root, &["--literal-pathspecs", "diff", "--staged", "--", &fp]);
         }
-        let wt_diff = run_git(&git_root, &["diff", "HEAD", "--", &fp])
-            .or_else(|_| run_git(&git_root, &["diff", "--", &fp]))?;
+        let wt_diff = run_git(&git_root, &["--literal-pathspecs", "diff", "HEAD", "--", &fp])
+            .or_else(|_| run_git(&git_root, &["--literal-pathspecs", "diff", "--", &fp]))?;
         return Ok(wt_diff);
     }
 
@@ -449,9 +452,9 @@ pub fn git_diff_for_path(
 
 pub fn git_stage_file(target_path: &str, file_path: Option<String>) -> Result<(), String> {
     let git_root = find_git_root(target_path).ok_or("Not a git repository")?;
-    match file_path.filter(|s| !s.trim().is_empty()) {
+    match file_path.filter(|s| !s.is_empty()) {
         Some(fp) => {
-            run_git(&git_root, &["add", "--", &fp])?;
+            run_git(&git_root, &["--literal-pathspecs", "add", "--", &fp])?;
         }
         None => {
             run_git(&git_root, &["add", "-A"])?;
@@ -528,9 +531,9 @@ pub fn message_generation_context(target_path: &str, mode: &str, include_unstage
 
 pub fn git_unstage_file(target_path: &str, file_path: Option<String>) -> Result<(), String> {
     let git_root = find_git_root(target_path).ok_or("Not a git repository")?;
-    match file_path.filter(|s| !s.trim().is_empty()) {
+    match file_path.filter(|s| !s.is_empty()) {
         Some(fp) => {
-            run_git(&git_root, &["reset", "--", &fp])?;
+            run_git(&git_root, &["--literal-pathspecs", "reset", "--", &fp])?;
         }
         None => {
             run_git(&git_root, &["reset", "--"])?;
@@ -600,6 +603,45 @@ mod index_action_tests {
                 .starts_with("codex-index-actions-"));
             fs::remove_dir_all(target).unwrap();
         }
+    }
+
+    #[test]
+    fn status_and_single_file_actions_preserve_literal_paths() {
+        let fixture = Fixture::new(true);
+        let target = " 中文 [1].txt";
+        let neighbor = " 中文 1.txt";
+        fixture.git(&["config", "core.quotePath", "true"]);
+        fixture.write(target, b"target before\n");
+        fixture.write(neighbor, b"neighbor before\n");
+        fixture.git(&["add", "-A"]);
+        fixture.git(&["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+            "-c", "commit.gpgsign=false", "commit", "-m", "literal paths"]);
+        fixture.write(target, b"target after\n");
+        fixture.write(neighbor, b"neighbor after\n");
+        let status = git_status_for_path(&fixture.cwd);
+        assert!(status.entries.iter().any(|entry| entry.path == target && entry.unstaged));
+        let diff = git_diff_for_path(&fixture.cwd, Some(target.into()), false, None, None).unwrap();
+        assert!(diff.contains("+target after"));
+        assert!(!diff.contains("neighbor after"));
+        git_stage_file(&fixture.cwd, Some(target.into())).unwrap();
+        assert_eq!(fixture.git(&["diff", "--cached", "--name-only", "-z"]), format!("{target}\0"));
+        git_unstage_file(&fixture.cwd, Some(target.into())).unwrap();
+        assert!(fixture.index_empty());
+        git_discard_file(&fixture.cwd, target).unwrap();
+        assert_eq!(fixture.read(target), b"target before\n");
+        assert_eq!(fixture.read(neighbor), b"neighbor after\n");
+    }
+
+    #[test]
+    fn status_reads_rename_destination_and_continues_to_next_entry() {
+        let fixture = Fixture::new(true);
+        fixture.git(&["config", "status.renames", "true"]);
+        fixture.git(&["mv", "tracked.txt", "改名 后.txt"]);
+        fixture.write("second.txt", b"untracked\n");
+        let status = git_status_for_path(&fixture.cwd);
+        assert_eq!(status.entries.len(), 2);
+        assert!(status.entries.iter().any(|entry| entry.path == "改名 后.txt" && entry.staged && entry.status == "R"));
+        assert!(status.entries.iter().any(|entry| entry.path == "second.txt" && entry.untracked));
     }
 
     #[test]
@@ -727,7 +769,7 @@ mod index_action_tests {
 
 pub fn git_discard_file(target_path: &str, file_path: &str) -> Result<(), String> {
     let git_root = find_git_root(target_path).ok_or("Not a git repository")?;
-    let is_untracked = run_git(&git_root, &["ls-files", "--error-unmatch", "--", file_path]).is_err();
+    let is_untracked = run_git(&git_root, &["--literal-pathspecs", "ls-files", "--error-unmatch", "--", file_path]).is_err();
     if is_untracked {
         let full = Path::new(&git_root).join(file_path);
         if full.is_file() {
@@ -735,7 +777,7 @@ pub fn git_discard_file(target_path: &str, file_path: &str) -> Result<(), String
         }
         return Ok(());
     }
-    run_git(&git_root, &["checkout", "--", file_path])?;
+    run_git(&git_root, &["--literal-pathspecs", "checkout", "--", file_path])?;
     Ok(())
 }
 
