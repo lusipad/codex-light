@@ -83,6 +83,9 @@ fn ms_from_datetime(naive: NaiveDateTime) -> Option<u64> {
 }
 
 fn compute_next_run_ms(rule: &Rrule, anchor_ms: u64, after_ms: u64) -> Option<u64> {
+    if let Some(once_at) = rule.once_at {
+        return (once_at > after_ms).then_some(once_at);
+    }
     if rule.freq == Freq::Minutely {
         return after_ms.checked_add(u64::from(rule.interval) * 60_000);
     }
@@ -117,6 +120,7 @@ enum Freq {
 /// `FREQ=HOURLY|DAILY|WEEKLY|MONTHLY|YEARLY`, `INTERVAL`, `BYHOUR`,
 /// `BYMINUTE`, `BYDAY`, `BYMONTHDAY` (positive and negative days) and `WKST`.
 /// Linked heartbeats additionally support `MINUTELY` with only `INTERVAL`.
+/// Cron tasks may use a UTC DTSTART and a single daily COUNT=1.
 /// Anything else is rejected with an explanatory error (caller logs and skips
 /// the automation instead of crashing).
 #[derive(Debug, Clone)]
@@ -128,6 +132,7 @@ struct Rrule {
     by_day: Vec<Weekday>,
     by_month_day: Vec<i32>,
     week_start: Weekday,
+    once_at: Option<u64>,
 }
 
 impl Rrule {
@@ -136,12 +141,33 @@ impl Rrule {
         if rule.freq == Freq::Minutely && linked_heartbeat_target(item).is_none() {
             return Err("MINUTELY requires a linked heartbeat thread".into());
         }
+        if rule.once_at.is_some() && !item.kind.eq_ignore_ascii_case("cron") {
+            return Err("UTC COUNT=1 requires a cron task".into());
+        }
         Ok(rule)
     }
 
     fn parse(raw: &str) -> Result<Self, String> {
         let normalized = raw.trim().to_ascii_uppercase();
-        let body = normalized.strip_prefix("RRULE:").unwrap_or(&normalized);
+        let (body, once_at) = if let Some(start) = normalized.strip_prefix("DTSTART:") {
+            let (timestamp, rule) = start.split_once('\n').ok_or("DTSTART requires a separate RRULE")?;
+            if !matches!(rule, "RRULE:FREQ=DAILY;COUNT=1" | "RRULE:COUNT=1;FREQ=DAILY") {
+                return Err("only a single daily COUNT=1 rule can use UTC DTSTART".into());
+            }
+            let timestamp = timestamp.trim_end_matches('\r');
+            if timestamp.len() != 16 {
+                return Err("DTSTART must be a UTC timestamp".into());
+            }
+            let date = NaiveDateTime::parse_from_str(timestamp, "%Y%m%dT%H%M%SZ")
+                .map_err(|_| "DTSTART must be a UTC timestamp")?;
+            if date.nanosecond() != 0 || date.format("%Y%m%dT%H%M%SZ").to_string() != timestamp {
+                return Err("DTSTART must use the exact UTC timestamp format without leap seconds".into());
+            }
+            let at = u64::try_from(date.and_utc().timestamp_millis()).map_err(|_| "DTSTART predates the Unix epoch")?;
+            ("FREQ=DAILY", Some(at))
+        } else {
+            (normalized.strip_prefix("RRULE:").unwrap_or(&normalized), None)
+        };
         if body.trim().is_empty() {
             return Err("empty RRULE".to_string());
         }
@@ -237,6 +263,7 @@ impl Rrule {
             by_day,
             by_month_day,
             week_start,
+            once_at,
         })
     }
 
@@ -630,6 +657,8 @@ struct AutomationScheduleState {
     last_run_at: Option<u64>,
     last_finished_at: Option<u64>,
     next_run_at: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    consumed_once_at: Option<u64>,
     last_thread_id: Option<String>,
     last_status: Option<String>,
     last_error: Option<String>,
@@ -748,6 +777,11 @@ fn baseline_ms(item: &AutomationItem) -> u64 {
 }
 
 fn schedule_signature(item: &AutomationItem) -> String {
+    if item.kind.eq_ignore_ascii_case("cron") && item.rrule.contains('\n') {
+        if let Ok(Rrule { once_at: Some(at), .. }) = Rrule::for_item(item) {
+            return format!("once|{at}|{}", item.execution_environment.to_ascii_lowercase());
+        }
+    }
     if let Some(target) = linked_heartbeat_target(item) {
         if let Ok(Rrule { freq: Freq::Minutely, interval, .. }) = Rrule::parse(&item.rrule) {
             return format!("minute|{}|{}|{}", target, item.execution_environment, interval);
@@ -862,12 +896,17 @@ fn prepare_item(
 
     let anchor_ms = entry.anchor_at.unwrap_or_else(|| baseline_ms(item));
     let minute_heartbeat = rule.freq == Freq::Minutely;
-    if (force_reschedule && !minute_heartbeat) || signature_changed || entry.next_run_at.is_none() {
+    let one_shot = rule.once_at.is_some();
+    if one_shot && entry.consumed_once_at == rule.once_at {
+        entry.next_run_at = None;
+        return false;
+    }
+    if (force_reschedule && !minute_heartbeat && !one_shot) || signature_changed || entry.next_run_at.is_none() {
         // Always move forward from "now": a newly discovered automation should
         // not fire immediately for occurrences that were missed while the app
         // was not running.
         entry.next_run_at = next_scheduled_at(&rule, item, anchor_ms, now, salt);
-        if entry.next_run_at.is_none() {
+        if entry.next_run_at.is_none() && !one_shot {
             note_schedule_warning(
                 entry,
                 item,
@@ -879,7 +918,7 @@ fn prepare_item(
     let Some(next_run_at) = entry.next_run_at else {
         return false;
     };
-    let jitter = if minute_heartbeat { 0 } else { jitter_ms(&item.id, salt) };
+    let jitter = if minute_heartbeat || one_shot { 0 } else { jitter_ms(&item.id, salt) };
     if force_reschedule || now < next_run_at.saturating_add(jitter) {
         return false;
     }
@@ -890,6 +929,9 @@ fn prepare_item(
     entry.last_status = Some("running".to_string());
     entry.last_error = None;
     entry.run_count = entry.run_count.saturating_add(1);
+    if one_shot {
+        entry.consumed_once_at = rule.once_at;
+    }
     entry.next_run_at = next_scheduled_at(&rule, item, anchor_ms, now, salt);
     true
 }
@@ -1386,7 +1428,11 @@ fn claim_manual_run(state: &mut SchedulerState, item: &AutomationItem, now: u64,
     entry.run_count = entry.run_count.saturating_add(1);
     if let Ok(rule) = Rrule::for_item(item) {
         let anchor_ms = entry.anchor_at.unwrap_or_else(|| baseline_ms(&item));
-        entry.next_run_at = next_scheduled_at(&rule, item, anchor_ms, now, salt);
+        entry.next_run_at = if rule.once_at.is_some() && entry.consumed_once_at == rule.once_at {
+            None
+        } else {
+            next_scheduled_at(&rule, item, anchor_ms, now, salt)
+        };
     }
     Ok(())
 }
@@ -1771,6 +1817,76 @@ mod tests {
         assert!(entry.last_run_at.is_none());
         assert!(entry.last_status.is_none());
         assert!(entry.schedule_warning.is_none());
+    }
+
+    #[test]
+    fn utc_once_survives_restart_then_is_consumed_without_jitter() {
+        let due = 1_893_553_445_000; // 2030-01-02T03:04:05Z
+        let mut item = test_automation("once", "DTSTART:20300102T030405Z\nRRULE:FREQ=DAILY;COUNT=1",
+            "ACTIVE", "local", vec!["fixture".into()], due - 1_000);
+        let mut state = SchedulerState::default();
+        assert!(!prepare_item(&mut state, &item, due - 1, b"salt", false));
+        assert_eq!(state.automations[&item.id].next_run_at, Some(due));
+        let mut restarted: SchedulerState = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        recover_scheduler_state(&mut restarted, &HashSet::new());
+        item.prompt = "edit unrelated to the schedule".into();
+        item.updated_at = due + 1;
+        assert!(!prepare_item(&mut restarted, &item, due + 1, b"salt", true));
+        assert_eq!(restarted.automations[&item.id].next_run_at, Some(due));
+        assert!(prepare_item(&mut restarted, &item, due + 1, b"salt", false));
+        let entry = restarted.automations.get_mut(&item.id).unwrap();
+        assert_eq!(entry.next_run_at, None);
+        assert_eq!(entry.run_count, 1);
+        entry.last_status = Some("failed".into());
+        let mut consumed: SchedulerState = serde_json::from_slice(&serde_json::to_vec(&restarted).unwrap()).unwrap();
+        for now in [due - 10, due, due + 60_000] {
+            assert!(!prepare_item(&mut consumed, &item, now, b"salt", true));
+            assert!(!prepare_item(&mut consumed, &item, now, b"salt", false));
+            assert_eq!(consumed.automations[&item.id].next_run_at, None);
+            assert!(consumed.automations[&item.id].schedule_warning.is_none());
+        }
+    }
+
+    #[test]
+    fn utc_once_handles_manual_pause_and_expired_import() {
+        let due = 1_893_553_445_000;
+        let mut item = test_automation("once", "DTSTART:20300102T030405Z\r\nRRULE:COUNT=1;FREQ=DAILY",
+            "ACTIVE", "local", vec!["fixture".into()], due - 1_000);
+        let mut expired = SchedulerState::default();
+        assert!(!prepare_item(&mut expired, &item, due, b"salt", false));
+        assert_eq!(expired.automations[&item.id].next_run_at, None);
+        assert!(expired.automations[&item.id].schedule_warning.is_none());
+        let mut state = SchedulerState::default();
+        claim_manual_run(&mut state, &item, due - 500, b"salt").unwrap();
+        assert_eq!(state.automations[&item.id].next_run_at, Some(due));
+        state.automations.get_mut(&item.id).unwrap().last_status = Some("completed".into());
+        item.status = "PAUSED".into();
+        assert!(!prepare_item(&mut state, &item, due - 100, b"salt", true));
+        assert_eq!(state.automations[&item.id].next_run_at, None);
+        item.status = "ACTIVE".into();
+        assert!(!prepare_item(&mut state, &item, due - 1, b"salt", true));
+        assert_eq!(state.automations[&item.id].next_run_at, Some(due));
+        assert!(prepare_item(&mut state, &item, due, b"salt", false));
+        assert_eq!(state.automations[&item.id].run_count, 2);
+    }
+
+    #[test]
+    fn utc_once_rejects_other_rule_shapes_and_linked_heartbeats() {
+        for rule in [
+            "FREQ=DAILY;COUNT=1",
+            "BEGIN:VEVENT\nDTSTART:20300102T030405Z\nEND:VEVENT",
+            "DTSTART;TZID=America/New_York:20300102T030405\nRRULE:FREQ=DAILY;COUNT=1",
+            "DTSTART:20300102T030405Z\nRRULE:FREQ=DAILY;COUNT=2",
+            "DTSTART:20300102T030405Z\nRRULE:FREQ=DAILY;COUNT=1\nEXDATE:20300102T030405Z",
+            "DTSTART:20300230T030405Z\nRRULE:FREQ=DAILY;COUNT=1",
+        ] {
+            assert!(Rrule::parse(rule).is_err(), "unexpected support for {rule}");
+        }
+        let mut item = test_automation("once", "DTSTART:20300102T030405Z\nRRULE:FREQ=DAILY;COUNT=1",
+            "ACTIVE", "local", vec![], 1);
+        item.kind = "heartbeat".into();
+        item.target_thread_id = Some("linked-thread".into());
+        assert!(validate_linked_schedule(&item).is_err());
     }
 
     #[test]
