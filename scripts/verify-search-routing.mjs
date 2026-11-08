@@ -35,12 +35,13 @@ function mount(overrides = {}) {
   const calls = [];
   const context = {
     query: "goal", mode: "root", workspacePath: "repo-B", remoteResults: null, pathQuery: null, pathLookup: null,
-    threads: [], workspaceFileHits: [], recentFiles: [], skills: [], SLASH_COMMANDS: [slash],
+    threads: [], workspaceFileHits: [], recentFiles: [], recentLookup: null, skills: [], SLASH_COMMANDS: [slash],
     REMOTE_THREAD_LIMIT: 9,
     runCmd: "npm run dev", testCmd: "npm test", buildCmd: "npm run build",
     selectedIndex: 0,
     baseNameFsPath: path => path.split(/[\\/]/).at(-1),
     setPathRetry: updater => calls.push(["retry", updater(0)]),
+    setRecentRetry: updater => calls.push(["recent retry", updater(0)]),
     inputRef: { current: { focus() {} } },
     React: { createElement() { return {}; } },
     ...overrides,
@@ -57,7 +58,7 @@ function mount(overrides = {}) {
 {
   const recentFiles = ["C:/repo/src/测试🚀.rs", "c:\\REPO\\src\\测试🚀.rs", "C:/repo-backup/secret.txt",
     ...Array.from({ length: 12 }, (_, i) => `C:/repo/recent-${i}.txt`)];
-  const view = mount({ mode: "files", query: " ", workspacePath: "C:/repo", recentFiles });
+  const view = mount({ mode: "files", query: " ", workspacePath: "C:/repo", recentFiles: recentFiles.map((path, i) => ({ path, updatedAt: 100 - i })) });
   const results = view.results();
   assert.equal(results.length, 10);
   assert.equal(results[0].section, "最近打开");
@@ -77,10 +78,22 @@ function mount(overrides = {}) {
   remember("C:/other", "C:/other/isolated.txt");
   remember("c:\\REPO", "c:\\repo\\recent-4.txt");
   assert.equal(history["c:/repo"].length, 10);
-  assert.equal(history["c:/repo"][0], "c:\\repo\\recent-4.txt");
-  assert.equal(history["c:/repo"].filter(path => /recent-4/i.test(path)).length, 1);
-  assert.ok(!history["c:/repo"].some(path => path.includes("secret.txt")));
-  assert.deepEqual(Array.from(history["c:/other"]), ["C:/other/isolated.txt"]);
+  assert.equal(history["c:/repo"][0].path, "c:\\repo\\recent-4.txt");
+  assert.equal(history["c:/repo"].filter(file => /recent-4/i.test(file.path)).length, 1);
+  assert.ok(!history["c:/repo"].some(file => file.path.includes("secret.txt")));
+  assert.deepEqual(Array.from(history["c:/other"], file => file.path), ["C:/other/isolated.txt"]);
+}
+{
+  const view = mount({ mode: "files", query: "", workspacePath: "C:/repo",
+    recentFiles: [{ path: "C:/repo/open.txt", updatedAt: 10 }],
+    recentLookup: { files: [{ path: "C:/repo/changed.txt", updatedAt: 30 }, { path: "c:/REPO/OPEN.txt", updatedAt: 20 }] },
+  });
+  assert.deepEqual(Array.from(view.results(), row => row.title), ["changed.txt", "OPEN.txt"]);
+  assert.ok(view.results().every(row => row.section === "最近文件"));
+  view.context.recentLookup = {};
+  assert.equal(view.results()[0].title, "open.txt", "scan failure preserves opened history");
+  view.results()[1].onSelect();
+  assert.deepEqual(view.calls, [["recent retry", 1]]);
 }
 {
   const view = mount({ mode: "files", query: "C:/repo/src", pathQuery: "C:/repo/src",

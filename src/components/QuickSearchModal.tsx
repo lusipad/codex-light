@@ -11,7 +11,7 @@ import {
   X,
 } from "lucide-react";
 import { homeDir, normalize as normalizeFsPath } from "@tauri-apps/api/path";
-import { callAppServer, isTauriRuntime } from "../bridge";
+import { callAppServer, isTauriRuntime, tauriInvoke } from "../bridge";
 import { baseNameFsPath, getMetadata, joinFsPath } from "../fsClient";
 import { createFuzzyFileSearch } from "../fuzzyFileSearch";
 import { MainViewRoute, ProjectScriptCommands, SettingsSectionSlug, SkillInfoItem, ThreadSummary } from "../types";
@@ -29,7 +29,7 @@ export interface QuickSearchModalProps {
    * 当前工作区绝对路径（可选）。files 模式下用真实 fuzzy session 搜索。
    */
   workspacePath?: string;
-  recentFiles?: readonly string[];
+  recentFiles?: readonly RecentFile[];
   onClose: () => void;
   onSelectThread: (threadId: string) => void;
   onSelectFile: (filePath: string, isDirectory?: boolean) => void;
@@ -96,6 +96,11 @@ interface RemoteFileResult {
   absPath: string;
   relPath: string;
   fileName: string;
+}
+
+export interface RecentFile {
+  path: string;
+  updatedAt: number;
 }
 
 interface RemoteThreadResult {
@@ -264,7 +269,12 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   );
   const [remoteLoading, setRemoteLoading] = useState(false);
   const [pathRetry, setPathRetry] = useState(0);
+  const [recentRetry, setRecentRetry] = useState(0);
   const trimmedQuery = query.trim();
+  const recentRequest = useMemo(() => open && mode === "files" && workspacePath && !trimmedQuery
+    ? { workspacePath } : null, [open, mode, workspacePath, trimmedQuery, recentRetry, initialQuery]);
+  const [recentResult, setRecentResult] = useState<{ request: NonNullable<typeof recentRequest>; files?: RecentFile[] } | null>(null);
+  const recentLookup = recentResult?.request === recentRequest ? recentResult : null;
   const pathQuery = mode === "files" && /^(?:~(?:\/|$)|[a-zA-Z]:[\\/]|\/|\\\\)/.test(trimmedQuery)
     ? trimmedQuery : null;
   const pathRequest = useMemo(() => open && workspacePath && pathQuery ? { pathQuery, workspacePath } : null,
@@ -330,6 +340,21 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   useEffect(() => {
     if (open && mode === "files") void fileSearchRef.current?.update(pathQuery ? "" : query);
   }, [open, mode, workspacePath, query, pathQuery]);
+
+  useEffect(() => {
+    if (!recentRequest || !isTauriRuntime()) return;
+    const requestId = crypto.randomUUID();
+    let disposed = false;
+    let settled = false;
+    void tauriInvoke<RecentFile[]>("fs_recent_workspace_files", { root: recentRequest.workspacePath, requestId }).then(
+      files => { settled = true; if (!disposed) setRecentResult({ request: recentRequest, files }); },
+      () => { settled = true; if (!disposed) setRecentResult({ request: recentRequest }); },
+    );
+    return () => {
+      disposed = true;
+      if (!settled) void tauriInvoke("fs_cancel_recent_workspace_files", { requestId }).catch(() => {});
+    };
+  }, [recentRequest]);
 
   useEffect(() => {
     if (!pathRequest || !isTauriRuntime()) return;
@@ -432,20 +457,27 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
       if (!workspacePath) return results;
       const root = `${fileDedupeKey(workspacePath)}/`;
       const seen = new Set<string>();
-      for (const path of recentFiles ?? []) {
+      const section = recentLookup?.files?.length ? "最近文件" : "最近打开";
+      const candidates = [...(recentFiles ?? []), ...(recentLookup?.files ?? [])].sort((a, b) => b.updatedAt - a.updatedAt);
+      for (const { path } of candidates) {
         const key = fileDedupeKey(path);
         if (!key.startsWith(root) || seen.has(key)) continue;
         seen.add(key);
         const relative = path.replace(/\\/g, "/").slice(root.length);
         const separator = relative.lastIndexOf("/");
         results.push({
-          id: `recent-file-${key}`, category: "file", section: "最近打开",
+          id: `recent-file-${key}`, category: "file", section,
           title: baseNameFsPath(path) || path, subtitle: separator < 0 ? undefined : relative.slice(0, separator),
           icon: <FileText size={14} />,
           onSelect: () => { onSelectFile(path); onClose(); },
         });
         if (results.length === 10) break;
       }
+      if (recentLookup && !recentLookup.files) results.push({
+        id: "retry-recent-files", category: "action", section,
+        title: "无法加载最近修改的文件。选择此项以重试", icon: <FileText size={14} />,
+        onSelect: () => { setRecentRetry(value => value + 1); inputRef.current?.focus(); },
+      });
       return results;
     }
 
@@ -851,6 +883,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
     mode,
     workspacePath,
     recentFiles,
+    recentLookup,
     threads,
     skills,
     remoteResults,
@@ -920,7 +953,9 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   };
 
   if (!open) return null;
-  const loading = pathQuery ? !!pathRequest && isTauriRuntime() && !pathLookup : remoteLoading;
+  const recentLoading = !!recentRequest && isTauriRuntime() && !recentLookup;
+  const loading = recentRequest ? recentLoading && items.length === 0
+    : pathQuery ? !!pathRequest && isTauriRuntime() && !pathLookup : remoteLoading;
 
   return (
     <div className="quick-search-backdrop" onClick={onClose}>
@@ -952,7 +987,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
               className="empty-hint-small"
               style={{ padding: "8px 12px", textAlign: "left", opacity: 0.75 }}
             >
-              {pathQuery ? "正在检查文件…" : mode === "files" ? "正在搜索文件…" : "正在搜索会话…"}
+              {recentLoading ? "正在加载最近文件…" : pathQuery ? "正在检查文件…" : mode === "files" ? "正在搜索文件…" : "正在搜索会话…"}
             </div>
           )}
           {items.length === 0 ? (

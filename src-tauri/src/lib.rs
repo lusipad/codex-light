@@ -43,6 +43,7 @@ mod system_fonts;
 mod plugin_operations;
 mod git_message_generation;
 mod remote_review;
+mod recent_workspace_files;
 
 use app_server::{AppServerManager, AppServerStatus, PendingServerRequest};
 use config_skills::{
@@ -969,6 +970,17 @@ async fn workspace_agents_md(cwd: String) -> Result<Value, String> {
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn fs_recent_workspace_files(state: State<'_, AppState>, root: String, request_id: String) -> Result<Vec<recent_workspace_files::RecentWorkspaceFile>, String> {
+    let cli = state.app_server.get_status().await.binary_path;
+    recent_workspace_files::list(&root, &cli, request_id).await
+}
+
+#[tauri::command]
+fn fs_cancel_recent_workspace_files(request_id: String) {
+    recent_workspace_files::cancel(&request_id);
 }
 
 #[tauri::command]
@@ -2402,6 +2414,8 @@ pub fn run() {
             pick_files_dialog,
             workspace_agents_md,
             fs_list_dir,
+            fs_recent_workspace_files,
+            fs_cancel_recent_workspace_files,
             fs_read_preview,
             fs_write_file,
             fs_search_files,

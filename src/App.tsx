@@ -126,6 +126,7 @@ import { ProjectsIndexView } from "./components/ProjectsIndexView";
 import { InboxView } from "./components/InboxView";
 import { MiniPetWidget } from "./components/MiniPetWidget";
 import { fileDedupeKey, QuickSearchModal } from "./components/QuickSearchModal";
+import type { RecentFile } from "./components/QuickSearchModal";
 import { restoreInboxHistory } from "./inboxState";
 import { CodeReviewView, ReviewRequest } from "./components/CodeReviewView";
 import { RemoteReviewView } from "./components/RemoteReviewView";
@@ -573,16 +574,16 @@ export const App: React.FC = () => {
     setPendingTermCommand((current) => current?.id === id ? null : current);
   }, []);
   const [selectedPreviewFile, setSelectedPreviewFile] = useState<string | null>(null);
-  const [recentFilesByWorkspace, setRecentFilesByWorkspace] = useState<Record<string, string[]>>({});
+  const [recentFilesByWorkspace, setRecentFilesByWorkspace] = useState<Record<string, RecentFile[]>>({});
   const rememberWorkspaceFile = useCallback((workspace: string, path: string) => {
     if (!workspace) return;
     const root = fileDedupeKey(workspace);
     const key = fileDedupeKey(path);
     if (!key.startsWith(`${root}/`)) return;
+    const updatedAt = Date.now();
     setRecentFilesByWorkspace(current => {
       const previous = current[root] ?? [];
-      if (previous[0] === path) return current;
-      return { ...current, [root]: [path, ...previous.filter(file => fileDedupeKey(file) !== key)].slice(0, 10) };
+      return { ...current, [root]: [{ path, updatedAt }, ...previous.filter(file => fileDedupeKey(file.path) !== key)].slice(0, 10) };
     });
   }, []);
 

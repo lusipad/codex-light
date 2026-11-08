@@ -18,12 +18,14 @@ const remoteEffect = effects.find(node => node.getText(ast).includes("const canS
 const fileEffect = effects.find(node => node.getText(ast).includes("const search = createFuzzyFileSearch"));
 const fileQueryEffect = effects.find(node => node.getText(ast).includes("fileSearchRef.current?.update("));
 const lookupEffect = effects.find(node => node.getText(ast).includes("await getMetadata(path)"));
+const recentEffect = effects.find(node => node.getText(ast).includes('"fs_recent_workspace_files"'));
 assert.ok(remoteEffect);
 const js = ts.transpileModule(`${declarations.join("\n")}\n({
   effect:${remoteEffect.getText(ast)},
   files:${fileEffect.getText(ast)},
   fileQuery:${fileQueryEffect.getText(ast)},
   lookup:${lookupEffect.getText(ast)},
+  recent:${recentEffect.getText(ast)},
   resolveFileSearchPath: typeof resolveFileSearchPath === "function" ? resolveFileSearchPath : undefined
 })`, {
   compilerOptions: { target: ts.ScriptTarget.ES2022 },
@@ -38,7 +40,7 @@ function mount() {
   const timers = new Map(), requests = [], fileControllers = [];
   let clock = 1000, timerId = 0;
   const context = {
-    open: true, query: "target", workspacePath: "C:/repo-A", mode: "root", pathQuery: null,
+    open: true, query: "target", workspacePath: "C:/repo-A", mode: "root", pathQuery: null, recentRequest: null,
     homeDir: async () => "C:\\Users\\tester",
     normalizeFsPath: async value => path.win32.normalize(value),
     joinFsPath: path.win32.join,
@@ -63,6 +65,12 @@ function mount() {
     setRemoteLoading(value) { context.loading = value; },
     getMetadata(path) { const pending = deferred(); requests.push({ method: "fs/getMetadata", path, ...pending }); return pending.promise; },
     setPathResult(result) { context.pathResult = result; },
+    crypto: { randomUUID: () => "scan-id" },
+    tauriInvoke(method, args) {
+      if (method === "fs_cancel_recent_workspace_files") { requests.push({ method, args }); return Promise.resolve(); }
+      const pending = deferred(); requests.push({ method, args, ...pending }); return pending.promise;
+    },
+    setRecentResult(result) { context.recentResult = result; },
   };
   return {
     context, requests, timers, fileControllers, ...vm.runInNewContext(js, context),
@@ -83,6 +91,25 @@ async function check(name, test) {
   try { await test(); console.log(`PASS ${name}`); }
   catch (error) { failures.push(name); console.error(`FAIL ${name}: ${error.message}`); }
 }
+await check("SB11 empty file scan cancels on scope change and cannot apply late data", async () => {
+  const view = mount();
+  assert.equal(view.recent(), undefined);
+  view.context.recentRequest = { workspacePath: "C:/repo-A" };
+  const cleanup = view.recent();
+  assert.equal(view.requests[0].args.root, "C:/repo-A");
+  cleanup();
+  assert.equal(view.requests[1].method, "fs_cancel_recent_workspace_files");
+  assert.equal(view.requests[1].args.requestId, "scan-id");
+  view.requests[0].resolve([{ path: "C:/repo-A/a.txt", updatedAt: 1 }]); await flush();
+  assert.equal(view.context.recentResult, undefined);
+  view.context.recentRequest = { workspacePath: "C:/repo-B" };
+  const finish = view.recent();
+  view.requests[2].reject(Error("missing ripgrep")); await flush();
+  assert.equal(view.context.recentResult.request.workspacePath, "C:/repo-B");
+  assert.equal(view.context.recentResult.files, undefined);
+  finish();
+  assert.equal(view.requests.length, 3, "settled scans require no cancellation");
+});
 await check("SB08 direct paths resolve only inside the selected workspace", async () => {
   const view = mount();
   const resolve = view.resolveFileSearchPath;
