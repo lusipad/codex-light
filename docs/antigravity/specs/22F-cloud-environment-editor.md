@@ -120,3 +120,5 @@ Rust 候选和复现入口在证据目录的 `durable-socket.rs` 和 `winhttp-lo
 验收要求。验证固定主机和请求体、同身份与环境、拒绝异常 ID/operation kind、取消与账号变化、失败和运行状态不得触发完成、完成回执身份。完成前由原生重读 operation，仅在匹配且为 SUCCEEDED 时发送完成请求。POST 结果不明时返回待核对状态，禁止传输层自动重发。共享与旧同步分支、发布页面、持久化操作恢复和发布版本读回分别验收。
 
 发布后新聊天取证见 `2463.22de500d36.js` 的 `ed`。点击时按配置 ID 读取环境摘要。账号、用户、当前路由、设置轮次、草稿和发布版本须仍一致，且环境最新就绪版本等于发布回执。成功后清除本地项目选择，将该云环境设为当前执行目标，打开空 Composer。提交远端任务是后续用户操作。项目当前 Composer 只有本地和工作树执行，云环境选择与真正远端发送需一起接通。
+
+常规云端线程启动使用官方包 `early-bootstrap-339-ce026819bf837ba7.js` 577689 附近的宿主身份门槛，以及 `early-bootstrap.js` 109207 的原函数序列化。隔离向量见 `.ref/parity/22/actual/22J-cloud-publish/reference/handoff-wire-replay.json`。已选配置发至 durable `thread/start`，使用 `environments:[{environmentConfigId}]`、`deferredEnvironment:true`、Codex 插件 SKU，去除本地目录。启动与首轮发送独立。启动响应必须给出真实线程 ID，若携带不同环境配置则拒绝。中途断开、取消或回执畸形时保留结果未确认，禁止自动重发。

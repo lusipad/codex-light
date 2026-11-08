@@ -29,6 +29,12 @@ pub struct DurableThreadRequest {
     deny_unknown_fields
 )]
 enum Operation {
+    StartSavedEnvironment {
+        environment_config_id: String,
+        model: Option<String>,
+        effort: Option<String>,
+        service_tier: Option<String>,
+    },
     Read {
         thread_id: String,
     },
@@ -95,6 +101,21 @@ fn opaque(value: &str) -> bool {
     !value.trim().is_empty() && value.len() <= 2048 && !value.chars().any(char::is_control)
 }
 
+fn saved_environment_id(value: &str) -> bool {
+    let segment = |value: &str| {
+        !value.is_empty()
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"_-".contains(&byte))
+    };
+    let (prefix, config) = value
+        .split_once('~')
+        .map_or((None, value), |(prefix, config)| (Some(prefix), config));
+    value.len() <= 512
+        && prefix.is_none_or(segment)
+        && config.strip_prefix("asenvcfg_").is_some_and(segment)
+}
+
 fn repository_apply_text(added: &[String], removed: &[String]) -> ServiceResult<String> {
     if added.len() > 16
         || removed.len() > 16
@@ -145,6 +166,31 @@ fn valid_resume_config(config: &Value) -> bool {
 impl Operation {
     fn wire(self) -> ServiceResult<Request> {
         let (method, params, seconds) = match self {
+            Self::StartSavedEnvironment {
+                environment_config_id,
+                model,
+                effort,
+                service_tier,
+            } if saved_environment_id(&environment_config_id)
+                && [model.as_deref(), effort.as_deref(), service_tier.as_deref()]
+                    .into_iter()
+                    .flatten()
+                    .all(opaque) =>
+            {
+                let mut config = json!({"features.mcp_app_ui":true});
+                if let Some(effort) = effort {
+                    config["model_reasoning_effort"] = json!(effort);
+                }
+                (
+                    "thread/start",
+                    json!({
+                        "environments":[{"environmentConfigId":environment_config_id}],
+                        "deferredEnvironment":true,"pluginsMcp":{"productSku":"codex"},
+                        "ephemeral":false,"model":model,"serviceTier":service_tier,"config":config,
+                    }),
+                    30,
+                )
+            }
             Self::Read { thread_id } if opaque(&thread_id) => (
                 "thread/read",
                 json!({"threadId":thread_id,"includeTurns":false}),
@@ -331,6 +377,38 @@ fn apply_unconfirmed() -> super::ServiceError {
     )
 }
 
+fn thread_start_unconfirmed() -> super::ServiceError {
+    failure(
+        "cloud_thread_start_unconfirmed",
+        "Cloud thread creation is unconfirmed",
+    )
+}
+
+fn checked_saved_thread(body: Value, config_id: &str) -> ServiceResult<Value> {
+    let thread = &body["thread"];
+    let id = thread["id"]
+        .as_str()
+        .filter(|id| opaque(id))
+        .ok_or_else(thread_start_unconfirmed)?;
+    let matches = |entry: &Value| {
+        entry
+            .get("environmentConfigId")
+            .is_none_or(|value| value.is_null() || value.as_str() == Some(config_id))
+    };
+    if !matches(&body)
+        || !matches(thread)
+        || !thread["environments"].is_null()
+            && !thread["environments"].as_array().is_some_and(|entries| {
+                entries
+                    .iter()
+                    .all(|entry| entry.is_object() && matches(entry))
+            })
+    {
+        return Err(thread_start_unconfirmed());
+    }
+    Ok(json!({"thread":{"id":id}}))
+}
+
 fn checked_start_response(
     thread_id: Option<&str>,
     message_id: Option<&str>,
@@ -504,8 +582,16 @@ impl ChatgptService {
             .as_str()
             .map(str::to_owned);
         let turn_write = method == "turn/start";
+        let saved_config_id = wire
+            .params
+            .pointer("/environments/0/environmentConfigId")
+            .and_then(Value::as_str)
+            .filter(|_| method == "thread/start")
+            .map(str::to_owned);
         let unconfirmed = || {
-            if reply_write {
+            if saved_config_id.is_some() {
+                thread_start_unconfirmed()
+            } else if reply_write {
                 failure(
                     "cloud_setup_reply_unconfirmed",
                     "Cloud environment reply delivery is unconfirmed",
@@ -533,7 +619,7 @@ impl ChatgptService {
             )
             .await
             .map_err(|error| {
-                if turn_write
+                if (turn_write || saved_config_id.is_some())
                     && handed_off.load(Ordering::SeqCst)
                     && error.code != "account_changed"
                 {
@@ -542,7 +628,9 @@ impl ChatgptService {
                     error
                 }
             })?;
-        response.body = if turn_write {
+        response.body = if let Some(config_id) = saved_config_id.as_deref() {
+            checked_saved_thread(response.body, config_id)?
+        } else if turn_write {
             checked_start_response(
                 thread_id.as_deref(),
                 message_id.as_deref(),
