@@ -266,7 +266,7 @@ export async function updateProject(
   }
   if (patch.roots !== undefined) {
     const normalizedRoots = normalizeRoots(patch.roots);
-    if (normalizedRoots.length === 0) throw new Error("至少需要一个项目根目录");
+    if (patch.roots.length > 0 && normalizedRoots.length === 0) throw new Error("项目根目录无效");
     params.roots = normalizedRoots;
   }
   if (patch.metadata !== undefined) {

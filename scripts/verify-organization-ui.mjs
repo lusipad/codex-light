@@ -60,7 +60,7 @@ const projectAst = ts.createSourceFile("ProjectsIndexView.tsx", projects, ts.Scr
 let menuAction;
 function visitProject(node) {
   if (ts.isJsxAttribute(node) && node.name.getText(projectAst) === "onSelect"
-      && node.initializer?.expression?.getText(projectAst).includes("handleRenameProject")) menuAction = node.initializer.expression.getText(projectAst);
+      && node.initializer?.expression?.getText(projectAst).includes("setEditingProject")) menuAction = node.initializer.expression.getText(projectAst);
   ts.forEachChild(node, visitProject);
 }
 visitProject(projectAst);
@@ -68,15 +68,34 @@ const calls = [], project = { id: "isolated-project" };
 const menuContext = {
   isBusy: false, project, roots: [{ path: "isolated-root" }],
   onRevealPath: root => calls.push(["reveal", root]),
-  handleRenameProject: item => calls.push(["rename", item.id]),
+  setEditingProject: item => calls.push(["edit", item.id]),
   handleMoveProject: (item, direction) => calls.push([direction, item.id]),
   handleDeleteProject: item => calls.push(["delete", item.id]),
 };
 const select = vm.runInNewContext(ts.transpileModule(`(${menuAction})`, {
   compilerOptions: { target: ts.ScriptTarget.ES2022 },
 }).outputText, menuContext);
-for (const action of ["reveal", "rename", "up", "down", "delete"]) select(action);
-assert.deepEqual(calls, [["reveal", "isolated-root"], ["rename", project.id], ["up", project.id], ["down", project.id], ["delete", project.id]]);
+for (const action of ["reveal", "edit", "up", "down", "delete"]) select(action);
+assert.deepEqual(calls, [["reveal", "isolated-root"], ["edit", project.id], ["up", project.id], ["down", project.id], ["delete", project.id]]);
 menuContext.isBusy = true; select("delete");
 assert.equal(calls.length, 5, "Busy menu dispatcher must not start a second mutation");
+
+const projectApi = {};
+const updates = [];
+vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/projects.ts", "utf8"), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+}).outputText, {
+  exports: projectApi,
+  require: () => ({ callAppServer: async (method, params) => {
+    updates.push([method, JSON.parse(JSON.stringify(params))]);
+    return { project: { id: project.id, name: params.name ?? "Existing", roots: params.roots ?? [] } };
+  } }),
+});
+await projectApi.updateProject(project.id, { name: " Updated " });
+await projectApi.updateProject(project.id, { roots: [] });
+await assert.rejects(projectApi.updateProject(project.id, { roots: [{ path: " " }] }));
+assert.deepEqual(updates, [
+  ["project/update", { projectId: project.id, name: "Updated" }],
+  ["project/update", { projectId: project.id, roots: [] }],
+], "an explicit empty root list differs from an omitted or malformed patch");
 console.log("Organization UI: loading/error/stale request and current-source surface regressions passed");

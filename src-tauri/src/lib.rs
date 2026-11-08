@@ -922,6 +922,18 @@ async fn pick_folder_dialog() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
+async fn pick_project_source_folders() -> Result<Vec<String>, String> {
+    let picked = tokio::task::spawn_blocking(|| rfd::FileDialog::new().pick_folders())
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(picked
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| state::normalize_fs_path(&p.to_string_lossy()))
+        .collect())
+}
+
+#[tauri::command]
 async fn pick_files_dialog() -> Result<Vec<String>, String> {
     let picked = tokio::task::spawn_blocking(|| rfd::FileDialog::new().pick_files())
         .await
@@ -2358,6 +2370,7 @@ pub fn run() {
             thread_project_move_commit,
             thread_project_move_reconcile,
             pick_folder_dialog,
+            pick_project_source_folders,
             pick_files_dialog,
             workspace_agents_md,
             fs_list_dir,

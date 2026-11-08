@@ -14,6 +14,7 @@ import { ThreadSummary, WorkspaceRootItem } from "../types";
 import { tauriInvoke, tauriListen } from "../bridge";
 import {
   Project,
+  ProjectPatch,
   createProject,
   deleteProject,
   listProjects,
@@ -21,6 +22,7 @@ import {
   updateProject,
 } from "../projects";
 import { ThreadActionsMenu } from "./ThreadActionsMenu";
+import { ProjectEditDialog } from "./ProjectEditDialog";
 import "./ProjectsIndexView.css";
 
 export interface ProjectsIndexViewProps {
@@ -168,6 +170,7 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
 
   /* ── 新建项目表单 ── */
   const [creating, setCreating] = useState(false);
+  const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [draftName, setDraftName] = useState("");
   const [draftRoots, setDraftRoots] = useState<string[]>([]);
   const [draftManualRoot, setDraftManualRoot] = useState("");
@@ -414,33 +417,19 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
     onStartNewChatInProject(root, project);
   };
 
-  const handleRenameProject = async (project: Project) => {
-    const next = window.prompt(`重命名项目「${project.name}」`, project.name);
-    if (next == null) return;
-    const trimmed = next.trim();
-    if (!trimmed || trimmed === project.name) return;
-    setActionBusyId(project.id);
-    try {
-      const updated = await updateProject(project.id, { name: trimmed });
-      setProjects((prev) =>
-        prev.map((item) =>
-          item.id === project.id ? { ...item, name: updated.name || trimmed } : item
-        )
-      );
-      notify(`已重命名为「${updated.name || trimmed}」`, "success");
-      onProjectsChanged?.();
-    } catch (e: any) {
-      notify(`重命名项目失败：${e?.message || e}`, "error");
-    } finally {
-      setActionBusyId(null);
-    }
+  const saveProject = async (project: Project, patch: ProjectPatch) => {
+    const updated = await updateProject(project.id, patch);
+    if (updated.id !== project.id) throw Error("服务返回了其他项目");
+    ++projectLoadRequestRef.current;
+    setProjects(previous => previous.map(item => item.id === project.id ? updated : item));
+    onProjectsChanged?.();
   };
 
   const handleDeleteProject = async (project: Project) => {
     const confirmed = window.confirm(
       `删除项目「${project.name}」？\n项目内的聊天不会被删除，只会解除项目关联。`
     );
-    if (!confirmed) return;
+    if (!confirmed) return false;
     setActionBusyId(project.id);
     try {
       await deleteProject(project.id);
@@ -448,9 +437,11 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
       onProjectsChanged?.();
       onThreadsChanged?.();
       notify(`已删除项目「${project.name}」`, "success");
+      return true;
     } catch (e: any) {
       notify(`删除项目失败：${e?.message || e}`, "error");
       await loadProjects();
+      return false;
     } finally {
       setActionBusyId(null);
     }
@@ -754,14 +745,14 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
               </button>
               <ThreadActionsMenu triggerAriaLabel="项目操作" items={[
                 ...(onRevealPath && roots.length > 0 ? [{ id: "reveal", label: "打开目录", disabled: isBusy }] : []),
-                { id: "rename", label: "重命名项目", disabled: isBusy },
+                { id: "edit", label: "编辑项目", disabled: isBusy },
                 { id: "up", label: "上移项目", disabled: isBusy || index <= 0 },
                 { id: "down", label: "下移项目", disabled: isBusy || index < 0 || index >= projects.length - 1 },
                 { id: "delete", label: "删除项目（聊天不会被删除）", danger: true, disabled: isBusy },
               ]} onSelect={action => {
                 if (isBusy) return;
                 if (action === "reveal") onRevealPath?.(roots[0].path);
-                else if (action === "rename") void handleRenameProject(project);
+                else if (action === "edit") setEditingProject(project);
                 else if (action === "up" || action === "down") void handleMoveProject(project, action);
                 else if (action === "delete") void handleDeleteProject(project);
               }} />
@@ -1019,6 +1010,11 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
             </div>
           </div>
         )}
+
+        {editingProject && <ProjectEditDialog key={editingProject.id} project={editingProject}
+          onSave={patch => saveProject(editingProject, patch)}
+          onRemove={() => handleDeleteProject(editingProject)}
+          onClose={() => setEditingProject(null)} />}
 
         {/* 列表：真实项目实体；协议失败时回退 workspace 视图 */}
         {isFallback ? renderWorkspaceFallback() : (

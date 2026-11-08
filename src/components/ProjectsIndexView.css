@@ -90,3 +90,58 @@
   white-space: nowrap;
   cursor: pointer;
 }
+
+.project-edit-dialog {
+  box-sizing: border-box;
+  width: min(480px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  margin: auto;
+  padding: 20px;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-default);
+  border-radius: 16px;
+  box-shadow: var(--shadow-lg);
+}
+
+.project-edit-dialog::backdrop { background: rgb(0 0 0 / 50%); }
+.project-edit-dialog h2 { margin: 0 0 16px; font-size: 18px; }
+.project-edit-dialog fieldset {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.project-edit-sources { display: grid; gap: 8px; }
+.project-edit-folders {
+  padding: 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+}
+.project-edit-folder {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-inline: 6px;
+}
+.project-edit-folder > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.project-edit-folder > svg { flex-shrink: 0; }
+.project-edit-dialog footer,
+.project-edit-dialog footer > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.project-edit-dialog footer { margin-top: 20px; }
+.project-edit-error, .project-edit-dialog .project-edit-remove { color: #fca5a5; }
