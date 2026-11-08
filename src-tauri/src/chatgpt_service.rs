@@ -1668,6 +1668,7 @@ impl ChatgptService {
     where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output=Result<Value,String>>, T: Transport {
         let content=matches!(request.operation,ServiceOperation::LibraryFileContent);
         let (id,route)=library_file_route(&request.params,content)?;
+        let download=request.params["download"]==true;
         let registration=self.register(&request.request_id)?;
         self.check_share_current(&request.expected_identity,&registration)?;
         let result=tokio::select! {
@@ -1675,7 +1676,7 @@ impl ChatgptService {
             result=async {
                 let body=if content {
                     let deadline=tokio::time::Instant::now()+Duration::from_secs(15);
-                    let retry_download=route.starts_with("/backend-api/files/download/");
+                    let retry_download=!download && route.starts_with("/backend-api/files/download/");
                     let mut delay=500u64;
                     let mut attempt=0;
                     let body=loop {
@@ -1689,7 +1690,8 @@ impl ChatgptService {
                     };
                     if body.get("status").and_then(Value::as_str).is_some_and(|status|matches!(status,"retry"|"processing"|"pending")) {return Err(failure("processing","Library file is not ready"));}
                     if body["status"]=="error" {return Err(failure("service_error","Library file download failed"));}
-                    let target=body.get("content_url").or_else(||body.get("download_url")).and_then(Value::as_str)
+                    let target=if download {body.get("download_url")} else {body.get("content_url").or_else(||body.get("download_url"))};
+                    let target=target.and_then(Value::as_str)
                         .filter(|url|!url.trim().is_empty()).ok_or_else(||failure("invalid_response","Library file URL is missing"))?;
                     let origin={let session=self.session.lock().await;self.check_share_current(&request.expected_identity,&registration)?;session.credentials.as_ref().unwrap().origin.clone()};
                     self.library_file_bytes(target,&origin,&request,&registration,&call,transport).await?
@@ -2742,7 +2744,9 @@ fn library_images_body(params: &Value) -> ServiceResult<Value> {
 
 fn library_file_route(params:&Value,content:bool)->ServiceResult<(String,String)> {
     let params=params.as_object().ok_or_else(||failure("invalid_request","Library file identifiers required"))?;
+    let download=params.get("download")==Some(&Value::Bool(true));
     for (key,value) in params {
+        if content && key=="download" && download {continue;}
         if !(key=="library_file_id" || content && matches!(key.as_str(),"file_id"|"gizmo_id")) || value.as_str().is_none_or(|id|id.trim().is_empty() || encode_segment(id).is_err()) {
             return Err(failure("invalid_request","Invalid library file identifier"));
         }
@@ -2754,8 +2758,17 @@ fn library_file_route(params:&Value,content:bool)->ServiceResult<(String,String)
     let mut route=format!("/backend-api/files/library/files/{}",encode_segment(id)?);
     if content {
         let target=if id.strip_prefix("libfile_fde").and_then(|rest|rest.split_once('_')).is_some_and(|(version,_)|!version.is_empty() && version.bytes().all(|b|b.is_ascii_digit())) {id} else {params.get("file_id").and_then(Value::as_str).unwrap_or(id)};
-        if native_library_id(target) {route=format!("/backend-api/files/library/files/{}/content_url",encode_segment(target)?);}
-        else {route=format!("/backend-api/files/download/{}?inline=true",encode_segment(&target.replace('#',"*"))?.replace("%2A","*"));if let Some(gizmo)=params.get("gizmo_id").and_then(Value::as_str){route.push_str(&format!("&gizmo_id={}",encode_segment(gizmo)?));}}
+        if native_library_id(target) {
+            let endpoint=if download {"download_url"} else {"content_url"};
+            route=format!("/backend-api/files/library/files/{}/{endpoint}",encode_segment(target)?);
+        } else {
+            route=format!("/backend-api/files/download/{}",encode_segment(&target.replace('#',"*"))?.replace("%2A","*"));
+            if !download {route.push_str("?inline=true");}
+            if let Some(gizmo)=params.get("gizmo_id").and_then(Value::as_str) {
+                let separator=if download {'?'} else {'&'};
+                route.push_str(&format!("{separator}gizmo_id={}",encode_segment(gizmo)?));
+            }
+        }
     }
     Ok((id.into(),route))
 }
@@ -5890,6 +5903,31 @@ mod tests {
         let mut req=library_request("file-content",ServiceOperation::LibraryFileContent);req.params=json!({"library_file_id":"libfile_fde1_fixture"});
         assert_eq!(service.read_with(req,share_rpc,&transport).await.unwrap().body,json!({"bytesBase64":base64::engine::general_purpose::STANDARD.encode(bytes),"mimeType":"text/plain; charset=utf-8"}));
         let requests=transport.requests.lock().unwrap();assert!(requests[2].headers.is_empty());assert!(requests[1].headers.contains_key("Authorization"));
+    }
+
+    #[tokio::test]
+    async fn library_file_content_explicit_download_uses_attachment_route_and_original_bytes() {
+        for (params,endpoint) in [
+            (json!({"library_file_id":"libfile_fde1_fixture","file_id":"file-old","download":true}),"/files/library/files/libfile_fde1_fixture/download_url"),
+            (json!({"library_file_id":"libfile_old","file_id":"file-old#part","gizmo_id":"gizmo","download":true}),"/files/download/file-old*part?gizmo_id=gizmo"),
+        ] {
+            let service=ChatgptService::default();
+            let transport=instructions_transport(&[200,200],&[json!({
+                "content_url":"https://files.example.test/preview","download_url":"https://files.example.test/original"
+            }),Value::Null]);
+            transport.responses.lock().unwrap()[1].body=vec![0,255,10];
+            let mut req=library_request("file-download",ServiceOperation::LibraryFileContent);
+            req.params=params;
+            assert_eq!(service.read_with(req,share_rpc,&transport).await.unwrap().body["bytesBase64"],"AP8K");
+            let requests=transport.requests.lock().unwrap();
+            assert!(requests[0].url.ends_with(endpoint));
+            assert_eq!(requests[1].url,"https://files.example.test/original");
+            assert!(requests[1].headers.is_empty());
+        }
+        for value in [json!(false),json!("true"),json!(null)] {
+            assert!(library_file_route(&json!({"library_file_id":"libfile_fde1_fixture","download":value}),true).is_err());
+        }
+        assert!(library_file_route(&json!({"library_file_id":"libfile_fde1_fixture","download":true}),false).is_err());
     }
 
     #[tokio::test]

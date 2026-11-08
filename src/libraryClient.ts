@@ -115,9 +115,10 @@ export async function readLibraryFile(access: LibraryAccess, id: string, signal:
   return parseLibraryFile(await readChatgptService("library_file", { library_file_id: id }, access.identity, signal), id);
 }
 
-export async function readLibraryFileContent(access: LibraryAccess, file: LibraryFile, signal: AbortSignal): Promise<{ bytes: ArrayBuffer; mimeType: string }> {
+export async function readLibraryFileContent(access: LibraryAccess, file: LibraryFile, signal: AbortSignal, mode: "preview" | "download" = "preview"): Promise<{ bytes: ArrayBuffer; mimeType: string }> {
   if (!access.available) throw Error("当前账号暂不支持资料库。");
   const params: Record<string, unknown> = { library_file_id: file.id };
+  if (mode === "download") params.download = true;
   if (file.file_id) params.file_id = file.file_id;
   if (typeof file.gizmo_id === "string" && file.gizmo_id) params.gizmo_id = file.gizmo_id;
   const body = await readChatgptService("library_file_content", params, access.identity, signal);
@@ -128,7 +129,7 @@ export async function readLibraryFileContent(access: LibraryAccess, file: Librar
     || !/^[\w!#$&^.+-]+\/[\w!#$&^.+-]+$/u.test(mime))
     throw Error("文件内容响应无效，请重试。");
   const raw = atob(body.bytesBase64);
-  if (raw.length > LIBRARY_PREVIEW_MAX_BYTES) throw Error("文件过大，无法预览。");
+  if (raw.length > LIBRARY_PREVIEW_MAX_BYTES) throw Error(mode === "download" ? "文件过大，无法下载。" : "文件过大，无法预览。");
   const bytes = new Uint8Array(raw.length);
   for (let index = 0; index < raw.length; index++) bytes[index] = raw.charCodeAt(index);
   return { bytes: bytes.buffer, mimeType: mime };

@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { X } from "lucide-react";
+import { Download, X } from "lucide-react";
 import { readLibraryFile, readLibraryFileContent, type LibraryAccess } from "../libraryClient";
 import { LIBRARY_PREVIEW_MAX_BYTES, libraryPreviewKind, type LibraryFile } from "../libraryPreview";
 import { serviceErrorMessage } from "../chatgptService";
@@ -29,6 +29,8 @@ export const LibraryPreviewPane: React.FC<{ request: LibraryPreviewRequest; onCl
   const [revision, setRevision] = useState(0);
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageError, setImageError] = useState(false);
+  const [download, setDownload] = useState<{ request: LibraryPreviewRequest; error?: string } | null>(null);
+  const downloadOperation = useRef<AbortController | null>(null);
   const [storedWidth, setStoredWidth] = useState<number | null>(() => {
     const stored = localStorage.getItem("app-shell:right-panel-width:v3");
     if (stored === null) return null;
@@ -96,6 +98,10 @@ export const LibraryPreviewPane: React.FC<{ request: LibraryPreviewRequest; onCl
     return () => { window.removeEventListener("keydown", keydown, true); clearTimeout(timeout); };
   }, [request, onClose]);
   useEffect(() => () => dragCleanup.current?.(), [request]);
+  useLayoutEffect(() => () => {
+    downloadOperation.current?.abort();
+    downloadOperation.current = null;
+  }, [request]);
   const full = standalone || (bounds.width > 0 && bounds.width < 672);
   const maxWidth = Math.max(320, bounds.width - 352);
   const initialWidth = bounds.width ? Math.max(320, Math.min(bounds.height * 1.6, bounds.width - 500), Math.min(640, bounds.width - 352)) : 600;
@@ -130,6 +136,39 @@ export const LibraryPreviewPane: React.FC<{ request: LibraryPreviewRequest; onCl
   const name = file?.file_name ?? request.name;
   const tooLarge = file?.file_size_bytes != null && file.file_size_bytes > LIBRARY_PREVIEW_MAX_BYTES;
   const pendingType = specialArtifact || (kind && ["pdf", "artifact", "html", "deep-research"].includes(kind));
+  const canDownload = file && !tooLarge && !specialArtifact && kind !== "deep-research" && file.state !== "trashed"
+    && (file.provider == null || file.provider === "native");
+  const currentDownload = download?.request === request && !request.controller.signal.aborted ? download : null;
+  const downloadFile = async () => {
+    if (!file || !canDownload || downloadOperation.current || request.controller.signal.aborted) return;
+    const controller = new AbortController();
+    downloadOperation.current = controller;
+    const cancel = () => controller.abort();
+    request.controller.signal.addEventListener("abort", cancel, { once: true });
+    setDownload({ request });
+    try {
+      const { bytes, mimeType } = await readLibraryFileContent(request.access, file, controller.signal, "download");
+      controller.signal.throwIfAborted();
+      const url = URL.createObjectURL(new Blob([bytes], { type: mimeType }));
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = file.file_name.split(/[\\/]/u).at(-1) || "download";
+      anchor.rel = "noopener";
+      try {
+        document.body.appendChild(anchor);
+        anchor.click();
+      } finally {
+        anchor.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 0);
+      }
+      setDownload(null);
+    } catch (cause) {
+      if (!controller.signal.aborted) setDownload({ request, error: serviceErrorMessage(cause) });
+    } finally {
+      request.controller.signal.removeEventListener("abort", cancel);
+      if (downloadOperation.current === controller) downloadOperation.current = null;
+    }
+  };
   return <aside ref={pane} className={`library-preview-pane${full ? " full" : ""}`} style={{ width: full ? "100%" : actualWidth }} aria-label="文件预览">
     {!full && <div role="separator" tabIndex={0} aria-label="调整工作空间窗格大小" aria-orientation="vertical"
       aria-valuemin={320} aria-valuemax={Math.round(maxWidth)} aria-valuenow={Math.round(actualWidth)} className="library-preview-resize"
@@ -140,9 +179,12 @@ export const LibraryPreviewPane: React.FC<{ request: LibraryPreviewRequest; onCl
         }
       }} />}
     <header className="library-preview-header"><span title={name}>{name}</span>
+      {canDownload && <button type="button" aria-label="下载文件" title="下载文件" disabled={!!currentDownload && currentDownload.error === undefined}
+        onClick={downloadFile}><Download size={18} aria-hidden="true" /></button>}
       <button type="button" aria-label="关闭预览" onClick={onClose}><X size={18} aria-hidden="true" /></button>
     </header>
     <div className={`library-preview-body${kind === "text" || kind === "markdown" ? " document" : ""}`}>
+      {currentDownload?.error !== undefined && <p role="alert">无法下载文件。{currentDownload.error}</p>}
       {(!current || current.loading) && <p role="status" aria-label="正在加载预览">正在加载预览</p>}
       {current?.error && <section><h3>{file ? "无法显示预览" : "无法打开此文件"}</h3><p role="alert">{current.error}</p>
         {current.retry && <button type="button" onClick={() => setRevision(value => value + 1)}>重试</button>}</section>}

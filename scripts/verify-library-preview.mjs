@@ -36,6 +36,8 @@ respond=async request=>({requestId:request.requestId,identity,body:{bytesBase64:
 const content=await library.readLibraryFileContent(access,original,new AbortController().signal);
 assert.equal(new TextDecoder().decode(content.bytes),'中文');assert.equal(content.mimeType,'text/plain');
 assert.equal(calls[1].args.request.operation,'library_file_content');assert.equal(JSON.stringify(calls[1].args.request.params),'{"library_file_id":"file-a"}');
+await library.readLibraryFileContent(access,original,new AbortController().signal,'download');
+assert.equal(JSON.stringify(calls.at(-1).args.request.params),'{"library_file_id":"file-a","download":true}');
 respond=async request=>({requestId:request.requestId,identity,body:{bytesBase64:'AQEB'.repeat(3*1024*1024),mimeType:'application/octet-stream'}});
 assert.equal((await library.readLibraryFileContent(access,original,new AbortController().signal)).bytes.byteLength,9*1024*1024,'valid binary above the old 8MiB image limit must survive the frontend decoder');
 respond=async request=>({requestId:request.requestId,identity,body:{bytesBase64:'',mimeType:'text/plain'}});

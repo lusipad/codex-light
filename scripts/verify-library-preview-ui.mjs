@@ -52,7 +52,7 @@ const compile = file => ts.transpileModule(fs.readFileSync(file, "utf8"), { comp
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
 const preview = {}; vm.runInNewContext(compile("src/libraryPreview.ts"), { exports: preview });
 function paneHarness(stored = null) {
-  const hooks = [], effects = [], metadata = [], contents = [], revoked = [], created = [], timers = new Map(), listeners = new Map();
+  const hooks = [], effects = [], metadata = [], contents = [], revoked = [], created = [], downloads = [], timers = new Map(), listeners = new Map();
   let cursor = 0, writes = 0, nextTimer = 0, props, box = { width: 1200, height: 800 }, resizeCallback;
   const storage = new Map(stored === null ? [] : [["app-shell:right-panel-width:v3", stored]]);
   const React = {
@@ -69,23 +69,27 @@ function paneHarness(stored = null) {
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
     ResizeObserver: class { constructor(callback) { resizeCallback = callback; } observe() {} disconnect() {} },
     URL: { createObjectURL: blob => { created.push(blob); return `blob:fixture-${created.length}`; }, revokeObjectURL: url => revoked.push(url) },
+    document: { body: { appendChild() {} }, createElement: tag => {
+      assert.equal(tag, "a");
+      return { click() { downloads.push([this.href, this.download]); }, remove() {} };
+    } },
     window: { addEventListener: (name, fn) => { if (!listeners.has(name)) listeners.set(name, new Set()); listeners.get(name).add(fn); }, removeEventListener: (name, fn) => listeners.get(name)?.delete(fn) },
     setTimeout: fn => { timers.set(++nextTimer, fn); return nextTimer; }, clearTimeout: id => timers.delete(id),
     require: name => {
       if (name === "react") return React;
-      if (name === "lucide-react") return { X: "X" };
+      if (name === "lucide-react") return { Download: "Download", X: "X" };
       if (name.endsWith(".css")) return {};
       if (name === "./MarkdownView") return { MarkdownView: "MarkdownView" };
       if (name === "../libraryPreview") return preview;
       if (name === "../chatgptService") return { serviceErrorMessage: error => error.message ?? error.code };
       if (name === "../libraryClient") return {
         readLibraryFile: (access, id, signal) => { const job = deferred(); metadata.push({ access, id, signal, ...job }); return job.promise; },
-        readLibraryFileContent: (access, file, signal) => { const job = deferred(); contents.push({ access, file, signal, ...job }); return job.promise; },
+        readLibraryFileContent: (access, file, signal, mode) => { const job = deferred(); contents.push({ access, file, signal, mode, ...job }); return job.promise; },
       };
       assert.fail(name);
     },
   });
-  return { metadata, contents, revoked, created, storage,
+  return { metadata, contents, revoked, created, downloads, storage,
     render(next = props) { props = next; cursor = 0; const tree = exports.LibraryPreviewPane(props);
       tree.props.ref.current = { parentElement: { getBoundingClientRect: () => box } };
       while (effects.length) effects.shift()(); return tree; },
@@ -100,6 +104,42 @@ const request = (id = "libfile_a") => ({ id, name: id, access, controller: new A
 const fileInfo = (name, mime = "text/plain", size = 20) => ({ id: "libfile_a", file_name: name, file_id: "file-a", mime_type: mime, file_size_bytes: size });
 const byType = (p, type) => walk(p.render()).find(node => node.type === type);
 const byButton = (p, name) => walk(p.render()).find(node => node.type === "button" && (node.props["aria-label"] === name || text(node) === name));
+for (const excluded of [{ provider: "google_drive" }, { state: "trashed" }, { library_artifact_type: "flashcards" }, { file_size_bytes: 41943041 }]) {
+  const pane = paneHarness();
+  pane.render({ request: request(), onClose() {} });
+  pane.metadata[0].resolve({ ...fileInfo("表格.csv", "text/csv"), ...excluded }); await flush();
+  assert.equal(byButton(pane, "下载文件"), undefined);
+  pane.unmount();
+}
+const downloadPane = paneHarness(), downloadRequest = request();
+downloadPane.render({ request: downloadRequest, onClose() {} });
+downloadPane.metadata[0].resolve(fileInfo("表格.csv", "text/csv")); await flush();
+assert.equal(downloadPane.contents.length, 0);
+const downloadButton = byButton(downloadPane, "下载文件");
+assert.ok(downloadButton, "an unsupported ordinary file still has a download action");
+downloadButton.props.onClick(); downloadButton.props.onClick();
+assert.equal(downloadPane.contents.length, 1);
+assert.equal(downloadPane.contents[0].mode, "download");
+assert.equal(byButton(downloadPane, "下载文件").props.disabled, true);
+downloadPane.contents[0].reject(Error("network")); await flush();
+assert.match(text(downloadPane.render()), /无法下载文件/);
+assert.equal(downloadPane.downloads.length, 0);
+byButton(downloadPane, "下载文件").props.onClick();
+const original = new Uint8Array([239, 187, 191, 0, 255, 10]);
+downloadPane.contents[1].resolve({ bytes: original.buffer, mimeType: "text/csv" }); await flush();
+assert.deepEqual(downloadPane.downloads, [["blob:fixture-1", "表格.csv"]]);
+assert.deepEqual(new Uint8Array(await downloadPane.created[0].arrayBuffer()), original);
+downloadPane.timers();
+assert.deepEqual(downloadPane.revoked, ["blob:fixture-1"]);
+byButton(downloadPane, "下载文件").props.onClick();
+downloadRequest.controller.abort();
+assert.equal(downloadPane.contents[2].signal.aborted, true);
+downloadPane.render({ request: request("libfile_next"), onClose() {} });
+downloadPane.contents[2].resolve({ bytes: original.buffer, mimeType: "text/csv" }); await flush();
+assert.equal(downloadPane.downloads.length, 1);
+assert.doesNotMatch(text(downloadPane.render()), /无法下载文件/);
+downloadPane.unmount();
+
 let closed = 0, p = paneHarness(), req = request(); p.render({ request: req, onClose: () => closed++ });
 assert.equal(p.metadata.length, 1); assert.equal(p.contents.length, 0, "metadata must precede bytes");
 p.metadata[0].resolve(fileInfo("真实.txt")); await flush(); assert.equal(p.contents.length, 1);
