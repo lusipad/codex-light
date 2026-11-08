@@ -127,6 +127,47 @@ async function ready(options={}) {const h=imagesHarness();h.render();await flush
   const h=await ready();button(h,"真实图像").props.onClick({currentTarget:{isConnected:true,focus(){}}});assert.ok(walk(h.render()).some(node=>node.props.role==="dialog"));assert.doesNotMatch(text(h.render()),/缩略图预览/);h.events.get("keydown")({key:"Escape",preventDefault(){},stopPropagation(){}});assert.equal(walk(h.render()).some(node=>node.props.role==="dialog"),false);h.unmount();
 }
 {
+  const h=await ready();
+  const trigger={isConnected:true,disabled:false,focus(){}};
+  const open=()=>button(h,"真实图像").props.onClick({currentTarget:trigger});
+  const title=()=>text(walk(h.render()).find(node=>node.props.id==="images-preview-title"));
+  open();
+  const galleryGrant=h.assets.find(asset=>asset.ref.id==="image");
+  const next=button(h,"下一张图像");
+  assert.equal(next.props.disabled,false,"a server cursor enables Next at the end of the loaded batch");
+  next.props.onClick();next.props.onClick();
+  assert.equal(h.histories.length,2,"Next starts only one history request");
+  assert.equal(button(h,"下一张图像").props.disabled,true);
+  h.histories[1].resolve(page([],"next2"));await flush();
+  assert.equal(title(),"真实图像","an empty page preserves the selection and dialog");
+  assert.equal(galleryGrant.signal.aborted,false,"ordinary pagination preserves the previous gallery grant");
+  h.events.get("keydown")({key:"ArrowRight",preventDefault(){}});
+  assert.equal(h.histories[2].cursor,"next2");
+  h.histories[2].resolve(page([{id:"later",title:"下一批原图",url:"https://example.invalid/later"}]));await flush();
+  assert.equal(title(),"下一批原图");
+  assert.equal(button(h,"下一张图像").props.disabled,true);
+  h.unmount();
+}
+{
+  const h=await ready(), trigger={isConnected:true,disabled:false,focus(){}};
+  const open=()=>button(h,"真实图像").props.onClick({currentTarget:trigger});
+  open();button(h,"下一张图像").props.onClick();button(h,"关闭图像预览").props.onClick();open();
+  h.histories[1].resolve(page([{id:"late",title:"迟到的新图",url:"https://example.invalid/late"}]));await flush();
+  assert.equal(text(walk(h.render()).find(node=>node.props.id==="images-preview-title")),"真实图像","an older visit cannot advance a reopened copy of the same image");
+  h.unmount();
+}
+{
+  const h=await ready();
+  button(h,"真实图像").props.onClick({currentTarget:{isConnected:true,focus(){}}});
+  button(h,"下一张图像").props.onClick();
+  h.histories[1].resolve(page([{id:"image",output_blocked:true},{id:"new",title:"可用新图",url:"https://example.invalid/new"}]));await flush();
+  const tree=h.render();
+  assert.equal(walk(tree).some(node=>node.props.role==="dialog"),false,"a newly blocked selection closes instead of advancing");
+  assert.equal(walk(tree).some(node=>node.props.inert===true),false);
+  assert.equal(button(h,"真实图像").props.disabled,true);
+  h.unmount();
+}
+{
   const h=imagesHarness();h.render();await flush();h.accesses[0].resolve(access);await flush();h.catalogs[0].resolve(catalog);
   const recent=page([{id:"distinct",title:"原图与缩略图",url:"https://example.invalid/full",encodings:{thumbnail:{path:"https://example.invalid/thumb"}}}]);
   recent.assets.push({...recent.assets[0],role:"recent_preview",assetKey:"original"});

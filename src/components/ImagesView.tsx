@@ -47,22 +47,31 @@ interface PreviewProps {
   pages: ImagesHistoryResult[];
   access: ImagesAccess;
   scope: AbortSignal;
+  hasNextPage: boolean;
+  paging: boolean;
+  onLoadNextPage: () => void;
   onSelect: (id: string) => void;
   onClose: () => void;
 }
-const ImagesPreview: React.FC<PreviewProps> = ({ images, selectedId, pages, access, scope, onSelect, onClose }) => {
+const ImagesPreview: React.FC<PreviewProps> = ({ images, selectedId, pages, access, scope, hasNextPage, paging, onLoadNextPage, onSelect, onClose }) => {
   const dialog = useRef<HTMLDivElement>(null);
   const close = useRef<HTMLButtonElement>(null);
   const index = images.findIndex(image => image.id === selectedId), image = images[index];
   const [retry, setRetry] = useState(0);
   const [failedId, setFailedId] = useState<string | null>(null);
+  const nextImage = images[index + 1];
+  const canAdvance = !!nextImage || (hasNextPage && !paging);
+  const advance = () => {
+    if (nextImage) onSelect(nextImage.id);
+    else if (canAdvance) onLoadNextPage();
+  };
+  useEffect(() => { close.current?.focus(); }, [selectedId]);
   useEffect(() => {
-    close.current?.focus();
     const keydown = (event: KeyboardEvent) => {
-      if (event.isComposing) return;
+      if (event.isComposing || event.keyCode === 229) return;
       if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); }
       else if (event.key === "ArrowLeft" && index > 0) { event.preventDefault(); onSelect(images[index - 1].id); }
-      else if (event.key === "ArrowRight" && index < images.length - 1) { event.preventDefault(); onSelect(images[index + 1].id); }
+      else if (event.key === "ArrowRight" && canAdvance) { event.preventDefault(); advance(); }
       else if (event.key === "Tab") {
         const buttons = [...(dialog.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [])];
         const first = buttons[0], last = buttons.at(-1);
@@ -72,7 +81,7 @@ const ImagesPreview: React.FC<PreviewProps> = ({ images, selectedId, pages, acce
     };
     document.addEventListener("keydown", keydown, true);
     return () => document.removeEventListener("keydown", keydown, true);
-  }, [index, images, onSelect, onClose]);
+  });
   if (!image) return null;
   const original = selectHistoryPreview(image, pages);
   return createPortal(<div className="images-preview-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
@@ -84,7 +93,7 @@ const ImagesPreview: React.FC<PreviewProps> = ({ images, selectedId, pages, acce
       <div className="images-preview-footer">{failedId === image.id && <span role="status">无法加载原图</span>}<div className="images-preview-navigation">
         {original && <button onClick={() => { setFailedId(null); setRetry(value => value + 1); }}>重新加载预览</button>}
         <button disabled={index <= 0} onClick={() => onSelect(images[index - 1].id)} aria-label="上一张图像">上一张</button>
-        <button disabled={index >= images.length - 1} onClick={() => onSelect(images[index + 1].id)} aria-label="下一张图像">下一张</button>
+        <button disabled={!canAdvance} onClick={advance} aria-label="下一张图像">下一张</button>
       </div></div>
     </div>
   </div>, document.body);
@@ -104,7 +113,8 @@ export const ImagesView: React.FC = () => {
   const [section, setSection] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [notice, setNotice] = useState("");
-  const [preview, setPreview] = useState<string | null>(null);
+  const [preview, setPreview] = useState<{ id: string } | null>(null);
+  const previewId = preview?.id ?? null;
   const [assetRevision, setAssetRevision] = useState({ catalog: 0, history: 0 });
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const root = useRef<HTMLDivElement>(null), composer = useRef<HTMLDivElement>(null);
@@ -200,19 +210,29 @@ export const ImagesView: React.FC = () => {
   };
   const images = mergeImagesHistory(pages), visibleImages = images.filter(image => !hidden.has(image.id));
   const previewImages = images.filter(image => !image.output_blocked && (hidden.has(image.id)
-    ? image.id === preview && selectHistoryPreview(image, pages)?.role === "recent_preview"
+    ? image.id === previewId && selectHistoryPreview(image, pages)?.role === "recent_preview"
     : selectHistoryAsset(image, pages) || selectHistoryPreview(image, pages)));
   const previewIds = new Set(previewImages.map(image => image.id));
+  const activePreview = previewId !== null && previewIds.has(previewId);
   const cursor = pages.at(-1)?.cursor ?? null;
-  const loadMore = async () => {
-    if (!access?.available || !scope || scope !== source.current || scope.signal.aborted || pending.current || historyLoading || !cursor) return;
+  const hasNextPage = !!cursor && !historyError && !historyLoading;
+  const loadMore = async (advanceFrom?: { id: string }) => {
+    if (!access?.available || !scope || scope !== source.current || scope.signal.aborted || pending.current || !hasNextPage || !cursor || usedCursors.current.has(cursor)) return;
     pending.current = true; setPaging(true); setHistoryError(null);
     try {
       const result = await readImagesHistory(access, cursor, scope.signal);
       if (scope.signal.aborted || scope !== source.current) return;
       usedCursors.current.add(cursor);
-      // Consume a later deny even when this response also reports a repeated cursor.
-      rotateAssets("history"); setPages(previous => [...previous, result]);
+      const nextPages = [...pages, result];
+      // The merged snapshot hides denials immediately and keeps unrelated grants.
+      setPages(nextPages);
+      const previousIds = new Set(images.map(image => image.id));
+      const next = advanceFrom && mergeImagesHistory(nextPages).find(image => !previousIds.has(image.id)
+        && (selectHistoryAsset(image, nextPages) || selectHistoryPreview(image, nextPages)));
+      setPreview(current => {
+        if (current && result.items.some(item => item.id === current.id && (item.is_archived || item.output_blocked))) return null;
+        return next && current === advanceFrom ? { id: next.id } : current;
+      });
       if (result.cursor && usedCursors.current.has(result.cursor)) setHistoryError("图像服务返回重复分页，请重试。");
     } catch (cause) {
       if (!scope.signal.aborted) {
@@ -238,19 +258,19 @@ export const ImagesView: React.FC = () => {
     {!historyLoading && !historyError && visibleImages.length === 0 && !cursor && <p className="images-message">你用 ChatGPT 创建的图像将显示在这里</p>}
     <ImagesHistoryMasonry items={visibleImages.map(image => ({ id: image.id, content:
       <button className="images-history-card" data-image-history={image.id} disabled={historyLoading || !previewIds.has(image.id)}
-        aria-label={image.title || "查看图像"} onClick={event => { if (!scope || scope !== source.current || scope.signal.aborted || historyLoading) return; previewTrigger.current = event.currentTarget; setPreview(image.id); }}>
+        aria-label={image.title || "查看图像"} onClick={event => { if (!scope || scope !== source.current || scope.signal.aborted || historyLoading) return; previewTrigger.current = event.currentTarget; setPreview({ id: image.id }); }}>
         {image.output_blocked ? <span className="images-asset-placeholder">无法显示此图像</span> : access && <ImagesAsset key={`${assetRevision.history}:${image.id}`} asset={selectHistoryAsset(image, pages)} access={access} scope={assetScope}
           onUnavailable={() => {
             if (!selectHistoryAsset(image, pages)) return;
             setHidden(previous => new Set(previous).add(image.id));
-            if (preview === image.id && selectHistoryPreview(image, pages)?.role !== "recent_preview") closePreview();
+            if (previewId === image.id && selectHistoryPreview(image, pages)?.role !== "recent_preview") closePreview();
           }} />}
       </button> }))} />
     {historyError && <div role="alert" className="images-inline-error">无法加载图像：{historyError}<button className="images-retry" disabled={paging || historyLoading} aria-label="重试加载图像" onClick={refresh}>重试</button></div>}
-    <LibraryPagination key={`${revision}:${pages.length}`} hasNextPage={!!cursor && !historyError && !historyLoading} fetching={historyLoading || paging} onLoadNextPage={() => void loadMore()} />
+    <LibraryPagination key={`${revision}:${pages.length}`} hasNextPage={hasNextPage} fetching={historyLoading || paging} onLoadNextPage={() => void loadMore()} />
   </section>;
   return <div ref={root} className={`images-view-container${access?.newLayout === true ? " images-layout-wide" : ""}`}>
-    <div className="images-scroll" inert={preview !== null ? true : undefined}><div className="images-page-content">
+    <div className="images-scroll" inert={activePreview || undefined}><div className="images-page-content">
       <header className="images-view-header"><h1>图像</h1>{access?.available && <button className="images-refresh" onClick={refresh} disabled={loading}>刷新</button>}</header>
       {error && <div role="alert" className="images-inline-error">{error}<button className="images-retry" onClick={refresh}>重试</button></div>}
       {!error && !access && loading && <p role="status">正在加载图像…</p>}
@@ -289,10 +309,12 @@ export const ImagesView: React.FC = () => {
         {!historyTab && history}
       </>}
     </div></div>
-    {access?.available && <div className="images-composer-overlay" ref={composer} inert={preview !== null ? true : undefined} aria-label="图像草稿（生成尚未接入）">
+    {access?.available && <div className="images-composer-overlay" ref={composer} inert={activePreview || undefined} aria-label="图像草稿（生成尚未接入）">
       <textarea ref={draftInput} aria-label="图像提示词草稿" placeholder="描述你想创建的图像" value={draft} rows={2} onChange={event => setDraft(event.target.value)} />
       <div className="images-composer-footer"><span role="status">{notice || "本地草稿；生成、上传和编辑尚未接入。"}</span><button className="images-composer-send" disabled aria-label="生成图像尚未连接"><ArrowUp size={18} /></button></div>
     </div>}
-    {preview && access?.available && previewImages.some(image => image.id === preview) && <ImagesPreview images={previewImages} selectedId={preview} pages={pages} access={access} scope={assetScope} onSelect={setPreview} onClose={closePreview} />}
+    {preview && activePreview && access?.available && <ImagesPreview images={previewImages} selectedId={preview.id} pages={pages} access={access}
+      scope={assetScope} hasNextPage={hasNextPage} paging={paging} onLoadNextPage={() => void loadMore(preview)}
+      onSelect={id => setPreview({ id })} onClose={closePreview} />}
   </div>;
 };
