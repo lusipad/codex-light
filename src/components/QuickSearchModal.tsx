@@ -312,6 +312,8 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   const chatSearchScopeRef = useRef(chatSearchScope);
   chatSearchScopeRef.current = chatSearchScope;
   const chatPageRequest = useRef<object | null>(null);
+  const pendingChatSelection = useRef<{ scope: object; ids: Set<string>; selectedId?: string } | null>(null);
+  const resultsRef = useRef<HTMLDivElement>(null);
   const [chatPagination, setChatPagination] = useState<ChatPagination | null>(null);
   const chatPaging = chatPagination?.scope === chatSearchScope ? chatPagination : null;
   const projectScope = JSON.stringify(workspaceRoots?.length ? workspaceRoots : workspacePath ? [workspacePath] : []);
@@ -724,7 +726,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
 
     remoteThreads.slice(0, threadLimit).forEach((t) => {
       results.push({
-        id: `rth-${t.id}`,
+        id: `th-${t.id}`,
         category: "thread",
         section: "聊天",
         title: t.name || t.preview || t.id,
@@ -769,10 +771,15 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
       const cursor = chatPaging?.nextCursor === undefined ? remote?.nextCursor : chatPaging.nextCursor;
       const chats = results.filter(item => item.category === "thread");
       if (chatPaging?.loading || remoteThreads.length + localThreads.length > threadLimit || cursor != null) {
+        const visibleIds = new Set(chats.map(item => item.id));
         chats.push({
           id: "show-more-chats", category: "action", section: "聊天",
           title: chatPaging?.loading ? "正在搜索会话…" : "显示更多", icon: <MessageSquare size={14} />,
-          onSelect: () => void loadMoreChats(cursor),
+          onSelect: () => {
+            if (chatPaging?.loading || chatPageRequest.current === chatSearchScope) return;
+            pendingChatSelection.current = { scope: chatSearchScope, ids: visibleIds };
+            void loadMoreChats(cursor);
+          },
         });
       }
       return chats;
@@ -1029,6 +1036,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
     skills,
     remoteResults,
     chatPaging,
+    chatSearchScope,
     loadMoreChats,
     pathQuery,
     pathLookup,
@@ -1048,20 +1056,38 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
     buildCmd,
   ]);
 
+  const selectAndScroll = useCallback((index: number, block: ScrollLogicalPosition = "nearest") => {
+    setSelectedIndex(index);
+    resultsRef.current?.querySelector<HTMLElement>(`[data-search-index="${index}"]`)?.scrollIntoView({ block });
+  }, []);
+
   useEffect(() => {
+    const pending = pendingChatSelection.current;
+    if (pending?.scope === chatSearchScope) {
+      if (!chatPaging?.loading) pendingChatSelection.current = null;
+      const kept = items.findIndex(item => item.id === pending.selectedId);
+      const next = kept >= 0 ? kept : items.findIndex(item => item.category === "thread" && !pending.ids.has(item.id));
+      if (next >= 0) {
+        pending.selectedId = items[next].id;
+        selectAndScroll(next, "center");
+        return;
+      }
+      const more = items.findIndex(item => item.id === "show-more-chats");
+      selectAndScroll(more >= 0 ? more : Math.max(0, items.length - 1));
+      return;
+    }
+    pendingChatSelection.current = null;
     setSelectedIndex(0);
-  }, [items]);
+  }, [items, chatSearchScope, chatPaging?.loading, selectAndScroll]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.nativeEvent.isComposing || e.keyCode === 229) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setSelectedIndex((idx) => (idx + 1) % Math.max(1, items.length));
+      selectAndScroll((selectedIndex + 1) % Math.max(1, items.length));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      setSelectedIndex(
-        (idx) => (idx - 1 + items.length) % Math.max(1, items.length)
-      );
+      selectAndScroll((selectedIndex - 1 + items.length) % Math.max(1, items.length));
     } else if (e.key === "Tab") {
       e.preventDefault();
       if (items.length === 0) { scopeTriggerRef.current?.focus(); return; }
@@ -1073,14 +1099,14 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
             const prevSec = items[i].section;
             let firstOfPrev = i;
             while (firstOfPrev > 0 && items[firstOfPrev - 1].section === prevSec) firstOfPrev--;
-            setSelectedIndex(firstOfPrev);
+            selectAndScroll(firstOfPrev);
             return;
           }
         }
       } else {
         for (let i = selectedIndex + 1; i < items.length; i++) {
           if (items[i].section !== currentSec) {
-            setSelectedIndex(i);
+            selectAndScroll(i);
             return;
           }
         }
@@ -1159,7 +1185,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
         </div>
 
 
-        <div className="quick-search-results">
+        <div className="quick-search-results" ref={resultsRef}>
           {loading && (
             <div
               className="empty-hint-small"
@@ -1189,6 +1215,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
                     className={`quick-search-row ${
                       index === selectedIndex ? "active" : ""
                     }`}
+                    data-search-index={index}
                     onClick={item.onSelect}
                     onMouseEnter={() => setSelectedIndex(index)}
                   >

@@ -5,7 +5,7 @@ import ts from "typescript";
 
 const parse = path => ts.createSourceFile(path, fs.readFileSync(path, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const page = parse("src/components/QuickSearchModal.tsx"), app = parse("src/App.tsx"), folderDialog = parse("src/components/SearchFolderDialog.tsx");
-let items, keydown, focus, appSlash, sidebarSearch, selectedFileSearchText, rememberWorkspaceFile, pickSearchFolder, finishFolderPicker, folderLocation, folderListEffect;
+let items, keydown, focus, pageSelection, appSlash, sidebarSearch, selectedFileSearchText, rememberWorkspaceFile, pickSearchFolder, finishFolderPicker, folderLocation, folderListEffect;
 const shortcuts = {};
 const helpers = [];
 function visit(node, ast) {
@@ -23,6 +23,8 @@ function visit(node, ast) {
   }
   if (ast === page && ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect" &&
       node.arguments[0]?.getText(ast).includes("lastActiveElementRef.current = document.activeElement")) focus = node.arguments[0];
+  if (ast === page && ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect" &&
+      node.arguments[0]?.getText(ast).includes("pendingChatSelection.current")) pageSelection = node.arguments[0];
   if (ast === app && ts.isJsxAttribute(node) && node.name.getText(ast) === "onSelectSlashCommand") appSlash = node.initializer.expression;
   if (ast === app && ts.isJsxAttribute(node) && node.name.getText(ast) === "onOpenQuickSearch") sidebarSearch = node.initializer.expression;
   if (ast === app && ts.isPropertyAssignment(node) && ["command-palette", "command-palette-alt", "file-search"].includes(node.name.text) &&
@@ -47,6 +49,7 @@ function mount(overrides = {}) {
     threads: [], workspaceFileHits: [], recentFiles: [], recentHistory: [], recentLookup: null, skills: [], SLASH_COMMANDS: [slash],
     REMOTE_THREAD_LIMIT: 9, REMOTE_CHAT_LIMIT: 25,
     chatPaging: null,
+    chatSearchScope: {}, chatPageRequest: { current: null }, pendingChatSelection: { current: null },
     runCmd: "npm run dev", testCmd: "npm test", buildCmd: "npm run build",
     selectedIndex: 0,
     baseNameFsPath: path => path.split(/[\\/]/).at(-1),
@@ -61,6 +64,7 @@ function mount(overrides = {}) {
     context[name] = (...args) => calls.push([name, ...args]);
   }
   context.setSelectedIndex = value => { context.selectedIndex = typeof value === "function" ? value(context.selectedIndex) : value; };
+  context.selectAndScroll = (index, block = "nearest") => { context.selectedIndex = index; calls.push(["scroll", index, block]); };
   context.setQuery = value => { context.query = value; };
   for (const helper of helpers) vm.runInNewContext(ts.transpileModule(helper.getText(page), {}).outputText, context);
   return { context, calls, results: () => execute(items, page, context)() };
@@ -295,10 +299,33 @@ function mount(overrides = {}) {
     setShowQuickSearch: open => entry.push(open),
   })();
   assert.deepEqual(entry, ["", "chats", true], "sidebar opens the dedicated chat mode");
+  results.at(-1).onSelect();
+  assert.equal(view.context.pendingChatSelection.current.ids.size, 25);
   view.context.chatPaging = { limit: 50, threads: [{ id: "0", name: "same server hit" }, { id: "new", name: "new hit" }] };
   const expanded = view.results();
   assert.equal(expanded.length, 31, "expanded results deduplicate loaded history against server pages");
   assert.ok(expanded.every(item => item.category === "thread"));
+  view.context.chatPaging.loading = true;
+  view.context.items = expanded;
+  execute(pageSelection, page, view.context)();
+  assert.equal(expanded[view.context.selectedIndex].title, "new hit", "a server duplicate is not a newly revealed chat");
+  assert.equal(view.calls.at(-1)[2], "center");
+  assert.equal(view.context.pendingChatSelection.current.selectedId, "th-new");
+  view.context.chatPaging.loading = false;
+  view.context.items = [{ id: "th-other-new", category: "thread" }, ...expanded];
+  execute(pageSelection, page, view.context)();
+  assert.equal(view.context.items[view.context.selectedIndex].id, "th-new", "late page completion preserves the first newly selected chat");
+  assert.equal(view.context.pendingChatSelection.current, null);
+  view.context.pendingChatSelection.current = { scope: {}, ids: new Set() };
+  execute(pageSelection, page, view.context)();
+  assert.equal(view.context.selectedIndex, 0);
+  assert.equal(view.context.pendingChatSelection.current, null, "changed scope drops the old selection");
+  view.context.items = results;
+  view.context.pendingChatSelection.current = { scope: view.context.chatSearchScope, ids: new Set(results.map(item => item.id)) };
+  execute(pageSelection, page, view.context)();
+  assert.equal(results[view.context.selectedIndex].id, "show-more-chats", "failed page keeps the retry action selected");
+  execute(keydown, page, view.context)({ key: "ArrowDown", nativeEvent: {}, preventDefault() {} });
+  assert.deepEqual(view.calls.at(-1), ["scroll", 0, "nearest"], "keyboard wrap reveals the newly selected row");
 }
 {
   const view = mount();
