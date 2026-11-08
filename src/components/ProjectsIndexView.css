@@ -89,6 +89,7 @@
     grid-template-columns: minmax(0, 1fr) auto;
   }
 
+  .projects-official-table .project-row-shortcut,
   .projects-official-table .project-col-updated {
     display: none;
   }

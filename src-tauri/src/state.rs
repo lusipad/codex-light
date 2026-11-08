@@ -11,6 +11,7 @@ const DESKTOP_PROJECT_ROOTS_KEY: &str = "electron-saved-workspace-roots";
 const DESKTOP_WORKSPACE_LABELS_KEY: &str = "electron-workspace-root-labels";
 const ACTIVE_WORKSPACE_ROOTS_KEY: &str = "active-workspace-roots";
 const PINNED_THREAD_IDS_KEY: &str = "pinned-thread-ids";
+const PINNED_PROJECT_IDS_KEY: &str = "pinned-project-ids";
 const ARCHIVED_THREADS_KEY: &str = "archivedThreads";
 const THREAD_WORKSPACE_HINTS_KEY: &str = "thread-workspace-root-hints";
 const PERSISTED_ATOM_STATE_KEY: &str = "electron-persisted-atom-state";
@@ -520,6 +521,25 @@ mod workspace_transition_tests {
         assert_eq!(manager.toggle_thread_pinned_at_path("first", false, &path).unwrap(), ["second"]);
         let persisted: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         assert_eq!(persisted[PINNED_THREAD_IDS_KEY], json!(["second"]));
+        fs::remove_file(&path).unwrap();
+        fs::remove_dir(&directory).unwrap();
+    }
+
+    #[test]
+    fn project_pins_append_preserve_thread_pins_and_remove_both_project_ids() {
+        let (manager, directory) = fixture();
+        let path = directory.join("project-pin-state.json");
+        manager.toggle_thread_pinned_at_path("chat", true, &path).unwrap();
+        assert_eq!(manager.set_project_pinned_at_path("first", None, true, &path).unwrap(), ["first"]);
+        assert_eq!(manager.set_project_pinned_at_path("second", Some("legacy-second"), true, &path).unwrap(), ["first", "legacy-second"]);
+        assert_eq!(manager.set_project_pinned_at_path("second", Some("legacy-second"), true, &path).unwrap(), ["first", "legacy-second"]);
+        assert!(manager.set_project_pinned_at_path("first", None, false, &directory).is_err());
+        assert_eq!(manager.list_pinned_projects(), ["first", "legacy-second"]);
+        manager.set_value_persisted_at_path(PINNED_PROJECT_IDS_KEY, json!(["first", "second", "legacy-second"]), &path).unwrap();
+        assert_eq!(manager.set_project_pinned_at_path("second", Some("legacy-second"), false, &path).unwrap(), ["first"]);
+        let disk: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(disk[PINNED_THREAD_IDS_KEY], json!(["chat"]));
+        assert_eq!(disk[PINNED_PROJECT_IDS_KEY], json!(["first"]));
         fs::remove_file(&path).unwrap();
         fs::remove_dir(&directory).unwrap();
     }
@@ -2040,6 +2060,34 @@ impl DesktopStateManager {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    pub fn list_pinned_projects(&self) -> Vec<String> {
+        self.get_value(PINNED_PROJECT_IDS_KEY).as_array().into_iter().flatten()
+            .filter_map(Value::as_str).map(str::to_owned).collect()
+    }
+
+    pub fn set_project_pinned(&self, project_id: &str, legacy_project_id: Option<&str>, pinned: bool) -> Result<Vec<String>, String> {
+        self.set_project_pinned_at_path(project_id, legacy_project_id, pinned, &desktop_global_state_path())
+    }
+
+    fn set_project_pinned_at_path(&self, project_id: &str, legacy_project_id: Option<&str>, pinned: bool, state_path: &Path) -> Result<Vec<String>, String> {
+        if project_id.trim().is_empty() {
+            return Err("Project id is required".into());
+        }
+        let updated = self.update_value_persisted_at_path(PINNED_PROJECT_IDS_KEY, |value| {
+            let mut ids: Vec<&str> = value.as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+            let matches = |id: &str| id == project_id || Some(id) == legacy_project_id;
+            if pinned {
+                if !ids.iter().any(|id| matches(id)) {
+                    ids.push(legacy_project_id.unwrap_or(project_id));
+                }
+            } else {
+                ids.retain(|id| !matches(id));
+            }
+            Ok(json!(ids))
+        }, state_path)?;
+        serde_json::from_value(updated).map_err(|error| error.to_string())
     }
 
     pub fn toggle_thread_pinned(&self, thread_id: &str, pinned: bool) -> Result<Vec<String>, String> {

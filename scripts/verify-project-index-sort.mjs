@@ -138,6 +138,17 @@ for (const label of ["名称", "已更新"]) {
   assert.equal(sortButton(tree, label).props.type, "button");
   assert.equal(sortButton(tree, label).props.title, undefined, "PS09: sorting must not introduce an unobserved native hover tooltip");
 }
+const beforePinOrder = ids(tree);
+props.isProjectPinned = id => id === "c";
+props.onSetProjectPinned = (id, pinned) => actions.push(["project-pin", id, pinned]);
+tree = render();
+const pinnedProject = nodes(tree, cls("projects-table-group")).find(row => row.props.key === "c");
+const pinButton = nodes(pinnedProject, node => node.props?.["aria-label"] === "取消置顶项目")[0];
+assert.ok(pinButton, "PS17: a pinned project has a dedicated unpin control");
+pinButton.props.onClick();
+nodes(pinnedProject, node => node.props?.triggerAriaLabel === "项目操作")[0].props.onSelect("pin");
+assert.deepEqual(actions.splice(0), [["project-pin", "c", false], ["project-pin", "c", false]]);
+assert.deepEqual(ids(tree), beforePinOrder, "PS17: pin state does not change project-center sorting");
 const css = fs.readFileSync("src/components/ProjectsIndexView.css", "utf8");
 props.threads = [
   { id: "matching", projectId: "d", name: "修复 Session 路径", cwd: "D:/isolated/chat", updatedAt: now - 60_000 },
@@ -232,4 +243,4 @@ assert.equal(pageMore(), undefined);
 assert.deepEqual(writes, [], "paging is read-only");
 assert.match(css, /@media \(max-width: 680px\)[\s\S]*\.project-col-updated\s*\{\s*display: none;/);
 assert.match(css, /\.project-sort-direction\s*\{[^}]*transition:\s*transform 150ms cubic-bezier\(0\.4, 0, 0\.2, 1\);/, "PS09: rotation uses the official default duration and timing curve");
-console.log("PASS PS01–PS16 project sorting, title search, chat paging and pin actions");
+console.log("PASS PS01–PS17 project sorting, title search, chat paging and pin actions");

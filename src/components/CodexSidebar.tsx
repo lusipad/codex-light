@@ -37,7 +37,8 @@ import { ThreadActionsMenu, ThreadActionItem } from "./ThreadActionsMenu";
 import { RenameThreadDialog } from "./RenameThreadDialog";
 import { SidebarThreadHoverCard } from "./SidebarThreadHoverCard";
 import { applySidebarOrder, mergeSidebarOrder, moveVisibleSidebarThread, prependSidebarThread, sidebarDropTarget } from "../sidebarOrder";
-import { buildSidebarProjectGroups, sidebarThreadProjects } from "../sidebarProjects";
+import { buildSidebarProjectGroups, sidebarThreadProjects, splitPinnedSidebarProjects, type SidebarProjectGroup } from "../sidebarProjects";
+import type { Project } from "../projects";
 
 import { sameCloudRecentIdentity, type CloudRecentAction, type CloudRecentChat } from "../cloudRecentChats";
 
@@ -52,6 +53,9 @@ export interface CodexSidebarProps {
   onSelectCloudChat?: (chat: CloudRecentChat) => void;
   onCloudRecentAction?: (chat: CloudRecentChat, action: CloudRecentAction) => void;
   pinnedThreadIds: string[];
+  pinnedProjectIds?: string[];
+  projectCatalog?: Project[];
+  onSetProjectPinned?: (projectId: string, pinned: boolean) => void;
   workspaceHints: Record<string, string>;
   projectMembership?: SidebarProjectMembership;
   activeThreadId: string | null;
@@ -134,6 +138,9 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
   pinnedThreadIds,
   workspaceHints,
   projectMembership = EMPTY_PROJECT_MEMBERSHIP,
+  pinnedProjectIds,
+  projectCatalog,
+  onSetProjectPinned,
   activeThreadId,
   activityAttentionCount,
   activityOnly,
@@ -173,9 +180,11 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
   });
   const [projectThreadLimits, setProjectThreadLimits] = useState<Record<string, number>>({});
   const projectGroups = useMemo(
-    () => buildSidebarProjectGroups(workspaces, projectMembership),
-    [workspaces, projectMembership],
+    () => buildSidebarProjectGroups(workspaces, projectMembership, projectCatalog),
+    [workspaces, projectMembership, projectCatalog],
   );
+  const sidebarProjects = useMemo(() => splitPinnedSidebarProjects(projectGroups, pinnedProjectIds || []),
+    [projectGroups, pinnedProjectIds]);
   useEffect(() => {
     localStorage.setItem("codex_sidebar_project_expansion_v1", JSON.stringify(expandedProjects));
   }, [expandedProjects]);
@@ -1355,6 +1364,132 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
     );
   };
 
+  const renderProjectGroup = (project: SidebarProjectGroup, pinned = false) => {
+    const isSelectedProject = projectMembership.selectedProjectId != null
+      ? projectMembership.selectedProjectId === project.id
+      : project.entity
+        ? project.rootPaths.some((path) => normPath(activeWorkspace?.path) === normPath(path))
+        : normPath(activeWorkspace?.path) === normPath(project.path);
+    const expanded = isProjectExpanded(project.key);
+    const projectKey = project.key;
+    const orderKey = `project:${projectKey}`;
+    const projectThreads = chatSortMode === "manual"
+      ? applySidebarOrder(threadsByProject[projectKey] || [], manualOrders[orderKey])
+      : threadsByProject[projectKey] || [];
+    const threadLimit = projectThreadLimits[projectKey] ?? 5;
+    let visibleThreads = projectThreads.slice(0, threadLimit);
+    const selectedThread = activeRoute === "thread"
+      ? projectThreads.slice(threadLimit).find((thread) => thread.id === activeThreadId)
+      : undefined;
+    if (selectedThread) visibleThreads.push(selectedThread);
+    if (projectThreads.length - visibleThreads.length === 1) visibleThreads = projectThreads;
+    const orderContext: ThreadOrderContext = {
+      key: orderKey,
+      allIds: projectThreads.map((thread) => thread.id),
+      visibleIds: visibleThreads.map((thread) => thread.id),
+    };
+    const projectName = project.label || project.path.split(/[/\\]/).pop();
+    const pinProjectId = project.entity ? project.serverProjectId || project.id : null;
+    const canStartChat = !!project.path && (!project.entity ||
+      !!projectMembership.localProjects?.some(item => item.id === project.id));
+    const projectActions: ThreadActionItem[] = [
+      { id: "manage", label: "项目设置与来源", icon: <FilterIcon size={13} /> },
+    ];
+    if (onRevealPath) {
+      projectActions.unshift({ id: "reveal", label: "在文件资源管理器中打开", icon: <FolderIcon size={13} /> });
+    }
+    if (!project.entity && workspaces.length > 1) {
+      projectActions.push({ id: "remove", label: "移除项目", icon: <CloseIcon size={12} />, danger: true, separatorBefore: true });
+    }
+
+    if (pinProjectId && onSetProjectPinned) {
+      projectActions.unshift({ id: "pin", label: pinned ? "取消置顶" : "置顶", icon: <PinIcon size={13} /> });
+    }
+    return (
+      <div key={project.id} className="sidebar-project-group">
+        <div
+          className={`sidebar-project-row ${isSelectedProject ? "selected" : ""}`}
+          role="button"
+          tabIndex={0}
+          aria-label={projectName}
+          aria-expanded={expanded}
+          onClick={() => toggleProjectExpand(project.key)}
+          onKeyDown={(e) => {
+            if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
+              e.preventDefault();
+              toggleProjectExpand(project.key);
+            }
+          }}
+          title={project.path || project.rootPaths.join("\n")}
+        >
+          <div className="sidebar-project-left">
+            <span
+              className="project-folder-icon"
+              aria-hidden="true"
+            >
+              <FolderIcon size={14} />
+            </span>
+            <span className="sidebar-project-name">{projectName}</span>
+          </div>
+
+          <div className="sidebar-project-actions" onClick={(e) => e.stopPropagation()}>
+            <ThreadActionsMenu
+              items={projectActions}
+              align="right"
+              buttonClassName="thread-icon-btn"
+              label={<EllipsisIcon size={12} />}
+              triggerAriaLabel={`${projectName} 的项目操作`}
+              onSelect={(id) => {
+                if (id === "pin" && pinProjectId) onSetProjectPinned?.(pinProjectId, !pinned);
+                if (id === "reveal" && project.path) onRevealPath?.(project.path);
+                if (id === "manage") onNavigate("projects");
+                if (id === "remove" && !project.entity) onRemoveWorkspace(project.path);
+              }}
+            />
+            {pinned && pinProjectId && onSetProjectPinned && <button type="button" className="thread-icon-btn"
+              aria-label={`取消置顶项目 ${projectName}`} onClick={() => onSetProjectPinned(pinProjectId, false)}>
+              <PinIcon size={12} />
+            </button>}
+            <button
+              type="button"
+              className="thread-icon-btn"
+              title={`在 ${projectName} 中开启新聊天`}
+              disabled={!canStartChat}
+              onClick={(e) => {
+                e.stopPropagation();
+                onStartNewChat(project.path, project.entity);
+              }}
+            >
+              <PlusIcon size={12} />
+            </button>
+          </div>
+        </div>
+
+        {expanded && (
+          <div className="sidebar-project-children">
+            {projectThreads.length === 0 ? (
+              <div className="sidebar-project-empty">暂无聊天</div>
+            ) : (
+              visibleThreads.map((t) => renderThreadRow(t, true, orderContext))
+            )}
+            {visibleThreads.length < projectThreads.length && (
+              <button
+                type="button"
+                className="sidebar-project-show-more"
+                onClick={() => setProjectThreadLimits((previous) => ({
+                  ...previous,
+                  [projectKey]: (previous[projectKey] ?? 5) + 10,
+                }))}
+              >
+                展开显示
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <aside className={`codex-sidebar ${collapsed ? "collapsed" : ""}`} aria-hidden={collapsed} data-dragging={!!dragVisual || undefined}>
       {/* ── 1. Codex-only header: static mode label on Left, Bell + Search on Right ── */}
@@ -1440,13 +1575,14 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
       {/* ── 3. Tree: 置顶 / 自定义分区 / 项目 / 最近 ── */}
       <div className="sidebar-threads-scroll">
         {/* Section A: 置顶 (Pinned) —— 仅在有置顶项时显示 */}
-        {!activityOnly && pinnedThreads.length > 0 && (
+        {!activityOnly && (pinnedThreads.length > 0 || sidebarProjects.pinned.length > 0) && (
           <>
             <div className="sidebar-section-header-row">
               <span className="sidebar-section-label">置顶</span>
             </div>
             <div className="sidebar-section-list">
               {pinnedThreads.map((t) => renderThreadRow(t, false))}
+              {sidebarProjects.pinned.map(project => renderProjectGroup(project, true))}
             </div>
           </>
         )}
@@ -1680,120 +1816,7 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
         {/* Section B: 项目 (Projects) —— 组织模式为 project 时展示 */}
         {organizeMode === "project" && (
           <div className="sidebar-projects-tree">
-            {projectGroups.map((project) => {
-              const isSelectedProject = projectMembership.selectedProjectId != null
-                ? projectMembership.selectedProjectId === project.id
-                : project.entity
-                  ? project.rootPaths.some((path) => normPath(activeWorkspace?.path) === normPath(path))
-                  : normPath(activeWorkspace?.path) === normPath(project.path);
-              const expanded = isProjectExpanded(project.key);
-              const projectKey = project.key;
-              const orderKey = `project:${projectKey}`;
-              const projectThreads = chatSortMode === "manual"
-                ? applySidebarOrder(threadsByProject[projectKey] || [], manualOrders[orderKey])
-                : threadsByProject[projectKey] || [];
-              const threadLimit = projectThreadLimits[projectKey] ?? 5;
-              let visibleThreads = projectThreads.slice(0, threadLimit);
-              const selectedThread = activeRoute === "thread"
-                ? projectThreads.slice(threadLimit).find((thread) => thread.id === activeThreadId)
-                : undefined;
-              if (selectedThread) visibleThreads.push(selectedThread);
-              if (projectThreads.length - visibleThreads.length === 1) visibleThreads = projectThreads;
-              const orderContext: ThreadOrderContext = {
-                key: orderKey,
-                allIds: projectThreads.map((thread) => thread.id),
-                visibleIds: visibleThreads.map((thread) => thread.id),
-              };
-              const projectName = project.label || project.path.split(/[/\\]/).pop();
-              const projectActions: ThreadActionItem[] = [
-                { id: "manage", label: "项目设置与来源", icon: <FilterIcon size={13} /> },
-              ];
-              if (onRevealPath) {
-                projectActions.unshift({ id: "reveal", label: "在文件资源管理器中打开", icon: <FolderIcon size={13} /> });
-              }
-              if (!project.entity && workspaces.length > 1) {
-                projectActions.push({ id: "remove", label: "移除项目", icon: <CloseIcon size={12} />, danger: true, separatorBefore: true });
-              }
-
-              return (
-                <div key={project.id} className="sidebar-project-group">
-                  <div
-                    className={`sidebar-project-row ${isSelectedProject ? "selected" : ""}`}
-                    role="button"
-                    tabIndex={0}
-                    aria-label={projectName}
-                    aria-expanded={expanded}
-                    onClick={() => toggleProjectExpand(project.key)}
-                    onKeyDown={(e) => {
-                      if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
-                        e.preventDefault();
-                        toggleProjectExpand(project.key);
-                      }
-                    }}
-                    title={project.path || project.rootPaths.join("\n")}
-                  >
-                    <div className="sidebar-project-left">
-                      <span
-                        className="project-folder-icon"
-                        aria-hidden="true"
-                      >
-                        <FolderIcon size={14} />
-                      </span>
-                      <span className="sidebar-project-name">{projectName}</span>
-                    </div>
-
-                    <div className="sidebar-project-actions" onClick={(e) => e.stopPropagation()}>
-                      <ThreadActionsMenu
-                        items={projectActions}
-                        align="right"
-                        buttonClassName="thread-icon-btn"
-                        label={<EllipsisIcon size={12} />}
-                        triggerAriaLabel={`${projectName} 的项目操作`}
-                        onSelect={(id) => {
-                          if (id === "reveal" && project.path) onRevealPath?.(project.path);
-                          if (id === "manage") onNavigate("projects");
-                          if (id === "remove" && !project.entity) onRemoveWorkspace(project.path);
-                        }}
-                      />
-                      <button
-                        type="button"
-                        className="thread-icon-btn"
-                        title={`在 ${projectName} 中开启新聊天`}
-                        disabled={!project.path}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onStartNewChat(project.path, project.entity);
-                        }}
-                      >
-                        <PlusIcon size={12} />
-                      </button>
-                    </div>
-                  </div>
-
-                  {expanded && (
-                    <div className="sidebar-project-children">
-                      {projectThreads.length === 0 ? (
-                        <div className="sidebar-project-empty">暂无聊天</div>
-                      ) : (
-                        visibleThreads.map((t) => renderThreadRow(t, true, orderContext))
-                      )}
-                      {visibleThreads.length < projectThreads.length && (
-                        <button
-                          type="button"
-                          className="sidebar-project-show-more"
-                          onClick={() => setProjectThreadLimits((previous) => ({
-                            ...previous,
-                            [projectKey]: (previous[projectKey] ?? 5) + 10,
-                          }))}
-                        >
-                          展开显示
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+            {sidebarProjects.ordinary.map(project => renderProjectGroup(project))}
           </div>
         )}
         </>}

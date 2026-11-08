@@ -1035,10 +1035,21 @@ fn threads_meta_get(state: State<'_, AppState>) -> Result<Value, String> {
     let workspace_hints: HashMap<String, String> = state.desktop_state.get_thread_workspace_hints();
     Ok(json!({
         "pinnedThreadIds": pinned,
+        "pinnedProjectIds": state.desktop_state.list_pinned_projects(),
         "archivedThreads": archived,
         "workspaceHints": workspace_hints,
         "projectMembership": state.desktop_state.sidebar_project_membership(),
     }))
+}
+
+#[tauri::command]
+fn project_set_pinned(
+    state: State<'_, AppState>,
+    project_id: String,
+    legacy_project_id: Option<String>,
+    pinned: bool,
+) -> Result<Vec<String>, String> {
+    state.desktop_state.set_project_pinned(&project_id, legacy_project_id.as_deref(), pinned)
 }
 
 #[tauri::command]
@@ -2394,6 +2405,7 @@ pub fn run() {
             thread_record_workspace,
             threads_meta_get,
             thread_toggle_pin,
+            project_set_pinned,
             thread_archive_toggle,
             thread_delete,
             thread_delete_archived,

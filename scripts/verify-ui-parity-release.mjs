@@ -25,7 +25,7 @@ const scripts = [
   'verify-general-open.mjs', 'verify-notification-settings-ui.mjs',
   'verify-account-notifications.mjs', 'verify-account-notifications-ui.mjs',
   'verify-command-cards.mjs', 'verify-user-message-presentation.mjs',
-  'verify-project-index-sort.mjs',
+  'verify-project-index-sort.mjs', 'verify-sidebar-local-projects.mjs',
   'verify-thread-activity.mjs', 'verify-activity-session.mjs', 'verify-activity-session-app.mjs', 'verify-activity-session-sidebar.mjs',
   'verify-archive-settings-projection.mjs', 'verify-archived-settings.mjs', 'verify-archive-service.mjs',
   'verify-archive-cloud-transport.mjs', 'verify-archive-cloud-tasks.mjs', 'verify-archive-cloud-ui.mjs',

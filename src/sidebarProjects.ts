@@ -1,4 +1,5 @@
 import type { SidebarLocalProject, SidebarProjectMembership, ThreadProjectAssignment, ThreadSummary, WorkspaceRootItem } from "./types";
+import type { Project } from "./projects";
 
 export interface SidebarProjectGroup {
   id: string;
@@ -13,8 +14,14 @@ export interface SidebarProjectGroup {
 
 const norm = (path?: string | null) => (path || "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
 
-export function buildSidebarProjectGroups(workspaces: WorkspaceRootItem[], metadata: SidebarProjectMembership): SidebarProjectGroup[] {
-  const entities: SidebarProjectGroup[] = (metadata.localProjects || []).map(project => ({
+export function buildSidebarProjectGroups(workspaces: WorkspaceRootItem[], metadata: SidebarProjectMembership, catalog?: Project[]): SidebarProjectGroup[] {
+  const localProjects = metadata.localProjects || [];
+  const mappedIds = new Set(localProjects.map(project => project.serverProjectId || project.id));
+  const catalogOnly = catalog?.filter(project => !mappedIds.has(project.id)).map(project => ({
+    id: project.id, name: project.name, rootPaths: project.roots.map(root => root.path),
+    createdAt: project.createdAt, serverProjectId: project.id,
+  })) || [];
+  const entities: SidebarProjectGroup[] = [...localProjects, ...catalogOnly].map(project => ({
     id: project.id, key: `entity:${project.id}`, path: project.rootPaths[0] || "", label: project.name,
     rootPaths: [...project.rootPaths], scopeRoots: [], serverProjectId: project.serverProjectId, entity: project,
   }));
@@ -41,6 +48,17 @@ export function buildSidebarProjectGroups(workspaces: WorkspaceRootItem[], metad
     rootPaths: [workspace.path], scopeRoots: [workspace.path], serverProjectId: workspace.serverProjectId,
   }));
   return [...entities, ...legacy];
+}
+
+export function splitPinnedSidebarProjects(groups: SidebarProjectGroup[], pinnedIds: string[]) {
+  const byId = new Map<string, SidebarProjectGroup>();
+  for (const group of groups) {
+    if (!group.entity) continue;
+    byId.set(group.id, group);
+    if (group.serverProjectId) byId.set(group.serverProjectId, group);
+  }
+  const pinned = new Set(pinnedIds.map(id => byId.get(id)).filter(group => group != null));
+  return { pinned: [...pinned], ordinary: groups.filter(group => !pinned.has(group)) };
 }
 
 export function sidebarThreadProjects(thread: Pick<ThreadSummary, "id" | "cwd" | "projectId">, groups: SidebarProjectGroup[], metadata: SidebarProjectMembership, hints: Record<string, string>): SidebarProjectGroup[] {

@@ -173,6 +173,7 @@ import {
   goalStatusLabel,
 } from "./threadGoal";
 import { buildSidebarProjectGroups, sidebarThreadProjects, resolveNewThreadProject, threadStartProjectParams } from "./sidebarProjects";
+import { listProjects, type Project } from "./projects";
 
 /** Reasoning items carry `summary[]` + `content[]` (and streamed text). */
 function selectedFileSearchText(): string | undefined {
@@ -646,6 +647,9 @@ export const App: React.FC = () => {
   const pendingNewThreadProjectRef = useRef<SidebarLocalProject | null>(null);
   const pendingProjectlessRef = useRef(false);
   const [pinnedThreadIds, setPinnedThreadIds] = useState<string[]>([]);
+  const [pinnedProjectIds, setPinnedProjectIds] = useState<string[] | null>(null);
+  const projectPinRevisionRef = useRef(0);
+  const projectPinPendingRef = useRef(false);
   const [workspaceHints, setWorkspaceHints] = useState<Record<string, string>>({});
   const [sidebarProjectMembership, setSidebarProjectMembership] = useState<SidebarProjectMembership>({
     threadProjectAssignments: {}, projectlessThreadIds: [], workspaceProjectAssignments: {},
@@ -910,6 +914,18 @@ export const App: React.FC = () => {
   const [customInstructions, setCustomInstructions] = useState<string>("");
   const [toneStyle, setToneStyle] = useState<string>("pragmatic");
   const [projectsRefreshToken, setProjectsRefreshToken] = useState<number>(0);
+  const [sidebarProjectCatalog, setSidebarProjectCatalog] = useState<Project[]>();
+  useEffect(() => {
+    if (!appServerStatus.connected || isThreadWindow || isQuickChatWindow) {
+      setSidebarProjectCatalog(undefined);
+      return;
+    }
+    let current = true;
+    void listProjects().then(projects => {
+      if (current) setSidebarProjectCatalog(projects);
+    }).catch(() => {});
+    return () => { current = false; };
+  }, [appServerStatus.connected, appServerStatus.binaryPath, projectsRefreshToken, isThreadWindow, isQuickChatWindow]);
 
   // In-session Hyperparameters
   const [sessionTemperature, setSessionTemperature] = useState<number>(0.2);
@@ -1194,6 +1210,7 @@ export const App: React.FC = () => {
   // 1. Load Workspaces & Thread Metadata from Rust DesktopStateManager
   const refreshWorkspaceGenerationRef = useRef(0);
   const refreshWorkspacesAndMeta = useCallback(async () => {
+    const projectPinRevision = projectPinRevisionRef.current;
     const generation = ++refreshWorkspaceGenerationRef.current;
     let wsList: WorkspaceRootItem[] | undefined;
     try {
@@ -1208,6 +1225,7 @@ export const App: React.FC = () => {
     try {
       const meta = await tauriInvoke<{
         pinnedThreadIds: string[];
+        pinnedProjectIds?: string[];
         archivedThreads: any[];
         workspaceHints: Record<string, string>;
         projectMembership?: SidebarProjectMembership;
@@ -1215,6 +1233,7 @@ export const App: React.FC = () => {
       if (generation !== refreshWorkspaceGenerationRef.current) return;
       if (meta) {
         setPinnedThreadIds(meta.pinnedThreadIds || []);
+        if (projectPinRevision === projectPinRevisionRef.current) setPinnedProjectIds(meta.pinnedProjectIds || []);
         setWorkspaceHints(meta.workspaceHints || {});
         setSidebarProjectMembership(meta.projectMembership ?? {
           threadProjectAssignments: {}, projectlessThreadIds: [], workspaceProjectAssignments: {},
@@ -3858,6 +3877,29 @@ export const App: React.FC = () => {
   }, [activeThreadId, refreshThreadQueue]);
 
   // Thread Pin, Rename, Archive
+  const legacyProjectPinId = (projectId: string) => sidebarProjectMembership.localProjects?.find(
+    project => project.serverProjectId === projectId && project.id !== projectId
+  )?.id;
+  const isProjectPinned = (projectId: string) => {
+    const legacyId = legacyProjectPinId(projectId);
+    return pinnedProjectIds?.some(id => id === projectId || id === legacyId) ?? false;
+  };
+  const setProjectPinned = async (projectId: string, pinned: boolean) => {
+    if (projectPinPendingRef.current) return;
+    projectPinPendingRef.current = true;
+    try {
+      const ids = await tauriInvoke<string[]>("project_set_pinned", {
+        projectId, legacyProjectId: legacyProjectPinId(projectId), pinned,
+      });
+      ++projectPinRevisionRef.current;
+      setPinnedProjectIds(ids);
+    } catch {
+      showAppToast("无法更新项目置顶状态。请重试。", "error");
+    } finally {
+      projectPinPendingRef.current = false;
+    }
+  };
+
   const pinMutationPendingRef = useRef(false);
   const handleTogglePinThread = useCallback(
     async (threadId: string, e?: React.MouseEvent) => {
@@ -5217,6 +5259,9 @@ export const App: React.FC = () => {
           if (personalizationNavigationGuardRef.current?.(open) !== false) open();
         }}
         pinnedThreadIds={pinnedThreadIds}
+        pinnedProjectIds={pinnedProjectIds ?? undefined}
+        projectCatalog={sidebarProjectCatalog}
+        onSetProjectPinned={pinnedProjectIds ? setProjectPinned : undefined}
         workspaceHints={workspaceHints}
         projectMembership={sidebarProjectMembership}
         activeThreadId={activeThreadId}
@@ -5675,6 +5720,8 @@ export const App: React.FC = () => {
             onRenameThread={handleRenameThread}
             pinnedThreadIds={pinnedThreadIds}
             onTogglePinThread={handleTogglePinThread}
+            isProjectPinned={isProjectPinned}
+            onSetProjectPinned={pinnedProjectIds ? setProjectPinned : undefined}
             refreshToken={projectsRefreshToken}
             onProjectsChanged={() => { setProjectsRefreshToken((c) => c + 1); refreshThreads(); }}
             onThreadsChanged={refreshThreads}

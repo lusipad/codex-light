@@ -10,6 +10,7 @@ import {
   NewChatComposeIcon,
   RefreshIcon,
   ArrowRightIcon,
+  PinIcon,
 } from "./Icons";
 import { ThreadSummary, WorkspaceRootItem } from "../types";
 import { tauriInvoke, tauriListen } from "../bridge";
@@ -44,6 +45,8 @@ export interface ProjectsIndexViewProps {
   onRenameThread?: (threadId: string, newName: string) => void;
   pinnedThreadIds?: string[];
   onTogglePinThread?: (threadId: string) => void;
+  isProjectPinned?: (projectId: string) => boolean;
+  onSetProjectPinned?: (projectId: string, pinned: boolean) => void | Promise<void>;
 
   /* ── 以下均为可选新增 props（向后兼容，不传时行为不变） ── */
   /** app-server 连接 / 父级数据刷新时递增此值，可触发重新拉取项目列表。 */
@@ -148,6 +151,8 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
   onRenameThread,
   pinnedThreadIds,
   onTogglePinThread,
+  isProjectPinned,
+  onSetProjectPinned,
   refreshToken,
   onProjectsChanged,
   onThreadsChanged,
@@ -441,6 +446,7 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
     setProjects(previous => previous.filter(item => item.id !== project.id));
     setRemovingProject(null);
     setEditingProject(previous => previous?.id === project.id ? null : previous);
+    if (isProjectPinned?.(project.id)) await onSetProjectPinned?.(project.id, false);
     onProjectsChanged?.();
     onThreadsChanged?.();
     notify(`已移除项目「${project.name}」`, "success");
@@ -689,6 +695,7 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
       const roots = project.roots;
       const isBusy = actionBusyId === project.id;
       const index = projects.findIndex((item) => item.id === project.id);
+      const pinned = isProjectPinned?.(project.id) ?? false;
 
       return (
         <div className="projects-table-group" key={project.id}>
@@ -738,16 +745,9 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
               className="project-col-actions"
               onClick={(e) => e.stopPropagation()}
             >
-              <button
-                type="button"
-                className="thread-icon-btn"
-                title="在该项目中新建聊天"
-                disabled={isBusy}
-                onClick={() => handleStartChatInProject(project)}
-              >
-                <NewChatComposeIcon size={13} />
-              </button>
               <ThreadActionsMenu triggerAriaLabel="项目操作" items={[
+                { id: "new-chat", label: "新建聊天", disabled: isBusy || roots.length === 0 },
+                ...(onSetProjectPinned ? [{ id: "pin", label: pinned ? "取消置顶" : "置顶", disabled: isBusy }] : []),
                 ...(onRevealPath && roots.length > 0 ? [{ id: "reveal", label: "打开目录", disabled: isBusy }] : []),
                 { id: "edit", label: "编辑项目", disabled: isBusy },
                 { id: "up", label: "上移项目", disabled: isBusy || index <= 0 },
@@ -755,11 +755,22 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
                 { id: "remove", label: "移除项目", danger: true, disabled: isBusy },
               ]} onSelect={action => {
                 if (isBusy) return;
-                if (action === "reveal") onRevealPath?.(roots[0].path);
+                if (action === "new-chat") handleStartChatInProject(project);
+                else if (action === "pin") void onSetProjectPinned?.(project.id, !pinned);
+                else if (action === "reveal") onRevealPath?.(roots[0].path);
                 else if (action === "edit") setEditingProject(project);
                 else if (action === "up" || action === "down") void handleMoveProject(project, action);
                 else if (action === "remove") setRemovingProject(project);
               }} />
+              {onSetProjectPinned && <button type="button" className="thread-icon-btn project-row-shortcut"
+                aria-label={pinned ? "取消置顶项目" : "置顶项目"} aria-pressed={pinned} disabled={isBusy}
+                onClick={() => void onSetProjectPinned(project.id, !pinned)}>
+                <PinIcon size={13} />
+              </button>}
+              <button type="button" className="thread-icon-btn project-row-shortcut" title="在该项目中新建聊天"
+                disabled={isBusy} onClick={() => handleStartChatInProject(project)}>
+                <NewChatComposeIcon size={13} />
+              </button>
             </div>
           </div>
 

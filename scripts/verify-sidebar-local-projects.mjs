@@ -9,7 +9,7 @@ const module = { exports: {} };
 vm.runInNewContext(ts.transpileModule(fs.readFileSync(path, "utf8"), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText, { exports: module.exports });
-const { buildSidebarProjectGroups, sidebarThreadProjects, threadStartProjectParams } = module.exports;
+const { buildSidebarProjectGroups, sidebarThreadProjects, threadStartProjectParams, splitPinnedSidebarProjects } = module.exports;
 const root = "D:/projects/shared", second = "D:/projects/second";
 const projects = [
   { id: "multi", name: "Multi", rootPaths: [root, second], createdAt: 1, serverProjectId: "s-multi" },
@@ -19,6 +19,12 @@ const metadata = { localProjects: projects, threadProjectAssignments: {}, worksp
 const workspaces = [{ id: root, path: root, label: "Projection" }, { id: second, path: second, label: "Second projection" }, { id: "D:/legacy", path: "D:/legacy", label: "Legacy" }];
 const groups = buildSidebarProjectGroups(workspaces, metadata);
 assert.deepEqual(Array.from(groups, g => g.id), ["multi", "same", "D:/legacy"], "shared roots do not merge entities; covered directory projections do not duplicate them");
+const catalog = [{ id: "server-only", name: "App server only", createdAt: 3, roots: [{ path: root }] }];
+const loadedGroups = buildSidebarProjectGroups(workspaces, metadata, catalog);
+const split = splitPinnedSidebarProjects(loadedGroups, ["server-only", "s-multi", "multi", "missing"]);
+assert.deepEqual(Array.from(split.pinned, g => g.id), ["server-only", "multi"]);
+assert.deepEqual(Array.from(split.ordinary, g => g.id), ["same", "D:/legacy"]);
+assert.deepEqual(Array.from(sidebarThreadProjects({ id: "catalog", projectId: "server-only" }, loadedGroups, metadata, {}), g => g.id), ["server-only"]);
 const ids = (thread, membership = metadata) => Array.from(sidebarThreadProjects(thread, groups, membership, {}), g => g.id);
 assert.deepEqual(ids({ id: "a", cwd: root, projectId: "s-multi" }), ["multi"], "explicit canonical assignment wins over directory owner");
 assert.deepEqual(ids({ id: "b", cwd: root }), ["same"], "single-root project owns shared cwd fallback");
