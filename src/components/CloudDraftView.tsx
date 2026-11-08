@@ -9,7 +9,7 @@ import { readCloudEnvironmentAccess } from "../cloudEnvironmentAccess";
 import { mergeCloudDraftHistory, readCloudDraftHistory, watchCloudDraftHistory } from "../cloudDraftHistory";
 import { advanceRepositoryApply, pendingRepositoryApplySession, saveDraftWithRepositoryApply, type RepositoryApplyStatus } from "../cloudDraftRepositoryApply";
 import { pendingCloudReplySession } from "../cloudEnvironmentReply";
-import { advanceCloudPublication, readCloudPublication, type CloudPublishReview } from "../cloudEnvironmentPublish";
+import { advanceCloudPublication, canRetryCloudPublication, readCloudPublication, type CloudPublishReview } from "../cloudEnvironmentPublish";
 import { sendCloudEnvironmentSetup } from "../cloudEnvironmentSetup";
 import { prepareCloudDraftContext, restoreCloudDraftSession, type CloudDraftSession } from "../cloudDraftSession";
 import type { CloudDetail } from "../cloudEnvironmentService";
@@ -310,7 +310,7 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
     && detail.draft.baseVersionId === detail.versionId && latestTurn?.status === "completed"
     && (!session.setup || setupStatus === "sent" || setupStatus === "no_pending")
     && !editing && !saveBusy && !publication && !publishing;
-  const runPublish = async (review: CloudPublishReview | null) => {
+  const runPublish = async (review: CloudPublishReview | null, retryFailedOperationId?: string) => {
     if (!scope || scope.aborted || publishPending.current || savePending.current || editing) return;
     publishPending.current = true;
     setPublishing(true); setPublicationError(null); setPublishReview(null);
@@ -333,7 +333,7 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
         if (thread?.id !== threadId || thread.status?.type !== "idle" || turns.data?.[0]?.id !== expected.turnId
           || turns.data?.[0]?.status !== "completed" || pendingCloudReplySession(binding.configId, identity)
           || pendingRepositoryApplySession(binding.configId, identity)) throw Error("会话仍有待处理变更，请完成后重新审核。");
-      });
+      }, retryFailedOperationId);
     } catch (cause) { if (!scope.aborted) setPublicationError(serviceErrorMessage(cause)); }
     finally {
       publishPending.current = false;
@@ -454,7 +454,13 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
         {session.binding.draftId && scope && !scope.aborted && !editing && <>
           {publishing ? <p role="status">正在发布…</p>
             : publication?.confirmed ? <p role="status">已发布</p>
-            : publication?.failed ? <p role="alert">无法发布</p>
+            : publication?.failed ? <>
+              <p role="alert">无法发布环境</p>
+              {canRetryCloudPublication(publication.failureCode) ? <>
+                <p>你的设置已保存。请尝试重新发布。</p>
+                <button type="button" className="back-to-app-pill" onClick={() => void runPublish(null, publication.operationId)}>重试发布</button>
+              </> : publication.failureCode === undefined && <button type="button" className="back-to-app-pill" onClick={() => void runPublish(null)}>核对发布状态</button>}
+            </>
             : publication ? <button type="button" className="back-to-app-pill" onClick={() => void runPublish(null)}>核对发布状态</button>
             : publishReview && canReview && detail?.draft && latestTurn?.id === publishReview.turnId
               && detail.draft.baseVersionId === publishReview.baseVersionId && detail.draft.revision === publishReview.revision ? <>

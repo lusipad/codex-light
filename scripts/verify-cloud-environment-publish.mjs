@@ -12,11 +12,12 @@ const binding = { ...identity, configId: "config", draftId: "draft", environment
 const session = { identity, binding, threadId: "thread" };
 const review = { baseVersionId: "v1", revision: 5, turnId: "turn" };
 const operation = (state, id = "op") => ({ id, state, environment_id: "env", kind: "APPROVE_ENVIRONMENT_CONFIG_DRAFT" });
+const failed = (code, id = "op") => ({ ...operation("FAILED", id), failure: { code } });
 const completed = { id: "config", draft: { id: "draft" }, version_id: "v2" };
 const ready = { id: "config", status: "ready", version_id: "v2" };
 
-function fixture(storage = new Map()) {
-  const calls = [], answers = [], expectedKey = "11111111-1111-4111-8111-111111111111";
+function fixture(storage = new Map(), expectedKey = "11111111-1111-4111-8111-111111111111") {
+  const calls = [], answers = [];
   let root = ready, lock = Promise.resolve(), clock = 0;
   const exports = {};
   vm.runInNewContext(outputText, {
@@ -56,8 +57,8 @@ function fixture(storage = new Map()) {
   });
   return { ...exports, calls, answers, storage, expectedKey,
     setRoot: value => { root = value; },
-    run: (input = review, validate = async () => {}, signal = new AbortController().signal) =>
-      exports.advanceCloudPublication(session, input, signal, validate),
+    run: (input = review, validate = async () => {}, signal = new AbortController().signal, retryId) =>
+      exports.advanceCloudPublication(session, input, signal, validate, retryId),
     order: () => calls.map(value => value.kind) };
 }
 
@@ -115,4 +116,40 @@ function fixture(storage = new Map()) {
   assert.deepEqual(f.order(), ["begin", "read"]);
   assert.equal(f.readCloudPublication(session).operationId, "op");
 }
-console.log("PASS private cloud publication: single begin, persisted idempotency, resume, terminal failure, mismatched operation, retry limit, identity scope and exact version readback");
+for (const code of ["APPROVAL_FAILED_BEFORE_SNAPSHOT", "APPROVAL_FAILED_AFTER_SNAPSHOT"]) {
+  const f = fixture();
+  f.answers.push(operation("PENDING"), failed(code));
+  assert.equal(await f.run(), "failed");
+  assert.equal(f.readCloudPublication(session).failureCode, code);
+  const reopened = fixture(f.storage, "22222222-2222-4222-8222-222222222222");
+  reopened.answers.push(failed(code));
+  await assert.rejects(reopened.run(null, async () => { throw Error("revision changed"); }, undefined, "op"), /revision changed/);
+  assert.deepEqual(reopened.order(), ["read"]);
+  assert.equal(reopened.readCloudPublication(session).key, f.expectedKey);
+  reopened.answers.push(failed(code), operation("PENDING", "op-new"), operation("SUCCEEDED", "op-new"), completed);
+  const validated = [];
+  assert.equal(await reopened.run(null, async v => validated.push([v.baseVersionId, v.revision, v.turnId]), undefined, "op"), "published");
+  await reopened.run(null, undefined, undefined, "op");
+  assert.deepEqual(validated, [["v1", 5, "turn"]]);
+  assert.deepEqual(reopened.order(), ["read", "read", "begin", "read", "complete", "root"]);
+  assert.equal(reopened.calls[2].idempotencyKey, reopened.expectedKey);
+}
+{
+  const f = fixture();
+  f.answers.push(operation("PENDING"), failed("STALE_BASE"));
+  assert.equal(await f.run(), "failed");
+  assert.equal(await f.run(null, undefined, undefined, "op"), "failed");
+  assert.deepEqual(f.order(), ["begin", "read"]);
+  const [key, raw] = [...f.storage][0];
+  const { failureCode, ...legacy } = JSON.parse(raw);
+  f.storage.set(key, JSON.stringify(legacy));
+  f.answers.push(failed("APPROVAL_FAILED_AFTER_SNAPSHOT"));
+  assert.equal(await f.run(null), "failed");
+  assert.equal(f.readCloudPublication(session).failureCode, "APPROVAL_FAILED_AFTER_SNAPSHOT");
+  assert.deepEqual(f.order(), ["begin", "read", "read"]);
+  f.answers.push(operation("RUNNING"));
+  await assert.rejects(f.run(null, undefined, undefined, "op"), /仍处于失败状态/);
+  assert.equal(f.readCloudPublication(session).key, f.expectedKey);
+  assert.deepEqual(f.order(), ["begin", "read", "read", "read"]);
+}
+console.log("PASS private cloud publication: resumable receipts, exact version readback and explicit retry of a revalidated recoverable terminal failure");

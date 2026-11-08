@@ -15,7 +15,11 @@ interface Receipt extends CloudPublishReview {
   versionId?: string;
   confirmed?: boolean;
   failed?: boolean;
+  failureCode?: string | null;
 }
+
+export const canRetryCloudPublication = (code: string | null | undefined) =>
+  code === "APPROVAL_FAILED_BEFORE_SNAPSHOT" || code === "APPROVAL_FAILED_AFTER_SNAPSHOT";
 
 const storageKey = ({ identity, binding, threadId }: CloudDraftSession) =>
   `cloud-environment-publish-v1:${JSON.stringify([identity.accountId, identity.userId, binding.configId, binding.draftId, binding.environmentId, threadId])}`;
@@ -31,7 +35,8 @@ export function readCloudPublication(session: CloudDraftSession): Receipt | null
     || (entry.operationId !== undefined && !id(entry.operationId))
     || (entry.versionId !== undefined && (!id(entry.versionId) || !entry.operationId))
     || (entry.confirmed !== undefined && (entry.confirmed !== true || !entry.versionId))
-    || (entry.failed !== undefined && (entry.failed !== true || !entry.operationId || !!entry.versionId))) {
+    || (entry.failed !== undefined && (entry.failed !== true || !entry.operationId || !!entry.versionId))
+    || (entry.failureCode !== undefined && (!entry.failed || (entry.failureCode !== null && !id(entry.failureCode))))) {
     throw Error("无法读取环境发布回执。");
   }
   return entry;
@@ -61,6 +66,7 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
 export async function advanceCloudPublication(
   session: CloudDraftSession, review: CloudPublishReview | null, signal: AbortSignal,
   validateReview: (review: CloudPublishReview) => Promise<void>,
+  retryFailedOperationId?: string,
 ): Promise<"published" | "checking" | "failed"> {
   const { identity, threadId, binding } = session;
   const { configId, draftId, environmentId } = binding;
@@ -72,20 +78,37 @@ export async function advanceCloudPublication(
   return navigator.locks.request(key, { signal }, async () => {
     signal.throwIfAborted();
     let entry = readCloudPublication(session);
-    const store = (value: Receipt) => { localStorage.setItem(key, JSON.stringify(value)); entry = value; return value; };
+    const store = (value: Receipt) => { localStorage.setItem(key, JSON.stringify(value)); return value; };
     const send = async (operation: CloudPublishOperation) => {
       signal.throwIfAborted();
       const body = await callCloudPublish({ configId, draftId, environmentId, operation }, identity, signal);
       signal.throwIfAborted();
       return body;
     };
+    if (retryFailedOperationId !== undefined && (!entry?.failed || entry.operationId !== retryFailedOperationId)) {
+      return entry?.confirmed ? "published" : "checking";
+    }
+    if (entry?.failed) {
+      const retry = retryFailedOperationId !== undefined;
+      if (retry ? !canRetryCloudPublication(entry.failureCode) : entry.failureCode !== undefined) return "failed";
+      const operationId = entry.operationId!;
+      const raw = await send({ kind: "read", operationId });
+      const { state, failureCode } = operationState(raw, environmentId, operationId);
+      if (state !== "FAILED") throw Error("无法确认原环境发布操作仍处于失败状态。");
+      if (!retry || !canRetryCloudPublication(failureCode)) {
+        store({ ...entry, failureCode });
+        return "failed";
+      }
+      const { baseVersionId, revision, turnId } = entry;
+      review = { baseVersionId, revision, turnId };
+      entry = null;
+    }
     if (!entry) {
       if (!review) throw Error("请先审核当前环境草稿。");
       await validateReview(review);
       signal.throwIfAborted();
       entry = store({ ...review, key: crypto.randomUUID() });
     }
-    if (entry.failed) return "failed";
     let current = entry;
     if (!current.operationId) {
       const raw = await send({ kind: "begin", expectedRevision: current.revision, idempotencyKey: current.key });
@@ -109,8 +132,8 @@ export async function advanceCloudPublication(
           continue;
         }
         failures = 0;
-        const { state } = operationState(raw, environmentId, operationId);
-        if (state === "FAILED") { store({ ...current, failed: true }); return "failed"; }
+        const { state, failureCode } = operationState(raw, environmentId, operationId);
+        if (state === "FAILED") { store({ ...current, failed: true, failureCode }); return "failed"; }
         if (state === "SUCCEEDED") {
           const result = await send({ kind: "complete", operationId, threadId }) as {
             id?: unknown; draft?: { id?: unknown }; version_id?: unknown;
@@ -137,9 +160,9 @@ export async function advanceCloudPublication(
 }
 
 function operationState(raw: unknown, environmentId: string, operationId?: string) {
-  const value = raw as { id?: unknown; kind?: unknown; environment_id?: unknown; state?: string } | null;
+  const value = raw as { id?: unknown; kind?: unknown; environment_id?: unknown; state?: string; failure?: { code?: unknown } } | null;
   if (!value || !id(value.id) || value.kind !== "APPROVE_ENVIRONMENT_CONFIG_DRAFT"
     || value.environment_id !== environmentId || (operationId && value.id !== operationId)
     || !["PENDING", "RUNNING", "SUCCEEDED", "FAILED"].includes(value.state ?? "")) throw Error("无法核对环境发布操作。");
-  return { id: value.id, state: value.state };
+  return { id: value.id, state: value.state, failureCode: id(value.failure?.code) ? value.failure.code : null };
 }

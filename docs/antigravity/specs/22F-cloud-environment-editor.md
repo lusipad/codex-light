@@ -109,6 +109,8 @@ Rust 候选和复现入口在证据目录的 `durable-socket.rs` 和 `winhttp-lo
 
 ### F06 私有草稿发布传输合同
 
+终态恢复取证见新版 `2463.22de500d36.js` 56701、65115 及 `19052.bfed17cb8e.js` 3637 附近。仅 `APPROVAL_FAILED_BEFORE_SNAPSHOT` 和 `APPROVAL_FAILED_AFTER_SNAPSHOT` 提供显式发布重试。按失败 operation ID 绑定，复核账号、失败终态和原审核修订后才换幂等键。旧回执缺少失败分类时只读补齐。断线、结果未知、过期回执与其他终态禁止重新发起。
+
 页面阶段核对 `19052.bfed17cb8e.js` 9450–11500 与 13743–13891。首次发起要求当前轮次、账号和草稿仍匹配，官方还检查会话及草稿审核状态。已知操作进入状态查询。完成后用回执的真实版本确认发布。首轮实现以现有侧栏为审核入口，要求用户确认具体草稿版本，并检查当前已完成轮次、空闲、无待发回复、无仓库应用和相同草稿修订。官方提案逐项审核与发布后交接保留为差异。
 
 复核 Store `26.1103.4239.0`。`19052.bfed17cb8e.js` 的 `wuQx.Px` 在发起前记下预期 revision 和幂等键，保存服务端 operation ID 后可继续查询。六组隔离原函数回放记录在 `.ref/parity/22/actual/22J-cloud-publish/reference/`。公开文档区分保存配置与发布文件系统。 [OpenAI 云环境说明](https://learn.chatgpt.com/docs/environments/cloud-environments#create-and-publish-an-environment)
@@ -116,3 +118,5 @@ Rust 候选和复现入口在证据目录的 `durable-socket.rs` 和 `winhttp-lo
 原生请求路径来自 `early-bootstrap-199-e3316cddb4ea6a6b.js` 1984870、1985035、1982971，schema 来自 `early-bootstrap-133-1c544c3280919085.js` 的 17911 模块。先对已有可编辑会话的私有草稿接通 `POST …/drafts/{draftId}/approve/begin`、`GET /v1/environment-operations/{operationId}`、`POST …/drafts/{draftId}/approve/complete`。发起体只含预期 revision 与 UUID，完成体只含服务端 operation ID 和私有草稿 thread ID。
 
 验收要求。验证固定主机和请求体、同身份与环境、拒绝异常 ID/operation kind、取消与账号变化、失败和运行状态不得触发完成、完成回执身份。完成前由原生重读 operation，仅在匹配且为 SUCCEEDED 时发送完成请求。POST 结果不明时返回待核对状态，禁止传输层自动重发。共享与旧同步分支、发布页面、持久化操作恢复和发布版本读回分别验收。
+
+发布后新聊天取证见 `2463.22de500d36.js` 的 `ed`。点击时按配置 ID 读取环境摘要。账号、用户、当前路由、设置轮次、草稿和发布版本须仍一致，且环境最新就绪版本等于发布回执。成功后清除本地项目选择，将该云环境设为当前执行目标，打开空 Composer。提交远端任务是后续用户操作。项目当前 Composer 只有本地和工作树执行，云环境选择与真正远端发送需一起接通。
