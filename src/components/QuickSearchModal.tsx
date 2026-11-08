@@ -19,6 +19,7 @@ import type { SlashCommand } from "../slashCommands";
 export interface QuickSearchModalProps {
   open: boolean;
   mode?: "root" | "files";
+  initialQuery: { value: string };
   threads: ThreadSummary[];
   skills: SkillInfoItem[];
   projectScripts?: ProjectScriptCommands;
@@ -221,6 +222,7 @@ async function searchThreadsProtocol(query: string): Promise<RemoteThreadResult[
 export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   open,
   mode = "root",
+  initialQuery,
   threads,
   skills,
   projectScripts,
@@ -236,7 +238,10 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   onTriggerCommand,
   onSelectSlashCommand,
 }) => {
-  const [query, setQuery] = useState("");
+  const [draft, setDraft] = useState({ initialQuery, value: initialQuery.value });
+  // A new opening takes effect before the search effects read the query.
+  const query = draft.initialQuery === initialQuery ? draft.value : initialQuery.value;
+  const setQuery = (value: string) => setDraft({ initialQuery, value });
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [remoteResults, setRemoteResults] = useState<RemoteSearchResults | null>(
     null
@@ -257,7 +262,6 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   useEffect(() => {
     if (open) {
       lastActiveElementRef.current = document.activeElement as HTMLElement | null;
-      setQuery("");
       setSelectedIndex(0);
       const timer = setTimeout(() => inputRef.current?.focus(), 40);
       return () => clearTimeout(timer);

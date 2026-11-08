@@ -5,10 +5,11 @@ import ts from "typescript";
 
 const parse = path => ts.createSourceFile(path, fs.readFileSync(path, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const page = parse("src/components/QuickSearchModal.tsx"), app = parse("src/App.tsx");
-let items, keydown, focus, appSlash;
+let items, keydown, focus, appSlash, selectedFileSearchText;
 const shortcuts = {};
 const helpers = [];
 function visit(node, ast) {
+  if (ast === app && ts.isFunctionDeclaration(node) && node.name?.text === "selectedFileSearchText") selectedFileSearchText = node;
   if (ast === page && ts.isFunctionDeclaration(node) && ["fileDedupeKey"].includes(node.name?.text)) helpers.push(node);
   if (ts.isVariableDeclaration(node) && ast === page) {
     if (node.name.getText(ast) === "items") items = node.initializer.arguments[0];
@@ -76,10 +77,56 @@ function mount(overrides = {}) {
   assert.ok(view.results().some(item => item.category === "action"));
   const modes = [], opened = [];
   for (const name of ["file-search", "command-palette", "command-palette-alt"]) {
-    execute(shortcuts[name], app, { setQuickSearchMode: mode => modes.push(mode), setShowQuickSearch: value => opened.push(value) })();
+    execute(shortcuts[name], app, {
+      showQuickSearch: false, lastFileSearchSeed: { current: "" }, selectedFileSearchText: () => undefined,
+      setQuickSearchInitialQuery() {},
+      setQuickSearchMode: mode => modes.push(mode), setShowQuickSearch: value => opened.push(value),
+    })();
   }
   assert.deepEqual(modes, ["files", "root", "root"], "SR03: every entry chooses its mode");
   assert.deepEqual(opened, [true, true, true]);
+}
+{
+  class Input {
+    type = "text";
+    value = "前缀  路径/测试🚀.rs  后缀";
+    selectionStart = 2;
+    selectionEnd = this.value.indexOf("后缀");
+  }
+  class Textarea extends Input {}
+  const input = new Input();
+  const document = { activeElement: input, getSelection: () => null };
+  assert.ok(selectedFileSearchText, "file shortcut must capture selection before the search input takes focus");
+  const select = execute(selectedFileSearchText, app, { document, HTMLInputElement: Input, HTMLTextAreaElement: Textarea });
+  assert.equal(select(), "路径/测试🚀.rs");
+  input.type = "password";
+  assert.equal(select(), undefined);
+  for (const value of ["a\nb", "a\rb", "a\0b", "a".repeat(257), " "]) {
+    const textarea = new Textarea();
+    Object.assign(textarea, { value, selectionStart: 0, selectionEnd: value.length });
+    document.activeElement = textarea;
+    assert.equal(select(), undefined);
+  }
+  document.activeElement = { contains: node => node === 1 || node === 2 };
+  const selection = { anchorNode: 1, focusNode: 2, toString: () => " src/main.rs " };
+  document.getSelection = () => selection;
+  assert.equal(select(), "src/main.rs");
+  selection.focusNode = 3;
+  assert.equal(select(), undefined);
+  const seeds = [];
+  const context = {
+    showQuickSearch: false, lastFileSearchSeed: { current: "" },
+    selectedFileSearchText: () => "src/main.rs",
+    setQuickSearchInitialQuery: request => seeds.push(request.value),
+    setQuickSearchMode() {}, setShowQuickSearch() {},
+  };
+  const openFiles = execute(shortcuts["file-search"], app, context);
+  openFiles();
+  context.showQuickSearch = true;
+  context.selectedFileSearchText = () => { throw Error("must not read the menu's own selection"); };
+  openFiles();
+  execute(shortcuts["command-palette"], app, context)();
+  assert.deepEqual(seeds, ["src/main.rs", "src/main.rs", ""]);
 }
 {
   const view = mount({ query: "match", remoteResults: {

@@ -175,6 +175,25 @@ import {
 import { buildSidebarProjectGroups, sidebarThreadProjects, resolveNewThreadProject, threadStartProjectParams } from "./sidebarProjects";
 
 /** Reasoning items carry `summary[]` + `content[]` (and streamed text). */
+function selectedFileSearchText(): string | undefined {
+  let active = document.activeElement;
+  while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+  if (active instanceof HTMLInputElement && active.type === "password") return;
+
+  let text = "";
+  if ((active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) &&
+      active.selectionStart !== null && active.selectionEnd !== null) {
+    text = active.value.slice(active.selectionStart, active.selectionEnd);
+  } else {
+    const selection = document.getSelection();
+    if (selection && active?.contains(selection.anchorNode) && active.contains(selection.focusNode)) {
+      text = selection.toString();
+    }
+  }
+  const query = text.trim();
+  return query && query.length <= 256 && !/[\r\n\0]/.test(query) ? query : undefined;
+}
+
 function extractReasoningText(item: TurnItem): string {
   if (!item) return "";
   if (Array.isArray(item.summary) && item.summary.length > 0) {
@@ -903,6 +922,8 @@ export const App: React.FC = () => {
   const petPreferencesState = usePetPreferences();
   const [showQuickSearch, setShowQuickSearch] = useState<boolean>(false);
   const [quickSearchMode, setQuickSearchMode] = useState<"root" | "files">("root");
+  const [quickSearchInitialQuery, setQuickSearchInitialQuery] = useState({ value: "" });
+  const lastFileSearchSeed = useRef("");
   const [showFindBar, setShowFindBar] = useState<boolean>(false);
   const [findBarScope, setFindBarScope] = useState<"chat" | "diff">("chat");
   const [bookmarkedTurnIds, setBookmarkedTurnIds] = useState<Record<string, string[]>>(() => {
@@ -4142,9 +4163,23 @@ export const App: React.FC = () => {
     "open-settings": () =>
       setActiveRoute((r) => (r === "settings" ? "home" : "settings")),
     "show-keyboard-shortcuts": () => setShowKeyboardShortcuts((value) => !value),
-    "command-palette": () => { setQuickSearchMode("root"); setShowQuickSearch(true); },
-    "command-palette-alt": () => { setQuickSearchMode("root"); setShowQuickSearch(true); },
-    "file-search": () => { setQuickSearchMode("files"); setShowQuickSearch(true); },
+    "command-palette": () => {
+      setQuickSearchInitialQuery({ value: "" });
+      setQuickSearchMode("root");
+      setShowQuickSearch(true);
+    },
+    "command-palette-alt": () => {
+      setQuickSearchInitialQuery({ value: "" });
+      setQuickSearchMode("root");
+      setShowQuickSearch(true);
+    },
+    "file-search": () => {
+      const selection = showQuickSearch ? undefined : selectedFileSearchText();
+      if (selection !== undefined) lastFileSearchSeed.current = selection;
+      setQuickSearchInitialQuery({ value: lastFileSearchSeed.current });
+      setQuickSearchMode("files");
+      setShowQuickSearch(true);
+    },
     "find-in-chat": () => setShowFindBar((v) => !v),
     "rename-thread": () => {
       if (activeThreadObj) {
@@ -5199,7 +5234,11 @@ export const App: React.FC = () => {
         onMoveThreadToProject={moveThreadToProject}
         onRevealPath={handleRevealPath}
         onOpenAgentsMd={() => setShowAgentsMdModal(true)}
-        onOpenQuickSearch={() => { setQuickSearchMode("root"); setShowQuickSearch(true); }}
+        onOpenQuickSearch={() => {
+          setQuickSearchInitialQuery({ value: "" });
+          setQuickSearchMode("root");
+          setShowQuickSearch(true);
+        }}
         onToggleCollapse={() => setSidebarCollapsed((v) => !v)}
         refreshToken={projectsRefreshToken}
         createdThread={sidebarCreatedThread}
@@ -6771,6 +6810,7 @@ export const App: React.FC = () => {
       <QuickSearchModal
         open={showQuickSearch}
         mode={quickSearchMode}
+        initialQuery={quickSearchInitialQuery}
         threads={threads}
         skills={skills}
         projectScripts={projectScripts}

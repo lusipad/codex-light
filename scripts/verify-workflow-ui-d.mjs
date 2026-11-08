@@ -19,7 +19,7 @@ vm.runInNewContext(compile(fs.readFileSync("src/components/QuickSearchModal.tsx"
   exports, console, require: id => id === "react" ? react : id === "lucide-react" ? new Proxy({}, { get: (_, name) => String(name) }) :
     id.endsWith("slashCommands") ? { SLASH_COMMANDS: [] } : {},
 });
-const props = { open: true, mode: "root", threads: [{ id: "thread-a", name: "Existing conversation" }], skills: [],
+const props = { open: true, mode: "root", initialQuery: { value: "" }, threads: [{ id: "thread-a", name: "Existing conversation" }], skills: [],
   onClose() { closed++; }, onSelectThread(id) { assert.equal(id, "thread-a"); selected++; },
   onStartNewChat() {}, onTriggerCommand() {}, onNavigateRoute() {}, onNavigateSettings() {}, onSearchFiles() {},
 };
@@ -39,6 +39,15 @@ dialog.props.onKeyDown(key({ nativeEvent: { isComposing: true } })); assert.equa
 dialog.props.onKeyDown(key({})); assert.equal(closed, 2);
 props.mode = "files"; render();
 assert.equal(all(tree).find(node => node.type === "input").props.placeholder, "搜索文件");
+props.initialQuery = { value: "src/测试.rs" }; render();
+const searchInput = () => all(tree).find(node => node.type === "input");
+assert.equal(searchInput().props.value, "src/测试.rs", "shortcut seed replaces the old draft on the first render");
+searchInput().props.onChange({ target: { value: "edited" } }); render();
+assert.equal(searchInput().props.value, "edited");
+props.initialQuery = { value: "src/测试.rs" }; render();
+assert.equal(searchInput().props.value, "src/测试.rs", "a repeated opening can restore the same seed");
+props.mode = "root"; props.initialQuery = { value: "" }; render();
+assert.equal(searchInput().props.value, "", "root opening never leaks a files seed");
 console.log("PASS WFD08 production command dialog: current Chinese scopes, real selection, close and IME boundary");
 
 const appSource = fs.readFileSync("src/App.tsx", "utf8");
