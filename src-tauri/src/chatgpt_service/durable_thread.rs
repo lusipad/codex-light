@@ -2,7 +2,7 @@ use super::{
     failure, ChatgptService, CloudProfile, DurableModelsResponse, ServiceIdentity, ServiceResult,
 };
 use crate::durable::{ConnectionConfig, Error as DurableError, Notify, Request};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
     future::Future,
@@ -58,8 +58,28 @@ enum Operation {
         added: Vec<String>,
         removed: Vec<String>,
     },
+    StartEnvironmentSetup {
+        thread_id: String,
+        client_user_message_id: uuid::Uuid,
+        cwd: String,
+        service_tier: Option<String>,
+        model: Option<String>,
+        effort: Option<String>,
+        repositories: Vec<SetupRepository>,
+        skill: Option<String>,
+        private_draft: bool,
+    },
     Preferences,
+    SetupPreferences,
     Requirements,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SetupRepository {
+    name: String,
+    #[serde(rename = "ref")]
+    reference: String,
 }
 
 fn opaque(value: &str) -> bool {
@@ -169,6 +189,9 @@ impl Operation {
                 )
             }
             Self::Preferences => ("config/read", json!({"cwd":null,"includeLayers":true}), 30),
+            Self::SetupPreferences => {
+                ("config/read", json!({"cwd":null,"includeLayers":false}), 30)
+            }
             Self::Requirements => ("configRequirements/read", Value::Null, 30),
             Self::StartRepositoryApply {
                 thread_id,
@@ -192,6 +215,65 @@ impl Operation {
                     30,
                 )
             }
+            Self::StartEnvironmentSetup {
+                thread_id,
+                client_user_message_id,
+                cwd,
+                service_tier,
+                model,
+                effort,
+                repositories,
+                skill,
+                private_draft,
+            } if opaque(&thread_id)
+                && !client_user_message_id.is_nil()
+                && cwd.starts_with('/')
+                && opaque(&cwd)
+                && [
+                    service_tier.as_deref(),
+                    model.as_deref(),
+                    effort.as_deref(),
+                    skill.as_deref(),
+                ]
+                .into_iter()
+                .flatten()
+                .all(opaque)
+                && skill
+                    .as_deref()
+                    .is_none_or(|skill| !skill.chars().any(char::is_whitespace))
+                && repositories.len() <= 100
+                && repositories
+                    .iter()
+                    .all(|repo| opaque(&repo.name) && opaque(&repo.reference)) =>
+            {
+                let context = format!("{}\n\n## My request:", json!({"repositories":repositories}));
+                if context.len() > 256 * 1024 {
+                    return Err(failure(
+                        "invalid_request",
+                        "Environment setup input exceeds transport limit",
+                    ));
+                }
+                let skill = skill
+                    .as_deref()
+                    .or(private_draft.then_some("cloud-environment-onboarding:setup"));
+                let prompt = match skill {
+                    Some(skill) => format!("使用 ${skill} 来设置此云环境"),
+                    None => {
+                        "先问我想运行什么，并和我讨论必要的细节。等我回复后，再开始设置这个云环境。"
+                            .into()
+                    }
+                };
+                (
+                    "turn/start",
+                    json!({
+                        "threadId":thread_id,"clientUserMessageId":client_user_message_id.to_string(),
+                        "cwd":cwd,"turnTrigger":"environment_onboarding","model":model,"effort":effort,
+                        "serviceTier":service_tier,"collaborationMode":null,
+                        "input":[{"type":"text","text":context,"text_elements":[]},{"type":"text","text":prompt,"text_elements":[]}]
+                    }),
+                    30,
+                )
+            }
             _ => return Err(failure("invalid_request", "Invalid cloud thread operation")),
         };
         Ok(Request {
@@ -209,16 +291,17 @@ fn apply_unconfirmed() -> super::ServiceError {
     )
 }
 
-fn checked_apply_response(
+fn checked_start_response(
     thread_id: Option<&str>,
     message_id: Option<&str>,
     body: Value,
+    unconfirmed: impl Fn() -> super::ServiceError,
 ) -> ServiceResult<Value> {
     let turn = &body["turn"];
     let id = turn["id"]
         .as_str()
         .filter(|id| opaque(id))
-        .ok_or_else(apply_unconfirmed)?;
+        .ok_or_else(&unconfirmed)?;
     if [
         (&body, "threadId", thread_id),
         (turn, "threadId", thread_id),
@@ -231,9 +314,33 @@ fn checked_apply_response(
             .get(key)
             .is_some_and(|field| !field.is_null() && field.as_str() != expected)
     }) {
-        return Err(apply_unconfirmed());
+        return Err(unconfirmed());
     }
     Ok(json!({"turn":{"id":id}}))
+}
+
+fn setup_preferences(body: Value) -> ServiceResult<Value> {
+    let config = &body["config"];
+    if !config.is_object() {
+        return Err(failure(
+            "invalid_response",
+            "Invalid cloud setup preferences",
+        ));
+    }
+    let active = config["profile"]
+        .as_str()
+        .and_then(|name| config["profiles"].get(name));
+    let text = |key: &str| {
+        active
+            .and_then(|profile| profile.get(key))
+            .filter(|value| !value.is_null())
+            .unwrap_or(&config[key])
+            .as_str()
+            .filter(|value| opaque(value))
+    };
+    Ok(json!({"config":{
+        "model":text("model"),"model_reasoning_effort":text("model_reasoning_effort"),"service_tier":text("service_tier")
+    }}))
 }
 
 fn valid_resume(params: &Value) -> bool {
@@ -346,6 +453,8 @@ impl ChatgptService {
         Run: FnOnce(ConnectionConfig, Request, Arc<AtomicBool>) -> RunFuture,
         RunFuture: Future<Output = Result<Value, DurableError>>,
     {
+        let setup_write = matches!(&request.operation, Operation::StartEnvironmentSetup { .. });
+        let setup_config = matches!(&request.operation, Operation::SetupPreferences);
         let wire = request.operation.wire()?;
         let method = wire.method;
         let thread_id = wire.params["threadId"].as_str().map(str::to_owned);
@@ -353,7 +462,17 @@ impl ChatgptService {
         let message_id = wire.params["clientUserMessageId"]
             .as_str()
             .map(str::to_owned);
-        let apply_write = method == "turn/start";
+        let turn_write = method == "turn/start";
+        let unconfirmed = || {
+            if setup_write {
+                failure(
+                    "cloud_setup_turn_unconfirmed",
+                    "Cloud environment setup turn delivery is unconfirmed",
+                )
+            } else {
+                apply_unconfirmed()
+            }
+        };
         let handed_off = AtomicBool::new(false);
         let mut response = self
             .durable_call_with(
@@ -368,17 +487,24 @@ impl ChatgptService {
             )
             .await
             .map_err(|error| {
-                if apply_write
+                if turn_write
                     && handed_off.load(Ordering::SeqCst)
                     && error.code != "account_changed"
                 {
-                    apply_unconfirmed()
+                    unconfirmed()
                 } else {
                     error
                 }
             })?;
-        response.body = if apply_write {
-            checked_apply_response(thread_id.as_deref(), message_id.as_deref(), response.body)?
+        response.body = if turn_write {
+            checked_start_response(
+                thread_id.as_deref(),
+                message_id.as_deref(),
+                response.body,
+                unconfirmed,
+            )?
+        } else if setup_config {
+            setup_preferences(response.body)?
         } else {
             checked_response(
                 method,

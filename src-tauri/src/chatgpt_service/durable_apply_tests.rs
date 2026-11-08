@@ -103,4 +103,79 @@ mod durable_apply_tests {
             .unwrap_err();
         assert_eq!(error.code, "cancelled");
     }
+
+    #[tokio::test]
+    async fn durable_setup_projects_only_active_model_preferences() {
+        let result = ChatgptService::default().durable_thread_with(
+            request(json!({"kind":"setup_preferences"})), cloud_profile(), share_rpc, |_, wire, _| {
+                assert_eq!(wire.method, "config/read");
+                assert_eq!(wire.params, json!({"cwd":null,"includeLayers":false}));
+                std::future::ready(Ok(json!({"config":{
+                    "profile":"active","model":"root","service_tier":"priority","model_reasoning_effort":"high",
+                    "profiles":{"active":{"model":"selected","service_tier":"flex","model_reasoning_effort":null,"unrelated":"hidden"}},
+                    "unrelated":"hidden"
+                }})))
+            },
+        ).await.unwrap();
+        assert_eq!(
+            result.body,
+            json!({"config":{"model":"selected","service_tier":"flex","model_reasoning_effort":"high"}})
+        );
+    }
+
+    #[tokio::test]
+    async fn durable_setup_sends_two_fixed_text_items_and_never_replays_a_missing_receipt() {
+        for (skill, private_draft, prompt) in [
+            (
+                Some("service:setup"),
+                true,
+                "使用 $service:setup 来设置此云环境",
+            ),
+            (
+                None,
+                true,
+                "使用 $cloud-environment-onboarding:setup 来设置此云环境",
+            ),
+            (
+                None,
+                false,
+                "先问我想运行什么，并和我讨论必要的细节。等我回复后，再开始设置这个云环境。",
+            ),
+        ] {
+            let service = ChatgptService::default();
+            let sends = AtomicUsize::new(0);
+            let setup = json!({"kind":"start_environment_setup","threadId":"thread-A","clientUserMessageId":MESSAGE_ID,
+                "cwd":"/workspace","model":"model-A","effort":"medium","serviceTier":"priority",
+                "repositories":[{"name":"org/repo","ref":"feature/branch"}],"privateDraft":private_draft,"skill":skill});
+            let error = service.durable_thread_with(request(setup), cloud_profile(), share_rpc, |_, wire, _| {
+                sends.fetch_add(1, Ordering::SeqCst);
+                assert_eq!(wire.method,"turn/start");
+                assert_eq!(wire.params,json!({
+                    "threadId":"thread-A","clientUserMessageId":MESSAGE_ID,"cwd":"/workspace","turnTrigger":"environment_onboarding",
+                    "model":"model-A","effort":"medium","serviceTier":"priority","collaborationMode":null,
+                    "input":[{"type":"text","text":"{\"repositories\":[{\"name\":\"org/repo\",\"ref\":\"feature/branch\"}]}\n\n## My request:","text_elements":[]},
+                        {"type":"text","text":prompt,"text_elements":[]}]
+                }));
+                std::future::ready(Err(crate::durable::Error::Closed))
+            }).await.unwrap_err();
+            assert_eq!(error.code, "cloud_setup_turn_unconfirmed");
+            assert_eq!(sends.load(Ordering::SeqCst), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn durable_setup_correlates_receipt_and_blocks_arbitrary_prompt() {
+        let setup = json!({"kind":"start_environment_setup","threadId":"thread-A","clientUserMessageId":MESSAGE_ID,
+            "cwd":"/workspace","repositories":[],"privateDraft":false});
+        let mut invalid = setup.clone();
+        invalid["input"] = json!([{"type":"text","text":"arbitrary"}]);
+        assert!(serde_json::from_value::<DurableThreadRequest>(json!({
+            "requestId":"invalid","expectedIdentity":identity(),"operation":invalid
+        }))
+        .is_err());
+        let response = ChatgptService::default().durable_thread_with(request(setup), cloud_profile(), share_rpc, |_, _, _| {
+            std::future::ready(Ok(json!({"turn":{"id":"turn-A","clientUserMessageId":MESSAGE_ID},"threadId":"thread-A"})))
+        }).await.unwrap();
+        assert_eq!(response.body, json!({"turn":{"id":"turn-A"}}));
+    }
 }

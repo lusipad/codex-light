@@ -1,5 +1,6 @@
 import { tauriInvoke } from "./bridge";
 import type { CloudNetworkPolicy } from "./cloudDraftNetwork";
+import type { ModelInfo } from "./types";
 import { parseSiteDomains, type SiteDomain } from "./sitesService";
 import { parsePinnedReviewComparison, parsePinnedReviewFile, parseRemotePullRequest, parseRemotePullRequestUrl,
   type PinnedReviewComparison, type PinnedReviewFile, type RemotePullRequest } from "./remoteReview";
@@ -291,7 +292,10 @@ export type CloudThreadOperation =
   | { kind: "turns"; threadId: string; cursor: string | null; limit: number }
   | { kind: "items"; threadId: string; turnId: string; cursor: string | null; limit: number }
   | { kind: "start_repository_apply"; threadId: string; clientUserMessageId: string; serviceTier: string | null; added: string[]; removed: string[] }
-  | { kind: "preferences" | "requirements" };
+  | { kind: "start_environment_setup"; threadId: string; clientUserMessageId: string; cwd: string;
+    model: string | null; effort: string | null; serviceTier: string | null; repositories: { name: string; ref: string }[];
+    skill: string | null; privateDraft: boolean }
+  | { kind: "preferences" | "setup_preferences" | "requirements" };
 
 export async function callCloudThread(operation: CloudThreadOperation, identity: ServiceIdentity, signal: AbortSignal): Promise<unknown> {
   const requestId = crypto.randomUUID();
@@ -300,6 +304,17 @@ export async function callCloudThread(operation: CloudThreadOperation, identity:
   );
   if (result.hostId !== "durable") throw Error("云端会话宿主不匹配。");
   return responseBody(result, requestId, identity);
+}
+
+export async function readCloudSetupModels(identity: ServiceIdentity, signal: AbortSignal): Promise<ModelInfo[]> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; hostId: string; body: unknown }>(
+    "cloud_service_models", requestId, { request: { requestId, cursor: null, expectedIdentity: identity } }, signal,
+  );
+  if (result.hostId !== "durable") throw Error("云端会话宿主不匹配。");
+  const body = responseBody(result, requestId, identity) as { data?: ModelInfo[] } | null;
+  if (!Array.isArray(body?.data)) throw Error("无法读取云端模型。");
+  return body.data;
 }
 
 export async function createCloudEnvironmentConfig(
@@ -705,6 +720,7 @@ export function serviceErrorMessage(error: unknown): string {
     cloud_config_pending: "此账号已有正在处理或尚未确认的环境创建请求。",
     cloud_draft_save_unconfirmed: "保存结果尚未确认，请先核对服务端草稿。",
     cloud_repository_apply_unconfirmed: "应用消息的投递结果尚未确认。",
+    cloud_setup_turn_unconfirmed: "设置消息的投递结果尚未确认，请先核对会话。",
     cloud_draft_pending: "此环境已有正在处理或尚未确认的草稿请求，请检查聊天列表。",
     cloud_resume_timeout: "恢复云端会话超时。", cloud_thread_closing: "云端会话正在关闭。",
     network_error: "服务连接失败，请检查网络后重试。", timeout: "服务请求超时，请重试。",

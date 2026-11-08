@@ -1,5 +1,6 @@
 import { createCloudDraftReceipt, createCloudEnvironmentConfig, readCloudService, type ServiceIdentity } from "./chatgptService";
 import { parseCloudDetail } from "./cloudEnvironmentService";
+import { resolveCloudSetupModel } from "./cloudSetupModel";
 
 type Receipt = Awaited<ReturnType<typeof createCloudEnvironmentConfig>>;
 export interface CloudSetupSelection {
@@ -31,7 +32,7 @@ function readPending(key: string): Pending | null {
   throw Error("无法读取待恢复的环境创建记录。");
 }
 
-async function resolveSetupTier(resolve: (signal: AbortSignal) => Promise<string | null>, signal: AbortSignal) {
+async function prepareSetupModel(identity: ServiceIdentity, signal: AbortSignal) {
   const deadline = AbortSignal.any([signal, AbortSignal.timeout(30000)]);
   deadline.throwIfAborted();
   let cancel: () => void = () => {};
@@ -41,7 +42,7 @@ async function resolveSetupTier(resolve: (signal: AbortSignal) => Promise<string
         cancel = () => reject(deadline.reason);
         deadline.addEventListener("abort", cancel, { once: true });
       }),
-      resolve(deadline),
+      resolveCloudSetupModel(identity, deadline),
     ]);
   } finally { deadline.removeEventListener("abort", cancel); }
 }
@@ -74,7 +75,6 @@ async function recoverReceipt(receipt: Receipt, identity: ServiceIdentity, signa
 
 export async function advanceCloudEnvironmentSetup(
   selection: CloudSetupSelection | null, identity: ServiceIdentity, signal: AbortSignal,
-  resolveServiceTier: (signal: AbortSignal) => Promise<string | null>,
 ) {
   signal.throwIfAborted();
   if (!navigator.locks) throw Error("当前窗口无法安全创建环境。");
@@ -85,7 +85,7 @@ export async function advanceCloudEnvironmentSetup(
     if (pending?.phase === "creating-config") return { status: "config_unconfirmed" as const };
     const chosen = pending?.selection ?? selection;
     if (!chosen) return null;
-    const tier = await resolveSetupTier(resolveServiceTier, signal);
+    const settings = await prepareSetupModel(identity, signal);
     signal.throwIfAborted();
     const save = (value: Pending) => localStorage.setItem(key, JSON.stringify(value));
     let receipt: Receipt;
@@ -120,6 +120,6 @@ export async function advanceCloudEnvironmentSetup(
     }
     signal.throwIfAborted();
     if (receipt.thread_id === null || receipt.environment_id === null) return { status: "draft_unconfirmed" as const, receipt };
-    return { status: "ready" as const, receipt: { ...receipt, thread_id: receipt.thread_id, environment_id: receipt.environment_id }, selection: chosen, serviceTier: tier };
+    return { status: "ready" as const, receipt: { ...receipt, thread_id: receipt.thread_id, environment_id: receipt.environment_id }, selection: chosen, ...settings };
   });
 }

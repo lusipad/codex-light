@@ -49,9 +49,11 @@ function fixture() {
   };
   const open = () => {
     const exports = {};
+    let modelPreparation;
     vm.runInNewContext(setupSource, {
       exports,
-      require: name => name === "./chatgptService" ? bridge : detail,
+      require: name => name === "./chatgptService" ? bridge : name === "./cloudSetupModel"
+        ? { resolveCloudSetupModel: (_identity, signal) => modelPreparation(signal) } : detail,
       localStorage: {
         getItem: key => storage.get(key) ?? null,
         setItem: (key, value) => { if (state.rejectStorage) throw Error("storage unavailable"); storage.set(key, value); },
@@ -67,8 +69,10 @@ function fixture() {
         return state.deadline.signal;
       } },
     });
-    return (input = selection, owner = identity, resolve = async () => null, signal = active) =>
-      exports.advanceCloudEnvironmentSetup(input, owner, signal, resolve);
+    return (input = selection, owner = identity, resolve = async () => ({ model: "model-A", effort: "medium", serviceTier: "priority" }), signal = active) => {
+      modelPreparation = resolve;
+      return exports.advanceCloudEnvironmentSetup(input, owner, signal);
+    };
   };
   return { open, calls, state, pending };
 }
@@ -76,6 +80,8 @@ function fixture() {
 const f = fixture();
 const [initial, concurrent] = await Promise.all([f.open()(), f.open()()]);
 assert.equal(initial.status, "ready");
+assert.equal(initial.model, "model-A");
+assert.equal(initial.serviceTier, "priority");
 assert.equal(concurrent.receipt.thread_id, "thread-A");
 assert.deepEqual(f.calls, [["config", "repo", [{ repositoryId: "repo-A", ref: "main" }]],
   ["draft", "config-A"], ["read", "draft", { id: "config-A", draftId: "draft-A" }]]);
@@ -139,9 +145,53 @@ assert.equal(deadline.pending(), null);
 const closed = fixture();
 const closing = new AbortController();
 closed.state.afterConfig = () => closing.abort();
-await assert.rejects(closed.open()(selection, identity, async () => null, closing.signal), { name: "AbortError" });
+await assert.rejects(closed.open()(selection, identity, undefined, closing.signal), { name: "AbortError" });
 assert.equal(closed.pending().phase, "config-created", "confirmed configuration survives navigation before draft creation");
 closed.state.readback = raw();
 assert.equal((await closed.open()(null)).status, "ready");
 assert.deepEqual(closed.calls.map(([op]) => op), ["config", "read", "draft"]);
 console.log("PASS cloud setup: tier preflight, write-ahead recovery, real receipt, serialized reopens and no automatic POST replay");
+
+const capabilities = {}, resolver = {};
+vm.runInNewContext(compile("src/modelCapabilities.ts"), { exports: capabilities });
+const tierCalls = [];
+let managed = { requirements: null }, configured = { model: null, model_reasoning_effort: "medium", service_tier: null };
+let requirementsError;
+vm.runInNewContext(compile("src/cloudSetupModel.ts"), {
+  exports: resolver,
+  require: name => name === "./modelCapabilities" ? capabilities : {
+    async callCloudThread(operation, owner) {
+      assert.equal(owner, identity);
+      tierCalls.push(operation.kind);
+      if (operation.kind === "requirements") {
+        if (requirementsError) throw requirementsError;
+        return managed;
+      }
+      assert.equal(operation.kind, "setup_preferences");
+      return { config: configured };
+    },
+    async readCloudSetupModels() {
+      tierCalls.push("models");
+      return [{ id: "model-A", isDefault: true, defaultServiceTier: "fast", serviceTiers: [{ id: "priority", name: "Fast" }] }];
+    },
+  },
+});
+const modelSettings = () => resolver.resolveCloudSetupModel(identity, active);
+assert.equal((await modelSettings()).serviceTier, "priority");
+assert.deepEqual(tierCalls, ["requirements", "setup_preferences", "models"]);
+managed = { requirements: { featureRequirements: { fast_mode: false, ultrafast_mode: true } }, supportsIndependentSpeedModes: true };
+assert.equal((await modelSettings()).serviceTier, null);
+configured = { ...configured, model: "model-A", service_tier: "ultrafast" };
+const resolved = await modelSettings();
+assert.equal(resolved.serviceTier, "ultrafast");
+assert.equal(resolved.model, "model-A");
+assert.deepEqual(tierCalls.slice(-2), ["requirements", "setup_preferences"]);
+configured = { ...configured, service_tier: "flex" };
+assert.equal((await modelSettings()).serviceTier, "flex");
+configured = { ...configured, service_tier: "default" };
+assert.equal((await modelSettings()).serviceTier, null);
+requirementsError = { code: "cloud_host_closed" };
+assert.equal((await modelSettings()).serviceTier, null);
+requirementsError = { code: "account_changed" };
+await assert.rejects(modelSettings(), { code: "account_changed" });
+console.log("PASS cloud setup model: remote requirements, profile settings, first model page, speed access and failure boundaries");
