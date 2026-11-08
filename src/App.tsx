@@ -575,6 +575,7 @@ export const App: React.FC = () => {
   }, []);
   const [selectedPreviewFile, setSelectedPreviewFile] = useState<string | null>(null);
   const [recentFilesByWorkspace, setRecentFilesByWorkspace] = useState<Record<string, RecentFile[]>>({});
+  const explicitFileScopeRef = useRef<{ cwd: string; path: string; root: string } | null>(null);
 
   // App-Server & Config State
   const [appServerStatus, setAppServerStatus] = useState<AppServerStatus>({
@@ -4221,8 +4222,10 @@ export const App: React.FC = () => {
   }, [activeWorkspace?.path, activeThreadObj, activeThreadId, workspaces, sidebarProjectMembership, workspaceHints]);
 
   const rememberWorkspaceFile = useCallback((workspace: string, path: string) => {
-    if (!workspace || !workbenchWorkspaceRoots.some(root => fileDedupeKey(root) === fileDedupeKey(workspace))) return;
-    const matchedRoot = fileSearchRoot(path, workbenchWorkspaceRoots);
+    const explicit = explicitFileScopeRef.current;
+    const matchedRoot = explicit?.cwd === workspace && fileDedupeKey(explicit.path) === fileDedupeKey(path)
+      ? explicit.root : workbenchWorkspaceRoots.some(root => fileDedupeKey(root) === fileDedupeKey(workspace))
+        ? fileSearchRoot(path, workbenchWorkspaceRoots) : undefined;
     if (!matchedRoot) return;
     const root = fileDedupeKey(matchedRoot);
     const key = fileDedupeKey(path);
@@ -4235,6 +4238,9 @@ export const App: React.FC = () => {
     if (isTauriRuntime()) void tauriInvoke("fs_record_recent_file_access", { root: matchedRoot, path, threadId: activeThreadId ?? "", updatedAt })
       .catch(error => console.warn("最近文件记录写入失败", error));
   }, [activeThreadId, workbenchWorkspaceRoots]);
+  const searchScopeProjects = sidebarProjectMembership.localProjects?.filter(project =>
+    project.rootPaths.some(root => fileDedupeKey(root) === fileDedupeKey(activeWorkspace?.path ?? "")) &&
+    project.rootPaths.every(root => workbenchWorkspaceRoots.some(candidate => fileDedupeKey(root) === fileDedupeKey(candidate))));
 
   const handleOpenQuickChat = useCallback(async () => {
     if (!isTauriRuntime()) {
@@ -7032,17 +7038,21 @@ export const App: React.FC = () => {
         projectScripts={projectScripts}
         workspacePath={activeWorkspace?.path}
         workspaceRoots={workbenchWorkspaceRoots}
+        workspaceLabel={searchScopeProjects?.length === 1 ? searchScopeProjects[0].name : undefined}
         recentFiles={workbenchWorkspaceRoots.flatMap(root => recentFilesByWorkspace[fileDedupeKey(root)] ?? [])}
         onClose={() => setShowQuickSearch(false)}
         onSelectThread={selectThread}
         onSearchFiles={() => setQuickSearchMode("files")}
-        onSelectFile={(filePath, isDirectory) => {
-          if (isDirectory && activeWorkspace?.path) {
-            const root = fileSearchRoot(filePath, workbenchWorkspaceRoots);
+        onSelectFile={(filePath, isDirectory, chosenRoot) => {
+          const cwd = activeWorkspace?.path || "";
+          if (chosenRoot && !fileSearchRoot(filePath, [chosenRoot])) return;
+          if (isDirectory) {
+            const root = chosenRoot ?? fileSearchRoot(filePath, workbenchWorkspaceRoots);
             if (!root) return;
-            setDirectoryReveal({ cwd: activeWorkspace.path, root, path: filePath });
+            setDirectoryReveal({ cwd, root, path: filePath });
             setShowRightDrawer(true);
           } else {
+            explicitFileScopeRef.current = chosenRoot ? { cwd, path: filePath, root: chosenRoot } : null;
             openPreviewFile(filePath);
           }
         }}

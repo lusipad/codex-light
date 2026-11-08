@@ -5,7 +5,7 @@ import ts from "typescript";
 
 const parse = path => ts.createSourceFile(path, fs.readFileSync(path, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const page = parse("src/components/QuickSearchModal.tsx"), app = parse("src/App.tsx");
-let items, keydown, focus, appSlash, selectedFileSearchText, rememberWorkspaceFile;
+let items, keydown, focus, appSlash, selectedFileSearchText, rememberWorkspaceFile, pickSearchFolder;
 const shortcuts = {};
 const helpers = [];
 function visit(node, ast) {
@@ -15,6 +15,7 @@ function visit(node, ast) {
   if (ts.isVariableDeclaration(node) && ast === page) {
     if (node.name.getText(ast) === "items") items = node.initializer.arguments[0];
     if (node.name.getText(ast) === "handleKeyDown") keydown = node.initializer;
+    if (node.name.getText(ast) === "pickSearchFolder") pickSearchFolder = node.initializer;
   }
   if (ast === page && ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect" &&
       node.arguments[0]?.getText(ast).includes("lastActiveElementRef.current = document.activeElement")) focus = node.arguments[0];
@@ -36,6 +37,8 @@ function mount(overrides = {}) {
   const context = {
     query: "goal", mode: "root", workspacePath: "repo-B", remoteResults: null, pathQuery: null, pathLookup: null,
     fileRoots: [overrides.workspacePath ?? "repo-B"], fileScope: JSON.stringify([overrides.workspacePath ?? "repo-B"]),
+    folderScope: undefined,
+    scopeTriggerRef: { current: null },
     threads: [], workspaceFileHits: [], recentFiles: [], recentHistory: [], recentLookup: null, skills: [], SLASH_COMMANDS: [slash],
     REMOTE_THREAD_LIMIT: 9,
     runCmd: "npm run dev", testCmd: "npm test", buildCmd: "npm run build",
@@ -77,7 +80,7 @@ function mount(overrides = {}) {
   let history = {};
   const writes = [];
   const remember = execute(rememberWorkspaceFile, app, { fileDedupeKey: view.context.fileDedupeKey, fileSearchRoot: view.context.fileSearchRoot,
-    workbenchWorkspaceRoots: ["C:/repo", "C:/other"], setRecentFilesByWorkspace: update => { history = update(history); },
+    workbenchWorkspaceRoots: ["C:/repo", "C:/other"], explicitFileScopeRef: { current: null }, setRecentFilesByWorkspace: update => { history = update(history); },
     isTauriRuntime: () => true, activeThreadId: "thread-a", tauriInvoke: (method, args) => { writes.push({ method, args }); return Promise.resolve(); } });
   for (const path of recentFiles.slice().reverse()) remember("C:/repo", path);
   remember("C:/repo", "C:/other/isolated.txt");
@@ -88,6 +91,34 @@ function mount(overrides = {}) {
   assert.ok(!history["c:/repo"].some(file => file.path.includes("secret.txt")));
   assert.deepEqual(Array.from(history["c:/other"], file => file.path), ["C:/other/isolated.txt"]);
   assert.ok(writes.every(write => write.method === "fs_record_recent_file_access" && write.args.threadId === "thread-a" && !write.args.path.includes("secret.txt")));
+}
+{
+  const view = mount({ mode: "files", query: "", workspacePath: "C:/repo", fileRoots: ["C:/picked"], folderScope: "C:/picked",
+    recentFiles: [{ path: "C:/repo/unselected.txt", updatedAt: 20 }, { path: "C:/picked/selected.txt", updatedAt: 10 }],
+  });
+  assert.deepEqual(Array.from(view.results(), item => item.title), ["selected.txt"]);
+  view.results()[0].onSelect();
+  assert.deepEqual(view.calls, [["onSelectFile", "C:/picked/selected.txt", undefined, "C:/picked"], ["onClose"]]);
+  const events = [], calls = [], scopeContext = {};
+  let resolve;
+  const context = {
+    scopeContext, scopeContextRef: { current: scopeContext }, folderPickerPending: { current: false },
+    chosenFolder: "C:/previous", projectScope: '["C:/repo"]', projectRoots: ["C:/repo"],
+    scopeTriggerRef: { current: { focus: () => events.push(["focus"]) } },
+    setScopeMenuOpen: value => events.push(["menu", value]), setScopeError: value => events.push(["error", value]),
+    setSelectedFolder: value => events.push(["selected", value]),
+    tauriInvoke: (method, args) => { calls.push({ method, args }); return new Promise(done => { resolve = done; }); },
+  };
+  const pick = execute(pickSearchFolder, page, context);
+  const cancelled = pick(); await pick();
+  assert.equal(calls.length, 1, "only one native picker can be pending");
+  assert.equal(calls[0].args.initialDirectory, "C:/previous");
+  resolve(null); await cancelled;
+  assert.equal(events.filter(([type]) => type === "selected").length, 0, "cancel preserves the previous scope");
+  const chosen = pick(); resolve("C:/picked"); await chosen;
+  assert.equal(events.find(([type]) => type === "selected")[1].path, "C:/picked");
+  const stale = pick(); context.scopeContextRef.current = {}; resolve("C:/stale"); await stale;
+  assert.equal(events.filter(([type]) => type === "selected").length, 1, "late picker results cannot affect another project or opening");
 }
 {
   const view = mount({ mode: "files", query: "", workspacePath: "C:/repo",

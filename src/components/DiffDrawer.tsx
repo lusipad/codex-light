@@ -795,7 +795,8 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
 
   // Files & Editor state
   const [currentDir, setCurrentDir] = useState<string>(cwd);
-  const fileTreeRoots = useMemo(() => Array.from(new Set([cwd, ...(workspaceRoots ?? [])].filter(Boolean))), [cwd, workspaceRoots]);
+  const revealedRoot = directoryReveal?.cwd === cwd ? directoryReveal.root : undefined;
+  const fileTreeRoots = useMemo(() => Array.from(new Set([cwd, ...(workspaceRoots ?? []), revealedRoot].filter((root): root is string => !!root))), [cwd, workspaceRoots, revealedRoot]);
   const [dirEntries, setDirEntries] = useState<DirectoryEntryItem[]>([]);
   const [fileFilterQuery, setFileFilterQuery] = useState("");
   const [fileSearchHits, setFileSearchHits] = useState<WorkspaceFileHit[]>([]);

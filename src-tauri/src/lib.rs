@@ -931,8 +931,15 @@ async fn thread_project_move_reconcile(
 }
 
 #[tauri::command]
-async fn pick_folder_dialog() -> Result<Option<String>, String> {
-    let picked = tokio::task::spawn_blocking(|| rfd::FileDialog::new().pick_folder())
+async fn pick_folder_dialog(initial_directory: Option<String>, title: Option<String>) -> Result<Option<String>, String> {
+    let picked = tokio::task::spawn_blocking(move || {
+        let mut picker = rfd::FileDialog::new();
+        if let Some(path) = initial_directory.filter(|path| std::path::Path::new(path).is_dir()) {
+            picker = picker.set_directory(path);
+        }
+        if let Some(title) = title { picker = picker.set_title(title); }
+        picker.pick_folder()
+    })
         .await
         .map_err(|e| e.to_string())?;
     Ok(picked.map(|p| state::normalize_fs_path(&p.to_string_lossy())))

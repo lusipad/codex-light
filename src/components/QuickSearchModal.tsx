@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   BookOpen,
+  ChevronDown,
   Command,
   FileText,
   Folder,
@@ -30,10 +31,11 @@ export interface QuickSearchModalProps {
    */
   workspacePath?: string;
   workspaceRoots?: readonly string[];
+  workspaceLabel?: string;
   recentFiles?: readonly RecentFile[];
   onClose: () => void;
   onSelectThread: (threadId: string) => void;
-  onSelectFile: (filePath: string, isDirectory?: boolean) => void;
+  onSelectFile: (filePath: string, isDirectory?: boolean, chosenRoot?: string) => void;
   onSearchFiles: () => void;
   onSelectSkill: (skillId: string) => void;
   onNavigateSettings: (slug: SettingsSectionSlug) => void;
@@ -258,6 +260,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   projectScripts,
   workspacePath,
   workspaceRoots,
+  workspaceLabel,
   recentFiles,
   onClose,
   onSelectThread,
@@ -281,8 +284,15 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   const [remoteLoading, setRemoteLoading] = useState(false);
   const [pathRetry, setPathRetry] = useState(0);
   const [recentRetry, setRecentRetry] = useState(0);
+  const [selectedFolder, setSelectedFolder] = useState<{ projectScope: string; path: string } | null>(null);
+  const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
+  const [scopeError, setScopeError] = useState("");
   const trimmedQuery = query.trim();
-  const fileScope = JSON.stringify(workspaceRoots?.length ? workspaceRoots : workspacePath ? [workspacePath] : []);
+  const projectScope = JSON.stringify(workspaceRoots?.length ? workspaceRoots : workspacePath ? [workspacePath] : []);
+  const projectRoots = useMemo(() => JSON.parse(projectScope) as string[], [projectScope]);
+  const chosenFolder = selectedFolder?.projectScope === projectScope ? selectedFolder.path : undefined;
+  const folderScope = mode === "files" ? chosenFolder : undefined;
+  const fileScope = folderScope ? JSON.stringify([folderScope]) : projectScope;
   const fileRoots = useMemo(() => JSON.parse(fileScope) as string[], [fileScope]);
   const recentRequest = useMemo(() => open && mode === "files" && fileRoots.length > 0 && !trimmedQuery
     ? { roots: fileRoots } : null, [open, mode, fileRoots, trimmedQuery, recentRetry, initialQuery]);
@@ -301,6 +311,12 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   } | null>(null);
   const pathLookup = pathResult?.request === pathRequest ? pathResult : null;
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const scopeTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const scopeMenuRef = useRef<HTMLDivElement | null>(null);
+  const folderPickerPending = useRef(false);
+  const scopeContext = useMemo(() => ({ open, projectScope, initialQuery }), [open, projectScope, initialQuery]);
+  const scopeContextRef = useRef(scopeContext);
+  scopeContextRef.current = scopeContext;
   const lastActiveElementRef = useRef<HTMLElement | null>(null);
   const fileSearchRef = useRef<ReturnType<typeof createFuzzyFileSearch> | null>(null);
   /** 查询词 -> 协议结果缓存：避免每次渲染/重复输入重复请求 app-server。 */
@@ -311,6 +327,33 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   const runCmd = projectScripts?.runCommand || "npm run dev";
   const testCmd = projectScripts?.testCommand || "npm test";
   const buildCmd = projectScripts?.buildCommand || "npm run build";
+
+  const closeScopeMenu = () => {
+    setScopeMenuOpen(false);
+    scopeTriggerRef.current?.focus();
+  };
+  const pickSearchFolder = async () => {
+    if (folderPickerPending.current) return;
+    folderPickerPending.current = true;
+    setScopeMenuOpen(false);
+    setScopeError("");
+    try {
+      const path = await tauriInvoke<string | null>("pick_folder_dialog", {
+        initialDirectory: chosenFolder ?? projectRoots[0], title: "选择要搜索的文件夹",
+      });
+      if (scopeContextRef.current === scopeContext && path) setSelectedFolder({ projectScope, path });
+    } catch {
+      if (scopeContextRef.current === scopeContext) setScopeError("无法打开文件夹选择器");
+    } finally {
+      folderPickerPending.current = false;
+      if (scopeContextRef.current === scopeContext) scopeTriggerRef.current?.focus();
+    }
+  };
+
+  useEffect(() => { setScopeMenuOpen(false); setScopeError(""); }, [scopeContext]);
+  useEffect(() => {
+    if (scopeMenuOpen) scopeMenuRef.current?.querySelector("button")?.focus();
+  }, [scopeMenuOpen]);
 
   useEffect(() => {
     if (open) {
@@ -454,6 +497,12 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
         ? remoteResults
         : null;
     const results: SearchResultItem[] = [];
+    const openResult = (path: string, isDirectory?: boolean) => {
+      if (folderScope) onSelectFile(path, isDirectory, folderScope);
+      else if (isDirectory === undefined) onSelectFile(path);
+      else onSelectFile(path, isDirectory);
+      onClose();
+    };
     if (pathQuery) {
       if (pathLookup?.match) {
         const { path, isDirectory } = pathLookup.match;
@@ -461,7 +510,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
           id: `rfile-${path}`, category: "file", section: "文件",
           title: baseNameFsPath(path) || path, subtitle: path,
           icon: isDirectory ? <Folder size={14} /> : <FileText size={14} />,
-          onSelect: () => { onSelectFile(path, isDirectory); onClose(); },
+          onSelect: () => openResult(path, isDirectory),
         });
       } else if (pathLookup?.failed) {
         results.push({
@@ -490,7 +539,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
           id: `recent-file-${key}`, category: "file", section,
           title: baseNameFsPath(path) || path, subtitle: subtitle || undefined,
           icon: <FileText size={14} />,
-          onSelect: () => { onSelectFile(path); onClose(); },
+          onSelect: () => openResult(path),
         });
         if (results.length === 10) break;
       }
@@ -688,10 +737,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
         subtitle: fileRoots.length > 1 && root ? `${baseNameFsPath(root) || root}/${relative}` : f.relPath,
         rightLabel: "File",
         icon: <FileText size={14} />,
-        onSelect: () => {
-          onSelectFile(f.absPath);
-          onClose();
-        },
+        onSelect: () => openResult(f.absPath),
       });
     });
 
@@ -907,6 +953,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
     workspacePath,
     fileRoots,
     fileScope,
+    folderScope,
     recentFiles,
     recentHistory,
     recentLookup,
@@ -946,7 +993,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
       );
     } else if (e.key === "Tab") {
       e.preventDefault();
-      if (items.length === 0) return;
+      if (items.length === 0) { scopeTriggerRef.current?.focus(); return; }
       const currentSec = items[selectedIndex]?.section;
       if (!currentSec) return;
       if (e.shiftKey) {
@@ -967,6 +1014,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
           }
         }
       }
+      scopeTriggerRef.current?.focus();
     } else if (e.key === "Enter") {
       e.preventDefault();
       if (items[selectedIndex]) {
@@ -982,6 +1030,8 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   const recentLoading = !!recentRequest && isTauriRuntime() && !recentLookup;
   const loading = recentRequest ? recentLoading && items.length === 0
     : pathQuery ? !!pathRequest && isTauriRuntime() && !pathLookup : remoteLoading;
+  const defaultScopeLabel = workspaceLabel || (projectRoots.length === 1
+    ? `文件夹：${baseNameFsPath(projectRoots[0]) || projectRoots[0]}` : "文件夹");
 
   return (
     <div className="quick-search-backdrop" onClick={onClose}>
@@ -1005,7 +1055,39 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
+          {isTauriRuntime() && <div className="quick-search-scope" onBlur={event => {
+            if (!event.currentTarget.contains(event.relatedTarget)) setScopeMenuOpen(false);
+          }} onKeyDown={event => {
+            if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+            if (event.key === "Escape" && !scopeMenuOpen) return;
+            event.stopPropagation();
+            if (event.key === "Escape") { event.preventDefault(); closeScopeMenu(); }
+            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              event.preventDefault();
+              if (!scopeMenuOpen && projectRoots.length) setScopeMenuOpen(true);
+              else if (scopeMenuOpen) {
+                const buttons = scopeMenuRef.current?.querySelectorAll("button");
+                if (buttons?.length) buttons[event.target === buttons[0] ? 1 : 0]?.focus();
+              }
+            }
+          }}>
+            <button type="button" ref={scopeTriggerRef} className="quick-search-scope-trigger"
+              title={chosenFolder ?? projectRoots.join("\n")}
+              aria-haspopup={projectRoots.length ? "menu" : "dialog"}
+              aria-expanded={projectRoots.length ? scopeMenuOpen : undefined}
+              onClick={() => projectRoots.length ? setScopeMenuOpen(value => !value) : void pickSearchFolder()}>
+              <Folder size={14} aria-hidden="true" />
+              <span>{chosenFolder ? `在 ${baseNameFsPath(chosenFolder) || chosenFolder} 中` : projectRoots.length ? defaultScopeLabel : "选择文件夹…"}</span>
+              {projectRoots.length > 0 && <ChevronDown size={12} aria-hidden="true" />}
+            </button>
+            {scopeMenuOpen && <div ref={scopeMenuRef} className="quick-search-scope-menu" role="menu" aria-label="搜索范围">
+              <button type="button" role="menuitemradio" aria-checked={!chosenFolder} onClick={() => { setSelectedFolder(null); setScopeError(""); closeScopeMenu(); }}>{defaultScopeLabel}</button>
+              <button type="button" role="menuitem" onClick={() => void pickSearchFolder()}>选择文件夹…</button>
+            </div>}
+          </div>}
         </div>
+
+        {scopeError && <div className="quick-search-scope-error" role="alert">{scopeError}</div>}
 
         <div className="quick-search-results">
           {loading && (

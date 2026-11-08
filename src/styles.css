@@ -5501,12 +5501,47 @@ html, body, #root {
 
 .quick-search-input {
   flex: 1;
+  min-width: 0;
   background: transparent;
   border: none;
   outline: none;
   color: var(--text-primary);
   font-size: var(--text-base);
 }
+
+.quick-search-dialog:has(.quick-search-scope-menu) {
+  overflow: visible;
+}
+
+.quick-search-scope { position: relative; min-width: 0; }
+.quick-search-scope-trigger, .quick-search-scope-menu button {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 5px 8px;
+  text-align: start;
+  cursor: pointer;
+}
+.quick-search-scope-trigger { display: flex; align-items: center; gap: 5px; }
+.quick-search-scope-trigger span { max-width: 10rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.quick-search-scope-menu {
+  position: absolute;
+  z-index: 1;
+  top: calc(100% + 4px);
+  inset-inline-end: 0;
+  min-width: 140px;
+  padding: 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 30%);
+}
+.quick-search-scope-menu button { display: block; width: 100%; white-space: nowrap; }
+.quick-search-scope-trigger:hover, .quick-search-scope-menu button:hover,
+.quick-search-scope-menu button:focus-visible { background: var(--bg-hover); }
+.quick-search-scope-menu button[aria-checked="true"]::after { content: "✓"; margin-inline-start: 8px; }
+.quick-search-scope-error { padding: 6px 14px; color: var(--text-secondary); }
 
 .quick-search-results {
   max-height: 360px;
