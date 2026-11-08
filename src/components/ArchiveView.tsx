@@ -4,6 +4,8 @@ import { callAppServer } from "../bridge";
 import { ArchiveDeleteResult, SidebarProjectMembership, ThreadSummary, WorkspaceRootItem } from "../types";
 import { accountRead } from "../config";
 import { serviceIdentity, unarchiveCloudItem, deleteCloudArchiveItem, type ArchiveCloudSource, type ServiceIdentity } from "../chatgptService";
+import { applyCloudRecentAction, type CloudRecentChat } from "../cloudRecentChats";
+import type { ArchivedDurableChatsState } from "../archiveDurableChats";
 import type { ArchivedConversationsState } from "../archiveConversations";
 import type { ArchivedCloudTasksState } from "../archiveCloudTasks";
 import { createPortal } from "react-dom";
@@ -17,18 +19,25 @@ export interface ArchiveViewProps {
   surface?: "global" | "settings";
   cloudArchive?: ArchivedCloudTasksState;
   conversationArchive?: ArchivedConversationsState;
+  durableArchive?: ArchivedDurableChatsState;
   workspaces?: WorkspaceRootItem[];
   projectMembership?: SidebarProjectMembership;
   workspaceHints?: Record<string, string>;
   onSelectThread: (threadId: string) => void;
   onUnarchive: (thread: ThreadSummary) => Promise<void> | void;
+  onDurableRestored?: () => void;
+  onOpenDurableChat?: (chat: CloudRecentChat) => void;
   onDelete: (thread: ThreadSummary) => Promise<ArchiveDeleteResult>;
   onDeleteAll: () => Promise<ArchiveDeleteResult>;
   onShowToast?: (message: string, type?: "info" | "success" | "error", action?: { label: string; onClick: () => void }) => void;
 }
 
+type ArchiveSource = ArchiveCloudSource | "durable";
+type ArchiveReader = ArchivedCloudTasksState | ArchivedConversationsState | ArchivedDurableChatsState;
+
 interface ArchivedThread extends ThreadSummary {
-  archiveSource?: "cloud-task" | "chatgpt-conversation";
+  archiveSource?: ArchiveSource;
+  durableChat?: CloudRecentChat;
   gizmoId?: string | null;
   environmentLabel?: string | null;
   displayTime?: number | string | null;
@@ -71,7 +80,7 @@ function archiveProjectPath(value?: string | null): string {
 }
 
 interface CloudRecovery {
-  source: ArchiveCloudSource; id: string; identity: ServiceIdentity; title: string; token: object; kind?: "unarchive" | "delete";
+  source: ArchiveSource; id: string; identity: ServiceIdentity; title: string; token: object; kind?: "unarchive" | "delete";
   status: "pending" | "accepted" | "unknown" | "failed"; detail?: string; readAfterVersion?: number;
 }
 const sameArchiveIdentity = (a?: ServiceIdentity | null, b?: ServiceIdentity | null) => Boolean(a && b
@@ -258,11 +267,14 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
   surface = "global",
   cloudArchive,
   conversationArchive,
+  durableArchive,
   workspaces = EMPTY_WORKSPACES,
   projectMembership = EMPTY_MEMBERSHIP,
   workspaceHints = EMPTY_HINTS,
   onSelectThread,
   onUnarchive,
+  onDurableRestored,
+  onOpenDurableChat,
   onDelete,
   onDeleteAll,
   onShowToast,
@@ -272,8 +284,8 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
   cloudDeleteTargetRef.current = cloudDeleteTarget;
   const [cloudRecoveries, setCloudRecoveries] = useState<Record<string, CloudRecovery>>({});
   const cloudOperationsRef = useRef(new Map<string, { controller: AbortController; identity: ServiceIdentity; sent: boolean; token: object; result: CloudRecovery["status"] }>());
-  const cloudReadersRef = useRef({ cloudArchive, conversationArchive, surface });
-  cloudReadersRef.current = { cloudArchive, conversationArchive, surface };
+  const cloudReadersRef = useRef({ cloudArchive, conversationArchive, durableArchive, surface });
+  cloudReadersRef.current = { cloudArchive, conversationArchive, durableArchive, surface };
   const [kindFilter, setKindFilter] = useState<ArchiveKindFilter>("all");
   const [sortKey, setSortKey] = useState<ArchiveSortKey>("updated");
   const [projectFilter, setProjectFilter] = useState("all");
@@ -330,10 +342,11 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
     void load();
   }, [load, refreshToken]);
 
-  const cloudReader = (source: ArchiveCloudSource) => source === "cloud-task" ? cloudReadersRef.current.cloudArchive : cloudReadersRef.current.conversationArchive;
+  const cloudReader = (source: ArchiveSource): ArchiveReader | undefined => source === "cloud-task"
+    ? cloudReadersRef.current.cloudArchive : source === "durable" ? cloudReadersRef.current.durableArchive : cloudReadersRef.current.conversationArchive;
   useEffect(() => {
     for (const [key, operation] of cloudOperationsRef.current) {
-      const source = key.startsWith("cloud-task:") ? "cloud-task" : "chatgpt-conversation";
+      const source = key.startsWith("cloud-task:") ? "cloud-task" : key.startsWith("durable:") ? "durable" : "chatgpt-conversation";
       const reader = cloudReader(source);
       if (surface !== "settings" || !reader?.isCurrentIdentity?.(operation.identity)) operation.controller.abort();
       if (surface !== "settings" || !sameArchiveIdentity(reader?.identity, operation.identity)) cloudOperationsRef.current.delete(key);
@@ -360,11 +373,13 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
       });
       return changed ? Object.fromEntries(entries) : current;
     });
-  }, [cloudArchive, conversationArchive, surface, cloudRecoveries]);
+  }, [cloudArchive, conversationArchive, durableArchive, surface, cloudRecoveries]);
 
-  const recoverCloud = async (thread: ArchivedThread, renderedReader?: ArchivedCloudTasksState | ArchivedConversationsState) => {
+  const recoverCloud = async (thread: ArchivedThread, renderedReader?: ArchiveReader) => {
     const source = thread.archiveSource;
     if (!source || surface !== "settings" || cloudReadersRef.current.surface !== "settings") return;
+    const durableChat = thread.durableChat;
+    if (source === "durable" && (!durableChat || !sameArchiveIdentity(renderedReader?.identity, durableChat.session.identity))) return;
     const key = `${source}:${thread.id}`, reader = cloudReader(source), identity = renderedReader?.identity;
     if (!identity || !renderedReader?.canUnarchive?.(thread.id, identity) || !sameArchiveIdentity(reader?.identity, identity) || reader?.status !== "ready" || typeof reader.canUnarchive !== "function" || !reader.canUnarchive(thread.id, identity)
       || cloudOperationsRef.current.has(key) || ["pending", "unknown", "accepted"].includes(cloudRecoveries[key]?.status)) return;
@@ -384,7 +399,8 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
         || !sameArchiveIdentity(await serviceIdentity(operation.controller.signal), identity)) throw Object.assign(Error("Account changed before write"), { code: "account_changed" });
       if (!active()) return;
       operation.sent = true;
-      await unarchiveCloudItem(source, thread.id, identity, operation.controller.signal);
+      if (source === "durable") await applyCloudRecentAction(durableChat!, { kind: "unarchive" }, operation.controller.signal);
+      else await unarchiveCloudItem(source, thread.id, identity, operation.controller.signal);
       accepted = true;
       if (!active()) return;
       const after = await accountRead();
@@ -395,16 +411,22 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
       if (!active() || !cloudReader(source)?.forgetAccepted(thread.id, identity)) return;
       operation.result = "accepted";
       updateRecovery({ ...base, status: "accepted" });
-      onShowToast?.("聊天已取消归档", "info");
-      if (source === "chatgpt-conversation") cloudReader(source)?.reload();
+      if (durableChat && onOpenDurableChat) onShowToast?.("聊天已取消归档", "info", {
+        label: "查看", onClick: () => {
+          if (mountedRef.current && cloudReader("durable")?.isCurrentIdentity(identity)) onOpenDurableChat(durableChat);
+        },
+      });
+      else onShowToast?.("聊天已取消归档", "info");
+      if (source === "durable") onDurableRestored?.();
+      if (source !== "cloud-task") cloudReader(source)?.reload();
     } catch (cause) {
       if (cloudOperationsRef.current.get(key) !== operation || !mountedRef.current || !sameArchiveIdentity(cloudReader(source)?.identity, identity) || !cloudReader(source)?.isCurrentIdentity?.(identity) || cloudReadersRef.current.surface !== "settings") return;
       const code = (cause as { code?: string })?.code;
       const detail = typeof (cause as { message?: unknown })?.message === "string" ? (cause as { message: string }).message : String(cause);
-      const unknown = code === "archive_write_unknown" || operation.sent && operation.controller.signal.aborted;
+      const unknown = code === "archive_write_unknown" || operation.sent && (source === "durable" || operation.controller.signal.aborted);
       operation.result = accepted ? "accepted" : unknown ? "unknown" : "failed";
       updateRecovery({ ...base, status: operation.result, detail, readAfterVersion: accepted ? cloudReader(source)?.readVersion : undefined });
-      if (accepted) { onShowToast?.("聊天已取消归档", "info"); if (source === "chatgpt-conversation") cloudReader(source)?.reload(); }
+      if (accepted) { onShowToast?.("聊天已取消归档", "info"); if (source !== "cloud-task") cloudReader(source)?.reload(); }
       else onShowToast?.(unknown ? "取消归档结果尚未确认，请刷新查看。" : "无法取消归档聊天", "error");
       if (!accepted && (code === "account_changed" || code === "archive_identity_changed" || code === "invalid_auth" || code?.startsWith("auth_"))) { cloudReader(source)?.reload(); refreshed = true; }
     } finally {
@@ -430,13 +452,14 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
   };
   const requestCloudDelete = (thread: ArchivedThread, renderedReader?: ArchivedCloudTasksState | ArchivedConversationsState) => {
     const source = thread.archiveSource, identity = renderedReader?.identity;
-    if (!source || !identity || surface !== "settings" || cloudReadersRef.current.surface !== "settings" || cloudOperationsRef.current.has(`${source}:${thread.id}`)
+    if (!source || source === "durable" || !identity || surface !== "settings" || cloudReadersRef.current.surface !== "settings" || cloudOperationsRef.current.has(`${source}:${thread.id}`)
       || !renderedReader?.canUnarchive?.(thread.id, identity) || !cloudReader(source)?.canUnarchive?.(thread.id, identity)) return;
     const target = { thread, reader: renderedReader, identity, dialogToken: {} };
     cloudDeleteTargetRef.current = target; setCloudDeleteTarget(target);
   };
   const deleteCloud = async (target: CloudDeleteTarget, retry = false) => {
     const { thread, reader: renderedReader, identity } = target, source = thread.archiveSource!;
+    if (source === "durable") return;
     const key = `${source}:${thread.id}`;
     if ((retry ? cloudDeleteTargetRef.current !== null : cloudDeleteTargetRef.current?.dialogToken !== target.dialogToken)
       || surface !== "settings" || cloudReadersRef.current.surface !== "settings" || cloudOperationsRef.current.has(key)
@@ -495,7 +518,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
     }
   };
 
-  const refreshCloudSource = (source: ArchiveCloudSource, retryListeners = false) => {
+  const refreshCloudSource = (source: ArchiveSource, retryListeners = false) => {
     const reader = cloudReader(source);
     if (!reader) return;
     const version = reader.readVersion;
@@ -589,12 +612,15 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
       && ["ready", "loading", "error"].includes(conversationArchive.status)
       ? conversationArchive.items.map(item => ({ id: item.id, name: item.title, createdAt: item.createdAt ?? undefined,
         updatedAt: item.updatedAt ?? undefined, archiveSource: "chatgpt-conversation", gizmoId: item.gizmoId, displayTime: item.displayTime })) : [];
-    const entries = [...(kindFilter === "cloud" ? [] : threads), ...cloudItems, ...conversations].map(thread => {
+    const durable: ArchivedThread[] = kindFilter !== "local" && durableArchive?.identity
+      ? durableArchive.items.map(chat => ({ id: chat.id, name: chat.title, createdAt: chat.createdAt, updatedAt: chat.updatedAt,
+        displayTime: chat.updatedAt ?? chat.createdAt ?? null, archiveSource: "durable", durableChat: chat, environmentLabel: chat.session.binding.name })) : [];
+    const entries = [...(kindFilter === "cloud" ? [] : threads), ...cloudItems, ...conversations, ...durable].map(thread => {
       let project: typeof projects[number] | undefined;
       if (thread.archiveSource === "chatgpt-conversation") project = projects.find(item => item.entity?.id === thread.gizmoId);
       const hasWorkspaceOverride = !thread.archiveSource && Object.prototype.hasOwnProperty.call(projectMembership.workspaceProjectAssignments, thread.id);
       const workspaceOverride = projectMembership.workspaceProjectAssignments[thread.id];
-      if (thread.archiveSource !== "chatgpt-conversation" && !projectMembership.projectlessThreadIds.includes(thread.id) && !(hasWorkspaceOverride && workspaceOverride == null)) {
+      if (thread.archiveSource !== "chatgpt-conversation" && thread.archiveSource !== "durable" && !projectMembership.projectlessThreadIds.includes(thread.id) && !(hasWorkspaceOverride && workspaceOverride == null)) {
         const assignment = hasWorkspaceOverride ? workspaceOverride : projectMembership.threadProjectAssignments[thread.id];
         if (assignment?.projectKind === "local") project = projects.find(item => item.id === assignment.projectId || item.serverProjectId === assignment.projectId);
         if (!project && thread.archiveSource !== "cloud-task") for (const path of [workspaceHints[thread.id], thread.cwd]) {
@@ -621,16 +647,17 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
     for (const group of result) group.threads.sort(compare);
     return result.sort((a, b) => (sortKey === "alphabetical" ? 0 : Math.max(0, ...b.threads.map(time)) - Math.max(0, ...a.threads.map(time)))
       || a.label.localeCompare(b.label) || a.id.localeCompare(b.id));
-  }, [threads, projects, projectMembership, workspaceHints, activeProjectFilter, kindFilter, sortKey, query, cloudArchive, conversationArchive]);
+  }, [threads, projects, projectMembership, workspaceHints, activeProjectFilter, kindFilter, sortKey, query, cloudArchive, conversationArchive, durableArchive]);
   const displayedGroups = settings ? settingsGroups : [{ id: "global", label: "", threads: visible }];
   const displayedCount = displayedGroups.reduce((count, group) => count + group.threads.length, 0);
   const cloudVisible = settings && kindFilter !== "local";
-  const cloudReady = Boolean(cloudArchive || conversationArchive) && (!cloudArchive || cloudArchive.status === "ready")
-    && (!conversationArchive || conversationArchive.status === "ready");
+  const hasCloudSource = Boolean(cloudArchive || conversationArchive || durableArchive);
+  const cloudReady = hasCloudSource && (!cloudArchive || cloudArchive.status === "ready")
+    && (!conversationArchive || conversationArchive.status === "ready") && (!durableArchive || durableArchive.status === "ready");
   const unavailableSource = settings && (activeProjectFilter === "special:automations" || (kindFilter === "cloud" && !cloudReady));
   const localSourceVisible = !settings || kindFilter !== "cloud";
-  const emptyReady = (!localSourceVisible || (!error && !loading)) && !unavailableSource && (!cloudVisible || (!cloudArchive && !conversationArchive) || cloudReady);
-  const refreshSources = () => { if (localSourceVisible) void load(); if (cloudVisible) { refreshCloudSource("cloud-task"); refreshCloudSource("chatgpt-conversation"); } };
+  const emptyReady = (!localSourceVisible || (!error && !loading)) && !unavailableSource && (!cloudVisible || !hasCloudSource || cloudReady);
+  const refreshSources = () => { if (localSourceVisible) void load(); if (cloudVisible) { refreshCloudSource("cloud-task"); refreshCloudSource("chatgpt-conversation"); refreshCloudSource("durable"); } };
 
   return (
     <div className={`archive-view${settings ? " archive-settings" : ""}`} ref={viewRef} tabIndex={-1}>
@@ -658,7 +685,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
             type="button"
             className="archive-refresh"
             onClick={refreshSources}
-            disabled={(localSourceVisible && loading) || busyId !== null || (cloudVisible && (cloudArchive?.status === "loading" || conversationArchive?.status === "loading"))}
+            disabled={(localSourceVisible && loading) || busyId !== null || (cloudVisible && [cloudArchive, conversationArchive, durableArchive].some(reader => reader?.status === "loading"))}
           >
             {loading ? "刷新中…" : "刷新"}
           </button>
@@ -673,11 +700,17 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
             <GeneralPreferenceSelect id="archive-project-filter" label="按项目筛选已归档的聊天" value={activeProjectFilter} options={projectOptions} onChange={setProjectFilter} />
           </div>
         </div>
-        {kindFilter === "all" && !cloudArchive && !conversationArchive && <div className="archive-source-notice" role="status">当前仅列出本地归档，云端归档尚未接入，全部聊天的来源不完整。</div>}
+        {kindFilter === "all" && !hasCloudSource && <div className="archive-source-notice" role="status">当前仅列出本地归档，云端归档尚未接入，全部聊天的来源不完整。</div>}
         {cloudVisible && cloudArchive && !conversationArchive && <div className="archive-source-notice" role="status">云端任务归档；ChatGPT 会话归档尚未接入，当前结果不代表完整云端归档。</div>}
         {cloudVisible && conversationArchive && <div className="archive-source-notice" role="status">按当前账号资格读取归档来源。ChatGPT 会话页面尚未接入；当前列表仅包含已读取的页。</div>}
         {cloudVisible && conversationArchive && !cloudArchive && <div className="archive-source-notice" role="status">云端任务来源尚未接入，当前结果不代表完整云端归档。</div>}
-        {kindFilter === "cloud" && !cloudArchive && !conversationArchive && <div className="archive-source-notice" role="status">云端归档尚未实现，无法读取云端结果。</div>}
+        {kindFilter === "cloud" && !hasCloudSource && <div className="archive-source-notice" role="status">云端归档尚未实现，无法读取云端结果。</div>}
+        {cloudVisible && durableArchive && <div className="archive-cloud-status" role="status">
+          {durableArchive.status === "signed_out" && <span>请登录 ChatGPT 账号以读取云端聊天归档。</span>}
+          {durableArchive.status === "unsupported_auth" && <span>当前登录方式不支持云端聊天归档。</span>}
+          {durableArchive.status === "loading" && <span>正在读取云端聊天归档…</span>}
+          {durableArchive.status === "error" && <><span>无法读取云端聊天归档：{durableArchive.error}</span><button type="button" className="archive-action" onClick={() => refreshCloudSource("durable", true)}>重试云端聊天归档</button></>}
+        </div>}
         {cloudVisible && cloudArchive && <div className="archive-cloud-status" role="status">
           {cloudArchive.status === "signed_out" && <span>请登录 ChatGPT 账号以读取云端任务归档。</span>}
           {cloudArchive.status === "unsupported_auth" && <span>当前登录方式不支持云端任务归档，请使用 ChatGPT 账号。</span>}
@@ -728,7 +761,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
 
       {emptyReady && displayedCount === 0 && (
         <div className="archive-empty">
-          <div className="archive-empty-title">{settings && (cloudArchive || conversationArchive) && kindFilter !== "local" ? (query ? "当前已读取的聊天中未找到匹配项" : "当前已读取的来源中没有归档聊天") : query ? "未找到匹配的归档聊天" : "暂无已归档的聊天"}</div>
+          <div className="archive-empty-title">{settings && hasCloudSource && kindFilter !== "local" ? (query ? "当前已读取的聊天中未找到匹配项" : "当前已读取的来源中没有归档聊天") : query ? "未找到匹配的归档聊天" : "暂无已归档的聊天"}</div>
         </div>
       )}
 
@@ -738,7 +771,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
         <div className="archive-list">
           {group.threads.map((thread) => (
             <div key={settings ? `${thread.archiveSource || "local"}:${thread.id}` : thread.id} className={`archive-row${thread.archiveSource ? " archive-cloud-row" : ""}${thread.archiveSource === "chatgpt-conversation" ? " archive-conversation-row" : ""}`} >
-              {thread.archiveSource && <Cloud size={14} aria-label={thread.archiveSource === "cloud-task" ? "云端任务" : "ChatGPT 会话"} className="archive-cloud-icon" />}
+              {thread.archiveSource && <Cloud size={14} aria-label={thread.archiveSource === "cloud-task" ? "云端任务" : thread.archiveSource === "durable" ? "云端聊天" : "ChatGPT 会话"} className="archive-cloud-icon" />}
               <div className="archive-row-main">
                 <span className="archive-row-title" title={thread.archiveSource === "chatgpt-conversation" ? "应用内 ChatGPT 会话页面尚未实现" : undefined}>
                   {settings ? archiveTitle(thread) : thread.name || thread.preview || thread.id}
@@ -768,12 +801,12 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
                   disabled={!cloudReader(thread.archiveSource)?.identity || cloudReader(thread.archiveSource)?.status !== "ready"
                     || typeof cloudReader(thread.archiveSource)?.canUnarchive !== "function" || !cloudReader(thread.archiveSource)?.canUnarchive(thread.id, cloudReader(thread.archiveSource)!.identity!)
                     || ["pending", "unknown", "accepted"].includes(cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.status)}
-                  onClick={() => void recoverCloud(thread, thread.archiveSource === "cloud-task" ? cloudArchive : conversationArchive)}>{cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.status === "pending" && cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.kind !== "delete" && <LoaderCircle size={13} className="archive-recovery-spinner" aria-hidden="true" />}取消归档</button><button type="button" className="archive-action danger archive-recovery-button" aria-label={`删除已归档的聊天 ${archiveTitle(thread)}`}
+                  onClick={() => void recoverCloud(thread, thread.archiveSource === "cloud-task" ? cloudArchive : thread.archiveSource === "durable" ? durableArchive : conversationArchive)}>{cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.status === "pending" && cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.kind !== "delete" && <LoaderCircle size={13} className="archive-recovery-spinner" aria-hidden="true" />}取消归档</button>{thread.archiveSource !== "durable" && <button type="button" className="archive-action danger archive-recovery-button" aria-label={`删除已归档的聊天 ${archiveTitle(thread)}`}
                   aria-busy={cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.status === "pending" && cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.kind === "delete"}
                   disabled={!cloudReader(thread.archiveSource)?.identity || !cloudReader(thread.archiveSource)?.canUnarchive?.(thread.id, cloudReader(thread.archiveSource)!.identity!)
                     || ["pending", "unknown", "accepted"].includes(cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.status)}
                   onClick={() => requestCloudDelete(thread, thread.archiveSource === "cloud-task" ? cloudArchive : conversationArchive)}>
-                  {cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.status === "pending" && cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.kind === "delete" && <LoaderCircle size={13} className="archive-recovery-spinner" aria-hidden="true" />}删除</button></> : <>
+                  {cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.status === "pending" && cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.kind === "delete" && <LoaderCircle size={13} className="archive-recovery-spinner" aria-hidden="true" />}删除</button>}</> : <>
                 <button
                   type="button"
                   className="archive-action danger"
@@ -800,8 +833,8 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
         </section>
       ))}
 
-      {!unavailableSource && !(cloudVisible && (cloudArchive || conversationArchive) && !cloudReady && displayedCount === 0) && <footer className="archive-footer">
-        {settings && (cloudArchive || conversationArchive) && kindFilter !== "local" ? `已显示 ${displayedCount} 个聊天（仅当前账号已读取的来源与页）` : <>共 {displayedCount} 个{settings ? "本地归档聊天" : "归档会话"}{loading ? "（加载中…）" : ""}</>}
+      {!unavailableSource && !(cloudVisible && hasCloudSource && !cloudReady && displayedCount === 0) && <footer className="archive-footer">
+        {settings && hasCloudSource && kindFilter !== "local" ? `已显示 ${displayedCount} 个聊天（仅当前账号已读取的来源与页）` : <>共 {displayedCount} 个{settings ? "本地归档聊天" : "归档会话"}{loading ? "（加载中…）" : ""}</>}
       </footer>}
       {cloudDeleteTarget && <CloudArchiveDeleteDialog title={archiveTitle(cloudDeleteTarget.thread)} fallbackRef={viewRef}
         busy={cloudRecoveries[`${cloudDeleteTarget.thread.archiveSource}:${cloudDeleteTarget.thread.id}`]?.kind === "delete" && cloudRecoveries[`${cloudDeleteTarget.thread.archiveSource}:${cloudDeleteTarget.thread.id}`]?.status === "pending"}

@@ -40,6 +40,8 @@ enum Operation {
     },
     List {
         cursor: Option<String>,
+        #[serde(default)]
+        archived: bool,
     },
     Resume {
         params: Value,
@@ -203,9 +205,9 @@ impl Operation {
                 json!({"threadId":thread_id,"includeTurns":false}),
                 30,
             ),
-            Self::List { cursor } if cursor.as_deref().is_none_or(opaque) => (
+            Self::List { cursor, archived } if cursor.as_deref().is_none_or(opaque) => (
                 "thread/list",
-                json!({"cursor":cursor,"limit":100,"archived":false,"useStateDbOnly":true,"sortKey":"updated_at"}),
+                json!({"cursor":cursor,"limit":100,"archived":archived,"useStateDbOnly":true,"sortKey":"updated_at"}),
                 30,
             ),
             Self::Resume {
@@ -719,6 +721,13 @@ mod tests {
                 json!({"cursor":cursor,"limit":100,"archived":false,"useStateDbOnly":true,"sortKey":"updated_at"})
             );
         }
+        let archived: Operation = serde_json::from_value(json!({
+            "kind":"list","cursor":"archived-page","archived":true
+        })).unwrap();
+        let archived = archived.wire().unwrap();
+        assert_eq!(archived.method, "thread/list");
+        assert_eq!(archived.params,
+            json!({"cursor":"archived-page","limit":100,"archived":true,"useStateDbOnly":true,"sortKey":"updated_at"}));
         assert!(serde_json::from_value::<Operation>(
             json!({"kind":"list","cursor":null,"cwd":"C:/project"})
         )

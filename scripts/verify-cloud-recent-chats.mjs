@@ -26,7 +26,7 @@ const pages = [
   { data: [{ ...thread, name: "duplicate" }, { id: "known", preview: "之前的聊天", recencyAt: 150 }], nextCursor: null },
 ];
 
-function fixture(readPage, current = identity, mutate = () => assert.fail("unexpected mutation")) {
+function fixture(readPage, current = identity, mutate = () => assert.fail("unexpected mutation"), archived = false) {
   const exports = {};
   const cursors = [];
   vm.runInNewContext(outputText, { exports, require(name) {
@@ -35,6 +35,7 @@ function fixture(readPage, current = identity, mutate = () => assert.fail("unexp
       async callCloudThread(operation, actual) {
         assert.equal(actual, identity);
         if (operation.kind !== "list") return mutate(operation);
+        assert.equal(operation.archived, archived || undefined);
         cursors.push(operation.cursor);
         return readPage(operation.cursor);
       },
@@ -44,7 +45,7 @@ function fixture(readPage, current = identity, mutate = () => assert.fail("unexp
     };
     assert.fail(name);
   } });
-  return { read: signal => exports.readCloudRecentChats(identity, signal), action: exports.applyCloudRecentAction, cursors };
+  return { read: signal => exports.readCloudRecentChats(identity, signal, archived), action: exports.applyCloudRecentAction, cursors };
 }
 
 const signal = new AbortController().signal;
@@ -56,6 +57,12 @@ assert.equal(JSON.stringify(chats.map(chat => [chat.session.threadId, chat.title
 assert.equal(chats[0].session.binding.name, "Saved");
 assert.equal(chats[1].session.binding.configId, env.environmentConfigId);
 assert.equal(chats[1].session.binding.conversation, true);
+const archivedCatalog = fixture(cursor => cursor === null
+  ? { data: [{ ...thread, archived: true }, { ...thread, id: "active", archived: false }], nextCursor: "archives-2" }
+  : { data: [{ ...thread, id: "another-archive" }], nextCursor: null }, identity, undefined, true);
+assert.equal(JSON.stringify((await archivedCatalog.read(signal)).map(chat => chat.session.threadId)),
+  '["same-id","another-archive"]');
+assert.deepEqual(archivedCatalog.cursors, [null, "archives-2"]);
 await assert.rejects(fixture(() => pages[0]).read(signal), /重复游标/);
 await assert.rejects(fixture(() => pages[1], { ...identity, generation: 2 }).read(signal), /账号/);
 const abort = new AbortController();

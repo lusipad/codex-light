@@ -37,6 +37,12 @@ vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { target: ts.Sc
     if (name === "react") return { ...React, default: React };
     if (name === "../config") return { accountRead: async () => { if(accountWait)await accountWait.promise; if(accountFailure)throw accountFailure; return { account: { type: "chatgpt" }, workspaceRouting: { chatgptAccountId: identity.accountId } }; } };
     if (name === "../chatgptService") return { serviceIdentity: async () => ({ ...identity }), unarchiveCloudItem: (source,id,current,signal) => { const request = defer(); pendingWrites.push({ source,id,current,signal,...request }); return request.promise; } };
+    if (name === "../cloudRecentChats") return { applyCloudRecentAction: (chat, action, signal) => {
+      assert.equal(action.kind, "unarchive");
+      const request = defer();
+      pendingWrites.push({ source: "durable", id: chat.session.threadId, current: chat.session.identity, signal, ...request });
+      return request.promise;
+    } };
     if (name === "../bridge") return { callAppServer: async (method, params) => { assert.equal(method, "thread/list"); assert.equal(params.archived, true); reads++; return { data: reply, nextCursor: null }; } };
     if (name.endsWith(".css")) return {};
     if (name === "../sidebarProjects") {
@@ -193,3 +199,39 @@ slots.length=0; effects.length=0; identity.generation++; props.cloudArchive=crea
 accountWait=defer(); const beforeCancelled=pendingWrites.length; restore("cloud-task",tree).props.onClick(); await flush();
 for(const slot of slots)slot?.cleanup?.(); accountWait.resolve(); accountWait=null; await flush(); assert.equal(pendingWrites.length,beforeCancelled,"UU08: cancellation before preflight completion sends zero writes");
 console.log("PASS UU01–UU11 production cloud unarchive UI: locks, accepted cache, independent source IDs, unknown no-replay and read-only retry");
+
+slots.length=0; effects.length=0; identity.generation++;
+props.cloudArchive=createReader("cloud-task"); props.conversationArchive=createReader("chatgpt-conversation");
+reply=[...rows,{ id:"same", name:"同 ID 本地归档", cwd:"D:/One" }];
+const durableChat = { id:"same", title:"普通云端归档", recency:42, createdAt:20, updatedAt:42, session: {
+  threadId:"same", identity:{...identity}, binding:{...identity, conversation:true, name:"构建环境"},
+} };
+let durableReloads=0, recentReloads=0, openedChat=null;
+props.onDurableRestored=()=>recentReloads++;
+props.onOpenDurableChat=chat=>{openedChat=chat;};
+props.durableArchive={...createReader("durable"), items:[durableChat],
+  forgetAccepted(id,current){if(!this.isCurrentIdentity(current))return false; props.durableArchive={...this,items:this.items.filter(item=>item.id!==id)};return true;},
+  reload(){durableReloads++;},
+};
+render(); await flush(); tree=render();
+assert.ok(row("local",tree) && row("cloud-task",tree) && row("chatgpt-conversation",tree) && row("durable",tree));
+assert.equal(nodes(row("durable",tree),n=>n.type==="button").length,1,"Durable rows cannot access legacy delete");
+const durableWriteCount=pendingWrites.length;
+restore("durable",tree).props.onClick(); restore("durable",tree).props.onClick(); await flush();
+assert.equal(pendingWrites.length,durableWriteCount+1);
+assert.equal(pendingWrites.at(-1).source,"durable");
+pendingWrites.at(-1).reject(Error("write reply missing")); await flush(); tree=render();
+assert.equal(restore("durable",tree).props.disabled,true);
+nodes(tree,n=>n.type==="button"&&text(n)==="刷新列表")[0].props.onClick();
+assert.equal(durableReloads,1); assert.equal(pendingWrites.length,durableWriteCount+1);
+props.durableArchive={...props.durableArchive,readVersion:1}; render(); tree=render();
+restore("durable",tree).props.onClick(); await flush();
+pendingWrites.at(-1).resolve(true); await flush(); tree=render();
+assert.equal(row("durable",tree),undefined);
+assert.ok(row("local",tree) && row("cloud-task",tree) && row("chatgpt-conversation",tree));
+assert.equal(recentReloads,1); assert.equal(durableReloads,2);
+const viewAction=notices.at(-1)[2]; assert.equal(viewAction.label,"查看");
+viewAction.onClick(); assert.equal(openedChat,durableChat);
+openedChat=null; props.durableArchive={...props.durableArchive,live:false}; render();
+viewAction.onClick(); assert.equal(openedChat,null);
+console.log("PASS durable settings archive: same-ID isolation, no legacy delete, unknown read-only recovery and scoped View action");

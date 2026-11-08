@@ -6,6 +6,8 @@ export interface CloudRecentChat {
   session: CloudDraftSession;
   title: string;
   recency: number;
+  createdAt?: number;
+  updatedAt?: number;
 }
 
 export type CloudRecentAction = { kind: "rename"; name: string } | { kind: "archive" | "unarchive" };
@@ -50,18 +52,18 @@ type CatalogThread = {
 
 const label = (value: unknown) => typeof value === "string" ? value.trim() : "";
 
-export async function readCloudRecentChats(identity: ServiceIdentity, signal: AbortSignal): Promise<CloudRecentChat[]> {
+export async function readCloudRecentChats(identity: ServiceIdentity, signal: AbortSignal, archived = false): Promise<CloudRecentChat[]> {
   const chats = new Map<string, CloudRecentChat>();
   const cursors = new Set<string>();
   let cursor: string | null = null;
   do {
     signal.throwIfAborted();
-    const page = await callCloudThread({ kind: "list", cursor }, identity, signal) as {
+    const page = await callCloudThread({ kind: "list", cursor, ...(archived ? { archived } : {}) }, identity, signal) as {
       data: CatalogThread[]; nextCursor?: string | null;
     };
     signal.throwIfAborted();
     for (const thread of page.data) {
-      if (chats.has(thread.id) || thread.archived || thread.ephemeral || thread.sideConversation ||
+      if (chats.has(thread.id) || (thread.archived != null && thread.archived !== archived) || thread.ephemeral || thread.sideConversation ||
         thread.parentThreadId || thread.threadSource === "aeon_child" || thread.threadSource === "dreaming") continue;
       const known = readCloudDraftBinding(thread.id, identity);
       if (known && !known.conversation) continue;
@@ -79,7 +81,9 @@ export async function readCloudRecentChats(identity: ServiceIdentity, signal: Ab
         configId, environmentId, draftId: null, name: known?.name ?? "",
         repositoryNamesById: known?.repositoryNamesById ?? {}, conversation: true as const };
       chats.set(thread.id, { session: { threadId: thread.id, identity, binding },
-        title: label(thread.name) || label(thread.preview) || "新聊天", recency: time });
+        title: label(thread.name) || label(thread.preview) || "新聊天", recency: time,
+        createdAt: typeof thread.createdAt === "number" && Number.isFinite(thread.createdAt) ? thread.createdAt : undefined,
+        updatedAt: typeof thread.updatedAt === "number" && Number.isFinite(thread.updatedAt) ? thread.updatedAt : undefined });
     }
     cursor = page.nextCursor ?? null;
     if (cursor !== null) {
@@ -90,6 +94,6 @@ export async function readCloudRecentChats(identity: ServiceIdentity, signal: Ab
   const current = await serviceIdentity(signal);
   signal.throwIfAborted();
   if (!sameCloudRecentIdentity(current, identity))
-    throw Error("读取期间账号发生变化，请重新刷新。");
+    throw Object.assign(Error("读取期间账号发生变化，请重新刷新。"), { code: "account_changed" });
   return [...chats.values()].sort((a, b) => b.recency - a.recency);
 }

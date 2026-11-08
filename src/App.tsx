@@ -5780,6 +5780,13 @@ export const App: React.FC = () => {
                 refreshToken: `${archiveRefreshTick}:${appServerStatus.connected}`,
                 onSelectThread: selectThread,
                 onUnarchive: handleUnarchiveThread,
+                onDurableRestored: () => refreshCloudRecentRef.current?.(),
+                onOpenDurableChat: chat => {
+                  if (activeRouteRef.current !== "settings") return;
+                  setPublishedCloudTarget(null);
+                  setCloudDraft({ session: chat.session, title: chat.title, persisted: true, origin: "home" });
+                  setActiveRoute("cloud-draft");
+                },
                 onDelete: handleDeleteArchivedThread,
                 onDeleteAll: handleDeleteAllArchivedThreads,
                 onShowToast: showAppToast,

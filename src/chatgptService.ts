@@ -288,7 +288,7 @@ export async function readCloudService(
 export type CloudThreadOperation =
   | { kind: "start_saved_environment"; environmentConfigId: string; model?: string | null; effort?: string | null; serviceTier?: string | null }
   | { kind: "read"; threadId: string }
-  | { kind: "list"; cursor: string | null }
+  | { kind: "list"; cursor: string | null; archived?: boolean }
   | { kind: "resume"; params: ReturnType<typeof import("./cloudDraftResume").cloudDraftResumeParams>; timeoutSeconds?: 120 | 240 | 480 }
   | { kind: "title"; threadId: string; name: string }
   | { kind: "archive"; threadId: string; archived: boolean }

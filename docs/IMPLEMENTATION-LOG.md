@@ -2397,3 +2397,7 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 
 - 最近列表的云端条目复用现有菜单与标题对话框，改名通过 durable 读回，归档与撤销在原云端宿主完成。浏览器隔离回放验证保存、取消回焦以及本地同行隔离。详见 [22F 验收记录](antigravity/acceptance/22F-cloud-environment-editor.md)。
 - 将发布后空聊天、首条文本发送、最近列表恢复和行操作作为 Windows preview.18 候选。以候选提交的分支 CI、标签 CI 和实际发布附件为准。
+
+## 2026-11-08 — 设置中的普通云端归档
+
+- 官方归档按宿主分页读取和恢复。现有设置页增加独立 durable 来源，复用读生命周期、归档过滤和恢复核对。恢复后刷新最近，并保留原账号下的「查看」入口。隔离浏览器验证两页、同 ID 本地隔离、恢复和换账号重读，真实账号及官方像素待验。详见 [22F 验收记录](antigravity/acceptance/22F-cloud-environment-editor.md)。

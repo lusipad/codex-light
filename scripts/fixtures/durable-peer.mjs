@@ -88,7 +88,9 @@ function sessionPeer(socket) {
         "thread/archive": [{ threadId }, {}],
         "thread/unarchive": [{ threadId }, {}],
         "thread/read": [{ threadId, includeTurns: false }, { thread: { id: threadId } }],
-        "thread/list": [{ cursor: "page-token", limit: 100, archived: false, useStateDbOnly: true, sortKey: "updated_at" }, { data: [{ id: threadId }], nextCursor: null }],
+        "thread/list": message.params?.cursor === "archived-page"
+          ? [{ cursor: "archived-page", limit: 100, archived: true, useStateDbOnly: true, sortKey: "updated_at" }, { data: [{ id: threadId, archived: true }], nextCursor: null }]
+          : [{ cursor: "page-token", limit: 100, archived: false, useStateDbOnly: true, sortKey: "updated_at" }, { data: [{ id: threadId }], nextCursor: null }],
         "thread/resume": [{ threadId, history: null, model: null, serviceTier: null, excludeTurns: true }, { thread: { id: threadId } }],
         "thread/turns/list": [{ threadId, limit: 5, cursor: null, sortDirection: "desc", itemsView: "notLoaded" }, { data: [{ id: turnId }], nextCursor: null }],
         "thread/items/list": [{ threadId, turnId, limit: 98, cursor: null, sortDirection: "desc" }, { data: [{ turnId, item: { id: "item-fixture" } }], nextCursor: null }],
