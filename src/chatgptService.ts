@@ -370,6 +370,20 @@ export async function saveCloudDraftFields(request: {
   return responseBody(result, requestId, identity);
 }
 
+export type CloudPublishOperation =
+  | { kind: "begin"; expectedRevision: number; idempotencyKey: string }
+  | { kind: "read"; operationId: string }
+  | { kind: "complete"; operationId: string; threadId: string };
+
+export async function callCloudPublish(request: {
+  configId: string; draftId: string; environmentId: string; operation: CloudPublishOperation;
+}, identity: ServiceIdentity, signal: AbortSignal): Promise<unknown> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; body: unknown }>(
+    "cloud_service_publish", requestId, { request: { ...request, requestId, expectedIdentity: identity } }, signal,
+  );
+  return responseBody(result, requestId, identity);
+}
 export async function readChatgptService(
   operation: ServiceOperation, params: Record<string, unknown>, identity: ServiceIdentity, signal: AbortSignal,
 ): Promise<unknown> {

@@ -8,6 +8,7 @@ import { createCloudDraftSession, type CloudDraftSession } from "../cloudDraftSe
 import { pendingRepositoryApplySession } from "../cloudDraftRepositoryApply";
 import { hasPendingCloudEnvironmentSetup, openCloudEnvironmentSetup } from "../cloudEnvironmentSetup";
 import { pendingCloudReplySession } from "../cloudEnvironmentReply";
+import { pendingCloudPublication } from "../cloudEnvironmentPublish";
 import { CloudRepositoryDialog, type RepositorySelection } from "./CloudDraftRepositories";
 import { cloudSharingLabel, filterCloudCatalog, loadCloudCatalog, loadRepositoryName, parseCloudDetail,
   type CloudCatalog, type CloudDetail, type CloudSummary, type RepositoryName } from "../cloudEnvironmentService";
@@ -173,7 +174,8 @@ export const CloudEnvironmentsView: React.FC<{
     creating.current = controller;
     setCreatingId(item.id); setCreateError(null); setMenu(null);
     try {
-      const pending = pendingCloudReplySession(item.id, access.identity) ?? pendingRepositoryApplySession(item.id, access.identity);
+      const pending = pendingCloudPublication(item.id, access.identity)
+        ?? pendingCloudReplySession(item.id, access.identity) ?? pendingRepositoryApplySession(item.id, access.identity);
       if (pending) { onOpenDraft(pending, true); return; }
       const repositoryNames = Object.fromEntries(item.repositories.flatMap(({ id }) => names[id]?.name ? [[id, names[id].name]] : []));
       const { session, persisted } = await createCloudDraftSession(item, repositoryNames, access.identity, controller.signal);

@@ -71,6 +71,7 @@ export function cloudEnvironmentHarness({ listenerError, deferredListener = fals
       if (name === "../cloudDraftSession") return { createCloudDraftSession: (environment, names, current, signal) => call("create", [environment, names, current], signal) };
       if (name === "../cloudDraftRepositoryApply") return { pendingRepositoryApplySession: () => pendingDraft };
       if (name === "../cloudEnvironmentReply") return { pendingCloudReplySession: () => null };
+      if (name === "../cloudEnvironmentPublish") return { pendingCloudPublication: () => null };
       if (name === "./CloudDraftRepositories") return { CloudRepositoryDialog: ({ onClose, onSave, initial }) =>
         React.createElement("div", { role: "dialog", initial },
           React.createElement("button", { onClick: onClose }, "取消选择"),

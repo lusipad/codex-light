@@ -1,13 +1,15 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Check, Pencil, X } from "lucide-react";
 import { tauriListen } from "../bridge";
-import { serviceErrorMessage } from "../chatgptService";
+import { callCloudThread, serviceErrorMessage } from "../chatgptService";
 import { readBoundCloudDraft } from "../cloudDraftBindings";
 import { compareDraftMetadata, draftFieldChanges, draftFieldsMatch, draftFieldValues, draftMetadataChanges, draftMetadataValues,
   saveBoundDraftFields, saveBoundDraftMetadata } from "../cloudDraftFields";
 import { readCloudEnvironmentAccess } from "../cloudEnvironmentAccess";
 import { mergeCloudDraftHistory, readCloudDraftHistory, watchCloudDraftHistory } from "../cloudDraftHistory";
-import { advanceRepositoryApply, saveDraftWithRepositoryApply, type RepositoryApplyStatus } from "../cloudDraftRepositoryApply";
+import { advanceRepositoryApply, pendingRepositoryApplySession, saveDraftWithRepositoryApply, type RepositoryApplyStatus } from "../cloudDraftRepositoryApply";
+import { pendingCloudReplySession } from "../cloudEnvironmentReply";
+import { advanceCloudPublication, readCloudPublication, type CloudPublishReview } from "../cloudEnvironmentPublish";
 import { sendCloudEnvironmentSetup } from "../cloudEnvironmentSetup";
 import { prepareCloudDraftContext, restoreCloudDraftSession, type CloudDraftSession } from "../cloudDraftSession";
 import type { CloudDetail } from "../cloudEnvironmentService";
@@ -69,9 +71,23 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
   const [applyWake, wakeRepositoryApply] = useState(0);
   const [setupStatus, setSetupStatus] = useState<"waiting" | "unconfirmed" | "sent" | "no_pending" | null>(null);
   const [setupError, setSetupError] = useState<string | null>(null);
+  const [publication, setPublication] = useState<ReturnType<typeof readCloudPublication>>(null);
+  const [publicationError, setPublicationError] = useState<string | null>(null);
+  const [publishReview, setPublishReview] = useState<CloudPublishReview | null>(null);
+  const [publishing, setPublishing] = useState(false);
+  const publishPending = useRef(false);
+  const publicationLocked = publishing || (publication !== null && !publication.failed);
   const editing = editor !== null;
   const panelHeading = useRef<HTMLHeadingElement>(null);
   const panelButton = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    setPublishReview(null);
+    setPublishing(false);
+    setPublicationError(null);
+    try { setPublication(readCloudPublication(session)); }
+    catch (cause) { setPublication(null); setPublicationError(serviceErrorMessage(cause)); }
+  }, [session]);
 
   useEffect(() => {
     const lifetime = new AbortController();
@@ -123,7 +139,7 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
   }, [scope, session, history, applyWake, setupError, setupStatus]);
 
   useEffect(() => {
-    if (!scope || scope.aborted || !history || saveBusy) return;
+    if (!scope || scope.aborted || !history || saveBusy || publicationLocked) return;
     void advanceRepositoryApply(session, history, false, scope).then(status => {
       if (scope.aborted) return;
       if (status) setRepositoryApply(status);
@@ -132,10 +148,10 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
     }, cause => {
       if (!scope.aborted) setRepositoryApplyError(serviceErrorMessage(cause));
     });
-  }, [scope, session, history, saveBusy, applyWake]);
+  }, [scope, session, history, saveBusy, applyWake, publicationLocked]);
 
   const retryRepositoryApply = async () => {
-    if (!scope || scope.aborted || !history || saveBusy) return;
+    if (!scope || scope.aborted || !history || saveBusy || publicationLocked) return;
     if (repositoryApply === "unconfirmed") { refreshHistory.current?.(); return; }
     try {
       const status = await advanceRepositoryApply(session, history, repositoryApply === "paused" || repositoryApply === "retry", scope);
@@ -203,7 +219,7 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
   };
 
   const runSave = async (check: boolean) => {
-    if (!scope || scope.aborted || !detail || !editor || savePending.current) return;
+    if (!scope || scope.aborted || !detail || !editor || savePending.current || publishPending.current || publicationLocked) return;
     savePending.current = true;
     setSaveBusy(true); setSaveError(null); setSaveNotice(null);
     let phase: SavePhase = checkRequired ?? "draft";
@@ -289,7 +305,46 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
   };
   const dirty = editor && (Object.keys(draftFieldChanges(draftFieldValues(editor.base), editor.values)).length > 0
     || Object.keys(draftMetadataChanges(editor.metadataBase, editor.metadata)).length > 0);
-  const editLocked = saveBusy || checkRequired !== null;
+  const latestTurn = history?.turns.at(-1)?.turn;
+  const canReview = persisted && !!scope && !!detail?.draft && detail.draft.id === session.binding.draftId
+    && detail.draft.baseVersionId === detail.versionId && latestTurn?.status === "completed"
+    && (!session.setup || setupStatus === "sent" || setupStatus === "no_pending")
+    && !editing && !saveBusy && !publication && !publishing;
+  const runPublish = async (review: CloudPublishReview | null) => {
+    if (!scope || scope.aborted || publishPending.current || savePending.current || editing) return;
+    publishPending.current = true;
+    setPublishing(true); setPublicationError(null); setPublishReview(null);
+    try {
+      const { identity, binding, threadId } = session;
+      const access = await readCloudEnvironmentAccess(scope);
+      if (!access.available || access.identity.accountId !== identity.accountId || access.identity.userId !== identity.userId
+        || access.identity.generation !== identity.generation) throw Error("当前账号无权发布此环境。");
+      await advanceCloudPublication(session, review, scope, async expected => {
+        const current = await readBoundCloudDraft(binding, identity, scope);
+        if (current.shareSettings === "workspace" ? !access.canManage : current.isOwner === false)
+          throw Error("当前账号无权发布此环境。");
+        if (!current.draft || current.draft.baseVersionId !== expected.baseVersionId || current.versionId !== expected.baseVersionId
+          || current.draft.revision !== expected.revision || current.draft.secrets.some(secret => !!secret.error))
+          throw Error("草稿已变更或有待处理项，请重新审核。");
+        const [{ thread }, turns] = await Promise.all([
+          callCloudThread({ kind: "read", threadId }, identity, scope) as Promise<{ thread?: { id?: string; status?: { type?: string } } }>,
+          callCloudThread({ kind: "turns", threadId, cursor: null, limit: 1 }, identity, scope) as Promise<{ data?: { id?: string; status?: string }[] }>,
+        ]);
+        if (thread?.id !== threadId || thread.status?.type !== "idle" || turns.data?.[0]?.id !== expected.turnId
+          || turns.data?.[0]?.status !== "completed" || pendingCloudReplySession(binding.configId, identity)
+          || pendingRepositoryApplySession(binding.configId, identity)) throw Error("会话仍有待处理变更，请完成后重新审核。");
+      });
+    } catch (cause) { if (!scope.aborted) setPublicationError(serviceErrorMessage(cause)); }
+    finally {
+      publishPending.current = false;
+      if (!scope.aborted) {
+        setPublishing(false);
+        try { setPublication(readCloudPublication(session)); }
+        catch (cause) { setPublicationError(serviceErrorMessage(cause)); }
+      }
+    }
+  };
+  const editLocked = saveBusy || checkRequired !== null || publicationLocked;
   const originalRepositories = editor?.base.repositories.map(repo => ({ ...repo, name: repositoryNames[repo.id] ?? repo.id })) ?? [];
   const environmentFields = detail && renderCloudEnvironmentFields({ detail, showScripts: !editing, showNetwork: !editing, showMetadata: !editing,
     showRepositories: !editing || !scope,
@@ -329,7 +384,7 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
         </div>
       </div>
       {scope && history && (!session.setup || setupStatus === "sent" || setupStatus === "no_pending") &&
-        <CloudEnvironmentReply session={session} history={history} scope={scope} revision={applyWake} refreshHistory={refreshHistory} />}
+        <CloudEnvironmentReply session={session} history={history} scope={scope} revision={applyWake} refreshHistory={refreshHistory} disabled={publicationLocked} />}
     </section>
     {panelOpen && <aside id="cloud-draft-environment" className="cloud-draft-environment" aria-labelledby="cloud-draft-environment-heading" onKeyDown={event => {
       if (event.key === "Escape" && !event.nativeEvent.isComposing) { event.stopPropagation(); if (!editing) setPanelOpen(false); }
@@ -382,7 +437,7 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
               <button type="button" disabled={saveBusy} onClick={() => { setDetail(null); setEditor(null); setNameBeforeEdit(null); setSaveError(null); setSaveNotice(null); }}>取消</button>
               {checkRequired ? <button key="check" type="button" disabled={saveBusy} onClick={event => { event.preventDefault(); void runSave(true); }}>核对服务端草稿</button> : <button key="save" type="submit" disabled={!dirty || saveBusy}>{saveBusy ? "正在保存…" : "保存草稿"}</button>}
             </footer>
-          </form> : session.binding.draftId && detail.draft && <button type="button" className="back-to-app-pill" onClick={() => {
+          </form> : session.binding.draftId && detail.draft && <button type="button" className="back-to-app-pill" disabled={publicationLocked} onClick={() => {
             if (!detail.draft) return;
             panelRequest.current?.abort();
             setCheckRequired(null); setSaveError(null); setSaveNotice(null); setNameBeforeEdit(null); setCanManage(false);
@@ -396,6 +451,20 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
           }}>编辑草稿配置</button>}
           {saveNotice && <p role="status">{saveNotice}</p>}
         </> : <p role="status">正在载入环境…</p>}
+        {session.binding.draftId && scope && !scope.aborted && !editing && <>
+          {publishing ? <p role="status">正在发布…</p>
+            : publication?.confirmed ? <p role="status">已发布</p>
+            : publication?.failed ? <p role="alert">无法发布</p>
+            : publication ? <button type="button" className="back-to-app-pill" onClick={() => void runPublish(null)}>核对发布状态</button>
+            : publishReview && canReview && detail?.draft && latestTurn?.id === publishReview.turnId
+              && detail.draft.baseVersionId === publishReview.baseVersionId && detail.draft.revision === publishReview.revision ? <>
+                <p>发布已审核的草稿修订 {publishReview.revision}？</p>
+                <button type="button" onClick={() => setPublishReview(null)}>取消</button>
+                <button type="button" className="back-to-app-pill" onClick={() => void runPublish(publishReview)}>发布</button>
+              </> : canReview && detail?.draft && latestTurn && <button type="button" className="back-to-app-pill"
+                onClick={() => setPublishReview({ baseVersionId: detail.draft!.baseVersionId, revision: detail.draft!.revision, turnId: latestTurn.id })}>审核发布</button>}
+          {publicationError && <p role="alert">{publicationError}</p>}
+        </>}
       </div>
     </aside>}
   </div>;

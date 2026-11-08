@@ -12,12 +12,13 @@ const labels = {
   accepted: "回复已发送，正在同步历史。",
 };
 
-export function CloudEnvironmentReply({ session, history, scope, revision, refreshHistory }: {
+export function CloudEnvironmentReply({ session, history, scope, revision, refreshHistory, disabled = false }: {
   session: CloudDraftSession;
   history: Awaited<ReturnType<typeof readCloudDraftHistory>>;
   scope: AbortSignal;
   revision: number;
   refreshHistory: React.RefObject<(() => void) | null>;
+  disabled?: boolean;
 }) {
   const [text, setText] = useState("");
   const [status, setStatus] = useState<CloudReplyStatus>(null);
@@ -29,7 +30,7 @@ export function CloudEnvironmentReply({ session, history, scope, revision, refre
   const resume = useRef(false);
 
   useEffect(() => {
-    if (scope.aborted || busy || error) return;
+    if (scope.aborted || busy || error || disabled) return;
     const resumePaused = resume.current;
     resume.current = false;
     void advanceCloudEnvironmentReply(session, history, scope, resumePaused).then(next => {
@@ -41,10 +42,10 @@ export function CloudEnvironmentReply({ session, history, scope, revision, refre
     }, cause => {
       if (!scope.aborted) setError(serviceErrorMessage(cause));
     });
-  }, [session, history, scope, revision, refreshHistory, attempt, busy, error]);
+  }, [session, history, scope, revision, refreshHistory, attempt, busy, error, disabled]);
 
   const change = async (value: string | null) => {
-    if (changing.current || scope.aborted || value !== null && (!value.trim() || status !== null)) return;
+    if (disabled || changing.current || scope.aborted || value !== null && (!value.trim() || status !== null)) return;
     changing.current = true;
     setBusy(true); setError(null);
     try {
@@ -64,19 +65,19 @@ export function CloudEnvironmentReply({ session, history, scope, revision, refre
     setError(null);
     setAttempt(number => number + 1);
   };
-  const canSend = !!text.trim() && !busy && status === null;
+  const canSend = !!text.trim() && !busy && !disabled && status === null;
   return <form className="cloud-environment-reply" aria-label="设置会话回复" onSubmit={event => {
     event.preventDefault();
     if (canSend) void change(text);
   }}>
     {status && <div role="status">{labels[status]} {status === "queued" || status === "paused" ? <>
-      {status === "paused" && <button type="button" disabled={busy} onClick={() => retry(true)}>继续发送</button>}
-      <button type="button" disabled={busy} onClick={() => void change(null)}>取消待发送回复</button>
+        {status === "paused" && <button type="button" disabled={busy || disabled} onClick={() => retry(true)}>继续发送</button>}
+      <button type="button" disabled={busy || disabled} onClick={() => void change(null)}>取消待发送回复</button>
     </> : <button type="button" onClick={() => refreshHistory.current?.()}>核对会话</button>}</div>}
     {error && <div role="alert">{error} <button type="button" onClick={() => retry(false)}>重试核对</button></div>}
     <div className="cloud-environment-reply-box">
       <textarea className="composer-textarea" aria-label="回复设置会话" placeholder="回复设置会话…" rows={2}
-        maxLength={cloudReplyMaxLength} value={text} readOnly={busy} onChange={event => setText(event.target.value)}
+        maxLength={cloudReplyMaxLength} value={text} readOnly={busy || disabled} onChange={event => setText(event.target.value)}
         onKeyDown={event => {
           if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing || event.keyCode === 229) return;
           event.preventDefault();

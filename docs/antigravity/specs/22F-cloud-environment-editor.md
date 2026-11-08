@@ -109,6 +109,8 @@ Rust 候选和复现入口在证据目录的 `durable-socket.rs` 和 `winhttp-lo
 
 ### F06 私有草稿发布传输合同
 
+页面阶段核对 `19052.bfed17cb8e.js` 9450–11500 与 13743–13891。首次发起要求当前轮次、账号和草稿仍匹配，官方还检查会话及草稿审核状态。已知操作进入状态查询。完成后用回执的真实版本确认发布。首轮实现以现有侧栏为审核入口，要求用户确认具体草稿版本，并检查当前已完成轮次、空闲、无待发回复、无仓库应用和相同草稿修订。官方提案逐项审核与发布后交接保留为差异。
+
 复核 Store `26.1103.4239.0`。`19052.bfed17cb8e.js` 的 `wuQx.Px` 在发起前记下预期 revision 和幂等键，保存服务端 operation ID 后可继续查询。六组隔离原函数回放记录在 `.ref/parity/22/actual/22J-cloud-publish/reference/`。公开文档区分保存配置与发布文件系统。 [OpenAI 云环境说明](https://learn.chatgpt.com/docs/environments/cloud-environments#create-and-publish-an-environment)
 
 原生请求路径来自 `early-bootstrap-199-e3316cddb4ea6a6b.js` 1984870、1985035、1982971，schema 来自 `early-bootstrap-133-1c544c3280919085.js` 的 17911 模块。先对已有可编辑会话的私有草稿接通 `POST …/drafts/{draftId}/approve/begin`、`GET /v1/environment-operations/{operationId}`、`POST …/drafts/{draftId}/approve/complete`。发起体只含预期 revision 与 UUID，完成体只含服务端 operation ID 和私有草稿 thread ID。
