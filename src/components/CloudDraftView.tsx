@@ -11,6 +11,7 @@ import { advanceRepositoryApply, pendingRepositoryApplySession, saveDraftWithRep
 import { pendingCloudReplySession } from "../cloudEnvironmentReply";
 import { advanceCloudPublication, canRetryCloudPublication, readCloudPublication, type CloudPublishReview } from "../cloudEnvironmentPublish";
 import { sendCloudEnvironmentSetup } from "../cloudEnvironmentSetup";
+import { verifyPublishedCloudTarget, type PublishedCloudTarget } from "../cloudPublishedChat";
 import { prepareCloudDraftContext, restoreCloudDraftSession, type CloudDraftSession } from "../cloudDraftSession";
 import type { CloudDetail } from "../cloudEnvironmentService";
 import { extractTextFromItem } from "../threadText";
@@ -38,7 +39,10 @@ const repositoryApplyMessages: Record<RepositoryApplyStatus, string> = {
   superseded: "服务端草稿已变更，此前的仓库应用记录已结束。",
 };
 
-export function CloudDraftView({ session, persisted, onBack }: { session: CloudDraftSession; persisted: boolean; onBack: () => void }) {
+export function CloudDraftView({ session, persisted, onBack, onNewPublishedChat }: {
+  session: CloudDraftSession; persisted: boolean; onBack: () => void;
+  onNewPublishedChat?: (target: PublishedCloudTarget) => void;
+}) {
   const [scope, setScope] = useState<AbortSignal | null>(null);
   const [scopeError, setScopeError] = useState<string | null>(null);
   const [history, setHistory] = useState<History | null>(null);
@@ -49,7 +53,7 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
   const [olderBusy, setOlderBusy] = useState(false);
   const [olderError, setOlderError] = useState<string | null>(null);
   const olderRequest = useRef<AbortController | null>(null);
-  const [panelOpen, setPanelOpen] = useState(true);
+  const [panelOpen, setPanelOpen] = useState(!session.binding.conversation);
   const [panelAttempt, setPanelAttempt] = useState(0);
   const [detail, setDetail] = useState<CloudDetail | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
@@ -75,6 +79,8 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
   const [publicationError, setPublicationError] = useState<string | null>(null);
   const [publishReview, setPublishReview] = useState<CloudPublishReview | null>(null);
   const [publishing, setPublishing] = useState(false);
+  const [openingPublishedChat, setOpeningPublishedChat] = useState(false);
+  const openingPublishedChatRef = useRef(false);
   const publishPending = useRef(false);
   const publicationLocked = publishing || (publication !== null && !publication.failed);
   const editing = editor !== null;
@@ -306,6 +312,26 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
   const dirty = editor && (Object.keys(draftFieldChanges(draftFieldValues(editor.base), editor.values)).length > 0
     || Object.keys(draftMetadataChanges(editor.metadataBase, editor.metadata)).length > 0);
   const latestTurn = history?.turns.at(-1)?.turn;
+  const openPublishedChat = async () => {
+    if (!scope || scope.aborted || !onNewPublishedChat || !publication?.confirmed || !publication.versionId
+      || openingPublishedChatRef.current) return;
+    openingPublishedChatRef.current = true;
+    setOpeningPublishedChat(true); setPublicationError(null);
+    try {
+      const target = { session, versionId: publication.versionId };
+      const turns = await callCloudThread({ kind: "turns", threadId: session.threadId, cursor: null, limit: 1 }, session.identity, scope) as {
+        data?: { id?: string; status?: string }[];
+      };
+      if (turns.data?.[0]?.id !== publication.turnId || turns.data?.[0]?.status !== "completed")
+        throw Error("已发布轮次已变更，请先核对环境。");
+      const name = await verifyPublishedCloudTarget(target, scope);
+      if (!scope.aborted) onNewPublishedChat({ ...target, session: { ...session, binding: { ...session.binding, name } } });
+    } catch (cause) { if (!scope.aborted) setPublicationError(serviceErrorMessage(cause)); }
+    finally {
+      openingPublishedChatRef.current = false;
+      if (!scope.aborted) setOpeningPublishedChat(false);
+    }
+  };
   const canReview = persisted && !!scope && !!detail?.draft && detail.draft.id === session.binding.draftId
     && detail.draft.baseVersionId === detail.versionId && latestTurn?.status === "completed"
     && (!session.setup || setupStatus === "sent" || setupStatus === "no_pending")
@@ -354,7 +380,7 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
     <section className="cloud-draft-chat" aria-label="云端会话">
       <header className="cloud-draft-heading">
         <button type="button" className="back-to-app-pill" disabled={editing} onClick={onBack}>← 返回环境</button>
-        <h1>{session.setup ? "设置" : "编辑"} {session.binding.name}</h1>
+        <h1>{session.binding.conversation ? "云端聊天" : session.setup ? "设置" : "编辑"} {session.binding.name}</h1>
         <button type="button" className="back-to-app-pill" ref={panelButton} disabled={editing} aria-expanded={panelOpen} aria-controls="cloud-draft-environment" onClick={() => setPanelOpen(value => !value)}>环境</button>
       </header>
       <div className="timeline-scroll-pane cloud-draft-timeline">
@@ -453,7 +479,11 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
         </> : <p role="status">正在载入环境…</p>}
         {session.binding.draftId && scope && !scope.aborted && !editing && <>
           {publishing ? <p role="status">正在发布…</p>
-            : publication?.confirmed ? <p role="status">已发布</p>
+            : publication?.confirmed ? <>
+              <p role="status">已发布</p>
+              {onNewPublishedChat && <button type="button" className="back-to-app-pill" disabled={openingPublishedChat}
+                onClick={() => void openPublishedChat()}>{openingPublishedChat ? "正在打开…" : "开始新聊天"}</button>}
+            </>
             : publication?.failed ? <>
               <p role="alert">无法发布环境</p>
               {canRetryCloudPublication(publication.failureCode) ? <>

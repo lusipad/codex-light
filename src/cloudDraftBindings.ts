@@ -8,6 +8,7 @@ export interface CloudDraftBinding extends Account {
   environmentId: string;
   name: string;
   repositoryNamesById: Record<string, string>;
+  conversation?: true;
 }
 
 const key = "environment-setup-server-configs-v1";
@@ -19,7 +20,8 @@ function bindingFrom(value: unknown): CloudDraftBinding | null {
     || (draftId !== null && (typeof draftId !== "string" || !draftId))
     || typeof name !== "string" || !repositoryNamesById || typeof repositoryNamesById !== "object"
     || Array.isArray(repositoryNamesById) || Object.values(repositoryNamesById).some(name => typeof name !== "string")) return null;
-  return { accountId, userId, configId, draftId, environmentId, name, repositoryNamesById };
+  return { accountId, userId, configId, draftId, environmentId, name, repositoryNamesById,
+    ...((value as CloudDraftBinding).conversation === true && draftId === null ? { conversation: true as const } : {}) };
 }
 
 function bindings(): Map<string, CloudDraftBinding> {

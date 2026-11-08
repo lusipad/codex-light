@@ -354,7 +354,8 @@ export type MainViewRoute =
   | "library"
   | "cloud-draft"
   | "cloud-environments"
-  | "cloud-create";
+  | "cloud-create"
+  | "cloud-new-chat";
 
 export type TurnCompletionPolicy = "always" | "unfocused" | "off";
 

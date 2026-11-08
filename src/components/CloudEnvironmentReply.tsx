@@ -66,7 +66,8 @@ export function CloudEnvironmentReply({ session, history, scope, revision, refre
     setAttempt(number => number + 1);
   };
   const canSend = !!text.trim() && !busy && !disabled && status === null;
-  return <form className="cloud-environment-reply" aria-label="设置会话回复" onSubmit={event => {
+  const replyLabel = session.binding.conversation ? "回复云端聊天" : "回复设置会话";
+  return <form className="cloud-environment-reply" aria-label={session.binding.conversation ? "云端聊天回复" : "设置会话回复"} onSubmit={event => {
     event.preventDefault();
     if (canSend) void change(text);
   }}>
@@ -76,7 +77,7 @@ export function CloudEnvironmentReply({ session, history, scope, revision, refre
     </> : <button type="button" onClick={() => refreshHistory.current?.()}>核对会话</button>}</div>}
     {error && <div role="alert">{error} <button type="button" onClick={() => retry(false)}>重试核对</button></div>}
     <div className="cloud-environment-reply-box">
-      <textarea className="composer-textarea" aria-label="回复设置会话" placeholder="回复设置会话…" rows={2}
+      <textarea className="composer-textarea" aria-label={replyLabel} placeholder={`${replyLabel}…`} rows={2}
         maxLength={cloudReplyMaxLength} value={text} readOnly={busy || disabled} onChange={event => setText(event.target.value)}
         onKeyDown={event => {
           if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing || event.keyCode === 229) return;

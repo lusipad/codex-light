@@ -47,17 +47,20 @@ export function pendingCloudReplySession(configId: string, identity: ServiceIden
   return null;
 }
 
-export function changeCloudEnvironmentReply(session: CloudDraftSession, text: string | null, signal: AbortSignal) {
+export function changeCloudEnvironmentReply(session: CloudDraftSession, text: string | null, signal: AbortSignal, initialId?: string) {
   return withReplyLock(session, signal, key => {
     const current = readReply(key);
     if (text === null) {
       if (current?.phase === "queued") localStorage.removeItem(key);
       return;
     }
-    if (current) throw Error("请先处理上一条待发送的回复。");
     const message = text.trim();
     if (!message || message.length > cloudReplyMaxLength || message.includes("\0")) throw Error("回复内容无效。");
-    localStorage.setItem(key, JSON.stringify({ id: crypto.randomUUID(), text: message, phase: "queued" } satisfies Reply));
+    if (current) {
+      if (initialId && current.id === initialId && current.text === message) return;
+      throw Error("请先处理上一条待发送的回复。");
+    }
+    localStorage.setItem(key, JSON.stringify({ id: initialId ?? crypto.randomUUID(), text: message, phase: "queued" } satisfies Reply));
   });
 }
 
