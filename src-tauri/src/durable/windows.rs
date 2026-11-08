@@ -706,12 +706,20 @@ mod tests {
                     .map(|_| line);
                 let _ = sender.send(result);
             });
-            let line = match ready.recv_timeout(Duration::from_secs(5)) {
-                Ok(Ok(line)) => line,
-                _ => {
+            // A busy Windows runner can take several seconds to start Node.
+            // The test still proceeds immediately when both listeners report ready.
+            let line = match ready.recv_timeout(Duration::from_secs(30)) {
+                Ok(Ok(line)) if !line.trim().is_empty() => line,
+                result => {
+                    let reason = match result {
+                        Ok(Ok(_)) => "stdout closed before readiness".to_string(),
+                        Ok(Err(error)) => format!("reading readiness failed: {error}"),
+                        Err(error) => format!("waiting for readiness: {error}"),
+                    };
+                    let exit = peer.child.try_wait();
                     peer.stop();
                     let _ = reader.join();
-                    panic!("loopback fixture did not become ready");
+                    panic!("loopback fixture did not become ready: {reason}; child status before cleanup: {exit:?}");
                 }
             };
             reader.join().unwrap();
