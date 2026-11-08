@@ -1135,9 +1135,11 @@ async fn thread_delete_archived(
     app: AppHandle,
     state: State<'_, AppState>,
     thread_id: Option<String>,
+    thread_ids: Option<Vec<String>>,
 ) -> Result<archive_delete::ArchivedDeleteResult, String> {
     archive_delete::delete_archived(
         thread_id.as_deref(),
+        thread_ids.as_deref(),
         |method, params| state.app_server.call(&app, method, Some(params)),
         |id| state.desktop_state.remove_thread_record(id),
     )

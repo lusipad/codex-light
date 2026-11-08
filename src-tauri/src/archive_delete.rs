@@ -15,6 +15,7 @@ pub(crate) struct ArchivedDeleteResult {
 
 pub(crate) async fn delete_archived<Call, Rpc, Remove>(
     thread_id: Option<&str>,
+    thread_ids: Option<&[String]>,
     call: Call,
     remove_record: Remove,
 ) -> Result<ArchivedDeleteResult, String>
@@ -23,12 +24,13 @@ where
     Rpc: Future<Output = Result<Value, String>>,
     Remove: FnMut(&str),
 {
-    delete_archived_locked(&ARCHIVE_DELETE_LOCK, thread_id, call, remove_record).await
+    delete_archived_locked(&ARCHIVE_DELETE_LOCK, thread_id, thread_ids, call, remove_record).await
 }
 
 async fn delete_archived_locked<Call, Rpc, Remove>(
     lock: &Mutex<()>,
     thread_id: Option<&str>,
+    thread_ids: Option<&[String]>,
     mut call: Call,
     mut remove_record: Remove,
 ) -> Result<ArchivedDeleteResult, String>
@@ -37,9 +39,18 @@ where
     Rpc: Future<Output = Result<Value, String>>,
     Remove: FnMut(&str),
 {
-    if thread_id.is_some_and(|id| id.trim().is_empty()) {
-        return Err("Archived thread id must not be empty".into());
-    }
+    let targets = match (thread_id, thread_ids) {
+        (None, None) => None,
+        (Some(id), None) if !id.trim().is_empty() => Some(HashSet::from([id])),
+        (None, Some(ids)) if !ids.is_empty() && ids.iter().all(|id| !id.trim().is_empty()) => {
+            let targets: HashSet<_> = ids.iter().map(String::as_str).collect();
+            if targets.len() != ids.len() {
+                return Err("Duplicate archived thread id".into());
+            }
+            Some(targets)
+        }
+        _ => return Err("Invalid archived thread selection".into()),
+    };
     let _guard = lock
         .try_lock()
         .map_err(|_| "Archived deletion is busy".to_string())?;
@@ -91,7 +102,7 @@ where
         error: None,
     };
     for id in archived_ids {
-        if thread_id.is_some_and(|target| target != id) {
+        if targets.as_ref().is_some_and(|targets| !targets.contains(id.as_str())) {
             continue;
         }
         if let Err(error) = call("thread/delete", json!({"threadId": id})).await {
@@ -118,12 +129,25 @@ mod tests {
         Vec<(String, Value)>,
         Vec<String>,
     ) {
+        run_selection(target, None, responses).await
+    }
+
+    async fn run_selection(
+        target: Option<&str>,
+        targets: Option<&[String]>,
+        responses: Vec<Result<Value, String>>,
+    ) -> (
+        Result<ArchivedDeleteResult, String>,
+        Vec<(String, Value)>,
+        Vec<String>,
+    ) {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let removed = Arc::new(Mutex::new(Vec::new()));
         let mut responses = responses.into_iter();
         let result = delete_archived_locked(
             &tokio::sync::Mutex::new(()),
             target,
+            targets,
             |method, params| {
                 calls.lock().unwrap().push((method.to_owned(), params));
                 std::future::ready(responses.next().expect("unexpected RPC"))
@@ -134,6 +158,30 @@ mod tests {
         let calls = calls.lock().unwrap().clone();
         let removed = removed.lock().unwrap().clone();
         (result, calls, removed)
+    }
+
+    #[tokio::test]
+    async fn archive_delete_selected_project_only_intersects_fresh_archived_ids() {
+        let targets = vec!["b".into(), "restored".into(), "c".into()];
+        let (result, calls, removed) = run_selection(None, Some(&targets), vec![
+            Ok(json!({"data":[{"id":"other"},{"id":"b"}],"nextCursor":"next"})),
+            Ok(json!({"data":[{"id":"c"},{"id":"b"}],"nextCursor":null})),
+            Ok(json!({})),
+            Err("permission denied".into()),
+        ]).await;
+        let result = result.unwrap();
+        assert_eq!(result.deleted_thread_ids, vec!["b"]);
+        assert_eq!(result.error.as_deref(), Some("permission denied"));
+        assert_eq!(removed, vec!["b"]);
+        assert_eq!(calls[2].1, json!({"threadId":"b"}));
+        assert_eq!(calls[3].1, json!({"threadId":"c"}));
+        assert_eq!(calls.len(), 4);
+        for invalid in [vec![], vec![" ".into()], vec!["b".into(), "b".into()]] {
+            let (result, calls, _) = run_selection(None, Some(&invalid), vec![]).await;
+            assert!(result.is_err() && calls.is_empty());
+        }
+        let (result, calls, _) = run_selection(Some("b"), Some(&targets), vec![]).await;
+        assert!(result.is_err() && calls.is_empty());
     }
 
     #[tokio::test]
@@ -268,6 +316,7 @@ mod tests {
             let result = delete_archived_locked(
                 &lock,
                 target,
+                None,
                 |_, _| std::future::ready(Err("must not call".into())),
                 |_| panic!("must not clear"),
             )
@@ -277,6 +326,7 @@ mod tests {
         drop(guard);
         assert!(delete_archived_locked(
             &lock,
+            None,
             None,
             |_, _| std::future::ready(Ok(json!({"data":[],"nextCursor":null}))),
             |_| panic!("empty set")

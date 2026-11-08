@@ -65,3 +65,9 @@
 `pwsh -NoProfile -File scripts/verify-all.ps1`非Fast最终退出0，32个真实隔离协议探针全部通过，日志374条双空格PASS记录、零FAIL，见`verify-all.log/exit`及`final-result.json`。其中含最终AS/ARS、共享选择器与受影响页面回归、TypeScript和生产前端构建。Rust为脚本指定的分组回归，未另跑全库cargo test；没有新增独立lint配置，不编造lint结果。存在既有Rust dead_code与Vite大chunk警告，未当成失败或静音。
 
 最终生产构建、冻结产物与原生复验已闭环；没有新打MSI/NSIS、没有推送或更新下载版，也没有宣称官方像素、完整云端功能或用户验收通过。后续较大阶段统一决定推送与新版本，本单元仍为15E-A本地增量。
+
+## 26.1103.4239.0 本地删除范围
+
+- 核对新版官方只对本地宿主展示归档会话的永久删除，并在本地类型、所有项目及空搜索时显示全部删除。普通云端会话仍可恢复。
+- 设置的具名项目组提供项目删除菜单。确认时复核当下可见的本地 ID，原生将它们与最新本地归档集合求交。回归覆盖取消、筛选变化、同 ID 的云端条目、已恢复的会话、重复 ID 和部分失败。
+- 1280×720 隔离浏览器验证取消零模拟写并回焦，确认后仅提交项目一的目标 ID，项目二及同 ID 云端行保留。证据在 `.ref/parity/22/actual/22J-cloud-publish/archive-project-delete-browser/`。没有对真实会话执行删除，Windows 原生 GUI 与官方同条件像素待验。

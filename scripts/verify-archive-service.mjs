@@ -70,6 +70,14 @@ for (const response of [null, {}, { deletedThreadIds: [""], error: null }, { del
   assert.equal(v.context.archiveMutationPendingRef.current, false, "AS05: invalid service reports cannot fabricate deletion success");
 }
 {
+  const v = mount(), deleting = v.context.deleteArchivedThreads(null, ["b"]);
+  assert.equal(v.calls[0].params.threadId, null);
+  assert.deepEqual(v.calls[0].params.threadIds, ["b"]);
+  v.calls[0].resolve({ deletedThreadIds: ["a"], error: null });
+  await assert.rejects(deleting, /未确认/);
+  assert.deepEqual(Array.from(v.context.threads, thread => thread.id), ["a", "b", "active"]);
+}
+{
   const v = mount(), deleting = v.context.handleDeleteAllArchivedThreads();
   v.calls[0].reject(Error("transport disconnected"));
   await assert.rejects(deleting, /transport disconnected/);

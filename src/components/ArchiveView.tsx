@@ -11,6 +11,7 @@ import type { ArchivedCloudTasksState } from "../archiveCloudTasks";
 import { createPortal } from "react-dom";
 import { buildSidebarProjectGroups } from "../sidebarProjects";
 import { GeneralPreferenceSelect } from "./GeneralPreferenceSelect";
+import { ThreadActionsMenu } from "./ThreadActionsMenu";
 import "./RenameThreadDialog.css";
 import "./ArchiveView.css";
 
@@ -29,6 +30,7 @@ export interface ArchiveViewProps {
   onOpenDurableChat?: (chat: CloudRecentChat) => void;
   onDelete: (thread: ThreadSummary) => Promise<ArchiveDeleteResult>;
   onDeleteAll: () => Promise<ArchiveDeleteResult>;
+  onDeleteProject?: (threadIds: string[]) => Promise<ArchiveDeleteResult>;
   onShowToast?: (message: string, type?: "info" | "success" | "error", action?: { label: string; onClick: () => void }) => void;
 }
 
@@ -45,6 +47,14 @@ interface ArchivedThread extends ThreadSummary {
   updatedAt?: number;
   createdAt?: number;
 }
+
+interface ArchiveProjectDeleteTarget {
+  projectId: string;
+  label: string;
+  threadIds: string[];
+}
+
+const localArchiveIds = (threads: ArchivedThread[]) => [...new Set(threads.filter(thread => !thread.archiveSource).map(thread => thread.id))];
 
 function formatRelative(seconds?: number): string {
   if (!seconds) return "—";
@@ -154,8 +164,9 @@ function ArchiveFilterMenu({ kindFilter, sortKey, onKindFilterChange, onSortKeyC
   </div>;
 }
 
-function ArchiveDeleteDialog({ all, onDecision, fallbackRef }: {
+function ArchiveDeleteDialog({ all, project, onDecision, fallbackRef }: {
   all: boolean;
+  project?: ArchiveProjectDeleteTarget;
   onDecision: (confirmed: boolean) => void;
   fallbackRef: React.RefObject<HTMLDivElement | null>;
 }) {
@@ -193,8 +204,8 @@ function ArchiveDeleteDialog({ all, onDecision, fallbackRef }: {
     }}>
     <form onSubmit={event => { event.preventDefault(); if (!composingRef.current) decide(true); }}>
       <header>
-        <h2 id="archive-delete-title">{all ? "删除所有已归档本地聊天？" : "删除已归档的聊天？"}</h2>
-        <p id="archive-delete-description">{all ? "这将永久删除所有本地已归档聊天记录" : "这将永久删除已归档的聊天"}</p>
+        <h2 id="archive-delete-title">{project ? `删除“${project.label}”的已归档聊天？` : all ? "删除所有已归档本地聊天？" : "删除已归档的聊天？"}</h2>
+        <p id="archive-delete-description">{project ? `这将永久删除此项目中列出的 ${project.threadIds.length} 个本地归档聊天` : all ? "这将永久删除所有本地已归档聊天记录" : "这将永久删除已归档的聊天"}</p>
       </header>
       <footer>
         <button ref={cancelRef} type="button" onClick={() => decide(false)}>取消</button>
@@ -277,6 +288,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
   onOpenDurableChat,
   onDelete,
   onDeleteAll,
+  onDeleteProject,
   onShowToast,
 }) => {
   const [cloudDeleteTarget, setCloudDeleteTarget] = useState<CloudDeleteTarget | null>(null);
@@ -295,7 +307,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
   const [search, setSearch] = useState<string>("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [restoredThread, setRestoredThread] = useState<ArchivedThread | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<ArchivedThread | "all" | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ArchivedThread | ArchiveProjectDeleteTarget | "all" | null>(null);
   const viewRef = useRef<HTMLDivElement>(null);
   const requestSeqRef = useRef(0);
   const mountedRef = useRef(true);
@@ -529,7 +541,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
   };
 
   const mutate = useCallback(
-    async (thread: ArchivedThread | null, action: "restore" | "delete") => {
+    async (thread: ArchivedThread | null, action: "restore" | "delete", projectIds?: string[]) => {
       if (mutationPendingRef.current) return;
       mutationPendingRef.current = true;
       ++requestSeqRef.current;
@@ -544,7 +556,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
           onShowToast?.("聊天已取消归档", "success");
           await load(true);
         } else {
-          const result = thread ? await onDelete(thread) : await onDeleteAll();
+          const result = projectIds ? await onDeleteProject!(projectIds) : thread ? await onDelete(thread) : await onDeleteAll();
           if (!mountedRef.current) return;
           const deleted = new Set(result.deletedThreadIds);
           setThreads(current => current.filter(item => !deleted.has(item.id)));
@@ -564,7 +576,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
         if (mountedRef.current) setBusyId(null);
       }
     },
-    [onUnarchive, onDelete, onDeleteAll, onShowToast, load, restoredThread]
+    [onUnarchive, onDelete, onDeleteAll, onDeleteProject, onShowToast, load, restoredThread]
   );
 
   const handleUnarchive = useCallback(
@@ -579,14 +591,6 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
     },
     [loading]
   );
-
-  const handleDeleteDecision = useCallback(async (confirmed: boolean) => {
-    const target = deleteTarget;
-    setDeleteTarget(null);
-    if (!confirmed || !target || mutationPendingRef.current || loading) return;
-    if (target === "all" && (error || threads.length === 0)) return;
-    await mutate(target === "all" ? null : target, "delete");
-  }, [deleteTarget, loading, error, threads.length, mutate]);
 
   const query = useDeferredValue(search.trim().toLocaleLowerCase());
   const visible = useMemo(() => threads.filter((thread) =>
@@ -649,6 +653,25 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
       || a.label.localeCompare(b.label) || a.id.localeCompare(b.id));
   }, [threads, projects, projectMembership, workspaceHints, activeProjectFilter, kindFilter, sortKey, query, cloudArchive, conversationArchive, durableArchive]);
   const displayedGroups = settings ? settingsGroups : [{ id: "global", label: "", threads: visible }];
+  const canDeleteAll = !loading && !error && threads.length > 0 &&
+    (!settings || (kindFilter === "local" && activeProjectFilter === "all" && !search.trim() && !query));
+  const projectDeleteTarget = deleteTarget && deleteTarget !== "all" && "threadIds" in deleteTarget ? deleteTarget : undefined;
+  const handleDeleteDecision = async (confirmed: boolean) => {
+    setDeleteTarget(null);
+    if (!confirmed || !deleteTarget || mutationPendingRef.current || loading) return;
+    if (projectDeleteTarget) {
+      if (!settings || !onDeleteProject || error || activeProjectFilter !== "all" || query !== search.trim().toLocaleLowerCase()) return;
+      const group = settingsGroups.find(item => item.id === projectDeleteTarget.projectId);
+      const currentIds = localArchiveIds(group?.threads ?? []);
+      if (group?.label !== projectDeleteTarget.label || currentIds.length !== projectDeleteTarget.threadIds.length ||
+        !currentIds.every(id => projectDeleteTarget.threadIds.includes(id))) return;
+      await mutate(null, "delete", projectDeleteTarget.threadIds);
+    } else if (deleteTarget === "all") {
+      if (canDeleteAll) await mutate(null, "delete");
+    } else if (!("threadIds" in deleteTarget)) {
+      await mutate(deleteTarget, "delete");
+    }
+  };
   const displayedCount = displayedGroups.reduce((count, group) => count + group.threads.length, 0);
   const cloudVisible = settings && kindFilter !== "local";
   const hasCloudSource = Boolean(cloudArchive || conversationArchive || durableArchive);
@@ -669,9 +692,9 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
           </p>
         </div>}
         <div className="archive-header-actions">
-          {!loading && !error && threads.length > 0 && (
+          {canDeleteAll && (
             <button type="button" className="archive-action danger" disabled={busyId !== null} aria-label="删除所有本地已归档聊天"
-              onClick={() => { if (!mutationPendingRef.current) setDeleteTarget("all"); }}>{settings && kindFilter === "cloud" ? "删除全部本地归档" : "全部删除"}</button>
+              onClick={() => { if (!mutationPendingRef.current) setDeleteTarget("all"); }}>全部删除</button>
           )}
           {!settings && <input
             className="archive-search"
@@ -765,9 +788,17 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
         </div>
       )}
 
-      {displayedCount > 0 && displayedGroups.map(group => (
+      {displayedCount > 0 && displayedGroups.map(group => {
+        const groupLocalIds = settings && onDeleteProject && group.label ? localArchiveIds(group.threads) : [];
+        return (
         <section key={group.id} className="archive-group">
-          {settings && activeProjectFilter === "all" && <header className="archive-group-header"><Folder size={14} aria-hidden="true" /><h3>{group.label || "无项目"}</h3><span>{group.threads.length} 个聊天</span></header>}
+          {settings && activeProjectFilter === "all" && <header className="archive-group-header"><Folder size={14} aria-hidden="true" /><h3>{group.label || "无项目"}</h3><span>{group.threads.length} 个聊天</span>
+            {groupLocalIds.length > 0 && <ThreadActionsMenu triggerAriaLabel={`${group.label} 项目操作`} buttonClassName="archive-action"
+              items={[{ id: "delete-project", label: "删除项目聊天", danger: true, disabled: loading || !!error || busyId !== null }]}
+              onSelect={() => {
+                if (!mutationPendingRef.current && !loading && !error) setDeleteTarget({ projectId: group.id, label: group.label, threadIds: groupLocalIds });
+              }} />}
+          </header>}
         <div className="archive-list">
           {group.threads.map((thread) => (
             <div key={settings ? `${thread.archiveSource || "local"}:${thread.id}` : thread.id} className={`archive-row${thread.archiveSource ? " archive-cloud-row" : ""}${thread.archiveSource === "chatgpt-conversation" ? " archive-conversation-row" : ""}`} >
@@ -831,7 +862,8 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
           ))}
         </div>
         </section>
-      ))}
+        );
+      })}
 
       {!unavailableSource && !(cloudVisible && hasCloudSource && !cloudReady && displayedCount === 0) && <footer className="archive-footer">
         {settings && hasCloudSource && kindFilter !== "local" ? `已显示 ${displayedCount} 个聊天（仅当前账号已读取的来源与页）` : <>共 {displayedCount} 个{settings ? "本地归档聊天" : "归档会话"}{loading ? "（加载中…）" : ""}</>}
@@ -842,7 +874,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
           || !cloudReader(cloudDeleteTarget.thread.archiveSource!)?.canUnarchive?.(cloudDeleteTarget.thread.id, cloudDeleteTarget.identity)}
         unknown={cloudRecoveries[`${cloudDeleteTarget.thread.archiveSource}:${cloudDeleteTarget.thread.id}`]?.status === "unknown"}
         onCancel={() => closeCloudDelete(cloudDeleteTarget)} onConfirm={() => deleteCloud(cloudDeleteTarget)} onRefresh={() => refreshCloudSource(cloudDeleteTarget.thread.archiveSource!)} />}
-      {deleteTarget && <ArchiveDeleteDialog all={deleteTarget === "all"} onDecision={handleDeleteDecision} fallbackRef={viewRef} />}
+      {deleteTarget && <ArchiveDeleteDialog all={deleteTarget === "all"} project={projectDeleteTarget} onDecision={handleDeleteDecision} fallbackRef={viewRef} />}
     </div>
   );
 };

@@ -3873,13 +3873,14 @@ export const App: React.FC = () => {
   );
 
   const deleteArchivedThreads = useCallback(
-    async (threadId: string | null): Promise<ArchiveDeleteResult> => {
+    async (threadId: string | null, threadIds?: string[]): Promise<ArchiveDeleteResult> => {
       if (archiveMutationPendingRef.current) throw new Error("归档操作正在进行，请稍后重试");
       archiveMutationPendingRef.current = true;
       try {
-        const result = await tauriInvoke<ArchiveDeleteResult>("thread_delete_archived", { threadId });
+        const result = await tauriInvoke<ArchiveDeleteResult>("thread_delete_archived", { threadId, ...(threadIds ? { threadIds } : {}) });
         if (!Array.isArray(result?.deletedThreadIds) ||
           !result.deletedThreadIds.every(id => typeof id === "string" && id.length > 0) ||
+          (threadIds && result.deletedThreadIds.some(id => !threadIds.includes(id))) ||
           new Set(result.deletedThreadIds).size !== result.deletedThreadIds.length ||
           !(result.error === null || typeof result.error === "string")) {
           throw new Error("删除结果未确认，请刷新归档列表后检查");
@@ -5789,6 +5790,7 @@ export const App: React.FC = () => {
                 },
                 onDelete: handleDeleteArchivedThread,
                 onDeleteAll: handleDeleteAllArchivedThreads,
+                onDeleteProject: threadIds => deleteArchivedThreads(null, threadIds),
                 onShowToast: showAppToast,
               }}
               notificationState={notificationState}

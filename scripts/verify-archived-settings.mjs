@@ -54,7 +54,7 @@ assert.ok(!standalone.attributes.properties.some(p => p.name?.getText(appAst) ==
 assert.ok(!standalone.attributes.properties.some(p => p.name?.getText(appAst) === "cloudArchive"), "ARS04: global archive is not coupled to cloud queries");
 assert.ok(!standalone.attributes.properties.some(p => p.name?.getText(appAst) === "conversationArchive"), "ARS07: global archive does not consume conversation source state");
 for (const [key, value] of Object.entries(shared)) {
-  if (["workspaces", "projectMembership", "workspaceHints", "onDurableRestored", "onOpenDurableChat"].includes(key)) continue;
+  if (["workspaces", "projectMembership", "workspaceHints", "onDurableRestored", "onOpenDurableChat", "onDeleteProject"].includes(key)) continue;
   const attribute = standalone.attributes.properties.find(p => p.name?.getText(appAst) === key);
   assert.ok(attribute, `ARS04: standalone archive has ${key}`);
   assert.equal(vm.runInNewContext(compile(`(${attribute.initializer.expression.getText(appAst)})`), bindings), value, `ARS02-04: both entry points use identical ${key}`);
