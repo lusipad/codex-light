@@ -7,7 +7,9 @@ const ast = ts.createSourceFile("DiffDrawer.tsx", source, ts.ScriptTarget.Latest
 const callbacks = {};
 const indexButtons = {};
 let effect, keydown;
+let projectEntries;
 function visit(node) {
+  if (ts.isVariableDeclaration(node) && node.name.getText(ast) === "displayedEntries") projectEntries = node.initializer.arguments[0];
   if (ts.isVariableDeclaration(node) && ["handleCommit", "handleCommitAndPush", "handlePush", "handleStage", "handleUnstage"].includes(node.name.getText(ast))) callbacks[node.name.getText(ast)] = node.initializer;
   if (ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect" &&
       node.arguments[0]?.getText(ast).includes('invoke<string>("git_diff"')) effect = node.arguments[0];
@@ -46,9 +48,33 @@ function mount() {
     context[`set${name}`] = value => { context[key] = value; events.push([key, value]); };
   }
   const render = node => { assert.ok(node, "production callback must exist"); return vm.runInNewContext(compile(node), context); };
-  return { context, requests, events, commit: render(callbacks.handleCommit), both: render(callbacks.handleCommitAndPush), push: render(callbacks.handlePush), stage: render(callbacks.handleStage), unstage: render(callbacks.handleUnstage), effect: render(effect) };
+  return { context, requests, events, commit: render(callbacks.handleCommit), both: render(callbacks.handleCommitAndPush), push: render(callbacks.handlePush), stage: render(callbacks.handleStage), unstage: render(callbacks.handleUnstage), effect: render(effect), projectEntries: render(projectEntries) };
 }
 async function flush() { for (let i = 0; i < 8; ++i) await Promise.resolve(); }
+{
+  const view = mount();
+  view.context.gitStatus.entries = [
+    { path: "staged.ts", staged: true },
+    { path: "mixed.ts", staged: true, unstaged: true, previousPath: "old.ts" },
+    { path: "new.ts", untracked: true },
+  ];
+  view.context.diffMode = "unstaged";
+  view.context.displayedEntries = view.projectEntries();
+  assert.deepEqual(Array.from(view.context.displayedEntries, entry => entry.path), ["mixed.ts", "new.ts"]);
+  view.context.selectedFile = "staged.ts";
+  const cleanup = view.effect();
+  assert.equal(view.requests[0].params.filePath, null);
+  assert.equal(view.requests[0].params.unstaged, true);
+  assert.equal(view.requests[0].params.staged, false);
+  cleanup();
+  view.context.selectedFile = "mixed.ts";
+  const nextCleanup = view.effect();
+  assert.equal(view.requests[1].params.filePath, "mixed.ts");
+  assert.equal(view.requests[1].params.previousFilePath, null);
+  nextCleanup();
+  for (const request of view.requests) request.resolve("");
+  await flush();
+}
 {
   const view = mount();
   view.context.gitStatus.entries[0].previousPath = "old [1].ts";

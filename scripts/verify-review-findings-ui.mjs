@@ -74,6 +74,18 @@ function nodes(tree) {
 }
 const text = tree => !tree || typeof tree !== "object" ? String(tree ?? "") : typeof tree.tag === "function" ? text(tree.tag(tree.props)) : tree.children.map(text).join("");
 {
+  const props = { cwd: "D:/repo", onClose() {}, onRefreshGit() {},
+    gitStatus: { additions: 20, deletions: 12, entries: [{ path: "a.ts", unstaged: true }, { path: "b.ts", staged: true }] } };
+  const rawNodes = node => node && typeof node === "object" ? [node, ...node.children.flatMap(rawNodes)] : [];
+  const header = view => text(rawNodes(view.tree).find(node => node.props.className === "diff-file-list-header"));
+  const scoped = mount("DiffDrawer", props, { requestedDiffMode: "unstaged", diffContent: diff });
+  assert.match(header(scoped), /已更改的文件 \(1\)\+2 -2/);
+  const selected = mount("DiffDrawer", props, { requestedDiffMode: "unstaged", diffContent: diff, selectedFile: "a.ts" });
+  assert.doesNotMatch(header(selected), /\+\d|-[0-9]/);
+  const empty = mount("DiffDrawer", { ...props, gitStatus: { entries: [{ path: "b.ts", staged: true }] } }, { requestedDiffMode: "unstaged" });
+  assert.match(text(empty.tree), /无未暂存更改/);
+}
+{
   const uneven = [
     "--- a/a.ts", "+++ b/a.ts", "@@ -1,4 +1,4 @@", " before", "-old", "+new one", "+new two", " after",
     "-deleted", "@@ -8 +8,2 @@", "+inserted", " shared",
@@ -137,11 +149,12 @@ for (const layout of ["unified", "split"]) {
 
 // The existing manual composer still sends only after an explicit user action.
 const sent = [];
-const manual = mount("DiffDrawer", { cwd: "D:/repo", gitStatus: { entries: [{ path: "a.ts" }] }, onClose() {}, onRefreshGit() {}, onSendReviewComment: value => sent.push(value) }, { diffContent: diff, commentLineIdx: 5, commentText: "Check this change" });
+const manual = mount("DiffDrawer", { cwd: "D:/repo", gitStatus: { entries: [{ path: "a.ts", unstaged: true }] }, onClose() {}, onRefreshGit() {}, onSendReviewComment: value => sent.push(value) }, { diffContent: diff, requestedDiffMode: "unstaged", selectedFile: "staged-only.ts", commentLineIdx: 5, commentText: "Check this change" });
 assert.equal(sent.length, 0);
 nodes(manual.tree).find(node => node.tag === "button" && text(node) === "发送给 Codex").props.onClick();
 assert.equal(sent.length, 1);
 assert(sent[0].includes("Check this change"));
+assert(sent[0].includes("`a.ts`") && !sent[0].includes("staged-only.ts"));
 const selected = mount("DiffDrawer", { cwd: "D:/repo", selectedPreviewFile: all[3].absolutePath, selectedReviewFinding: all[3], modelReviewComments: [all[3]], initialTab: "files", gitStatus: { entries: [] }, onClose() {}, onRefreshGit() {} });
 selected.effects.find(effect => effect.toString().includes("setActiveReviewFinding(selectedReviewFinding)")).call(null);
 for (let i = 0; i < 15; i++) await Promise.resolve();

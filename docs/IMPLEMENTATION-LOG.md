@@ -1,5 +1,9 @@
 # 实施日志（按轮次）
 
+## 2026-11-09 — 06G 未暂存差异
+
+- 根据官方 Git 比较基准接入「未暂存」筛选。索引、工作区与未跟踪补丁各按范围显示，列表统计跟随筛选。隔离 Windows 验证三种范围及真实补丁，718 项 Rust、115 项前端及 Windows 打包通过。[验收记录](antigravity/acceptance/06G-unstaged-diff.md)
+
 ## 2026-11-09 — 06F 重命名的取消暂存
 
 - 取消暂存前核对当前索引中的重命名对，用一次 Git 索引操作处理旧路径和目标路径。原生界面与真实 Git 读回确认工作区编辑保留、无关暂存项隔离。717 项 Rust、115 项前端及 Windows 打包通过。[验收记录](antigravity/acceptance/06F-git-rename-unstage.md)

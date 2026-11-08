@@ -1515,22 +1515,25 @@ async fn git_status(cwd: String) -> Result<GitStatusInfo, String> {
 }
 
 #[tauri::command]
-fn git_diff(
+async fn git_diff(
     cwd: String,
     file_path: Option<String>,
     staged: Option<bool>,
+    unstaged: Option<bool>,
     base_branch: Option<String>,
     review_base_commit: Option<String>,
     previous_file_path: Option<String>,
 ) -> Result<String, String> {
-    git::git_diff_for_path(
-        &cwd,
-        file_path,
-        staged.unwrap_or(false),
-        base_branch,
-        review_base_commit,
-        previous_file_path,
-    )
+    let scope = if staged.unwrap_or(false) {
+        git::GitDiffScope::Staged
+    } else if unstaged.unwrap_or(false) {
+        git::GitDiffScope::Unstaged
+    } else {
+        git::GitDiffScope::Uncommitted
+    };
+    tokio::task::spawn_blocking(move || {
+        git::git_diff_for_path(&cwd, file_path, scope, base_branch, review_base_commit, previous_file_path)
+    }).await.map_err(|error| error.to_string())?
 }
 
 #[tauri::command]

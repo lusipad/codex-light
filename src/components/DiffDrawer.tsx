@@ -732,7 +732,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     .map((tab) => ({ id: tab.id, title: tab.title, url: tab.url as string }));
 
   // Changes state
-  const [requestedDiffMode, setDiffMode] = useState<"lastTurn" | "working" | "staged" | "branch" | "commits">(
+  const [requestedDiffMode, setDiffMode] = useState<"lastTurn" | "working" | "unstaged" | "staged" | "branch" | "commits">(
     "working"
   );
   const lastTurnOnly = !gitPreferencesReady || gitPreferences["git-review-mode"] === "last-turn-only";
@@ -877,6 +877,9 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     if (diffMode === "staged") {
       return list.filter((e) => e.staged);
     }
+    if (diffMode === "unstaged") {
+      return list.filter((e) => e.unstaged || e.untracked);
+    }
     return list;
   }, [gitStatus, diffMode]);
   const fsWatchTimerRef = useRef<number | null>(null);
@@ -956,12 +959,15 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
       return () => { disposed = true; };
     }
 
+    const filePath = (diffMode === "staged" || diffMode === "unstaged") &&
+      !displayedEntries.some(entry => entry.path === selectedFile) ? null : selectedFile;
     setLoadingDiff(true);
     invoke<string>("git_diff", {
       cwd,
-      filePath: selectedFile,
-      previousFilePath: gitStatus?.entries?.find(entry => entry.path === selectedFile)?.previousPath ?? null,
+      filePath,
+      previousFilePath: diffMode === "unstaged" ? null : gitStatus?.entries?.find(entry => entry.path === filePath)?.previousPath ?? null,
       staged: diffMode === "staged",
+      unstaged: diffMode === "unstaged",
       baseBranch: diffMode === "branch" ? baseBranch : null,
       reviewBaseCommit: diffMode === "branch" && reviewTarget?.cwd === cwd && reviewTarget.baseBranch === baseBranch ? reviewTarget.mergeBase : null,
     })
@@ -969,7 +975,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
       .catch((err) => { if (!disposed) setDiffContent(`Error loading diff: ${String(err)}`); })
       .finally(() => { if (!disposed) setLoadingDiff(false); });
     return () => { disposed = true; };
-  }, [open, activeTab, cwd, selectedFile, diffMode, baseBranch, selectedCommitHash, gitStatus, turns, reviewTarget, gitPreferencesReady, recordedTurnDiff]);
+  }, [open, activeTab, cwd, selectedFile, diffMode, baseBranch, selectedCommitHash, gitStatus, turns, reviewTarget, gitPreferencesReady, recordedTurnDiff, displayedEntries]);
 
   /**
    * List one directory: app-server `fs/readDirectory` first, then the legacy
@@ -1804,6 +1810,14 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     : "";
 
   const parsedLines = useMemo(() => parseUnifiedDiff(diffContent), [diffContent]);
+  const visibleDiffStats = diffMode === "unstaged" || diffMode === "staged"
+    ? loadingDiff || displayedEntries.some(entry => entry.path === selectedFile)
+      ? null
+      : {
+        additions: parsedLines.filter(line => line.type === "add").length,
+        deletions: parsedLines.filter(line => line.type === "del").length,
+      }
+    : gitStatus;
   const splitRows = useMemo(() => diffLayout === "split" ? alignSplitDiff(parsedLines) : [], [diffLayout, parsedLines]);
   const unanchoredFindings = modelReviewComments.filter(comment => loadingDiff || !parsedLines.some(line => findingMatchesLine(comment, line, cwd)));
   const renderLineFindings = (line: ParsedDiffLine) => modelReviewComments
@@ -2109,6 +2123,13 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
             </button>
             <button
               type="button"
+              className={`seg-btn ${diffMode === "unstaged" ? "active" : ""}`}
+              onClick={() => setDiffMode("unstaged")}
+            >
+              未暂存
+            </button>
+            <button
+              type="button"
               className={`seg-btn ${diffMode === "staged" ? "active" : ""}`}
               onClick={() => setDiffMode("staged")}
             >
@@ -2254,6 +2275,8 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                 <div className="diff-empty-title">
                   {diffMode === "staged"
                     ? "没有已暂存的更改"
+                    : diffMode === "unstaged"
+                    ? "无未暂存更改"
                     : diffMode === "working"
                     ? "工作树干净，没有未提交更改"
                     : "当前无文件差异"}
@@ -2261,6 +2284,8 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                 <div className="diff-empty-desc">
                   {diffMode === "staged"
                     ? "在更改列表中点击暂存按钮，将修改纳入提交范围"
+                    : diffMode === "unstaged"
+                    ? "代码更改将在此处显示"
                     : diffMode === "working"
                     ? "项目工作区当前没有变动，修改文件后将自动显示在这里"
                     : "此分支与基准分支内容一致"}
@@ -2272,11 +2297,11 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
 <div className="diff-file-list">
                   <div className="diff-file-list-header">
                     <span>
-                      已更改的文件 ({gitStatus?.entries.length ?? 0})
-                      {gitStatus && (
+                      已更改的文件 ({displayedEntries.length})
+                      {visibleDiffStats && (
                         <span className="diff-stat-inline">
-                          <span className="diff-add">+{gitStatus.additions}</span>{" "}
-                          <span className="diff-del">-{gitStatus.deletions}</span>
+                          <span className="diff-add">+{visibleDiffStats.additions}</span>{" "}
+                          <span className="diff-del">-{visibleDiffStats.deletions}</span>
                         </span>
                       )}
                     </span>
@@ -2456,7 +2481,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                                 className="primary-btn compact"
                                 onClick={() => {
                                   if (!commentText.trim()) return;
-                                  const targetLabel = selectedFile || "当前变更";
+                                  const targetLabel = line.file || "当前变更";
                                   const prompt = `请查看 \`${targetLabel}\` 中的这行变更：\n\`\`\`diff\n${line.raw}\n\`\`\`\n评审意见：${commentText.trim()}`;
                                   onSendReviewComment?.(prompt);
                                   setCommentText("");
