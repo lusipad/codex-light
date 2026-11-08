@@ -1,5 +1,9 @@
 # 实施日志（按轮次）
 
+## 2026-11-09 — 08P 独立聊天搜索的项目来源
+
+- 按官方独立聊天行的来源优先级复用侧栏项目解析与协议项目 ID。Windows 隔离验证了当前项目名、无项目来源隐藏、协议命中打开准确会话。113 项前端回放与 Windows 打包通过。[验收记录](antigravity/acceptance/08P-chat-search-project-source.md)
+
 ## 2026-11-09 — 08O 独立聊天搜索命中片段
 
 - 按官方本地 `thread/search` 投影展示正文片段与右侧目录来源，按字面查询高亮。复用现有行与打开动作，隔离 Windows 验证显示及 Enter 打开准确会话。修正真实协议探针的根数组与分页断言，两版 CLI 均通过，详见 [08O 验收记录](antigravity/acceptance/08O-chat-search-snippets.md)。

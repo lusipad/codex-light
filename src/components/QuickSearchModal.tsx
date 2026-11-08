@@ -34,6 +34,7 @@ export interface QuickSearchModalProps {
   workspacePath?: string;
   workspaceRoots?: readonly string[];
   workspaceLabel?: string;
+  getChatProjectLabel: (thread: Pick<ThreadSummary, "id" | "cwd" | "projectId">) => string | undefined;
   recentFiles?: readonly RecentFile[];
   onClose: () => void;
   onSelectThread: (threadId: string) => void;
@@ -91,6 +92,7 @@ interface ThreadSearchThread {
   name?: string | null;
   preview?: string | null;
   cwd?: string | null;
+  projectId?: string | null;
 }
 
 /** `thread/search` 返回项：schema 为 { snippet, thread }，同时兼容扁平的 thread 数组。 */
@@ -115,6 +117,7 @@ interface RemoteThreadResult {
   name?: string | null;
   preview?: string | null;
   cwd?: string | null;
+  projectId?: string | null;
   snippet?: string;
 }
 
@@ -238,6 +241,7 @@ function normalizeRemoteThreadHits(raw: unknown, limit: number): RemoteThreadRes
       name: typeof thread.name === "string" ? thread.name : null,
       preview: typeof thread.preview === "string" ? thread.preview : null,
       cwd: typeof thread.cwd === "string" ? thread.cwd : null,
+      projectId: typeof thread.projectId === "string" ? thread.projectId : thread.projectId === null ? null : undefined,
       snippet: typeof item.snippet === "string" ? item.snippet.trim() || undefined : undefined,
     });
     if (results.length >= limit) break;
@@ -292,6 +296,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   workspacePath,
   workspaceRoots,
   workspaceLabel,
+  getChatProjectLabel,
   recentFiles,
   onClose,
   onSelectThread,
@@ -734,6 +739,11 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
       : remote?.threads ?? [];
     const remoteThreadIds = new Set(remoteThreads.map((t) => t.id));
     const threadLimit = mode === "chats" ? chatPaging?.limit ?? REMOTE_CHAT_LIMIT : REMOTE_THREAD_LIMIT;
+    const chatSource = (thread: RemoteThreadResult) => {
+      const loaded = thread.projectId === undefined ? threads.find(candidate => candidate.id === thread.id) : undefined;
+      const source = loaded ? { ...thread, projectId: loaded.projectId, cwd: thread.cwd ?? loaded.cwd } : thread;
+      return getChatProjectLabel(source) ?? baseNameFsPath(source.cwd ?? "");
+    };
 
     remoteThreads.slice(0, threadLimit).forEach((t) => {
       results.push({
@@ -742,7 +752,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
         section: "聊天",
         title: t.name || t.preview || t.id,
         subtitle: mode === "chats" ? t.snippet : `历史会话${t.cwd ? ` · ${t.cwd}` : ""}`,
-        rightLabel: mode === "chats" ? baseNameFsPath(t.cwd ?? "") : t.cwd ? t.cwd.split(/[/\\]/).pop() : "Chat",
+        rightLabel: mode === "chats" ? chatSource(t) : t.cwd ? t.cwd.split(/[/\\]/).pop() : "Chat",
         icon: <MessageSquare size={14} />,
         onSelect: () => {
           onSelectThread(t.id);
@@ -769,7 +779,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
           section: "聊天",
           title: t.name || t.preview || t.id,
           subtitle: mode === "chats" ? undefined : `历史会话 · ${t.cwd || ""}`,
-          rightLabel: mode === "chats" ? baseNameFsPath(t.cwd ?? "") : t.cwd ? t.cwd.split(/[/\\]/).pop() : "Chat",
+          rightLabel: mode === "chats" ? chatSource(t) : t.cwd ? t.cwd.split(/[/\\]/).pop() : "Chat",
           icon: <MessageSquare size={14} />,
           onSelect: () => {
             onSelectThread(t.id);
@@ -1048,6 +1058,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
     remoteResults,
     chatPaging,
     chatSearchScope,
+    getChatProjectLabel,
     loadMoreChats,
     pathQuery,
     pathLookup,

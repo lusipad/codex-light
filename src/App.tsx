@@ -4257,6 +4257,17 @@ export const App: React.FC = () => {
   const searchScopeProjects = sidebarProjectMembership.localProjects?.filter(project =>
     project.rootPaths.some(root => fileDedupeKey(root) === fileDedupeKey(activeWorkspace?.path ?? "")) &&
     project.rootPaths.every(root => workbenchWorkspaceRoots.some(candidate => fileDedupeKey(root) === fileDedupeKey(candidate))));
+  const searchChatProjects = useMemo(() => buildSidebarProjectGroups(workspaces, sidebarProjectMembership, sidebarProjectCatalog),
+    [workspaces, sidebarProjectMembership, sidebarProjectCatalog]);
+  const getChatProjectLabel = useCallback((thread: Pick<ThreadSummary, "id" | "cwd" | "projectId">) => {
+    const project = sidebarThreadProjects(thread, searchChatProjects, sidebarProjectMembership, workspaceHints).find(group => group.entity);
+    if (project) return project.label;
+    const assignment = sidebarProjectMembership.workspaceProjectAssignments;
+    const projectless = Object.prototype.hasOwnProperty.call(assignment, thread.id)
+      ? assignment[thread.id] === null
+      : sidebarProjectMembership.projectlessThreadIds.includes(thread.id) && !sidebarProjectMembership.threadProjectAssignments[thread.id];
+    return projectless ? "" : undefined;
+  }, [searchChatProjects, sidebarProjectMembership, workspaceHints]);
 
   const handleOpenQuickChat = useCallback(async () => {
     if (!isTauriRuntime()) {
@@ -7005,6 +7016,7 @@ export const App: React.FC = () => {
         workspacePath={activeWorkspace?.path}
         workspaceRoots={workbenchWorkspaceRoots}
         workspaceLabel={searchScopeProjects?.length === 1 ? searchScopeProjects[0].name : undefined}
+        getChatProjectLabel={getChatProjectLabel}
         recentFiles={workbenchWorkspaceRoots.flatMap(root => recentFilesByWorkspace[fileDedupeKey(root)] ?? [])}
         onClose={() => setShowQuickSearch(false)}
         onSelectThread={selectThread}

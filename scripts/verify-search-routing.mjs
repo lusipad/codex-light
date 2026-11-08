@@ -6,12 +6,14 @@ import ts from "typescript";
 const parse = path => ts.createSourceFile(path, fs.readFileSync(path, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const page = parse("src/components/QuickSearchModal.tsx"), app = parse("src/App.tsx"), folderDialog = parse("src/components/SearchFolderDialog.tsx");
 let items, keydown, focus, pageSelection, appSlash, sidebarSearch, selectedFileSearchText, rememberWorkspaceFile, pickSearchFolder, finishFolderPicker, folderLocation, folderListEffect;
+let chatProjectLabel;
 const chatStates = {};
 const shortcuts = {};
 const helpers = [];
 function visit(node, ast) {
   if (ast === app && ts.isFunctionDeclaration(node) && node.name?.text === "selectedFileSearchText") selectedFileSearchText = node;
   if (ast === app && ts.isVariableDeclaration(node) && node.name.getText(ast) === "rememberWorkspaceFile") rememberWorkspaceFile = node.initializer.arguments[0];
+  if (ast === app && ts.isVariableDeclaration(node) && node.name.getText(ast) === "getChatProjectLabel") chatProjectLabel = node.initializer.arguments[0];
   if (ast === page && ts.isFunctionDeclaration(node) && ["fileDedupeKey", "fileSearchRoot"].includes(node.name?.text)) helpers.push(node);
   if (ast === folderDialog && ts.isFunctionDeclaration(node) && node.name?.text === "folderLocation") folderLocation = node;
   if (ast === folderDialog && ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect" &&
@@ -57,6 +59,7 @@ function mount(overrides = {}) {
     runCmd: "npm run dev", testCmd: "npm test", buildCmd: "npm run build",
     selectedIndex: 0,
     baseNameFsPath: path => path.split(/[\\/]/).at(-1),
+    getChatProjectLabel: () => undefined,
     setPathRetry: updater => calls.push(["retry", updater(0)]),
     setRecentRetry: updater => calls.push(["recent retry", updater(0)]),
     inputRef: { current: { focus() {}, select() {} } },
@@ -72,6 +75,28 @@ function mount(overrides = {}) {
   context.setQuery = value => { context.query = value; };
   for (const helper of helpers) vm.runInNewContext(ts.transpileModule(helper.getText(page), {}).outputText, context);
   return { context, calls, results: () => execute(items, page, context)() };
+}
+{
+  const projects = { exports: {} };
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/sidebarProjects.ts", "utf8"), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText, projects);
+  const sidebarProjectMembership = { threadProjectAssignments: {}, workspaceProjectAssignments: { excluded: null }, projectlessThreadIds: [],
+    localProjects: [{ id: "local-project", serverProjectId: "server-project", name: "已重命名项目", rootPaths: ["D:/projects/main"], createdAt: 0 }] };
+  const resolve = execute(chatProjectLabel, app, {
+    ...projects.exports, sidebarProjectMembership, workspaceHints: {},
+    searchChatProjects: projects.exports.buildSidebarProjectGroups([], sidebarProjectMembership),
+  });
+  const remoteThreads = [
+    { id: "unknown", name: "新命中", projectId: "server-project", cwd: "D:/other/folder" },
+    { id: "excluded", name: "已移出", cwd: "D:/projects/main" },
+    { id: "legacy", name: "旧协议命中", cwd: "D:/other/folder" },
+    { id: "ordinary", name: "普通目录", cwd: "D:/other/folder" },
+  ];
+  const view = mount({ mode: "chats", query: "项目", getChatProjectLabel: resolve,
+    threads: [{ id: "legacy", projectId: "server-project" }, { id: "loaded", name: "项目本地候选", cwd: "D:/projects/main" }],
+    remoteResults: { mode: "chats", query: "项目", workspacePath: "repo-B", threads: remoteThreads } });
+  assert.deepEqual(Array.from(view.results(), row => row.rightLabel), ["已重命名项目", "", "已重命名项目", "folder", "已重命名项目"]);
 }
 {
   const match = { id: "content-match", name: "Design", cwd: "D:/private/workspace", snippet: "命中的正文" };

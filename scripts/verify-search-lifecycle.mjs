@@ -264,11 +264,12 @@ await check("SB14 chat pagination serializes requests, retries, stops a repeated
   view.requests[0].reject(Error("network")); await first;
   assert.equal(context.chatPaging.limit, 50, "failure preserves the last visible page size");
   const retry = view.more("cursor-1");
-  view.requests[1].resolve({ data: [{ snippet: "  正文命中  ", thread: { id: "new-chat", preview: "原会话预览" } }], nextCursor: "cursor-1" }); await retry;
+  view.requests[1].resolve({ data: [{ snippet: "  正文命中  ", thread: { id: "new-chat", preview: "原会话预览", projectId: "project-1" } }], nextCursor: "cursor-1" }); await retry;
   assert.equal(context.chatPaging.limit, 75);
   assert.equal(context.chatPaging.threads[0].id, "new-chat");
   assert.equal(context.chatPaging.threads[0].snippet, "正文命中");
   assert.equal(context.chatPaging.threads[0].preview, "原会话预览");
+  assert.equal(context.chatPaging.threads[0].projectId, "project-1");
   assert.equal(context.chatPaging.nextCursor, null);
   const stale = view.more("cursor-2"), before = context.chatPaging;
   context.chatSearchScopeRef.current = {};
