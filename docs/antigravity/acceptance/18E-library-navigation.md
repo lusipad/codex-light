@@ -12,6 +12,8 @@
 
 打包前改用官方发布资产 API 读取相同 ZIP。只重试下载错误，校验锁定 Tauri CLI 的 SHA-256 后才解包到其 WiX 目录。本机私有目录验证真实下载、工具文件存在以及校验错误拒绝安装。分支 CI 仍执行原完整打包流程。[Tauri 锁定版 MSI 源码](https://github.com/tauri-apps/tauri/blob/tauri-cli-v2.12.3/crates/tauri-bundler/src/bundle/windows/msi/mod.rs)
 
+CI 42465616700 验证预下载的 WiX 可生成 MSI，随后 NSIS 发布下载同样返回 504。依据上一版成功日志和锁定源码，把 NSIS 3.13 和 Tauri 插件 0.5.3 一并移到预下载。三个官方资产分别校验 SHA-256，再核对 NSIS 启动文件和插件与锁定 bundler 的 SHA-1 一致。本地私有目录三资产完整解包和坏校验和拒绝通过。[Tauri 锁定版 NSIS 源码](https://github.com/tauri-apps/tauri/blob/tauri-cli-v2.12.3/crates/tauri-bundler/src/bundle/windows/nsis/mod.rs)
+
 日期：2026-11-06。状态：本地功能自验完成，待真实账号/视觉及用户验收。固定官方Store26.1027.3384.0，合同见[18E规格](../specs/18E-library-navigation.md)，直接原包12条目、25函数/中文锚点和补充CSS证据位于`.ref/parity/18/actual/18E-library/reference/`。
 
 ## 改动与真实边界

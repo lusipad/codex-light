@@ -90,11 +90,11 @@ jobs:
       - name: Run Backend Unit Tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --verbose
 
-      - name: Prepare Verified WiX Tools
+      - name: Prepare Verified Installer Tools
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: ./scripts/prepare-ci-wix.ps1 -ToolsRoot (Join-Path $env:LOCALAPPDATA tauri)
+        run: ./scripts/prepare-ci-installer-tools.ps1 -ToolsRoot (Join-Path $env:LOCALAPPDATA tauri)
 
       - name: Build Tauri Application & Installers
         run: npm run tauri build -- --ci
