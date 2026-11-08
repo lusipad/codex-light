@@ -19,7 +19,7 @@ import { notificationApprovalActions, notificationApprovalResponse } from "./not
 import { GeneratedImageCard } from "./components/GeneratedImageCard";
 import { McpCallCard } from "./components/McpCallCard";
 import { extractTextFromItem } from "./threadText";
-import { pendingRequestKey, requestThreadId, requestsForThread, type RequestResponseState } from "./approvalRequests";
+import { fileChangeApprovalForItem, pendingRequestKey, requestThreadId, requestsForThread, type RequestResponseState } from "./approvalRequests";
 import { copyTextToClipboard } from "./clipboard";
 import { buildSkillTrialPrompt } from "./skillTrialPrompt";
 import { ShareThreadDialog } from "./components/ShareThreadDialog";
@@ -6415,6 +6415,7 @@ export const App: React.FC = () => {
                       );
                   const renderFileChange = (fc: TurnItem, fIdx: number) => (
                     <FileChangeCard key={fc.id || fIdx} item={fc} turnStatus={turn.status}
+                      approval={fc.type === "fileChange" && fc.status === "inProgress" ? fileChangeApprovalForItem(activePendingRequests, turn.id, fc.id) : undefined}
                       cwd={fc.cwd || activeThreadObj?.cwd || activeWorkspace?.path} onOpenFile={openPreviewFile} />
                   );
                   const renderPlan = (plan: TurnItem, pIdx: number) => (

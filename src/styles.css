@@ -1502,6 +1502,8 @@ button.file-change-name:hover { text-decoration: underline; }
 .file-change-copy-status { margin-inline-start: auto; }
 .file-change-copy { display: flex; align-items: center; }
 .file-change-card .turn-diff-code { border-top: 1px solid var(--border-subtle); }
+.file-change-card--pending { border-radius: 12px; }
+.file-change-card--pending .turn-diff-code { max-height: 100px; }
 
 /* Approval Request Card */
 .approval-card {

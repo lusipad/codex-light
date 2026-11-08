@@ -76,8 +76,10 @@ assert.ok(fileChangeMapBody, "App.tsx must contain the production file-change re
     return exports;
   }
   diffPanel = component("src/components/TurnDiffPanel.tsx");
+  const { fileChangeApprovalForItem } = component("src/approvalRequests.ts");
   const { FileChangeCard } = component("src/components/FileChangeCard.tsx");
-  const context = { React: react, FileChangeCard, turn: { status: "completed" }, activeThreadObj: { cwd: "C:/project" },
+  const context = { React: react, FileChangeCard, fileChangeApprovalForItem, activePendingRequests: [],
+    turn: { id: "turn-1", status: "completed" }, activeThreadObj: { cwd: "C:/project" },
     openPreviewFile: (path, line) => opened.push([path, line]) };
   const renderFc = vm.runInNewContext(compile(`(${fileChangeMapBody})`), context);
   const sample = { id: "fc", status: "completed", changes: [
@@ -113,6 +115,24 @@ assert.ok(fileChangeMapBody, "App.tsx must contain the production file-change re
   const large = { ...sample, changes: [{ path: "large.ts", diff: "+x\n".repeat(5001) }] };
   assert.match(JSON.stringify(render(large)), /差异内容过多，无法预览/);
   assert.equal(findClass(render(large), "file-change-copy").length, 0);
+  const approval = { id: 7, method: "item/fileChange/requestApproval",
+    params: { turnId: "turn-1", itemId: sample.id, grantRoot: "D:/granted" } };
+  const inProgress = { ...sample, type: "fileChange", status: "inProgress" };
+  context.turn.status = "running";
+  context.activePendingRequests = [{ ...approval, params: { ...approval.params, turnId: "other" } },
+    { ...approval, params: { ...approval.params, itemId: "other" } },
+    { ...approval, method: "item/commandExecution/requestApproval" }];
+  assert.match(JSON.stringify(render(inProgress)), /正在编辑/, "unrelated approvals do not suppress streaming status");
+  context.activePendingRequests.push(approval);
+  const pending = render(inProgress);
+  assert.equal(findClass(pending, "file-change-card file-change-card--pending").length, 3);
+  assert.doesNotMatch(JSON.stringify(pending), /正在编辑/);
+  findClass(pending, "file-change-name").find(node => node.props.title === "old.ts").props.onClick();
+  assert.deepEqual(opened.at(-1), ["D:/granted/old.ts", 4]);
+  assert.equal(findClass(render({ ...inProgress, status: "completed" }), "file-change-card file-change-card--pending").length, 0);
+  assert.match(JSON.stringify(render({ ...inProgress, status: "declined" })), /已拒绝/);
+  context.activePendingRequests = [];
+  assert.match(JSON.stringify(render(inProgress)), /正在编辑/, "resolution restores streaming without fabricating a result");
   console.log("PASS per-file patch rows, exact stats, disclosure, applied rename, stopped/rejected and render cap");
 }
 

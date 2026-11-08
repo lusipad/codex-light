@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { copyTextToClipboard } from "../clipboard";
 import { baseNameFsPath, joinFsPath } from "../fsClient";
-import type { TurnItem } from "../types";
+import type { PendingServerRequest, TurnItem } from "../types";
 import { ChevronDownIcon, ChevronRightIcon, CopyIcon, DiffIcon } from "./Icons";
 import { parseUnifiedDiff } from "./TurnDiffPanel";
 
@@ -28,8 +28,8 @@ function patchOpenLine(lines: ReturnType<typeof parseUnifiedDiff>): number {
   return firstDeletion ?? 1;
 }
 
-function PatchFile({ change, status, turnStatus, cwd, onOpenFile }: {
-  change: Change; status?: string; turnStatus?: string; cwd?: string; onOpenFile: (path: string, line?: number) => void;
+function PatchFile({ change, status, turnStatus, cwd, pending, onOpenFile }: {
+  change: Change; status?: string; turnStatus?: string; cwd?: string; pending: boolean; onOpenFile: (path: string, line?: number) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [copyStatus, setCopyStatus] = useState("");
@@ -80,11 +80,11 @@ function PatchFile({ change, status, turnStatus, cwd, onOpenFile }: {
     setCopyStatus(await copyTextToClipboard(patch) ? "已复制" : "无法复制差异");
   }
 
-  return <section className="file-change-card">
+  return <section className={pending ? "file-change-card file-change-card--pending" : "file-change-card"}>
     <div className="file-change-summary">
       <DiffIcon size={15} />
-      <span>{showFileHeader && status === "completed" ? labels[3] : label}</span>
-      {!showFileHeader && <>{fileName}{stats}</>}
+      {!pending && <span>{showFileHeader && status === "completed" ? labels[3] : label}</span>}
+      {(!showFileHeader || pending) && <>{fileName}{stats}</>}
       <button type="button" className="file-change-toggle" aria-label={`切换 ${name} 的差异视图`} aria-expanded={expanded}
         onClick={() => { setExpanded(value => !value); setCopyStatus(""); }}>{expanded ? <ChevronDownIcon size={14} /> : <ChevronRightIcon size={14} />}</button>
     </div>
@@ -101,11 +101,14 @@ function PatchFile({ change, status, turnStatus, cwd, onOpenFile }: {
   </section>;
 }
 
-export function FileChangeCard({ item, cwd, turnStatus, onOpenFile }: {
-  item: TurnItem; cwd?: string; turnStatus?: string; onOpenFile: (path: string, line?: number) => void;
+export function FileChangeCard({ item, cwd, turnStatus, approval, onOpenFile }: {
+  item: TurnItem; cwd?: string; turnStatus?: string; approval?: PendingServerRequest; onOpenFile: (path: string, line?: number) => void;
 }) {
   const changes: Change[] = Array.isArray(item.changes) && item.changes.length ? item.changes
     : typeof item.path === "string" ? [{ path: item.path, kind: item.kind, diff: item.diff }] : [];
+  const grantRoot = approval?.params?.grantRoot;
+  const root = typeof grantRoot === "string" && grantRoot ? grantRoot : cwd;
   return <>{changes.filter(change => typeof change?.path === "string" && change.path.trim()).map((change, index) =>
-    <PatchFile key={`${change.path}:${index}`} change={change} status={item.status} turnStatus={turnStatus} cwd={cwd} onOpenFile={onOpenFile} />)}</>;
+    <PatchFile key={`${change.path}:${index}`} change={change} status={item.status} turnStatus={turnStatus}
+      cwd={root} pending={approval !== undefined} onOpenFile={onOpenFile} />)}</>;
 }
