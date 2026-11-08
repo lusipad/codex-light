@@ -27,6 +27,7 @@ export interface ProjectsIndexViewProps {
   workspaces: WorkspaceRootItem[];
   activeWorkspace: WorkspaceRootItem | null;
   threads: ThreadSummary[];
+  currentThreadId?: string | null;
   workspaceHints: Record<string, string>;
   onSelectWorkspace: (path: string) => void;
   onStartNewChatInProject: (path: string, project?: Project) => void;
@@ -65,6 +66,42 @@ function effectiveProjectUpdated(project: Project, threads: ThreadSummary[]): nu
     ...threads.map(thread => timestampMilliseconds(thread.updatedAt || thread.createdAt)));
 }
 
+const PROJECT_CHAT_PAGE_SIZE = 10;
+
+function visibleProjectChats(threads: ThreadSummary[], limit: number, currentThreadId?: string | null): ThreadSummary[] {
+  const visible = threads.slice(0, limit);
+  const current = threads.find((thread, index) => index >= limit && thread.id === currentThreadId);
+  if (current) visible.push(current);
+  return threads.length - visible.length <= 1 ? threads : visible;
+}
+
+function ProjectChatList({ label, threads, currentThreadId, expanded, onExpand, renderThread }: {
+  label: string;
+  threads: ThreadSummary[];
+  currentThreadId?: string | null;
+  expanded: boolean;
+  onExpand: () => void;
+  renderThread: (thread: ThreadSummary) => React.ReactNode;
+}) {
+  const [expandedLimit, setExpandedLimit] = useState(2 * PROJECT_CHAT_PAGE_SIZE);
+  const limit = expanded ? expandedLimit : PROJECT_CHAT_PAGE_SIZE;
+  const visible = visibleProjectChats(threads, limit, currentThreadId);
+
+  return <div className="project-expanded-threads" role="group" tabIndex={-1} aria-label={label}>
+    {visible.length === 0 ? <div className="project-expanded-empty">暂无聊天</div> : visible.map(renderThread)}
+    {visible.length < threads.length && <button type="button" className="sidebar-project-show-more"
+      onClick={event => {
+        const nextLimit = limit + PROJECT_CHAT_PAGE_SIZE;
+        if (visibleProjectChats(threads, nextLimit, currentThreadId).length === threads.length
+          && document.activeElement === event.currentTarget) {
+          event.currentTarget.closest<HTMLElement>(".project-expanded-threads")?.focus({ preventScroll: true });
+        }
+        if (expanded) setExpandedLimit(nextLimit);
+        else onExpand();
+      }}>展开显示</button>}
+  </div>;
+}
+
 function normPath(p?: string | null): string {
   if (!p) return "";
   return p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
@@ -92,6 +129,7 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
   workspaces,
   activeWorkspace,
   threads,
+  currentThreadId,
   workspaceHints,
   onSelectWorkspace,
   onStartNewChatInProject,
@@ -107,6 +145,7 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
   onShowToast,
 }) => {
   const [search, setSearch] = useState("");
+  const [expandedChatPages, setExpandedChatPages] = useState<Record<string, boolean>>({});
   const [sort, setSort] = useState<{ column: ProjectSortColumn; direction: "ascending" | "descending" }>({
     column: "modified", direction: "descending",
   });
@@ -650,7 +689,8 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
     return filteredProjects.map(({ project, projectThreads, matchingThreads, effectiveUpdated }) => {
       const searchExpanded = matchingThreads.length > 0;
       const isExpanded = searchExpanded || !!expandedProjects[project.id];
-      const visibleThreads = searchExpanded ? matchingThreads : projectThreads;
+      const visibleThreads = searchExpanded ? matchingThreads : isExpanded ? [...projectThreads].sort((a, b) =>
+        timestampMilliseconds(b.updatedAt || b.createdAt) - timestampMilliseconds(a.updatedAt || a.createdAt)) : [];
       const roots = project.roots;
       const isBusy = actionBusyId === project.id;
       const index = projects.findIndex((item) => item.id === project.id);
@@ -729,13 +769,10 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
           </div>
 
           {isExpanded && (
-            <div className="project-expanded-threads" role="group" aria-label={`${project.name} 中最近的聊天`}>
-              {visibleThreads.length === 0 ? (
-                <div className="project-expanded-empty">
-                  暂无聊天
-                </div>
-              ) : (
-                visibleThreads.map((t) => (
+            <ProjectChatList label={`${project.name} 中最近的聊天`} threads={visibleThreads}
+              currentThreadId={currentThreadId} expanded={!!expandedChatPages[project.id]}
+              onExpand={() => setExpandedChatPages(previous => ({ ...previous, [project.id]: true }))}
+              renderThread={t => (
                   <div
                     key={t.id}
                     className="project-expanded-thread-item"
@@ -786,9 +823,7 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
                       </span>
                     </div>
                   </div>
-                ))
-              )}
-            </div>
+              )} />
           )}
         </div>
       );

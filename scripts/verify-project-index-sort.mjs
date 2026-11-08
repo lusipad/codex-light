@@ -16,14 +16,16 @@ const originalOrder = projects.map(p => p.id);
 let serverProjects = projects;
 let projectReads = 0;
 const listeners = new Map();
-const slots = [], effects = [], writes = [], actions = [];
+const rootSlots = [], childSlots = new Map(), effects = [], writes = [], actions = [];
+let slots = rootSlots;
 let cursor = 0;
 const React = {
   createElement(type, props, ...children) { return { type, props: { ...props, children: children.flat(Infinity) } }; },
   useState(initial) {
     const index = cursor++;
-    if (!(index in slots)) slots[index] = typeof initial === "function" ? initial() : initial;
-    return [slots[index], value => { slots[index] = typeof value === "function" ? value(slots[index]) : value; }];
+    const ownerSlots = slots;
+    if (!(index in ownerSlots)) ownerSlots[index] = typeof initial === "function" ? initial() : initial;
+    return [ownerSlots[index], value => { ownerSlots[index] = typeof value === "function" ? value(ownerSlots[index]) : value; }];
   },
   useRef(initial) { const index = cursor++; return slots[index] ??= { current: initial }; },
   useMemo(fn, dependencies) {
@@ -40,7 +42,7 @@ const React = {
 let mounted = false;
 const exported = {};
 const context = {
-  exports: exported, console, Intl, Element: class {},
+  exports: exported, console, Intl, Element: class {}, document: { activeElement: null },
   Date: class extends Date { static now() { return now; } },
   require(name) {
     if (name === "react") return { ...React, default: React };
@@ -61,7 +63,27 @@ const props = {
   onStartNewChatInProject: (...args) => actions.push(["chat", ...args]),
   onSelectThread: id => actions.push(["thread", id]), onPickNewFolder() {}, onRemoveWorkspace() {},
 };
-const render = () => { cursor = 0; return exported.ProjectsIndexView(props); };
+function render() {
+  cursor = 0;
+  const mountedLists = new Set();
+  const renderChildren = (node, owner) => {
+    if (!node?.props) return node;
+    const key = node.props.key ?? owner;
+    if (node.type?.name === "ProjectChatList") {
+      mountedLists.add(key);
+      if (!childSlots.has(key)) childSlots.set(key, []);
+      const rootCursor = cursor;
+      slots = childSlots.get(key); cursor = 0;
+      const child = node.type(node.props);
+      slots = rootSlots; cursor = rootCursor;
+      return child;
+    }
+    return { ...node, props: { ...node.props, children: node.props.children.map(child => renderChildren(child, key)) } };
+  };
+  const tree = renderChildren(exported.ProjectsIndexView(props));
+  for (const key of childSlots.keys()) if (!mountedLists.has(key)) childSlots.delete(key);
+  return tree;
+}
 const nodes = (tree, match) => {
   const found = [];
   const visit = node => { if (!node || typeof node !== "object") return; if (match(node)) found.push(node); for (const child of node.props?.children || []) visit(child); };
@@ -145,6 +167,36 @@ props.threads = props.threads.map(thread => thread.id === "matching" ? { ...thre
 tree = render();
 assert.deepEqual(ids(tree), [], "PS12: a title update removes stale matches without changing the query");
 assert.deepEqual(writes, [], "search never writes project state");
+searchProjects("");
+props.threads = Array.from({length: 23}, (_, index) => ({
+  id: `page-${index}`, projectId: "b", name: `Paging ${index}`, updatedAt: now - index * 2000,
+})).reverse();
+props.currentThreadId = "page-22";
+tree = render();
+const pageTitles = () => nodes(tree, cls("project-expanded-thread-title")).map(text);
+assert.deepEqual(pageTitles(), [...Array.from({length: 10}, (_, index) => `💬 Paging ${index}`), "💬 Paging 22"],
+  "PS13: sorted first ten and forced current chat");
+const pageMore = () => nodes(tree, node => node.type === "button" && text(node) === "展开显示")[0];
+pageMore().props.onClick({ currentTarget: {} }); tree = render();
+assert.equal(pageTitles().length, 21, "PS14: one click adds ten more, retaining the current chat");
+let focusRestored = 0;
+const button = { closest: () => ({ focus: () => focusRestored++ }) };
+context.document.activeElement = button;
+pageMore().props.onClick({ currentTarget: button }); tree = render();
+assert.equal(pageTitles().length, 23);
+assert.equal(pageMore(), undefined);
+assert.equal(focusRestored, 1, "PS14: disappearing pagination control leaves focus in its list");
+const toggleBeta = () => nodes(tree, node => cls("projects-table-group")(node) && node.props.key === "b")
+  .flatMap(node => nodes(node, candidate => candidate.props["aria-label"] === "展开/折叠项目"))[0]
+  .props.onClick({ stopPropagation() {} });
+toggleBeta(); tree = render(); toggleBeta(); tree = render();
+assert.equal(pageTitles().length, 21, "PS15: remount retains the first extra batch only");
+props.currentThreadId = null;
+props.threads = props.threads.slice(-21);
+tree = render();
+assert.equal(pageTitles().length, 21, "PS15: a lone remaining row is revealed without another button");
+assert.equal(pageMore(), undefined);
+assert.deepEqual(writes, [], "paging is read-only");
 assert.match(css, /@media \(max-width: 680px\)[\s\S]*\.project-col-updated\s*\{\s*display: none;/);
 assert.match(css, /\.project-sort-direction\s*\{[^}]*transition:\s*transform 150ms cubic-bezier\(0\.4, 0, 0\.2, 1\);/, "PS09: rotation uses the official default duration and timing curve");
-console.log("PASS PS01–PS12 project sorting and title search: updates, stable order, forced expansion, keyboard activation and restoration");
+console.log("PASS PS01–PS15 project sorting, title search and chat paging");

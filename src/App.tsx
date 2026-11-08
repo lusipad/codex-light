@@ -5647,6 +5647,7 @@ export const App: React.FC = () => {
             workspaces={workspaces}
             activeWorkspace={activeWorkspace}
             threads={threads}
+            currentThreadId={activeThreadId}
             workspaceHints={workspaceHints}
             onSelectWorkspace={handleSelectWorkspace}
             onStartNewChatInProject={(path, project) => {
