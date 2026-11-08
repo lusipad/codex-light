@@ -1,4 +1,7 @@
-import { createCloudDraftReceipt, createCloudEnvironmentConfig, readCloudService, type ServiceIdentity } from "./chatgptService";
+import { callCloudThread, createCloudDraftReceipt, createCloudEnvironmentConfig, readCloudService, type ServiceIdentity } from "./chatgptService";
+import { rememberCloudDraftBinding } from "./cloudDraftBindings";
+import type { CloudDraftSession } from "./cloudDraftSession";
+import type { readCloudDraftHistory } from "./cloudDraftHistory";
 import { parseCloudDetail } from "./cloudEnvironmentService";
 import { resolveCloudSetupModel } from "./cloudSetupModel";
 
@@ -10,11 +13,14 @@ export interface CloudSetupSelection {
 type Pending = { selection: CloudSetupSelection } & (
   | { phase: "creating-config" }
   | { phase: "config-created" | "creating-draft"; receipt: Receipt }
+  | { phase: "sending"; receipt: Receipt; messageId: string }
 );
 
 const present = (value: unknown): value is string => typeof value === "string" && !!value.trim();
 const configId = (value: unknown): value is string => present(value) && /^[A-Za-z0-9_~-]{1,512}$/.test(value);
 const nullableText = (value: unknown): value is string | null => value === null || present(value);
+const setupKey = (identity: ServiceIdentity) => `cloud-environment-setup-v1:${JSON.stringify([identity.accountId, identity.userId])}`;
+export const hasPendingCloudEnvironmentSetup = (identity: ServiceIdentity) => readPending(setupKey(identity)) !== null;
 
 function readPending(key: string): Pending | null {
   const raw = localStorage.getItem(key);
@@ -25,7 +31,7 @@ function readPending(key: string): Pending | null {
     throw Error("无法读取待恢复的环境创建记录。");
   }
   if (value.phase === "creating-config") return value;
-  if ((value.phase === "config-created" || value.phase === "creating-draft") && value.receipt
+  if ((value.phase === "config-created" || value.phase === "creating-draft" || value.phase === "sending" && present(value.messageId)) && value.receipt
     && configId(value.receipt.config_id) && present(value.receipt.name) && present(value.receipt.version_id)
     && [value.receipt.environment_id, value.receipt.thread_id, value.receipt.onboarding_skill].every(nullableText)
     && (value.receipt.draft_id === null || configId(value.receipt.draft_id))) return value;
@@ -78,7 +84,7 @@ export async function advanceCloudEnvironmentSetup(
 ) {
   signal.throwIfAborted();
   if (!navigator.locks) throw Error("当前窗口无法安全创建环境。");
-  const key = `cloud-environment-setup-v1:${JSON.stringify([identity.accountId, identity.userId])}`;
+  const key = setupKey(identity);
   return navigator.locks.request(key, { signal }, async () => {
     signal.throwIfAborted();
     const pending = readPending(key);
@@ -105,7 +111,7 @@ export async function advanceCloudEnvironmentSetup(
       }
       save({ phase: "config-created", selection: chosen, receipt });
     }
-    if (receipt.thread_id === null && pending?.phase !== "creating-draft") {
+    if (receipt.thread_id === null && pending?.phase !== "creating-draft" && pending?.phase !== "sending") {
       signal.throwIfAborted();
       save({ phase: "creating-draft", selection: chosen, receipt });
       let draft: Awaited<ReturnType<typeof createCloudDraftReceipt>>;
@@ -121,5 +127,68 @@ export async function advanceCloudEnvironmentSetup(
     signal.throwIfAborted();
     if (receipt.thread_id === null || receipt.environment_id === null) return { status: "draft_unconfirmed" as const, receipt };
     return { status: "ready" as const, receipt: { ...receipt, thread_id: receipt.thread_id, environment_id: receipt.environment_id }, selection: chosen, ...settings };
+  });
+}
+
+export async function openCloudEnvironmentSetup(selection: CloudSetupSelection | null, identity: ServiceIdentity, signal: AbortSignal) {
+  const result = await advanceCloudEnvironmentSetup(selection, identity, signal);
+  if (!result || result.status !== "ready") return result;
+  const { receipt, serviceTier } = result;
+  const session: CloudDraftSession = {
+    threadId: receipt.thread_id, identity, setup: { serviceTier },
+    binding: {
+      accountId: identity.accountId, userId: identity.userId, configId: receipt.config_id, draftId: receipt.draft_id,
+      environmentId: receipt.environment_id, name: receipt.name,
+      repositoryNamesById: Object.fromEntries(result.selection.repositories.map(repo => [repo.repositoryId, repo.name])),
+    },
+  };
+  return { status: "ready" as const, session, persisted: rememberCloudDraftBinding(session.threadId, session.binding) };
+}
+
+export async function sendCloudEnvironmentSetup(session: CloudDraftSession, history: Awaited<ReturnType<typeof readCloudDraftHistory>>, signal: AbortSignal) {
+  const { threadId, identity, binding } = session;
+  if (!session.setup || identity.accountId !== binding.accountId || identity.userId !== binding.userId) return null;
+  const key = setupKey(identity);
+  return navigator.locks.request(key, { signal }, async () => {
+    signal.throwIfAborted();
+    const pending = readPending(key);
+    if (!pending || pending.phase === "creating-config" || pending.receipt.thread_id !== threadId
+      || pending.receipt.config_id !== binding.configId || pending.receipt.draft_id !== binding.draftId
+      || pending.receipt.environment_id !== binding.environmentId) return null;
+    if (pending.phase === "sending") {
+      if (!history.turns.some(({ turn }) => turn.items.some(item => item.type === "userMessage" && item.clientId === pending.messageId))) return "unconfirmed";
+      localStorage.removeItem(key);
+      return "sent";
+    }
+    const { thread } = await callCloudThread({ kind: "read", threadId }, identity, signal) as {
+      thread?: { id?: string; name?: string | null; cwd?: string; status?: { type?: string } };
+    };
+    if (thread?.id !== threadId || thread.status?.type !== "idle" || history.turns.at(-1)?.turn.status === "inProgress") return "waiting";
+    if (!thread.cwd?.startsWith("/")) throw Error("无法确认设置会话的工作目录。");
+    const settings = await prepareSetupModel(identity, signal);
+    if (!thread.name) {
+      const title = Array.from(`设置 ${pending.receipt.name}`).slice(0, 60).join("");
+      await callCloudThread({ kind: "title", threadId, name: title }, identity, signal);
+    }
+    signal.throwIfAborted();
+    const messageId = crypto.randomUUID();
+    localStorage.setItem(key, JSON.stringify({ ...pending, phase: "sending", messageId }));
+    try {
+      const result = await callCloudThread({
+        kind: "start_environment_setup", threadId, clientUserMessageId: messageId, cwd: thread.cwd,
+        ...settings, repositories: pending.selection.repositories.map(({ name, ref }) => ({ name, ref })),
+        skill: pending.receipt.onboarding_skill, privateDraft: pending.receipt.draft_id !== null,
+      }, identity, signal) as { turn?: { id?: string } };
+      signal.throwIfAborted();
+      if (!result?.turn?.id) return "unconfirmed";
+    } catch (cause) {
+      if (!signal.aborted && definitelyRefused(cause)) {
+        localStorage.setItem(key, JSON.stringify(pending));
+        throw cause;
+      }
+      return "unconfirmed";
+    }
+    localStorage.removeItem(key);
+    return "sent";
   });
 }

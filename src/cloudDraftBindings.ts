@@ -4,7 +4,7 @@ import { parseCloudDetail, type CloudDetail } from "./cloudEnvironmentService";
 type Account = Pick<ServiceIdentity, "accountId" | "userId">;
 export interface CloudDraftBinding extends Account {
   configId: string;
-  draftId: string;
+  draftId: string | null;
   environmentId: string;
   name: string;
   repositoryNamesById: Record<string, string>;
@@ -15,7 +15,8 @@ const key = "environment-setup-server-configs-v1";
 function bindingFrom(value: unknown): CloudDraftBinding | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const { accountId, userId, configId, draftId, environmentId, name, repositoryNamesById } = value as CloudDraftBinding;
-  if (![accountId, userId, configId, draftId, environmentId].every(id => typeof id === "string" && id.length > 0)
+  if (![accountId, userId, configId, environmentId].every(id => typeof id === "string" && id.length > 0)
+    || (draftId !== null && (typeof draftId !== "string" || !draftId))
     || typeof name !== "string" || !repositoryNamesById || typeof repositoryNamesById !== "object"
     || Array.isArray(repositoryNamesById) || Object.values(repositoryNamesById).some(name => typeof name !== "string")) return null;
   return { accountId, userId, configId, draftId, environmentId, name, repositoryNamesById };
@@ -64,7 +65,9 @@ export function rememberCloudDraftBinding(threadId: string, value: CloudDraftBin
 export async function readBoundCloudDraft(binding: CloudDraftBinding, identity: ServiceIdentity, signal: AbortSignal): Promise<CloudDetail> {
   signal.throwIfAborted();
   if (!sameAccount(binding, identity)) throw Error("环境草稿与当前账号不匹配。");
-  const value = await readCloudService("draft", { id: binding.configId, draftId: binding.draftId }, identity, signal);
+  const value = await (binding.draftId
+    ? readCloudService("draft", { id: binding.configId, draftId: binding.draftId }, identity, signal)
+    : readCloudService("detail", { id: binding.configId }, identity, signal));
   signal.throwIfAborted();
-  return parseCloudDetail(value, binding.configId, binding.draftId);
+  return parseCloudDetail(value, binding.configId, binding.draftId ?? undefined);
 }

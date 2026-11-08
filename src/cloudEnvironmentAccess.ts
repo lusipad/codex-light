@@ -8,6 +8,8 @@ export interface CloudEnvironmentAccess {
   canManage: boolean;
   rbacEnabled: boolean;
   gateEvidence: string;
+  canCreate: boolean;
+  directCreate: boolean;
 }
 const object = (value: unknown): value is Record<string, any> => value !== null && typeof value === "object" && !Array.isArray(value);
 const personalPlans = new Set(["free", "go", "plus", "prolite", "pro", "promax"]);
@@ -32,10 +34,13 @@ export async function readCloudEnvironmentAccess(signal: AbortSignal): Promise<C
     || !object(payload.feature_gates) || payload.has_updates !== true || payload.is_delta === true || payload.isDelta === true
     || payload.live_overlay != null || ![undefined, "init-v1", "init-v2"].includes(payload.response_format))
     throw Error("云端环境权限快照不完整或与当前账号不符。");
-  const gate = (key: string): boolean => {
+  const gateValue = (key: string): unknown => {
     let hash = 0; for (let i = 0; i < key.length; ++i) hash = (Math.imul(hash, 31) + key.charCodeAt(i)) >>> 0;
     const item = payload.feature_gates[key] ?? payload.feature_gates[String(hash)];
-    const value = item?.[payload.response_format === "init-v2" ? "v" : "value"];
+    return item?.[payload.response_format === "init-v2" ? "v" : "value"];
+  };
+  const gate = (key: string): boolean => {
+    const value = gateValue(key);
     if (typeof value !== "boolean") throw Error("云端环境访问资格尚未确认。");
     return value;
   };
@@ -65,5 +70,8 @@ export async function readCloudEnvironmentAccess(signal: AbortSignal): Promise<C
   const after = await serviceIdentity(signal);
   if (identity.accountId !== after.accountId || identity.userId !== after.userId || identity.generation !== after.generation)
     throw Error("读取期间账号发生变化，请重试。");
-  return { identity, available, canManage, rbacEnabled, gateEvidence };
+  return { identity, available, canManage, rbacEnabled, gateEvidence,
+    canCreate: available && gateValue("375130565") === true,
+    directCreate: gateValue("3620782482") === true,
+  };
 }

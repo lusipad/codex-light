@@ -6,6 +6,7 @@ import { readCloudEnvironmentAccess, type CloudEnvironmentAccess } from "../clou
 import { readCloudService, serviceErrorMessage } from "../chatgptService";
 import { createCloudDraftSession, type CloudDraftSession } from "../cloudDraftSession";
 import { pendingRepositoryApplySession } from "../cloudDraftRepositoryApply";
+import { hasPendingCloudEnvironmentSetup, openCloudEnvironmentSetup } from "../cloudEnvironmentSetup";
 import { cloudSharingLabel, filterCloudCatalog, loadCloudCatalog, loadRepositoryName, parseCloudDetail,
   type CloudCatalog, type CloudDetail, type CloudSummary, type RepositoryName } from "../cloudEnvironmentService";
 import "./CloudEnvironmentsView.css";
@@ -43,6 +44,7 @@ export const CloudEnvironmentsView: React.FC<{ embedded?: boolean; onOpenDraft?:
   const creating = useRef<AbortController | null>(null);
   const [creatingId, setCreatingId] = useState<string | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [setupPending, setSetupPending] = useState(false);
   const returnedFocus = useRef(false);
   const catalogBusy = useRef(false);
   const catalogSequence = useRef(0);
@@ -75,7 +77,7 @@ export const CloudEnvironmentsView: React.FC<{ embedded?: boolean; onOpenDraft?:
     let unlisten: (() => void) | undefined;
     const controller = new AbortController(); source.current = controller;
     catalogBusy.current = false; noResultRefresh.current = null;
-    setAccess(null); setCatalog(null); setNames({}); setLoading(true); setError(null); setSelectedId(null); setDetail(null); setMenu(null);
+    setAccess(null); setSetupPending(false); setCatalog(null); setNames({}); setLoading(true); setError(null); setSelectedId(null); setDetail(null); setMenu(null);
     void (async () => {
       try {
         const stop = await tauriListen("chatgpt-service:invalidated", () => {
@@ -88,6 +90,10 @@ export const CloudEnvironmentsView: React.FC<{ embedded?: boolean; onOpenDraft?:
         const current = await readCloudEnvironmentAccess(controller.signal);
         if (controller.signal.aborted) return;
         setAccess(current);
+        if (current.canCreate) {
+          try { setSetupPending(hasPendingCloudEnvironmentSetup(current.identity)); }
+          catch (cause) { setCreateError(serviceErrorMessage(cause)); }
+        }
         if (current.available) await readCatalog(current); else setLoading(false);
       } catch (cause) { if (!controller.signal.aborted) { setError(serviceErrorMessage(cause)); setLoading(false); } }
     })();
@@ -166,6 +172,30 @@ export const CloudEnvironmentsView: React.FC<{ embedded?: boolean; onOpenDraft?:
       if (!controller.signal.aborted) setCreatingId(null);
     }
   };
+  const openSetup = async () => {
+    if (!access?.canCreate || (!access.directCreate && !setupPending) || !onOpenDraft
+      || creating.current || source.current?.signal.aborted) return;
+    const controller = new AbortController();
+    creating.current = controller;
+    setCreatingId("new-setup"); setCreateError(null);
+    try {
+      const selection = setupPending ? null : { name: "New environment", repositories: [] };
+      const result = await openCloudEnvironmentSetup(selection, access.identity, controller.signal);
+      if (controller.signal.aborted) return;
+      if (result?.status === "ready") onOpenDraft(result.session, result.persisted);
+      else if (result) setCreateError(result.status === "config_unconfirmed"
+        ? "环境创建结果尚未确认，请先核对环境列表。" : "环境已保存，设置会话仍待确认。");
+    } catch (cause) {
+      if (!controller.signal.aborted) setCreateError(serviceErrorMessage(cause));
+    } finally {
+      if (creating.current === controller) creating.current = null;
+      if (!controller.signal.aborted) {
+        setCreatingId(null);
+        try { setSetupPending(hasPendingCloudEnvironmentSetup(access.identity)); }
+        catch (cause) { setCreateError(serviceErrorMessage(cause)); }
+      }
+    }
+  };
   return <div className={`cloud-envs-page${embedded ? " cloud-envs-embedded" : ""}`}>
     <div className="cloud-envs-content">
       {selectedId ? <>
@@ -178,10 +208,13 @@ export const CloudEnvironmentsView: React.FC<{ embedded?: boolean; onOpenDraft?:
       </> : <>
         <header className="cloud-envs-page-header"><h2>Codex 云端</h2><p>设置云端环境，为 Codex 在你的项目中开展工作提供所需的代码仓库、工具和设置</p></header>
         <div className="cloud-envs-controls"><div className="cloud-envs-tabs" role="tablist" aria-label="Codex 云端设置"><button type="button" role="tab" aria-selected="true">环境</button><button type="button" role="tab" aria-selected="false" disabled title="个人保险库尚未接入">个人保险库</button></div>
-          <div className="cloud-envs-toolbar"><label className="cloud-envs-search"><Search size={16} aria-hidden="true" /><input aria-label="搜索环境" maxLength={128} placeholder="搜索" value={query} onChange={event => setQuery(event.target.value.slice(0, 128))} /></label><button type="button" className="cloud-envs-create" disabled title="云环境设置聊天尚未接入"><Plus size={16} aria-hidden="true" />创建环境</button></div>
+          <div className="cloud-envs-toolbar"><label className="cloud-envs-search"><Search size={16} aria-hidden="true" /><input aria-label="搜索环境" maxLength={128} placeholder="搜索" value={query} onChange={event => setQuery(event.target.value.slice(0, 128))} /></label><button type="button" className="cloud-envs-create"
+            disabled={!access?.canCreate || (!access.directCreate && !setupPending) || !onOpenDraft || !!creatingId} onClick={() => void openSetup()}>
+            <Plus size={16} aria-hidden="true" />{setupPending ? "继续创建环境" : "创建环境"}
+          </button></div>
         </div>
         {loading && <p className="cloud-envs-state" role="status">正在加载已保存的环境…</p>}
-        {creatingId && <p className="cloud-envs-state" role="status">正在创建环境草稿…</p>}
+        {creatingId && <p className="cloud-envs-state" role="status">{creatingId === "new-setup" ? "正在启动设置…" : "正在创建环境草稿…"}</p>}
         {createError && <p className="cloud-envs-state" role="alert">{createError}</p>}
         {error && <section className="cloud-envs-state" role="alert"><span>无法加载已保存的环境</span><p>{error}</p><button type="button" onClick={() => setRevision(value => value + 1)}>重试</button></section>}
         {access && !access.available && !loading && <p className="cloud-envs-state" role="status">此工作空间无法设置云环境</p>}

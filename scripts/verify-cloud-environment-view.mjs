@@ -68,6 +68,10 @@ export function cloudEnvironmentHarness({ listenerError, deferredListener = fals
       if (name === "../cloudEnvironmentAccess") return { readCloudEnvironmentAccess: signal => call("access", [], signal) };
       if (name === "../cloudDraftSession") return { createCloudDraftSession: (environment, names, current, signal) => call("create", [environment, names, current], signal) };
       if (name === "../cloudDraftRepositoryApply") return { pendingRepositoryApplySession: () => pendingDraft };
+      if (name === "../cloudEnvironmentSetup") return {
+        hasPendingCloudEnvironmentSetup: () => false,
+        openCloudEnvironmentSetup: (selection, current, signal) => call("setup", [selection, current], signal),
+      };
       if (name === "../chatgptService") return { readCloudService: (operation, params, current, signal) => call(operation, [params, current], signal), serviceErrorMessage: cause => cause.message || cause.code };
       if (name === "../cloudEnvironmentService") return { ...data, loadCloudCatalog: (current, signal) => call("catalog", [current], signal), loadRepositoryName: (id, current, signal) => call("repository", [id, current], signal) };
       assert.fail(name);
@@ -211,5 +215,24 @@ await check("a pending repository application reopens its existing draft instead
   assert.deepEqual(opened, [[pendingDraft, true]]);
   assert.equal(count(h, "create"), 0);
   h.unmount();
+});
+await check("direct creation requires both gates and only opens the confirmed setup conversation", async () => {
+  const opened = [];
+  const h = await boot(cloudEnvironmentHarness({ onOpenDraft: (...args) => opened.push(args) }), undefined,
+    { canCreate: true, directCreate: true });
+  const action = button(h, "创建环境");
+  assert.equal(action.props.disabled, false);
+  action.props.onClick(); action.props.onClick();
+  assert.equal(count(h, "setup"), 1);
+  assert.equal(JSON.stringify(latest(h, "setup").args[0]), '{"name":"New environment","repositories":[]}');
+  assert.equal(opened.length, 0);
+  const session = { threadId: "new-thread", identity };
+  latest(h, "setup").resolve({ status: "ready", session, persisted: true }); await flush();
+  assert.deepEqual(opened, [[session, true]]);
+  h.unmount();
+  const picker = await boot(cloudEnvironmentHarness({ onOpenDraft: () => assert.fail("wrong gate branch") }), undefined,
+    { canCreate: true, directCreate: false });
+  assert.equal(button(picker, "创建环境").props.disabled, true);
+  picker.unmount();
 });
 console.log(`PASS ${passed} cloud environment production JSX/hook scenarios; ReactDOM, bridge/access/service transport and lucide are explicit offline boundaries. HTTP, native UI, physical IME and pixel parity remain unverified.`);

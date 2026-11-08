@@ -7,6 +7,7 @@ export interface CloudDraftSession {
   threadId: string;
   identity: ServiceIdentity;
   binding: CloudDraftBinding;
+  setup?: { serviceTier: string | null };
 }
 
 export async function createCloudDraftSession(environment: { id: string; name: string }, repositoryNamesById: Record<string, string>, identity: ServiceIdentity, signal: AbortSignal) {
@@ -108,7 +109,9 @@ export async function restoreCloudDraftSession(session: CloudDraftSession, prepa
     const preferences = await callCloudThread({ kind: "preferences" }, identity, active);
     const context = await prepare({ metadata, preferences, signal: active });
     active.throwIfAborted();
-    const params = cloudDraftResumeParams({ ...context, threadId });
+    const params = cloudDraftResumeParams({ ...context, threadId, ...(session.setup ? {
+      includeServiceTier: true, prepared: { ...context.prepared, serviceTier: session.setup.serviceTier },
+    } : {}) });
     const historyRequest = readCloudDraftHistory(threadId, identity, active, { ...historyLimits, cursor: null })
       .then(value => ({ ok: true as const, value }), error => ({ ok: false as const, error }));
     let response: unknown;

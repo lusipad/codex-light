@@ -70,4 +70,11 @@ before = calls.length;
 await assert.rejects(readBoundCloudDraft(binding, identity, controller.signal), { name: "AbortError" });
 assert.equal(calls.length, before);
 
-console.log("PASS cloud draft binding: 100 recent bindings, identity and generation, private draft GET, mismatched responses and cancellation");
+const rootBinding = { ...binding, draftId: null };
+assert(rememberCloudDraftBinding("root-thread", rootBinding));
+assert.equal(readCloudDraftBinding("root-thread", identity).draftId, null);
+const rootDetail = readBoundCloudDraft(rootBinding, identity, new AbortController().signal);
+assert.deepEqual(plain(calls.at(-1).args.slice(0, 3)), ["detail", { id: binding.configId }, identity]);
+calls.at(-1).resolve({ ...config, draft: null });
+assert.equal((await rootDetail).draft, null);
+console.log("PASS cloud draft binding: 100 recent bindings, identity and generation, private draft and root GET, mismatched responses and cancellation");

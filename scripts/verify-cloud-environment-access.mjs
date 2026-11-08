@@ -19,4 +19,15 @@ await test('RBAC and legacy wham branch stay distinct; manage requires cloud all
 await test('permission rollout rejects absent gate and malformed required settings rather than upgrading HTTP success',async()=>{for(const mode of ['missing-gate','missing-permissions','bad-permissions','missing-beta','bad-beta']){const h=fixture();if(mode==='missing-gate')delete h.c.gates['1355972088'];if(mode==='missing-permissions')h.c.settings={};if(mode==='bad-permissions')h.c.settings.permissions=[42];if(mode==='missing-beta'){h.c.gates['1355972088']=false;h.c.settings={};}if(mode==='bad-beta'){h.c.gates['1355972088']=false;h.c.settings.beta_settings={wham_access:'true'};}await assert.rejects(h.read());}});
 await test('full identity-bound V1/V2 hashed snapshots accepted, partial/foreign/delta rejected',async()=>{const h=fixture();h.c.compact=true;h.c.hashed=true;assert.equal((await h.read()).available,true);for(const mode of ['account','user','delta','incomplete','missing']){const f=fixture();f.c.payload=p=>{if(mode==='account')p.user.customIDs.account_id='other';if(mode==='user')p.user.userID='other';if(mode==='delta')p.is_delta=true;if(mode==='incomplete')p.has_updates=false;if(mode==='missing')p.feature_gates={};return p;};await assert.rejects(f.read());}});
 await test('raw selected membership and ChatGPT auth required; final generation rejects late response',async()=>{for(const mode of ['array','deactivated','session','auth','identity']){const h=fixture();if(mode==='array')h.c.accounts=()=>({accounts:[],account_ordering:[]});if(mode==='deactivated')h.c.accounts=b=>{b.accounts[identity.accountId].account.is_deactivated=true;return b};if(mode==='session')h.c.accounts=b=>{b.accounts[identity.accountId].can_access_with_session=false;return b};if(mode==='auth')h.c.auth='apiKey';if(mode==='identity'){let calls=0;h.c.identity=()=>({...identity,generation:++calls===1?2:3});}await assert.rejects(h.read());}});
+await test('create eligibility and direct experience are independently confirmed', async () => {
+  const h = fixture();
+  h.c.gates['375130565'] = true;
+  assert.equal((await h.read()).canCreate, true);
+  assert.equal((await h.read()).directCreate, false);
+  h.c.compact = true; h.c.hashed = true;
+  h.c.gates['3620782482'] = true;
+  assert.equal((await h.read()).directCreate, true);
+  h.c.settings = { permissions: [] };
+  assert.equal((await h.read()).canCreate, false);
+});
 console.log(`PASS ${passed} cloud access groups; actual wrapper/raw accounts, offline bridge, no HTTP`);

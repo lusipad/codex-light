@@ -27,6 +27,16 @@ function fixture() {
     readback: raw("thread-A", true), rejectStorage: false, deadline: new AbortController() };
   const pending = () => JSON.parse([...storage.values()][0] ?? "null");
   const bridge = {
+    async callCloudThread(operation) {
+      calls.push([operation.kind, JSON.parse(JSON.stringify(operation))]);
+      if (operation.kind === "read") return { thread: { id: "thread-A", name: state.title, cwd: "/workspace", status: { type: state.status ?? "idle" } } };
+      if (operation.kind === "title") return {};
+      assert.equal(operation.kind, "start_environment_setup");
+      assert.equal(pending().phase, "sending");
+      assert.equal(pending().messageId, operation.clientUserMessageId);
+      if (state.turnError) throw state.turnError;
+      return { turn: { id: "turn-A" } };
+    },
     async createCloudEnvironmentConfig(name, repositories, expected) {
       assert.equal(expected.accountId, identity.accountId);
       assert.equal(pending().phase, "creating-config");
@@ -53,7 +63,9 @@ function fixture() {
     vm.runInNewContext(setupSource, {
       exports,
       require: name => name === "./chatgptService" ? bridge : name === "./cloudSetupModel"
-        ? { resolveCloudSetupModel: (_identity, signal) => modelPreparation(signal) } : detail,
+        ? { resolveCloudSetupModel: (_identity, signal) => modelPreparation(signal) }
+        : name === "./cloudDraftBindings" ? { rememberCloudDraftBinding: () => true } : detail,
+      crypto: { randomUUID: () => "0843a3ba-7ae9-4e70-9c42-6054258ae17a" },
       localStorage: {
         getItem: key => storage.get(key) ?? null,
         setItem: (key, value) => { if (state.rejectStorage) throw Error("storage unavailable"); storage.set(key, value); },
@@ -69,10 +81,15 @@ function fixture() {
         return state.deadline.signal;
       } },
     });
-    return (input = selection, owner = identity, resolve = async () => ({ model: "model-A", effort: "medium", serviceTier: "priority" }), signal = active) => {
+    const prepare = async () => ({ model: "model-A", effort: "medium", serviceTier: "priority" });
+    const advance = (input = selection, owner = identity, resolve = prepare, signal = active) => {
       modelPreparation = resolve;
       return exports.advanceCloudEnvironmentSetup(input, owner, signal);
     };
+    return Object.assign(advance, {
+      session(input = selection) { modelPreparation = prepare; return exports.openCloudEnvironmentSetup(input, identity, active); },
+      send(session, history = { turns: [] }) { modelPreparation = prepare; return exports.sendCloudEnvironmentSetup(session, history, active); },
+    });
   };
   return { open, calls, state, pending };
 }
@@ -151,6 +168,36 @@ closed.state.readback = raw();
 assert.equal((await closed.open()(null)).status, "ready");
 assert.deepEqual(closed.calls.map(([op]) => op), ["config", "read", "draft"]);
 console.log("PASS cloud setup: tier preflight, write-ahead recovery, real receipt, serialized reopens and no automatic POST replay");
+
+const launch = fixture();
+const firstSession = (await launch.open().session()).session;
+assert.equal(firstSession.setup.serviceTier, "priority");
+assert.equal(firstSession.binding.draftId, "draft-A");
+launch.state.status = "active";
+assert.equal(await launch.open().send(firstSession), "waiting");
+launch.state.status = "idle";
+launch.state.turnError = { code: "cloud_setup_turn_unconfirmed" };
+assert.deepEqual(await Promise.all([launch.open().send(firstSession), launch.open().send(firstSession)]), ["unconfirmed", "unconfirmed"]);
+const send = launch.calls.find(([op]) => op === "start_environment_setup")[1];
+assert.deepEqual(send.repositories, [{ name: "org/repo", ref: "main" }]);
+assert.equal(send.privateDraft, true);
+assert.equal(send.threadId, "thread-A");
+const reopenedSession = (await launch.open().session(null)).session;
+assert.equal(await launch.open().send(reopenedSession, { turns: [{ turn: { items: [{ type: "userMessage", clientId: "unrelated" }] } }] }), "unconfirmed");
+assert.equal(await launch.open().send(reopenedSession, { turns: [{ turn: { items: [{ type: "userMessage", clientId: send.clientUserMessageId }] } }] }), "sent");
+assert.equal(launch.pending(), null);
+assert.equal(launch.calls.filter(([op]) => op === "start_environment_setup").length, 1);
+assert.equal(launch.calls.filter(([op]) => op === "config" || op === "draft").length, 2);
+
+const rootLaunch = fixture();
+rootLaunch.state.config = { ...receipt, environment_id: "env-A", thread_id: "thread-A" };
+rootLaunch.state.title = "existing title";
+const rootSession = (await rootLaunch.open().session({ name: "New environment", repositories: [] })).session;
+assert.equal(rootSession.binding.draftId, null);
+assert.equal(await rootLaunch.open().send(rootSession), "sent");
+assert.deepEqual(rootLaunch.calls.map(([op]) => op), ["config", "read", "start_environment_setup"]);
+assert.equal(rootLaunch.calls.at(-1)[1].privateDraft, false);
+console.log("PASS setup conversation launch: active thread wait, serialized first turn, UUID readback and root configuration session");
 
 const capabilities = {}, resolver = {};
 vm.runInNewContext(compile("src/modelCapabilities.ts"), { exports: capabilities });
