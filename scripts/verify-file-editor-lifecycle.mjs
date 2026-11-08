@@ -46,6 +46,7 @@ function mount() {
     invoke() { throw Error("unexpected fallback"); }, MAX_TEXT_PREVIEW_BYTES: 262144,
     isPreviewFallbackError: () => false, console: { warn() {} },
     showToast: message => events.push(["toast", message]), onRefreshGit: () => events.push(["git"]),
+    onFileAccess: (root, path) => events.push(["access", root, path]),
     refreshDirectory: () => events.push(["directory"]),
   };
   for (const name of ["FilePreview", "EditedContent", "IsDirty", "SavingFile", "DiscardConfirmation"]) {
@@ -116,6 +117,10 @@ console.log("PASS FO01–FO05 production external open: Changes reveal, visible 
   view.reads[2].reject(Error("old read failed")); await old;
   assert.equal(view.context.filePreview.path, "latest");
   assert.equal(view.events.some(event => event[0] === "toast"), false, "FE01: stale failure cannot show a current error");
+  assert.deepEqual(view.events.filter(event => event[0] === "access"), [["access", "root", "B"], ["access", "root", "latest"]]);
+  const silent = view.open("latest", { silent: true });
+  view.reads[4].resolve(preview("latest")); await silent;
+  assert.equal(view.events.filter(event => event[0] === "access").length, 2, "silent refresh cannot reorder recent files");
 }
 {
   const view = mount(), refresh = view.open("A", { silent: true });
@@ -140,6 +145,7 @@ console.log("PASS FO01–FO05 production external open: Changes reveal, visible 
   await retry;
   assert.equal(view.context.isDirty, true);
   assert.equal(view.context.savePromiseRef.current, null, "FE04: failure releases retry guard");
+  assert.deepEqual(view.events.filter(event => event[0] === "access"), [["access", "root", "A"]], "only the successful save enters history");
 }
 {
   const view = mount(), read = view.open("B");

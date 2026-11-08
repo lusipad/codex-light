@@ -40,6 +40,7 @@ function mount() {
     MAX_TEXT_PREVIEW_BYTES: 262144, isPreviewFallbackError: () => true,
     console: { warn() {} }, showToast: text => events.push(["toast", text]),
     onFilePreviewHandlerChange: value => { handler = value; },
+    onFileAccess: (root, path) => events.push(["access", root, path]),
   };
   for (const name of ["FilePreview", "EditedContent", "IsDirty", "ActiveTab", "SelectedTreePath"]) {
     context[`set${name}`] = value => events.push([name, value]);
@@ -72,6 +73,7 @@ for (const legacy of [false, true]) {
   } else view.reads[0].resolve(preview("SKILL.md"));
   assert.equal(await pending, true, "only applied read reports success");
   assert.equal(view.context.filePreviewRef.current.path, "SKILL.md");
+  assert.deepEqual(view.events.filter(([name]) => name === "access"), [["access", "root", "SKILL.md"]]);
   assert.ok(view.events.some(([name, value]) => name === "ActiveTab" && value === "files"));
   assert.ok(view.events.some(([name, value]) => name === "SelectedTreePath" && value === "SKILL.md"));
 }
@@ -97,6 +99,7 @@ for (const invalidate of [
     assert.equal(view.context.filePreviewRef.current.path, "old");
     assert.equal(view.fallbacks.length, 0, "obsolete protocol cannot start fallback");
     assert.equal(view.events.some(([name]) => name === "ActiveTab"), false, "obsolete read cannot select Files");
+    assert.equal(view.events.some(([name]) => name === "access"), false, "obsolete read cannot enter file history");
   }
 }
 for (const binary of [false, true]) {

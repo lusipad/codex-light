@@ -29,6 +29,7 @@ export interface QuickSearchModalProps {
    * 当前工作区绝对路径（可选）。files 模式下用真实 fuzzy session 搜索。
    */
   workspacePath?: string;
+  recentFiles?: readonly string[];
   onClose: () => void;
   onSelectThread: (threadId: string) => void;
   onSelectFile: (filePath: string, isDirectory?: boolean) => void;
@@ -127,6 +128,8 @@ function fileDedupeKey(filePath: string): string {
   const normalized = filePath.replace(/\\/g, "/").replace(/\/+$/, "");
   return /^(?:[a-z]:|\/\/)/i.test(normalized) ? normalized.toLowerCase() : normalized;
 }
+
+export { fileDedupeKey };
 
 async function resolveFileSearchPath(query: string, workspacePath: string): Promise<string | null> {
   if (/[\r\n\0]/.test(query) || /^[\\/]{2}[?.][\\/]/.test(query)) return null;
@@ -239,6 +242,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   skills,
   projectScripts,
   workspacePath,
+  recentFiles,
   onClose,
   onSelectThread,
   onSelectFile,
@@ -420,6 +424,27 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
           title: "无法检查路径。选择此项以重试", icon: <FileText size={14} />,
           onSelect: () => { setPathRetry(value => value + 1); inputRef.current?.focus(); },
         });
+      }
+      return results;
+    }
+
+    if (mode === "files" && !trimmedQuery) {
+      if (!workspacePath) return results;
+      const root = `${fileDedupeKey(workspacePath)}/`;
+      const seen = new Set<string>();
+      for (const path of recentFiles ?? []) {
+        const key = fileDedupeKey(path);
+        if (!key.startsWith(root) || seen.has(key)) continue;
+        seen.add(key);
+        const relative = path.replace(/\\/g, "/").slice(root.length);
+        const separator = relative.lastIndexOf("/");
+        results.push({
+          id: `recent-file-${key}`, category: "file", section: "最近打开",
+          title: baseNameFsPath(path) || path, subtitle: separator < 0 ? undefined : relative.slice(0, separator),
+          icon: <FileText size={14} />,
+          onSelect: () => { onSelectFile(path); onClose(); },
+        });
+        if (results.length === 10) break;
       }
       return results;
     }
@@ -825,6 +850,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
     query,
     mode,
     workspacePath,
+    recentFiles,
     threads,
     skills,
     remoteResults,
@@ -932,7 +958,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
           {items.length === 0 ? (
             loading ? null : (
               <div className="empty-hint-small" style={{ padding: "20px 0" }}>
-                {pathQuery ? "未找到匹配的文件" : mode === "files" && !query.trim() ? "输入以搜索文件" : "未找到匹配项"}
+                {pathQuery ? "未找到匹配的文件" : mode === "files" && !query.trim() ? "输入文件名进行搜索" : "未找到匹配项"}
               </div>
             )
           ) : (

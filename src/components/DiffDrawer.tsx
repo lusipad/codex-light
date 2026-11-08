@@ -185,6 +185,7 @@ export interface DiffDrawerProps {
   directoryReveal?: { cwd: string; path: string } | null;
   onSelectPreviewFile?: (file: string | null) => void;
   onFilePreviewHandlerChange?: (handler: ((path: string) => Promise<boolean>) | null) => void;
+  onFileAccess?: (workspace: string, path: string) => void;
   onSendReviewComment?: (commentPrompt: string) => void;
   modelReviewComments?: ModelReviewComment[];
   selectedReviewFinding?: ModelReviewComment | null;
@@ -532,6 +533,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   directoryReveal,
   onSelectPreviewFile,
   onFilePreviewHandlerChange,
+  onFileAccess,
   onSendReviewComment,
   modelReviewComments = [],
   selectedReviewFinding,
@@ -1381,6 +1383,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
       editedContentRef.current = preview.content ?? "";
       setEditedContent(preview.content ?? "");
       setIsDirty(false);
+      if (!options?.silent) onFileAccess?.(context.cwd, preview.path);
       if (options?.reveal) {
         setActiveTab("files");
         setSelectedTreePath(preview.path);
@@ -1417,7 +1420,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     onFilePreviewHandlerChange?.(path => context === gitContextRef.current && open
       ? openFilePreview(path, { reveal: true }) : Promise.resolve(false));
     return () => onFilePreviewHandlerChange?.(null);
-  }, [open, cwd, connectionIdentity, onFilePreviewHandlerChange]);
+  }, [open, cwd, connectionIdentity, onFilePreviewHandlerChange, onFileAccess]);
 
   useEffect(() => {
     if (!previewFocusRequest || !open || activeKind !== "files") return;
@@ -1458,6 +1461,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
         const savedPreview = { ...filePreviewRef.current, content };
         filePreviewRef.current = savedPreview;
         setFilePreview(savedPreview);
+        if (result === "saved") onFileAccess?.(context.cwd, targetPath);
         if (revision === editRevisionRef.current) {
           isDirtyRef.current = false;
           setIsDirty(false);

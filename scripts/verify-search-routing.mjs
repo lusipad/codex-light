@@ -5,11 +5,12 @@ import ts from "typescript";
 
 const parse = path => ts.createSourceFile(path, fs.readFileSync(path, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const page = parse("src/components/QuickSearchModal.tsx"), app = parse("src/App.tsx");
-let items, keydown, focus, appSlash, selectedFileSearchText;
+let items, keydown, focus, appSlash, selectedFileSearchText, rememberWorkspaceFile;
 const shortcuts = {};
 const helpers = [];
 function visit(node, ast) {
   if (ast === app && ts.isFunctionDeclaration(node) && node.name?.text === "selectedFileSearchText") selectedFileSearchText = node;
+  if (ast === app && ts.isVariableDeclaration(node) && node.name.getText(ast) === "rememberWorkspaceFile") rememberWorkspaceFile = node.initializer.arguments[0];
   if (ast === page && ts.isFunctionDeclaration(node) && ["fileDedupeKey"].includes(node.name?.text)) helpers.push(node);
   if (ts.isVariableDeclaration(node) && ast === page) {
     if (node.name.getText(ast) === "items") items = node.initializer.arguments[0];
@@ -34,7 +35,7 @@ function mount(overrides = {}) {
   const calls = [];
   const context = {
     query: "goal", mode: "root", workspacePath: "repo-B", remoteResults: null, pathQuery: null, pathLookup: null,
-    threads: [], workspaceFileHits: [], skills: [], SLASH_COMMANDS: [slash],
+    threads: [], workspaceFileHits: [], recentFiles: [], skills: [], SLASH_COMMANDS: [slash],
     REMOTE_THREAD_LIMIT: 9,
     runCmd: "npm run dev", testCmd: "npm test", buildCmd: "npm run build",
     selectedIndex: 0,
@@ -52,6 +53,34 @@ function mount(overrides = {}) {
   context.setQuery = value => { context.query = value; };
   for (const helper of helpers) vm.runInNewContext(ts.transpileModule(helper.getText(page), {}).outputText, context);
   return { context, calls, results: () => execute(items, page, context)() };
+}
+{
+  const recentFiles = ["C:/repo/src/测试🚀.rs", "c:\\REPO\\src\\测试🚀.rs", "C:/repo-backup/secret.txt",
+    ...Array.from({ length: 12 }, (_, i) => `C:/repo/recent-${i}.txt`)];
+  const view = mount({ mode: "files", query: " ", workspacePath: "C:/repo", recentFiles });
+  const results = view.results();
+  assert.equal(results.length, 10);
+  assert.equal(results[0].section, "最近打开");
+  assert.equal(results[0].title, "测试🚀.rs");
+  assert.equal(results[0].subtitle, "src");
+  assert.equal(results.at(-1).title, "recent-8.txt");
+  results[0].onSelect();
+  assert.deepEqual(view.calls, [["onSelectFile", recentFiles[0]], ["onClose"]]);
+  view.context.query = "测试";
+  assert.equal(view.results().length, 0, "recent files never mix into a nonempty query");
+  view.context.query = "";
+  view.context.workspacePath = "C:/another";
+  assert.equal(view.results().length, 0, "recent paths cannot leak to another workspace");
+  let history = {};
+  const remember = execute(rememberWorkspaceFile, app, { fileDedupeKey: view.context.fileDedupeKey, setRecentFilesByWorkspace: update => { history = update(history); } });
+  for (const path of recentFiles.slice().reverse()) remember("C:/repo", path);
+  remember("C:/other", "C:/other/isolated.txt");
+  remember("c:\\REPO", "c:\\repo\\recent-4.txt");
+  assert.equal(history["c:/repo"].length, 10);
+  assert.equal(history["c:/repo"][0], "c:\\repo\\recent-4.txt");
+  assert.equal(history["c:/repo"].filter(path => /recent-4/i.test(path)).length, 1);
+  assert.ok(!history["c:/repo"].some(path => path.includes("secret.txt")));
+  assert.deepEqual(Array.from(history["c:/other"]), ["C:/other/isolated.txt"]);
 }
 {
   const view = mount({ mode: "files", query: "C:/repo/src", pathQuery: "C:/repo/src",
