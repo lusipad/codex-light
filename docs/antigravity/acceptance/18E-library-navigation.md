@@ -6,6 +6,12 @@
 - 生产 JSX 回放覆盖编码 ID、偏好优先级、目录前后退、popstate、换账号清理及不支持地址。隔离浏览器验证带搜索的目录直接打开、编辑后刷新恢复、返回根与标题栏返回、换账号清除旧地址。记录见 `.ref/parity/18/actual/18I-library-header/browser/address-verification.json`。
 - 浏览器历史栈与官方仍有差异。外部 provider、虚拟集合、收藏、垃圾箱与独立预览地址另验。Windows 原生加载、真实账号和同条件像素待验。
 
+### Windows 打包
+
+资料库提交 `ae4012d` 的 CI 42462947299 两次尝试均通过前端和 Rust 检查并生成 release EXE。MSI 阶段下载 WiX 3.14.1 时两次返回 504，未生成安装包。日志保存在本单元的 `.ref` 目录。
+
+打包前改用官方发布资产 API 读取相同 ZIP。只重试下载错误，校验锁定 Tauri CLI 的 SHA-256 后才解包到其 WiX 目录。本机私有目录验证真实下载、工具文件存在以及校验错误拒绝安装。分支 CI 仍执行原完整打包流程。[Tauri 锁定版 MSI 源码](https://github.com/tauri-apps/tauri/blob/tauri-cli-v2.12.3/crates/tauri-bundler/src/bundle/windows/msi/mod.rs)
+
 日期：2026-11-06。状态：本地功能自验完成，待真实账号/视觉及用户验收。固定官方Store26.1027.3384.0，合同见[18E规格](../specs/18E-library-navigation.md)，直接原包12条目、25函数/中文锚点和补充CSS证据位于`.ref/parity/18/actual/18E-library/reference/`。
 
 ## 改动与真实边界
