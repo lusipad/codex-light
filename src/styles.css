@@ -1479,18 +1479,28 @@ html, body, #root {
   color: var(--text-secondary);
 }
 .file-change-summary > :not(.file-change-name) { flex-shrink: 0; }
-.file-change-name, .file-change-toggle {
+.file-change-name, .file-change-toggle, .file-change-copy {
   border: 0;
   border-radius: 4px;
   background: transparent;
   color: var(--text-primary);
   padding: 2px 4px;
 }
-button.file-change-name, .file-change-toggle { cursor: pointer; }
+button.file-change-name, .file-change-toggle, .file-change-copy { cursor: pointer; }
 .file-change-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 button.file-change-name:hover { text-decoration: underline; }
 .file-change-toggle { margin-inline-start: auto; display: flex; align-items: center; }
-.file-change-toggle:hover { background: var(--bg-hover); }
+.file-change-toggle:hover, .file-change-copy:hover { background: var(--bg-hover); }
+.file-change-diff-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 9px;
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+.file-change-copy-status { margin-inline-start: auto; }
+.file-change-copy { display: flex; align-items: center; }
 .file-change-card .turn-diff-code { border-top: 1px solid var(--border-subtle); }
 
 /* Approval Request Card */

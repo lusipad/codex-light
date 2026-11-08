@@ -1,15 +1,16 @@
 import React, { useMemo, useState } from "react";
+import { copyTextToClipboard } from "../clipboard";
 import { baseNameFsPath, joinFsPath } from "../fsClient";
 import type { TurnItem } from "../types";
-import { ChevronDownIcon, ChevronRightIcon, DiffIcon } from "./Icons";
+import { ChevronDownIcon, ChevronRightIcon, CopyIcon, DiffIcon } from "./Icons";
 import { parseUnifiedDiff } from "./TurnDiffPanel";
 
 const MAX_PREVIEW_CHARS = 1_048_576;
 const MAX_PREVIEW_ROWS = 5000;
 const LABELS = {
-  add: ["正在创建", "已创建", "已停止创建"],
-  delete: ["正在删除", "已删除", "已停止删除"],
-  update: ["正在编辑", "已编辑", "已停止编辑"],
+  add: ["正在创建", "已创建", "已停止创建", "文件已创建"],
+  delete: ["正在删除", "已删除", "已停止删除", "文件已删除"],
+  update: ["正在编辑", "已编辑", "已停止编辑", "已编辑的文件"],
 } as const;
 
 type Change = { path: string; kind?: { type?: string; move_path?: string } | string; diff?: string };
@@ -18,6 +19,7 @@ function PatchFile({ change, status, turnStatus, cwd, onOpenFile }: {
   change: Change; status?: string; turnStatus?: string; cwd?: string; onOpenFile: (path: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [copyStatus, setCopyStatus] = useState("");
   const kind = typeof change.kind === "string" ? change.kind : change.kind?.type;
   const labels = kind === "add" ? LABELS.add : kind === "delete" ? LABELS.delete : LABELS.update;
   const stopped = status === "inProgress" && turnStatus === "interrupted";
@@ -38,20 +40,46 @@ function PatchFile({ change, status, turnStatus, cwd, onOpenFile }: {
   const path = status === "completed" && movePath ? movePath : change.path;
   const name = baseNameFsPath(path) || path;
   const absolute = /^(?:[a-z]:[\\/]|\/|\\\\)/i.test(path) ? path : cwd ? joinFsPath(cwd, path) : null;
+  const previewable = !tooLarge && lines.length > 0 && lines.length <= MAX_PREVIEW_ROWS;
+  const showFileHeader = expanded && previewable;
+  const fileName = absolute ? <button type="button" className="file-change-name" title={path} onClick={() => onOpenFile(absolute)}>{name}</button>
+    : <span className="file-change-name" title={path}>{name}</span>;
+  const stats = (additions > 0 || deletions > 0) && <span className="diff-stats-badge">
+    {additions > 0 && <span className="diff-plus">+{additions}</span>}{" "}
+    {deletions > 0 && <span className="diff-minus">−{deletions}</span>}
+  </span>;
+
+  async function copyPatch() {
+    const oldPath = change.path;
+    const newPath = movePath ?? oldPath;
+    const gitHeader = `diff --git a/${oldPath} b/${newPath}\n`;
+    let patch: string;
+    if (kind === "add" || kind === "delete") {
+      const header = kind === "add"
+        ? `new file mode 100644\n--- /dev/null\n+++ b/${newPath}\n@@ -0,0 +1,${additions} @@\n`
+        : `deleted file mode 100644\n--- a/${oldPath}\n+++ /dev/null\n@@ -1,${deletions} +0,0 @@\n`;
+      patch = gitHeader + header + lines.map(line => line.text).join("\n") + "\n";
+    } else {
+      const body = diff.trimStart();
+      const fileHeader = /^---\s/m.test(body) ? "" : `--- a/${oldPath}\n+++ b/${newPath}\n`;
+      patch = /^diff --git /m.test(body) ? body : gitHeader + fileHeader + body;
+    }
+    setCopyStatus(await copyTextToClipboard(patch) ? "已复制" : "无法复制差异");
+  }
 
   return <section className="file-change-card">
     <div className="file-change-summary">
       <DiffIcon size={15} />
-      <span>{label}</span>
-      {absolute ? <button type="button" className="file-change-name" title={path} onClick={() => onOpenFile(absolute)}>{name}</button>
-        : <span className="file-change-name" title={path}>{name}</span>}
-      {(additions > 0 || deletions > 0) && <span className="diff-stats-badge">
-        {additions > 0 && <span className="diff-plus">+{additions}</span>}{" "}
-        {deletions > 0 && <span className="diff-minus">−{deletions}</span>}
-      </span>}
+      <span>{showFileHeader && status === "completed" ? labels[3] : label}</span>
+      {!showFileHeader && <>{fileName}{stats}</>}
       <button type="button" className="file-change-toggle" aria-label={`切换 ${name} 的差异视图`} aria-expanded={expanded}
-        onClick={() => setExpanded(value => !value)}>{expanded ? <ChevronDownIcon size={14} /> : <ChevronRightIcon size={14} />}</button>
+        onClick={() => { setExpanded(value => !value); setCopyStatus(""); }}>{expanded ? <ChevronDownIcon size={14} /> : <ChevronRightIcon size={14} />}</button>
     </div>
+    {showFileHeader && <div className="file-change-diff-header">
+      {fileName}{stats}
+      <span className="file-change-copy-status" role="status">{copyStatus}</span>
+      <button type="button" className="file-change-copy" aria-label="复制差异" title="复制差异" onClick={copyPatch}><CopyIcon size={13} /></button>
+    </div>}
     {expanded && <div className="turn-diff-code">
       {tooLarge || lines.length > MAX_PREVIEW_ROWS ? <div className="turn-diff-file-empty">差异内容过多，无法预览</div>
         : lines.length ? lines.map((line, index) => <div key={index} className={`turn-diff-line turn-diff-line--${line.type}`}>{line.text || "\u00a0"}</div>)

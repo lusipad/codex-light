@@ -47,7 +47,8 @@ assert.ok(mcpProgressBranch, "App.tsx must handle NOTIFICATION.ITEM_MCP_PROGRESS
 // 2. Exercise the production file rows and their independent actions.
 assert.ok(fileChangeMapBody, "App.tsx must contain the production file-change renderer");
 {
-  const slots = [], opened = [];
+  const slots = [], opened = [], copied = [];
+  let clipboardAvailable = true;
   let cursor = 0;
   const react = {
     ...React, Fragment: "fragment", useMemo: callback => callback(),
@@ -62,6 +63,7 @@ assert.ok(fileChangeMapBody, "App.tsx must contain the production file-change re
     if (name === "react") return react;
     if (name === "./Icons") return new Proxy({}, { get: () => () => null });
     if (name === "./TurnDiffPanel") return diffPanel;
+    if (name === "../clipboard") return { copyTextToClipboard: async text => { copied.push(text); return clipboardAvailable; } };
     if (name === "../fsClient") return { baseNameFsPath: path => path.split(/[\\/]/).at(-1), joinFsPath: (root, path) => `${root}/${path}` };
     if (name.endsWith(".css")) return {};
     throw new Error(name);
@@ -93,15 +95,24 @@ assert.ok(fileChangeMapBody, "App.tsx must contain the production file-change re
   findClass(rows, "file-change-toggle")[1].props.onClick();
   assert.deepEqual(findClass(render(), "file-change-toggle").map(node => node.props["aria-expanded"]), [false, true, false]);
   assert.equal(opened.length, 0, "expanding a patch must not open a file");
+  assert.match(JSON.stringify(render()), /已编辑的文件/);
+  await findClass(render(), "file-change-copy")[0].props.onClick();
+  assert.equal(copied[0], "diff --git a/old.ts b/src/renamed.ts\n" + sample.changes[1].diff);
+  clipboardAvailable = false;
+  await findClass(render(), "file-change-copy")[0].props.onClick();
+  assert.match(JSON.stringify(render()), /无法复制差异/);
   findClass(render(), "file-change-name")[1].props.onClick();
   assert.deepEqual(opened, ["C:/project/src/renamed.ts"]);
+  findClass(render(), "file-change-toggle")[0].props.onClick();
+  await findClass(render(), "file-change-copy")[0].props.onClick();
+  assert.equal(copied.at(-1), "diff --git a/src/new.ts b/src/new.ts\nnew file mode 100644\n--- /dev/null\n+++ b/src/new.ts\n@@ -0,0 +1,2 @@\n++++ raw content\n+second\n");
   assert.match(JSON.stringify(render({ ...sample, status: "inProgress" })), /正在创建.*正在编辑.*正在删除/);
   context.turn.status = "interrupted";
   assert.match(JSON.stringify(render({ ...sample, status: "inProgress" })), /已停止创建.*已停止编辑.*已停止删除/);
   for (const status of ["failed", "declined"]) assert.match(JSON.stringify(render({ ...sample, status })), /已拒绝/);
   const large = { ...sample, changes: [{ path: "large.ts", diff: "+x\n".repeat(5001) }] };
-  findClass(render(large), "file-change-toggle")[0].props.onClick();
   assert.match(JSON.stringify(render(large)), /差异内容过多，无法预览/);
+  assert.equal(findClass(render(large), "file-change-copy").length, 0);
   console.log("PASS per-file patch rows, exact stats, disclosure, applied rename, stopped/rejected and render cap");
 }
 
