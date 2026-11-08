@@ -31,7 +31,7 @@ const React = {
   }, useLayoutEffect() {},
 };
 const output = {};
-vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React } }).outputText + "\nexports.TestMenu = ArchiveFilterMenu;", {
+vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React } }).outputText + "\nexports.TestMenu = ArchiveFilterMenu; exports.prepareArchiveRestoreFocus = prepareArchiveRestoreFocus;", {
   exports: output, console, Date, Intl, Set, Map, AbortController, document: { body: {} },
   require(name) {
     if (name === "react") return { ...React, default: React };
@@ -54,6 +54,28 @@ vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { target: ts.Sc
     return new Proxy({}, { get: (_, key) => key });
   },
 });
+{
+  const active = [], frames = [], body = {};
+  let onFocus;
+  const doc = { body, activeElement: body, defaultView: { requestAnimationFrame: fn => frames.push(fn) },
+    addEventListener: (_, fn, { signal }) => { onFocus = target => { if (!signal.aborted) fn({ target }); }; } };
+  const target = name => ({ ownerDocument: doc, isConnected: true, disabled: false,
+    focus(options) { assert.equal(options.preventScroll, true); active.push(name); doc.activeElement = this; } });
+  const [prior, original, next, search, refresh, root] = ["prior", "original", "next", "search", "refresh", "root"].map(target);
+  root.querySelectorAll = () => [prior, original, next];
+  root.querySelector = selector => selector.includes("search") ? search.isConnected ? search : null : refresh;
+  const start = () => { doc.activeElement = original; return output.prepareArchiveRestoreFocus(root, original); };
+  const settleFocus = (finish, success, scopeCurrent = () => true) => { finish(success, scopeCurrent); frames.shift()?.(); };
+  let finish = start(); doc.activeElement = body; settleFocus(finish, true); assert.equal(active.at(-1), "next");
+  next.disabled = true; finish = start(); doc.activeElement = body; settleFocus(finish, true); assert.equal(active.at(-1), "prior");
+  finish = start(); doc.activeElement = body; settleFocus(finish, false); assert.equal(active.at(-1), "original");
+  prior.isConnected = false; finish = start(); doc.activeElement = body; settleFocus(finish, true); assert.equal(active.at(-1), "search");
+  search.isConnected = false; finish = start(); doc.activeElement = body; settleFocus(finish, true); assert.equal(active.at(-1), "refresh");
+  const count = active.length;
+  finish = start(); onFocus(search); doc.activeElement = body; settleFocus(finish, true); assert.equal(active.length, count);
+  finish = start(); doc.activeElement = body; settleFocus(finish, true, () => false); assert.equal(active.length, count);
+  assert.equal(output.prepareArchiveRestoreFocus(root, original), undefined, "pointer action without retained focus does not move it");
+}
 const props = {
   surface: "settings", workspaces: [], workspaceHints: {},
   projectMembership: { localProjects: [

@@ -78,6 +78,33 @@ const archiveTime = (value?: number, fallback?: number) => Number.isFinite(value
 const archivePath = (value?: string | null) => (value || "").replace(/\\/g, "/").replace(/\/+$/, "");
 const archiveRepo = (value?: string | null) => archivePath(value).split("/").at(-1)?.split(/\s+/).slice(0, 3).join(" ") || "";
 
+function prepareArchiveRestoreFocus(view: HTMLDivElement | null, button?: HTMLButtonElement) {
+  if (!view || !button) return;
+  const doc = button.ownerDocument;
+  if (doc.activeElement !== button) return;
+  const buttons = Array.from(view.querySelectorAll<HTMLButtonElement>("[data-archived-chat-unarchive]"));
+  const index = buttons.indexOf(button);
+  if (index < 0) return;
+  const neighbors = [...buttons.slice(index + 1), ...buttons.slice(0, index).reverse()];
+  const focusWatch = new AbortController();
+  doc.addEventListener("focusin", event => {
+    if (event.target !== button) focusWatch.abort();
+  }, { signal: focusWatch.signal });
+  return (restored: boolean, scopeCurrent: () => boolean) => {
+    const moved = focusWatch.signal.aborted;
+    focusWatch.abort();
+    if (moved) return;
+    doc.defaultView?.requestAnimationFrame(() => {
+      if (!view.isConnected || !scopeCurrent() || (doc.activeElement !== doc.body && doc.activeElement !== button)) return;
+      const target = (restored ? neighbors : [button]).find(candidate => candidate.isConnected && !candidate.disabled)
+        ?? view.querySelector<HTMLInputElement>("input.archive-search")
+        ?? view.querySelector<HTMLButtonElement>("button.archive-refresh:not(:disabled)")
+        ?? view;
+      target.focus({ preventScroll: true });
+    });
+  };
+}
+
 // Official archive identity uses EY/Pa; display paths keep their original case.
 function archiveProjectPath(value?: string | null): string {
   let path = value || "";
@@ -388,7 +415,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
     });
   }, [cloudArchive, conversationArchive, durableArchive, surface, cloudRecoveries]);
 
-  const recoverCloud = async (thread: ArchivedThread, renderedReader?: ArchiveReader) => {
+  const recoverCloud = async (thread: ArchivedThread, renderedReader?: ArchiveReader, trigger?: HTMLButtonElement) => {
     const source = thread.archiveSource;
     if (!source || surface !== "settings" || cloudReadersRef.current.surface !== "settings") return;
     const durableChat = thread.durableChat;
@@ -396,6 +423,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
     const key = `${source}:${thread.id}`, reader = cloudReader(source), identity = renderedReader?.identity;
     if (!identity || !renderedReader?.canUnarchive?.(thread.id, identity) || !sameArchiveIdentity(reader?.identity, identity) || reader?.status !== "ready" || typeof reader.canUnarchive !== "function" || !reader.canUnarchive(thread.id, identity)
       || cloudOperationsRef.current.has(key) || ["pending", "unknown", "accepted"].includes(cloudRecoveries[key]?.status)) return;
+    const restoreFocus = source === "chatgpt-conversation" ? prepareArchiveRestoreFocus(viewRef.current, trigger) : undefined;
     const operation = { controller: new AbortController(), identity, sent: false, token: {}, result: "pending" as CloudRecovery["status"] };
     cloudOperationsRef.current.set(key, operation);
     const base = { source, id: thread.id, identity, title: archiveTitle(thread), token: operation.token, kind: "unarchive" as const };
@@ -456,6 +484,8 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
         return current;
       });
       if (ownsOperation && !refreshed && source === "cloud-task" && operation.sent && !changed && mountedRef.current && cloudReader(source)?.isCurrentIdentity?.(identity)) cloudReader(source)?.reload();
+      restoreFocus?.(operation.result === "accepted", () => sameContext && !changed && mountedRef.current
+        && cloudReadersRef.current.surface === "settings" && Boolean(cloudReader(source)?.isCurrentIdentity?.(identity)));
     }
   };
 
@@ -846,11 +876,11 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
                 </span>
               </div>
               <div className="archive-row-actions">
-                {thread.archiveSource ? <><button type="button" className="archive-action archive-recovery-button" aria-label="取消归档" aria-busy={cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.status === "pending" && cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.kind !== "delete"}
+                {thread.archiveSource ? <><button type="button" className="archive-action archive-recovery-button" aria-label="取消归档" data-archived-chat-unarchive={thread.archiveSource === "chatgpt-conversation" ? "" : undefined} aria-busy={cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.status === "pending" && cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.kind !== "delete"}
                   disabled={!cloudReader(thread.archiveSource)?.identity || cloudReader(thread.archiveSource)?.status !== "ready"
                     || typeof cloudReader(thread.archiveSource)?.canUnarchive !== "function" || !cloudReader(thread.archiveSource)?.canUnarchive(thread.id, cloudReader(thread.archiveSource)!.identity!)
                     || ["pending", "unknown", "accepted"].includes(cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.status)}
-                  onClick={() => void recoverCloud(thread, thread.archiveSource === "cloud-task" ? cloudArchive : thread.archiveSource === "durable" ? durableArchive : conversationArchive)}>{cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.status === "pending" && cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.kind !== "delete" && <LoaderCircle size={13} className="archive-recovery-spinner" aria-hidden="true" />}取消归档</button>{thread.archiveSource !== "durable" && <button type="button" className="archive-action danger archive-recovery-button" aria-label={`删除已归档的聊天 ${archiveTitle(thread)}`}
+                  onClick={event => void recoverCloud(thread, thread.archiveSource === "cloud-task" ? cloudArchive : thread.archiveSource === "durable" ? durableArchive : conversationArchive, event?.currentTarget)}>{cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.status === "pending" && cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.kind !== "delete" && <LoaderCircle size={13} className="archive-recovery-spinner" aria-hidden="true" />}取消归档</button>{thread.archiveSource !== "durable" && <button type="button" className="archive-action danger archive-recovery-button" aria-label={`删除已归档的聊天 ${archiveTitle(thread)}`}
                   aria-busy={cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.status === "pending" && cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.kind === "delete"}
                   disabled={!cloudReader(thread.archiveSource)?.identity || !cloudReader(thread.archiveSource)?.canUnarchive?.(thread.id, cloudReader(thread.archiveSource)!.identity!)
                     || ["pending", "unknown", "accepted"].includes(cloudRecoveries[`${thread.archiveSource}:${thread.id}`]?.status)}
