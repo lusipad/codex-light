@@ -73,6 +73,7 @@ for(const change of ['close','identity','remove','already-read','notification-be
 {
   let threads=[{id:'archived'},{id:'keep'}],started=0,ticks=0,rpc=0;const errors=[],pending=deferred();
   const context={...activity.exports,activitySessionRef:{current:null},archiveMutationPendingRef:{current:false},pinMutationPendingRef:{current:false},threadPinRevisionRef:{current:0},setPinnedThreadIds:()=>{},activeThreadIdRef:{current:'archived'},refreshThreadsGenerationRef:{current:0},setThreads:update=>{threads=update(threads);},setArchiveRefreshTick:()=>ticks++,startNewThread:()=>started++,showAppToast:(...args)=>errors.push(args),tauriInvoke:async()=>{rpc++;return pending.promise;}};
+  context.archiveLocalThread=run('archiveLocalThread',context);
   const archive=run('handleArchiveThread',context);const first=archive({id:'archived'});await archive({id:'archived'});assert.equal(rpc,1,'no-event and duplicate gestures reach one real boundary');
   context.activeThreadIdRef.current='new-thread';pending.resolve({pinnedThreadIds:[],pinPlacement:null,localStateError:false});await first;
   assert.deepEqual(threads,[{id:'keep'}]);assert.equal(started,0,'late archive never leaves a newer thread');assert.equal(ticks,1);
@@ -93,6 +94,7 @@ for(const change of ['close','identity','remove','already-read','notification-be
       return {pinnedThreadIds:args.archive?['next']:['target','next'],pinPlacement:placement,localStateError:false};
     }};
   context.undoProjectArchive=run('undoProjectArchive',context);
+  context.archiveLocalThread=run('archiveLocalThread',context);
   const archive=run('handleArchiveThread',context);
   await assert.rejects(archive(target,undefined,{allowRunning:true}),/计划任务/);
   schedules=[];
@@ -112,6 +114,36 @@ for(const change of ['close','identity','remove','already-read','notification-be
     setActiveThreadId:()=>{},setTurns:()=>{},setActiveRoute:()=>assert.fail('archive notification changed project route')};
   vm.runInNewContext(transpile(`(()=>${removal})()`),notification);
   assert.equal(notification.activeThreadIdRef.current,null);
+}
+{
+  const targets=['a','b','failed','scheduled','moved','started'].map(id=>({id,projectId:'p'}));
+  const latest=targets.map(thread=>thread.id==='moved'?{...thread,projectId:'other'}:
+    thread.id==='started'?{...thread,status:{type:'active'}}:thread);
+  let threads=[...latest],pins=['a','b','z'];
+  const invokes=[],toasts=[],gate=deferred();
+  const context={...activity.exports,activitySessionRef:{current:null},archiveMutationPendingRef:{current:false},pinMutationPendingRef:{current:false},
+    threadPinRevisionRef:{current:0},threadsRef:{current:latest},refreshThreadsGenerationRef:{current:0},
+    setThreads:update=>{threads=update(threads);},setArchiveRefreshTick:()=>{},setPinnedThreadIds:ids=>{pins=ids;},
+    refreshThreads:async()=>{},showAppToast:(...args)=>toasts.push(args),tauriInvoke:async(method,args)=>{
+      if(method==='automations_list')return gate.promise;
+      const id=args.thread.id;
+      invokes.push([id,args.archive,args.restorePin?.beforeThreadId]);
+      if(id==='failed')throw Error('denied');
+      return {pinnedThreadIds:args.archive?pins.filter(pin=>pin!==id):id==='b'?['b','z']:['a','b','z'],
+        pinPlacement:{beforeThreadId:id==='a'?'b':'z'},localStateError:false};
+    }};
+  context.archiveLocalThread=run('archiveLocalThread',context);
+  context.undoProjectArchive=run('undoProjectArchive',context);
+  const archive=run('handleArchiveProjectThreads',context);
+  const pending=archive('p','测试项目',targets);
+  await assert.rejects(archive('p','测试项目',targets),/正在进行/);
+  gate.resolve([{targetThreadId:'scheduled'}]); await pending;
+  assert.deepEqual(invokes,[['a',true,undefined],['b',true,undefined],['failed',true,undefined]]);
+  assert.deepEqual(Array.from(threads,item=>item.id),['failed','scheduled','moved','started']);
+  assert.match(toasts.at(-1)[0],/2 个聊天；4 个未成功归档。.*1 个关联计划任务/);
+  toasts.at(-1)[2].onClick(); await flush();
+  assert.deepEqual(invokes.slice(3),[['b',false,'z'],['a',false,'b']]);
+  assert.deepEqual(pins,['a','b','z']);
 }
 {
   const pending=deferred();const generation={current:0};let threads=[{id:'gone'},{id:'keep'}];

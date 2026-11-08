@@ -24,7 +24,7 @@ import {
   updateProject,
 } from "../projects";
 import { ThreadActionsMenu } from "./ThreadActionsMenu";
-import { ProjectArchiveDialog, ProjectEditDialog, ProjectRemoveDialog } from "./ProjectEditDialog";
+import { ProjectArchiveDialog, ProjectBulkArchiveDialog, ProjectEditDialog, ProjectRemoveDialog } from "./ProjectEditDialog";
 import { RenameThreadDialog } from "./RenameThreadDialog";
 import { copyTextToClipboard } from "../clipboard";
 import "./ProjectsIndexView.css";
@@ -48,6 +48,7 @@ export interface ProjectsIndexViewProps {
   isProjectPinned?: (projectId: string) => boolean;
   onSetProjectPinned?: (projectId: string, pinned: boolean) => void | Promise<void>;
   onArchiveProjectThread?: (thread: ThreadSummary, allowRunning: boolean) => Promise<void>;
+  onArchiveProjectThreads?: (projectId: string, projectName: string, threads: ThreadSummary[]) => Promise<void>;
 
   /* ── 以下均为可选新增 props（向后兼容，不传时行为不变） ── */
   /** app-server 连接 / 父级数据刷新时递增此值，可触发重新拉取项目列表。 */
@@ -155,6 +156,7 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
   isProjectPinned,
   onSetProjectPinned,
   onArchiveProjectThread,
+  onArchiveProjectThreads,
   refreshToken,
   onProjectsChanged,
   onThreadsChanged,
@@ -189,6 +191,7 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
   const [removingProject, setRemovingProject] = useState<Project | null>(null);
   const [renamingThread, setRenamingThread] = useState<ThreadSummary | null>(null);
   const [archivingThread, setArchivingThread] = useState<ThreadSummary | null>(null);
+  const [archivingProject, setArchivingProject] = useState<{ project: Project; threads: ThreadSummary[] } | null>(null);
   const [draftName, setDraftName] = useState("");
   const [draftRoots, setDraftRoots] = useState<string[]>([]);
   const [draftManualRoot, setDraftManualRoot] = useState("");
@@ -755,6 +758,7 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
                 { id: "edit", label: "编辑项目", disabled: isBusy },
                 { id: "up", label: "上移项目", disabled: isBusy || index <= 0 },
                 { id: "down", label: "下移项目", disabled: isBusy || index < 0 || index >= projects.length - 1 },
+                ...(onArchiveProjectThreads ? [{ id: "archive-threads", label: "归档聊天", disabled: isBusy || projectThreads.length === 0 }] : []),
                 { id: "remove", label: "移除项目", danger: true, disabled: isBusy },
               ]} onSelect={action => {
                 if (isBusy) return;
@@ -763,6 +767,7 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
                 else if (action === "reveal") onRevealPath?.(roots[0].path);
                 else if (action === "edit") setEditingProject(project);
                 else if (action === "up" || action === "down") void handleMoveProject(project, action);
+                else if (action === "archive-threads" && projectThreads.length) setArchivingProject({ project, threads: projectThreads });
                 else if (action === "remove") setRemovingProject(project);
               }} />
               {onSetProjectPinned && <button type="button" className="thread-icon-btn project-row-shortcut"
@@ -1040,6 +1045,17 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
           onClose={() => setArchivingThread(null)} onArchive={async () => {
             await onArchiveProjectThread?.(archivingThread, true);
             setArchivingThread(null);
+          }} />}
+        {archivingProject && <ProjectBulkArchiveDialog key={`archive-project:${archivingProject.project.id}`} fallbackRef={searchRef}
+          projectName={archivingProject.project.name} count={archivingProject.threads.length}
+          hasRunning={archivingProject.threads.some(thread => {
+            const status = typeof thread.status === "string" ? thread.status : thread.status?.type;
+            return status === "active" || status === "running";
+          })}
+          onClose={() => setArchivingProject(null)} onArchive={async () => {
+            const { project, threads: targets } = archivingProject;
+            await onArchiveProjectThreads?.(project.id, project.name, targets);
+            setArchivingProject(null);
           }} />}
 
         {/* 列表：真实项目实体；协议失败时回退 workspace 视图 */}

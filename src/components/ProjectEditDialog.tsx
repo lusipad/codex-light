@@ -228,3 +228,20 @@ export function ProjectArchiveDialog({ onArchive, onClose, fallbackRef }: {
     confirmLabel="停止并归档" pendingLabel="归档中…" failure="聊天归档未成功"
     onConfirm={onArchive} onClose={onClose} fallbackRef={fallbackRef} />;
 }
+
+export function ProjectBulkArchiveDialog({ count, projectName, hasRunning, onArchive, onClose, fallbackRef }: {
+  count: number;
+  projectName: string;
+  hasRunning: boolean;
+  onArchive: () => Promise<void>;
+  onClose: () => void;
+  fallbackRef: React.RefObject<HTMLInputElement | null>;
+}) {
+  const description = hasRunning
+    ? "归档会停止所有正在进行的工作。你稍后可以在设置中恢复这些聊天。"
+    : `这会将 ${projectName} 中的聊天归档。之后你可以在已归档的聊天中找到它们。`;
+  return <ProjectConfirmDialog title={`${hasRunning ? "停止并归档" : "归档"} ${count} 个聊天？`}
+    description={`${description} 关联计划任务的聊天会保留。`}
+    confirmLabel={hasRunning ? "停止并归档" : "全部归档"} pendingLabel="正在归档…" failure={`未成功归档 ${projectName} 中的已开启聊天`}
+    onConfirm={onArchive} onClose={onClose} fallbackRef={fallbackRef} />;
+}

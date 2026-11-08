@@ -175,6 +175,8 @@ import {
 import { buildSidebarProjectGroups, sidebarThreadProjects, resolveNewThreadProject, threadStartProjectParams } from "./sidebarProjects";
 import { listProjects, type Project } from "./projects";
 
+type ProjectArchiveUndo = { thread: ThreadSummary; pinPlacement: { beforeThreadId: string | null } | null };
+
 /** Reasoning items carry `summary[]` + `content[]` (and streamed text). */
 function selectedFileSearchText(): string | undefined {
   let active = document.activeElement;
@@ -3941,21 +3943,48 @@ export const App: React.FC = () => {
     [showAppToast]
   );
 
-  const undoProjectArchive = useCallback(async (thread: ThreadSummary, restorePin: { beforeThreadId: string | null } | null) => {
+  const archiveLocalThread = useCallback(async (thread: ThreadSummary) => {
+    const receipt = await tauriInvoke<{ pinnedThreadIds: string[]; pinPlacement: ProjectArchiveUndo["pinPlacement"]; localStateError: boolean }>(
+      "thread_archive_toggle", { thread, archive: true });
+    ++threadPinRevisionRef.current;
+    setPinnedThreadIds(receipt.pinnedThreadIds);
+    refreshThreadsGenerationRef.current += 1;
+    activitySessionRef.current = excludeActivityThreads(activitySessionRef.current, [thread.id]);
+    setThreads(previous => previous.filter(item => item.id !== thread.id));
+    setArchiveRefreshTick(value => value + 1);
+    return receipt;
+  }, []);
+
+  const undoProjectArchive = useCallback(async (archived: ProjectArchiveUndo[]) => {
     if (archiveMutationPendingRef.current || pinMutationPendingRef.current) {
       showAppToast("聊天操作正在进行，请稍后在设置中恢复。", "error");
       return;
     }
     archiveMutationPendingRef.current = true;
     try {
-      const receipt = await tauriInvoke<{ pinnedThreadIds: string[]; localStateError: boolean }>("thread_archive_toggle", {
-        thread, archive: false, restorePin,
-      });
-      ++threadPinRevisionRef.current;
-      setPinnedThreadIds(receipt.pinnedThreadIds);
+      let failed = 0;
+      let localStateError = false;
+      // Undo in reverse order so a removed pin's original next neighbour is available.
+      for (const { thread, pinPlacement } of [...archived].reverse()) {
+        try {
+          const receipt = await tauriInvoke<{ pinnedThreadIds: string[]; localStateError: boolean }>("thread_archive_toggle", {
+            thread, archive: false, restorePin: pinPlacement,
+          });
+          ++threadPinRevisionRef.current;
+          setPinnedThreadIds(receipt.pinnedThreadIds);
+          localStateError ||= receipt.localStateError;
+        } catch {
+          failed++;
+        }
+      }
       await refreshThreads();
       setArchiveRefreshTick(value => value + 1);
-      showAppToast(receipt.localStateError ? "聊天已恢复，本地状态未能保存。" : "聊天已恢复", receipt.localStateError ? "error" : "success");
+      const restored = archived.length - failed;
+      if (failed) {
+        showAppToast(`已恢复 ${restored} 个聊天，${failed} 个未确认恢复。请在设置中刷新已归档的聊天。`, "error");
+      } else {
+        showAppToast(localStateError ? "聊天已恢复，本地状态未能保存。" : "聊天已恢复", localStateError ? "error" : "success");
+      }
     } catch {
       showAppToast("聊天恢复未确认。请在设置中刷新已归档的聊天。", "error");
     } finally {
@@ -3987,22 +4016,13 @@ export const App: React.FC = () => {
           }
           thread = latest;
         }
-        const receipt = await tauriInvoke<{ pinnedThreadIds: string[]; pinPlacement: { beforeThreadId: string | null } | null; localStateError: boolean }>("thread_archive_toggle", {
-          thread,
-          archive: true,
-        });
-        ++threadPinRevisionRef.current;
-        setPinnedThreadIds(receipt.pinnedThreadIds);
-        refreshThreadsGenerationRef.current += 1;
-        activitySessionRef.current = excludeActivityThreads(activitySessionRef.current, [thread.id]);
-        setThreads((prev) => prev.filter((t) => t.id !== thread.id));
-        setArchiveRefreshTick((v) => v + 1);
+        const receipt = await archiveLocalThread(thread);
         if (!project && activeThreadIdRef.current === thread.id) {
           startNewThread();
         }
         if (project) {
           showAppToast(receipt.localStateError ? "聊天已归档，本地状态未能保存。" : "聊天已归档",
-            receipt.localStateError ? "error" : "success", { label: "撤销", onClick: () => { void undoProjectArchive(thread, receipt.pinPlacement); } });
+            receipt.localStateError ? "error" : "success", { label: "撤销", onClick: () => { void undoProjectArchive([{ thread, pinPlacement: receipt.pinPlacement }]); } });
         } else if (receipt.localStateError) {
           showAppToast("聊天已归档，本地状态未能保存。", "error");
         }
@@ -4013,8 +4033,49 @@ export const App: React.FC = () => {
         archiveMutationPendingRef.current = false;
       }
     },
-    [startNewThread, showAppToast, undoProjectArchive]
+    [archiveLocalThread, startNewThread, showAppToast, undoProjectArchive]
   );
+
+  const handleArchiveProjectThreads = useCallback(async (projectId: string, projectName: string, confirmed: ThreadSummary[]) => {
+    if (archiveMutationPendingRef.current || pinMutationPendingRef.current) throw Error("聊天操作正在进行，请稍后重试。");
+    archiveMutationPendingRef.current = true;
+    try {
+      const automations = await tauriInvoke<{ targetThreadId?: string | null }[]>("automations_list");
+      const scheduled = new Set(automations.map(task => task.targetThreadId));
+      const archived: ProjectArchiveUndo[] = [];
+      let localStateError = false;
+      let retained = 0;
+      const isRunning = (thread: ThreadSummary) => {
+        const status = typeof thread.status === "string" ? thread.status : thread.status?.type;
+        return status === "active" || status === "running";
+      };
+      for (const target of confirmed) {
+        const latest = threadsRef.current.find(thread => thread.id === target.id);
+        if (!latest || latest.projectId !== projectId || target.projectId !== projectId) continue;
+        if (scheduled.has(target.id)) { retained++; continue; }
+        if (isRunning(latest) && !isRunning(target)) continue;
+        try {
+          const receipt = await archiveLocalThread(latest);
+          archived.push({ thread: latest, pinPlacement: receipt.pinPlacement });
+          localStateError ||= receipt.localStateError;
+        } catch {
+          // A failed or uncertain write is never retried automatically.
+        }
+      }
+      const failed = confirmed.length - archived.length;
+      let message = failed
+        ? `已归档 ${projectName} 中的 ${archived.length} 个聊天；${failed} 个未成功归档。`
+        : `已归档 ${archived.length} 个聊天`;
+      if (retained) message += `其中 ${retained} 个关联计划任务的聊天已保留。`;
+      if (localStateError) message += " 本地状态未能保存。";
+      showAppToast(message, failed || localStateError ? "error" : "success", archived.length ? {
+        label: "撤销", onClick: () => { void undoProjectArchive(archived); },
+      } : undefined);
+      if (failed > retained) void refreshThreads();
+    } finally {
+      archiveMutationPendingRef.current = false;
+    }
+  }, [archiveLocalThread, refreshThreads, showAppToast, undoProjectArchive]);
 
   // Both archive entry points share the same service mutation boundary.
   const handleUnarchiveThread = useCallback(
@@ -5773,6 +5834,7 @@ export const App: React.FC = () => {
             pinnedThreadIds={pinnedThreadIds}
             onTogglePinThread={handleTogglePinThread}
             onArchiveProjectThread={(thread, allowRunning) => handleArchiveThread(thread, undefined, { allowRunning })}
+            onArchiveProjectThreads={handleArchiveProjectThreads}
             isProjectPinned={isProjectPinned}
             onSetProjectPinned={pinnedProjectIds ? setProjectPinned : undefined}
             refreshToken={projectsRefreshToken}
