@@ -724,6 +724,20 @@ async fn cloud_service_save_draft(
 }
 
 #[tauri::command]
+async fn cloud_service_publish(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: chatgpt_service::CloudPublishRequest,
+) -> Result<chatgpt_service::ServiceResponse, chatgpt_service::ServiceError> {
+    let (profile, _) = durable_service_context(&app, &state).await?;
+    state.chatgpt_service.cloud_publish(request, profile, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
 async fn cloud_service_models(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -2314,6 +2328,7 @@ pub fn run() {
             cloud_service_create_config,
             cloud_service_create_draft,
             cloud_service_save_draft,
+            cloud_service_publish,
             cloud_service_models,
             cloud_service_thread,
             shortcut_menu_sync,

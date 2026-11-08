@@ -24,8 +24,10 @@ mod sites_assets;
 mod sites_settings;
 mod cloud_drafts;
 mod cloud_draft_save;
+mod cloud_publish;
 mod cloud_repositories;
 pub use cloud_draft_save::CloudDraftSaveRequest;
+pub use cloud_publish::CloudPublishRequest;
 pub use cloud_drafts::{CloudConfigRequest, CloudConfigResponse, CloudDraftRequest, CloudDraftResponse};
 mod durable_models;
 pub use durable_models::{DurableModelsRequest, DurableModelsResponse};
@@ -3885,6 +3887,7 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
     include!("chatgpt_service/cloud_drafts_tests.rs");
     include!("chatgpt_service/cloud_draft_save_tests.rs");
+    include!("chatgpt_service/cloud_publish_tests.rs");
     include!("chatgpt_service/durable_models_tests.rs");
     include!("chatgpt_service/durable_apply_tests.rs");
 
