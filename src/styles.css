@@ -5729,6 +5729,21 @@ button.file-change-name:hover { text-decoration: underline; }
   white-space: nowrap;
 }
 
+.quick-search-chat-row .quick-search-row-subtitle {
+  font-family: inherit;
+}
+
+.quick-search-chat-row mark {
+  background: none;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.quick-search-chat-row .quick-search-right-label {
+  flex: 0 0 min(96px, 25%);
+  text-align: end;
+}
+
 .quick-search-footer {
   display: flex;
   align-items: center;

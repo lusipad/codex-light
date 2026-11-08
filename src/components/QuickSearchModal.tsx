@@ -115,6 +115,7 @@ interface RemoteThreadResult {
   name?: string | null;
   preview?: string | null;
   cwd?: string | null;
+  snippet?: string;
 }
 
 interface RemoteSearchResults {
@@ -237,12 +238,20 @@ function normalizeRemoteThreadHits(raw: unknown, limit: number): RemoteThreadRes
       name: typeof thread.name === "string" ? thread.name : null,
       preview: typeof thread.preview === "string" ? thread.preview : null,
       cwd: typeof thread.cwd === "string" ? thread.cwd : null,
+      snippet: typeof item.snippet === "string" ? item.snippet.trim() || undefined : undefined,
     });
     if (results.length >= limit) break;
   }
 
   return results;
 }
+
+const highlightChatMatch = (text: string, query: string) => {
+  if (!query) return text;
+  const literal = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return text.split(new RegExp(`(${literal})`, "giu")).map((part, index) =>
+    index % 2 === 1 ? <mark key={index}>{part}</mark> : part);
+};
 
 /**
  * 调用 `thread/search` 搜索历史会话。
@@ -732,8 +741,8 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
         category: "thread",
         section: "聊天",
         title: t.name || t.preview || t.id,
-        subtitle: `历史会话${t.cwd ? ` · ${t.cwd}` : ""}`,
-        rightLabel: t.cwd ? t.cwd.split(/[/\\]/).pop() : "Chat",
+        subtitle: mode === "chats" ? t.snippet : `历史会话${t.cwd ? ` · ${t.cwd}` : ""}`,
+        rightLabel: mode === "chats" ? baseNameFsPath(t.cwd ?? "") : t.cwd ? t.cwd.split(/[/\\]/).pop() : "Chat",
         icon: <MessageSquare size={14} />,
         onSelect: () => {
           onSelectThread(t.id);
@@ -759,8 +768,8 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
           category: "thread",
           section: "聊天",
           title: t.name || t.preview || t.id,
-          subtitle: `历史会话 · ${t.cwd || ""}`,
-          rightLabel: t.cwd ? t.cwd.split(/[/\\]/).pop() : "Chat",
+          subtitle: mode === "chats" ? undefined : `历史会话 · ${t.cwd || ""}`,
+          rightLabel: mode === "chats" ? baseNameFsPath(t.cwd ?? "") : t.cwd ? t.cwd.split(/[/\\]/).pop() : "Chat",
           icon: <MessageSquare size={14} />,
           onSelect: () => {
             onSelectThread(t.id);
@@ -1219,6 +1228,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
             )
           ) : (
             items.map((item, index) => {
+              const chatRow = mode === "chats" && item.category === "thread";
               const showSectionHeader =
                 index === 0 || items[index - 1].section !== item.section;
               return (
@@ -1229,7 +1239,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
                     </div>
                   )}
                   <div
-                    className={`quick-search-row ${
+                    className={`quick-search-row${chatRow ? " quick-search-chat-row" : ""} ${
                       index === selectedIndex ? "active" : ""
                     }`}
                     data-search-index={index}
@@ -1238,10 +1248,10 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
                   >
                     <div className="quick-search-row-icon">{item.icon}</div>
                     <div className="quick-search-row-content">
-                      <span className="quick-search-row-title">{item.title}</span>
+                      <span className="quick-search-row-title">{chatRow ? highlightChatMatch(item.title, trimmedQuery) : item.title}</span>
                       {item.subtitle && (
                         <span className="quick-search-row-subtitle">
-                          {item.subtitle}
+                          {chatRow ? highlightChatMatch(item.subtitle, trimmedQuery) : item.subtitle}
                         </span>
                       )}
                     </div>

@@ -98,7 +98,7 @@ async function searchFiles(query, matches) {
   const completion = createSearchCompletion(matches, complete, fail);
   const timer = setTimeout(() => fail(Error("real session notification timed out")), 15000);
   const controller = fileModule.exports.createFuzzyFileSearch([workspace], {
-    onResults: value => completion.onResults(search.normalize(value.files, workspace)),
+    onResults: value => completion.onResults(search.normalize(value.files, [workspace])),
     onLoading: completion.onLoading,
     onError: completion.onError,
   });
@@ -122,8 +122,11 @@ try {
   assert.equal(afterDelete.length, 0, "same real query observes removed file");
   const deleted = await rpc("fuzzyFileSearch", { roots: [workspace], query: "target" });
   assert.ok(Array.isArray(deleted.files), "independent deletion check must return a real files array");
-  assert.equal(search.normalize(deleted.files, workspace).length, 0, "independent real search confirms removal, not a session's initial empty snapshot");
-  assert.equal((await search.threads("unmatched-isolated-query")).length, 0);
+  assert.equal(search.normalize(deleted.files, [workspace]).length, 0, "independent real search confirms removal, not a session's initial empty snapshot");
+  const chatPage = await search.threads("unmatched-isolated-query", 26);
+  assert.ok(chatPage, "the empty chat page must come from a successful request");
+  assert.equal(chatPage.threads.length, 0);
+  assert.equal(chatPage.nextCursor, null);
   assert.ok(transcript.every(entry => !entry.response.error), "helpers must not hide a rejected protocol call");
   passed = true;
   assert.equal(notificationListeners.size, 0);

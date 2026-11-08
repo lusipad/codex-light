@@ -17,7 +17,8 @@ const react = { Fragment: "fragment", createElement: (type, props, ...children) 
 };
 vm.runInNewContext(compile(fs.readFileSync("src/components/QuickSearchModal.tsx", "utf8")), {
   exports, console, require: id => id === "react" ? react : id === "lucide-react" ? new Proxy({}, { get: (_, name) => String(name) }) :
-    id.endsWith("slashCommands") ? { SLASH_COMMANDS: [] } : id === "../bridge" ? { isTauriRuntime: () => true } : {},
+    id.endsWith("slashCommands") ? { SLASH_COMMANDS: [] } : id === "../bridge" ? { isTauriRuntime: () => true } :
+    id === "../fsClient" ? { baseNameFsPath: path => path.split(/[\\/]/).at(-1) } : {},
 });
 const props = { open: true, mode: "root", initialQuery: { value: "" }, threads: [{ id: "thread-a", name: "Existing conversation" }], skills: [],
   onClose() { closed++; }, onSelectThread(id) { assert.equal(id, "thread-a"); selected++; },
@@ -54,6 +55,9 @@ assert.ok(!all(tree).some(node => node.props.className === "quick-search-scope-t
 const chatRows = all(tree).filter(node => node.props.className?.split(" ").includes("quick-search-row"));
 assert.equal(chatRows.length, 1);
 assert.match(text(chatRows[0]), /Existing conversation/);
+props.threads = [{ id: "thread-a", name: "A[1] / a[1]" }];
+searchInput().props.onChange({ target: { value: "a[1]" } }); render();
+assert.deepEqual(all(tree).filter(node => node.type === "mark").map(text), ["A[1]", "a[1]"], "literal query matches are highlighted without treating punctuation as a regex");
 console.log("PASS WFD08 production command dialog: current Chinese scopes, real selection, close and IME boundary");
 
 const appSource = fs.readFileSync("src/App.tsx", "utf8");

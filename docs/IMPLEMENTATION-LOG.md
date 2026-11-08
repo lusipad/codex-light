@@ -1,5 +1,9 @@
 # 实施日志（按轮次）
 
+## 2026-11-09 — 08O 独立聊天搜索命中片段
+
+- 按官方本地 `thread/search` 投影展示正文片段与右侧目录来源，按字面查询高亮。复用现有行与打开动作，隔离 Windows 验证显示及 Enter 打开准确会话。修正真实协议探针的根数组与分页断言，两版 CLI 均通过，详见 [08O 验收记录](antigravity/acceptance/08O-chat-search-snippets.md)。
+
 ## 2026-11-09 — 08N 独立聊天搜索空态
 
 - 根据当前固定 Store 的空态与加载分支，历史确认空列表后显示居中创建引导，查询等待时保留命中并仅向辅助技术播报，完成后显示无匹配项。复用现有新聊天动作。Windows 隔离验证了等待、无匹配、Tab 与 Enter 创建及 Escape 关闭。[验收记录](antigravity/acceptance/08N-chat-search-empty.md)

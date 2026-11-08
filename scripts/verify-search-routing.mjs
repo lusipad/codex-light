@@ -74,6 +74,18 @@ function mount(overrides = {}) {
   return { context, calls, results: () => execute(items, page, context)() };
 }
 {
+  const match = { id: "content-match", name: "Design", cwd: "D:/private/workspace", snippet: "命中的正文" };
+  const view = mount({ mode: "chats", query: "正文", remoteResults: { mode: "chats", query: "正文", workspacePath: "repo-B", threads: [match] },
+    threads: [{ id: "local-only", name: "正文标题" }] });
+  const [remote, local] = view.results();
+  assert.equal(remote.subtitle, "命中的正文");
+  assert.equal(remote.rightLabel, "workspace");
+  assert.equal(local.subtitle, undefined);
+  assert.equal(local.rightLabel, "");
+  remote.onSelect();
+  assert.deepEqual(view.calls, [["onSelectThread", "content-match"], ["onClose"]]);
+}
+{
   const view = mount({ mode: "chats", query: "", chatHistoryReady: false, trimmedQuery: "", items: [], isTauriRuntime: () => true });
   const state = name => execute(chatStates[name], page, view.context);
   assert.equal(state("emptyChat"), false, "the catalog has not loaded");
