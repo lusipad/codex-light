@@ -1,5 +1,9 @@
 # 实施日志（按轮次）
 
+## 2026-11-09 — 06H 未提交补丁汇总
+
+- 依据官方比较基准补齐未跟踪补丁与首次提交前的空树。复用真实 Git 补丁读取，统计来自当前汇总。719 项 Rust、115 项前端、Windows 打包及隔离原生验证通过。[验收记录](antigravity/acceptance/06H-uncommitted-diff.md)
+
 ## 2026-11-09 — 06G 未暂存差异
 
 - 根据官方 Git 比较基准接入「未暂存」筛选。索引、工作区与未跟踪补丁各按范围显示，列表统计跟随筛选。隔离 Windows 验证三种范围及真实补丁，718 项 Rust、115 项前端及 Windows 打包通过。[验收记录](antigravity/acceptance/06G-unstaged-diff.md)

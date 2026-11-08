@@ -1810,7 +1810,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     : "";
 
   const parsedLines = useMemo(() => parseUnifiedDiff(diffContent), [diffContent]);
-  const visibleDiffStats = diffMode === "unstaged" || diffMode === "staged"
+  const visibleDiffStats = diffMode === "working" || diffMode === "unstaged" || diffMode === "staged"
     ? loadingDiff || displayedEntries.some(entry => entry.path === selectedFile)
       ? null
       : {

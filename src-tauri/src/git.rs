@@ -414,34 +414,18 @@ pub fn git_diff_for_path(
     previous_file_path: Option<String>,
 ) -> Result<String, String> {
     let git_root = find_git_root(target_path).ok_or("Not a git repository")?;
-    if scope == GitDiffScope::Unstaged {
-        let mut tracked = vec!["--literal-pathspecs", "diff", "--"];
-        let mut untracked = vec!["--literal-pathspecs", "ls-files", "--others", "--exclude-standard", "-z", "--"];
-        if let Some(path) = file_path.as_deref().filter(|path| !path.is_empty()) {
-            tracked.push(path);
-            untracked.push(path);
-        }
-        let mut patch = run_git(&git_root, &tracked)?;
-        for path in run_git(&git_root, &untracked)?.split_terminator('\0') {
-            // Nested repositories are listed as directories, not individual untracked files.
-            if !path.is_empty() && !path.ends_with('/') {
-                patch.push_str(&run_git_with_diff_status(
-                    &git_root,
-                    &["diff", "--no-index", "--no-ext-diff", "--", "/dev/null", path],
-                    true,
-                )?);
-            }
-        }
-        return Ok(patch);
-    }
-    let read_selected_diff = |options: &[&str], path: &str| {
-        let previous = previous_file_path.as_deref().filter(|old| !old.is_empty() && *old != path);
+    let selected = file_path.as_deref().filter(|path| !path.is_empty());
+    let read_diff = |options: &[&str]| {
+        let previous = previous_file_path.as_deref().filter(|old| {
+            scope != GitDiffScope::Unstaged && !old.is_empty() && selected.is_some_and(|path| path != *old)
+        });
         let mut args = vec!["--literal-pathspecs", "diff"];
         if previous.is_some() {
             args.push("--find-renames");
         }
         args.extend_from_slice(options);
-        args.extend(["--", path]);
+        args.push("--");
+        args.extend(selected);
         args.extend(previous);
         run_git(&git_root, &args)
     };
@@ -454,50 +438,38 @@ pub fn git_diff_for_path(
             &git_root,
             &["rev-parse", "--verify", "--end-of-options", &reference],
         )?;
-        if let Some(fp) = file_path.filter(|f| !f.is_empty()) {
-            return read_selected_diff(&[resolved.trim()], &fp);
-        }
-        return run_git(&git_root, &["diff", resolved.trim(), "--"]);
+        return read_diff(&[resolved.trim()]);
     }
     if let Some(base) = base_branch.filter(|b| !b.trim().is_empty()) {
         let range = format!("{}...HEAD", base.trim());
-        if let Some(fp) = file_path.filter(|f| !f.is_empty()) {
-            return read_selected_diff(&[&range], &fp);
-        }
-        return run_git(&git_root, &["diff", &range]);
-    }
-
-    if let Some(fp) = file_path.filter(|f| !f.is_empty()) {
-        if scope == GitDiffScope::Staged {
-            return read_selected_diff(&["--staged"], &fp);
-        }
-        let full_file = Path::new(&git_root).join(&fp);
-        // Check if file is untracked; if so, synthesize a unified diff
-        let is_untracked = run_git(&git_root, &["--literal-pathspecs", "ls-files", "--error-unmatch", "--", &fp]).is_err();
-        if is_untracked && full_file.is_file() {
-            if let Ok(content) = fs::read_to_string(&full_file) {
-                let mut synth = format!(
-                    "diff --git a/{0} b/{0}\nnew file mode 100644\n--- /dev/null\n+++ b/{0}\n@@ -0,0 +1,{1} @@\n",
-                    fp,
-                    content.lines().count()
-                );
-                for line in content.lines() {
-                    synth.push('+');
-                    synth.push_str(line);
-                    synth.push('\n');
-                }
-                return Ok(synth);
-            }
-        }
-        let wt_diff = read_selected_diff(&["HEAD"], &fp).or_else(|_| read_selected_diff(&[], &fp))?;
-        return Ok(wt_diff);
+        return read_diff(&[&range]);
     }
 
     if scope == GitDiffScope::Staged {
-        run_git(&git_root, &["diff", "--staged"])
-    } else {
-        run_git(&git_root, &["diff", "HEAD"]).or_else(|_| run_git(&git_root, &["diff"]))
+        return read_diff(&["--staged"]);
     }
+
+    let mut patch = if scope == GitDiffScope::Unstaged {
+        read_diff(&[])?
+    } else {
+        // An unborn branch compares against an empty tree, using the repository's hash format.
+        let base = run_git(&git_root, &["rev-parse", "--verify", "--quiet", "HEAD"])
+            .or_else(|_| run_git(&git_root, &["hash-object", "-t", "tree", "--stdin"]))?;
+        read_diff(&[base.trim()])?
+    };
+    let mut untracked = vec!["--literal-pathspecs", "ls-files", "--others", "--exclude-standard", "-z", "--"];
+    untracked.extend(selected);
+    for path in run_git(&git_root, &untracked)?.split_terminator('\0') {
+        // Nested repositories are listed as directories, not individual untracked files.
+        if !path.is_empty() && !path.ends_with('/') {
+            patch.push_str(&run_git_with_diff_status(
+                &git_root,
+                &["diff", "--no-index", "--no-ext-diff", "--", "/dev/null", path],
+                true,
+            )?);
+        }
+    }
+    Ok(patch)
 }
 
 pub fn git_stage_file(target_path: &str, file_path: Option<String>) -> Result<(), String> {
@@ -759,6 +731,30 @@ mod index_action_tests {
         assert!(!selected.contains("+later edit"));
         let staged = git_diff_for_path(&fixture.cwd, Some(new_file.into()), GitDiffScope::Staged, None, None, None).unwrap();
         assert!(staged.is_empty());
+    }
+
+    #[test]
+    fn uncommitted_diff_includes_untracked_and_index_changes_with_or_without_head() {
+        for committed in [true, false] {
+            let fixture = Fixture::new(committed);
+            fixture.write("tracked.txt", b"index content\n");
+            fixture.write("staged-only.txt", b"staged-only content\n");
+            git_stage_file(&fixture.cwd, None).unwrap();
+            fixture.write("tracked.txt", b"index content\nworking addition\n");
+            fixture.write("新文件 [1].txt", b"untracked content\n");
+            fixture.write(".git/info/exclude", b"ignored.txt\n");
+            fixture.write("ignored.txt", b"ignored content\n");
+            let diff = git_diff_for_path(&fixture.cwd, None, GitDiffScope::Uncommitted, None, None, None).unwrap();
+            for line in ["+index content", "+working addition", "+staged-only content", "+untracked content"] {
+                assert!(diff.contains(line), "missing {line} with HEAD={committed}: {diff}");
+            }
+            assert!(!diff.contains("ignored content"));
+            let selected = git_diff_for_path(&fixture.cwd, Some("新文件 [1].txt".into()), GitDiffScope::Uncommitted, None, None, None).unwrap();
+            assert!(selected.contains("+untracked content"));
+            assert!(!selected.contains("working addition"));
+            let ignored = git_diff_for_path(&fixture.cwd, Some("ignored.txt".into()), GitDiffScope::Uncommitted, None, None, None).unwrap();
+            assert!(ignored.is_empty());
+        }
     }
 
     #[test]

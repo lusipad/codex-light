@@ -80,6 +80,8 @@ const text = tree => !tree || typeof tree !== "object" ? String(tree ?? "") : ty
   const header = view => text(rawNodes(view.tree).find(node => node.props.className === "diff-file-list-header"));
   const scoped = mount("DiffDrawer", props, { requestedDiffMode: "unstaged", diffContent: diff });
   assert.match(header(scoped), /已更改的文件 \(1\)\+2 -2/);
+  const uncommitted = mount("DiffDrawer", props, { requestedDiffMode: "working", diffContent: diff });
+  assert.match(header(uncommitted), /已更改的文件 \(2\)\+2 -2/);
   const selected = mount("DiffDrawer", props, { requestedDiffMode: "unstaged", diffContent: diff, selectedFile: "a.ts" });
   assert.doesNotMatch(header(selected), /\+\d|-[0-9]/);
   const empty = mount("DiffDrawer", { ...props, gitStatus: { entries: [{ path: "b.ts", staged: true }] } }, { requestedDiffMode: "unstaged" });
