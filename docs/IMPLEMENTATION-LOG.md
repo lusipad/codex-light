@@ -1,5 +1,10 @@
 # 实施日志（按轮次）
 
+## 2026-11-08 — 04J 项目聊天行与操作
+
+- 按当前官方包对齐聊天行、窄窗时间隐藏和独立打开入口，重命名与复制复用现有组件和处理器。106 个前端重放、Windows 安装包构建、隔离浏览器与原生操作均已验证。[阶段验收](antigravity/acceptance/04E-project-sort.md)
+- [preview.24 发布任务](https://github.com/lusipad/codex-desktop-native/actions/runs/42485942064) 第二次运行成功，校验了四个发布文件及对应构建产物。该标签早于本轮项目编辑、移除与聊天行改动。
+
 ## 2026-11-08 — 04I 本地项目移除确认
 
 - 两处入口共用模态确认，取消保留项目与草稿，失败可重试。隔离真实协议验证项目移除保留聊天和文件。[阶段验收](antigravity/acceptance/04E-project-sort.md)

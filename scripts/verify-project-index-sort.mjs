@@ -17,6 +17,7 @@ let serverProjects = projects;
 let projectReads = 0;
 const listeners = new Map();
 const rootSlots = [], childSlots = new Map(), effects = [], writes = [], actions = [];
+const copied = [];
 let slots = rootSlots;
 let cursor = 0;
 const React = {
@@ -47,6 +48,7 @@ const context = {
   require(name) {
     if (name === "react") return { ...React, default: React };
     if (name.endsWith(".css")) return {};
+    if (name === "../clipboard") return { copyTextToClipboard: async value => { copied.push(value); return true; } };
     if (name === "../projects") return {
       listProjects: async () => { projectReads++; return serverProjects; },
       ...Object.fromEntries(["createProject", "deleteProject", "moveProject", "updateProject"].map(key => [key, (...args) => writes.push([key, ...args])])),
@@ -62,6 +64,7 @@ const props = {
   onSelectWorkspace: path => actions.push(["workspace", path]),
   onStartNewChatInProject: (...args) => actions.push(["chat", ...args]),
   onSelectThread: id => actions.push(["thread", id]), onPickNewFolder() {}, onRemoveWorkspace() {},
+  onRenameThread: (id, name) => actions.push(["rename", id, name]),
 };
 function render() {
   cursor = 0;
@@ -137,7 +140,7 @@ for (const label of ["名称", "已更新"]) {
 }
 const css = fs.readFileSync("src/components/ProjectsIndexView.css", "utf8");
 props.threads = [
-  { id: "matching", projectId: "d", name: "修复 Session 路径" },
+  { id: "matching", projectId: "d", name: "修复 Session 路径", cwd: "D:/isolated/chat", updatedAt: now - 60_000 },
   { id: "other", projectId: "d", name: "未命中", preview: "Session 只是正文" },
   { id: "foreign", name: "Session 未归属" },
   { id: "kept", projectId: "b", name: "先前展开的聊天" },
@@ -154,8 +157,28 @@ assert.equal(nodes(tree, node => node.props?.["aria-label"] === "展开/折叠�
 const hit = nodes(tree, node => node.type === "button" && text(node).includes("修复 Session 路径"))[0];
 assert.ok(hit, "PS10: hit is keyboard accessible");
 assert.equal(nodes(tree, cls("project-expanded-thread-item")).length, 1);
+const chatMenus = nodes(tree, node => node.props?.triggerAriaLabel === "聊天操作");
+assert.equal(chatMenus.length, 1, "PS10: expanded local chat has a single actions menu");
+const openChat = nodes(tree, node => node.props?.["aria-label"] === "打开聊天");
+assert.equal(openChat.length, 1, "PS10: expanded local chat has a dedicated open button");
 hit.props.onClick({ stopPropagation() {} });
-assert.deepEqual(actions, [["thread", "matching"]]);
+openChat[0].props.onClick();
+assert.deepEqual(actions, [["thread", "matching"], ["thread", "matching"]]);
+const chatMenu = chatMenus[0].props;
+assert.equal(chatMenu.items.map(item => item.id).join(","), "rename,copy-link,copy-cwd");
+chatMenu.onSelect("copy-link");
+chatMenu.onSelect("copy-cwd");
+assert.deepEqual(copied, ["codex://threads/matching", "D:/isolated/chat"]);
+const renameDialog = () => nodes(render(), node => node.type === "RenameThreadDialog")[0];
+chatMenu.onSelect("rename");
+assert.equal(renameDialog().props.initialValue, "修复 Session 路径");
+renameDialog().props.onClose();
+assert.equal(renameDialog(), undefined);
+assert.equal(actions.length, 2, "PS10: clipboard and rename cancellation do not open or change the chat");
+chatMenu.onSelect("rename");
+renameDialog().props.onSave(" 已重命名 ");
+assert.deepEqual(actions.pop(), ["rename", "matching", "已重命名"]);
+actions.pop();
 searchProjects("");
 assert.deepEqual(nodes(tree, cls("projects-table-group")).filter(node => nodes(node, cls("active")).length).map(node => node.props.key),
   ["b"], "PS11: clearing search restores only manually expanded projects");
@@ -174,7 +197,7 @@ props.threads = Array.from({length: 23}, (_, index) => ({
 props.currentThreadId = "page-22";
 tree = render();
 const pageTitles = () => nodes(tree, cls("project-expanded-thread-title")).map(text);
-assert.deepEqual(pageTitles(), [...Array.from({length: 10}, (_, index) => `💬 Paging ${index}`), "💬 Paging 22"],
+assert.deepEqual(pageTitles(), [...Array.from({length: 10}, (_, index) => `Paging ${index}`), "Paging 22"],
   "PS13: sorted first ten and forced current chat");
 const pageMore = () => nodes(tree, node => node.type === "button" && text(node) === "展开显示")[0];
 pageMore().props.onClick({ currentTarget: {} }); tree = render();

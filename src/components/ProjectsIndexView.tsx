@@ -9,6 +9,7 @@ import {
   CloseIcon,
   NewChatComposeIcon,
   RefreshIcon,
+  ArrowRightIcon,
 } from "./Icons";
 import { ThreadSummary, WorkspaceRootItem } from "../types";
 import { tauriInvoke, tauriListen } from "../bridge";
@@ -23,6 +24,8 @@ import {
 } from "../projects";
 import { ThreadActionsMenu } from "./ThreadActionsMenu";
 import { ProjectEditDialog, ProjectRemoveDialog } from "./ProjectEditDialog";
+import { RenameThreadDialog } from "./RenameThreadDialog";
+import { copyTextToClipboard } from "../clipboard";
 import "./ProjectsIndexView.css";
 
 export interface ProjectsIndexViewProps {
@@ -173,6 +176,7 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
   const [creating, setCreating] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [removingProject, setRemovingProject] = useState<Project | null>(null);
+  const [renamingThread, setRenamingThread] = useState<ThreadSummary | null>(null);
   const [draftName, setDraftName] = useState("");
   const [draftRoots, setDraftRoots] = useState<string[]>([]);
   const [draftManualRoot, setDraftManualRoot] = useState("");
@@ -436,6 +440,11 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
     onProjectsChanged?.();
     onThreadsChanged?.();
     notify(`已移除项目「${project.name}」`, "success");
+  };
+
+  const copyProjectThreadValue = async (value: string, label: string) => {
+    const copied = await copyTextToClipboard(value);
+    notify(copied ? `已复制${label}` : `无法复制${label}`, copied ? "success" : "error");
   };
 
   const handleMoveProject = async (project: Project, direction: "up" | "down") => {
@@ -754,58 +763,44 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
             <ProjectChatList label={`${project.name} 中最近的聊天`} threads={visibleThreads}
               currentThreadId={currentThreadId} expanded={!!expandedChatPages[project.id]}
               onExpand={() => setExpandedChatPages(previous => ({ ...previous, [project.id]: true }))}
-              renderThread={t => (
+              renderThread={t => {
+                const status = typeof t.status === "string" ? t.status : t.status?.type;
+                const indicator = status === "active" ? "运行中" : t.readState?.firstUnread != null ? "未读" : "";
+                const updated = t.updatedAt || t.createdAt;
+                return (
                   <div
                     key={t.id}
                     className="project-expanded-thread-item"
-                    onClick={() => onSelectThread(t.id)}
+                    onClick={event => { if (event.detail <= 1) onSelectThread(t.id); }}
                   >
                     <button type="button" className="project-expanded-thread-title" onClick={event => {
                       event.stopPropagation();
                       onSelectThread(t.id);
-                    }}>💬 {t.name || t.preview || "未命名聊天"}</button>
+                    }}><span className="project-thread-indicator" role={indicator ? "img" : undefined}
+                        aria-label={indicator || undefined} aria-hidden={!indicator}
+                        data-status={status === "active" ? "active" : indicator ? "unread" : undefined} />
+                      <span>{t.name || t.preview || "未命名聊天"}</span>
+                    </button>
+                    <span className="project-col-updated">{updated ? formatRelativeTime(updated) : null}</span>
                     <div
                       className="project-thread-actions"
                       onClick={(e) => e.stopPropagation()}
                     >
-                      {onRenameThread && (
-                        <button
-                          type="button"
-                          className="thread-icon-btn"
-                          title="重命名聊天"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            const next = prompt(
-                              "请输入新聊天标题:",
-                              t.name || t.preview || ""
-                            );
-                            if (next && next.trim()) {
-                              onRenameThread(t.id, next.trim());
-                            }
-                          }}
-                        >
-                          ✏️
-                        </button>
-                      )}
-                      {onDeleteThread && (
-                        <button
-                          type="button"
-                          className="thread-icon-btn danger"
-                          title="彻底删除此聊天"
-                          onClick={(e) => onDeleteThread(t, e)}
-                        >
-                          🗑️
-                        </button>
-                      )}
-                      <span
-                        className="thread-open-link"
-                        onClick={() => onSelectThread(t.id)}
-                      >
-                        打开聊天 →
-                      </span>
+                      <ThreadActionsMenu triggerAriaLabel="聊天操作" items={[
+                        ...(onRenameThread ? [{ id: "rename", label: "重命名聊天" }] : []),
+                        { id: "copy-link", label: "复制深层链接" },
+                        ...(t.cwd ? [{ id: "copy-cwd", label: "复制工作目录" }] : []),
+                      ]} onSelect={action => {
+                        if (action === "rename") setRenamingThread(t);
+                        else if (action === "copy-link") void copyProjectThreadValue(`codex://threads/${encodeURIComponent(t.id)}`, "深层链接");
+                        else if (action === "copy-cwd" && t.cwd) void copyProjectThreadValue(t.cwd, "工作目录");
+                      }} />
+                      <button type="button" className="thread-icon-btn" aria-label="打开聊天"
+                        onClick={() => onSelectThread(t.id)}><ArrowRightIcon size={14} /></button>
                     </div>
                   </div>
-              )} />
+                );
+              }} />
           )}
         </div>
       );
@@ -1009,6 +1004,11 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
           onClose={() => setEditingProject(null)} />}
         {removingProject && <ProjectRemoveDialog key={`remove:${removingProject.id}`} name={removingProject.name} fallbackRef={searchRef}
           onRemove={() => removeProject(removingProject)} onClose={() => setRemovingProject(null)} />}
+        {renamingThread && <RenameThreadDialog key={`thread:${renamingThread.id}`} initialValue={renamingThread.name || renamingThread.preview || ""}
+          onClose={() => setRenamingThread(null)} onSave={value => {
+            const name = value.trim();
+            if (name && name !== renamingThread.name) onRenameThread?.(renamingThread.id, name);
+          }} />}
 
         {/* 列表：真实项目实体；协议失败时回退 workspace 视图 */}
         {isFallback ? renderWorkspaceFallback() : (

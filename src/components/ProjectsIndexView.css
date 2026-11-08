@@ -6,10 +6,25 @@
 }
 
 .projects-official-table .projects-table-head,
-.projects-official-table .projects-table-row {
+.projects-official-table .projects-table-row,
+.projects-official-table .project-expanded-thread-item {
   grid-template-columns: minmax(0, 1fr) 4rem 8rem;
   column-gap: 16px;
   padding-inline: 0;
+}
+
+.projects-official-table .project-expanded-threads {
+  padding-inline: 0;
+}
+
+.projects-official-table .project-expanded-thread-item {
+  display: grid;
+  min-height: 36px;
+  padding-block: 0;
+}
+
+.projects-official-table .project-thread-actions {
+  justify-content: flex-end;
 }
 
 .projects-official-table .projects-table-head {
@@ -69,7 +84,8 @@
 
 @media (max-width: 680px) {
   .projects-official-table .projects-table-head,
-  .projects-official-table .projects-table-row {
+  .projects-official-table .projects-table-row,
+  .projects-official-table .project-expanded-thread-item {
     grid-template-columns: minmax(0, 1fr) auto;
   }
 
@@ -77,7 +93,20 @@
     display: none;
   }
 }
+
+@media (hover: hover) {
+  .projects-official-table .project-expanded-thread-item .project-thread-actions {
+    opacity: 0;
+  }
+
+  .projects-official-table .project-expanded-thread-item:is(:hover, :focus-within, :has([aria-expanded="true"])) .project-thread-actions {
+    opacity: 1;
+  }
+}
+
 .project-expanded-thread-title {
+  display: flex;
+  align-items: center;
   min-width: 0;
   padding: 0;
   border: 0;
@@ -85,10 +114,33 @@
   color: inherit;
   font: inherit;
   text-align: start;
+  cursor: pointer;
+}
+
+.project-expanded-thread-title > span:last-child {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  cursor: pointer;
+}
+
+.project-thread-indicator {
+  flex: 0 0 28px;
+  display: grid;
+  place-items: center;
+}
+
+.project-thread-indicator[data-status]::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-blue);
+}
+
+.project-thread-indicator[data-status="active"]::before {
+  background: transparent;
+  border: 1px solid var(--accent-blue);
 }
 
 .project-edit-dialog {
