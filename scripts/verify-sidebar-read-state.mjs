@@ -80,6 +80,7 @@ function context(rpc) {
     refreshThreads: async () => { refreshes.push(true); },
     showAppToast: (...args) => toasts.push(args),
     setThreads: update => { threads = typeof update === "function" ? update(threads) : update; },
+    setChatHistoryReady: value => assert.equal(value, true),
     refreshThreadsGenerationRef: { current: 0 }, activeThreadIdRef: { current: null },
     console,
   });

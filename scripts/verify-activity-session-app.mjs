@@ -147,7 +147,7 @@ for(const change of ['close','identity','remove','already-read','notification-be
 }
 {
   const pending=deferred();const generation={current:0};let threads=[{id:'gone'},{id:'keep'}];
-  const context={...activity.exports,activitySessionRef:{current:null},refreshThreadsGenerationRef:generation,callAppServer:async()=>pending.promise,setThreads:update=>{threads=typeof update==='function'?update(threads):update;},console:{warn(){}}};
+  const context={...activity.exports,activitySessionRef:{current:null},refreshThreadsGenerationRef:generation,callAppServer:async()=>pending.promise,setThreads:update=>{threads=typeof update==='function'?update(threads):update;},setChatHistoryReady:()=>assert.fail('stale catalog must not mark history ready'),console:{warn(error){throw error;}}};
   const refresh=run('refreshThreads',context)();await flush();
   vm.runInNewContext(transpile(`(()=>${removal})()`),{...context,params:{threadId:'gone'},activeThreadIdRef:{current:'different'}});
   pending.resolve({data:[{id:'gone'},{id:'keep'}],nextCursor:null});await refresh;

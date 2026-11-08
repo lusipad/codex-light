@@ -42,6 +42,7 @@ export function mountMembershipRefresh(rpc, initial = [{ id: "a", projectId: "A"
     NOTIFICATION, activeThreadIdRef: { current: "a" }, refreshThreadsGenerationRef: { current: 0 },
     callAppServer: async (method, params) => { calls.push({ method, params }); return rpc(method, params, calls.length); },
     setThreads: update => { threads = typeof update === "function" ? update(threads) : update; },
+    setChatHistoryReady: value => assert.equal(value, true),
     setProjectsRefreshToken: update => { projectRefreshes = update(projectRefreshes); },
     refreshWorkspacesAndMeta: () => { workspaceRefreshes++; },
     console: { warn: (...args) => warnings.push(args) },

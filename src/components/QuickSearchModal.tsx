@@ -25,6 +25,7 @@ export interface QuickSearchModalProps {
   mode?: "root" | "chats" | "files";
   initialQuery: { value: string };
   threads: ThreadSummary[];
+  chatHistoryReady: boolean;
   skills: SkillInfoItem[];
   projectScripts?: ProjectScriptCommands;
   /**
@@ -276,6 +277,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   mode = "root",
   initialQuery,
   threads,
+  chatHistoryReady,
   skills,
   projectScripts,
   workspacePath,
@@ -1080,8 +1082,18 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
     setSelectedIndex(0);
   }, [items, chatSearchScope, chatPaging?.loading, selectAndScroll]);
 
+  const createChatRef = useRef<HTMLButtonElement>(null);
+  const emptyChat = mode === "chats" && !trimmedQuery && chatHistoryReady && items.length === 0;
+  const chatLoading = mode === "chats" && !!trimmedQuery && isTauriRuntime() &&
+    (remoteResults?.mode !== mode || remoteResults.query !== trimmedQuery || remoteResults.workspacePath !== workspacePath);
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+    if (emptyChat && e.key === "Tab") {
+      e.preventDefault();
+      (e.target === createChatRef.current ? inputRef : createChatRef).current?.focus();
+      return;
+    }
+    if (e.key === "Enter" && e.target === createChatRef.current) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
       selectAndScroll((selectedIndex + 1) % Math.max(1, items.length));
@@ -1126,7 +1138,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   if (!open) return null;
   const recentLoading = !!recentRequest && isTauriRuntime() && !recentLookup;
   const loading = recentRequest ? recentLoading && items.length === 0
-    : pathQuery ? !!pathRequest && isTauriRuntime() && !pathLookup : remoteLoading;
+    : pathQuery ? !!pathRequest && isTauriRuntime() && !pathLookup : mode === "chats" ? chatLoading : remoteLoading;
   const defaultScopeLabel = workspaceLabel || (projectRoots.length === 1
     ? `文件夹：${baseNameFsPath(projectRoots[0]) || projectRoots[0]}` : "文件夹");
 
@@ -1187,7 +1199,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
 
         <div className="quick-search-results" ref={resultsRef}>
           {loading && (
-            <div
+            mode === "chats" ? <span className="sr-only" role="status">聊天加载中…</span> : <div
               className="empty-hint-small"
               style={{ padding: "8px 12px", textAlign: "left", opacity: 0.75 }}
             >
@@ -1195,9 +1207,14 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
             </div>
           )}
           {items.length === 0 ? (
-            loading ? null : (
+            emptyChat ? (
+              <div className="quick-search-empty-chat">
+                <span>创建聊天即可开始！</span>
+                <button ref={createChatRef} type="button" onClick={() => { onClose(); onStartNewChat(); }}>创建聊天</button>
+              </div>
+            ) : loading || (mode === "chats" && !trimmedQuery) ? null : (
               <div className="empty-hint-small" style={{ padding: "20px 0" }}>
-                {pathQuery ? "未找到匹配的文件" : mode === "files" && !query.trim() ? "输入文件名进行搜索" : "未找到匹配项"}
+                {mode === "chats" ? "无匹配项" : pathQuery ? "未找到匹配的文件" : mode === "files" && !query.trim() ? "输入文件名进行搜索" : "未找到匹配项"}
               </div>
             )
           ) : (

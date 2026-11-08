@@ -15,14 +15,15 @@ assert.ok(callback, "execute the actual refreshThreads callback");
 const code = ts.transpileModule(`(${callback})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
 function mount(rpc) {
-  const calls = [], warnings = [], commits = [];
+  const calls = [], warnings = [], commits = [], readiness = [];
   const refresh = vm.runInNewContext(code, {
     refreshThreadsGenerationRef: { current: 0 },
     callAppServer: async (method, params) => { calls.push({ method, params }); return rpc(params, calls.length); },
     setThreads: value => commits.push(value),
+    setChatHistoryReady: value => readiness.push(value),
     console: { warn: (...args) => warnings.push(args) },
   });
-  return { refresh, calls, warnings, commits };
+  return { refresh, calls, warnings, commits, readiness };
 }
 {
   const view = mount(async p => p.cursor === "page-2" ? { data: [{ id: "b" }, { id: "c" }], nextCursor: "page-3" } : p.cursor === "page-3" ? { data: [{ id: "d" }], nextCursor: null } : { data: [{ id: "a" }, { id: "b" }], nextCursor: "page-2" });
@@ -36,13 +37,16 @@ function mount(rpc) {
   const view = mount(async p => p.cursor ? page.promise : { data: [{ id: "a" }], nextCursor: "later" });
   const pending = view.refresh(); await Promise.resolve(); await Promise.resolve();
   assert.equal(view.commits.length, 0, "partial catalog must not be published as complete");
+  assert.deepEqual(view.readiness, []);
   page.resolve({ data: [{ id: "b" }], nextCursor: null }); await pending;
   assert.equal(view.commits[0].length, 2);
+  assert.deepEqual(view.readiness, [true]);
 }
 {
   const view = mount(async p => { if (p.cursor) throw Error("second page failed"); return { data: [{ id: "a" }], nextCursor: "later" }; });
   await view.refresh();
   assert.equal(view.commits.length, 0, "page failure must preserve existing catalog");
+  assert.deepEqual(view.readiness, []);
   assert.equal(view.calls.length, 2, "must not switch read mode after a partial page");
   assert.ok(view.warnings.length);
 }
@@ -58,6 +62,7 @@ function mount(rpc) {
   old.resolve({ data: [{ id: "old" }], nextCursor: "stale-more" }); await pending;
   assert.equal(view.commits.length, 1, "stale refresh must not overwrite a newer catalog");
   assert.equal(view.commits[0][0].id, "new"); assert.equal(view.calls.length, 2);
+  assert.deepEqual(view.readiness, [true]);
 }
 {
   const view = mount(async () => ({ data: [{ id: "a" }], nextCursor: "loop" }));
@@ -68,5 +73,11 @@ function mount(rpc) {
 {
   const view = mount(async p => p.useStateDbOnly ? { data: [], nextCursor: null } : [{ id: "legacy" }]);
   await view.refresh(); assert.equal(view.commits[0][0].id, "legacy");
+}
+{
+  const view = mount(async () => ({ data: [], nextCursor: null }));
+  await view.refresh();
+  assert.equal(view.commits[0].length, 0);
+  assert.deepEqual(view.readiness, [true], "an empty catalog is ready after both reads complete");
 }
 console.log("PASS actual thread-list callback: complete pages, overlap, transactional failure, compatible fallback, stale refresh, repeated cursor and legacy arrays (L2)");

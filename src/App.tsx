@@ -651,6 +651,7 @@ export const App: React.FC = () => {
 
   // Threads, Pinned, Hints & Conversation State
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
+  const [chatHistoryReady, setChatHistoryReady] = useState(false);
   const [sidebarCreatedThread, setSidebarCreatedThread] = useState<Pick<ThreadSummary, "id" | "cwd" | "projectId"> | null>(null);
   const pendingNewThreadProjectRef = useRef<SidebarLocalProject | null>(null);
   const pendingProjectlessRef = useRef(false);
@@ -1392,7 +1393,10 @@ export const App: React.FC = () => {
     };
     try {
       const list = await readPages(true);
-      if (list !== null && generation === refreshThreadsGenerationRef.current) setThreads(list);
+      if (list !== null && generation === refreshThreadsGenerationRef.current) {
+        setThreads(list);
+        setChatHistoryReady(true);
+      }
     } catch (error) {
       if (generation === refreshThreadsGenerationRef.current) console.warn("thread/list refresh failed; previous list retained:", error);
     }
@@ -6995,6 +6999,7 @@ export const App: React.FC = () => {
         mode={quickSearchMode}
         initialQuery={quickSearchInitialQuery}
         threads={threads}
+        chatHistoryReady={chatHistoryReady}
         skills={skills}
         projectScripts={projectScripts}
         workspacePath={activeWorkspace?.path}

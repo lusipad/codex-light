@@ -6,6 +6,7 @@ import ts from "typescript";
 const parse = path => ts.createSourceFile(path, fs.readFileSync(path, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const page = parse("src/components/QuickSearchModal.tsx"), app = parse("src/App.tsx"), folderDialog = parse("src/components/SearchFolderDialog.tsx");
 let items, keydown, focus, pageSelection, appSlash, sidebarSearch, selectedFileSearchText, rememberWorkspaceFile, pickSearchFolder, finishFolderPicker, folderLocation, folderListEffect;
+const chatStates = {};
 const shortcuts = {};
 const helpers = [];
 function visit(node, ast) {
@@ -16,6 +17,7 @@ function visit(node, ast) {
   if (ast === folderDialog && ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect" &&
       node.arguments[0]?.getText(ast).includes('"fs_list_dir"')) folderListEffect = node.arguments[0];
   if (ts.isVariableDeclaration(node) && ast === page) {
+    if (["emptyChat", "chatLoading"].includes(node.name.getText(ast))) chatStates[node.name.getText(ast)] = node.initializer;
     if (node.name.getText(ast) === "items") items = node.initializer.arguments[0];
     if (node.name.getText(ast) === "handleKeyDown") keydown = node.initializer;
     if (node.name.getText(ast) === "pickSearchFolder") pickSearchFolder = node.initializer;
@@ -46,6 +48,8 @@ function mount(overrides = {}) {
     fileRoots: [overrides.workspacePath ?? "repo-B"], fileScope: JSON.stringify([overrides.workspacePath ?? "repo-B"]),
     folderScope: undefined,
     scopeTriggerRef: { current: null },
+    createChatRef: { current: null },
+    emptyChat: false,
     threads: [], workspaceFileHits: [], recentFiles: [], recentHistory: [], recentLookup: null, skills: [], SLASH_COMMANDS: [slash],
     REMOTE_THREAD_LIMIT: 9, REMOTE_CHAT_LIMIT: 25,
     chatPaging: null,
@@ -68,6 +72,34 @@ function mount(overrides = {}) {
   context.setQuery = value => { context.query = value; };
   for (const helper of helpers) vm.runInNewContext(ts.transpileModule(helper.getText(page), {}).outputText, context);
   return { context, calls, results: () => execute(items, page, context)() };
+}
+{
+  const view = mount({ mode: "chats", query: "", chatHistoryReady: false, trimmedQuery: "", items: [], isTauriRuntime: () => true });
+  const state = name => execute(chatStates[name], page, view.context);
+  assert.equal(state("emptyChat"), false, "the catalog has not loaded");
+  view.context.chatHistoryReady = true;
+  assert.equal(state("emptyChat"), true);
+  const input = { focus: () => view.calls.push(["input focus"]) };
+  const button = { focus: () => view.calls.push(["create focus"]) };
+  Object.assign(view.context, { emptyChat: true, inputRef: { current: input }, createChatRef: { current: button } });
+  const press = (key, target) => execute(keydown, page, view.context)({
+    key, target, nativeEvent: {}, preventDefault: () => view.calls.push(["prevent"]),
+  });
+  press("Tab", input);
+  press("Tab", button);
+  press("Enter", button);
+  assert.deepEqual(view.calls, [["prevent"], ["create focus"], ["prevent"], ["input focus"]]);
+  view.context.items = [{ category: "thread" }];
+  assert.equal(state("emptyChat"), false);
+  view.context.trimmedQuery = "测";
+  assert.equal(state("chatLoading"), true);
+  view.context.remoteResults = { mode: "chats", query: "测", workspacePath: "repo-A", threads: [] };
+  assert.equal(state("chatLoading"), true, "another workspace's response does not settle the query");
+  view.context.remoteResults.workspacePath = "repo-B";
+  assert.equal(state("chatLoading"), false);
+  view.context.mode = "files";
+  assert.equal(state("emptyChat"), false);
+  assert.equal(state("chatLoading"), false);
 }
 {
   const recentFiles = ["C:/repo/src/测试🚀.rs", "c:\\REPO\\src\\测试🚀.rs", "C:/repo-backup/secret.txt",
