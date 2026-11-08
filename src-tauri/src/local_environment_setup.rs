@@ -1227,12 +1227,11 @@ mod tests {
         let op = state.prepare_operation("cancel", "id").unwrap();
         let marker = fixture.source().join("ready");
         let script = if cfg!(windows) {
-            "[System.IO.File]::WriteAllText('ready', 'ready')\nStart-Sleep -Seconds 20"
+            "[System.IO.File]::WriteAllText([System.IO.Path]::Combine($env:CODEX_WORKTREE_PATH, 'ready'), 'ready')\nStart-Sleep -Seconds 60"
         } else {
-            "printf ready > ready\nsleep 20"
+            "printf ready > ready\nsleep 60"
         };
         thread::scope(|scope| {
-            let started = Instant::now();
             let cwd = fixture.source();
             let task = scope.spawn(move || {
                 run_setup(
@@ -1244,13 +1243,19 @@ mod tests {
                     None,
                 )
             });
-            while !marker.exists() && started.elapsed() < Duration::from_secs(8) {
+            // A loaded Windows runner can take longer to launch PowerShell than
+            // it takes to stop an already running script and drain its pipes.
+            let startup_deadline = Instant::now() + Duration::from_secs(30);
+            while !marker.exists() && !task.is_finished() && Instant::now() < startup_deadline {
                 thread::sleep(Duration::from_millis(20));
             }
-            assert!(marker.exists(), "setup process did not start");
+            let ready = marker.exists();
+            let cancelled = Instant::now();
             state.cancel("cancel", "id");
-            assert!(task.join().unwrap().unwrap_err().contains("取消"));
-            assert!(started.elapsed() < Duration::from_secs(12));
+            let result = task.join().unwrap();
+            assert!(ready, "setup script did not signal readiness: {result:?}");
+            assert!(result.unwrap_err().contains("取消"));
+            assert!(cancelled.elapsed() < Duration::from_secs(8), "script or readers did not stop promptly");
         });
     }
 
