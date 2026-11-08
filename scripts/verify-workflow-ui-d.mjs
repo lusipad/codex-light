@@ -22,6 +22,7 @@ vm.runInNewContext(compile(fs.readFileSync("src/components/QuickSearchModal.tsx"
 });
 const props = { open: true, mode: "root", initialQuery: { value: "" }, threads: [{ id: "thread-a", name: "Existing conversation" }], skills: [],
   getChatProjectLabel: () => undefined,
+  pinnedThreadIds: [],
   onClose() { closed++; }, onSelectThread(id) { assert.equal(id, "thread-a"); selected++; },
   onStartNewChat() {}, onTriggerCommand() {}, onNavigateRoute() {}, onNavigateSettings() {}, onSearchFiles() {}, onSearchChats() {},
 };

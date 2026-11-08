@@ -52,6 +52,7 @@ function mount(overrides = {}) {
     scopeTriggerRef: { current: null },
     createChatRef: { current: null },
     emptyChat: false,
+    pinnedThreadIds: [],
     threads: [], workspaceFileHits: [], recentFiles: [], recentHistory: [], recentLookup: null, skills: [], SLASH_COMMANDS: [slash],
     REMOTE_THREAD_LIMIT: 9, REMOTE_CHAT_LIMIT: 25,
     chatPaging: null,
@@ -75,6 +76,27 @@ function mount(overrides = {}) {
   context.setQuery = value => { context.query = value; };
   for (const helper of helpers) vm.runInNewContext(ts.transpileModule(helper.getText(page), {}).outputText, context);
   return { context, calls, results: () => execute(items, page, context)() };
+}
+{
+  const threads = Array.from({ length: 30 }, (_, i) => ({ id: String(i), name: `聊天 ${i}`, updatedAt: i }));
+  threads[0].recencyAt = 99;
+  const view = mount({ mode: "chats", query: "", threads, pinnedThreadIds: ["missing", "3", "1", "3"] });
+  const initial = view.results();
+  assert.equal(initial.length, 25);
+  assert.deepEqual(Array.from(initial.slice(0, 5), item => [item.id, item.section]), [
+    ["th-3", "已置顶聊天"], ["th-1", "已置顶聊天"], ["th-0", "聊天"], ["th-29", "聊天"], ["th-28", "聊天"],
+  ]);
+  assert.ok(initial.every(item => item.category === "thread"), "opening without a query never shows pagination");
+  view.context.items = initial;
+  execute(keydown, page, view.context)({ key: "Tab", nativeEvent: {}, preventDefault() {} });
+  assert.equal(view.context.selectedIndex, 2);
+  initial[view.context.selectedIndex].onSelect();
+  assert.deepEqual(view.calls, [["scroll", 2, "nearest"], ["onSelectThread", "0"], ["onClose"]]);
+  view.context.query = "聊天";
+  const matches = view.results();
+  assert.equal(matches[0].section, "聊天");
+  assert.equal(matches.at(-1).id, "show-more-chats");
+  assert.equal(threads[1].id, "1", "sorting never mutates the original history");
 }
 {
   const projects = { exports: {} };
@@ -354,7 +376,7 @@ function mount(overrides = {}) {
   view.results().find(item => item.id === "search-chats")?.onSelect();
   assert.deepEqual(view.calls, [["onSearchChats"]]);
   assert.equal(view.context.query, "切换聊天", "chat drill-in retains the current query");
-  view.context.mode = "chats"; view.context.query = "";
+  view.context.mode = "chats"; view.context.query = "聊天";
   view.context.threads = Array.from({ length: 30 }, (_, i) => ({ id: String(i), name: `聊天 ${i}` }));
   const results = view.results();
   assert.equal(results.filter(item => item.category === "thread").length, 25);

@@ -7011,6 +7011,7 @@ export const App: React.FC = () => {
         initialQuery={quickSearchInitialQuery}
         threads={threads}
         chatHistoryReady={chatHistoryReady}
+        pinnedThreadIds={pinnedThreadIds}
         skills={skills}
         projectScripts={projectScripts}
         workspacePath={activeWorkspace?.path}

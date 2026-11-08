@@ -1,5 +1,9 @@
 # 实施日志（按轮次）
 
+## 2026-11-09 — 08Q 独立聊天搜索的置顶与最近列表
+
+- 按官方空查询分支复用已保存置顶顺序，与按活动时间倒序的聊天共享 25 条上限。分页仅用于有查询的匹配结果。Windows 实测置顶顺序、查询分页及 Tab、Enter 打开最近聊天。113 项前端回放和 Windows 打包通过。[验收记录](antigravity/acceptance/08Q-chat-search-pinned.md)
+
 ## 2026-11-09 — 08P 独立聊天搜索的项目来源
 
 - 按官方独立聊天行的来源优先级复用侧栏项目解析与协议项目 ID。Windows 隔离验证了当前项目名、无项目来源隐藏、协议命中打开准确会话。113 项前端回放与 Windows 打包通过。[验收记录](antigravity/acceptance/08P-chat-search-project-source.md)

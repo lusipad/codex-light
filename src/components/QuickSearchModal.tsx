@@ -26,6 +26,7 @@ export interface QuickSearchModalProps {
   initialQuery: { value: string };
   threads: ThreadSummary[];
   chatHistoryReady: boolean;
+  pinnedThreadIds: string[];
   skills: SkillInfoItem[];
   projectScripts?: ProjectScriptCommands;
   /**
@@ -291,6 +292,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   initialQuery,
   threads,
   chatHistoryReady,
+  pinnedThreadIds,
   skills,
   projectScripts,
   workspacePath,
@@ -761,6 +763,8 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
       });
     });
 
+    const emptyChatQuery = mode === "chats" && !trimmedQuery;
+    const pinnedRanks = emptyChatQuery ? new Map([...new Set(pinnedThreadIds)].map((id, index) => [id, index])) : undefined;
     const localThreads = threads
       .filter((t) => {
         if (mode === "files" || (mode === "root" && q.length < 2) || remoteThreadIds.has(t.id)) return false;
@@ -770,13 +774,21 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
           t.id.toLowerCase().includes(q)
         );
       });
+    if (pinnedRanks) {
+      localThreads.sort((a, b) => {
+        const aRank = pinnedRanks.get(a.id);
+        const bRank = pinnedRanks.get(b.id);
+        if (aRank !== undefined || bRank !== undefined) return (aRank ?? pinnedRanks.size) - (bRank ?? pinnedRanks.size);
+        return (b.recencyAt ?? b.updatedAt ?? b.createdAt ?? 0) - (a.recencyAt ?? a.updatedAt ?? a.createdAt ?? 0);
+      });
+    }
     localThreads
       .slice(0, Math.max(0, threadLimit - remoteThreads.length))
       .forEach((t) => {
         results.push({
           id: `th-${t.id}`,
           category: "thread",
-          section: "聊天",
+          section: pinnedRanks?.has(t.id) ? "已置顶聊天" : "聊天",
           title: t.name || t.preview || t.id,
           subtitle: mode === "chats" ? undefined : `历史会话 · ${t.cwd || ""}`,
           rightLabel: mode === "chats" ? chatSource(t) : t.cwd ? t.cwd.split(/[/\\]/).pop() : "Chat",
@@ -791,7 +803,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
     if (mode === "chats") {
       const cursor = chatPaging?.nextCursor === undefined ? remote?.nextCursor : chatPaging.nextCursor;
       const chats = results.filter(item => item.category === "thread");
-      if (chatPaging?.loading || remoteThreads.length + localThreads.length > threadLimit || cursor != null) {
+      if (trimmedQuery && (chatPaging?.loading || remoteThreads.length + localThreads.length > threadLimit || cursor != null)) {
         const visibleIds = new Set(chats.map(item => item.id));
         chats.push({
           id: "show-more-chats", category: "action", section: "聊天",
@@ -1054,6 +1066,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
     recentHistory,
     recentLookup,
     threads,
+    pinnedThreadIds,
     skills,
     remoteResults,
     chatPaging,
