@@ -83,6 +83,22 @@ await check("first history omits after; continuation uses 20 and opaque cursor",
   await h.images.readImagesHistory(access(), "raw/?next", signal());
   assert.deepEqual(reads(h).map(r => clone(r.params)), [{ limit: 25 }, { limit: 20, after: "raw/?next" }]);
 });
+await check("continuation retries only errors from before grant registration", async () => {
+  const h = client();
+  for (const cause of [{ code: "network_error" }, { code: "timeout" }, { code: "rate_limited", status: 429 }, { code: "service_error", status: 503 }]) {
+    h.control.read = async () => { throw cause; };
+    await assert.rejects(h.images.readImagesHistory(access(), "next", signal()), error => error instanceof h.images.ImagesHistoryRetryError);
+    await assert.rejects(h.images.readImagesHistory(access(), null, signal()), error => error === cause);
+  }
+  for (const cause of [{ code: "asset_limit" }, { code: "invalid_response", status: 200 }, { code: "forbidden", status: 403 }, { code: "account_changed" }]) {
+    h.control.read = async () => { throw cause; };
+    await assert.rejects(h.images.readImagesHistory(access(), "next", signal()), error => error === cause);
+  }
+  const afterRead = { code: "timeout" };
+  h.control.read = async () => ({ items: [], cursor: null });
+  h.control.identity = async () => { throw afterRead; };
+  await assert.rejects(h.images.readImagesHistory(access(), "next", signal()), error => error === afterRead);
+});
 await check("full V1/V2 and hashed keys decode only independent direct gates/configs", async () => {
   for (const compact of [false, true]) for (const hashed of [false, true]) {
     const h = client(); h.control.payload = snapshot({ compact, hashed });

@@ -1,6 +1,6 @@
 import { selectedServiceAccount } from "./serviceAccounts";
 import { callAppServer } from "./bridge";
-import { isImagesAssetRef, readChatgptService, readImagesMetadata, serviceIdentity, shareAccessBootstrap, type ImagesAssetRef, type ServiceIdentity } from "./chatgptService";
+import { isImagesAssetRef, readChatgptService, readImagesMetadata, serviceErrorMessage, serviceIdentity, shareAccessBootstrap, type ImagesAssetRef, type ServiceIdentity } from "./chatgptService";
 import { parseImagesCatalog, parseImagesHistory, parseImagesStyles, type ImagesCatalog, type ImagesHistoryPage, type ImagesStyles } from "./imagesData";
 
 export interface ImagesAccess {
@@ -12,6 +12,7 @@ export interface ImagesAccess {
 }
 export interface ImagesCatalogResult { catalog?: ImagesCatalog; styles?: ImagesStyles; catalogAssets: ImagesAssetRef[]; stylesAssets: ImagesAssetRef[]; errors: string[] }
 export interface ImagesHistoryResult extends ImagesHistoryPage { assets: ImagesAssetRef[] }
+export class ImagesHistoryRetryError extends Error {}
 
 const object = (value: unknown): value is Record<string, any> => value !== null && typeof value === "object" && !Array.isArray(value);
 async function confirmIdentity(identity: ServiceIdentity, signal: AbortSignal) {
@@ -103,7 +104,18 @@ export async function readImagesCatalog(access: ImagesAccess, signal: AbortSigna
 
 export async function readImagesHistory(access: ImagesAccess, cursor: string | null, signal: AbortSignal): Promise<ImagesHistoryResult> {
   if (!access.available) throw Error("当前账号暂不支持图像。");
-  const result = await readImagesMetadata("images_recent", cursor === null ? { limit: 25 } : { limit: 20, after: cursor }, access.identity, signal);
+  const result = await readImagesMetadata("images_recent", cursor === null ? { limit: 25 } : { limit: 20, after: cursor }, access.identity, signal).catch(cause => {
+    // These transport/HTTP failures occur before the host registers the response's grants.
+    if (cursor !== null && !signal.aborted && object(cause)) {
+      const { code, status } = cause;
+      if (["network_error", "transport_error", "timeout"].includes(code) ||
+          code === "rate_limited" && status === 429 ||
+          code === "service_error" && typeof status === "number" && status >= 500 && status < 600) {
+        throw new ImagesHistoryRetryError(serviceErrorMessage(cause));
+      }
+    }
+    throw cause;
+  });
   await confirmIdentity(access.identity, signal);
   return { ...parseImagesHistory(result.body), assets: result.assets };
 }

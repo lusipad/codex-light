@@ -7,6 +7,7 @@ const walk = node => node && typeof node === "object" ? [node, ...(node.children
 const text = tree => walk(tree).flatMap(node => (node.children ?? []).filter(child => typeof child === "string")).join(" ");
 const flush = async () => { for (let i = 0; i < 40; i++) await Promise.resolve(); };
 const deferred = () => { let resolve, reject; const promise = new Promise((a,b) => { resolve=a; reject=b; }); return { promise, resolve, reject }; };
+class ImagesHistoryRetryError extends Error {}
 export function imagesHarness(listenerError = null) {
   const contexts = new Map(), effects = [], accesses = [], catalogs = [], histories = [], assets = [], observers = [], saves = [];
   let context, used, listener, writes = 0, onCommit;
@@ -48,6 +49,7 @@ export function imagesHarness(listenerError = null) {
         if(name==="../imagesAssets")return load("src/imagesAssets.ts");
         if(name==="../imageSave")return {saveDecodedImage:(src,title)=>{const d=deferred();saves.push({src,title,...d});return d.promise;}};
         if(name==="../imagesClient")return {
+          ImagesHistoryRetryError,
           readImagesAccess:signal=>{const d=deferred();accesses.push({signal,...d});return d.promise;},
           readImagesCatalog:(access,signal)=>{const d=deferred();catalogs.push({access,signal,...d});return d.promise;},
           readImagesHistory:(access,cursor,signal)=>{const d=deferred();histories.push({access,cursor,signal,...d});return d.promise;},
@@ -175,6 +177,23 @@ async function ready(options={}) {const h=imagesHarness();h.render();await flush
   assert.equal(title(),"下一批原图");
   assert.equal(button(h,"下一张图像").props.disabled,true);
   h.unmount();
+}
+{
+  const h=await ready();
+  button(h,"真实图像").props.onClick({currentTarget:{isConnected:true,focus(){}}});h.render();
+  const original=h.assets.filter(asset=>asset.ref.id==="image").at(-1);
+  button(h,"下一张图像").props.onClick();
+  h.histories[1].reject(new ImagesHistoryRetryError("连接失败"));await flush();
+  const failed=walk(h.render()).find(node=>node.props.role==="dialog");
+  assert.ok(failed,"a known pre-registration error preserves the preview");
+  assert.match(text(failed),/无法加载更多图像/);
+  assert.equal(original.signal.aborted,false);
+  assert.equal(h.histories.length,2,"failure does not automatically retry");
+  button(h,"下一张图像").props.onClick();
+  assert.equal(h.histories[2].cursor,h.histories[1].cursor);
+  h.histories[2].resolve(page([{id:"retry",title:"重试后的新图",url:"https://example.invalid/retry"}]));await flush();
+  assert.equal(text(walk(h.render()).find(node=>node.props.id==="images-preview-title")),"重试后的新图");
+  assert.doesNotMatch(text(h.render()),/无法加载更多图像/);h.unmount();
 }
 {
   const h=await ready(), trigger={isConnected:true,disabled:false,focus(){}};

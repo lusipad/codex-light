@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { ArrowUp, ImageOff } from "lucide-react";
 import { tauriListen } from "../bridge";
 import { serviceErrorMessage, type ImagesAssetRef } from "../chatgptService";
-import { readImagesAccess, readImagesCatalog, readImagesHistory, readImagesAsset,
+import { readImagesAccess, readImagesCatalog, readImagesHistory, readImagesAsset, ImagesHistoryRetryError,
   type ImagesAccess, type ImagesCatalogResult, type ImagesHistoryResult } from "../imagesClient";
 import { mergeImagesCatalog, mergeImagesHistory, imagesSections, type CloudImage, type ImagePrompt, type ImagePromptGroup } from "../imagesData";
 import { selectPromptAsset, selectHistoryAsset, selectHistoryPreview } from "../imagesAssets";
@@ -52,12 +52,13 @@ interface PreviewProps {
   scope: AbortSignal;
   hasNextPage: boolean;
   paging: boolean;
+  nextPageError: boolean;
   savingDialog: { current: boolean };
   onLoadNextPage: () => void;
   onSelect: (id: string) => void;
   onClose: () => void;
 }
-const ImagesPreview: React.FC<PreviewProps> = ({ images, selectedId, pages, access, scope, hasNextPage, paging, savingDialog, onLoadNextPage, onSelect, onClose }) => {
+const ImagesPreview: React.FC<PreviewProps> = ({ images, selectedId, pages, access, scope, hasNextPage, paging, nextPageError, savingDialog, onLoadNextPage, onSelect, onClose }) => {
   const dialog = useRef<HTMLDivElement>(null);
   const close = useRef<HTMLButtonElement>(null);
   const index = images.findIndex(image => image.id === selectedId), image = images[index];
@@ -125,6 +126,7 @@ const ImagesPreview: React.FC<PreviewProps> = ({ images, selectedId, pages, acce
         <button disabled={index <= 0} onClick={() => onSelect(images[index - 1].id)} aria-label="上一张图像">上一张</button>
         <button disabled={!canAdvance} onClick={advance} aria-label="下一张图像">下一张</button>
       </div></div>
+      {nextPageError && <p role="alert" className="images-inline-error">无法加载更多图像。请再次点击“下一张图像”</p>}
       {saveError && saveError.source === ready && <p role="alert" className="images-inline-error">无法下载图像：{saveError.message}</p>}
     </div>
   </div>, document.body);
@@ -140,6 +142,7 @@ export const ImagesView: React.FC = () => {
   const [historyLoading, setHistoryLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
+  const [nextPageError, setNextPageError] = useState<string | null>(null);
   const [paging, setPaging] = useState(false);
   const [section, setSection] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -185,7 +188,7 @@ export const ImagesView: React.FC = () => {
   }, [access?.available]);
   useEffect(() => {
     const controller = new AbortController(); source.current = controller; pending.current = false;
-    revokeAssets(); usedCursors.current.clear(); setLoading(true); setCatalogLoading(true); setHistoryLoading(true); setPaging(false); setError(null); setHistoryError(null);
+    revokeAssets(); usedCursors.current.clear(); setLoading(true); setCatalogLoading(true); setHistoryLoading(true); setPaging(false); setError(null); setHistoryError(null); setNextPageError(null);
     let unlisten: (() => void) | undefined;
     void (async () => {
       try {
@@ -257,7 +260,7 @@ export const ImagesView: React.FC = () => {
   const hasNextPage = !!cursor && !historyError && !historyLoading;
   const loadMore = async (advanceFrom?: { id: string }) => {
     if (!access?.available || !scope || scope !== source.current || scope.signal.aborted || pending.current || !hasNextPage || !cursor || usedCursors.current.has(cursor)) return;
-    pending.current = true; setPaging(true); setHistoryError(null);
+    pending.current = true; setPaging(true); setHistoryError(null); setNextPageError(null);
     try {
       const result = await readImagesHistory(access, cursor, scope.signal);
       if (scope.signal.aborted || scope !== source.current) return;
@@ -275,6 +278,7 @@ export const ImagesView: React.FC = () => {
       if (result.cursor && usedCursors.current.has(result.cursor)) setHistoryError("图像服务返回重复分页，请重试。");
     } catch (cause) {
       if (!scope.signal.aborted) {
+        if (cause instanceof ImagesHistoryRetryError) { setNextPageError(cause.message); return; }
         // The host can revoke a newest deny before rejecting its remaining asset
         // registration. An error therefore cannot preserve any old history grant.
         assetSource.current.abort(); setPreview(null);
@@ -305,8 +309,9 @@ export const ImagesView: React.FC = () => {
             if (previewId === image.id && selectHistoryPreview(image, pages)?.role !== "recent_preview") closePreview();
           }} />}
       </button> }))} />
-    {historyError && <div role="alert" className="images-inline-error">无法加载图像：{historyError}<button className="images-retry" disabled={paging || historyLoading} aria-label="重试加载图像" onClick={refresh}>重试</button></div>}
-    <LibraryPagination key={`${revision}:${pages.length}`} hasNextPage={hasNextPage} fetching={historyLoading || paging} onLoadNextPage={() => void loadMore()} />
+    {(historyError || nextPageError) && <div role="alert" className="images-inline-error">无法加载图像：{historyError || nextPageError}
+      <button className="images-retry" disabled={paging || historyLoading} aria-label="重试加载图像" onClick={nextPageError ? () => void loadMore() : refresh}>重试</button></div>}
+    <LibraryPagination key={`${revision}:${pages.length}`} hasNextPage={hasNextPage && !nextPageError} fetching={historyLoading || paging} onLoadNextPage={() => void loadMore()} />
   </section>;
   return <div ref={root} className={`images-view-container${access?.newLayout === true ? " images-layout-wide" : ""}`}>
     <div className="images-scroll" inert={activePreview || undefined}><div className="images-page-content">
@@ -353,7 +358,7 @@ export const ImagesView: React.FC = () => {
       <div className="images-composer-footer"><span role="status">{notice || "本地草稿；生成、上传和编辑尚未接入。"}</span><button className="images-composer-send" disabled aria-label="生成图像尚未连接"><ArrowUp size={18} /></button></div>
     </div>}
     {preview && activePreview && access?.available && <ImagesPreview images={previewImages} selectedId={preview.id} pages={pages} access={access}
-      scope={assetScope} hasNextPage={hasNextPage} paging={paging} savingDialog={savingDialog} onLoadNextPage={() => void loadMore(preview)}
+      scope={assetScope} hasNextPage={hasNextPage} paging={paging} nextPageError={nextPageError !== null} savingDialog={savingDialog} onLoadNextPage={() => void loadMore(preview)}
       onSelect={id => setPreview({ id })} onClose={closePreview} />}
   </div>;
 };
