@@ -270,6 +270,21 @@ html, body, #root {
   color: var(--text-primary);
 }
 
+.sidebar-thread-row[data-chat-host="durable"] {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: start;
+}
+
+.sidebar-thread-row[data-chat-host="durable"]:hover {
+  background-color: var(--bg-hover);
+}
+
+.sidebar-thread-row[data-chat-host="durable"].active {
+  background-color: var(--bg-tertiary);
+}
+
 .sidebar-thread-row.active {
   background-color: var(--bg-tertiary);
   color: var(--text-primary);

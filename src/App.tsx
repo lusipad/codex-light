@@ -151,6 +151,8 @@ import { CloudDraftView } from "./components/CloudDraftView";
 import { CloudNewChatView } from "./components/CloudNewChatView";
 import type { PublishedCloudTarget } from "./cloudPublishedChat";
 import type { CloudDraftSession } from "./cloudDraftSession";
+import { readCloudRecentChats, type CloudRecentChat } from "./cloudRecentChats";
+import { serviceIdentity, type ServiceIdentity } from "./chatgptService";
 import { ThreadActionsMenu, ThreadActionItem } from "./components/ThreadActionsMenu";
 import { ThreadFindBar } from "./components/ThreadFindBar";
 import {
@@ -335,7 +337,8 @@ export const App: React.FC = () => {
   // Primary Route & Shell Layout State
   const [activeRoute, commitActiveRoute] = useState<MainViewRoute>(() => window.location.pathname === "/code-review" ? "code-review" : parseSitesLocation(window.location.href) ? "sites" : "home");
   const isCloudChatRoute = activeRoute === "cloud-draft" || activeRoute === "cloud-new-chat";
-  const [cloudDraft, setCloudDraft] = useState<{ session: CloudDraftSession; persisted: boolean; origin: "settings" | "cloud-environments" | "home" } | null>(null);
+  const [cloudDraft, setCloudDraft] = useState<{ session: CloudDraftSession; persisted: boolean; origin: "settings" | "cloud-environments" | "home"; title?: string } | null>(null);
+  const refreshCloudRecentRef = useRef<(() => void) | null>(null);
   const [publishedCloudTarget, setPublishedCloudTarget] = useState<PublishedCloudTarget | null>(null);
   const cloudDraftRef = useRef(cloudDraft);
   cloudDraftRef.current = cloudDraft;
@@ -633,6 +636,52 @@ export const App: React.FC = () => {
   const [shareThreadId, setShareThreadId] = useState<string | null>(null);
   const [shareAvailable, setShareAvailable] = useState(false);
   const [shareAccessRevision, setShareAccessRevision] = useState(0);
+  const [cloudRecent, setCloudRecent] = useState<{ account: AccountReadResult; revision: number; chats: CloudRecentChat[] } | null>(null);
+  const cloudRecentChats = appServerStatus.connected && cloudRecent?.account === accountInfo &&
+    cloudRecent?.revision === shareAccessRevision ? cloudRecent.chats : undefined;
+  const cloudRecentChatsRef = useRef(cloudRecentChats);
+  cloudRecentChatsRef.current = cloudRecentChats;
+  useEffect(() => {
+    if (!appServerStatus.connected || accountInfo?.account?.type !== "chatgpt" || isQuickChatWindow || isThreadWindow) {
+      setCloudRecent(null);
+      return;
+    }
+    let pending: AbortController | undefined;
+    let identity: ServiceIdentity | undefined;
+    let disposed = false;
+    const refresh = () => {
+      if (disposed) return;
+      pending?.abort();
+      const request = new AbortController();
+      pending = request;
+      void (async () => {
+        const current = await serviceIdentity(request.signal);
+        const expectedAccount = accountInfo.workspaceRouting?.chatgptAccountId;
+        if (request.signal.aborted) return;
+        if (identity && (identity.accountId !== current.accountId || identity.userId !== current.userId ||
+          identity.generation !== current.generation)) setCloudRecent(null);
+        if (expectedAccount && expectedAccount !== current.accountId) return;
+        identity = current;
+        const chats = await readCloudRecentChats(current, request.signal);
+        if (!request.signal.aborted) setCloudRecent({ account: accountInfo, revision: shareAccessRevision, chats });
+      })().catch(() => {});
+    };
+    refreshCloudRecentRef.current = refresh;
+    refresh();
+    window.addEventListener("focus", refresh);
+    const listener = tauriListen<{ identity: ServiceIdentity; method: string; hostId: string }>("cloud-app-server:notification", notice => {
+      if (notice.hostId === "durable" && identity?.accountId === notice.identity.accountId &&
+        identity?.userId === notice.identity.userId && identity?.generation === notice.identity.generation &&
+        ["turn/completed", "thread/name/updated", "thread/archived"].includes(notice.method)) refresh();
+    });
+    return () => {
+      disposed = true;
+      pending?.abort();
+      refreshCloudRecentRef.current = null;
+      window.removeEventListener("focus", refresh);
+      void listener.then(unlisten => unlisten()).catch(() => {});
+    };
+  }, [accountInfo, appServerStatus.connected, isQuickChatWindow, isThreadWindow, shareAccessRevision]);
   useEffect(() => {
     const pending = new AbortController();
     setShareAvailable(false);
@@ -645,6 +694,8 @@ export const App: React.FC = () => {
       if (pending.signal.aborted) return;
       pending.abort(); setShareAvailable(false); setShareThreadId(null);
       setCloudDraft(null);
+      setCloudRecent(null);
+      cloudRecentChatsRef.current = undefined;
       setPublishedCloudTarget(null);
       if (activeRouteRef.current === "cloud-new-chat") setActiveRoute("cloud-environments");
       if (activeRouteRef.current === "cloud-draft") setActiveRoute(cloudDraftRef.current?.origin === "home" ? "home" : "cloud-environments");
@@ -5016,6 +5067,18 @@ export const App: React.FC = () => {
         workspaces={workspaces}
         activeWorkspace={activeWorkspace}
         threads={threads}
+        cloudRecentChats={cloudRecentChats}
+        activeCloudThreadId={activeRoute === "cloud-draft" ? cloudDraft?.session.threadId : undefined}
+        onSelectCloudChat={chat => {
+          const open = () => {
+            if (!cloudRecentChatsRef.current?.includes(chat) || (activeRouteRef.current === "cloud-draft" &&
+              cloudDraftRef.current?.session.threadId === chat.session.threadId)) return;
+            setPublishedCloudTarget(null);
+            setCloudDraft({ session: chat.session, title: chat.title, persisted: true, origin: "home" });
+            setActiveRoute("cloud-draft");
+          };
+          if (personalizationNavigationGuardRef.current?.(open) !== false) open();
+        }}
         pinnedThreadIds={pinnedThreadIds}
         workspaceHints={workspaceHints}
         projectMembership={sidebarProjectMembership}
@@ -5576,10 +5639,11 @@ export const App: React.FC = () => {
               setCloudDraft({ session, persisted: true, origin: "cloud-environments" });
               setPublishedCloudTarget(null);
               setActiveRoute("cloud-draft");
+              refreshCloudRecentRef.current?.();
               return true;
             }} />
         ) : activeRoute === "cloud-draft" && cloudDraft ? (
-          <CloudDraftView key={cloudDraft.session.threadId} session={cloudDraft.session} persisted={cloudDraft.persisted}
+          <CloudDraftView key={cloudDraft.session.threadId} session={cloudDraft.session} persisted={cloudDraft.persisted} title={cloudDraft.title}
             onNewPublishedChat={target => {
               if (activeRouteRef.current !== "cloud-draft" || cloudDraftRef.current?.session !== cloudDraft.session) return;
               setPublishedCloudTarget(target);

@@ -1001,6 +1001,7 @@ mod tests {
             ("configRequirements/read", Value::Null, serde_json::json!({"requirements":null})),
             ("thread/name/set", serde_json::json!({"threadId":thread,"name":"编辑 fixture"}), serde_json::json!({})),
             ("thread/read", serde_json::json!({"threadId":thread,"includeTurns":false}), serde_json::json!({"thread":{"id":thread}})),
+            ("thread/list", serde_json::json!({"cursor":"page-token","limit":100,"archived":false,"useStateDbOnly":true,"sortKey":"updated_at"}), serde_json::json!({"data":[{"id":thread}],"nextCursor":null})),
             ("thread/resume", serde_json::json!({"threadId":thread,"history":null,"model":null,"serviceTier":null,"excludeTurns":true}), serde_json::json!({"thread":{"id":thread}})),
             ("thread/turns/list", serde_json::json!({"threadId":thread,"limit":5,"cursor":null,"sortDirection":"desc","itemsView":"notLoaded"}), serde_json::json!({"data":[{"id":"turn-fixture"}],"nextCursor":null})),
             ("thread/items/list", serde_json::json!({"threadId":thread,"turnId":"turn-fixture","limit":98,"cursor":null,"sortDirection":"desc"}), serde_json::json!({"data":[{"turnId":"turn-fixture","item":{"id":"item-fixture"}}],"nextCursor":null})),

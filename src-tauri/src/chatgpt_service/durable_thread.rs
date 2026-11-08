@@ -38,6 +38,9 @@ enum Operation {
     Read {
         thread_id: String,
     },
+    List {
+        cursor: Option<String>,
+    },
     Resume {
         params: Value,
         timeout_seconds: Option<u16>,
@@ -194,6 +197,11 @@ impl Operation {
             Self::Read { thread_id } if opaque(&thread_id) => (
                 "thread/read",
                 json!({"threadId":thread_id,"includeTurns":false}),
+                30,
+            ),
+            Self::List { cursor } if cursor.as_deref().is_none_or(opaque) => (
+                "thread/list",
+                json!({"cursor":cursor,"limit":100,"archived":false,"useStateDbOnly":true,"sortKey":"updated_at"}),
                 30,
             ),
             Self::Resume {
@@ -501,6 +509,17 @@ fn checked_response(
         {
             Ok(body)
         }
+        "thread/list"
+            if body["data"].as_array().is_some_and(|items| {
+                items.len() <= 100
+                    && items
+                        .iter()
+                        .all(|entry| entry["id"].as_str().is_some_and(opaque))
+            }) && (body["nextCursor"].is_null()
+                || body["nextCursor"].as_str().is_some_and(opaque)) =>
+        {
+            Ok(body)
+        }
         "thread/turns/list" | "thread/items/list"
             if body["data"].as_array().is_some_and(|items| {
                 items.iter().all(|entry| {
@@ -654,6 +673,46 @@ impl ChatgptService {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cloud_catalog_keeps_read_only_wire_and_cursor() {
+        for cursor in [Value::Null, json!("page-token")] {
+            let operation: Operation =
+                serde_json::from_value(json!({"kind":"list","cursor":cursor})).unwrap();
+            let request = operation.wire().unwrap();
+            assert_eq!(request.method, "thread/list");
+            assert_eq!(
+                request.params,
+                json!({"cursor":cursor,"limit":100,"archived":false,"useStateDbOnly":true,"sortKey":"updated_at"})
+            );
+        }
+        assert!(serde_json::from_value::<Operation>(
+            json!({"kind":"list","cursor":null,"cwd":"C:/project"})
+        )
+        .is_err());
+        let invalid: Operation =
+            serde_json::from_value(json!({"kind":"list","cursor":"\n"})).unwrap();
+        assert!(invalid.wire().is_err());
+    }
+
+    #[test]
+    fn cloud_catalog_validates_page_and_preserves_environment_metadata() {
+        let page = json!({"data":[{"id":"thread-1","environments":[
+            {"environmentConfigId":"asenvcfg_sample","environmentId":"environment-1"}
+        ]}],"nextCursor":"next"});
+        assert_eq!(
+            checked_response("thread/list", None, None, page.clone()).unwrap(),
+            page
+        );
+        for invalid in [
+            json!({"data":[{"id":""}]}),
+            json!({"data":{},"nextCursor":null}),
+            json!({"data":[],"nextCursor":123}),
+            json!({"data":vec![json!({"id":"valid"}); 101]}),
+        ] {
+            assert!(checked_response("thread/list", None, None, invalid).is_err());
+        }
+    }
 
     #[test]
     fn durable_thread_requests_match_fixed_wire_and_preserve_null_tier() {

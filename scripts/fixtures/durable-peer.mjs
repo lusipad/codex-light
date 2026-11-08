@@ -86,6 +86,7 @@ function sessionPeer(socket) {
         "configRequirements/read": [undefined, { requirements: null }],
         "thread/name/set": [{ threadId, name: "编辑 fixture" }, {}],
         "thread/read": [{ threadId, includeTurns: false }, { thread: { id: threadId } }],
+        "thread/list": [{ cursor: "page-token", limit: 100, archived: false, useStateDbOnly: true, sortKey: "updated_at" }, { data: [{ id: threadId }], nextCursor: null }],
         "thread/resume": [{ threadId, history: null, model: null, serviceTier: null, excludeTurns: true }, { thread: { id: threadId } }],
         "thread/turns/list": [{ threadId, limit: 5, cursor: null, sortDirection: "desc", itemsView: "notLoaded" }, { data: [{ id: turnId }], nextCursor: null }],
         "thread/items/list": [{ threadId, turnId, limit: 98, cursor: null, sortDirection: "desc" }, { data: [{ turnId, item: { id: "item-fixture" } }], nextCursor: null }],

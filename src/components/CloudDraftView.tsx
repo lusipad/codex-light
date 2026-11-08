@@ -39,8 +39,9 @@ const repositoryApplyMessages: Record<RepositoryApplyStatus, string> = {
   superseded: "服务端草稿已变更，此前的仓库应用记录已结束。",
 };
 
-export function CloudDraftView({ session, persisted, onBack, onNewPublishedChat }: {
+export function CloudDraftView({ session, persisted, title, onBack, onNewPublishedChat }: {
   session: CloudDraftSession; persisted: boolean; onBack: () => void;
+  title?: string;
   onNewPublishedChat?: (target: PublishedCloudTarget) => void;
 }) {
   const [scope, setScope] = useState<AbortSignal | null>(null);
@@ -379,8 +380,8 @@ export function CloudDraftView({ session, persisted, onBack, onNewPublishedChat 
   return <div className="cloud-draft-view" data-chat-host="durable">
     <section className="cloud-draft-chat" aria-label="云端会话">
       <header className="cloud-draft-heading">
-        <button type="button" className="back-to-app-pill" disabled={editing} onClick={onBack}>← 返回环境</button>
-        <h1>{session.binding.conversation ? "云端聊天" : session.setup ? "设置" : "编辑"} {session.binding.name}</h1>
+        <button type="button" className="back-to-app-pill" disabled={editing} onClick={onBack}>{title ? "← 返回" : "← 返回环境"}</button>
+        <h1>{title ?? `${session.binding.conversation ? "云端聊天" : session.setup ? "设置" : "编辑"} ${session.binding.name}`}</h1>
         <button type="button" className="back-to-app-pill" ref={panelButton} disabled={editing} aria-expanded={panelOpen} aria-controls="cloud-draft-environment" onClick={() => setPanelOpen(value => !value)}>环境</button>
       </header>
       <div className="timeline-scroll-pane cloud-draft-timeline">

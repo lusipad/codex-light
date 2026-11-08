@@ -39,12 +39,17 @@ import { SidebarThreadHoverCard } from "./SidebarThreadHoverCard";
 import { applySidebarOrder, mergeSidebarOrder, moveVisibleSidebarThread, prependSidebarThread, sidebarDropTarget } from "../sidebarOrder";
 import { buildSidebarProjectGroups, sidebarThreadProjects } from "../sidebarProjects";
 
+import type { CloudRecentChat } from "../cloudRecentChats";
+
 export interface CodexSidebarProps {
   collapsed: boolean;
   activeRoute: MainViewRoute;
   workspaces: WorkspaceRootItem[];
   activeWorkspace: WorkspaceRootItem | null;
   threads: ThreadSummary[];
+  cloudRecentChats?: CloudRecentChat[];
+  activeCloudThreadId?: string;
+  onSelectCloudChat?: (chat: CloudRecentChat) => void;
   pinnedThreadIds: string[];
   workspaceHints: Record<string, string>;
   projectMembership?: SidebarProjectMembership;
@@ -121,6 +126,9 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
   workspaces,
   activeWorkspace,
   threads,
+  cloudRecentChats,
+  activeCloudThreadId,
+  onSelectCloudChat,
   pinnedThreadIds,
   workspaceHints,
   projectMembership = EMPTY_PROJECT_MEMBERSHIP,
@@ -589,6 +597,13 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
   const orderedMainThreads = !activityOnly && chatSortMode === "manual"
     ? applySidebarOrder(mainChatThreads, manualOrders.recent, true)
     : mainChatThreads;
+  const recentRows = [
+    ...orderedMainThreads.map(thread => ({ thread, time: thread.recencyAt ?? thread.updatedAt ?? thread.createdAt ?? 0 })),
+    ...(activityOnly ? [] : (cloudRecentChats ?? [])
+      .filter(chat => chat.title.toLowerCase().includes(searchQuery.trim().toLowerCase()))
+      .map(chat => ({ chat, time: chat.recency }))),
+  ];
+  if (!activityOnly && chatSortMode !== "manual" && cloudRecentChats?.length) recentRows.sort((a, b) => b.time - a.time);
   const recentOrderContext: ThreadOrderContext = {
     key: "recent",
     allIds: orderedMainThreads.map((thread) => thread.id),
@@ -1809,14 +1824,21 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
         </div>
 
         <div className="sidebar-section-list">
-          {mainChatThreads.length === 0 ? (
+          {recentRows.length === 0 ? (
             <div className="sidebar-project-empty" style={{ paddingLeft: 12 }}>
               {activityOnly
                 ? "暂无需要关注的事项"
                 : "暂无聊天"}
             </div>
           ) : (
-            orderedMainThreads.map((t) => renderThreadRow(t, false, activityOnly ? undefined : recentOrderContext))
+            recentRows.map(row => "chat" in row ? (
+              <button key={`durable:${row.chat.session.threadId}`} type="button" data-chat-host="durable"
+                className={`sidebar-thread-row${activeCloudThreadId === row.chat.session.threadId ? " active" : ""}`}
+                aria-current={activeCloudThreadId === row.chat.session.threadId ? "page" : undefined}
+                onClick={() => onSelectCloudChat?.(row.chat)}>
+                <span className="sidebar-thread-title">{row.chat.title}</span>
+              </button>
+            ) : renderThreadRow(row.thread, false, activityOnly ? undefined : recentOrderContext))
           )}
           {activityOnly && activityThreads.length > activityVisibleCount && onLoadMoreActivity && (
             <button type="button" className="sidebar-project-show-more" onClick={onLoadMoreActivity}>
