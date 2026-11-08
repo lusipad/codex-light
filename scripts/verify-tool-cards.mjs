@@ -78,11 +78,11 @@ assert.ok(fileChangeMapBody, "App.tsx must contain the production file-change re
   diffPanel = component("src/components/TurnDiffPanel.tsx");
   const { FileChangeCard } = component("src/components/FileChangeCard.tsx");
   const context = { React: react, FileChangeCard, turn: { status: "completed" }, activeThreadObj: { cwd: "C:/project" },
-    openPreviewFile: path => opened.push(path) };
+    openPreviewFile: (path, line) => opened.push([path, line]) };
   const renderFc = vm.runInNewContext(compile(`(${fileChangeMapBody})`), context);
   const sample = { id: "fc", status: "completed", changes: [
     { path: "src/new.ts", kind: { type: "add" }, diff: "+++ raw content\r\nsecond\r\n" },
-    { path: "old.ts", kind: { type: "update", move_path: "src/renamed.ts" }, diff: "--- a/old.ts\n+++ b/src/renamed.ts\n@@ -1 +1 @@\n--- previous\n+++ changed\n" },
+    { path: "old.ts", kind: { type: "update", move_path: "src/renamed.ts" }, diff: "--- a/old.ts\n+++ b/src/renamed.ts\n@@ -3 +2,0 @@\n--- removed first\n@@ -5 +4 @@\n--- previous\n+++ changed\n" },
     { path: "removed.ts", kind: { type: "delete" }, diff: "line removed\n" },
   ] };
   const visitNodes = node => !node || typeof node !== "object" ? [] : [node, ...(node.children ?? []).flatMap(visitNodes)];
@@ -91,7 +91,7 @@ assert.ok(fileChangeMapBody, "App.tsx must contain the production file-change re
   const rows = render();
   assert.equal(findClass(rows, "file-change-card").length, 3);
   assert.deepEqual(findClass(rows, "diff-plus").map(node => node.children.join("")), ["+2", "+1"]);
-  assert.deepEqual(findClass(rows, "diff-minus").map(node => node.children.join("")), ["−1", "−1"]);
+  assert.deepEqual(findClass(rows, "diff-minus").map(node => node.children.join("")), ["−2", "−1"]);
   findClass(rows, "file-change-toggle")[1].props.onClick();
   assert.deepEqual(findClass(render(), "file-change-toggle").map(node => node.props["aria-expanded"]), [false, true, false]);
   assert.equal(opened.length, 0, "expanding a patch must not open a file");
@@ -102,7 +102,7 @@ assert.ok(fileChangeMapBody, "App.tsx must contain the production file-change re
   await findClass(render(), "file-change-copy")[0].props.onClick();
   assert.match(JSON.stringify(render()), /无法复制差异/);
   findClass(render(), "file-change-name")[1].props.onClick();
-  assert.deepEqual(opened, ["C:/project/src/renamed.ts"]);
+  assert.deepEqual(opened, [["C:/project/src/renamed.ts", 4]]);
   findClass(render(), "file-change-toggle")[0].props.onClick();
   await findClass(render(), "file-change-copy")[0].props.onClick();
   assert.equal(copied.at(-1), "diff --git a/src/new.ts b/src/new.ts\nnew file mode 100644\n--- /dev/null\n+++ b/src/new.ts\n@@ -0,0 +1,2 @@\n++++ raw content\n+second\n");

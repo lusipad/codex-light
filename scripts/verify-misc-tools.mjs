@@ -48,6 +48,7 @@ assert.ok(systemEventsMapBody, "App.tsx must contain the production system-event
     GeneratedImageCard: imageExports.GeneratedImageCard,
     turn: { status: "running" },
     setSelectedPreviewFile: () => {},
+    setPreviewLine: () => {},
     setShowRightDrawer: () => {},
   });
   const renderImg = vm.runInContext(compile(`(${imageViewsMapBody})`), fakeContext);

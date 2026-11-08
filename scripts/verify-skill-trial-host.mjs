@@ -73,6 +73,7 @@ for (const accepted of [true, false]) {
     },
     setSelectedReviewFinding: value => { assert.equal(value, null); events.push("clear review"); },
     setSelectedPreviewFile: value => { assert.equal(value, null); events.push("clear external request"); },
+    setPreviewLine: value => assert.equal(value, undefined),
     setShowRightDrawer: value => { assert.equal(value, true); events.push("open"); },
   };
   const open = vm.runInNewContext(ts.transpileModule(`(${openCallback})`, {

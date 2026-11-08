@@ -617,6 +617,7 @@ export const App: React.FC = () => {
   const [reviewRuns, setReviewRuns] = useState<ReviewRun[]>([]);
   const [selectedReviewFinding, setSelectedReviewFinding] = useState<ModelReviewComment | null>(null);
   const [previewRequestId, setPreviewRequestId] = useState(0);
+  const [previewLine, setPreviewLine] = useState<number>();
   const [directoryReveal, setDirectoryReveal] = useState<{ cwd: string; root?: string; path: string } | null>(null);
   const skillFilePreviewHandlerRef = useRef<((path: string) => Promise<boolean>) | null>(null);
   const registerSkillFilePreviewHandler = useCallback((handler: ((path: string) => Promise<boolean>) | null) => {
@@ -626,13 +627,15 @@ export const App: React.FC = () => {
     flushSync(() => {
       setSelectedReviewFinding(null);
       setSelectedPreviewFile(null);
+      setPreviewLine(undefined);
       setShowRightDrawer(true);
     });
     return await skillFilePreviewHandlerRef.current?.(path) ?? false;
   }, []);
-  const openPreviewFile = useCallback((filePath: string) => {
+  const openPreviewFile = useCallback((filePath: string, line?: number) => {
     setSelectedReviewFinding(null);
     setSelectedPreviewFile(filePath);
+    setPreviewLine(line);
     setPreviewRequestId(current => current + 1);
     setShowRightDrawer(true);
   }, []);
@@ -5830,6 +5833,7 @@ export const App: React.FC = () => {
                 onOpenReviewFinding={(finding) => {
                   setSelectedReviewFinding(finding);
                   setSelectedPreviewFile(finding.absolutePath);
+                  setPreviewLine(undefined);
                   setInitialWorkbenchTab("files");
                   setShowRightDrawer(true);
                 }}
@@ -6885,6 +6889,7 @@ export const App: React.FC = () => {
         onClose={() => setShowRightDrawer(false)}
         selectedPreviewFile={selectedPreviewFile}
         previewRequestId={previewRequestId}
+        previewLine={previewLine}
         directoryReveal={directoryReveal}
         onFilePreviewHandlerChange={registerSkillFilePreviewHandler}
         onFileAccess={rememberWorkspaceFile}

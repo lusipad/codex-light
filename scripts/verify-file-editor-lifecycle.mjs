@@ -5,13 +5,16 @@ import ts from "typescript";
 const source = fs.readFileSync("src/components/DiffDrawer.tsx", "utf8");
 const ast = ts.createSourceFile("DiffDrawer.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const callbacks = {};
-let change, close, discardEffect, externalOpenEffect;
+let change, close, discardEffect, externalOpenEffect, focusEffect, selectionRange;
 function visit(node) {
+  if (ts.isFunctionDeclaration(node) && node.name?.text === "reviewSelectionRange") selectionRange = node;
   if (ts.isVariableDeclaration(node) && ["openFilePreview", "saveEditedFile", "closeFilePreview"].includes(node.name.getText(ast))) callbacks[node.name.getText(ast)] = node.initializer;
   if (ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect"
     && node.arguments[0]?.getText(ast).includes("discardResolverRef.current?.(false)")) discardEffect = node.arguments[0];
   if (ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect"
     && node.arguments[0]?.getText(ast).includes("lastExternalPreviewRequestRef.current")) externalOpenEffect = node.arguments[0];
+  if (ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect"
+    && node.arguments[0]?.getText(ast).includes("const { context, request, path, line } = previewFocusRequest")) focusEffect = node.arguments[0];
   if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
     const attrs = node.attributes.properties;
     const attr = name => attrs.find(item => ts.isJsxAttribute(item) && item.name.getText(ast) === name)?.initializer;
@@ -25,7 +28,9 @@ const deferred = () => { let resolve, reject; const promise = new Promise((a, b)
 const settle = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
 const preview = path => ({ path, content: `${path} original`, isBinary: false, isImage: false });
 function mount() {
-  const reads = [], writes = [], events = [];
+  const reads = [], writes = [], events = [], frames = [];
+  const editor = { value: "first\nsecond\nthird\nfourth\n", scrollTop: 0, focus: () => events.push(["focus"]),
+    setSelectionRange: (start, end) => events.push(["selection", start, end]) };
   const context = {
     filePreview: preview("A"), editedContent: "A draft", currentDir: "root",
     previewRequestRef: { current: 0 }, editRevisionRef: { current: 0 },
@@ -35,7 +40,10 @@ function mount() {
     isDirtyRef: { current: false }, filePreviewRef: { current: preview("A") },
     gitContextRef: { current: { cwd: "root" } },
     open: true, cwd: "root", connectionIdentity: "local", selectedPreviewFile: "B", previewRequestId: 1,
-    selectedReviewFinding: null, lastExternalPreviewRequestRef: { current: null }, activeTab: "changes",
+    selectedReviewFinding: null, lastExternalPreviewRequestRef: { current: null }, activeTab: "changes", activeKind: "files",
+    previewLine: undefined, previewFocusRequest: null, fileEditorRef: { current: editor },
+    setPreviewFocusRequest: value => { context.previewFocusRequest = value; },
+    window: { requestAnimationFrame: callback => frames.push(callback), cancelAnimationFrame() {}, getComputedStyle: () => ({ lineHeight: "18px" }) },
     setActiveTab: value => { context.activeTab = value; events.push(["tab", value]); },
     readTextPreviewViaProtocol(path) { const pending = deferred(); reads.push({ path, ...pending }); return pending.promise; },
     saveFileEditorSnapshot(path, baseContent, content) {
@@ -60,9 +68,11 @@ function mount() {
   context.saveEditedFile = run(callbacks.saveEditedFile);
   context.openFilePreview = run(callbacks.openFilePreview);
   context.closeFilePreview = run(callbacks.closeFilePreview);
+  context.reviewSelectionRange = run(selectionRange);
   assert.match(close.getText(ast), /closeFilePreview/);
   return {
-    context, reads, writes, events, open: context.openFilePreview, externalOpen: run(externalOpenEffect),
+    context, reads, writes, events, editor, frames, open: context.openFilePreview, externalOpen: run(externalOpenEffect),
+    focusPreview: run(focusEffect),
     save: context.saveEditedFile, edit: run(change), close: context.closeFilePreview,
     discardCleanup: run(discardEffect)(),
     decide(discard) {
@@ -107,6 +117,29 @@ function mount() {
   assert.equal(view.context.filePreview.path, "C", "FO05: late external request cannot replace the newer file");
 }
 console.log("PASS FO01–FO05 production external open: Changes reveal, visible failure, same-path retry, dirty protection and latest request identity");
+{
+  const view = mount();
+  view.context.previewLine = 4;
+  view.externalOpen();
+  view.reads[0].resolve(preview("B")); await settle();
+  view.focusPreview(); view.frames.shift()();
+  assert.deepEqual(view.events.at(-1), ["selection", 19, 19], "FO06: place the caret at the requested line after reading");
+  assert.equal(view.editor.scrollTop, 36);
+  assert.equal(view.context.previewFocusRequest, null, "navigation is consumed after one placement");
+
+  view.context.selectedPreviewFile = "C"; view.context.previewRequestId++; view.externalOpen();
+  view.context.selectedPreviewFile = "B"; view.context.previewLine = 2; view.context.previewRequestId++; view.externalOpen();
+  view.reads[1].resolve(preview("C")); await settle();
+  view.focusPreview(); view.frames.shift()();
+  assert.equal(view.context.filePreview.path, "B", "FO07: a same-file jump invalidates an older pending open");
+  assert.equal(view.reads.length, 2, "same-file jump does not reread the file");
+  assert.deepEqual(view.events.at(-1), ["selection", 6, 6]);
+
+  view.context.previewLine = 99; view.context.previewRequestId++; view.externalOpen();
+  view.focusPreview(); view.frames.shift()();
+  assert.equal(view.events.filter(([type]) => type === "selection").length, 2, "FO08: an out-of-range line does not move the caret");
+}
+console.log("PASS FO06–FO08 patch line navigation: caret and scroll, same-path jump supersedes a pending read, out-of-range protection");
 {
   const view = mount(), a = view.open("A"), b = view.open("B");
   view.reads[1].resolve(preview("B")); await b;

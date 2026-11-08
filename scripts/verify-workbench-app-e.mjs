@@ -48,14 +48,16 @@ assert.deepEqual(run({ activeWorkspace: null }), []);
 assert.deepEqual(run({ activeThreadId: null, activeThreadObj: null }), ['D:/mine']);
 assert.equal(passedRequest.initializer.expression.getText(ast), 'previewRequestId');
 let request = 0;
-const opened = [];
+const opened = [], lines = [];
 const open = vm.runInNewContext(ts.transpileModule(`(${openFile.getText(ast)})`, { compilerOptions: options }).outputText, {
   setSelectedReviewFinding: value => assert.equal(value, null),
   setSelectedPreviewFile: file => opened.push(file),
+  setPreviewLine: line => lines.push(line),
   setPreviewRequestId: update => { request = update(request); },
   setShowRightDrawer: value => assert.equal(value, true),
 });
-open('D:/mine/same.ts'); open('D:/mine/same.ts');
+open('D:/mine/same.ts', 32); open('D:/mine/same.ts');
 assert.equal(request, 2, 'same path click creates a fresh retry request');
 assert.equal(opened.length, 2);
+assert.deepEqual(lines, [32, undefined], 'ordinary open clears any earlier line request');
 console.log('PASS actual App workspace roots follow the active thread project, exclude global/unrelated roots and preserve cwd');

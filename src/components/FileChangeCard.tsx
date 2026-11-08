@@ -15,8 +15,21 @@ const LABELS = {
 
 type Change = { path: string; kind?: { type?: string; move_path?: string } | string; diff?: string };
 
+function patchOpenLine(lines: ReturnType<typeof parseUnifiedDiff>): number {
+  let oldStart = 1, newStart = 1, firstDeletion: number | undefined;
+  for (const line of lines) {
+    if (line.type === "hunk") {
+      const header = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line.text);
+      oldStart = Number(header?.[1]) || 1;
+      newStart = Number(header?.[2]) || 1;
+    } else if (line.type === "add") return newStart;
+    else if (line.type === "del") firstDeletion ??= oldStart;
+  }
+  return firstDeletion ?? 1;
+}
+
 function PatchFile({ change, status, turnStatus, cwd, onOpenFile }: {
-  change: Change; status?: string; turnStatus?: string; cwd?: string; onOpenFile: (path: string) => void;
+  change: Change; status?: string; turnStatus?: string; cwd?: string; onOpenFile: (path: string, line?: number) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [copyStatus, setCopyStatus] = useState("");
@@ -27,7 +40,7 @@ function PatchFile({ change, status, turnStatus, cwd, onOpenFile }: {
     : stopped ? labels[2] : status === "inProgress" ? labels[0] : status === "completed" ? labels[1] : "文件变更";
   const diff = typeof change.diff === "string" ? change.diff : "";
   const tooLarge = diff.length > MAX_PREVIEW_CHARS;
-  const lines = useMemo(() => {
+  const lines = useMemo<ReturnType<typeof parseUnifiedDiff>>(() => {
     if (tooLarge || !diff) return [];
     if (kind !== "add" && kind !== "delete") return parseUnifiedDiff(diff);
     const sign = kind === "add" ? "+" : "-";
@@ -42,7 +55,7 @@ function PatchFile({ change, status, turnStatus, cwd, onOpenFile }: {
   const absolute = /^(?:[a-z]:[\\/]|\/|\\\\)/i.test(path) ? path : cwd ? joinFsPath(cwd, path) : null;
   const previewable = !tooLarge && lines.length > 0 && lines.length <= MAX_PREVIEW_ROWS;
   const showFileHeader = expanded && previewable;
-  const fileName = absolute ? <button type="button" className="file-change-name" title={path} onClick={() => onOpenFile(absolute)}>{name}</button>
+  const fileName = absolute ? <button type="button" className="file-change-name" title={path} onClick={() => onOpenFile(absolute, tooLarge ? undefined : patchOpenLine(lines))}>{name}</button>
     : <span className="file-change-name" title={path}>{name}</span>;
   const stats = (additions > 0 || deletions > 0) && <span className="diff-stats-badge">
     {additions > 0 && <span className="diff-plus">+{additions}</span>}{" "}
@@ -89,7 +102,7 @@ function PatchFile({ change, status, turnStatus, cwd, onOpenFile }: {
 }
 
 export function FileChangeCard({ item, cwd, turnStatus, onOpenFile }: {
-  item: TurnItem; cwd?: string; turnStatus?: string; onOpenFile: (path: string) => void;
+  item: TurnItem; cwd?: string; turnStatus?: string; onOpenFile: (path: string, line?: number) => void;
 }) {
   const changes: Change[] = Array.isArray(item.changes) && item.changes.length ? item.changes
     : typeof item.path === "string" ? [{ path: item.path, kind: item.kind, diff: item.diff }] : [];

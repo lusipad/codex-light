@@ -182,6 +182,7 @@ export interface DiffDrawerProps {
   onClose: () => void;
   selectedPreviewFile?: string | null;
   previewRequestId?: number;
+  previewLine?: number;
   directoryReveal?: { cwd: string; root?: string; path: string } | null;
   onSelectPreviewFile?: (file: string | null) => void;
   onFilePreviewHandlerChange?: (handler: ((path: string) => Promise<boolean>) | null) => void;
@@ -530,6 +531,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   onClose,
   selectedPreviewFile,
   previewRequestId,
+  previewLine,
   directoryReveal,
   onSelectPreviewFile,
   onFilePreviewHandlerChange,
@@ -807,7 +809,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   const fileEditorRef = useRef<HTMLTextAreaElement | null>(null);
   const filePreviewPaneRef = useRef<HTMLDivElement | null>(null);
   const [previewFocusRequest, setPreviewFocusRequest] = useState<{
-    context: typeof gitContextRef.current; request: number; path: string;
+    context: typeof gitContextRef.current; request: number; path: string; line?: number;
   } | null>(null);
   const [editedContent, setEditedContent] = useState<string>("");
   const [inFileSearch, setInFileSearch] = useState("");
@@ -1363,7 +1365,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
    */
   const openFilePreview = async (
     path: string,
-    options?: { silent?: boolean; reveal?: boolean }
+    options?: { silent?: boolean; reveal?: boolean; line?: number }
   ): Promise<boolean> => {
     if (isDirtyRef.current) {
       if (!options?.silent) showToast("请先保存当前文件的修改，再打开其他文件。");
@@ -1388,8 +1390,8 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
       if (options?.reveal) {
         setActiveTab("files");
         setSelectedTreePath(preview.path);
-        setPreviewFocusRequest({ context, request, path: preview.path });
       }
+      if (options?.reveal || options?.line !== undefined) setPreviewFocusRequest({ context, request, path: preview.path, line: options.line });
       return true;
     };
     try {
@@ -1425,12 +1427,21 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
 
   useEffect(() => {
     if (!previewFocusRequest || !open || activeKind !== "files") return;
-    const { context, request, path } = previewFocusRequest;
+    const { context, request, path, line } = previewFocusRequest;
     const frame = window.requestAnimationFrame(() => {
       const preview = filePreviewRef.current;
       if (!editorOpenRef.current || context !== gitContextRef.current
         || request !== previewRequestRef.current || preview?.path !== path) return;
-      (preview.isBinary || preview.isImage ? filePreviewPaneRef.current : fileEditorRef.current)?.focus();
+      const editor = fileEditorRef.current;
+      (preview.isBinary || preview.isImage ? filePreviewPaneRef.current : editor)?.focus();
+      if (line === undefined) return;
+      setPreviewFocusRequest(null);
+      if (!editor || preview.isBinary || preview.isImage) return;
+      const range = reviewSelectionRange(editor.value, line, line);
+      if (!range) return;
+      editor.setSelectionRange(range[0], range[0]);
+      const lineHeight = parseFloat(window.getComputedStyle(editor).lineHeight);
+      if (Number.isFinite(lineHeight)) editor.scrollTop = Math.max(0, (line - 2) * lineHeight);
     });
     return () => window.cancelAnimationFrame(frame);
   }, [previewFocusRequest, open, activeKind, cwd, connectionIdentity]);
@@ -1579,9 +1590,13 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     if (lastExternalPreviewRequestRef.current === requestKey) return;
     lastExternalPreviewRequestRef.current = requestKey;
     setActiveTab("files");
-    if (filePreviewRef.current?.path === selectedPreviewFile) return;
-    void openFilePreview(selectedPreviewFile);
-  }, [open, cwd, connectionIdentity, selectedPreviewFile, previewRequestId, selectedReviewFinding]);
+    if (filePreviewRef.current?.path === selectedPreviewFile) {
+      const request = ++previewRequestRef.current;
+      if (previewLine !== undefined) setPreviewFocusRequest({ context: gitContextRef.current, request, path: selectedPreviewFile, line: previewLine });
+      return;
+    }
+    void openFilePreview(selectedPreviewFile, { line: previewLine });
+  }, [open, cwd, connectionIdentity, selectedPreviewFile, previewRequestId, previewLine, selectedReviewFinding]);
 
   useEffect(() => {
     if (!open || !directoryReveal || directoryReveal.cwd !== cwd || lastDirectoryRevealRef.current === directoryReveal) return;
