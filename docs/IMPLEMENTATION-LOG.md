@@ -1,5 +1,9 @@
 # 实施日志（按轮次）
 
+## 2026-11-09 — 06F 重命名的取消暂存
+
+- 取消暂存前核对当前索引中的重命名对，用一次 Git 索引操作处理旧路径和目标路径。原生界面与真实 Git 读回确认工作区编辑保留、无关暂存项隔离。717 项 Rust、115 项前端及 Windows 打包通过。[验收记录](antigravity/acceptance/06F-git-rename-unstage.md)
+
 ## 2026-11-09 — 06E 重命名文件的成对差异
 
 - 按官方保留旧路径与目标路径，单文件差异按字面一起读取。Windows 隔离 Git 验证暂存纯重命名和工作区后续编辑。716 项 Rust、115 项前端和 Windows 打包通过。[验收记录](antigravity/acceptance/06E-git-rename-diff.md)

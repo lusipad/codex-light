@@ -1547,8 +1547,8 @@ fn git_stage(cwd: String, file_path: Option<String>) -> Result<GitStatusInfo, St
 }
 
 #[tauri::command]
-fn git_unstage(cwd: String, file_path: Option<String>) -> Result<GitStatusInfo, String> {
-    git::git_unstage_file(&cwd, file_path)?;
+fn git_unstage(cwd: String, file_path: Option<String>, previous_file_path: Option<String>) -> Result<GitStatusInfo, String> {
+    git::git_unstage_file(&cwd, file_path, previous_file_path)?;
     Ok(git::git_status_for_path(&cwd))
 }
 

@@ -1171,7 +1171,8 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     gitWritePendingRef.current = true;
     setIndexWriting(true);
     try {
-      await invoke("git_unstage", { cwd: context.cwd, filePath: filePath ?? null });
+      const renamed = gitStatus?.entries.find(entry => entry.path === filePath && entry.staged && entry.status.startsWith("R"));
+      await invoke("git_unstage", { cwd: context.cwd, filePath: filePath ?? null, previousFilePath: renamed?.previousPath ?? null });
       if (context === gitContextRef.current) onRefreshGit();
     } catch (e) {
       if (context === gitContextRef.current) showToast(`取消暂存失败: ${String(e)}`);

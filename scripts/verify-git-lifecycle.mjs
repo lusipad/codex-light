@@ -121,6 +121,22 @@ async function flush() { for (let i = 0; i < 8; ++i) await Promise.resolve(); }
   assert.deepEqual(calls, ["commit"]);
 }
 console.log("PASS GL01–GL06 actual diff effects and Git callbacks: stale responses, shared write lock, draft retention, repo-switch cancellation, push retry and IME");
+{
+  const view = mount();
+  view.context.gitStatus.entries = [
+    { path: "new [1].ts", previousPath: "old [1].ts", status: "RM", staged: true },
+    { path: "copy.ts", previousPath: "source.ts", status: "C", staged: true },
+  ];
+  for (const [path, previous] of [["new [1].ts", "old [1].ts"], ["copy.ts", null], [undefined, null]]) {
+    const pending = view.unstage(path);
+    const request = view.requests.at(-1);
+    assert.equal(request.method, "git_unstage");
+    assert.equal(request.params.filePath, path ?? null);
+    assert.equal(request.params.previousFilePath, previous);
+    request.resolve();
+    await pending;
+  }
+}
 for (const action of ["stage", "unstage"]) {
   const view = mount(), pending = view[action]("a.ts");
   const ignored = [view.stage("b.ts"), view.unstage(), view.commit(), view.both(), view.push()];

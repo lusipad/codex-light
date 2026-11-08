@@ -546,12 +546,33 @@ pub fn message_generation_context(target_path: &str, mode: &str, include_unstage
     Ok(result)
 }
 
-pub fn git_unstage_file(target_path: &str, file_path: Option<String>) -> Result<(), String> {
+pub fn git_unstage_file(
+    target_path: &str,
+    file_path: Option<String>,
+    previous_file_path: Option<String>,
+) -> Result<(), String> {
     let git_root = find_git_root(target_path).ok_or("Not a git repository")?;
     match file_path.filter(|s| !s.is_empty()) {
         Some(fp) => {
-            run_git(&git_root, &["--literal-pathspecs", "reset", "--", &fp])?;
+            let mut args = vec!["--literal-pathspecs", "reset", "--", fp.as_str()];
+            if let Some(previous) = previous_file_path.as_deref() {
+                let pair = run_git(&git_root, &[
+                    "--literal-pathspecs", "diff", "--cached", "--name-status", "-z",
+                    "--find-renames", "--", previous, &fp,
+                ])?;
+                let mut fields = pair.split_terminator('\0');
+                if !fields.next().is_some_and(|status| status.starts_with('R'))
+                    || fields.next() != Some(previous)
+                    || fields.next() != Some(fp.as_str())
+                    || fields.next().is_some()
+                {
+                    return Err("暂存区的重命名已变化，请刷新后重试。".into());
+                }
+                args.push(previous);
+            }
+            run_git(&git_root, &args)?;
         }
+        None if previous_file_path.is_some() => return Err("取消暂存重命名需要目标路径。".into()),
         None => {
             run_git(&git_root, &["reset", "--"])?;
         }
@@ -642,7 +663,7 @@ mod index_action_tests {
         assert!(!diff.contains("neighbor after"));
         git_stage_file(&fixture.cwd, Some(target.into())).unwrap();
         assert_eq!(fixture.git(&["diff", "--cached", "--name-only", "-z"]), format!("{target}\0"));
-        git_unstage_file(&fixture.cwd, Some(target.into())).unwrap();
+        git_unstage_file(&fixture.cwd, Some(target.into()), None).unwrap();
         assert!(fixture.index_empty());
         git_discard_file(&fixture.cwd, target).unwrap();
         assert_eq!(fixture.read(target), b"target before\n");
@@ -681,6 +702,32 @@ mod index_action_tests {
         assert!(working.contains("+x\n"));
         assert!(!working.contains("+original"));
         assert!(!working.contains("unrelated content"));
+    }
+
+    #[test]
+    fn unstage_selected_rename_releases_both_paths_and_preserves_edits() {
+        let fixture = Fixture::new(true);
+        let destination = "改名 [1].txt";
+        fixture.git(&["config", "status.renames", "true"]);
+        fixture.git(&["mv", "tracked.txt", destination]);
+        fixture.write(destination, b"original\nworking edit\n");
+        fixture.write("unrelated.txt", b"keep staged\n");
+        git_stage_file(&fixture.cwd, Some("unrelated.txt".into())).unwrap();
+        let entry = git_status_for_path(&fixture.cwd).entries.into_iter().find(|entry| entry.path == destination).unwrap();
+        let before = fixture.git(&["diff", "--cached", "--name-status", "-z"]);
+        assert!(git_unstage_file(&fixture.cwd, Some(destination.into()), Some("unrelated.txt".into())).is_err());
+        assert_eq!(fixture.git(&["diff", "--cached", "--name-status", "-z"]), before);
+        let lock = fixture.root.join(".git/index.lock");
+        fs::write(&lock, b"fixture lock").unwrap();
+        let failed = git_unstage_file(&fixture.cwd, Some(entry.path.clone()), entry.previous_path.clone());
+        fs::remove_file(lock).unwrap();
+        assert!(failed.is_err());
+        assert_eq!(fixture.git(&["diff", "--cached", "--name-status", "-z"]), before);
+        git_unstage_file(&fixture.cwd, Some(entry.path), entry.previous_path).unwrap();
+        assert_eq!(fixture.git(&["diff", "--cached", "--name-only", "-z"]), "unrelated.txt\0");
+        assert_eq!(fixture.git(&["show", ":tracked.txt"]), "original\n");
+        assert!(!fixture.root.join("tracked.txt").exists());
+        assert_eq!(fixture.read(destination), b"original\nworking edit\n");
     }
 
     #[test]
@@ -731,7 +778,7 @@ mod index_action_tests {
         assert_eq!(fixture.git(&["show", ":tracked.txt"]), "staged content\n");
         fixture.write("tracked.txt", b"latest content\r\n\0end");
         assert!(fixture.git(&["diff", "--name-only"]).contains("tracked.txt"));
-        git_unstage_file(&fixture.cwd, Some("tracked.txt".into())).unwrap();
+        git_unstage_file(&fixture.cwd, Some("tracked.txt".into()), None).unwrap();
         assert!(fixture.index_empty());
         assert_eq!(fixture.git(&["show", ":tracked.txt"]), "original\n");
         assert_eq!(fixture.read("tracked.txt"), b"latest content\r\n\0end");
@@ -743,7 +790,7 @@ mod index_action_tests {
         fixture.write("new file.txt", b"new file\n");
         git_stage_file(&fixture.cwd, Some("new file.txt".into())).unwrap();
         assert!(fixture.git(&["diff", "--cached", "--name-only"]).contains("new file.txt"));
-        git_unstage_file(&fixture.cwd, Some("new file.txt".into())).unwrap();
+        git_unstage_file(&fixture.cwd, Some("new file.txt".into()), None).unwrap();
         assert!(fixture.index_empty());
         assert!(fixture.git(&["ls-files", "--others", "--exclude-standard"]).contains("new file.txt"));
         assert_eq!(fixture.read("new file.txt"), b"new file\n");
@@ -757,7 +804,7 @@ mod index_action_tests {
         git_stage_file(&fixture.cwd, None).unwrap();
         let cached = fixture.git(&["diff", "--cached", "--name-status"]);
         assert!(cached.contains("A\tnew.txt") && cached.contains("D\ttracked.txt"));
-        git_unstage_file(&fixture.cwd, None).unwrap();
+        git_unstage_file(&fixture.cwd, None, None).unwrap();
         assert!(fixture.index_empty());
         assert!(!fixture.root.join("tracked.txt").exists());
         assert_eq!(fixture.read("new.txt"), b"new\n");
@@ -771,10 +818,10 @@ mod index_action_tests {
         git_stage_file(&fixture.cwd, None).unwrap();
         fixture.git(&["reset", "--", "first.txt"]);
         assert!(!fixture.git(&["ls-files"]).contains("first.txt"));
-        git_unstage_file(&fixture.cwd, Some("second.txt".into())).unwrap();
+        git_unstage_file(&fixture.cwd, Some("second.txt".into()), None).unwrap();
         assert!(fixture.git(&["ls-files"]).trim().is_empty());
         git_stage_file(&fixture.cwd, None).unwrap();
-        git_unstage_file(&fixture.cwd, None).unwrap();
+        git_unstage_file(&fixture.cwd, None, None).unwrap();
         assert!(fixture.git(&["ls-files"]).trim().is_empty());
         assert_eq!(fixture.read("first.txt"), b"first\n");
         assert_eq!(fixture.read("second.txt"), b"second\n");
@@ -789,7 +836,7 @@ mod index_action_tests {
         let lock = fixture.root.join(".git/index.lock");
         fs::write(&lock, b"test lock").unwrap();
         for file in [Some("tracked.txt".to_string()), None] {
-            let error = git_unstage_file(&fixture.cwd, file.clone()).unwrap_err();
+            let error = git_unstage_file(&fixture.cwd, file.clone(), None).unwrap_err();
             assert!(error.contains("index.lock"), "{error}");
             let error = git_stage_file(&fixture.cwd, file).unwrap_err();
             assert!(error.contains("index.lock"), "{error}");
@@ -797,11 +844,11 @@ mod index_action_tests {
         assert_eq!(fs::read(fixture.root.join(".git/index")).unwrap(), index_before);
         assert_eq!(fixture.read("tracked.txt"), b"changed\n");
         fs::remove_file(lock).unwrap();
-        git_unstage_file(&fixture.cwd, None).unwrap();
+        git_unstage_file(&fixture.cwd, None, None).unwrap();
         assert!(fixture.index_empty());
         git_stage_file(&fixture.cwd, Some("tracked.txt".into())).unwrap();
         assert!(!fixture.index_empty());
-        git_unstage_file(&fixture.cwd, Some("tracked.txt".into())).unwrap();
+        git_unstage_file(&fixture.cwd, Some("tracked.txt".into()), None).unwrap();
         assert!(fixture.index_empty());
     }
 }
