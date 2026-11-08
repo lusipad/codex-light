@@ -7,6 +7,7 @@ import { readImagesAccess, readImagesCatalog, readImagesHistory, readImagesAsset
   type ImagesAccess, type ImagesCatalogResult, type ImagesHistoryResult } from "../imagesClient";
 import { mergeImagesCatalog, mergeImagesHistory, imagesSections, type CloudImage, type ImagePrompt, type ImagePromptGroup } from "../imagesData";
 import { selectPromptAsset, selectHistoryAsset, selectHistoryPreview } from "../imagesAssets";
+import { saveDecodedImage } from "../imageSave";
 import { ImagesHistoryMasonry } from "./ImagesHistoryMasonry";
 import { LibraryPagination } from "./LibraryPagination";
 import "./ImagesView.css";
@@ -16,10 +17,11 @@ interface AssetProps {
   access: ImagesAccess;
   scope: AbortSignal;
   alt?: string;
+  onDecoded?: (src: string) => void;
   onUnavailable?: () => void;
 }
 /** Asset URLs are never taken from renderer metadata: only opaque host-registered refs. */
-const ImagesAsset: React.FC<AssetProps> = ({ asset, access, scope, alt = "", onUnavailable }) => {
+const ImagesAsset: React.FC<AssetProps> = ({ asset, access, scope, alt = "", onDecoded, onUnavailable }) => {
   const [src, setSrc] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const image = useRef<HTMLImageElement>(null);
@@ -37,6 +39,7 @@ const ImagesAsset: React.FC<AssetProps> = ({ asset, access, scope, alt = "", onU
   }, [asset, access, scope]);
   return src && !failed && !scope.aborted
     ? <img ref={image} className="images-asset" src={src} alt={alt} draggable={false}
+      onLoad={() => { if (!scope.aborted) onDecoded?.(src); }}
       onError={() => { if (!scope.aborted) { image.current?.removeAttribute("src"); setSrc(null); setFailed(true); unavailable.current?.(); } }} />
     : <span className="images-asset-placeholder" aria-label={failed || !asset ? "图像不可用" : "正在加载图像"}><ImageOff size={20} aria-hidden="true" /></span>;
 };
@@ -49,16 +52,24 @@ interface PreviewProps {
   scope: AbortSignal;
   hasNextPage: boolean;
   paging: boolean;
+  savingDialog: { current: boolean };
   onLoadNextPage: () => void;
   onSelect: (id: string) => void;
   onClose: () => void;
 }
-const ImagesPreview: React.FC<PreviewProps> = ({ images, selectedId, pages, access, scope, hasNextPage, paging, onLoadNextPage, onSelect, onClose }) => {
+const ImagesPreview: React.FC<PreviewProps> = ({ images, selectedId, pages, access, scope, hasNextPage, paging, savingDialog, onLoadNextPage, onSelect, onClose }) => {
   const dialog = useRef<HTMLDivElement>(null);
   const close = useRef<HTMLButtonElement>(null);
   const index = images.findIndex(image => image.id === selectedId), image = images[index];
+  const original = image ? selectHistoryPreview(image, pages) : null;
   const [retry, setRetry] = useState(0);
   const [failedId, setFailedId] = useState<string | null>(null);
+  const [decoded, setDecoded] = useState<{ key: string; retry: number; src: string } | null>(null);
+  const ready = decoded && !scope.aborted && decoded.key === original?.assetKey && decoded.retry === retry ? decoded : null;
+  const currentReady = useRef(ready); currentReady.current = ready;
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<{ source: NonNullable<typeof ready>; message: string } | null>(null);
+  useEffect(() => () => { currentReady.current = null; }, []);
   const nextImage = images[index + 1];
   const canAdvance = !!nextImage || (hasNextPage && !paging);
   const advance = () => {
@@ -83,18 +94,38 @@ const ImagesPreview: React.FC<PreviewProps> = ({ images, selectedId, pages, acce
     return () => document.removeEventListener("keydown", keydown, true);
   });
   if (!image) return null;
-  const original = selectHistoryPreview(image, pages);
+  const download = async () => {
+    if (!ready || currentReady.current !== ready || savingDialog.current || scope.aborted) return;
+    savingDialog.current = true;
+    setSaving(true); setSaveError(null);
+    try {
+      const title = image.title?.trim() || `ChatGPT 图像 ${new Intl.DateTimeFormat("zh-CN", {
+        year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit",
+      }).format(new Date())}`;
+      await saveDecodedImage(ready.src, title);
+    } catch (cause) {
+      if (currentReady.current === ready && !scope.aborted) setSaveError({ source: ready, message: serviceErrorMessage(cause) });
+    } finally {
+      savingDialog.current = false; setSaving(false);
+    }
+  };
   return createPortal(<div className="images-preview-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
     <div className="images-preview-dialog" ref={dialog} role="dialog" aria-modal="true" aria-labelledby="images-preview-title">
-      <div className="images-preview-header"><h2 id="images-preview-title">{image.title || "图像"}</h2><button ref={close} onClick={onClose} aria-label="关闭图像预览">关闭</button></div>
+      <div className="images-preview-header"><h2 id="images-preview-title">{image.title || "图像"}</h2><div className="images-preview-navigation">
+        <button type="button" aria-label="下载图像" disabled={!ready || saving} onClick={() => void download()}>下载图像</button>
+        <button ref={close} type="button" onClick={onClose} aria-label="关闭图像预览">关闭</button>
+      </div></div>
       <div className="images-preview-media">{original
-        ? <ImagesAsset key={`${image.id}:${retry}`} asset={original} access={access} scope={scope} alt={image.title || "图像"} onUnavailable={() => setFailedId(image.id)} />
+        ? <ImagesAsset key={`${original.assetKey}:${retry}`} asset={original} access={access} scope={scope} alt={image.title || "图像"}
+          onDecoded={src => setDecoded({ key: original.assetKey, retry, src })}
+          onUnavailable={() => { setFailedId(image.id); setDecoded(null); }} />
         : <p role="status">原图不可用</p>}</div>
       <div className="images-preview-footer">{failedId === image.id && <span role="status">无法加载原图</span>}<div className="images-preview-navigation">
         {original && <button onClick={() => { setFailedId(null); setRetry(value => value + 1); }}>重新加载预览</button>}
         <button disabled={index <= 0} onClick={() => onSelect(images[index - 1].id)} aria-label="上一张图像">上一张</button>
         <button disabled={!canAdvance} onClick={advance} aria-label="下一张图像">下一张</button>
       </div></div>
+      {saveError && saveError.source === ready && <p role="alert" className="images-inline-error">无法下载图像：{saveError.message}</p>}
     </div>
   </div>, document.body);
 };
@@ -120,6 +151,7 @@ export const ImagesView: React.FC = () => {
   const root = useRef<HTMLDivElement>(null), composer = useRef<HTMLDivElement>(null);
   const draftInput = useRef<HTMLTextAreaElement>(null), previewTrigger = useRef<HTMLButtonElement | null>(null);
   const restorePreviewFocus = useRef(false);
+  const savingDialog = useRef(false);
   const source = useRef<AbortController | null>(null), assetSource = useRef(new AbortController());
   const catalogAssetSource = useRef(new AbortController());
   const identity = useRef<ImagesAccess["identity"] | null>(null);
@@ -190,8 +222,15 @@ export const ImagesView: React.FC = () => {
   }, [revision, revokeAssets]);
   useEffect(() => {
     const interval = window.setInterval(refresh, 300000);
-    window.addEventListener("focus", refresh); window.addEventListener("online", refresh);
-    return () => { window.clearInterval(interval); window.removeEventListener("focus", refresh); window.removeEventListener("online", refresh); };
+    let returningFromSave = false;
+    const blur = () => { if (savingDialog.current) returningFromSave = true; };
+    const focus = () => {
+      const skip = returningFromSave || savingDialog.current;
+      returningFromSave = false;
+      if (!skip) refresh();
+    };
+    window.addEventListener("blur", blur); window.addEventListener("focus", focus); window.addEventListener("online", refresh);
+    return () => { window.clearInterval(interval); window.removeEventListener("blur", blur); window.removeEventListener("focus", focus); window.removeEventListener("online", refresh); };
   }, [refresh]);
   const scope = source.current, assetScope = assetSource.current.signal, catalogAssetScope = catalogAssetSource.current.signal;
   const groups = catalog?.catalog ? mergeImagesCatalog(catalog.catalog, catalog.styles) : [];
@@ -314,7 +353,7 @@ export const ImagesView: React.FC = () => {
       <div className="images-composer-footer"><span role="status">{notice || "本地草稿；生成、上传和编辑尚未接入。"}</span><button className="images-composer-send" disabled aria-label="生成图像尚未连接"><ArrowUp size={18} /></button></div>
     </div>}
     {preview && activePreview && access?.available && <ImagesPreview images={previewImages} selectedId={preview.id} pages={pages} access={access}
-      scope={assetScope} hasNextPage={hasNextPage} paging={paging} onLoadNextPage={() => void loadMore(preview)}
+      scope={assetScope} hasNextPage={hasNextPage} paging={paging} savingDialog={savingDialog} onLoadNextPage={() => void loadMore(preview)}
       onSelect={id => setPreview({ id })} onClose={closePreview} />}
   </div>;
 };

@@ -14,3 +14,12 @@ export async function saveGeneratedImageBytes(image: { path?: string; src?: stri
   }
   return tauriInvoke<string | null>("generated_image_save", { dataBase64 });
 }
+
+/** A decoded History preview already owns its validated bytes. */
+export async function saveDecodedImage(src: string, suggestedTitle: string): Promise<string | null> {
+  const prefix = /^data:image\/(?:png|jpeg|gif|webp|avif);base64,/u.exec(src);
+  if (!prefix || src.length === prefix[0].length || src.length - prefix[0].length > Math.ceil(8 * 1024 * 1024 / 3) * 4) {
+    throw new Error("无法读取当前图像");
+  }
+  return tauriInvoke<string | null>("generated_image_save", { dataBase64: src.slice(prefix[0].length), suggestedTitle });
+}

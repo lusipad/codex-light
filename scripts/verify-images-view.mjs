@@ -8,7 +8,7 @@ const text = tree => walk(tree).flatMap(node => (node.children ?? []).filter(chi
 const flush = async () => { for (let i = 0; i < 40; i++) await Promise.resolve(); };
 const deferred = () => { let resolve, reject; const promise = new Promise((a,b) => { resolve=a; reject=b; }); return { promise, resolve, reject }; };
 export function imagesHarness(listenerError = null) {
-  const contexts = new Map(), effects = [], accesses = [], catalogs = [], histories = [], assets = [], observers = [];
+  const contexts = new Map(), effects = [], accesses = [], catalogs = [], histories = [], assets = [], observers = [], saves = [];
   let context, used, listener, writes = 0, onCommit;
   const events = new Map();
   const renderComponent = (type, props) => {
@@ -37,7 +37,7 @@ export function imagesHarness(listenerError = null) {
       ResizeObserver:class {observe(){} disconnect(){}}, getComputedStyle:()=>({getPropertyValue:()=>"1",rowGap:"12px"}),
       requestAnimationFrame:()=>0,cancelAnimationFrame(){},
       document:{body:{},getElementById:()=>null,addEventListener(name,callback){events.set(name,callback);},removeEventListener(name,callback){if(events.get(name)===callback)events.delete(name);}},
-      window:{addEventListener(){},removeEventListener(){},setInterval:()=>1,clearInterval(){},},
+      window:{addEventListener(name,callback){events.set(name,callback);},removeEventListener(name,callback){if(events.get(name)===callback)events.delete(name);},setInterval:()=>1,clearInterval(){},},
       require:name=>{
         if(name==="react")return React; if(name==="react-dom")return {createPortal:node=>node};
         if(name==="lucide-react")return new Proxy({},{get:(_,key)=>String(key)});
@@ -46,6 +46,7 @@ export function imagesHarness(listenerError = null) {
         if(name==="../chatgptService")return {serviceErrorMessage:error=>error.message};
         if(name==="../imagesData"||name==="./imagesData")return load("src/imagesData.ts");
         if(name==="../imagesAssets")return load("src/imagesAssets.ts");
+        if(name==="../imageSave")return {saveDecodedImage:(src,title)=>{const d=deferred();saves.push({src,title,...d});return d.promise;}};
         if(name==="../imagesClient")return {
           readImagesAccess:signal=>{const d=deferred();accesses.push({signal,...d});return d.promise;},
           readImagesCatalog:(access,signal)=>{const d=deferred();catalogs.push({access,signal,...d});return d.promise;},
@@ -58,7 +59,7 @@ export function imagesHarness(listenerError = null) {
       }});return exports;
   };
   const view=load("src/components/ImagesView.tsx");
-  return {accesses,catalogs,histories,assets,observers,events,setCommit(callback){onCommit=callback;},render(){used=new Set();const tree=renderComponent(view.ImagesView,{}); for(const[key,owner]of contexts)if(!used.has(key)){owner.hooks.forEach(h=>h?.cleanup?.());contexts.delete(key);}onCommit?.(tree);while(effects.length)effects.shift()();return tree;},invalidate(){listener();},unmount(){for(const owner of contexts.values())owner.hooks.forEach(h=>h?.cleanup?.());},get writes(){return writes;}};
+  return {accesses,catalogs,histories,assets,observers,events,saves,setCommit(callback){onCommit=callback;},render(){used=new Set();const tree=renderComponent(view.ImagesView,{}); for(const[key,owner]of contexts)if(!used.has(key)){owner.hooks.forEach(h=>h?.cleanup?.());contexts.delete(key);}onCommit?.(tree);while(effects.length)effects.shift()();return tree;},invalidate(){listener();},unmount(){for(const owner of contexts.values())owner.hooks.forEach(h=>h?.cleanup?.());},get writes(){return writes;}};
 }
 const button = (h,label) => { const found=walk(h.render()).find(node=>node.type==="button"&&(node.props["aria-label"]===label||text(node)===label));assert.ok(found,label);return found; };
 const access={available:true,identity:{accountId:"a",userId:"u",generation:1}};
@@ -125,6 +126,33 @@ async function ready(options={}) {const h=imagesHarness();h.render();await flush
 }
 {
   const h=await ready();button(h,"真实图像").props.onClick({currentTarget:{isConnected:true,focus(){}}});assert.ok(walk(h.render()).some(node=>node.props.role==="dialog"));assert.doesNotMatch(text(h.render()),/缩略图预览/);h.events.get("keydown")({key:"Escape",preventDefault(){},stopPropagation(){}});assert.equal(walk(h.render()).some(node=>node.props.role==="dialog"),false);h.unmount();
+}
+{
+  const h=await ready(), imageSrc="data:image/png;base64,AAAA";
+  const open=()=>button(h,"真实图像").props.onClick({currentTarget:{isConnected:true,focus(){}}});
+  open();
+  assert.equal(button(h,"下载图像").props.disabled,true);
+  const previewAsset=h.assets.filter(asset=>asset.ref.id==="image").at(-1);
+  previewAsset.resolve(imageSrc);await flush();
+  const rendered=()=>walk(walk(h.render()).find(node=>node.props.role==="dialog")).find(node=>node.type==="img");
+  assert.equal(button(h,"下载图像").props.disabled,true,"bytes alone do not enable download before decode");
+  rendered().props.onLoad();
+  const download=button(h,"下载图像");
+  download.props.onClick();download.props.onClick();
+  assert.equal(h.saves.length,1);
+  assert.equal(h.saves[0].src,imageSrc);
+  assert.equal(h.saves[0].title,"真实图像");
+  h.events.get("blur")?.();
+  h.saves[0].resolve(null);await flush();
+  h.events.get("focus")?.();h.render();await flush();
+  assert.ok(walk(h.render()).some(node=>node.props.role==="dialog"),"focus returning from the native save must not refresh away the preview");
+  assert.doesNotMatch(text(h.render()),/已保存/);
+  button(h,"下载图像").props.onClick();
+  button(h,"关闭图像预览").props.onClick();h.render();open();h.render();
+  h.saves[1].reject(Error("old save failed"));await flush();
+  assert.doesNotMatch(text(h.render()),/old save failed/);
+  assert.equal(button(h,"下载图像").props.disabled,true);
+  h.unmount();
 }
 {
   const h=await ready();
