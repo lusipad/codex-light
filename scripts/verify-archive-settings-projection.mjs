@@ -6,7 +6,7 @@ import ts from "typescript";
 const source = fs.readFileSync("src/components/ArchiveView.tsx", "utf8");
 const rows = [
   { id: "a", name: "Zulu", updatedAt: 20, createdAt: 40, cwd: "D:/One", path: "D:\\unrelated-parent\\Cafe\u0301 独立记录 nonce hidden-tail.jsonl" },
-  { id: "b", name: "Alpha", updatedAt: 20, createdAt: 30, cwd: "D:/Two" },
+  { id: "b", name: "Alpha", updatedAt: 20, createdAt: 30, cwd: "D:/Two", path: "D:/records/b.jsonl" },
   { id: "c", name: "Alpha", updatedAt: 10, createdAt: 50, cwd: "D:/One/child" },
   { id: "d", name: "Delta", updatedAt: 0, createdAt: 60, cwd: "D:/One" },
 ];
@@ -52,6 +52,7 @@ const nodes = (tree, predicate) => { const list = []; const walk = n => { if (!n
 const cls = value => node => node.props?.className?.split(" ").includes(value);
 const text = node => typeof node === "string" || typeof node === "number" ? String(node) : (node?.props?.children || []).map(text).join("");
 const ids = tree => nodes(tree, cls("archive-row")).map(node => node.props.key?.replace(/^local:/, ""));
+const rowMeta = (tree, id) => text(nodes(nodes(tree, n => n.props?.key === `local:${id}`)[0], cls("archive-row-meta"))[0]);
 const filter = tree => nodes(tree, node => node.type?.name === "ArchiveFilterMenu")[0];
 const project = tree => nodes(tree, node => node.props?.id === "archive-project-filter")[0];
 render(); for (const effect of effects) effect(); mounted = true;
@@ -62,6 +63,7 @@ assert.equal(nodes(tree, cls("archive-title")).length, 0, "AS01: settings reuses
 assert.equal(nodes(tree, cls("archive-subtitle")).length, 0);
 assert.equal(filter(tree).props.sortKey, "updated");
 assert.deepEqual(ids(tree), ["a", "b", "c", "d"], "AS02: groups by max updated, then label/id; per-row updated desc/title tie; zero is valid");
+assert.doesNotMatch(rowMeta(tree, "b"), /•/, "AS14: group header already supplies context");
 filter(tree).props.onSortKeyChange("alphabetical"); tree = render();
 assert.deepEqual(ids(tree), ["c", "d", "a", "b"], "AS03: unnamed group first; names sort ascending, same label groups retain IDs");
 filter(tree).props.onSortKeyChange("created"); tree = render();
@@ -159,6 +161,19 @@ reply = Error("offline archive fixture"); refresh();
 for (let i=0;i<8;i++) await Promise.resolve(); tree = render();
 assert.ok(text(tree).includes("无法加载已归档的聊天"));
 assert.equal(nodes(tree, cls("archive-empty")).length, 0, "AS13: failure is not a successful empty read");
+reply = [
+  { ...rows[0], cwd: null, path: "D:\\records\\archive source name ignored.jsonl" },
+  { ...rows[1], cwd: "D:/Two" },
+  { ...rows[2], cwd: "/", path: null },
+];
+props.projectMembership = { ...props.projectMembership, threadProjectAssignments: {
+  ...props.projectMembership.threadProjectAssignments, a: { projectKind: "local", projectId: "one" },
+} };
+refresh(); for (let i=0;i<8;i++) await Promise.resolve(); tree = render();
+project(tree).props.onChange(one.value); tree = render();
+assert.match(rowMeta(tree, "a"), /，.+ • archive source name$/, "AS14: use only the path basename when cwd is absent");
+assert.match(rowMeta(tree, "b"), / • Two$/, "AS14: prefer cwd over rollout path");
+assert.doesNotMatch(rowMeta(tree, "c"), /•/, "AS14: blank basename cannot produce a dangling separator");
 // Exercise the actual local menu's JSX and handlers without a browser DOM.
 slots.length = 0;
 const selection = [];
@@ -187,4 +202,4 @@ nodes(menuTree, n => n.props?.role === "menuitemradio").at(-1).props.onClick();
 assert.deepEqual(selection, [["sort", "alphabetical"]]); assert.equal(returned, 2);
 const css = fs.readFileSync("src/components/ArchiveView.css", "utf8");
 assert.match(css, /\.archive-filter-menu \[role=menuitemradio\]\s*\{/, "AS10: nested group radios receive button styles");
-console.log("PASS AS01–AS13: settings sort/group/filter, Unicode search, scoped empty/loading/error, restore readback and standalone isolation");
+console.log("PASS AS01–AS14: settings sort/group/filter, Unicode search, scoped states, source descriptions and standalone isolation");

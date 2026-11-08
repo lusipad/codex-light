@@ -866,7 +866,9 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
                     const timeText = date.toLocaleTimeString("zh-CN", { hour: "numeric", minute: "2-digit" });
                     if (thread.archiveSource === "cloud-task" && activeProjectFilter !== "all" && thread.environmentLabel?.trim()) return `${dateText} ${timeText} • ${thread.environmentLabel.trim()}`;
                     const label = `${dateText}，${timeText}`;
-                    return activeProjectFilter !== "all" && thread.cwd ? `${label} • ${archiveRepo(thread.cwd)}` : label;
+                    const repo = activeProjectFilter !== "all" && !thread.archiveSource
+                      ? archiveRepo(thread.cwd) || archiveRepo(thread.path) : "";
+                    return repo ? `${label} • ${repo}` : label;
                   })()}</span> : <span className="mono">{formatRelative(thread.updatedAt || thread.createdAt)}</span>}
                   {!settings && thread.cwd && (
                     <span className="mono archive-row-cwd" title={thread.cwd}>
