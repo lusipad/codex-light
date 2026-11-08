@@ -61,6 +61,7 @@ assert.ok(fileChangeMapBody, "App.tsx must contain the production file-change re
   let diffPanel;
   const require = name => {
     if (name === "react") return react;
+    if (name === "lucide-react") return new Proxy({}, { get: () => () => null });
     if (name === "./Icons") return new Proxy({}, { get: () => () => null });
     if (name === "./TurnDiffPanel") return diffPanel;
     if (name === "../clipboard") return { copyTextToClipboard: async text => { copied.push(text); return clipboardAvailable; } };
@@ -79,7 +80,7 @@ assert.ok(fileChangeMapBody, "App.tsx must contain the production file-change re
   const { fileChangeApprovalForItem } = component("src/approvalRequests.ts");
   const { FileChangeCard } = component("src/components/FileChangeCard.tsx");
   const context = { React: react, FileChangeCard, fileChangeApprovalForItem, activePendingRequests: [],
-    turn: { id: "turn-1", status: "completed" }, activeThreadObj: { cwd: "C:/project" },
+    turn: { id: "turn-1", status: "completed", items: [] }, activeThreadObj: { cwd: "C:/project" },
     openPreviewFile: (path, line) => opened.push([path, line]) };
   const renderFc = vm.runInNewContext(compile(`(${fileChangeMapBody})`), context);
   const sample = { id: "fc", status: "completed", changes: [
@@ -133,6 +134,21 @@ assert.ok(fileChangeMapBody, "App.tsx must contain the production file-change re
   assert.match(JSON.stringify(render({ ...inProgress, status: "declined" })), /已拒绝/);
   context.activePendingRequests = [];
   assert.match(JSON.stringify(render(inProgress)), /正在编辑/, "resolution restores streaming without fabricating a result");
+  const { recordPatchAutoReviewDenial } = component("src/threadTimeline.ts");
+  const decision = { threadId: "chat", turnId: "turn-1", targetItemId: sample.id, reviewId: "r1",
+    action: { type: "applyPatch" }, review: { status: "denied", rationale: "来自自动审核的理由" } };
+  const turns = [context.turn];
+  assert.equal(recordPatchAutoReviewDenial(turns, { ...decision, targetItemId: null }), turns);
+  assert.equal(recordPatchAutoReviewDenial(turns, { ...decision, turnId: "unrelated" }), turns);
+  assert.equal(recordPatchAutoReviewDenial(turns, { ...decision, review: { status: "timedOut" } }), turns);
+  assert.equal(recordPatchAutoReviewDenial(turns, { ...decision, action: { type: "command" } }), turns);
+  const updated = recordPatchAutoReviewDenial(turns, decision);
+  assert.equal(recordPatchAutoReviewDenial(updated, decision), updated, "duplicate review cannot duplicate the notice");
+  context.turn = updated[0];
+  assert.match(JSON.stringify(render(inProgress)), /自动审核拒绝了文件更改：/);
+  assert.match(JSON.stringify(render(inProgress)), /来自自动审核的理由/, "expanded row shows the actual review rationale");
+  assert.doesNotMatch(JSON.stringify(render({ ...inProgress, id: "other" })), /自动审核拒绝了文件更改/);
+  assert.doesNotMatch(JSON.stringify(render({ ...inProgress, status: "completed" })), /自动审核拒绝了文件更改/);
   console.log("PASS per-file patch rows, exact stats, disclosure, applied rename, stopped/rejected and render cap");
 }
 

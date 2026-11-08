@@ -27,7 +27,7 @@ import { readShareAccess } from "./shareAccess";
 import { installDeepLinkReceiver } from "./deepLinks";
 import { normalizeComposerEnterBehavior, type ComposerEnterBehavior } from "./composerPreferences";
 import { CommandExecutionCard } from "./components/CommandExecutionCard";
-import { mergeTimelineItem, ThreadHistoryBuffer, isCurrentThreadRequest } from "./threadTimeline";
+import { mergeTimelineItem, recordPatchAutoReviewDenial, ThreadHistoryBuffer, isCurrentThreadRequest } from "./threadTimeline";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { Bookmark } from "lucide-react";
@@ -795,6 +795,8 @@ export const App: React.FC = () => {
   } | null>(null);
   const [autoReview, setAutoReview] = useState<{
     active: boolean;
+    reviewId?: string;
+    threadId?: string;
     decision?: string | null;
   } | null>(null);
   const [inboxItems, setInboxItems] = useState<InboxNotificationItem[]>([]);
@@ -2021,15 +2023,22 @@ export const App: React.FC = () => {
           setRateLimits(null);
           void refreshAccount();
         } else if (method === NOTIFICATION.ITEM_AUTO_REVIEW_STARTED) {
-          setAutoReview({ active: true, decision: null });
+          setAutoReview({ active: true, decision: null, reviewId: params?.reviewId, threadId: eventThreadId });
         } else if (method === NOTIFICATION.ITEM_AUTO_REVIEW_COMPLETED) {
+          if (params?.action?.type === "applyPatch" && params?.review?.status === "denied") {
+            setTurns(prev => recordPatchAutoReviewDenial(prev, params));
+            setAutoReview(current => current?.reviewId === params.reviewId && current?.threadId === eventThreadId ? null : current);
+            return;
+          }
           const decision =
+            params?.review?.status ??
             params?.decision?.type ??
             params?.decision ??
             params?.result?.decision ??
             null;
-          setAutoReview({ active: false, decision: decision ? String(decision) : null });
-          setTimeout(() => setAutoReview(null), 8000);
+          const completed = { active: false, decision: decision ? String(decision) : null, reviewId: params?.reviewId, threadId: eventThreadId };
+          setAutoReview(completed);
+          setTimeout(() => setAutoReview(current => current === completed ? null : current), 8000);
         } else if (method === NOTIFICATION.THREAD_REVERTED) {
           if (eventThreadId && eventThreadId === activeThreadIdRef.current) {
             selectThread(eventThreadId);
@@ -6366,6 +6375,7 @@ export const App: React.FC = () => {
                     "fileChange",
                     "diff",
                     "file_change",
+                    "patchAutoReviewDenial",
                     "plan",
                     "mcpToolCall",
                     "mcpCall",
@@ -6416,6 +6426,8 @@ export const App: React.FC = () => {
                   const renderFileChange = (fc: TurnItem, fIdx: number) => (
                     <FileChangeCard key={fc.id || fIdx} item={fc} turnStatus={turn.status}
                       approval={fc.type === "fileChange" && fc.status === "inProgress" ? fileChangeApprovalForItem(activePendingRequests, turn.id, fc.id) : undefined}
+                      autoReviewDenial={fc.type === "fileChange" && fc.id && fc.status !== "completed"
+                        ? turn.items.find(item => item.type === "patchAutoReviewDenial" && item.targetItemId === fc.id) : undefined}
                       cwd={fc.cwd || activeThreadObj?.cwd || activeWorkspace?.path} onOpenFile={openPreviewFile} />
                   );
                   const renderPlan = (plan: TurnItem, pIdx: number) => (
@@ -6666,7 +6678,7 @@ export const App: React.FC = () => {
                       {turn.items.map((item, index) => {
                         let content: React.ReactNode;
                         switch (item.type) {
-                          case "userMessage": case "user": return null;
+                          case "userMessage": case "user": case "patchAutoReviewDenial": return null;
                           case "reasoning": case "thought": content = renderThought(item); break;
                           case "commandExecution": case "command": case "execCommand": case "toolCall": content = renderCommand(item, index); break;
                           case "fileChange": case "diff": case "file_change": content = renderFileChange(item, index); break;
@@ -6750,7 +6762,7 @@ export const App: React.FC = () => {
               );
                 })}
 
-                {autoReview && (
+                {autoReview && autoReview.threadId === activeThreadId && (
                   <div
                     className={`auto-review-banner ${
                       autoReview.active ? "active" : "done"

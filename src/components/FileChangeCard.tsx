@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { TriangleAlert } from "lucide-react";
 import { copyTextToClipboard } from "../clipboard";
 import { baseNameFsPath, joinFsPath } from "../fsClient";
 import type { PendingServerRequest, TurnItem } from "../types";
@@ -28,8 +29,9 @@ function patchOpenLine(lines: ReturnType<typeof parseUnifiedDiff>): number {
   return firstDeletion ?? 1;
 }
 
-function PatchFile({ change, status, turnStatus, cwd, pending, onOpenFile }: {
+function PatchFile({ change, status, turnStatus, cwd, pending, autoReviewDenial, onOpenFile }: {
   change: Change; status?: string; turnStatus?: string; cwd?: string; pending: boolean; onOpenFile: (path: string, line?: number) => void;
+  autoReviewDenial?: TurnItem;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [copyStatus, setCopyStatus] = useState("");
@@ -82,12 +84,14 @@ function PatchFile({ change, status, turnStatus, cwd, pending, onOpenFile }: {
 
   return <section className={pending ? "file-change-card file-change-card--pending" : "file-change-card"}>
     <div className="file-change-summary">
-      <DiffIcon size={15} />
-      {!pending && <span>{showFileHeader && status === "completed" ? labels[3] : label}</span>}
-      {(!showFileHeader || pending) && <>{fileName}{stats}</>}
+      {autoReviewDenial ? <TriangleAlert size={15} aria-hidden="true" className="file-change-warning" /> : <DiffIcon size={15} />}
+      {autoReviewDenial ? <span>自动审核拒绝了文件更改：</span>
+        : !pending && <span>{showFileHeader && status === "completed" ? labels[3] : label}</span>}
+      {(!showFileHeader || pending || autoReviewDenial) && <>{fileName}{stats}</>}
       <button type="button" className="file-change-toggle" aria-label={`切换 ${name} 的差异视图`} aria-expanded={expanded}
         onClick={() => { setExpanded(value => !value); setCopyStatus(""); }}>{expanded ? <ChevronDownIcon size={14} /> : <ChevronRightIcon size={14} />}</button>
     </div>
+    {expanded && autoReviewDenial?.rationale && <div className="file-change-review-reason">{autoReviewDenial.rationale}</div>}
     {showFileHeader && <div className="file-change-diff-header">
       {fileName}{stats}
       <span className="file-change-copy-status" role="status">{copyStatus}</span>
@@ -101,8 +105,9 @@ function PatchFile({ change, status, turnStatus, cwd, pending, onOpenFile }: {
   </section>;
 }
 
-export function FileChangeCard({ item, cwd, turnStatus, approval, onOpenFile }: {
+export function FileChangeCard({ item, cwd, turnStatus, approval, autoReviewDenial, onOpenFile }: {
   item: TurnItem; cwd?: string; turnStatus?: string; approval?: PendingServerRequest; onOpenFile: (path: string, line?: number) => void;
+  autoReviewDenial?: TurnItem;
 }) {
   const changes: Change[] = Array.isArray(item.changes) && item.changes.length ? item.changes
     : typeof item.path === "string" ? [{ path: item.path, kind: item.kind, diff: item.diff }] : [];
@@ -110,5 +115,5 @@ export function FileChangeCard({ item, cwd, turnStatus, approval, onOpenFile }: 
   const root = typeof grantRoot === "string" && grantRoot ? grantRoot : cwd;
   return <>{changes.filter(change => typeof change?.path === "string" && change.path.trim()).map((change, index) =>
     <PatchFile key={`${change.path}:${index}`} change={change} status={item.status} turnStatus={turnStatus}
-      cwd={root} pending={approval !== undefined} onOpenFile={onOpenFile} />)}</>;
+      cwd={root} pending={approval !== undefined && !autoReviewDenial} autoReviewDenial={autoReviewDenial} onOpenFile={onOpenFile} />)}</>;
 }

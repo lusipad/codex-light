@@ -150,3 +150,14 @@ export function mergeTimelineItem(turns: TurnData[], turnId: string | undefined,
 export function isCurrentThreadRequest(request: number, currentRequest: number, threadId: string, activeThreadId: string | null): boolean {
   return request === currentRequest && threadId === activeThreadId;
 }
+
+export function recordPatchAutoReviewDenial(turns: TurnData[], params: any): TurnData[] {
+  const { reviewId, turnId, targetItemId, action, review } = params ?? {};
+  if (action?.type !== "applyPatch" || review?.status !== "denied"
+    || typeof reviewId !== "string" || !reviewId || typeof targetItemId !== "string" || !targetItemId) return turns;
+  const turn = turns.find(candidate => candidate.id === turnId);
+  const id = `automatic-approval-review:${reviewId}`;
+  if (!turn || turn.items.some(item => item.id === id)) return turns;
+  const rationale = typeof review.rationale === "string" ? review.rationale : undefined;
+  return mergeTimelineItem(turns, turn.id, id, () => ({ type: "patchAutoReviewDenial", targetItemId, rationale }));
+}
