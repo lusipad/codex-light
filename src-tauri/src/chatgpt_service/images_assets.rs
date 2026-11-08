@@ -63,7 +63,8 @@ impl ChatgptService {
                     else if snapshot == state.0 && denied { state.1 = true; }
                 }
                 let denied: std::collections::HashSet<_> = registry.recent.iter().filter(|(_, (_, deny))| *deny).map(|(id, _)| id.clone()).collect();
-                registry.entries.retain(|entry| entry.reference.role != "recent" || !denied.contains(&entry.reference.id));
+                registry.entries.retain(|entry| !matches!(entry.reference.role, "recent" | "recent_preview")
+                    || !denied.contains(&entry.reference.id));
             }
             if registry.recent.len() > MAX_ASSETS {
                 // Fail closed at a visible adaptation limit, without reviving older in-flight responses.
@@ -74,15 +75,25 @@ impl ChatgptService {
         let mut entries = Vec::new();
         let mut add = |item: &Value, role: &'static str, group_id: Option<String>| {
             let Some(id) = item.get("id").and_then(Value::as_str).filter(|id| !id.is_empty() && id.len() <= 2048) else { return };
-            if role == "recent" && (blocked.contains(id) || registry.recent.get(id).is_some_and(|(seq, denied)| *seq > snapshot || *denied)) { return; }
-            let source = if role == "recent" {
+            if recent && (blocked.contains(id) || registry.recent.get(id).is_some_and(|(seq, denied)| *seq > snapshot || *denied)) { return; }
+            let thumbnail = || {
                 match item.pointer("/encodings/thumbnail/path") {
                     Some(Value::Null) | None => item.get("url").and_then(Value::as_str),
                     Some(value) => value.as_str(),
                 }
-            } else { catalog_source(item) };
-            let Some(source) = source.filter(|source| !source.trim().is_empty()) else { return };
-            let Ok(source) = asset_source(source, origin, role == "recent") else { return };
+            };
+            let source = if role == "recent_preview" {
+                if let Some(pointer) = item["asset_pointer"].as_str().and_then(image_file_id) {
+                    pointer_source(pointer, item["conversation_id"].as_str(), origin).ok()
+                } else {
+                    item["url"].as_str().filter(|url| !url.trim().is_empty() && Some(*url) != thumbnail())
+                        .and_then(|url| asset_source(url, origin, true).ok())
+                }
+            } else {
+                let url = if recent { thumbnail() } else { catalog_source(item) };
+                url.filter(|url| !url.trim().is_empty()).and_then(|url| asset_source(url, origin, recent).ok())
+            };
+            let Some(source) = source else { return };
             entries.push(AssetEntry { reference: ImagesAssetRef { asset_key:uuid::Uuid::new_v4().to_string(),
                 source_request_id:request.request_id.clone(), role, id:id.to_owned(), group_id, variant:0 },
                 identity:request.expected_identity.clone(), source });
@@ -96,7 +107,10 @@ impl ChatgptService {
             ServiceOperation::ImagesStyles => for (key, role) in [("styles", "styles"), ("image_suggestions", "image_suggestions")] {
                 if let Some(items)=body.get(key).and_then(Value::as_array) { for item in items { add(item, role, None); } }
             },
-            ServiceOperation::ImagesRecent => if let Some(items)=items { for item in items { add(item, "recent", None); } },
+            ServiceOperation::ImagesRecent => if let Some(items)=items { for item in items {
+                add(item, "recent", None);
+                add(item, "recent_preview", None);
+            }},
             _ => return Err(failure("invalid_request", "Images metadata required")),
         }
         if entries.len() > MAX_SNAPSHOT_ASSETS {
@@ -178,7 +192,12 @@ impl ChatgptService {
                     if source.json_refresh {
                         if step==5 {return Err(failure("invalid_response", "Too many image resource refreshes"));}
                         let body:Value=serde_json::from_slice(&response.body).map_err(|_|failure("invalid_response", "Invalid image URL response"))?;
-                        let target=body.get("content_url").or_else(||body.get("download_url")).or_else(||body.get("thumbnail_url"))
+                        let target=if source.url.path().starts_with("/backend-api/files/download/") {
+                            body.get("download_url")
+                        } else {
+                            body.get("content_url").or_else(||body.get("download_url")).or_else(||body.get("thumbnail_url"))
+                        };
+                        let target=target
                             .and_then(Value::as_str).filter(|url|!url.trim().is_empty()).ok_or_else(||failure("invalid_response", "Image URL missing"))?;
                         source=asset_source(target, &credentials.origin, true)?;
                         // A JSON resolution to a public URL also permanently drops credentials.
@@ -198,6 +217,23 @@ impl ChatgptService {
         self.check_image_asset(&entry, &request, &registration)?;
         result.map(|body|ServiceResponse {request_id:request.request_id, identity:request.expected_identity, status:200, body, headers:BTreeMap::new(), assets:None, gpt_assets:None,site_assets:None})
     }
+}
+
+fn image_file_id(pointer: &str) -> Option<&str> {
+    pointer.strip_prefix("file-service://").or_else(|| pointer.strip_prefix("sediment://"))
+}
+
+fn pointer_source(file_id: &str, conversation_id: Option<&str>, origin: &str) -> ServiceResult<AssetSource> {
+    if !file_id.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"_-#".contains(&byte)) {
+        return Err(unavailable());
+    }
+    let id=encode_segment(&file_id.replace('#',"*"))?.replace("%2A","*");
+    let mut url=public_url(&format!("/backend-api/files/download/{id}?download_intent=false&inline=true"),origin)?;
+    if let Some(id)=conversation_id.filter(|id| !id.is_empty()) {
+        if id.len()>512 || !id.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"_-".contains(&byte)) { return Err(unavailable()); }
+        url.query_pairs_mut().append_pair("conversation_id",id);
+    }
+    Ok(AssetSource {url,authenticated:true,json_refresh:true})
 }
 
 fn catalog_source(item: &Value) -> Option<&str> {

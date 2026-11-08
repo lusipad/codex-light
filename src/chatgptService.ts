@@ -90,7 +90,7 @@ function responseBody(result: { requestId: string; identity: ServiceIdentity; bo
 export interface ImagesAssetRef {
   assetKey: string;
   sourceRequestId: string;
-  role: "init_group" | "styles" | "image_suggestions" | "recent";
+  role: "init_group" | "styles" | "image_suggestions" | "recent" | "recent_preview";
   id: string;
   groupId: string | null;
   variant: 0;
@@ -247,7 +247,7 @@ export function isImagesAssetRef(value: unknown): value is ImagesAssetRef {
   const ref = value as ImagesAssetRef;
   const identifier = (text: unknown) => typeof text === "string" && text.length > 0 && text.length <= 4096 && !/[\u0000-\u001f\u007f-\u009f]/u.test(text);
   return identifier(ref.assetKey) && identifier(ref.sourceRequestId) && identifier(ref.id) && ref.variant === 0
-    && ["init_group", "styles", "image_suggestions", "recent"].includes(ref.role)
+    && ["init_group", "styles", "image_suggestions", "recent", "recent_preview"].includes(ref.role)
     && (ref.role === "init_group" ? identifier(ref.groupId) : ref.groupId === null);
 }
 
@@ -264,7 +264,7 @@ export async function readImagesMetadata(
   );
   const body = responseBody(result, requestId, identity);
   if (!Array.isArray(result.assets)) throw Error("图像资源引用缺失，请重试。");
-  const roles = operation === "images_init" ? ["init_group"] : operation === "images_styles" ? ["styles", "image_suggestions"] : ["recent"];
+  const roles = operation === "images_init" ? ["init_group"] : operation === "images_styles" ? ["styles", "image_suggestions"] : ["recent", "recent_preview"];
   const keys = new Set<string>();
   for (const ref of result.assets) {
     if (!isImagesAssetRef(ref) || ref.sourceRequestId !== requestId || !roles.includes(ref.role)) throw Error("图像资源引用无效，请重试。");

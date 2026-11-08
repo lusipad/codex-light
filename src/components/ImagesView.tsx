@@ -6,7 +6,7 @@ import { serviceErrorMessage, type ImagesAssetRef } from "../chatgptService";
 import { readImagesAccess, readImagesCatalog, readImagesHistory, readImagesAsset,
   type ImagesAccess, type ImagesCatalogResult, type ImagesHistoryResult } from "../imagesClient";
 import { mergeImagesCatalog, mergeImagesHistory, imagesSections, type CloudImage, type ImagePrompt, type ImagePromptGroup } from "../imagesData";
-import { selectPromptAsset, selectHistoryAsset } from "../imagesAssets";
+import { selectPromptAsset, selectHistoryAsset, selectHistoryPreview } from "../imagesAssets";
 import { ImagesHistoryMasonry } from "./ImagesHistoryMasonry";
 import { LibraryPagination } from "./LibraryPagination";
 import "./ImagesView.css";
@@ -55,6 +55,7 @@ const ImagesPreview: React.FC<PreviewProps> = ({ images, selectedId, pages, acce
   const close = useRef<HTMLButtonElement>(null);
   const index = images.findIndex(image => image.id === selectedId), image = images[index];
   const [retry, setRetry] = useState(0);
+  const [failedId, setFailedId] = useState<string | null>(null);
   useEffect(() => {
     close.current?.focus();
     const keydown = (event: KeyboardEvent) => {
@@ -73,12 +74,15 @@ const ImagesPreview: React.FC<PreviewProps> = ({ images, selectedId, pages, acce
     return () => document.removeEventListener("keydown", keydown, true);
   }, [index, images, onSelect, onClose]);
   if (!image) return null;
+  const original = selectHistoryPreview(image, pages);
   return createPortal(<div className="images-preview-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
     <div className="images-preview-dialog" ref={dialog} role="dialog" aria-modal="true" aria-labelledby="images-preview-title">
       <div className="images-preview-header"><h2 id="images-preview-title">{image.title || "图像"}</h2><button ref={close} onClick={onClose} aria-label="关闭图像预览">关闭</button></div>
-      <div className="images-preview-media"><ImagesAsset key={`${image.id}:${retry}`} asset={selectHistoryAsset(image, pages)} access={access} scope={scope} alt={image.title || "图像"} /></div>
-      <div className="images-preview-footer"><span>缩略图预览；原图、编辑和下载尚未接入。</span><div className="images-preview-navigation">
-        <button onClick={() => setRetry(value => value + 1)}>重新加载预览</button>
+      <div className="images-preview-media">{original
+        ? <ImagesAsset key={`${image.id}:${retry}`} asset={original} access={access} scope={scope} alt={image.title || "图像"} onUnavailable={() => setFailedId(image.id)} />
+        : <p role="status">原图不可用</p>}</div>
+      <div className="images-preview-footer">{failedId === image.id && <span role="status">无法加载原图</span>}<div className="images-preview-navigation">
+        {original && <button onClick={() => { setFailedId(null); setRetry(value => value + 1); }}>重新加载预览</button>}
         <button disabled={index <= 0} onClick={() => onSelect(images[index - 1].id)} aria-label="上一张图像">上一张</button>
         <button disabled={index >= images.length - 1} onClick={() => onSelect(images[index + 1].id)} aria-label="下一张图像">下一张</button>
       </div></div>
@@ -195,7 +199,10 @@ export const ImagesView: React.FC = () => {
     document.getElementById(`images-tab-${encodeURIComponent(keys[next])}`)?.focus();
   };
   const images = mergeImagesHistory(pages), visibleImages = images.filter(image => !hidden.has(image.id));
-  const previewImages = visibleImages.filter(image => !image.output_blocked && selectHistoryAsset(image, pages) !== null);
+  const previewImages = images.filter(image => !image.output_blocked && (hidden.has(image.id)
+    ? image.id === preview && selectHistoryPreview(image, pages)?.role === "recent_preview"
+    : selectHistoryAsset(image, pages) || selectHistoryPreview(image, pages)));
+  const previewIds = new Set(previewImages.map(image => image.id));
   const cursor = pages.at(-1)?.cursor ?? null;
   const loadMore = async () => {
     if (!access?.available || !scope || scope !== source.current || scope.signal.aborted || pending.current || historyLoading || !cursor) return;
@@ -230,10 +237,14 @@ export const ImagesView: React.FC = () => {
     {historyLoading && pages.length === 0 && <p role="status" className="images-message">正在加载图像…</p>}
     {!historyLoading && !historyError && visibleImages.length === 0 && !cursor && <p className="images-message">你用 ChatGPT 创建的图像将显示在这里</p>}
     <ImagesHistoryMasonry items={visibleImages.map(image => ({ id: image.id, content:
-      <button className="images-history-card" data-image-history={image.id} disabled={image.output_blocked || !selectHistoryAsset(image, pages) || historyLoading}
+      <button className="images-history-card" data-image-history={image.id} disabled={historyLoading || !previewIds.has(image.id)}
         aria-label={image.title || "查看图像"} onClick={event => { if (!scope || scope !== source.current || scope.signal.aborted || historyLoading) return; previewTrigger.current = event.currentTarget; setPreview(image.id); }}>
         {image.output_blocked ? <span className="images-asset-placeholder">无法显示此图像</span> : access && <ImagesAsset key={`${assetRevision.history}:${image.id}`} asset={selectHistoryAsset(image, pages)} access={access} scope={assetScope}
-          onUnavailable={() => { setHidden(previous => new Set(previous).add(image.id)); if (preview === image.id) closePreview(); }} />}
+          onUnavailable={() => {
+            if (!selectHistoryAsset(image, pages)) return;
+            setHidden(previous => new Set(previous).add(image.id));
+            if (preview === image.id && selectHistoryPreview(image, pages)?.role !== "recent_preview") closePreview();
+          }} />}
       </button> }))} />
     {historyError && <div role="alert" className="images-inline-error">无法加载图像：{historyError}<button className="images-retry" disabled={paging || historyLoading} aria-label="重试加载图像" onClick={refresh}>重试</button></div>}
     <LibraryPagination key={`${revision}:${pages.length}`} hasNextPage={!!cursor && !historyError && !historyLoading} fetching={historyLoading || paging} onLoadNextPage={() => void loadMore()} />

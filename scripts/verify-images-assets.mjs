@@ -70,6 +70,14 @@ await check("history selector uses first originating page and revokes later bloc
   assert.equal(h.assets.selectHistoryAsset({ ...item, encodings: { thumbnail: { path: "" } } }, [pages[0]]), null);
   assert.equal(h.assets.selectHistoryAsset(item, [{ ...pages[0], assets: [] }]), null);
 });
+await check("history preview selects its own grant and never treats a separate thumbnail as the original", async () => {
+  const h = client(), item = { id: "image-a", url: "https://fixture.invalid/full", encodings: { thumbnail: { path: "https://fixture.invalid/thumb" } } };
+  const pages = [{ items: [item], assets: [ref("origin"), { ...ref("origin", "recent_preview"), assetKey: "full" }] }];
+  assert.equal(h.assets.selectHistoryAsset(item, pages).role, "recent");
+  assert.equal(h.assets.selectHistoryPreview(item, pages).assetKey, "full");
+  assert.equal(h.assets.selectHistoryPreview(item, [{ ...pages[0], assets: [ref()] }]), null);
+  assert.equal(h.assets.selectHistoryPreview(item, [...pages, { items: [{ ...item, output_blocked: true }], assets: [] }]), null);
+});
 await check("image read sends opaque key/source only and validates identity at response and readback", async () => {
   const h = client(); h.control.read = async () => ({ dataUrl: png });
   assert.equal(await h.images.readImagesAsset(ref(), access(), signal()), png);

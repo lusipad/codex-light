@@ -124,7 +124,20 @@ async function ready(options={}) {const h=imagesHarness();h.render();await flush
   const failed=h.render();assert.match(text(failed),/first metadata registration rejected/);assert.ok(walk(failed).some(node=>node.props["data-image-history"]==="image"));assert.equal(walk(failed).some(node=>node.type==="img"),false,"failed first-page refresh does not resurrect old history bytes when catalog succeeds");h.unmount();
 }
 {
-  const h=await ready();button(h,"真实图像").props.onClick({currentTarget:{isConnected:true,focus(){}}});assert.ok(walk(h.render()).some(node=>node.props.role==="dialog"));assert.match(text(h.render()),/缩略图预览/);h.events.get("keydown")({key:"Escape",preventDefault(){},stopPropagation(){}});assert.equal(walk(h.render()).some(node=>node.props.role==="dialog"),false);h.unmount();
+  const h=await ready();button(h,"真实图像").props.onClick({currentTarget:{isConnected:true,focus(){}}});assert.ok(walk(h.render()).some(node=>node.props.role==="dialog"));assert.doesNotMatch(text(h.render()),/缩略图预览/);h.events.get("keydown")({key:"Escape",preventDefault(){},stopPropagation(){}});assert.equal(walk(h.render()).some(node=>node.props.role==="dialog"),false);h.unmount();
+}
+{
+  const h=imagesHarness();h.render();await flush();h.accesses[0].resolve(access);await flush();h.catalogs[0].resolve(catalog);
+  const recent=page([{id:"distinct",title:"原图与缩略图",url:"https://example.invalid/full",encodings:{thumbnail:{path:"https://example.invalid/thumb"}}}]);
+  recent.assets.push({...recent.assets[0],role:"recent_preview",assetKey:"original"});
+  h.histories[0].resolve(recent);await flush();h.render();
+  assert.equal(h.assets.some(asset=>asset.ref.assetKey==="original"),false,"gallery does not fetch full bytes");
+  button(h,"原图与缩略图").props.onClick({currentTarget:{isConnected:true,focus(){}}});h.render();
+  const original=h.assets.find(asset=>asset.ref.assetKey==="original");
+  assert.ok(original,"opening preview reads its distinct original grant");
+  h.assets.find(asset=>asset.ref.assetKey==="key-distinct").reject(Error("thumbnail failed"));await flush();
+  assert.ok(walk(h.render()).some(node=>node.props.role==="dialog"),"thumbnail failure does not close the independent original");
+  h.unmount();assert.equal(original.signal.aborted,true);
 }
 {
   const h=await ready();let inert=false, restored=0;

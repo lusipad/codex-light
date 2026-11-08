@@ -12,9 +12,19 @@ export function selectPromptAsset(group: ImagePromptGroup, item: ImagePrompt, re
   return result.catalogAssets.find(ref => ref.role === "init_group" && ref.groupId === group.id && ref.id === item.id) ?? null;
 }
 
-export function selectHistoryAsset(image: CloudImage, pages: ImagesHistoryResult[]): ImagesAssetRef | null {
-  if (!imageThumbnail(image) || pages.some(page => page.items.some(item => item.id === image.id && (item.is_archived || item.output_blocked)))) return null;
+function historyPage(image: CloudImage, pages: ImagesHistoryResult[]) {
+  if (pages.some(page => page.items.some(item => item.id === image.id && (item.is_archived || item.output_blocked)))) return;
   // Ordinary duplicates keep the first item and its originating request's grant.
-  const page = pages.find(page => page.items.some(item => item.id === image.id));
-  return page?.assets.find(ref => ref.role === "recent" && ref.id === image.id) ?? null;
+  return pages.find(page => page.items.some(item => item.id === image.id));
+}
+
+export function selectHistoryAsset(image: CloudImage, pages: ImagesHistoryResult[]): ImagesAssetRef | null {
+  return imageThumbnail(image) ? historyPage(image, pages)?.assets.find(ref => ref.role === "recent" && ref.id === image.id) ?? null : null;
+}
+
+export function selectHistoryPreview(image: CloudImage, pages: ImagesHistoryResult[]): ImagesAssetRef | null {
+  const page = historyPage(image, pages);
+  const role = !/^(?:file-service|sediment):\/\//u.test(image.asset_pointer ?? "") && image.url && image.url === imageThumbnail(image)
+    ? "recent" : "recent_preview";
+  return page?.assets.find(ref => ref.role === role && ref.id === image.id) ?? null;
 }

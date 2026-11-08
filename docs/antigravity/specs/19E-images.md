@@ -132,6 +132,12 @@ output_blocked不请求图。thumbnail严格`encodings.thumbnail.path ?? url`，
 
 ## 7. 开发顺序与验收用例
 
+### 大图资源（当前 Store 补证）
+
+Store `26.1103.4239.0`，asar SHA-256 `fb47d6491dc3006b708cb1e14de479b882bf50f88b7daa81818f154c253266aa`。`57123.7f2c0aec10.js` 45255 用 `encodings.thumbnail.path ?? url` 显示缩略图；点击后进入 `96508.6784f2f012.js` 159978 的 `ImagesHistoryPreview`。161725 处优先选择 `file-service://`、`sediment://` 指针，否则用该条历史的 `url`。`189497.6182e00931.js` 551314 的 `iqEK.V2` 解析前缀；`182735.bb2cb0d2af.js` 2979301 的 `taWv.Qt` 和 3535475 的 `hrUs` 把普通指针解析为带可选会话 ID 的文件下载请求。大图从服务原始历史条目发放受控授权，保留取消、账号、网络和撤销约束。
+
+验收。目录仅取缩略图，打开时才取原图。分辨原图与缩略图，原图缺失或失败时显示对应状态。归档或拒绝撤销两个资源授权，包括正在读取的原图。先支持普通指针和受控直链；共享会话指针的特殊路由、准备中自动重试、原图超过既有 8 MiB 上限和编辑另行核对。
+
 | 阶段/用例 | 开发目标与可检验预期 |
 |---|---|
 | E01 准入 | personal/workspace、gate真假未知、selected/auth账号不符、非openai条件、API-key/unsupported-auth、listener拒绝；未确认不读、不强开sidebar |

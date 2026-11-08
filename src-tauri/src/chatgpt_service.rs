@@ -6574,6 +6574,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn images_assets_original_pointer_resolves_only_on_open_and_is_revoked_with_history() {
+        let service=ChatgptService::default();
+        let recent=images_asset_fixture(&service,"image-original",ServiceOperation::ImagesRecent,json!({"items":[{
+            "id":"image-a","asset_pointer":"sediment://file-a#part","conversation_id":"conversation-1",
+            "url":"https://images.example.test/fallback","encodings":{"thumbnail":{"path":"https://images.example.test/thumb"}}
+        }]})).await;
+        let assets=recent["assets"].as_array().unwrap();
+        assert_eq!(assets.len(),2);
+        assert_eq!(assets[0]["role"],"recent");
+        assert_eq!(assets[1]["role"],"recent_preview");
+        let transport=instructions_transport(&[200,200],&[json!({
+            "download_url":"https://images.example.test/original","content_url":"https://images.example.test/other"
+        }),Value::Null]);
+        transport.responses.lock().unwrap()[1].body=b"\x89PNG\r\n\x1a\noriginal".to_vec();
+        let response=service.read_with(images_asset_request("open-image-original",&assets[1]),share_rpc,&transport).await.unwrap();
+        assert_eq!(response.body["dataUrl"],format!("data:image/png;base64,{}",base64::engine::general_purpose::STANDARD.encode(b"\x89PNG\r\n\x1a\noriginal")));
+        {
+            let requests=transport.requests.lock().unwrap();
+            assert!(requests[0].url.ends_with("/files/download/file-a*part?download_intent=false&inline=true&conversation_id=conversation-1"));
+            assert!(requests[0].headers.contains_key("Authorization"));
+            assert_eq!(requests[1].url,"https://images.example.test/original");
+            assert!(requests[1].headers.is_empty());
+        }
+        images_asset_fixture(&service,"image-original-denied",ServiceOperation::ImagesRecent,json!({"items":[{"id":"image-a","is_archived":true}]})).await;
+        let forbidden=FakeTransport::new(&[]);
+        for asset in assets {
+            let error=service.read_with(images_asset_request("open-image-revoked",asset),share_rpc,&forbidden).await.err().unwrap();
+            assert_eq!(error.code,"asset_unavailable");
+        }
+        assert!(forbidden.requests.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn images_assets_catalog_same_origin_has_no_credentials_and_recent_nullish_path_is_strict() {
         let service=ChatgptService::default();
         let metadata=images_asset_fixture(&service,"catalog-no-auth",ServiceOperation::ImagesInit,json!({"groups":[{"id":"g","items":[
@@ -6590,7 +6623,9 @@ mod tests {
             {"id":"blocked","url":"https://images.example.test/blocked","output_blocked":true},
             {"id":"archived","url":"https://images.example.test/archived","is_archived":true}
         ]})).await;
-        assert_eq!(recent["assets"].as_array().unwrap().len(),1);assert_eq!(recent["assets"][0]["id"],"null");
+        assert_eq!(recent["assets"].as_array().unwrap().len(),2);
+        assert_eq!(recent["assets"][0]["id"],"empty");assert_eq!(recent["assets"][0]["role"],"recent_preview");
+        assert_eq!(recent["assets"][1]["id"],"null");assert_eq!(recent["assets"][1]["role"],"recent");
     }
 
     #[tokio::test]
