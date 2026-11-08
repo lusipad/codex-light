@@ -145,6 +145,7 @@ import { GptsView } from "./components/GptsView";
 import { SitesView } from "./components/SitesView";
 import { parseSitesLocation, type SitesNavigation } from "./sitesNavigation";
 import { LibraryView, type LibraryNavigation } from "./components/LibraryView";
+import { libraryLocationUrl, parseLibraryLocation } from "./libraryBrowse";
 import { LibraryCleanupView } from "./components/LibraryCleanupView";
 import { CloudEnvironmentsView } from "./components/CloudEnvironmentsView";
 import { CloudDraftView } from "./components/CloudDraftView";
@@ -336,7 +337,9 @@ export const App: React.FC = () => {
   const [threadEventsReady, setThreadEventsReady] = useState(false);
   const promptStorageKey = isQuickChatWindow ? "codex_quick_chat_prompt_drafts_v1" : threadWindowId ? `codex_thread_window_drafts_v1:${threadWindowId}` : "codex_composer_prompt_drafts_v1";
   // Primary Route & Shell Layout State
-  const [activeRoute, commitActiveRoute] = useState<MainViewRoute>(() => window.location.pathname === "/code-review" ? "code-review" : parseSitesLocation(window.location.href) ? "sites" : "home");
+  const [activeRoute, commitActiveRoute] = useState<MainViewRoute>(() => window.location.pathname === "/code-review" ? "code-review"
+    : parseSitesLocation(window.location.href) ? "sites"
+      : !isQuickChatWindow && !isThreadWindow && parseLibraryLocation(window.location.href) ? "library" : "home");
   const isCloudChatRoute = activeRoute === "cloud-draft" || activeRoute === "cloud-new-chat";
   const [cloudDraft, setCloudDraft] = useState<{ session: CloudDraftSession; persisted: boolean; origin: "settings" | "cloud-environments" | "home"; title?: string } | null>(null);
   const refreshCloudRecentRef = useRef<(() => void) | null>(null);
@@ -377,14 +380,20 @@ export const App: React.FC = () => {
     setActiveRoute("code-review");
   };
   useEffect(() => {
-    const onSitesPopState = () => {
+    const restorePageRoute = () => {
       if (parseSitesLocation(window.location.href)) setActiveRoute("sites");
-      else if (activeRouteRef.current === "sites") setActiveRoute("home");
+      else if (!isQuickChatWindow && !isThreadWindow && parseLibraryLocation(window.location.href)) {
+        setLibraryCleanupTab(null);
+        setActiveRoute("library");
+      } else if (activeRouteRef.current === "sites" || activeRouteRef.current === "library") setActiveRoute("home");
     };
-    window.addEventListener("popstate", onSitesPopState);
-    return () => window.removeEventListener("popstate", onSitesPopState);
-  }, [setActiveRoute]);
+    window.addEventListener("popstate", restorePageRoute);
+    return () => window.removeEventListener("popstate", restorePageRoute);
+  }, [isQuickChatWindow, isThreadWindow, setActiveRoute]);
   useEffect(() => {
+    if ((activeRoute !== "library" || libraryCleanupTab) && parseLibraryLocation(window.location.href)) {
+      window.history.replaceState(window.history.state, "", libraryLocationUrl(window.location.href, null));
+    }
     const url = new URL(window.location.href);
     if (activeRoute === "sites" && !parseSitesLocation(url)) {
       url.pathname = "/sites";
@@ -395,7 +404,7 @@ export const App: React.FC = () => {
       url.searchParams.delete("view");
       window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
     }
-  }, [activeRoute]);
+  }, [activeRoute, libraryCleanupTab]);
   useEffect(() => {
     if (activeRoute === "code-review") {
       const hash = remotePullRequestUrl ? `#${new URLSearchParams({ pullRequest: remotePullRequestUrl })}` : "";
@@ -5691,7 +5700,7 @@ export const App: React.FC = () => {
           <div className={`full-route-view${libraryCleanupTab ? "" : " library-route-view"}`}>
             <div className={`full-route-container${libraryCleanupTab ? "" : " library-route-container"}`}>
               {libraryCleanupTab ? <LibraryCleanupView tab={libraryCleanupTab} onTabChange={setLibraryCleanupTab}
-                scope={JSON.stringify([modelAccountIdentity, appServerStatus.connected, appServerStatus.binaryPath, appServerStatus.appServerVersion])} /> : <LibraryView onNavigationChange={updateLibraryNavigation} />}
+                scope={JSON.stringify([modelAccountIdentity, appServerStatus.connected, appServerStatus.binaryPath, appServerStatus.appServerVersion])} /> : <LibraryView onNavigationChange={updateLibraryNavigation} routeUrl={!isQuickChatWindow && !isThreadWindow} />}
             </div>
           </div>
         ) : activeRoute === "cloud-new-chat" && publishedCloudTarget ? (

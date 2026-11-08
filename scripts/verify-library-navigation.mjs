@@ -123,4 +123,41 @@ h.reads.at(-1).reject(Error("403 list failed")); h.paths.at(-1).resolve([{ id: "
 assert.match(text(h.render()), /403 list failed/); assert.ok(button(h, "资料库"));
 button(h, "重试").props.onClick(); h.render(); await flush(); h.accesses.at(-1).resolve(access); await flush();
 assert.equal(h.reads.at(-1).directoryId, "A/中文"); h.unmount();
-console.log("PASS 18E production Library directory activation, raw IDs/native-only boundary, scoped paging, independent path retry, ancestor/root/local back, stale/identity/unmount cancellation");
+{
+  const id = "A/中文";
+  const address = "https://fixture.invalid/library/d/A%2F%E4%B8%AD%E6%96%87?tab=all&search=%20project%20&category=pdfs&source=uploaded";
+  const preferences = new Map([['library-display-preferences:["a","u"]', JSON.stringify({ lastTab: "images", viewMode: "list" })]]);
+  const routed = harness(null, preferences, address);
+  routed.render(); await flush();
+  assert.equal(routed.reads.length, 0, "URL does not bypass account qualification");
+  routed.accesses.at(-1).resolve(access); await flush();
+  const requested = routed.reads.at(-1);
+  assert.equal(requested?.directoryId, id, "direct URL restores the decoded directory before reading");
+  assert.equal(requested.tab, "all", "explicit URL wins over saved last tab");
+  assert.equal(requested.search, "project");
+  assert.equal(requested.categories.join(), "pdfs");
+  assert.equal(requested.sources.join(), "uploaded");
+  assert.equal(routed.paths[0].directoryId, id);
+  requested.resolve(page([folder("B")])); routed.paths[0].resolve([{ id, name: "目录 A" }]); await flush(); routed.render();
+  await open(routed, "B");
+  assert.equal(routed.window.location.pathname, "/library/d/B");
+  assert.equal(routed.window.location.searchParams.has("search"), false);
+  routed.navigation.back(); routed.render(); await flush();
+  assert.equal(routed.window.location.pathname, "/library/d/A%2F%E4%B8%AD%E6%96%87");
+  assert.equal(routed.window.location.searchParams.get("search"), "project");
+  routed.pop("/library/d/C?tab=all&search=restored");
+  routed.render(); await flush(); routed.accesses.at(-1).resolve(access); await flush();
+  assert.equal(routed.reads.at(-1).directoryId, "C");
+  assert.equal(routed.reads.at(-1).search, "restored");
+  assert.equal(routed.navigation.canGoBack, false, "external history navigation cannot use old local history");
+  routed.invalidate(); routed.render(); await flush();
+  assert.equal(routed.window.location.pathname, "/library");
+  assert.equal(routed.window.location.searchParams.has("search"), false);
+  assert.equal(routed.navigation.canGoForward, false);
+  for (const suffix of ["/d/%ZZ", "/d/external-gdrive%3Afoo", "/d/library%3Acollection%3Ashared-with-me", "?tab=favorites", "?deleted=true", "?storage_cleanup=true", "?account_id=other"]) {
+    assert.equal(routed.browse.parseLibraryLocation(`/library${suffix}`), null, suffix);
+  }
+  assert.equal(routed.browse.libraryLocationUrl("/library/d/A?tab=all&search=secret&source=uploaded&other=1", null), "/?other=1");
+  routed.unmount();
+}
+console.log("PASS 18E production Library directory activation, direct URL, titlebar history, independent path retry and account cancellation");

@@ -20,6 +20,50 @@ export const libraryBrowseCategories: Record<LibraryBrowseCategory, string> = {
   images: "图像", documents: "文档", spreadsheets: "电子表格", presentations: "演示文稿", pdfs: "PDF 文件",
 };
 
+const libraryPath = /^\/library(?:\/d\/([^/]+))?\/?$/;
+const browseQueryKeys = ["tab", "search", "category", "source"] as const;
+
+export function isNativeLibraryDirectory(id: string): boolean {
+  return !id.startsWith("library:") && !/^external-(?:gdrive|box|dropbox|sharepoint|onedrive|imanage):/u.test(id);
+}
+
+export function parseLibraryLocation(value: string | URL): LibraryBrowseScope | null {
+  const url = new URL(value, "http://localhost");
+  const match = libraryPath.exec(url.pathname);
+  if (!match) return null;
+  const query = url.searchParams;
+  if (query.get("deleted") === "true" || query.get("storage_cleanup") === "true" || query.get("entry_point") === "settings" ||
+    query.has("view") || query.has("file_id") || query.has("account_id") || query.get("review_access_requests") === "1") return null;
+  const tab = (query.get("tab") ?? "suggested") as LibraryBrowseTab;
+  if (!libraryBrowseTabs.includes(tab)) return null;
+  let directoryId: string | null = null;
+  if (match[1]) {
+    try { directoryId = decodeURIComponent(match[1]); } catch { return null; }
+    if (!directoryId.trim() || directoryId === "." || directoryId === ".." || /[\u0000-\u001f\u007f]/u.test(directoryId) ||
+      new TextEncoder().encode(directoryId).length > 2048 || !isNativeLibraryDirectory(directoryId)) return null;
+  }
+  const categories = [...new Set(query.getAll("category"))].filter((category): category is LibraryBrowseCategory => Object.hasOwn(libraryBrowseCategories, category));
+  const sources = [...new Set(query.getAll("source"))].filter((source): source is LibraryBrowseSource => source === "uploaded" || source === "generated");
+  return { directoryId, tab, search: query.get("search")?.trim() ?? "", categories, sources };
+}
+
+export function libraryLocationUrl(current: string | URL, scope: LibraryBrowseScope | null): string {
+  const url = new URL(current, "http://localhost");
+  for (const key of browseQueryKeys) url.searchParams.delete(key);
+  if (scope) {
+    if (!libraryPath.test(url.pathname)) {
+      url.searchParams.delete("view");
+      if (url.pathname === "/code-review") url.hash = "";
+    }
+    url.pathname = scope.directoryId === null ? "/library" : `/library/d/${encodeURIComponent(scope.directoryId)}`;
+    if (scope.tab !== "suggested") url.searchParams.set("tab", scope.tab);
+    if (scope.search.trim()) url.searchParams.set("search", scope.search.trim());
+    for (const category of scope.categories) url.searchParams.append("category", category);
+    for (const source of scope.sources) url.searchParams.append("source", source);
+  } else url.pathname = "/";
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
 export function libraryBrowsePreferenceKey(identity: Pick<ServiceIdentity, "accountId" | "userId">): string | null {
   return identity.userId == null ? null : `library-display-preferences:${JSON.stringify([identity.accountId, identity.userId])}`;
 }

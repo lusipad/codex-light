@@ -4,7 +4,7 @@ import { tauriListen } from "../bridge";
 import { serviceErrorMessage } from "../chatgptService";
 import { readLibraryAccess, readLibraryDirectoryPath, readLibraryBrowsePage, type LibraryAccess } from "../libraryClient";
 import { mergeLibraryPages, type LibraryDirectoryEntry, type LibraryNode, type LibraryPage } from "../libraryData";
-import { libraryBrowseCategories, nextLibraryBrowseSort, sortLibraryBrowseItems, type LibraryBrowseScope, type LibraryBrowseTab, type LibraryBrowseMode, type LibraryBrowseSort, type LibraryBrowseCategory, type LibraryBrowseSource } from "../libraryBrowse";
+import { isNativeLibraryDirectory, libraryBrowseCategories, libraryLocationUrl, nextLibraryBrowseSort, parseLibraryLocation, sortLibraryBrowseItems, type LibraryBrowseScope, type LibraryBrowseTab, type LibraryBrowseMode, type LibraryBrowseSort, type LibraryBrowseCategory, type LibraryBrowseSource } from "../libraryBrowse";
 import { readLibraryBrowsePreferences, writeLibraryBrowsePreferences } from "../libraryBrowsePreferences";
 import { LibraryBrowseFilters, LibraryBrowseLayout } from "./LibraryBrowseLayout";
 import { LibraryPagination } from "./LibraryPagination";
@@ -24,19 +24,15 @@ const normalizeLocation = (location: DirectoryLocation): DirectoryLocation => {
 };
 const scopeKey = (scope: LibraryBrowseScope) => JSON.stringify([scope.tab, scope.directoryId, scope.search.trim(), scope.categories, scope.sources]);
 const tabNames: Record<LibraryBrowseTab, string> = { suggested: "推荐", folders: "文件夹", images: "图像", all: "全部" };
-// Official _q defaults to native; virtual library collections are not ordinary directories.
-const nativeDirectory = (id: string) => !id.startsWith("library:")
-  && !/^external-(?:gdrive|box|dropbox|sharepoint|onedrive|imanage):/u.test(id);
-
 export interface LibraryNavigation {
   canGoBack: boolean;
   canGoForward: boolean;
   back: () => void;
   forward: () => void;
 }
-interface LibraryViewProps { onNavigationChange?: (navigation: LibraryNavigation | null) => void }
+interface LibraryViewProps { onNavigationChange?: (navigation: LibraryNavigation | null) => void; routeUrl?: boolean }
 
-export const LibraryView: React.FC<LibraryViewProps> = ({ onNavigationChange }) => {
+export const LibraryView: React.FC<LibraryViewProps> = ({ onNavigationChange, routeUrl = false }) => {
   const [revision, setRevision] = useState(0);
   const [viewMode, setViewMode] = useState<LibraryBrowseMode>("grid");
   const [sort, setSort] = useState<LibraryBrowseSort | null>(null);
@@ -49,7 +45,10 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onNavigationChange }) 
     previewRef.current?.controller.abort(); previewRef.current = null; previewReturnLocation.current = null; setPreview(null);
   }, []);
   useEffect(() => () => previewRef.current?.controller.abort(), []);
-  const [location, setLocation] = useState<DirectoryLocation>(rootLocation);
+  const [initialLocation] = useState(() => routeUrl ? parseLibraryLocation(window.location.href) : null);
+  const explicitLocation = useRef(initialLocation !== null);
+  const [location, setLocation] = useState<DirectoryLocation>(() =>
+    initialLocation ? normalizeLocation({ ...initialLocation, known: [] }) : rootLocation);
   const locationRef = useRef(location);
   const history = useRef<DirectoryLocation[]>([]);
   const future = useRef<DirectoryLocation[]>([]);
@@ -76,6 +75,12 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onNavigationChange }) 
   const pending = useRef(false);
   const pathPending = useRef(false);
   const usedCursors = useRef(new Set<string>());
+  useEffect(() => {
+    if (!routeUrl) return;
+    const next = libraryLocationUrl(window.location.href, location);
+    if (next !== `${window.location.pathname}${window.location.search}${window.location.hash}`)
+      window.history.replaceState(window.history.state, "", next);
+  }, [location, routeUrl]);
   const readPath = async (current: LibraryAccess, controller: AbortController, directoryId: string) => {
     if (controller.signal.aborted || pathPending.current) return;
     pathPending.current = true; setPathLoading(true); setPathError(null);
@@ -100,6 +105,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onNavigationChange }) 
         unlisten = await tauriListen("chatgpt-service:invalidated", () => {
           if (controller.signal.aborted) return;
           clearPreview(); setViewMode("grid"); setSort(null); setPreferenceError(null);
+          explicitLocation.current = false;
           controller.abort(); identity.current = null; history.current = []; future.current = []; returnLocations.current.clear(); locationRef.current = rootLocation;
           setLocation(rootLocation); setPath(null); setAccess(null); setPages([]); setRevision(value => value + 1);
         });
@@ -114,7 +120,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onNavigationChange }) 
         if (!previous || changed) {
           const preferences = readLibraryBrowsePreferences(current.identity);
           setViewMode(preferences.viewMode ?? "grid"); setPreferenceError(null);
-          if (changed || location.tab !== preferences.lastTab) {
+          if (changed || (!explicitLocation.current && location.tab !== preferences.lastTab)) {
             const reset = { ...rootLocation, tab: preferences.lastTab };
             clearPreview(); setSort(null);
             controller.abort(); history.current = []; future.current = []; returnLocations.current.clear(); locationRef.current = reset;
@@ -144,11 +150,23 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onNavigationChange }) 
     setPages([]); setPath(null); setError(null); setPageError(null); setPathError(null);
     setLoading(true); setPaging(false); setPathLoading(false); setLocation(next);
   }, [clearPreview]);
+  useEffect(() => {
+    if (!routeUrl) return;
+    const restore = () => {
+      const next = parseLibraryLocation(window.location.href);
+      if (!next) return;
+      explicitLocation.current = true;
+      history.current = []; future.current = []; returnLocations.current.clear();
+      changeLocation({ ...next, known: [] });
+    };
+    window.addEventListener("popstate", restore);
+    return () => window.removeEventListener("popstate", restore);
+  }, [changeLocation, routeUrl]);
   const renderedSource = source.current;
   const navigate = (directoryId: string | null, known: LibraryDirectoryEntry[], search = "") => {
     if (scopeKey(locationRef.current) !== currentScopeKey) return;
     if (!access?.available || !renderedSource || renderedSource !== source.current || renderedSource.signal.aborted) return;
-    if ((directoryId === locationRef.current.directoryId && search === locationRef.current.search) || (directoryId !== null && !nativeDirectory(directoryId))) return;
+    if ((directoryId === locationRef.current.directoryId && search === locationRef.current.search) || (directoryId !== null && !isNativeLibraryDirectory(directoryId))) return;
     future.current = [];
     const previous = { ...locationRef.current, known: path ?? locationRef.current.known };
     returnLocations.current.set(previous.directoryId, previous); history.current.push(previous);
@@ -166,7 +184,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onNavigationChange }) 
     locationRef.current = next; setLocation(next);
   };
   const openDirectory = (node: LibraryNode) => {
-    if (node.kind !== "directory" || !nativeDirectory(node.id)) return;
+    if (node.kind !== "directory" || !isNativeLibraryDirectory(node.id)) return;
     navigate(node.id, [...(path ?? locationRef.current.known), { id: node.id, name: node.name }]);
   };
   const back = useCallback(() => {
@@ -208,7 +226,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onNavigationChange }) 
     }
   };
   const openFile = (node: LibraryNode, trigger: HTMLButtonElement) => {
-    if (node.kind !== "file" || !nativeDirectory(node.id) || !access?.available
+    if (node.kind !== "file" || !isNativeLibraryDirectory(node.id) || !access?.available
       || scopeKey(locationRef.current) !== currentScopeKey || !renderedSource
       || renderedSource !== source.current || renderedSource.signal.aborted) return;
     const returnLocation = previewRef.current && !previewRef.current.controller.signal.aborted ? previewReturnLocation.current : null;
@@ -337,7 +355,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onNavigationChange }) 
     {!loading && !error && access?.available && !items.length && cursor && <p role="status">当前页没有条目，可继续加载更多内容。</p>}
     {access?.available && (loading || Boolean(items.length)) && <LibraryBrowseLayout items={items} mode={effectiveMode} scope={location} access={access} loading={loading} paging={paging}
       sort={query ? null : sort} onSort={key => { if (!loading && !query && scopeKey(locationRef.current) === currentScopeKey && renderedSource === source.current && !renderedSource?.signal.aborted) setSort(current => nextLibraryBrowseSort(current, key)); }}
-      canOpen={node => nativeDirectory(node.id) && (node.kind === "directory" || node.kind === "file")}
+      canOpen={node => isNativeLibraryDirectory(node.id) && (node.kind === "directory" || node.kind === "file")}
       onOpen={(node, trigger) => node.kind === "directory" ? openDirectory(node) : openFile(node, trigger)} />}
     {pageError && <section aria-label="资料库分页状态"><p role="alert">{pageError}</p><button type="button" onClick={() => void loadMore()}>重试加载</button></section>}
     {access?.available && <LibraryPagination key={pages.length} hasNextPage={Boolean(cursor) && !loading && !pageError} fetching={loading || paging} onLoadNextPage={() => void loadMore()} />}

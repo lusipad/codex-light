@@ -9,7 +9,7 @@ const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve()
 const nodes = node => node && typeof node === "object" ? [node, ...(node.children ?? []).flatMap(nodes)] : [];
 const text = tree => nodes(tree).flatMap(node => node.children.filter(child => typeof child === "string")).join(" ");
 const button = (tree, label) => { const found = nodes(tree).find(node => node.type === "button" && text(node) === label); assert.ok(found, label); return found; };
-export function harness(listenerError = null, storage = new Map()) {
+export function harness(listenerError = null, storage = new Map(), href) {
   const contexts = new Map(), effects = [], accesses = [], reads = [], paths = [], images = [], paginationObservers = [];
   class PaginationObserver {
     constructor(callback) { this.callback = callback; paginationObservers.push(this); }
@@ -17,6 +17,12 @@ export function harness(listenerError = null, storage = new Map()) {
     disconnect() { this.disconnected = true; }
   }
   let listener, writes = 0, navigation = null, context, used;
+  const windowListeners = new Map();
+  const window = { innerWidth: 1280, innerHeight: 800, location: new URL(href ?? "https://fixture.invalid/"),
+    history: { state: { fixture: true }, replaceState(state, _, next) {
+      assert.equal(state, window.history.state); window.location = new URL(next, window.location);
+    } }, addEventListener(name, callback) { windowListeners.set(name, callback); },
+    removeEventListener(name, callback) { if (windowListeners.get(name) === callback) windowListeners.delete(name); } };
   const componentContext = key => { if (!contexts.has(key)) contexts.set(key, { hooks: [], cursor: 0 }); return contexts.get(key); };
   const renderComponent = (type, props) => {
     const before = context, key = `${type.name}:${props?.key ?? "single"}`;
@@ -43,9 +49,9 @@ export function harness(listenerError = null, storage = new Map()) {
   const load = file => {
     if (modules.has(file)) return modules.get(file);
     const exports = {}; modules.set(file, exports);
-    vm.runInNewContext(compile(file), { exports, AbortController, Date, Intl, Map, Set, Number, JSON,
+    vm.runInNewContext(compile(file), { exports, AbortController, Date, Intl, Map, Set, Number, JSON, URL, URLSearchParams, TextEncoder,
       ...(file.endsWith("/LibraryPagination.tsx") ? { IntersectionObserver: PaginationObserver } : {}),
-      document: { body: {}, addEventListener() {}, removeEventListener() {} }, window: { innerWidth: 1280, innerHeight: 800, addEventListener() {}, removeEventListener() {} },
+      document: { body: {}, addEventListener() {}, removeEventListener() {} }, window,
       localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
       require: name => {
       if (name === "react") return React;
@@ -77,14 +83,15 @@ export function harness(listenerError = null, storage = new Map()) {
   };
   const exports = load("src/components/LibraryView.tsx");
   const onNavigationChange = next => { navigation = next; };
-  return { accesses, reads, paths, images, storage, paginationObservers,
+  return { accesses, reads, paths, images, storage, paginationObservers, window, browse: load("src/libraryBrowse.ts"),
+    pop(next) { window.location = new URL(next, window.location); windowListeners.get("popstate")?.(); },
     triggerPagination(entries = [{ isIntersecting: true }]) {
       const active = paginationObservers.filter(observer => !observer.disconnected && observer.target);
       for (const observer of active) observer.callback(entries, observer);
       return active.length;
     },
     get navigation() { return navigation; }, setListenError(value) { listenerError = value; }, render() {
-    used = new Set(); const tree = renderComponent(exports.LibraryView, { onNavigationChange });
+    used = new Set(); const tree = renderComponent(exports.LibraryView, { onNavigationChange, routeUrl: href !== undefined });
     for (const [key, owner] of contexts) if (!used.has(key)) { owner.hooks.forEach(hook => hook?.cleanup?.()); contexts.delete(key); }
     while (effects.length) effects.shift()(); return tree;
   }, invalidate() { listener(); }, unmount() { for (const owner of contexts.values()) owner.hooks.forEach(hook => hook?.cleanup?.()); }, get writes() { return writes; } };
