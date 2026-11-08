@@ -103,16 +103,18 @@ function normalizeKind(kind: string): DiffKind {
 }
 
 /** Parse a unified diff snippet into styled, render-ready lines. */
-function parseUnifiedDiff(diff: string): ParsedDiffLine[] {
+export function parseUnifiedDiff(diff: string): ParsedDiffLine[] {
   if (!diff || !diff.trim()) return [];
   const rawLines = diff.split("\n");
   // Trailing newline in a git patch produces one empty tail entry; drop it.
   while (rawLines.length > 0 && rawLines[rawLines.length - 1] === "") {
     rawLines.pop();
   }
+  let inHunk = false;
   return rawLines.map((raw) => {
-    if (raw.startsWith("@@")) return { type: "hunk", text: raw };
-    if (META_PREFIXES.some((prefix) => raw.startsWith(prefix))) {
+    if (raw.startsWith("diff --git ")) inHunk = false;
+    if (raw.startsWith("@@")) { inHunk = true; return { type: "hunk", text: raw }; }
+    if (raw.startsWith("\\ No newline") || (!inHunk && META_PREFIXES.some((prefix) => raw.startsWith(prefix)))) {
       return { type: "meta", text: raw };
     }
     if (raw.startsWith("+")) return { type: "add", text: raw };

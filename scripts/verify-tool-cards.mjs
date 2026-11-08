@@ -44,42 +44,65 @@ visit(ast);
 // 1. 检查 NOTIFICATION.ITEM_MCP_PROGRESS 通知分支
 assert.ok(mcpProgressBranch, "App.tsx must handle NOTIFICATION.ITEM_MCP_PROGRESS");
 
-// 2. 验证 fileChanges 渲染：kind 必须支持官方 schema 对象形式，且状态指示完整
+// 2. Exercise the production file rows and their independent actions.
 assert.ok(fileChangeMapBody, "App.tsx must contain the production file-change renderer");
 {
-  const fakeReactContext = vm.createContext({
-    React,
-    countDiffLines: () => ({ additions: 1, deletions: 1 }),
-    DiffIcon: () => null,
-    setSelectedPreviewFile: () => {},
-    setShowRightDrawer: () => {},
-  });
-  const renderFc = vm.runInContext(compile(`(${fileChangeMapBody})`), fakeReactContext);
-
-  // 检查 inProgress 与 kind 对象
-  const sampleFc = {
-    id: "fc-1",
-    status: "inProgress",
-    changes: [
-      {
-        path: "src/sample.ts",
-        kind: { type: "update", move_path: null },
-        diff: "+add\n-del"
-      }
-    ]
+  const slots = [], opened = [];
+  let cursor = 0;
+  const react = {
+    ...React, Fragment: "fragment", useMemo: callback => callback(),
+    useState: initial => {
+      const index = cursor++;
+      slots[index] ??= initial;
+      return [slots[index], next => { slots[index] = typeof next === "function" ? next(slots[index]) : next; }];
+    },
   };
-  const jsxResult = renderFc(sampleFc, 0);
-  const renderedStr = JSON.stringify(jsxResult);
-  assert.ok(!renderedStr.includes("[object Object]"), "fileChange kind must not render as [object Object]");
-  assert.ok(renderedStr.includes("update") || renderedStr.includes("修改"), "fileChange kind must show valid kind label");
-  assert.ok(renderedStr.includes("修改中") || renderedStr.includes("调用中") || renderedStr.includes("运行中") || renderedStr.includes("inProgress"), "fileChange card must display inProgress status");
-
-  // 检查 failed 和 declined 终态
-  for (const [status, label] of [["failed", "失败"], ["declined", "已拒绝"]]) {
-    const res = renderFc({ id: "fc-2", status, changes: [{ path: "f.ts", kind: "delete", diff: "-del" }] }, 0);
-    const s = JSON.stringify(res);
-    assert.ok(s.includes(label), `fileChange card must display ${label} for status ${status}`);
+  let diffPanel;
+  const require = name => {
+    if (name === "react") return react;
+    if (name === "./Icons") return new Proxy({}, { get: () => () => null });
+    if (name === "./TurnDiffPanel") return diffPanel;
+    if (name === "../fsClient") return { baseNameFsPath: path => path.split(/[\\/]/).at(-1), joinFsPath: (root, path) => `${root}/${path}` };
+    if (name.endsWith(".css")) return {};
+    throw new Error(name);
+  };
+  function component(path) {
+    const exports = {};
+    const js = ts.transpileModule(fs.readFileSync(path, "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS,
+      jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
+    vm.runInNewContext(js, { exports, require });
+    return exports;
   }
+  diffPanel = component("src/components/TurnDiffPanel.tsx");
+  const { FileChangeCard } = component("src/components/FileChangeCard.tsx");
+  const context = { React: react, FileChangeCard, turn: { status: "completed" }, activeThreadObj: { cwd: "C:/project" },
+    openPreviewFile: path => opened.push(path) };
+  const renderFc = vm.runInNewContext(compile(`(${fileChangeMapBody})`), context);
+  const sample = { id: "fc", status: "completed", changes: [
+    { path: "src/new.ts", kind: { type: "add" }, diff: "+++ raw content\r\nsecond\r\n" },
+    { path: "old.ts", kind: { type: "update", move_path: "src/renamed.ts" }, diff: "--- a/old.ts\n+++ b/src/renamed.ts\n@@ -1 +1 @@\n--- previous\n+++ changed\n" },
+    { path: "removed.ts", kind: { type: "delete" }, diff: "line removed\n" },
+  ] };
+  const visitNodes = node => !node || typeof node !== "object" ? [] : [node, ...(node.children ?? []).flatMap(visitNodes)];
+  const render = (item = sample) => { cursor = 0; return visitNodes(renderFc(item, 0)); };
+  const findClass = (nodes, name) => nodes.filter(node => node.props?.className === name);
+  const rows = render();
+  assert.equal(findClass(rows, "file-change-card").length, 3);
+  assert.deepEqual(findClass(rows, "diff-plus").map(node => node.children.join("")), ["+2", "+1"]);
+  assert.deepEqual(findClass(rows, "diff-minus").map(node => node.children.join("")), ["−1", "−1"]);
+  findClass(rows, "file-change-toggle")[1].props.onClick();
+  assert.deepEqual(findClass(render(), "file-change-toggle").map(node => node.props["aria-expanded"]), [false, true, false]);
+  assert.equal(opened.length, 0, "expanding a patch must not open a file");
+  findClass(render(), "file-change-name")[1].props.onClick();
+  assert.deepEqual(opened, ["C:/project/src/renamed.ts"]);
+  assert.match(JSON.stringify(render({ ...sample, status: "inProgress" })), /正在创建.*正在编辑.*正在删除/);
+  context.turn.status = "interrupted";
+  assert.match(JSON.stringify(render({ ...sample, status: "inProgress" })), /已停止创建.*已停止编辑.*已停止删除/);
+  for (const status of ["failed", "declined"]) assert.match(JSON.stringify(render({ ...sample, status })), /已拒绝/);
+  const large = { ...sample, changes: [{ path: "large.ts", diff: "+x\n".repeat(5001) }] };
+  findClass(render(large), "file-change-toggle")[0].props.onClick();
+  assert.match(JSON.stringify(render(large)), /差异内容过多，无法预览/);
+  console.log("PASS per-file patch rows, exact stats, disclosure, applied rename, stopped/rejected and render cap");
 }
 
 // 3. 验证 mcpCalls 渲染：error 支持官方 schema 对象形式，result 提取文本，progress 进度展示

@@ -35,7 +35,6 @@ import {
   OpenAIIcon,
   CodexHomeIcon,
   BranchIcon,
-  DiffIcon,
   TerminalIcon,
   BrainIcon,
   ShieldIcon,
@@ -75,6 +74,7 @@ import {
 } from "./threadAttachments";
 import { callAppServer, tauriInvoke, tauriListen, isTauriRuntime } from "./bridge";
 import { baseNameFsPath } from "./fsClient";
+import { FileChangeCard } from "./components/FileChangeCard";
 import type { AccountReadResult } from "./config";
 import { createShortcutMatcher, shortcutEventAllowed, SHORTCUTS, effectiveBindings } from "./shortcuts";
 import { useKeyboardPreferences } from "./keyboardPreferences";
@@ -6409,67 +6409,10 @@ export const App: React.FC = () => {
                         <CommandExecutionCard key={cmd.id || cIdx} item={cmd} turnStatus={turn.status}
                           onOpenFile={filePath => { openPreviewFile(filePath); }} />
                       );
-                  const renderFileChange = (fc: TurnItem, fIdx: number) => {
-                        const changes: any[] = Array.isArray(fc.changes)
-                          ? fc.changes
-                          : [];
-                        let additions = 0;
-                        let deletions = 0;
-                        for (const change of changes) {
-                          const counted = countDiffLines(String(change?.diff || ""));
-                          additions += counted.additions;
-                          deletions += counted.deletions;
-                        }
-                        const primaryPath = changes[0]?.path || fc.path || "";
-                        const summaryText =
-                          changes.length > 1
-                            ? `${changes[0]?.path || "文件"} 等 ${changes.length} 个文件`
-                            : primaryPath || "Modified file";
-                        const rawKind = changes[0]?.kind;
-                        const kindType = typeof rawKind === "object" && rawKind !== null
-                          ? String(rawKind.type || "update")
-                          : String(rawKind || "");
-                        const kindLabelMap: Record<string, string> = { add: "添加", delete: "删除", update: "修改" };
-                        const kindLabel = kindLabelMap[kindType] || kindType;
-                        return (
-                          <div
-                            key={fc.id || fIdx}
-                            className="file-change-card"
-                            onClick={() => {
-                              if (primaryPath) {
-                                openPreviewFile(primaryPath);
-                              }
-                            }}
-                          >
-                            <div className="file-change-left">
-                              <DiffIcon size={15} />
-                              <span title={changes.map((c: any) => c?.path).filter(Boolean).join("\n")}>
-                                {summaryText}
-                              </span>
-                              {kindType && (
-                                <span className={`file-change-kind kind-${kindType}`} title={kindLabel}>
-                                  {kindLabel}
-                                </span>
-                              )}
-                            </div>
-                            <div className="file-change-right">
-                              {fc.status === "inProgress" && (
-                                <span className="file-change-status in-progress">修改中…</span>
-                              )}
-                              {fc.status === "failed" && (
-                                <span className="file-change-status failed">失败</span>
-                              )}
-                              {fc.status === "declined" && (
-                                <span className="file-change-status declined">已拒绝</span>
-                              )}
-                              <span className="diff-stats-badge">
-                                <span className="diff-plus">+{additions}</span>{" "}
-                                <span className="diff-minus">-{deletions}</span>
-                              </span>
-                            </div>
-                          </div>
-                        );
-                      };
+                  const renderFileChange = (fc: TurnItem, fIdx: number) => (
+                    <FileChangeCard key={fc.id || fIdx} item={fc} turnStatus={turn.status}
+                      cwd={fc.cwd || activeThreadObj?.cwd || activeWorkspace?.path} onOpenFile={openPreviewFile} />
+                  );
                   const renderPlan = (plan: TurnItem, pIdx: number) => (
                         <div key={plan.id || pIdx} className="plan-inline-card">
                           <div className="plan-inline-header">

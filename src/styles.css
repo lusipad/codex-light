@@ -1463,29 +1463,35 @@ html, body, #root {
 
 /* Inline File Change Card */
 .file-change-card {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
+  overflow: hidden;
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
   font-size: var(--text-sm);
-  cursor: pointer;
-  transition: all 0.12s ease;
 }
 
-.file-change-card:hover {
-  background: var(--bg-hover);
-  border-color: var(--border-default);
-}
-
-.file-change-left {
+.file-change-card + .file-change-card { margin-top: 4px; }
+.file-change-summary {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-family: var(--font-mono);
+  padding: 6px 9px;
+  color: var(--text-secondary);
 }
+.file-change-summary > :not(.file-change-name) { flex-shrink: 0; }
+.file-change-name, .file-change-toggle {
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-primary);
+  padding: 2px 4px;
+}
+button.file-change-name, .file-change-toggle { cursor: pointer; }
+.file-change-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+button.file-change-name:hover { text-decoration: underline; }
+.file-change-toggle { margin-inline-start: auto; display: flex; align-items: center; }
+.file-change-toggle:hover { background: var(--bg-hover); }
+.file-change-card .turn-diff-code { border-top: 1px solid var(--border-subtle); }
 
 /* Approval Request Card */
 .approval-card {
@@ -6568,39 +6574,8 @@ html, body, #root {
 }
 
 /* ============================================================
-   Turn item extras: file-change kinds, inline plan, usage limits
+   Turn item extras: inline plan, usage limits
    ============================================================ */
-.file-change-kind {
-  font-family: var(--font-mono);
-  font-size: calc(10px * var(--font-ui-scale, 1));
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: var(--bg-pill);
-  color: var(--text-secondary);
-  border: 1px solid var(--border-default);
-  flex: none;
-}
-
-.file-change-kind.kind-add {
-  color: #22c55e;
-  border-color: rgba(34, 197, 94, 0.35);
-  background: rgba(34, 197, 94, 0.12);
-}
-
-.file-change-kind.kind-delete {
-  color: var(--accent-red);
-  border-color: rgba(239, 68, 68, 0.35);
-  background: rgba(239, 68, 68, 0.12);
-}
-
-.file-change-kind.kind-rename {
-  color: #eab308;
-  border-color: rgba(234, 179, 8, 0.35);
-  background: rgba(234, 179, 8, 0.12);
-}
-
 .plan-inline-card {
   border: 1px solid var(--border-default);
   background: var(--bg-pill);
