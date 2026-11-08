@@ -11,9 +11,8 @@
 //! * persists scheduling bookkeeping in
 //!   `~/.codex/.codex-native/scheduler-state.json` (atomic tmp + rename; user
 //!   `automation.toml` files are never modified),
-//! * when due, starts a real app-server thread/turn
-//!   (`thread/start` + `turn/start`, approval policy `never`, sandbox
-//!   `workspace-write`) and emits `automation:run-started` /
+//! * when due, starts a real app-server turn, in the linked thread for
+//!   a heartbeat or in a new thread for a standalone task, and emits `automation:run-started` /
 //!   `automation:run-finished` events for the UI.
 //!
 //! Scheduling is anchored to the automation's `created_at`/`updated_at`
@@ -84,6 +83,9 @@ fn ms_from_datetime(naive: NaiveDateTime) -> Option<u64> {
 }
 
 fn compute_next_run_ms(rule: &Rrule, anchor_ms: u64, after_ms: u64) -> Option<u64> {
+    if rule.freq == Freq::Minutely {
+        return after_ms.checked_add(u64::from(rule.interval) * 60_000);
+    }
     let anchor = datetime_from_ms(anchor_ms);
     let mut after = datetime_from_ms(after_ms.max(anchor_ms));
     // Skip nonexistent local times (DST gap) rather than dropping the schedule.
@@ -103,6 +105,7 @@ fn compute_next_run_ms(rule: &Rrule, anchor_ms: u64, after_ms: u64) -> Option<u6
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Freq {
+    Minutely,
     Hourly,
     Daily,
     Weekly,
@@ -113,6 +116,7 @@ enum Freq {
 /// Supported subset of RFC 5545 RRULE:
 /// `FREQ=HOURLY|DAILY|WEEKLY|MONTHLY|YEARLY`, `INTERVAL`, `BYHOUR`,
 /// `BYMINUTE`, `BYDAY`, `BYMONTHDAY` (positive and negative days) and `WKST`.
+/// Linked heartbeats additionally support `MINUTELY` with only `INTERVAL`.
 /// Anything else is rejected with an explanatory error (caller logs and skips
 /// the automation instead of crashing).
 #[derive(Debug, Clone)]
@@ -127,6 +131,14 @@ struct Rrule {
 }
 
 impl Rrule {
+    fn for_item(item: &AutomationItem) -> Result<Self, String> {
+        let rule = Self::parse(&item.rrule)?;
+        if rule.freq == Freq::Minutely && linked_heartbeat_target(item).is_none() {
+            return Err("MINUTELY requires a linked heartbeat thread".into());
+        }
+        Ok(rule)
+    }
+
     fn parse(raw: &str) -> Result<Self, String> {
         let normalized = raw.trim().to_ascii_uppercase();
         let body = normalized.strip_prefix("RRULE:").unwrap_or(&normalized);
@@ -141,6 +153,8 @@ impl Rrule {
         let mut by_day: Vec<Weekday> = Vec::new();
         let mut by_month_day: Vec<i32> = Vec::new();
         let mut week_start = Weekday::Mon;
+        let mut minute_fields = HashSet::new();
+        let mut minute_rule_is_simple = true;
 
         for part in body.split(';').map(str::trim).filter(|part| !part.is_empty()) {
             let (key, value) = part
@@ -148,9 +162,11 @@ impl Rrule {
                 .ok_or_else(|| format!("malformed RRULE part `{part}`"))?;
             let key = key.trim();
             let value = value.trim();
+            minute_rule_is_simple &= matches!(key, "FREQ" | "INTERVAL") && minute_fields.insert(key);
             match key {
                 "FREQ" => {
                     freq = Some(match value {
+                        "MINUTELY" => Freq::Minutely,
                         "HOURLY" => Freq::Hourly,
                         "DAILY" => Freq::Daily,
                         "WEEKLY" => Freq::Weekly,
@@ -210,6 +226,9 @@ impl Rrule {
         }
 
         let freq = freq.ok_or_else(|| "RRULE is missing FREQ".to_string())?;
+        if freq == Freq::Minutely && !minute_rule_is_simple {
+            return Err("MINUTELY accepts only FREQ and INTERVAL".into());
+        }
         Ok(Rrule {
             freq,
             interval,
@@ -363,6 +382,7 @@ fn next_occurrence_naive(
     after: NaiveDateTime,
 ) -> Option<NaiveDateTime> {
     match rule.freq {
+        Freq::Minutely => None,
         Freq::Hourly => next_hourly(rule, anchor, after),
         Freq::Daily => next_daily(rule, anchor, after),
         Freq::Weekly => next_weekly(rule, anchor, after),
@@ -576,12 +596,28 @@ fn read_jitter_salt() -> Vec<u8> {
 /// Stable FNV-1a based jitter in `0..=MAX_JITTER_SECS` seconds, derived from the
 /// runtime salt and the automation id (same automation keeps the same offset).
 fn jitter_ms(id: &str, salt: &[u8]) -> u64 {
+    (schedule_hash(salt.iter().chain(id.as_bytes())) % (MAX_JITTER_SECS + 1)) * 1000
+}
+
+fn schedule_hash<'a>(bytes: impl IntoIterator<Item = &'a u8>) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in salt.iter().chain(id.as_bytes()) {
+    for byte in bytes {
         hash ^= *byte as u64;
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
-    (hash % (MAX_JITTER_SECS + 1)) * 1000
+    hash
+}
+
+fn next_scheduled_at(rule: &Rrule, item: &AutomationItem, anchor: u64, now: u64, salt: &[u8]) -> Option<u64> {
+    let next = compute_next_run_ms(rule, anchor, now)?;
+    if rule.freq != Freq::Minutely || rule.interval < 60 {
+        return Some(next);
+    }
+    // Longer heartbeat intervals jitter around the nominal time. The persisted
+    // next time already includes this offset, so the claim adds no second jitter.
+    let nominal = next.to_le_bytes();
+    let offset = (schedule_hash(salt.iter().chain(item.id.as_bytes()).chain(&nominal)) % 601) as i64 - 300;
+    next.checked_add_signed(offset * 1000)
 }
 
 /* ------------------------------------------------------------------ */
@@ -712,6 +748,11 @@ fn baseline_ms(item: &AutomationItem) -> u64 {
 }
 
 fn schedule_signature(item: &AutomationItem) -> String {
+    if let Some(target) = linked_heartbeat_target(item) {
+        if let Ok(Rrule { freq: Freq::Minutely, interval, .. }) = Rrule::parse(&item.rrule) {
+            return format!("minute|{}|{}|{}", target, item.execution_environment, interval);
+        }
+    }
     format!(
         "{}|{}|{}|{}|{}|{}",
         item.rrule.trim(),
@@ -721,6 +762,13 @@ fn schedule_signature(item: &AutomationItem) -> String {
         item.reasoning_effort.as_deref().unwrap_or("").trim(),
         item.updated_at.max(item.created_at),
     )
+}
+
+fn linked_heartbeat_target(item: &AutomationItem) -> Option<&str> {
+    if !item.kind.eq_ignore_ascii_case("heartbeat") {
+        return None;
+    }
+    item.target_thread_id.as_deref().map(str::trim).filter(|id| !id.is_empty())
 }
 
 /// Store (and log once) the reason an automation cannot be scheduled.
@@ -783,13 +831,19 @@ fn prepare_item(
         return false;
     }
 
-    if item.cwds.iter().all(|cwd| cwd.trim().is_empty()) {
+    if item.kind.eq_ignore_ascii_case("heartbeat") && linked_heartbeat_target(item).is_none() {
+        entry.next_run_at = None;
+        note_schedule_warning(entry, item, "heartbeat has no linked thread; skipped".into());
+        return false;
+    }
+
+    if linked_heartbeat_target(item).is_none() && item.cwds.iter().all(|cwd| cwd.trim().is_empty()) {
         entry.next_run_at = None;
         note_schedule_warning(entry, item, "automation has no cwd; skipped".to_string());
         return false;
     }
 
-    let rule = match Rrule::parse(&item.rrule) {
+    let rule = match Rrule::for_item(item) {
         Ok(rule) => rule,
         Err(err) => {
             entry.next_run_at = None;
@@ -803,11 +857,12 @@ fn prepare_item(
     }
 
     let anchor_ms = entry.anchor_at.unwrap_or_else(|| baseline_ms(item));
-    if force_reschedule || signature_changed || entry.next_run_at.is_none() {
+    let minute_heartbeat = rule.freq == Freq::Minutely;
+    if (force_reschedule && !minute_heartbeat) || signature_changed || entry.next_run_at.is_none() {
         // Always move forward from "now": a newly discovered automation should
         // not fire immediately for occurrences that were missed while the app
         // was not running.
-        entry.next_run_at = compute_next_run_ms(&rule, anchor_ms, now);
+        entry.next_run_at = next_scheduled_at(&rule, item, anchor_ms, now, salt);
         if entry.next_run_at.is_none() {
             note_schedule_warning(
                 entry,
@@ -820,7 +875,8 @@ fn prepare_item(
     let Some(next_run_at) = entry.next_run_at else {
         return false;
     };
-    if now < next_run_at.saturating_add(jitter_ms(&item.id, salt)) {
+    let jitter = if minute_heartbeat { 0 } else { jitter_ms(&item.id, salt) };
+    if force_reschedule || now < next_run_at.saturating_add(jitter) {
         return false;
     }
 
@@ -830,7 +886,7 @@ fn prepare_item(
     entry.last_status = Some("running".to_string());
     entry.last_error = None;
     entry.run_count = entry.run_count.saturating_add(1);
-    entry.next_run_at = compute_next_run_ms(&rule, anchor_ms, now);
+    entry.next_run_at = next_scheduled_at(&rule, item, anchor_ms, now, salt);
     true
 }
 
@@ -938,20 +994,34 @@ fn emit_event(app: &AppHandle, event: &str, payload: Value) {
     }
 }
 
-/// Start a thread + turn for one automation. Never panics; all failures come
-/// back as [`ExecutionError`].
+async fn prepare_heartbeat_thread<F, R>(thread_id: &str, mut call: F) -> Result<(), String>
+where
+    F: FnMut(&'static str, Value) -> R,
+    R: std::future::Future<Output = Result<Value, String>>,
+{
+    let mut response = call("thread/read", json!({"threadId":thread_id,"includeTurns":false})).await?;
+    if response["thread"]["id"].as_str() != Some(thread_id) {
+        return Err("会话身份不匹配，未运行定时任务".into());
+    }
+    if response["thread"]["status"]["type"] == "notLoaded" {
+        response = call("thread/resume", json!({"threadId":thread_id,"excludeTurns":true})).await?;
+    }
+    let thread = &response["thread"];
+    if thread["id"].as_str() != Some(thread_id) || thread["status"]["type"] != "idle" {
+        return Err("关联会话正在执行或不可用，未运行定时任务".into());
+    }
+    if !thread["environments"].as_array().is_some_and(|environments| {
+        !environments.is_empty() && environments.iter().all(|env| env["environmentId"] == "local")
+    }) {
+        return Err("无法确认关联会话的本地执行环境，未运行定时任务".into());
+    }
+    Ok(())
+}
+
 async fn execute_automation(
     app: &AppHandle,
     item: &AutomationItem,
 ) -> Result<RunOutcome, ExecutionError> {
-    let cwd = item
-        .cwds
-        .iter()
-        .map(|cwd| cwd.trim())
-        .find(|cwd| !cwd.is_empty())
-        .map(str::to_string)
-        .ok_or_else(|| ExecutionError::new("automation has no cwd"))?;
-
     if !item.execution_environment.eq_ignore_ascii_case("local") {
         return Err(ExecutionError::new(format!(
             "execution_environment `{}` is not local; run skipped",
@@ -967,41 +1037,53 @@ async fn execute_automation(
         ExecutionError::new(format!("app-server connection failed: {err}"))
     })?;
 
-    let mut thread_params = json!({
-        "cwd": cwd,
-        "approvalPolicy": "never",
-        "sandbox": "workspace-write",
-    });
-    if let Some(model) = item
-        .model
-        .as_deref()
-        .map(str::trim)
-        .filter(|model| !model.is_empty())
-    {
-        thread_params["model"] = json!(model);
-    }
+    let thread_id = if let Some(target) = linked_heartbeat_target(item) {
+        prepare_heartbeat_thread(target, |method, params| manager.call(app, method, Some(params)))
+            .await.map_err(ExecutionError::new)?;
+        // Recheck the task after the RPCs so a pause or a reassignment during
+        // cold resume does not send the original prompt into the old thread.
+        if !config_skills::list_automations().iter().any(|current| {
+            current.id == item.id && linked_heartbeat_target(current) == Some(target) &&
+                current.status == item.status && current.rrule == item.rrule &&
+                current.execution_environment == item.execution_environment &&
+                current.prompt == item.prompt && current.model == item.model &&
+                current.reasoning_effort == item.reasoning_effort
+        }) {
+            return Err(ExecutionError::new("任务在准备期间发生变化，未运行定时任务"));
+        }
+        target.to_owned()
+    } else {
+        if item.kind.eq_ignore_ascii_case("heartbeat") {
+            return Err(ExecutionError::new("定时任务没有关联聊天"));
+        }
+        let cwd = item.cwds.iter().map(|cwd| cwd.trim()).find(|cwd| !cwd.is_empty())
+            .ok_or_else(|| ExecutionError::new("automation has no cwd"))?;
+        let mut thread_params = json!({
+            "cwd": cwd,
+            "approvalPolicy": "never",
+            "sandbox": "workspace-write",
+        });
+        if let Some(model) = item.model.as_deref().map(str::trim).filter(|model| !model.is_empty()) {
+            thread_params["model"] = json!(model);
+        }
 
-    let thread_response = manager
-        .call(app, "thread/start", Some(thread_params))
-        .await
-        .map_err(|err| ExecutionError::new(format!("thread/start failed: {err}")))?;
-    let thread_id = thread_response
-        .get("thread")
-        .and_then(|thread| thread.get("id"))
-        .and_then(Value::as_str)
-        .or_else(|| thread_response.get("threadId").and_then(Value::as_str))
-        .or_else(|| thread_response.get("conversationId").and_then(Value::as_str))
-        .map(str::to_string)
-        .ok_or_else(|| {
-            ExecutionError::new("thread/start response did not contain a thread id")
-        })?;
+        let thread_response = manager
+            .call(app, "thread/start", Some(thread_params))
+            .await
+            .map_err(|err| ExecutionError::new(format!("thread/start failed: {err}")))?;
+        let thread_id = thread_response
+            .get("thread")
+            .and_then(|thread| thread.get("id"))
+            .and_then(Value::as_str)
+            .or_else(|| thread_response.get("threadId").and_then(Value::as_str))
+            .or_else(|| thread_response.get("conversationId").and_then(Value::as_str))
+            .map(str::to_string)
+            .ok_or_else(|| ExecutionError::new("thread/start response did not contain a thread id"))?;
 
-    {
         let state = app.state::<AppState>();
-        state
-            .desktop_state
-            .record_thread_workspace(&thread_id, &cwd);
-    }
+        state.desktop_state.record_thread_workspace(&thread_id, cwd);
+        thread_id
+    };
 
     let mut turn_params = json!({
         "threadId": thread_id.clone(),
@@ -1197,15 +1279,23 @@ impl AutomationScheduler {
 }
 
 fn recover_interrupted_runs() {
-    with_state(|state| {
-        for entry in state.automations.values_mut() {
-            if entry.last_status.as_deref() == Some("running") {
-                entry.last_status = Some("unknown".to_string());
-                entry.last_error =
-                    Some("scheduler stopped while this run was in progress; execution outcome unknown".to_string());
-            }
+    let minute_ids: HashSet<_> = config_skills::list_automations().into_iter()
+        .filter(|item| Rrule::for_item(item).is_ok_and(|rule| rule.freq == Freq::Minutely))
+        .map(|item| item.id).collect();
+    with_state(|state| recover_scheduler_state(state, &minute_ids));
+}
+
+fn recover_scheduler_state(state: &mut SchedulerState, minute_ids: &HashSet<String>) {
+    for (id, entry) in &mut state.automations {
+        if entry.last_status.as_deref() == Some("running") {
+            entry.last_status = Some("unknown".to_string());
+            entry.last_error =
+                Some("scheduler stopped while this run was in progress; execution outcome unknown".to_string());
         }
-    });
+        if minute_ids.contains(id) {
+            entry.next_run_at = None;
+        }
+    }
 }
 
 fn delete_orphaned_state(items: &[AutomationItem]) {
@@ -1276,7 +1366,7 @@ pub fn refresh_schedule() -> Value {
     scheduler_status()
 }
 
-fn claim_manual_run(state: &mut SchedulerState, item: &AutomationItem, now: u64) -> Result<(), String> {
+fn claim_manual_run(state: &mut SchedulerState, item: &AutomationItem, now: u64, salt: &[u8]) -> Result<(), String> {
     let entry = state.automations.entry(item.id.clone()).or_default();
     if entry.last_status.as_deref() == Some("running") {
         return Err("该任务仍在运行，请等待真实执行结束".into());
@@ -1290,9 +1380,9 @@ fn claim_manual_run(state: &mut SchedulerState, item: &AutomationItem, now: u64)
     entry.last_status = Some("running".to_string());
     entry.last_error = None;
     entry.run_count = entry.run_count.saturating_add(1);
-    if let Ok(rule) = Rrule::parse(&item.rrule) {
+    if let Ok(rule) = Rrule::for_item(item) {
         let anchor_ms = entry.anchor_at.unwrap_or_else(|| baseline_ms(&item));
-        entry.next_run_at = compute_next_run_ms(&rule, anchor_ms, now);
+        entry.next_run_at = next_scheduled_at(&rule, item, anchor_ms, now, salt);
     }
     Ok(())
 }
@@ -1310,14 +1400,18 @@ pub async fn run_now(app: AppHandle, id: String) -> Result<Value, String> {
             item.name, item.execution_environment
         ));
     }
-    if item.cwds.iter().all(|cwd| cwd.trim().is_empty()) {
+    if item.kind.eq_ignore_ascii_case("heartbeat") && linked_heartbeat_target(&item).is_none() {
+        return Err("定时任务没有关联聊天".into());
+    }
+    if linked_heartbeat_target(&item).is_none() && item.cwds.iter().all(|cwd| cwd.trim().is_empty()) {
         return Err(format!("automation `{}` has no cwd", item.name));
     }
 
     let now = now_ms();
     // Persist "running" before the app-server round-trips so the UI sees the
     // state and the periodic scan does not run the same automation again.
-    try_with_state(|state| claim_manual_run(state, &item, now))??;
+    let salt = read_jitter_salt();
+    try_with_state(|state| claim_manual_run(state, &item, now, &salt))??;
 
     emit_event(
         &app,
@@ -1435,12 +1529,12 @@ mod tests {
             ..Default::default()
         });
         assert!(!prepare_item(&mut state, &item, now, b"salt", false));
-        assert!(claim_manual_run(&mut state, &item, now + 1).is_err());
+        assert!(claim_manual_run(&mut state, &item, now + 1, b"salt").is_err());
         assert_eq!(state.automations[&item.id].run_count, 1);
         state.automations.get_mut(&item.id).unwrap().last_status = Some("unknown".into());
         assert!(!prepare_item(&mut state, &item, now + 2, b"salt", false));
-        claim_manual_run(&mut state, &item, now + 3).unwrap();
-        assert!(claim_manual_run(&mut state, &item, now + 4).is_err());
+        claim_manual_run(&mut state, &item, now + 3, b"salt").unwrap();
+        assert!(claim_manual_run(&mut state, &item, now + 4, b"salt").is_err());
         assert!(!prepare_item(&mut state, &item, now + 5, b"salt", false));
         assert_eq!(state.automations[&item.id].run_count, 2);
     }
@@ -1673,6 +1767,109 @@ mod tests {
         assert!(entry.last_run_at.is_none());
         assert!(entry.last_status.is_none());
         assert!(entry.schedule_warning.is_none());
+    }
+
+    #[test]
+    fn linked_minute_heartbeat_keeps_its_due_time_until_claimed() {
+        let now = 1_793_000_001_123;
+        let mut item = test_automation("heartbeat", "RRULE:INTERVAL=2;FREQ=MINUTELY", "ACTIVE", "local", vec![], now);
+        item.kind = "heartbeat".into();
+        item.target_thread_id = Some("linked-thread".into());
+        let mut state = SchedulerState::default();
+        let due = now + 120_000;
+        assert!(!prepare_item(&mut state, &item, now, b"salt", false));
+        assert_eq!(state.automations[&item.id].next_run_at, Some(due));
+        item.prompt = "updated without changing the schedule".into();
+        item.updated_at += 1;
+        assert!(!prepare_item(&mut state, &item, due, b"salt", true));
+        assert_eq!(state.automations[&item.id].next_run_at, Some(due));
+        assert!(prepare_item(&mut state, &item, due, b"salt", false));
+        let entry = &state.automations[&item.id];
+        assert_eq!(entry.next_run_at, Some(due + 120_000));
+        assert_eq!(entry.run_count, 1);
+        assert!(!prepare_item(&mut state, &item, due + 240_000, b"salt", false));
+        state.automations.get_mut(&item.id).unwrap().last_status = Some("completed".into());
+        item.status = "PAUSED".into();
+        assert!(!prepare_item(&mut state, &item, due + 240_000, b"salt", false));
+        assert_eq!(state.automations[&item.id].next_run_at, None);
+        item.status = "ACTIVE".into();
+        assert!(!prepare_item(&mut state, &item, due + 240_001, b"salt", false));
+        assert_eq!(state.automations[&item.id].next_run_at, Some(due + 360_001));
+    }
+
+    #[test]
+    fn minute_heartbeat_restarts_without_backfill_and_manual_run_reanchors() {
+        let now = 1_793_000_001_123;
+        let mut item = test_automation("minute", "FREQ=MINUTELY;INTERVAL=30", "ACTIVE", "local", vec![], now);
+        item.kind = "heartbeat".into();
+        item.target_thread_id = Some("linked-thread".into());
+        let mut state = SchedulerState::default();
+        let ids = HashSet::from([item.id.clone()]);
+        prepare_item(&mut state, &item, now, b"salt", false);
+        let mut restarted: SchedulerState = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        let after_restart = now + 3_600_000;
+        recover_scheduler_state(&mut restarted, &ids);
+        assert!(!prepare_item(&mut restarted, &item, after_restart, b"salt", false));
+        assert_eq!(restarted.automations[&item.id].next_run_at, Some(after_restart + 1_800_000));
+        let manual = after_restart + 100;
+        claim_manual_run(&mut restarted, &item, manual, b"salt").unwrap();
+        assert_eq!(restarted.automations[&item.id].next_run_at, Some(manual + 1_800_000));
+        recover_scheduler_state(&mut restarted, &ids);
+        assert!(!prepare_item(&mut restarted, &item, manual + 3_600_000, b"salt", false));
+        assert_eq!(restarted.automations[&item.id].last_status.as_deref(), Some("unknown"));
+        assert_eq!(restarted.automations[&item.id].run_count, 1);
+    }
+
+    #[test]
+    fn minute_rules_reject_unlinked_tasks_and_calendar_filters() {
+        let now = 1_793_000_001_123;
+        let mut item = test_automation("minute", "FREQ=MINUTELY;INTERVAL=1", "ACTIVE", "local", vec!["fixture".into()], now);
+        assert!(Rrule::for_item(&item).is_err());
+        item.kind = "heartbeat".into();
+        assert!(Rrule::for_item(&item).is_err());
+        item.target_thread_id = Some("linked-thread".into());
+        assert!(Rrule::for_item(&item).is_ok());
+        for filter in ["BYDAY=MO", "WKST=MO", "INTERVAL=2", "BYMINUTE=0"] {
+            assert!(Rrule::parse(&format!("FREQ=MINUTELY;INTERVAL=1;{filter}")).is_err());
+        }
+        let fast = Rrule::for_item(&item).unwrap();
+        // This instant straddles the 2026 fall clock transition in North America.
+        let boundary = 1_793_523_570_123;
+        assert_eq!(next_scheduled_at(&fast, &item, 0, boundary, b"salt"), Some(boundary + 60_000));
+        let slow = Rrule::parse("FREQ=MINUTELY;INTERVAL=60").unwrap();
+        let due = next_scheduled_at(&slow, &item, 0, boundary, b"salt").unwrap();
+        assert!(due.abs_diff(boundary + 3_600_000) <= 300_000);
+        assert_eq!(next_scheduled_at(&slow, &item, 0, boundary, b"salt"), Some(due));
+    }
+
+    #[tokio::test]
+    async fn heartbeat_checks_same_idle_local_thread_after_cold_resume() {
+        let mut methods = Vec::new();
+        prepare_heartbeat_thread("linked", |method, params| {
+            methods.push(method);
+            let thread = match method {
+                "thread/read" => {
+                    assert_eq!(params, json!({"threadId":"linked","includeTurns":false}));
+                    json!({"id":"linked","status":{"type":"notLoaded"},"environments":null})
+                }
+                "thread/resume" => {
+                    assert_eq!(params, json!({"threadId":"linked","excludeTurns":true}));
+                    json!({"id":"linked","status":{"type":"idle"},"environments":[{"environmentId":"local"}]})
+                }
+                _ => panic!("Unexpected request {method}"),
+            };
+            std::future::ready(Ok(json!({"thread":thread})))
+        }).await.unwrap();
+        assert_eq!(methods, ["thread/read", "thread/resume"]);
+        for (id, status, environment) in [("wrong", "idle", "local"), ("linked", "active", "local"), ("linked", "idle", "remote")] {
+            let result = prepare_heartbeat_thread("linked", |method, _| {
+                assert_eq!(method, "thread/read");
+                std::future::ready(Ok(json!({"thread":{
+                    "id":id, "status":{"type":status}, "environments":[{"environmentId":environment}]
+                }})))
+            }).await;
+            assert!(result.is_err());
+        }
     }
 
     #[test]

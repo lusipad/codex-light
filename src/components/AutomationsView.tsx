@@ -44,6 +44,18 @@ const SCHEDULE_DAYS = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"];
 const SCHEDULE_TIME = new Intl.DateTimeFormat("zh-CN", { hour: "numeric", minute: "2-digit" });
 const SCHEDULE_FALLBACK = "自定义安排";
 
+function intervalScheduleLabel(minutes: number): string {
+  const format = (count: number) => count.toLocaleString("zh-CN");
+  if (minutes === 1) return "每分钟";
+  if (minutes === 60) return "每小时";
+  if (minutes === 1440) return "每天";
+  if (minutes === 10080) return "每周";
+  if (minutes % 10080 === 0) return `每 ${format(minutes / 10080)} 周`;
+  if (minutes % 1440 === 0) return `每${format(minutes / 1440)} 天`;
+  if (minutes % 60 === 0) return `每 ${format(minutes / 60)} 小时`;
+  return `每 ${format(minutes)} 分钟`;
+}
+
 function scheduleLabel(item: AutomationItem): string {
   const fields = new Map<string, string>();
   for (const part of item.rrule.trim().toUpperCase().replace(/^RRULE:/, "").split(";")) {
@@ -69,16 +81,16 @@ function scheduleLabel(item: AutomationItem): string {
       (minute !== undefined && (!/^\+?\d+$/.test(minute) || Number(minute) > 59))) return SCHEDULE_FALLBACK;
 
   const freq = fields.get("FREQ");
+  if (freq === "MINUTELY") {
+    return item.kind.toLowerCase() === "heartbeat" && item.targetThreadId?.trim() &&
+      item.executionEnvironment.toLowerCase() === "local" &&
+      [...fields.keys()].every(key => key === "FREQ" || key === "INTERVAL")
+      ? intervalScheduleLabel(interval) : SCHEDULE_FALLBACK;
+  }
   if (freq === "HOURLY") {
     // The local hourly scheduler has no weekday filter.
     if (!everyDay || hour !== undefined) return SCHEDULE_FALLBACK;
-    const count = interval.toLocaleString("zh-CN");
-    if (interval === 1) return "每小时";
-    if (interval === 24) return "每天";
-    if (interval === 168) return "每周";
-    if (interval % 168 === 0) return `每 ${(interval / 168).toLocaleString("zh-CN")} 周`;
-    if (interval % 24 === 0) return `每${(interval / 24).toLocaleString("zh-CN")} 天`;
-    return `每 ${count} 小时`;
+    return intervalScheduleLabel(interval * 60);
   }
   if (interval !== 1 || hour === undefined || minute === undefined ||
       (freq !== "DAILY" && (freq !== "WEEKLY" || !weekdays.length))) return SCHEDULE_FALLBACK;

@@ -227,8 +227,11 @@ const scheduleCases = [
   ["One time", "FREQ=DAILY;COUNT=1;BYHOUR=9;BYMINUTE=0", "自定义安排"],
   ["Minutes", "FREQ=MINUTELY;INTERVAL=30", "自定义安排"],
   ["Day range", "FREQ=WEEKLY;BYDAY=WE,MO,TU;BYHOUR=10;BYMINUTE=0", "一-三（时间：10:00）"],
+  ["Linked heartbeat", "RRULE:INTERVAL=30;FREQ=MINUTELY", "每 30 分钟", { kind: "heartbeat", targetThreadId: "fixture-thread" }],
+  ["Unlinked heartbeat", "FREQ=MINUTELY;INTERVAL=30", "自定义安排", { kind: "heartbeat" }],
+  ["Filtered heartbeat", "FREQ=MINUTELY;INTERVAL=30;BYDAY=MO", "自定义安排", { kind: "heartbeat", targetThreadId: "fixture-thread" }],
 ];
-summaries.control.list = scheduleCases.map(([name, rrule], i) => ({ ...tasks[0], id: `schedule-${i}`, name, rrule }));
+summaries.control.list = scheduleCases.map(([name, rrule, , overrides], i) => ({ ...tasks[0], id: `schedule-${i}`, name, rrule, ...overrides }));
 summaries.render(); summaries.effects(); await summaries.settle();
 const rowLabels = () => summaries.nodes().filter(node => node.props.className === "automation-task-schedule").map(node => node.children.join(""));
 assert.deepEqual(rowLabels(), scheduleCases.map(([, , label]) => label), "table describes supported RRULE semantics");

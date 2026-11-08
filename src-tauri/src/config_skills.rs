@@ -699,7 +699,7 @@ fn parse_automation_toml(path: &Path) -> Option<AutomationItem> {
         .get("execution_environment")
         .or_else(|| table.get("executionEnvironment"))
         .and_then(|v| v.as_str())
-        .unwrap_or("worktree")
+        .unwrap_or(if kind.eq_ignore_ascii_case("heartbeat") { "local" } else { "worktree" })
         .to_string();
     let model = table
         .get("model")
@@ -1060,6 +1060,25 @@ pub fn import_external_tool_config(kind: &str, cwd: Option<&str>) -> Result<serd
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn linked_heartbeat_toml_without_environment_inherits_local() {
+        let root = std::env::temp_dir().join(format!("codex-heartbeat-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        let file = root.join("automation.toml");
+        let heartbeat = "kind = 'heartbeat'\ntarget_thread_id = 'fixture-thread'\nrrule = 'FREQ=MINUTELY;INTERVAL=30'\n";
+        fs::write(&file, heartbeat).unwrap();
+        let item = parse_automation_toml(&file).unwrap();
+        assert_eq!(item.execution_environment, "local");
+        assert_eq!(item.target_thread_id.as_deref(), Some("fixture-thread"));
+        assert!(item.cwds.is_empty());
+        fs::write(&file, "kind = 'cron'\n").unwrap();
+        assert_eq!(parse_automation_toml(&file).unwrap().execution_environment, "worktree");
+        fs::write(&file, format!("{heartbeat}execution_environment = 'worktree'\n")).unwrap();
+        assert_eq!(parse_automation_toml(&file).unwrap().execution_environment, "worktree");
+        fs::remove_file(file).unwrap();
+        fs::remove_dir(root).unwrap();
+    }
 
     #[test]
     fn skill_writes_reject_invalid_ids_and_invalid_sources_without_changing_existing_files() {
