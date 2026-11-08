@@ -241,14 +241,17 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
   }, [threads]);
 
   const filteredProjects = useMemo(() => {
-    const q = search.trim() ? search.toLowerCase() : "";
-    return projects.filter(project => !q || project.name.toLowerCase().includes(q) ||
-      project.roots.some(root => root.path.toLowerCase().includes(q)))
+    const q = search.trim().toLowerCase();
+    return projects.map(project => {
+      const projectThreads = threadsByProjectId[project.id] || [];
+      const matchingThreads = q ? projectThreads.filter(thread =>
+        (thread.name || thread.preview || "").toLowerCase().includes(q)) : [];
+      return { project, projectThreads, matchingThreads, effectiveUpdated: effectiveProjectUpdated(project, projectThreads) };
+    }).filter(({ project, matchingThreads }) => !q || matchingThreads.length > 0 ||
+      [project.name, ...project.roots.map(root => root.path)].join(" ").toLowerCase().includes(q))
       .sort((a, b) => {
-        const nameOrder = projectNameCollator.compare(a.name, b.name) || a.id.localeCompare(b.id);
-        const order = sort.column === "name" ? nameOrder :
-          effectiveProjectUpdated(a, threadsByProjectId[a.id] || []) -
-          effectiveProjectUpdated(b, threadsByProjectId[b.id] || []) || nameOrder;
+        const nameOrder = projectNameCollator.compare(a.project.name, b.project.name) || a.project.id.localeCompare(b.project.id);
+        const order = sort.column === "name" ? nameOrder : a.effectiveUpdated - b.effectiveUpdated || nameOrder;
         return sort.direction === "ascending" ? order : -order;
       });
   }, [projects, search, sort, threadsByProjectId]);
@@ -644,19 +647,19 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
       );
     }
 
-    return filteredProjects.map((project) => {
-      const isExpanded = !!expandedProjects[project.id];
-      const projectThreads = threadsByProjectId[project.id] || [];
+    return filteredProjects.map(({ project, projectThreads, matchingThreads, effectiveUpdated }) => {
+      const searchExpanded = matchingThreads.length > 0;
+      const isExpanded = searchExpanded || !!expandedProjects[project.id];
+      const visibleThreads = searchExpanded ? matchingThreads : projectThreads;
       const roots = project.roots;
       const isBusy = actionBusyId === project.id;
       const index = projects.findIndex((item) => item.id === project.id);
-      const effectiveUpdated = effectiveProjectUpdated(project, projectThreads);
 
       return (
         <div className="projects-table-group" key={project.id}>
           <div
             className={`projects-table-row ${isExpanded ? "active" : ""}`}
-            onClick={(event) => { if (event.detail <= 1) handleToggleProject(project); }}
+            onClick={searchExpanded ? undefined : event => { if (event.detail <= 1) handleToggleProject(project); }}
             onDoubleClick={(event) => {
               if (event.target instanceof Element && event.target.closest("button,a,input,select,textarea")) return;
               handleStartChatInProject(project);
@@ -664,14 +667,14 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
             title={`${project.name} (双击直接启动聊天)`}
           >
             <div className="project-col-name" title={roots.map((root) => root.path).join("\n")}>
-              <button type="button" className="thread-icon-btn" aria-label="展开/折叠项目"
+              {!searchExpanded && <button type="button" className="thread-icon-btn" aria-label="展开/折叠项目"
                 aria-expanded={isExpanded} onClick={event => { event.stopPropagation(); handleToggleProject(project); }}>
               {isExpanded ? (
                 <ChevronDownIcon size={14} />
               ) : (
                 <ChevronRightIcon size={14} />
               )}
-              </button>
+              </button>}
               <FolderIcon size={16} />
               <div
                 style={{
@@ -726,19 +729,22 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
           </div>
 
           {isExpanded && (
-            <div className="project-expanded-threads">
-              {projectThreads.length === 0 ? (
+            <div className="project-expanded-threads" role="group" aria-label={`${project.name} 中最近的聊天`}>
+              {visibleThreads.length === 0 ? (
                 <div className="project-expanded-empty">
-                  暂无聊天（仅显示最近加载的 60 条会话中属于本项目的聊天）
+                  暂无聊天
                 </div>
               ) : (
-                projectThreads.map((t) => (
+                visibleThreads.map((t) => (
                   <div
                     key={t.id}
                     className="project-expanded-thread-item"
                     onClick={() => onSelectThread(t.id)}
                   >
-                    <span>💬 {t.name || t.preview || "未命名聊天"}</span>
+                    <button type="button" className="project-expanded-thread-title" onClick={event => {
+                      event.stopPropagation();
+                      onSelectThread(t.id);
+                    }}>💬 {t.name || t.preview || "未命名聊天"}</button>
                     <div
                       className="project-thread-actions"
                       onClick={(e) => e.stopPropagation()}

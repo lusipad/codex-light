@@ -114,6 +114,37 @@ for (const label of ["名称", "已更新"]) {
   assert.equal(sortButton(tree, label).props.title, undefined, "PS09: sorting must not introduce an unobserved native hover tooltip");
 }
 const css = fs.readFileSync("src/components/ProjectsIndexView.css", "utf8");
+props.threads = [
+  { id: "matching", projectId: "d", name: "修复 Session 路径" },
+  { id: "other", projectId: "d", name: "未命中", preview: "Session 只是正文" },
+  { id: "foreign", name: "Session 未归属" },
+  { id: "kept", projectId: "b", name: "先前展开的聊天" },
+];
+tree = render();
+const searchProjects = value => {
+  nodes(tree, node => node.type === "input" && node.props["aria-label"] === "搜索项目")[0]
+    .props.onChange({ target: { value } });
+  tree = render();
+};
+searchProjects("  sEsSiOn  ");
+assert.deepEqual(ids(tree), ["d"], "PS10: title hits reveal only the owning project");
+assert.equal(nodes(tree, node => node.props?.["aria-label"] === "展开/折叠项目").length, 0);
+const hit = nodes(tree, node => node.type === "button" && text(node).includes("修复 Session 路径"))[0];
+assert.ok(hit, "PS10: hit is keyboard accessible");
+assert.equal(nodes(tree, cls("project-expanded-thread-item")).length, 1);
+hit.props.onClick({ stopPropagation() {} });
+assert.deepEqual(actions, [["thread", "matching"]]);
+searchProjects("");
+assert.deepEqual(nodes(tree, cls("projects-table-group")).filter(node => nodes(node, cls("active")).length).map(node => node.props.key),
+  ["b"], "PS11: clearing search restores only manually expanded projects");
+searchProjects("  D:/D  ");
+assert.deepEqual(ids(tree), ["d"], "PS11: root path match does not force expansion");
+assert.equal(nodes(tree, cls("project-expanded-thread-item")).length, 0);
+searchProjects("Session");
+props.threads = props.threads.map(thread => thread.id === "matching" ? { ...thread, name: "已改名" } : thread);
+tree = render();
+assert.deepEqual(ids(tree), [], "PS12: a title update removes stale matches without changing the query");
+assert.deepEqual(writes, [], "search never writes project state");
 assert.match(css, /@media \(max-width: 680px\)[\s\S]*\.project-col-updated\s*\{\s*display: none;/);
 assert.match(css, /\.project-sort-direction\s*\{[^}]*transition:\s*transform 150ms cubic-bezier\(0\.4, 0, 0\.2, 1\);/, "PS09: rotation uses the official default duration and timing curve");
-console.log("PASS PS01–PS09 production project sorting: normalized time, defaults/toggles/ties, filtering, live updates, identity expansion, read-only projection and sourced hover/rotation");
+console.log("PASS PS01–PS12 project sorting and title search: updates, stable order, forced expansion, keyboard activation and restoration");
