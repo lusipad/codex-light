@@ -117,6 +117,7 @@ try {
   Invoke-Step "Codex Cloud authenticated configuration regression" { node scripts/verify-cloud-environments.mjs }
   Invoke-Step "Codex Cloud draft binding and scoped readback" { node scripts/verify-cloud-draft-bindings.mjs }
   Invoke-Step "Codex Cloud draft resume parameter contract" { node scripts/verify-cloud-draft-resume.mjs }
+  Invoke-Step "Codex Cloud new environment creation recovery" { node scripts/verify-cloud-environment-setup.mjs }
   Invoke-Step "Codex Cloud current access contract" { node scripts/verify-cloud-environment-access.mjs }
   Invoke-Step "Codex Cloud settings data contract" { node scripts/verify-cloud-environment-data.mjs }
   Invoke-Step "Codex Cloud repository discovery transport" { cargo test --locked --manifest-path src-tauri/Cargo.toml --lib cloud_repository_discovery }

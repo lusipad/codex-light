@@ -321,17 +321,23 @@ export async function createCloudEnvironmentConfig(
   return receipt;
 }
 
-export async function createCloudDraft(configId: string, identity: ServiceIdentity, signal: AbortSignal) {
+export async function createCloudDraftReceipt(configId: string, identity: ServiceIdentity, signal: AbortSignal) {
   const requestId = crypto.randomUUID();
   const result = await invokeService<{ requestId: string; identity: ServiceIdentity; receipt: {
     draft_id: string; environment_id: string; thread_id: string | null;
   } }>("cloud_service_create_draft", requestId, { request: { requestId, configId, expectedIdentity: identity } }, signal);
-  responseBody({ ...result, body: result.receipt }, requestId, identity);
-  const { draft_id, environment_id, thread_id } = result.receipt;
-  if (![draft_id, environment_id, thread_id].every(value => typeof value === "string" && value.trim())) {
+  const receipt = responseBody({ ...result, body: result.receipt }, requestId, identity) as typeof result.receipt | null;
+  if (!receipt || ![receipt.draft_id, receipt.environment_id].every(value => typeof value === "string" && value.trim())
+    || (receipt.thread_id !== null && (typeof receipt.thread_id !== "string" || !receipt.thread_id.trim()))) {
     throw { code: "cloud_draft_unconfirmed" };
   }
-  return { draftId: draft_id, environmentId: environment_id, threadId: thread_id as string };
+  return { draftId: receipt.draft_id, environmentId: receipt.environment_id, threadId: receipt.thread_id };
+}
+
+export async function createCloudDraft(configId: string, identity: ServiceIdentity, signal: AbortSignal) {
+  const { draftId, environmentId, threadId } = await createCloudDraftReceipt(configId, identity, signal);
+  if (threadId === null) throw { code: "cloud_draft_unconfirmed" };
+  return { draftId, environmentId, threadId };
 }
 
 export async function saveCloudDraftFields(request: {

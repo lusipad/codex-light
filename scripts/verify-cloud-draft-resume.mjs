@@ -471,3 +471,10 @@ assert.equal(await advanceApply(), "superseded");
 assert.equal(journal.size, 0);
 assert.equal(applyCalls.length, 3, "a new revision with a different selection must not wake the saved message");
 console.log("PASS cloud repository save and apply: journal-before-write, restart binding, queue, interruption, single dispatch, UUID recovery and obsolete filtering");
+
+receipt = { draft_id: "draft-pending", environment_id: "environment-pending", thread_id: null };
+const partialDraftReceipt = await service.createCloudDraftReceipt("config-A", identity, signal);
+assert.equal(partialDraftReceipt.draftId, "draft-pending");
+assert.equal(partialDraftReceipt.threadId, null);
+await assert.rejects(service.createCloudDraft("config-A", identity, signal), { code: "cloud_draft_unconfirmed" });
+console.log("PASS new setup can retain a real draft receipt without opening a nonexistent thread");
