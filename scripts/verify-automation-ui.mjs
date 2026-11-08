@@ -271,4 +271,35 @@ assert.deepEqual(rowLabels(), [scheduleCases[1][2]], "search matches the summary
 assert.ok(summaries.calls.every(call => call.method === "automations_list"), "reading and searching summaries never writes");
 summaries.unmount();
 console.log("PASS RRULE schedule summaries in table, detail and search; unsupported rules fall back");
+
+const once = surface();
+const anchor = Date.parse("2030-01-02T03:04:05Z");
+const pending = Date.parse("2030-01-03T04:05:06Z");
+const dateTimeLabel = ms => `${new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium" }).format(ms)} · ${new Intl.DateTimeFormat("zh-CN", { timeStyle: "short" }).format(ms)}`;
+const onceRule = "DTSTART:20300102T030405Z\r\nRRULE:COUNT=1;FREQ=DAILY";
+once.control.list = [
+  { ...tasks[0], id: "pending", name: "Pending once", rrule: onceRule },
+  { ...tasks[0], id: "consumed", name: "Consumed once", rrule: onceRule },
+  { ...tasks[0], id: "invalid", name: "Invalid once", rrule: onceRule.replace("20300102", "20300230") },
+  { ...tasks[0], id: "excluded", name: "Excluded once", rrule: `${onceRule}\nEXDATE:20300102T030405Z` },
+];
+once.control.scheduler = { running: true, now: 0, entries: [{ id: "pending", nextRunAt: pending }, { id: "consumed", nextRunAt: null }] };
+once.render(); once.effects(); await once.settle();
+const onceLabels = () => once.nodes().filter(node => node.props.className === "automation-task-schedule").map(node => node.children.join(""));
+assert.deepEqual(onceLabels(), [dateTimeLabel(pending), dateTimeLabel(anchor), "自定义安排", "自定义安排"]);
+once.button("Pending once").props.onClick(); once.render();
+assert.ok(once.nodes().some(node => node.type === "dd" && node.children.join("") === dateTimeLabel(pending)));
+once.button("编辑").props.onClick(); once.render();
+assert.ok(once.nodes().some(node => node.type === "textarea" && node.props.value === onceRule));
+once.button("取消").props.onClick(); once.render();
+once.nodes().find(node => node.props.placeholder === "搜索任务").props.onChange({ target: { value: dateTimeLabel(anchor) } }); once.render();
+assert.deepEqual(onceLabels(), [dateTimeLabel(anchor)]);
+assert.ok(once.calls.every(call => call.method === "automations_list"));
+once.button("Consumed once").props.onClick(); once.render();
+once.button("编辑").props.onClick(); once.render();
+once.nodes().find(node => node.type === "input" && node.props.value === "Consumed once").props.onChange({ target: { value: "Renamed once" } }); once.render();
+once.button("保存修改").props.onClick(); await once.settle();
+assert.equal(once.calls.find(call => call.method === "automation_save")?.args.item.rrule, onceRule);
+once.unmount();
+console.log("PASS 10J official one-shot date/time format, scheduler precedence, consumed fallback, invalid rules and multiline editor");
 console.log("NOT TESTED: official layout/pixel parity, native GUI or real task execution");

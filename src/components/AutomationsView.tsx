@@ -44,6 +44,8 @@ const SCHEDULE_PRESETS = [
 
 const SCHEDULE_DAYS = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"];
 const SCHEDULE_TIME = new Intl.DateTimeFormat("zh-CN", { hour: "numeric", minute: "2-digit" });
+const ONCE_DATE = new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium" });
+const ONCE_TIME = new Intl.DateTimeFormat("zh-CN", { timeStyle: "short" });
 const SCHEDULE_FALLBACK = "自定义安排";
 
 function intervalScheduleLabel(minutes: number): string {
@@ -58,7 +60,20 @@ function intervalScheduleLabel(minutes: number): string {
   return `每 ${format(minutes)} 分钟`;
 }
 
-function scheduleLabel(item: AutomationItem): string {
+function scheduleLabel(item: AutomationItem, nextRunAt?: number | null): string {
+  if (item.kind.toLowerCase() === "cron" && item.executionEnvironment.toLowerCase() === "local") {
+    const once = /^DTSTART:(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z\r?\nRRULE:(?:FREQ=DAILY;COUNT=1|COUNT=1;FREQ=DAILY)$/i.exec(item.rrule.trim());
+    if (once) {
+      const [, year, month, day, hour, minute, second] = once;
+      const iso = `${year}-${month}-${day}T${hour}:${minute}:${second}.000Z`;
+      const anchor = new Date(iso);
+      if (Number.isFinite(anchor.getTime()) && anchor.getTime() >= 0 && anchor.toISOString() === iso) {
+        const next = new Date(nextRunAt ?? NaN);
+        const date = Number.isFinite(next.getTime()) ? next : anchor;
+        return `${ONCE_DATE.format(date)} · ${ONCE_TIME.format(date)}`;
+      }
+    }
+  }
   const fields = new Map<string, string>();
   for (const part of item.rrule.trim().toUpperCase().replace(/^RRULE:/, "").split(";")) {
     if (!part.trim()) continue;
@@ -462,7 +477,7 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
       name: name.trim(),
       prompt: prompt.trim(),
       status: editingItem ? editingItem.status : "ACTIVE",
-      rrule: rrule.trim() || "FREQ=DAILY;BYHOUR=9;BYMINUTE=0",
+      rrule: rrule.includes("\n") && editingItem?.rrule === rrule ? rrule : rrule.trim() || "FREQ=DAILY;BYHOUR=9;BYMINUTE=0",
       cwds: editingItem ? editingItem.cwds : [activeWorkspaceRoot],
       executionEnvironment: execEnv,
       model: selectedModel || null,
@@ -638,7 +653,8 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
       if (item.status === "DELETED") return false;
       const status = item.status === "PAUSED" ? "PAUSED" : "ACTIVE";
       if (statusFilter !== "ALL" && statusFilter !== status) return false;
-      return !q || [item.name, item.prompt, ...item.cwds, scheduleLabel(item)].some(value => value.toLocaleLowerCase().includes(q));
+      return !q || [item.name, item.prompt, ...item.cwds, scheduleLabel(item, schedulerEntriesById.get(item.id)?.nextRunAt)]
+        .some(value => value.toLocaleLowerCase().includes(q));
     });
     if (sortOrder === "title_asc") items.sort((a, b) => a.name.localeCompare(b.name, "zh-CN", { numeric: true, sensitivity: "base" }));
     if (sortOrder === "updated_at_desc") items.sort((a, b) => b.updatedAt - a.updatedAt);
@@ -792,7 +808,7 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
                     <span className="automation-task-name"><Clock size={16} /><span>{item.name}</span>
                       {runningAutomationIds.has(item.id) && <span className="automation-running">运行中…</span>}</span>
                     <span className="automation-task-time">{nextRunLabel(item)}</span>
-                    <span className="automation-task-schedule">{scheduleLabel(item)}</span>
+                    <span className="automation-task-schedule">{scheduleLabel(item, schedulerEntriesById.get(item.id)?.nextRunAt)}</span>
                   </button>
                 </div>)}
               </div>}
@@ -856,12 +872,12 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
             </div>
             <div className="form-field">
               <label>RRULE 规则字符串</label>
-              <input
+              {editingItem?.rrule.includes("\n") ? <textarea rows={2} value={rrule} onChange={e => setRrule(e.target.value)} /> : <input
                 type="text"
                 value={rrule}
                 onChange={(e) => setRrule(e.target.value)}
                 placeholder="FREQ=DAILY;BYHOUR=9;BYMINUTE=0"
-              />
+              />}
             </div>
             <div className="form-field">
               <label>执行环境</label>
@@ -931,7 +947,7 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
             <dl className="automation-detail-metadata">
               <div><dt>状态</dt><dd>{selectedItem.status === "PAUSED" ? "已暂停" : selectedItem.status === "COMPLETED" ? "已完成" : "已开启"}</dd></div>
               <div><dt>下次运行</dt><dd>{nextRunLabel(selectedItem)}</dd></div>
-              <div><dt>已安排</dt><dd>{scheduleLabel(selectedItem)}</dd></div>
+              <div><dt>已安排</dt><dd>{scheduleLabel(selectedItem, selectedEntry?.nextRunAt)}</dd></div>
             </dl>
             <div className="automation-detail-actions">
               <button type="button" className="secondary-btn" onClick={() => handleRunNow(selectedItem)} disabled={runBusyId !== null}
