@@ -31,6 +31,8 @@ interface AutomationsViewProps {
   activeWorkspaceRoot: string;
   models: ModelInfo[];
   onSelectThread?: (threadId: string) => void;
+  threadTask?: { id: string; threadId: string; onClose: () => void };
+  onNavigationGuardChange?: (guard: ((action: () => void) => boolean) | null) => void;
 }
 
 const SCHEDULE_PRESETS = [
@@ -237,12 +239,14 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
   activeWorkspaceRoot,
   models,
   onSelectThread,
+  threadTask,
+  onNavigationGuardChange,
 }) => {
   const [automations, setAutomations] = useState<AutomationItem[]>([]);
   const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "PAUSED" | "COMPLETED">("ACTIVE");
   const [sortOrder, setSortOrder] = useState<"automatic" | "next_run_asc" | "updated_at_desc" | "title_asc">("automatic");
   const [filterOpen, setFilterOpen] = useState(false);
-  const [selectedAutomationId, setSelectedAutomationId] = useState<string | null>(null);
+  const [selectedAutomationId, setSelectedAutomationId] = useState<string | null>(threadTask?.id ?? null);
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState("");
   const [clock, setClock] = useState(Date.now());
@@ -654,12 +658,23 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
     return running;
   }, [runHistory, scheduler]);
 
-  const selectedItem = automations.find(item => item.id === selectedAutomationId);
+  const selectedItem = automations.find(item => item.id === selectedAutomationId &&
+    (!threadTask || (item.status !== "DELETED" && item.targetThreadId === threadTask.threadId)));
   const selectedEntry = selectedItem ? schedulerEntriesById.get(selectedItem.id) : undefined;
   const selectedRuns = selectedItem ? runHistory.filter(record => record.automationId === selectedItem.id) : [];
   const stateOptions = [["ALL", "全部"], ["ACTIVE", "已开启"], ["PAUSED", "已暂停"], ["COMPLETED", "已完成"]] as const;
   const sortOptions = [["automatic", "自动"], ["next_run_asc", "下次运行"], ["updated_at_desc", "最近更新"], ["title_asc", "名称"]] as const;
   const configurationDirty = showCreateForm && JSON.stringify([name, kind, rrule, prompt, execEnv, selectedModel]) !== configurationBaselineRef.current;
+  useEffect(() => {
+    if (!onNavigationGuardChange) return;
+    onNavigationGuardChange(() => !writePendingRef.current &&
+      (!configurationDirty || confirm("放弃未保存的更改？")));
+    return () => onNavigationGuardChange(null);
+  }, [configurationDirty, onNavigationGuardChange]);
+  const hasThreadTaskDetail = threadTask != null && selectedItem != null;
+  useEffect(() => {
+    if (threadTask) detailCloseRef.current?.focus({ preventScroll: true });
+  }, [threadTask?.id, hasThreadTaskDetail]);
   const nextRunLabel = (item: AutomationItem) => {
     if (item.status === "PAUSED") return "已暂停";
     const nextRunAt = schedulerEntriesById.get(item.id)?.nextRunAt;
@@ -674,6 +689,10 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
     if (writePendingRef.current) return;
     if (configurationDirty && !confirm("放弃未保存的更改？")) return;
     const returnToId = showCreateForm && editingItem ? editingItem.id : null;
+    if (threadTask && !returnToId) {
+      threadTask.onClose();
+      return;
+    }
     setShowCreateForm(false);
     setEditingItem(null);
     setSelectedAutomationId(returnToId);
@@ -693,17 +712,22 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
   };
 
   return (
-    <section className="automation-page" aria-label="定时任务">
-      <header className="automation-page-header">
+    <section className="automation-page" aria-label="定时任务" onKeyDown={threadTask ? event => {
+      if (event.key !== "Escape" || event.nativeEvent.isComposing || event.keyCode === 229) return;
+      event.preventDefault();
+      event.stopPropagation();
+      closeTaskPanel();
+    } : undefined}>
+      {!threadTask && <header className="automation-page-header">
         <h1>定时任务</h1>
         <button type="button" className="automation-add" onClick={event => {
           if (startCreate()) rowTriggerRef.current = event.currentTarget;
         }} disabled={writeBusy}>
           <Plus size={16} /> 添加
         </button>
-      </header>
+      </header>}
       <div className="automation-layout">
-        <div className="automation-list-pane">
+        {!threadTask && <div className="automation-list-pane">
           <div className="automation-toolbar">
             <div className="automation-filter" onBlur={event => {
               if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFilterOpen(false);
@@ -773,7 +797,14 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
                 </div>)}
               </div>}
           </>}
-        </div>
+        </div>}
+        {threadTask && !showCreateForm && !selectedItem && <aside className="automation-detail" aria-label="任务详情">
+          <header className="automation-detail-header"><h2>已安排任务</h2>
+            <button ref={detailCloseRef} type="button" className="automation-close" aria-label="关闭任务详情" onClick={threadTask.onClose}><X size={16} /></button>
+          </header>
+          <p role="status">{listLoading ? "正在读取定时任务…" : listError || "未找到已安排任务"}</p>
+          {listError && <button type="button" className="secondary-btn" onClick={() => void refresh()}>重试</button>}
+        </aside>}
         {(showCreateForm || selectedItem) && <aside className="automation-detail" aria-label={showCreateForm ? "任务配置" : "任务详情"}>
           <header className="automation-detail-header"><h2>{showCreateForm ? editingItem ? "编辑定时任务" : "添加定时任务" : selectedItem?.name}</h2>
             <button ref={detailCloseRef} type="button" className="automation-close" aria-label="关闭任务详情" disabled={writeBusy} onClick={closeTaskPanel}><X size={16} /></button>

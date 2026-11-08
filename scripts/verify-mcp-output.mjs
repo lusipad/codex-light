@@ -3,7 +3,7 @@ import fs from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
 
-export function mountMcp(initial) {
+export function mountMcp(initial, onOpenSchedule) {
   let item = initial, state = false;
   const document = { activeElement: null };
   const React = {
@@ -28,7 +28,7 @@ export function mountMcp(initial) {
       throw Error(name);
     },
   });
-  return { render: () => module.exports.McpCallCard({ item }), update: next => { item = next; }, document };
+  return { render: () => module.exports.McpCallCard({ item, onOpenSchedule }), update: next => { item = next; }, document };
 }
 const nodes = node => node && typeof node === "object" ? [node, ...node.children.flatMap(nodes)] : [];
 const text = node => node && typeof node === "object" ? node.children.map(text).join("") : typeof node === "string" || typeof node === "number" ? String(node) : "";
@@ -78,3 +78,28 @@ for (const item of [
 assert.match(text(mountMcp({ ...sample, result: { content: [] } }).render()), /工具未返回任何内容/);
 assert.doesNotMatch(text(mountMcp({ ...sample, status: "inProgress", result: null }).render()), /工具未返回任何内容/, "MC06: running is not empty completion");
 console.log("PASS MC01–MC06 production MCP raw output: lazy dialog, actual payload/update, isolation, Escape, errors and empty state; focus requires browser verification");
+
+const scheduleId = "Automation_0123456789abcdef0123456789abcdef";
+const receipt = (automationId = scheduleId) => ({ content: [{ type: "text", text: JSON.stringify({ automationId, mode: "create", status: "PAUSED" }) }] });
+const taskCall = { ...sample, server: "codex_native_schedule", tool: "automation_update", arguments: { name: "Read-only task" }, result: receipt() };
+const opens = [];
+const task = mountMcp(taskCall, (...args) => opens.push(args));
+const trigger = task.render();
+assert.equal(trigger.type, "button");
+assert.match(text(trigger), /Read-only task已创建/);
+trigger.props.onClick({ currentTarget: trigger });
+assert.deepEqual(opens, [[scheduleId, trigger]]);
+task.update({ ...taskCall, status: "inProgress", result: null });
+assert.equal(task.render().props.role, "status");
+assert.equal(text(task.render()), "正在创建计划任务");
+for (const item of [
+  { ...taskCall, server: "external" },
+  { ...taskCall, result: receipt("untrusted-id") },
+  { ...taskCall, result: { ...receipt(), isError: true } },
+  { ...taskCall, error: { message: "write refused" } },
+]) {
+  task.update(item);
+  assert.ok(rawTrigger(task.render()), "non-task or unsuccessful calls retain raw output");
+  assert.doesNotMatch(text(task.render()), /已创建/);
+}
+console.log("PASS 10H01 task receipt/progress and generic fallback");

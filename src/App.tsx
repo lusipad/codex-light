@@ -658,6 +658,9 @@ export const App: React.FC = () => {
     threadProjectAssignments: {}, projectlessThreadIds: [], workspaceProjectAssignments: {},
   });
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const [threadScheduleTask, setThreadScheduleTask] = useState<{ id: string; threadId: string } | null>(null);
+  const threadScheduleTrigger = useRef<HTMLButtonElement | null>(null);
+  const showThreadSchedule = activeRoute === "thread" && threadScheduleTask?.threadId === activeThreadId;
   const [activeTurnId, setActiveTurnId] = useState<string | null>(null);
   const [turns, setTurns] = useState<TurnData[]>([]);
   const [turnsCursor, setTurnsCursor] = useState<string | null>(null);
@@ -6455,7 +6458,14 @@ export const App: React.FC = () => {
                         </div>
                       );
                   const renderMcpCall = (call: TurnItem, mcIdx: number) => (
-                    <McpCallCard key={call.id || mcIdx} item={call} />
+                    <McpCallCard key={call.id || mcIdx} item={call}
+                      onOpenSchedule={activeThreadId ? (id, trigger) => {
+                        const open = () => {
+                          threadScheduleTrigger.current = trigger;
+                          setThreadScheduleTask({ id, threadId: activeThreadId });
+                        };
+                        if (personalizationNavigationGuardRef.current?.(open) !== false) open();
+                      } : undefined} />
                   );
                   const renderWebSearch = (search: TurnItem, wsIdx: number) => {
                         const results: any[] = Array.isArray(search.results)
@@ -6882,11 +6892,19 @@ export const App: React.FC = () => {
         )}
       </main>
 
+      {showThreadSchedule && threadScheduleTask && <div className="automation-thread-outlet">
+        <AutomationsView key={threadScheduleTask.id} activeWorkspaceRoot={activeWorkspace?.path || ""} models={models}
+          onSelectThread={selectThread} onNavigationGuardChange={setPersonalizationNavigationGuard}
+          threadTask={{ ...threadScheduleTask, onClose: () => {
+            setThreadScheduleTask(null);
+            threadScheduleTrigger.current?.focus({ preventScroll: true });
+          } }} />
+      </div>}
       {/* ── 4. Right-Hand Diff & File Review Workbench ── */}
       <DiffDrawer
         workspaceRoots={workbenchWorkspaceRoots}
         connectionIdentity={JSON.stringify([modelAccountIdentity, appServerStatus.connected, appServerStatus.binaryPath, appServerStatus.appServerVersion, appServerStatus.userAgent])}
-        open={showRightDrawer && !isCloudChatRoute}
+        open={showRightDrawer && !isCloudChatRoute && !showThreadSchedule}
         shortcutRequest={workbenchShortcutRequest ?? undefined}
         onShortcutHandled={requestId => setWorkbenchShortcutRequest(current => current?.requestId === requestId ? null : current)}
         gitPreferences={gitPreferencesState.preferences}

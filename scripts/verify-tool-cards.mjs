@@ -88,7 +88,8 @@ assert.ok(mcpCallMapBody, "App.tsx must contain the production MCP renderer");
   const fakeReactContext = vm.createContext({
     React,
     SparklesIcon: () => null,
-    McpCallCard: ({ item }) => mountMcp(item).render(),
+      activeThreadId: null,
+      McpCallCard: ({ item }) => mountMcp(item).render(),
   });
   const renderMcp = vm.runInContext(compile(`(${mcpCallMapBody})`), fakeReactContext);
 

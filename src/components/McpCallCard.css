@@ -12,6 +12,24 @@
 .mcp-result-image { max-width: 100%; max-height: 192px; object-fit: contain; border-radius: 6px; }
 .mcp-call-card audio { width: 100%; }
 .mcp-no-result { margin: 8px 12px; color: var(--text-secondary); }
+.scheduled-task-receipt {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  text-align: start;
+  font: inherit;
+  cursor: pointer;
+}
+.scheduled-task-receipt:hover { background: var(--bg-hover); }
+.scheduled-task-receipt > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scheduled-task-receipt > span:last-child, .scheduled-task-progress { color: var(--text-secondary); }
+.scheduled-task-receipt > span:last-child { white-space: nowrap; }
 .mcp-raw-dialog {
   width: min(800px, calc(100vw - 48px));
   max-height: calc(100vh - 64px);

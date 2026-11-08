@@ -10,7 +10,7 @@ const tasks = [
     rrule: "FREQ=DAILY;BYHOUR=10;BYMINUTE=0", cwds: ["fixture-repo"], executionEnvironment: "local", model: null },
 ];
 const flush = async () => { for (let i = 0; i < 40; ++i) await Promise.resolve(); };
-function surface() {
+function surface(props = {}) {
   let cursor = 0, tree, pending = [];
   const slots = [], calls = [], timers = new Map(); let timerId = 0, stopped = 0;
   const document = { activeElement: null };
@@ -68,7 +68,7 @@ function surface() {
     if (name === "../types" || name.endsWith(".css")) return {};
     throw Error(`Unexpected dependency ${name}`);
   } });
-  const render = () => { cursor = 0; tree = exports.AutomationsView({ activeWorkspaceRoot: "fixture-repo", models: [{ id: "fixture-model", model: "fixture-model", displayName: "Fixture model" }] }); };
+  const render = () => { cursor = 0; tree = exports.AutomationsView({ activeWorkspaceRoot: "fixture-repo", models: [{ id: "fixture-model", model: "fixture-model", displayName: "Fixture model" }], ...props }); };
   const effects = () => { const queue = pending; pending = []; for (const fn of queue) fn(); };
   const walk = node => !node || typeof node !== "object" ? [] : [node, ...node.children.flatMap(walk)];
   const content = node => node == null || typeof node === "boolean" ? "" : typeof node === "object" ? node.children.map(content).join(" ") : String(node);
@@ -77,6 +77,32 @@ function surface() {
     settle: async () => { await flush(); render(); effects(); },
     unmount: () => { for (const slot of slots) slot?.stop?.(); assert.equal(timers.size, 0); assert.equal(stopped, 1); } };
 }
+
+for (const owner of ["current-thread", "other-thread"]) {
+  let closed = 0;
+  const drawer = surface({ threadTask: { id: "paused-task", threadId: "current-thread", onClose: () => { ++closed; } } });
+  drawer.control.list = tasks.map(task => ({ ...task, targetThreadId: owner }));
+  drawer.render(); drawer.effects(); await drawer.settle();
+  assert.equal(drawer.button("添加"), undefined);
+  assert.equal(drawer.button("Active fixture"), undefined);
+  if (owner === "current-thread") {
+    assert.match(drawer.text(), /Paused fixture/);
+    assert.ok(drawer.button("编辑"));
+  } else {
+    assert.match(drawer.text(), /未找到已安排任务/);
+    assert.doesNotMatch(drawer.text(), /Paused fixture/);
+    assert.equal(drawer.button("编辑"), undefined);
+  }
+  const keydown = drawer.nodes()[0].props.onKeyDown;
+  const event = { key: "Escape", nativeEvent: { isComposing: true }, preventDefault() {}, stopPropagation() {} };
+  keydown(event);
+  assert.equal(closed, 0);
+  keydown({ ...event, nativeEvent: {} });
+  assert.equal(closed, 1);
+  assert.ok(drawer.calls.every(call => call.method === "automations_list"));
+  drawer.unmount();
+}
+console.log("PASS 10H02–10H03 read-only detail scope, thread ownership and Escape/IME guard");
 
 const h = surface(); h.render(); h.effects(); await h.settle();
 assert.ok(h.nodes().some(node => /^h[1-3]$/.test(node.type) && node.children.join("") === "定时任务"), "official local configuration region uses its documented title");

@@ -6,6 +6,20 @@
   max-width: 1024px;
 }
 
+.automation-thread-outlet {
+  flex: 0 0 min(360px, 42vw);
+  min-width: 0;
+  overflow: auto;
+  border-inline-start: 1px solid var(--border-subtle);
+  padding-inline: 16px;
+  background: var(--bg-primary);
+}
+
+.automation-thread-outlet .automation-detail {
+  margin-top: 0;
+  border-top: 0;
+}
+
 .automation-page {
   container-type: inline-size;
   color: var(--text-primary);

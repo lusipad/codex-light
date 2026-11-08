@@ -3,7 +3,25 @@ import type { TurnItem } from "../types";
 import { CloseIcon, SparklesIcon } from "./Icons";
 import "./McpCallCard.css";
 
-export const McpCallCard: React.FC<{ item: TurnItem }> = ({ item }) => {
+function createdScheduleId(item: TurnItem): string | null {
+  const result = item.result;
+  if (item.status !== "completed" || item.error || result?.isError === true ||
+      !Array.isArray(result?.content) || result.content.length !== 1 ||
+      result.content[0]?.type !== "text" || typeof result.content[0].text !== "string") return null;
+  try {
+    const receipt = JSON.parse(result.content[0].text);
+    return receipt?.mode === "create" && ["ACTIVE", "PAUSED"].includes(receipt.status) &&
+      typeof receipt.automationId === "string" && /^Automation_[a-f0-9]{32}$/.test(receipt.automationId)
+      ? receipt.automationId : null;
+  } catch {
+    return null;
+  }
+}
+
+export const McpCallCard: React.FC<{
+  item: TurnItem;
+  onOpenSchedule?: (id: string, trigger: HTMLButtonElement) => void;
+}> = ({ item, onOpenSchedule }) => {
   const [rawOpen, setRawOpen] = useState(false);
   const dialogRef = useRef<HTMLDialogElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -53,6 +71,18 @@ export const McpCallCard: React.FC<{ item: TurnItem }> = ({ item }) => {
       if (triggerRef.current?.isConnected) triggerRef.current.focus({ preventScroll: true });
     };
   }, [rawOpen]);
+
+  if (server === "codex_native_schedule" && tool === "automation_update") {
+    const id = failed ? null : createdScheduleId(item);
+    if (id && onOpenSchedule) {
+      const title = typeof item.arguments?.name === "string" ? item.arguments.name.trim() : "";
+      return <button type="button" className="scheduled-task-receipt" onClick={event => onOpenSchedule(id, event.currentTarget)}>
+        <span>{title || "已安排任务"}</span>
+        <span>已创建</span>
+      </button>;
+    }
+    if (running && !failed) return <div className="scheduled-task-progress" role="status">正在创建计划任务</div>;
+  }
 
   return <div className="mcp-call-card">
     <div className="mcp-call-header">
