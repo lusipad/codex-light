@@ -651,7 +651,7 @@ pub fn list_automations() -> Vec<AutomationItem> {
     items
 }
 
-fn parse_automation_toml(path: &Path) -> Option<AutomationItem> {
+pub(crate) fn parse_automation_toml(path: &Path) -> Option<AutomationItem> {
     let raw = fs::read_to_string(path).ok()?;
     let val: toml::Value = toml::from_str(&raw).ok()?;
     let table = val.as_table()?;
@@ -748,13 +748,19 @@ pub fn save_automation(item: AutomationItem) -> Result<Vec<AutomationItem>, Stri
     };
     let dir = codex_home_dir().join("automations").join(&id);
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let doc = automation_document(&id, &item);
+    fs::write(dir.join("automation.toml"), doc.to_string()).map_err(|e| e.to_string())?;
+    Ok(list_automations())
+}
+
+pub(crate) fn automation_document(id: &str, item: &AutomationItem) -> DocumentMut {
     let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
 
     let mut doc = DocumentMut::new();
-    doc["id"] = toml_edit::value(id.as_str());
+    doc["id"] = toml_edit::value(id);
     doc["kind"] = toml_edit::value(item.kind.as_str());
     doc["name"] = toml_edit::value(item.name.as_str());
     doc["prompt"] = toml_edit::value(item.prompt.as_str());
@@ -766,19 +772,18 @@ pub fn save_automation(item: AutomationItem) -> Result<Vec<AutomationItem>, Stri
         cwds_arr.push(c.as_str());
     }
     doc["cwds"] = toml_edit::value(cwds_arr);
-    if let Some(m) = item.model.filter(|s| !s.trim().is_empty()) {
+    if let Some(m) = item.model.as_deref().filter(|s| !s.trim().is_empty()) {
         doc["model"] = toml_edit::value(m);
     }
-    if let Some(e) = item.reasoning_effort.filter(|s| !s.trim().is_empty()) {
+    if let Some(e) = item.reasoning_effort.as_deref().filter(|s| !s.trim().is_empty()) {
         doc["reasoning_effort"] = toml_edit::value(e);
     }
-    if let Some(t) = item.target_thread_id.filter(|s| !s.trim().is_empty()) {
+    if let Some(t) = item.target_thread_id.as_deref().filter(|s| !s.trim().is_empty()) {
         doc["target_thread_id"] = toml_edit::value(t);
     }
     doc["updated_at"] = toml_edit::value(now_ms);
 
-    fs::write(dir.join("automation.toml"), doc.to_string()).map_err(|e| e.to_string())?;
-    Ok(list_automations())
+    doc
 }
 
 pub fn delete_automation(id: &str) -> Result<Vec<AutomationItem>, String> {

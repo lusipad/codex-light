@@ -111,3 +111,19 @@ assert.match(render({responseStates:{[pendingRequestKey(pending[0])]:{sending:tr
 assert.match(render({requests:[{...pending[0],responseDeliveryUnknown:true}]}),/无法确认响应是否已送达/);
 assert.match(render({responseStates:{[pendingRequestKey(pending[0])]:{error:"发送失败"}}}),/role="alert"/);
 console.log("PASS actual approval cards expose sending/error/unknown-delivery state");
+
+const schedule = { ...pending[0], method: "codex-native/schedule/requestApproval", params: {
+  threadId: "a", arguments: { name: "巡检", prompt: "<private fixture>", rrule: "FREQ=MINUTELY;INTERVAL=30", status: "PAUSED" },
+} };
+const scheduleCard = render({ requests: [schedule] });
+assert.match(scheduleCard, /在此聊天中创建定时任务/);
+assert.match(scheduleCard, /巡检/);
+assert.match(scheduleCard, /创建后暂停/);
+assert.match(scheduleCard, /FREQ=MINUTELY;INTERVAL=30/);
+assert.match(scheduleCard, /&lt;private fixture&gt;/);
+assert.match(scheduleCard, /拒绝/);
+rows=[schedule];
+await handler(schedule.id,schedule.generation,{decision:"create"},null);
+assert.equal(responseCalls.at(-1).notificationNonce,schedule.notificationNonce);
+assert.deepEqual(responseCalls.at(-1).result,{decision:"create"});
+console.log("PASS schedule approval discloses the task and sends the current instance nonce");

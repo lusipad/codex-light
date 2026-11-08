@@ -2,6 +2,7 @@ pub mod local_environment;
 mod local_environment_setup;
 pub mod app_server;
 pub mod automations;
+mod automation_tool;
 pub mod config_skills;
 pub mod recommended_skills;
 pub mod desktop_open;
@@ -153,8 +154,19 @@ async fn app_server_call(
     window: tauri::WebviewWindow,
     state: State<'_, AppState>,
     method: String,
-    params: Option<Value>,
+    mut params: Option<Value>,
 ) -> Result<Value, String> {
+    if method == "thread/start" {
+        if let Some(params) = params.as_mut().and_then(Value::as_object_mut) {
+            let requested = params.remove("codexNativeScheduleTool") == Some(Value::Bool(true));
+            if requested && !params.contains_key("dynamicTools") {
+                let status = state.app_server.ensure_connected(&app).await?;
+                if matches!(status.app_server_version.as_deref(), Some("0.165.0" | "0.167.0-alpha.3.2")) {
+                    params.insert("dynamicTools".into(), json!([automation_tool::spec()]));
+                }
+            }
+        }
+    }
     if method == "getAuthStatus" {
         return Err("认证状态令牌只能由宿主服务读取".to_string());
     }

@@ -43,6 +43,7 @@ struct InnerState {
     stdin: Option<ChildStdin>,
     pending_requests: HashMap<u64, oneshot::Sender<Result<Value, String>>>,
     pending_server_requests: HashMap<String, PendingServerRequest>,
+    active_schedule_turns: HashMap<String, String>,
     status: AppServerStatus,
     custom_cli_path: Option<String>,
     private_threads: HashMap<String, Option<mpsc::UnboundedSender<Value>>>,
@@ -59,6 +60,31 @@ struct InnerState {
 enum PrivateRoute {Global,Held,Owned {thread_id:String,delivered:bool}}
 
 impl InnerState {
+    fn schedule_turn_is_active(&self, params: &Value) -> bool {
+        params["threadId"].as_str().and_then(|id| self.active_schedule_turns.get(id))
+            .is_some_and(|turn| params["turnId"] == turn.as_str())
+    }
+
+    fn update_schedule_turns(&mut self, method: &str, params: &Value) -> Vec<PendingServerRequest> {
+        let turn = params["threadId"].as_str().zip(params.pointer("/turn/id").and_then(Value::as_str));
+        match (method, turn) {
+            ("turn/started", Some((thread, turn))) => {
+                self.active_schedule_turns.insert(thread.into(), turn.into());
+            }
+            ("turn/completed", Some((thread, turn))) => {
+                if self.active_schedule_turns.get(thread).is_some_and(|active| active == turn) {
+                    self.active_schedule_turns.remove(thread);
+                }
+            }
+            ("account/updated", _) => self.active_schedule_turns.clear(),
+            _ => return Vec::new(),
+        }
+        let expired: Vec<_> = self.pending_server_requests.iter().filter(|(_, request)| {
+            request.method == crate::automation_tool::APPROVAL_METHOD && !self.schedule_turn_is_active(&request.params)
+        }).map(|(key, _)| key.clone()).collect();
+        expired.into_iter().filter_map(|key| self.pending_server_requests.remove(&key)).collect()
+    }
+
     fn claim_private_start(&mut self,id:u64,message:&Value)->Option<Option<String>> {
         let sender=self.private_starts.remove(&id)?;
         let tools=self.private_tool_starts.remove(&id);
@@ -121,6 +147,7 @@ impl InnerState {
         self.status.connecting = false;
         self.stdin = None;
         self.pending_server_requests.clear();
+        self.active_schedule_turns.clear();
         self.private_tool_starts.clear();
         self.private_tool_threads.clear();
         self.private_tool_requests.clear();
@@ -154,6 +181,7 @@ impl AppServerManager {
                 stdin: None,
                 pending_requests: HashMap::new(),
                 pending_server_requests: HashMap::new(),
+                active_schedule_turns: HashMap::new(),
                 status: AppServerStatus {
                     connected: false,
                     connecting: false,
@@ -277,6 +305,7 @@ impl AppServerManager {
                 let _ = tx.send(Err("app-server restarting".to_string()));
             }
             guard.pending_server_requests.clear();
+            guard.active_schedule_turns.clear();
             guard.private_tool_starts.clear();
             guard.private_tool_threads.clear();
             guard.private_tool_requests.clear();
@@ -629,13 +658,61 @@ impl AppServerManager {
         error: Option<Value>,
         notification_nonce: Option<String>,
     ) -> Result<(), String> {
+        let schedule_thread = {
+            let guard = self.inner.lock().await;
+            let req = guard.pending_server_requests.get(&server_request_key(&id));
+            if let Some(req) = req.filter(|req| req.method == crate::automation_tool::APPROVAL_METHOD) {
+                if guard.generation != generation || req.generation != generation ||
+                    req.response_delivery_unknown || !guard.schedule_turn_is_active(&req.params) ||
+                    notification_nonce.as_deref() != Some(req.notification_nonce.as_str())
+                {
+                    return Err("定时任务确认已失效".into());
+                }
+                if error.is_some() || !matches!(result.as_ref().and_then(|value| value["decision"].as_str()), Some("create" | "decline")) {
+                    return Err("请选择创建或拒绝定时任务".into());
+                }
+                (result.as_ref().unwrap()["decision"] == "create")
+                    .then(|| req.params["threadId"].as_str().unwrap_or_default().to_owned())
+            } else {
+                None
+            }
+        };
+        let thread_valid = if let Some(thread_id) = schedule_thread.as_deref() {
+            self.call(app, "thread/read", Some(json!({"threadId":thread_id,"includeTurns":false})))
+                .await.is_ok_and(|response| crate::automation_tool::can_schedule_in_thread(thread_id, &response))
+        } else {
+            false
+        };
         let mut guard = self.inner.lock().await;
         if guard.generation != generation {
             return Err("Approval belongs to a previous app-server connection".to_string());
         }
+        let active_schedule_request = guard.pending_server_requests.get(&server_request_key(&id))
+            .is_some_and(|request| guard.schedule_turn_is_active(&request.params));
         let InnerState { stdin, pending_server_requests, .. } = &mut *guard;
         validate_notification_nonce(pending_server_requests, &id, notification_nonce.as_deref())?;
-        let instance = pending_server_requests.get(&server_request_key(&id)).map(|request| request.notification_nonce.clone());
+        let request = pending_server_requests.get(&server_request_key(&id));
+        let instance = request.map(|request| request.notification_nonce.clone());
+        let result = if let Some(request) = request.filter(|request| request.method == crate::automation_tool::APPROVAL_METHOD) {
+            if request.response_delivery_unknown || !active_schedule_request ||
+                notification_nonce.as_deref() != Some(request.notification_nonce.as_str())
+            {
+                return Err("定时任务确认已失效".into());
+            }
+            let response = if schedule_thread.is_none() {
+                crate::automation_tool::reply(false, "User declined scheduling the task.")
+            } else if !thread_valid || request.params["threadId"].as_str() != schedule_thread.as_deref() || stdin.is_none() {
+                crate::automation_tool::reply(false, "The linked local chat is no longer available.")
+            } else {
+                match crate::automation_tool::create(&request.params) {
+                    Ok(receipt) => crate::automation_tool::reply(true, receipt.to_string()),
+                    Err(message) => crate::automation_tool::reply(false, message),
+                }
+            };
+            Some(response)
+        } else {
+            result
+        };
         write_server_response(pending_server_requests, stdin.as_mut(), &id, generation, result, error).await?;
         let _ = app.emit("app-server:server-request-resolved", json!({ "id": id, "generation": generation, "notificationNonce":instance }));
         Ok(())
@@ -697,6 +774,16 @@ fn validate_notification_nonce(pending: &HashMap<String, PendingServerRequest>, 
         }
     }
     Ok(())
+}
+
+async fn reject_schedule_call(writer: Option<&mut ChildStdin>, id: &Value, reason: &str) {
+    let response = json!({"id":id,"result":crate::automation_tool::reply(false, reason)});
+    if let (Some(writer), Ok(mut bytes)) = (writer, serde_json::to_vec(&response)) {
+        bytes.push(b'\n');
+        if writer.write_all(&bytes).await.is_ok() {
+            let _ = writer.flush().await;
+        }
+    }
 }
 
 async fn write_server_response<W: tokio::io::AsyncWrite + Unpin>(
@@ -816,12 +903,24 @@ async fn handle_incoming_message(
     // 2. Server-initiated request (e.g. command/patch/tool approval or user input)
     if has_id && has_method && !has_result && !has_error {
         let id = msg.get("id").cloned().unwrap_or(Value::Null);
-        let method = msg
+        let mut method = msg
             .get("method")
             .and_then(|m| m.as_str())
             .unwrap_or("")
             .to_string();
         let params = msg.get("params").cloned().unwrap_or(Value::Null);
+        if crate::automation_tool::matches_tool(&method, &params) {
+            let validated = if guard.schedule_turn_is_active(&params) {
+                crate::automation_tool::validate(&params)
+            } else {
+                Err("The scheduling turn is no longer active".into())
+            };
+            if let Err(error) = validated {
+                reject_schedule_call(guard.stdin.as_mut(), &id, &error).await;
+                continue;
+            }
+            method = crate::automation_tool::APPROVAL_METHOD.into();
+        }
         let req = PendingServerRequest {
             id: id.clone(),
             method,
@@ -847,6 +946,14 @@ async fn handle_incoming_message(
             .or_else(|| msg.get("result"))
             .cloned()
             .unwrap_or(Value::Null);
+        for request in guard.update_schedule_turns(method, &params) {
+            if method != "turn/completed" && !request.response_delivery_unknown {
+                reject_schedule_call(guard.stdin.as_mut(), &request.id, "The scheduling approval expired.").await;
+            }
+            let _ = app.emit("app-server:server-request-resolved", json!({
+                "id":request.id,"generation":request.generation,"notificationNonce":request.notification_nonce
+            }));
+        }
         if method == "serverRequest/resolved" {
             guard.resolve_server_request(generation, &params);
         }
@@ -1267,4 +1374,27 @@ mod tests {
         assert!(srvs.contains_key("valid_srv"));
     }
 }
+
+    #[tokio::test]
+    async fn schedule_approval_expires_with_its_turn_or_account() {
+        let manager = AppServerManager::new();
+        let mut state = manager.inner.lock().await;
+        let turn = |thread, id| json!({"threadId":thread,"turn":{"id":id}});
+        state.update_schedule_turns("turn/started", &turn("chat", "a"));
+        let request = PendingServerRequest {
+            id: json!("approve"), method: crate::automation_tool::APPROVAL_METHOD.into(),
+            params: json!({"threadId":"chat","turnId":"a"}), generation: 0,
+            response_delivery_unknown: false, notification_nonce: "fixture".into(),
+        };
+        assert!(state.schedule_turn_is_active(&request.params));
+        state.pending_server_requests.insert(server_request_key(&request.id), request.clone());
+        assert!(state.update_schedule_turns("turn/completed", &turn("chat", "other")).is_empty());
+        assert_eq!(state.update_schedule_turns("turn/started", &turn("chat", "b")).len(), 1);
+        assert!(!state.schedule_turn_is_active(&request.params));
+        let mut request = request;
+        request.params["turnId"] = json!("b");
+        state.pending_server_requests.insert(server_request_key(&request.id), request.clone());
+        assert_eq!(state.update_schedule_turns("account/updated", &Value::Null).len(), 1);
+        assert!(!state.schedule_turn_is_active(&request.params));
+    }
 

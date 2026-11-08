@@ -771,6 +771,10 @@ fn linked_heartbeat_target(item: &AutomationItem) -> Option<&str> {
     item.target_thread_id.as_deref().map(str::trim).filter(|id| !id.is_empty())
 }
 
+pub(crate) fn validate_linked_schedule(item: &AutomationItem) -> Result<(), String> {
+    Rrule::for_item(item).map(|_| ())
+}
+
 /// Store (and log once) the reason an automation cannot be scheduled.
 fn note_schedule_warning(
     entry: &mut AutomationScheduleState,

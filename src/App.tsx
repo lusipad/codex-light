@@ -3331,6 +3331,7 @@ export const App: React.FC = () => {
       if (!currentThreadId) {
         const startRes = await callAppServer<any>("thread/start", {
           cwd: targetCwd || undefined,
+          codexNativeScheduleTool: true,
           ...projectStartParams,
           model: configuration.model,
           approvalPolicy,
@@ -3688,7 +3689,8 @@ export const App: React.FC = () => {
           generation,
           result,
           error,
-          ...(notificationNonce ? { notificationNonce } : {}),
+          ...((notificationNonce || request.method === "codex-native/schedule/requestApproval")
+            ? { notificationNonce: notificationNonce || request.notificationNonce } : {}),
         });
         void tauriInvoke("desktop_notification_hide", { id: `${notificationRequestCategory(request)}-${key}-${request.notificationNonce || ""}` })
           .catch(reason => showAppToast(`撤回已解决通知失败：${String(reason)}`, "error"));

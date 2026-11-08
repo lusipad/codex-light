@@ -106,6 +106,31 @@ const ApprovalCard: React.FC<{
   onRespond: (id: any, result: any) => void;
   onRespondError: (id: any, message: string) => void;
 }> = ({ request, onRespond, onRespondError }) => {
+  if (request.method === "codex-native/schedule/requestApproval") {
+    const draft = request.params?.arguments ?? {};
+    return (
+      <CardShell
+        tone="info"
+        icon={<HandApprovalIcon size={18} />}
+        title="在此聊天中创建定时任务"
+        subtitle={draft.name}
+        footer={
+          <>
+            <button type="button" className="btn-approve" onClick={() => onRespond(request.id, { decision: "create" })}>
+              <CheckIcon size={14} /> 创建
+            </button>
+            <button type="button" className="btn-decline" onClick={() => onRespond(request.id, { decision: "decline" })}>
+              拒绝
+            </button>
+          </>
+        }
+      >
+        <div>{draft.status === "PAUSED" ? "创建后暂停" : "创建后启用"}</div>
+        <code>{draft.rrule}</code>
+        <pre className="approval-raw-json">{draft.prompt}</pre>
+      </CardShell>
+    );
+  }
   const kind = classifyServerRequest(request.method, request.params);
   switch (kind) {
     case "command":
