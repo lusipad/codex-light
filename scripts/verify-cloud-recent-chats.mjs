@@ -26,15 +26,15 @@ const pages = [
   { data: [{ ...thread, name: "duplicate" }, { id: "known", preview: "之前的聊天", recencyAt: 150 }], nextCursor: null },
 ];
 
-function fixture(readPage, current = identity) {
+function fixture(readPage, current = identity, mutate = () => assert.fail("unexpected mutation")) {
   const exports = {};
   const cursors = [];
   vm.runInNewContext(outputText, { exports, require(name) {
     if (name === "./chatgptService") return {
       async serviceIdentity() { return current; },
       async callCloudThread(operation, actual) {
-        assert.equal(operation.kind, "list");
         assert.equal(actual, identity);
+        if (operation.kind !== "list") return mutate(operation);
         cursors.push(operation.cursor);
         return readPage(operation.cursor);
       },
@@ -44,7 +44,7 @@ function fixture(readPage, current = identity) {
     };
     assert.fail(name);
   } });
-  return { read: signal => exports.readCloudRecentChats(identity, signal), cursors };
+  return { read: signal => exports.readCloudRecentChats(identity, signal), action: exports.applyCloudRecentAction, cursors };
 }
 
 const signal = new AbortController().signal;
@@ -62,6 +62,7 @@ const abort = new AbortController();
 await assert.rejects(fixture(() => { abort.abort(); return pages[0]; }).read(abort.signal), { name: "AbortError" });
 
 const picked = [];
+const actions = [];
 const all = node => node && typeof node === "object" ? [node, ...node.children.flatMap(all)] : [];
 const sidebar = mount({
   workspaces: [],
@@ -71,17 +72,63 @@ const sidebar = mount({
   activeCloudThreadId: "same-id",
   cloudRecentChats: chats,
   onSelectCloudChat: chat => picked.push(chat.session.threadId),
+  onCloudRecentAction: (chat, action) => actions.push([chat.session.threadId, action.kind, action.name]),
 });
 const rows = all(sidebar.render()).filter(node => node.props["data-thread-id"] || node.props["data-chat-host"] === "durable");
 assert.equal(rows.length, 3);
 assert.deepEqual(rows.map(row => row.props["data-chat-host"] ?? row.props["data-thread-id"]),
   ["durable", "same-id", "durable"]);
 assert.equal(rows[1].props["aria-current"], undefined);
-assert.equal(rows[2].props["aria-current"], "page");
-rows[2].props.onClick();
+const cloudButton = rows[2].children.find(node => node.type === "button");
+assert.equal(cloudButton.props["aria-current"], "page");
+cloudButton.props.onClick();
 assert.deepEqual(picked, ["same-id"]);
-assert.ok(!rows[2].props.onContextMenu);
+const menu = all(rows[2]).find(node => node.type === "ThreadActionsMenu");
+menu.props.onSelect("rename");
+let dialog = all(sidebar.render()).find(node => node.type === "RenameThreadDialog");
+assert.equal(dialog.props.initialValue, "云端对话");
+dialog.props.onClose();
+assert.deepEqual(actions, []);
+menu.props.onSelect("rename");
+dialog = all(sidebar.render()).find(node => node.type === "RenameThreadDialog");
+dialog.props.onSave("新云端名称");
+menu.props.onSelect("archive");
+assert.deepEqual(actions, [["same-id", "rename", "新云端名称"], ["same-id", "archive", undefined]]);
+assert.deepEqual(picked, ["same-id"]);
+sidebar.props.cloudRecentChats = [];
+assert.ok(!all(sidebar.render()).some(node => node.type === "RenameThreadDialog"));
+sidebar.props.cloudRecentChats = chats;
 sidebar.props.activityOnly = true;
 assert.ok(!all(sidebar.render()).some(node => node.props["data-chat-host"] === "durable"));
 
-console.log("PASS cloud recent chats: authenticated pagination, visibility, account changes, cancellation, separate host routing and recent row order");
+const wire = [];
+let readName = "新云端名称";
+let failedArchive = false;
+const calls = fixture(() => assert.fail("unexpected list"), identity, operation => {
+  wire.push(JSON.stringify(operation));
+  if (operation.kind === "read") return { thread: { id: "same-id", name: readName } };
+  if (operation.kind === "archive" && failedArchive) throw Error("lost archive response");
+  return {};
+});
+assert.equal(await calls.action(chats[1], { kind: "rename", name: " " }, signal), false);
+assert.equal(await calls.action(chats[1], { kind: "rename", name: "云端对话 " }, signal), false);
+assert.equal(wire.length, 0);
+assert.equal(await calls.action(chats[1], { kind: "rename", name: " 新云端名称 " }, signal), true);
+assert.equal(await calls.action(chats[1], { kind: "archive" }, signal), true);
+assert.equal(await calls.action(chats[1], { kind: "unarchive" }, signal), true);
+assert.deepEqual(wire.map(value => JSON.parse(value)), [
+  { kind: "title", threadId: "same-id", name: "新云端名称" },
+  { kind: "read", threadId: "same-id" },
+  { kind: "archive", threadId: "same-id", archived: true },
+  { kind: "archive", threadId: "same-id", archived: false },
+]);
+readName = "旧标题";
+await assert.rejects(calls.action(chats[1], { kind: "rename", name: "待确认" }, signal), /尚未确认/);
+failedArchive = true;
+const previousCalls = wire.length;
+await assert.rejects(calls.action(chats[1], { kind: "archive" }, signal), /lost archive response/);
+assert.equal(wire.length, previousCalls + 1);
+await assert.rejects(calls.action(chats[1], { kind: "archive" }, abort.signal), { name: "AbortError" });
+assert.equal(wire.length, previousCalls + 1);
+
+console.log("PASS cloud recent chats: scoped pagination and host routing, rename dialog and verified readback, archive, undo, cancellation and no replay");

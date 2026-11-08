@@ -2392,3 +2392,8 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 
 - 复核官方固定版本的宿主目录、环境关联及最近会话键。复用鉴权 durable 通道读目录，按账号和 generation 隔离；有效的普通云端聊天并入现有最近列表，选择时复用云端恢复组件。本地项目、活动和归档操作仍使用各自数据源。
 - Windows 回环、687 项 Rust 测试和隔离浏览器的混合列表及键盘/鼠标选择通过。真实账号、云端行菜单、跨设备恢复和同条件像素待验。详见 [22F 验收记录](antigravity/acceptance/22F-cloud-environment-editor.md)。
+
+## 2026-11-08 — 云端聊天行操作与预览候选
+
+- 最近列表的云端条目复用现有菜单与标题对话框，改名通过 durable 读回，归档与撤销在原云端宿主完成。浏览器隔离回放验证保存、取消回焦以及本地同行隔离。详见 [22F 验收记录](antigravity/acceptance/22F-cloud-environment-editor.md)。
+- 将发布后空聊天、首条文本发送、最近列表恢复和行操作作为 Windows preview.18 候选。以候选提交的分支 CI、标签 CI 和实际发布附件为准。

@@ -85,6 +85,8 @@ function sessionPeer(socket) {
       const operations = {
         "configRequirements/read": [undefined, { requirements: null }],
         "thread/name/set": [{ threadId, name: "编辑 fixture" }, {}],
+        "thread/archive": [{ threadId }, {}],
+        "thread/unarchive": [{ threadId }, {}],
         "thread/read": [{ threadId, includeTurns: false }, { thread: { id: threadId } }],
         "thread/list": [{ cursor: "page-token", limit: 100, archived: false, useStateDbOnly: true, sortKey: "updated_at" }, { data: [{ id: threadId }], nextCursor: null }],
         "thread/resume": [{ threadId, history: null, model: null, serviceTier: null, excludeTurns: true }, { thread: { id: threadId } }],

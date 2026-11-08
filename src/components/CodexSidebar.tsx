@@ -39,7 +39,7 @@ import { SidebarThreadHoverCard } from "./SidebarThreadHoverCard";
 import { applySidebarOrder, mergeSidebarOrder, moveVisibleSidebarThread, prependSidebarThread, sidebarDropTarget } from "../sidebarOrder";
 import { buildSidebarProjectGroups, sidebarThreadProjects } from "../sidebarProjects";
 
-import type { CloudRecentChat } from "../cloudRecentChats";
+import { sameCloudRecentIdentity, type CloudRecentAction, type CloudRecentChat } from "../cloudRecentChats";
 
 export interface CodexSidebarProps {
   collapsed: boolean;
@@ -50,6 +50,7 @@ export interface CodexSidebarProps {
   cloudRecentChats?: CloudRecentChat[];
   activeCloudThreadId?: string;
   onSelectCloudChat?: (chat: CloudRecentChat) => void;
+  onCloudRecentAction?: (chat: CloudRecentChat, action: CloudRecentAction) => void;
   pinnedThreadIds: string[];
   workspaceHints: Record<string, string>;
   projectMembership?: SidebarProjectMembership;
@@ -129,6 +130,7 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
   cloudRecentChats,
   activeCloudThreadId,
   onSelectCloudChat,
+  onCloudRecentAction,
   pinnedThreadIds,
   workspaceHints,
   projectMembership = EMPTY_PROJECT_MEMBERSHIP,
@@ -247,6 +249,14 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
     localStorage.setItem("codex_sidebar_show_projects_in_recents", String(showProjectsInRecents));
   }, [showProjectsInRecents]);
   const [renamingThread, setRenamingThread] = useState<ThreadSummary | null>(null);
+  const [renamingCloudChat, setRenamingCloudChat] = useState<CloudRecentChat | null>(null);
+  const cloudTitleButtons = useRef(new Map<string, HTMLButtonElement>());
+  const renameCloudTarget = renamingCloudChat && cloudRecentChats?.find(chat =>
+    chat.session.threadId === renamingCloudChat.session.threadId &&
+    sameCloudRecentIdentity(chat.session.identity, renamingCloudChat.session.identity));
+  useEffect(() => {
+    if (renamingCloudChat && !renameCloudTarget) setRenamingCloudChat(null);
+  }, [renamingCloudChat, renameCloudTarget]);
 
   /* ── 自定义分区（threadSection/*） ── */
   const [sections, setSections] = useState<ThreadSection[]>([]);
@@ -1832,12 +1842,28 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
             </div>
           ) : (
             recentRows.map(row => "chat" in row ? (
-              <button key={`durable:${row.chat.session.threadId}`} type="button" data-chat-host="durable"
-                className={`sidebar-thread-row${activeCloudThreadId === row.chat.session.threadId ? " active" : ""}`}
-                aria-current={activeCloudThreadId === row.chat.session.threadId ? "page" : undefined}
-                onClick={() => onSelectCloudChat?.(row.chat)}>
-                <span className="sidebar-thread-title">{row.chat.title}</span>
-              </button>
+              <div key={`durable:${row.chat.session.threadId}`} data-chat-host="durable"
+                className={`sidebar-thread-row${activeCloudThreadId === row.chat.session.threadId ? " active" : ""}`}>
+                <button type="button" className="sidebar-cloud-thread-button sidebar-thread-title"
+                  ref={button => {
+                    if (button) cloudTitleButtons.current.set(row.chat.session.threadId, button);
+                    else cloudTitleButtons.current.delete(row.chat.session.threadId);
+                  }}
+                  aria-current={activeCloudThreadId === row.chat.session.threadId ? "page" : undefined}
+                  onClick={() => onSelectCloudChat?.(row.chat)}>{row.chat.title}</button>
+                {onCloudRecentAction && <div className="sidebar-thread-actions">
+                  <ThreadActionsMenu label={<EllipsisIcon size={12} />} buttonClassName="thread-icon-btn"
+                    triggerAriaLabel="云端聊天操作"
+                    items={[{ id: "rename", label: "重命名" }, { id: "archive", label: "归档", icon: <ArchiveIcon size={14} /> }]}
+                    onSelect={id => {
+                      if (id === "rename") {
+                        cloudTitleButtons.current.get(row.chat.session.threadId)?.focus();
+                        setRenamingCloudChat(row.chat);
+                      }
+                      if (id === "archive") onCloudRecentAction(row.chat, { kind: "archive" });
+                    }} />
+                </div>}
+              </div>
             ) : renderThreadRow(row.thread, false, activityOnly ? undefined : recentOrderContext))
           )}
           {activityOnly && activityThreads.length > activityVisibleCount && onLoadMoreActivity && (
@@ -1873,6 +1899,15 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
           initialValue={renamingThread.name ?? ""}
           onClose={() => setRenamingThread(null)}
           onSave={(value) => onRenameThread(renamingThread.id, value)}
+        />,
+        document.body,
+      )}
+      {renameCloudTarget && createPortal(
+        <RenameThreadDialog
+          key={`durable:${renameCloudTarget.session.threadId}`}
+          initialValue={renameCloudTarget.title}
+          onClose={() => setRenamingCloudChat(null)}
+          onSave={name => onCloudRecentAction?.(renameCloudTarget, { kind: "rename", name })}
         />,
         document.body,
       )}

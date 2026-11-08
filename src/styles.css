@@ -270,19 +270,17 @@ html, body, #root {
   color: var(--text-primary);
 }
 
-.sidebar-thread-row[data-chat-host="durable"] {
-  width: 100%;
+.sidebar-cloud-thread-button {
+  min-width: 0;
+  height: 100%;
+  flex: 1;
+  padding: 0;
   border: 0;
+  color: inherit;
+  font: inherit;
   background: transparent;
   text-align: start;
-}
-
-.sidebar-thread-row[data-chat-host="durable"]:hover {
-  background-color: var(--bg-hover);
-}
-
-.sidebar-thread-row[data-chat-host="durable"].active {
-  background-color: var(--bg-tertiary);
+  cursor: pointer;
 }
 
 .sidebar-thread-row.active {

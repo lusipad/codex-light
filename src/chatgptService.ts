@@ -291,6 +291,7 @@ export type CloudThreadOperation =
   | { kind: "list"; cursor: string | null }
   | { kind: "resume"; params: ReturnType<typeof import("./cloudDraftResume").cloudDraftResumeParams>; timeoutSeconds?: 120 | 240 | 480 }
   | { kind: "title"; threadId: string; name: string }
+  | { kind: "archive"; threadId: string; archived: boolean }
   | { kind: "turns"; threadId: string; cursor: string | null; limit: number }
   | { kind: "items"; threadId: string; turnId: string; cursor: string | null; limit: number }
   | { kind: "start_repository_apply"; threadId: string; clientUserMessageId: string; serviceTier: string | null; added: string[]; removed: string[] }

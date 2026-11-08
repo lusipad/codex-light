@@ -17,6 +17,10 @@ const projectsModule = { exports: {} };
 vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/sidebarProjects.ts", "utf8"), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText, { exports: projectsModule.exports });
+const cloudRecentModule = { exports: {} };
+vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/cloudRecentChats.ts", "utf8"), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText, { exports: cloudRecentModule.exports, require: () => ({}) });
 const all = node => node && typeof node === "object" ? [node, ...node.children.flatMap(all)] : [];
 const text = node => node && typeof node === "object" ? node.children.map(text).join("") : typeof node === "string" ? node : "";
 const a = { id: "a", path: "D:/parity/alpha", label: "Alpha", active: true };
@@ -99,7 +103,7 @@ export function mount(overrides = {}, storage = new Map(), useDefaultRecents = f
   const module = { exports: {} };
   vm.runInNewContext(code, {
     exports: module.exports,
-    require: name => name === "react" ? react : name === "react-dom" ? { createPortal: node => ({ type: "portal", props: {}, children: [node] }) } : name === "lucide-react" ? { MessageCircle: "MessageCircle" } : name === "./Icons" ? { CheckIcon: "CheckIcon" } : name === "./ThreadActionsMenu" ? { ThreadActionsMenu: "ThreadActionsMenu" } : name === "./RenameThreadDialog" ? { RenameThreadDialog: "RenameThreadDialog" } : name === "./SidebarThreadHoverCard" ? { SidebarThreadHoverCard: "SidebarThreadHoverCard" } : name === "../sidebarOrder" ? orderModule.exports : name === "../sidebarProjects" ? projectsModule.exports : name === "../threadSections" ? threadSections : name === "../bridge" ? { tauriListen: async () => () => {} } : {},
+    require: name => name === "react" ? react : name === "react-dom" ? { createPortal: node => ({ type: "portal", props: {}, children: [node] }) } : name === "lucide-react" ? { MessageCircle: "MessageCircle" } : name === "./Icons" ? { CheckIcon: "CheckIcon" } : name === "./ThreadActionsMenu" ? { ThreadActionsMenu: "ThreadActionsMenu" } : name === "./RenameThreadDialog" ? { RenameThreadDialog: "RenameThreadDialog" } : name === "./SidebarThreadHoverCard" ? { SidebarThreadHoverCard: "SidebarThreadHoverCard" } : name === "../sidebarOrder" ? orderModule.exports : name === "../sidebarProjects" ? projectsModule.exports : name === "../cloudRecentChats" ? cloudRecentModule.exports : name === "../threadSections" ? threadSections : name === "../bridge" ? { tauriListen: async () => () => {} } : {},
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) }, console,
     window: { ...eventTarget("window"), innerWidth: 800, innerHeight: 600 },
     document: documentStub, HTMLElement: ElementStub,

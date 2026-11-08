@@ -49,6 +49,10 @@ enum Operation {
         thread_id: String,
         name: String,
     },
+    Archive {
+        thread_id: String,
+        archived: bool,
+    },
     Turns {
         thread_id: String,
         cursor: Option<String>,
@@ -219,6 +223,11 @@ impl Operation {
             Self::Title { thread_id, name } if opaque(&thread_id) && opaque(&name) => (
                 "thread/name/set",
                 json!({"threadId":thread_id,"name":name}),
+                30,
+            ),
+            Self::Archive { thread_id, archived } if opaque(&thread_id) => (
+                if archived { "thread/archive" } else { "thread/unarchive" },
+                json!({"threadId":thread_id}),
                 30,
             ),
             Self::Turns {
@@ -504,6 +513,11 @@ fn checked_response(
 ) -> ServiceResult<Value> {
     match method {
         "thread/name/set" if body.is_object() => Ok(body),
+        "thread/archive" | "thread/unarchive"
+            if body.as_object().is_some_and(|fields| fields.is_empty()) =>
+        {
+            Ok(body)
+        }
         "thread/read" | "thread/resume"
             if thread_id.is_some() && body["thread"]["id"].as_str() == thread_id =>
         {
@@ -673,6 +687,25 @@ impl ChatgptService {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cloud_archive_toggles_only_the_durable_thread_id() {
+        for (archived, method) in [(true, "thread/archive"), (false, "thread/unarchive")] {
+            let operation: Operation = serde_json::from_value(json!({
+                "kind":"archive","threadId":"cloud-thread","archived":archived
+            })).unwrap();
+            let request = operation.wire().unwrap();
+            assert_eq!(request.method, method);
+            assert_eq!(request.params, json!({"threadId":"cloud-thread"}));
+            assert!(checked_response(method, Some("cloud-thread"), None, json!({})).is_ok());
+            assert!(checked_response(method, Some("cloud-thread"), None, Value::Null).is_err());
+            assert!(checked_response(method, Some("cloud-thread"), None, json!({"error":true})).is_err());
+        }
+        assert!(serde_json::from_value::<Operation>(json!({
+            "kind":"archive","threadId":"cloud-thread","archived":true,"cwd":"C:/local"
+        })).is_err());
+        assert!(Operation::Archive { thread_id: " ".to_owned(), archived: true }.wire().is_err());
+    }
 
     #[test]
     fn cloud_catalog_keeps_read_only_wire_and_cursor() {

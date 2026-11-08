@@ -8,6 +8,31 @@ export interface CloudRecentChat {
   recency: number;
 }
 
+export type CloudRecentAction = { kind: "rename"; name: string } | { kind: "archive" | "unarchive" };
+
+export function sameCloudRecentIdentity(a: ServiceIdentity | undefined, b: ServiceIdentity): boolean {
+  return a?.accountId === b.accountId && a.userId === b.userId && a.generation === b.generation;
+}
+
+export async function applyCloudRecentAction(chat: CloudRecentChat, action: CloudRecentAction, signal: AbortSignal): Promise<boolean> {
+  const { threadId, identity, binding } = chat.session;
+  signal.throwIfAborted();
+  if (!binding.conversation || binding.accountId !== identity.accountId || binding.userId !== identity.userId)
+    throw Error("无法确认云端聊天身份。");
+  if (action.kind === "rename") {
+    const name = action.name.trim();
+    if (!name || name === chat.title) return false;
+    await callCloudThread({ kind: "title", threadId, name }, identity, signal);
+    signal.throwIfAborted();
+    const result = await callCloudThread({ kind: "read", threadId }, identity, signal) as { thread?: { id?: string; name?: string } };
+    if (result.thread?.id !== threadId || result.thread.name !== name) throw Error("云端标题尚未确认，请重新查看聊天。");
+  } else {
+    await callCloudThread({ kind: "archive", threadId, archived: action.kind === "archive" }, identity, signal);
+  }
+  signal.throwIfAborted();
+  return true;
+}
+
 type CatalogThread = {
   id: string;
   name?: unknown;
@@ -64,7 +89,7 @@ export async function readCloudRecentChats(identity: ServiceIdentity, signal: Ab
   } while (cursor !== null);
   const current = await serviceIdentity(signal);
   signal.throwIfAborted();
-  if (current.accountId !== identity.accountId || current.userId !== identity.userId || current.generation !== identity.generation)
+  if (!sameCloudRecentIdentity(current, identity))
     throw Error("读取期间账号发生变化，请重新刷新。");
   return [...chats.values()].sort((a, b) => b.recency - a.recency);
 }

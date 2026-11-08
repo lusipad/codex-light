@@ -151,8 +151,8 @@ import { CloudDraftView } from "./components/CloudDraftView";
 import { CloudNewChatView } from "./components/CloudNewChatView";
 import type { PublishedCloudTarget } from "./cloudPublishedChat";
 import type { CloudDraftSession } from "./cloudDraftSession";
-import { readCloudRecentChats, type CloudRecentChat } from "./cloudRecentChats";
-import { serviceIdentity, type ServiceIdentity } from "./chatgptService";
+import { applyCloudRecentAction, readCloudRecentChats, sameCloudRecentIdentity, type CloudRecentAction, type CloudRecentChat } from "./cloudRecentChats";
+import { serviceErrorMessage, serviceIdentity, type ServiceIdentity } from "./chatgptService";
 import { ThreadActionsMenu, ThreadActionItem } from "./components/ThreadActionsMenu";
 import { ThreadFindBar } from "./components/ThreadFindBar";
 import {
@@ -636,11 +636,19 @@ export const App: React.FC = () => {
   const [shareThreadId, setShareThreadId] = useState<string | null>(null);
   const [shareAvailable, setShareAvailable] = useState(false);
   const [shareAccessRevision, setShareAccessRevision] = useState(0);
-  const [cloudRecent, setCloudRecent] = useState<{ account: AccountReadResult; revision: number; chats: CloudRecentChat[] } | null>(null);
-  const cloudRecentChats = appServerStatus.connected && cloudRecent?.account === accountInfo &&
-    cloudRecent?.revision === shareAccessRevision ? cloudRecent.chats : undefined;
+  const [cloudRecent, setCloudRecent] = useState<{ account: AccountReadResult; revision: number; identity: ServiceIdentity; chats: CloudRecentChat[] } | null>(null);
+  const currentCloudRecent = appServerStatus.connected && cloudRecent?.account === accountInfo &&
+    cloudRecent?.revision === shareAccessRevision ? cloudRecent : undefined;
+  const cloudRecentChats = currentCloudRecent?.chats;
   const cloudRecentChatsRef = useRef(cloudRecentChats);
   cloudRecentChatsRef.current = cloudRecentChats;
+  const cloudRecentIdentityRef = useRef(currentCloudRecent?.identity);
+  cloudRecentIdentityRef.current = currentCloudRecent?.identity;
+  const cloudRecentWritesRef = useRef(new Map<string, AbortController>());
+  const cancelCloudRecentWrites = useCallback(() => {
+    for (const request of cloudRecentWritesRef.current.values()) request.abort();
+    cloudRecentWritesRef.current.clear();
+  }, []);
   useEffect(() => {
     if (!appServerStatus.connected || accountInfo?.account?.type !== "chatgpt" || isQuickChatWindow || isThreadWindow) {
       setCloudRecent(null);
@@ -658,30 +666,32 @@ export const App: React.FC = () => {
         const current = await serviceIdentity(request.signal);
         const expectedAccount = accountInfo.workspaceRouting?.chatgptAccountId;
         if (request.signal.aborted) return;
-        if (identity && (identity.accountId !== current.accountId || identity.userId !== current.userId ||
-          identity.generation !== current.generation)) setCloudRecent(null);
+        if (identity && !sameCloudRecentIdentity(identity, current)) {
+          setCloudRecent(null);
+          cancelCloudRecentWrites();
+        }
         if (expectedAccount && expectedAccount !== current.accountId) return;
         identity = current;
         const chats = await readCloudRecentChats(current, request.signal);
-        if (!request.signal.aborted) setCloudRecent({ account: accountInfo, revision: shareAccessRevision, chats });
+        if (!request.signal.aborted) setCloudRecent({ account: accountInfo, revision: shareAccessRevision, identity: current, chats });
       })().catch(() => {});
     };
     refreshCloudRecentRef.current = refresh;
     refresh();
     window.addEventListener("focus", refresh);
     const listener = tauriListen<{ identity: ServiceIdentity; method: string; hostId: string }>("cloud-app-server:notification", notice => {
-      if (notice.hostId === "durable" && identity?.accountId === notice.identity.accountId &&
-        identity?.userId === notice.identity.userId && identity?.generation === notice.identity.generation &&
-        ["turn/completed", "thread/name/updated", "thread/archived"].includes(notice.method)) refresh();
+      if (notice.hostId === "durable" && sameCloudRecentIdentity(identity, notice.identity) &&
+        ["turn/completed", "thread/name/updated", "thread/archived", "thread/unarchived"].includes(notice.method)) refresh();
     });
     return () => {
       disposed = true;
       pending?.abort();
+      cancelCloudRecentWrites();
       refreshCloudRecentRef.current = null;
       window.removeEventListener("focus", refresh);
       void listener.then(unlisten => unlisten()).catch(() => {});
     };
-  }, [accountInfo, appServerStatus.connected, isQuickChatWindow, isThreadWindow, shareAccessRevision]);
+  }, [accountInfo, appServerStatus.connected, cancelCloudRecentWrites, isQuickChatWindow, isThreadWindow, shareAccessRevision]);
   useEffect(() => {
     const pending = new AbortController();
     setShareAvailable(false);
@@ -696,13 +706,15 @@ export const App: React.FC = () => {
       setCloudDraft(null);
       setCloudRecent(null);
       cloudRecentChatsRef.current = undefined;
+      cloudRecentIdentityRef.current = undefined;
+      cancelCloudRecentWrites();
       setPublishedCloudTarget(null);
       if (activeRouteRef.current === "cloud-new-chat") setActiveRoute("cloud-environments");
       if (activeRouteRef.current === "cloud-draft") setActiveRoute(cloudDraftRef.current?.origin === "home" ? "home" : "cloud-environments");
       setShareAccessRevision(value => value + 1);
     });
     return () => { pending.abort(); void listener.then(unlisten => unlisten()).catch(() => {}); };
-  }, [appServerStatus.connected, accountInfo, shareAccessRevision, setActiveRoute]);
+  }, [appServerStatus.connected, accountInfo, cancelCloudRecentWrites, shareAccessRevision, setActiveRoute]);
   const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(false);
   const keyboardShortcutsOpenRef = useRef(showKeyboardShortcuts);
   keyboardShortcutsOpenRef.current = showKeyboardShortcuts;
@@ -903,6 +915,49 @@ export const App: React.FC = () => {
     },
     []
   );
+
+  const handleCloudRecentAction = async (chat: CloudRecentChat, action: CloudRecentAction) => {
+    const { threadId, identity } = chat.session;
+    const activeIdentity = () => sameCloudRecentIdentity(cloudRecentIdentityRef.current, identity);
+    if (!activeIdentity() || cloudRecentWritesRef.current.has(threadId) ||
+      (action.kind !== "unarchive" && !cloudRecentChatsRef.current?.includes(chat))) return;
+    const request = new AbortController();
+    cloudRecentWritesRef.current.set(threadId, request);
+    const active = () => !request.signal.aborted && activeIdentity();
+    try {
+      if (!await applyCloudRecentAction(chat, action, request.signal) || !active()) return;
+      if (action.kind === "rename") {
+        const title = action.name.trim();
+        setCloudRecent(current => current && sameCloudRecentIdentity(current.identity, identity) ? {
+          ...current, chats: current.chats.map(row => row.session.threadId === threadId ? { ...row, title } : row),
+        } : current);
+        setCloudDraft(current => current?.session.threadId === threadId &&
+          sameCloudRecentIdentity(current.session.identity, identity) ? { ...current, title } : current);
+      } else if (action.kind === "archive") {
+        setCloudRecent(current => current && sameCloudRecentIdentity(current.identity, identity) ? {
+          ...current, chats: current.chats.filter(row => row.session.threadId !== threadId),
+        } : current);
+        const open = cloudDraftRef.current?.session;
+        if (activeRouteRef.current === "cloud-draft" && open?.threadId === threadId && sameCloudRecentIdentity(open.identity, identity)) {
+          setCloudDraft(null);
+          setActiveRoute("home");
+        }
+        showAppToast("聊天已归档", "info", {
+          label: "撤销", onClick: () => void handleCloudRecentAction(chat, { kind: "unarchive" }),
+        });
+      } else {
+        showAppToast("聊天已取消归档");
+      }
+      refreshCloudRecentRef.current?.();
+    } catch (error) {
+      if (active()) {
+        showAppToast(`云端聊天操作未确认：${serviceErrorMessage(error)}`, "error");
+        refreshCloudRecentRef.current?.();
+      }
+    } finally {
+      if (cloudRecentWritesRef.current.get(threadId) === request) cloudRecentWritesRef.current.delete(threadId);
+    }
+  };
 
   useEffect(() => {
     try {
@@ -5069,6 +5124,7 @@ export const App: React.FC = () => {
         threads={threads}
         cloudRecentChats={cloudRecentChats}
         activeCloudThreadId={activeRoute === "cloud-draft" ? cloudDraft?.session.threadId : undefined}
+        onCloudRecentAction={(chat, action) => void handleCloudRecentAction(chat, action)}
         onSelectCloudChat={chat => {
           const open = () => {
             if (!cloudRecentChatsRef.current?.includes(chat) || (activeRouteRef.current === "cloud-draft" &&
@@ -5644,6 +5700,7 @@ export const App: React.FC = () => {
             }} />
         ) : activeRoute === "cloud-draft" && cloudDraft ? (
           <CloudDraftView key={cloudDraft.session.threadId} session={cloudDraft.session} persisted={cloudDraft.persisted} title={cloudDraft.title}
+            backToHome={cloudDraft.origin === "home"}
             onNewPublishedChat={target => {
               if (activeRouteRef.current !== "cloud-draft" || cloudDraftRef.current?.session !== cloudDraft.session) return;
               setPublishedCloudTarget(target);
