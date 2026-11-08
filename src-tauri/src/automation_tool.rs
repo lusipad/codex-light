@@ -8,7 +8,7 @@ const TOOL: &str = "automation_update";
 const NAMESPACE: &str = "codex_native";
 
 pub(crate) fn spec() -> Value {
-    let tool = json!({
+    json!({
         "type":"function", "name":TOOL,
         "description":"Request user approval to schedule a recurring follow-up in this local chat. Use only when requested by the user. Use a plain RRULE, for example FREQ=MINUTELY;INTERVAL=30.",
         "inputSchema":{
@@ -20,8 +20,7 @@ pub(crate) fn spec() -> Value {
             },
             "required":["mode","kind","destination","name","prompt","rrule"]
         }
-    });
-    json!({"type":"namespace","name":NAMESPACE,"description":"Tools provided by the local desktop app","tools":[tool]})
+    })
 }
 
 #[derive(Deserialize)]

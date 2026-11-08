@@ -3,6 +3,7 @@ mod local_environment_setup;
 pub mod app_server;
 pub mod automations;
 mod automation_tool;
+pub mod schedule_mcp;
 pub mod config_skills;
 pub mod recommended_skills;
 pub mod desktop_open;
@@ -156,13 +157,16 @@ async fn app_server_call(
     method: String,
     mut params: Option<Value>,
 ) -> Result<Value, String> {
-    if method == "thread/start" {
+    if matches!(method.as_str(), "thread/start" | "thread/resume") {
         if let Some(params) = params.as_mut().and_then(Value::as_object_mut) {
             let requested = params.remove("codexNativeScheduleTool") == Some(Value::Bool(true));
-            if requested && !params.contains_key("dynamicTools") {
+            if requested {
                 let status = state.app_server.ensure_connected(&app).await?;
                 if matches!(status.app_server_version.as_deref(), Some("0.165.0" | "0.167.0-alpha.3.2")) {
-                    params.insert("dynamicTools".into(), json!([automation_tool::spec()]));
+                    let token = state.app_server.schedule_mcp_token().await;
+                    if let Ok(executable) = std::env::current_exe() {
+                        schedule_mcp::attach(params, &executable, &token);
+                    }
                 }
             }
         }

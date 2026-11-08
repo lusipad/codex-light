@@ -2,6 +2,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some(codex_tauri_lib::schedule_mcp::ARGUMENT) {
+        codex_tauri_lib::schedule_mcp::run_stdio();
+        return;
+    }
     std::panic::set_hook(Box::new(|info| {
         let msg = format!("Codex Crash: {}\n", info);
         let log_path = dirs::home_dir()

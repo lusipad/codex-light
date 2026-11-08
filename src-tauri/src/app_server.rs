@@ -44,6 +44,7 @@ struct InnerState {
     pending_requests: HashMap<u64, oneshot::Sender<Result<Value, String>>>,
     pending_server_requests: HashMap<String, PendingServerRequest>,
     active_schedule_turns: HashMap<String, String>,
+    schedule_mcp_token: String,
     status: AppServerStatus,
     custom_cli_path: Option<String>,
     private_threads: HashMap<String, Option<mpsc::UnboundedSender<Value>>>,
@@ -123,20 +124,21 @@ impl InnerState {
         if self.private_starts.values().any(Option::is_some) {self.held_private_events.push(message.clone());return PrivateRoute::Held;}
         PrivateRoute::Global
     }
-    fn resolve_server_request(&mut self, generation: u64, params: &Value) {
+    fn resolve_server_request(&mut self, generation: u64, params: &Value) -> Option<PendingServerRequest> {
         if self.generation != generation {
-            return;
+            return None;
         }
-        let Some(id) = params.get("requestId") else { return };
-        let Some(thread_id) = params.get("threadId").and_then(Value::as_str) else { return };
+        let id = params.get("requestId")?;
+        let thread_id = params.get("threadId").and_then(Value::as_str)?;
         let key = server_request_key(id);
         if self.pending_server_requests.get(&key).is_some_and(|request| {
             request.generation == generation
                 && request.params.get("threadId").and_then(Value::as_str)
                     .or_else(|| request.params.get("conversationId").and_then(Value::as_str)) == Some(thread_id)
         }) {
-            self.pending_server_requests.remove(&key);
+            return self.pending_server_requests.remove(&key);
         }
+        None
     }
 
     fn close_generation(&mut self, generation: u64) -> bool {
@@ -148,6 +150,7 @@ impl InnerState {
         self.stdin = None;
         self.pending_server_requests.clear();
         self.active_schedule_turns.clear();
+        self.schedule_mcp_token.clear();
         self.private_tool_starts.clear();
         self.private_tool_threads.clear();
         self.private_tool_requests.clear();
@@ -182,6 +185,7 @@ impl AppServerManager {
                 pending_requests: HashMap::new(),
                 pending_server_requests: HashMap::new(),
                 active_schedule_turns: HashMap::new(),
+                schedule_mcp_token: String::new(),
                 status: AppServerStatus {
                     connected: false,
                     connecting: false,
@@ -306,6 +310,7 @@ impl AppServerManager {
             }
             guard.pending_server_requests.clear();
             guard.active_schedule_turns.clear();
+            guard.schedule_mcp_token = uuid::Uuid::new_v4().to_string();
             guard.private_tool_starts.clear();
             guard.private_tool_threads.clear();
             guard.private_tool_requests.clear();
@@ -699,23 +704,24 @@ impl AppServerManager {
             {
                 return Err("定时任务确认已失效".into());
             }
-            let response = if schedule_thread.is_none() {
-                crate::automation_tool::reply(false, "User declined scheduling the task.")
+            let receipt = if schedule_thread.is_none() {
+                Err("User declined scheduling the task.".into())
             } else if !thread_valid || request.params["threadId"].as_str() != schedule_thread.as_deref() || stdin.is_none() {
-                crate::automation_tool::reply(false, "The linked local chat is no longer available.")
+                Err("The linked local chat is no longer available.".into())
             } else {
-                match crate::automation_tool::create(&request.params) {
-                    Ok(receipt) => crate::automation_tool::reply(true, receipt.to_string()),
-                    Err(message) => crate::automation_tool::reply(false, message),
-                }
+                crate::automation_tool::create(&request.params)
             };
-            Some(response)
+            Some(schedule_reply(request.params["scheduleTransport"] == "mcp", receipt))
         } else {
             result
         };
         write_server_response(pending_server_requests, stdin.as_mut(), &id, generation, result, error).await?;
         let _ = app.emit("app-server:server-request-resolved", json!({ "id": id, "generation": generation, "notificationNonce":instance }));
         Ok(())
+    }
+
+    pub(crate) async fn schedule_mcp_token(&self) -> String {
+        self.inner.lock().await.schedule_mcp_token.clone()
     }
 }
 
@@ -776,8 +782,17 @@ fn validate_notification_nonce(pending: &HashMap<String, PendingServerRequest>, 
     Ok(())
 }
 
-async fn reject_schedule_call(writer: Option<&mut ChildStdin>, id: &Value, reason: &str) {
-    let response = json!({"id":id,"result":crate::automation_tool::reply(false, reason)});
+fn schedule_reply(mcp: bool, receipt: Result<Value, String>) -> Value {
+    match (mcp, receipt) {
+        (true, Ok(receipt)) => json!({"action":"accept","content":{"receipt":receipt.to_string()}}),
+        (true, Err(_)) => json!({"action":"decline"}),
+        (false, Ok(receipt)) => crate::automation_tool::reply(true, receipt.to_string()),
+        (false, Err(error)) => crate::automation_tool::reply(false, error),
+    }
+}
+
+async fn reject_schedule_call(writer: Option<&mut ChildStdin>, id: &Value, mcp: bool, reason: &str) {
+    let response = json!({"id":id,"result":schedule_reply(mcp, Err(reason.into()))});
     if let (Some(writer), Ok(mut bytes)) = (writer, serde_json::to_vec(&response)) {
         bytes.push(b'\n');
         if writer.write_all(&bytes).await.is_ok() {
@@ -908,15 +923,18 @@ async fn handle_incoming_message(
             .and_then(|m| m.as_str())
             .unwrap_or("")
             .to_string();
-        let params = msg.get("params").cloned().unwrap_or(Value::Null);
-        if crate::automation_tool::matches_tool(&method, &params) {
-            let validated = if guard.schedule_turn_is_active(&params) {
-                crate::automation_tool::validate(&params)
-            } else {
+        let mut params = msg.get("params").cloned().unwrap_or(Value::Null);
+        let mcp_schedule = crate::schedule_mcp::is_schedule_elicitation(&method, &params);
+        if mcp_schedule || crate::automation_tool::matches_tool(&method, &params) {
+            let validated = if !guard.schedule_turn_is_active(&params) {
                 Err("The scheduling turn is no longer active".into())
+            } else if mcp_schedule {
+                crate::schedule_mcp::proposal(&params, &guard.schedule_mcp_token).map(|proposal| params = proposal)
+            } else {
+                crate::automation_tool::validate(&params)
             };
             if let Err(error) = validated {
-                reject_schedule_call(guard.stdin.as_mut(), &id, &error).await;
+                reject_schedule_call(guard.stdin.as_mut(), &id, mcp_schedule, &error).await;
                 continue;
             }
             method = crate::automation_tool::APPROVAL_METHOD.into();
@@ -948,14 +966,20 @@ async fn handle_incoming_message(
             .unwrap_or(Value::Null);
         for request in guard.update_schedule_turns(method, &params) {
             if method != "turn/completed" && !request.response_delivery_unknown {
-                reject_schedule_call(guard.stdin.as_mut(), &request.id, "The scheduling approval expired.").await;
+                reject_schedule_call(guard.stdin.as_mut(), &request.id, request.params["scheduleTransport"] == "mcp", "The scheduling approval expired.").await;
             }
             let _ = app.emit("app-server:server-request-resolved", json!({
                 "id":request.id,"generation":request.generation,"notificationNonce":request.notification_nonce
             }));
         }
         if method == "serverRequest/resolved" {
-            guard.resolve_server_request(generation, &params);
+            if let Some(request) = guard.resolve_server_request(generation, &params)
+                .filter(|request| request.method == crate::automation_tool::APPROVAL_METHOD)
+            {
+                let _ = app.emit("app-server:server-request-resolved", json!({
+                    "id":request.id,"generation":request.generation,"notificationNonce":request.notification_nonce
+                }));
+            }
         }
         let _ = app.emit(
             "app-server:notification",

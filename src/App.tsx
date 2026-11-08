@@ -2741,7 +2741,11 @@ export const App: React.FC = () => {
       hydrateThreadModel(threadId, fullRes, modelHydration);
       try {
         const revision = threadExecutionRevisionsRef.current.get(threadId) ?? 0;
-        const settings = await callAppServer<any>("thread/resume", { threadId });
+        const settings = await callAppServer<any>("thread/resume", {
+          threadId,
+          ...(fullRes?.thread?.status?.type === "notLoaded" && fullRes?.thread?.ephemeral === false
+            ? { codexNativeScheduleTool: true } : {}),
+        });
         if (!isCurrent()) return;
         hydrateThreadModel(threadId, settings, modelHydration);
         captureThreadExecutionPolicy(threadId, settings, revision);
