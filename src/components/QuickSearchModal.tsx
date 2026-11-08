@@ -17,6 +17,7 @@ import { baseNameFsPath, getMetadata, joinFsPath } from "../fsClient";
 import { createFuzzyFileSearch } from "../fuzzyFileSearch";
 import { MainViewRoute, ProjectScriptCommands, SettingsSectionSlug, SkillInfoItem, ThreadSummary } from "../types";
 import { SLASH_COMMANDS } from "../slashCommands";
+import { SearchFolderDialog } from "./SearchFolderDialog";
 import type { SlashCommand } from "../slashCommands";
 
 export interface QuickSearchModalProps {
@@ -286,7 +287,6 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   const [recentRetry, setRecentRetry] = useState(0);
   const [selectedFolder, setSelectedFolder] = useState<{ projectScope: string; path: string } | null>(null);
   const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
-  const [scopeError, setScopeError] = useState("");
   const trimmedQuery = query.trim();
   const projectScope = JSON.stringify(workspaceRoots?.length ? workspaceRoots : workspacePath ? [workspacePath] : []);
   const projectRoots = useMemo(() => JSON.parse(projectScope) as string[], [projectScope]);
@@ -313,8 +313,8 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const scopeTriggerRef = useRef<HTMLButtonElement | null>(null);
   const scopeMenuRef = useRef<HTMLDivElement | null>(null);
-  const folderPickerPending = useRef(false);
   const scopeContext = useMemo(() => ({ open, projectScope, initialQuery }), [open, projectScope, initialQuery]);
+  const [folderPicker, setFolderPicker] = useState<typeof scopeContext | null>(null);
   const scopeContextRef = useRef(scopeContext);
   scopeContextRef.current = scopeContext;
   const lastActiveElementRef = useRef<HTMLElement | null>(null);
@@ -332,25 +332,20 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
     setScopeMenuOpen(false);
     scopeTriggerRef.current?.focus();
   };
-  const pickSearchFolder = async () => {
-    if (folderPickerPending.current) return;
-    folderPickerPending.current = true;
+  const pickSearchFolder = () => {
     setScopeMenuOpen(false);
-    setScopeError("");
-    try {
-      const path = await tauriInvoke<string | null>("pick_folder_dialog", {
-        initialDirectory: chosenFolder ?? projectRoots[0], title: "选择要搜索的文件夹",
-      });
-      if (scopeContextRef.current === scopeContext && path) setSelectedFolder({ projectScope, path });
-    } catch {
-      if (scopeContextRef.current === scopeContext) setScopeError("无法打开文件夹选择器");
-    } finally {
-      folderPickerPending.current = false;
+    setFolderPicker(scopeContext);
+  };
+  const finishFolderPicker = (path?: string) => {
+    if (scopeContextRef.current !== scopeContext) return;
+    setFolderPicker(null);
+    if (path) setSelectedFolder({ projectScope, path });
+    requestAnimationFrame(() => {
       if (scopeContextRef.current === scopeContext) scopeTriggerRef.current?.focus();
-    }
+    });
   };
 
-  useEffect(() => { setScopeMenuOpen(false); setScopeError(""); }, [scopeContext]);
+  useEffect(() => { setScopeMenuOpen(false); setFolderPicker(null); }, [scopeContext]);
   useEffect(() => {
     if (scopeMenuOpen) scopeMenuRef.current?.querySelector("button")?.focus();
   }, [scopeMenuOpen]);
@@ -1033,7 +1028,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   const defaultScopeLabel = workspaceLabel || (projectRoots.length === 1
     ? `文件夹：${baseNameFsPath(projectRoots[0]) || projectRoots[0]}` : "文件夹");
 
-  return (
+  return (<>
     <div className="quick-search-backdrop" onClick={onClose}>
       <div
         className="quick-search-dialog"
@@ -1081,13 +1076,12 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
               {projectRoots.length > 0 && <ChevronDown size={12} aria-hidden="true" />}
             </button>
             {scopeMenuOpen && <div ref={scopeMenuRef} className="quick-search-scope-menu" role="menu" aria-label="搜索范围">
-              <button type="button" role="menuitemradio" aria-checked={!chosenFolder} onClick={() => { setSelectedFolder(null); setScopeError(""); closeScopeMenu(); }}>{defaultScopeLabel}</button>
+              <button type="button" role="menuitemradio" aria-checked={!chosenFolder} onClick={() => { setSelectedFolder(null); closeScopeMenu(); }}>{defaultScopeLabel}</button>
               <button type="button" role="menuitem" onClick={() => void pickSearchFolder()}>选择文件夹…</button>
             </div>}
           </div>}
         </div>
 
-        {scopeError && <div className="quick-search-scope-error" role="alert">{scopeError}</div>}
 
         <div className="quick-search-results">
           {loading && (
@@ -1146,5 +1140,6 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
         </div>
       </div>
     </div>
-  );
+    {folderPicker === scopeContext && <SearchFolderDialog initialPath={chosenFolder ?? projectRoots[0]} onClose={finishFolderPicker} />}
+  </>);
 };

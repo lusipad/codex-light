@@ -4,18 +4,22 @@ import vm from "node:vm";
 import ts from "typescript";
 
 const parse = path => ts.createSourceFile(path, fs.readFileSync(path, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-const page = parse("src/components/QuickSearchModal.tsx"), app = parse("src/App.tsx");
-let items, keydown, focus, appSlash, selectedFileSearchText, rememberWorkspaceFile, pickSearchFolder;
+const page = parse("src/components/QuickSearchModal.tsx"), app = parse("src/App.tsx"), folderDialog = parse("src/components/SearchFolderDialog.tsx");
+let items, keydown, focus, appSlash, selectedFileSearchText, rememberWorkspaceFile, pickSearchFolder, finishFolderPicker, folderLocation, folderListEffect;
 const shortcuts = {};
 const helpers = [];
 function visit(node, ast) {
   if (ast === app && ts.isFunctionDeclaration(node) && node.name?.text === "selectedFileSearchText") selectedFileSearchText = node;
   if (ast === app && ts.isVariableDeclaration(node) && node.name.getText(ast) === "rememberWorkspaceFile") rememberWorkspaceFile = node.initializer.arguments[0];
   if (ast === page && ts.isFunctionDeclaration(node) && ["fileDedupeKey", "fileSearchRoot"].includes(node.name?.text)) helpers.push(node);
+  if (ast === folderDialog && ts.isFunctionDeclaration(node) && node.name?.text === "folderLocation") folderLocation = node;
+  if (ast === folderDialog && ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect" &&
+      node.arguments[0]?.getText(ast).includes('"fs_list_dir"')) folderListEffect = node.arguments[0];
   if (ts.isVariableDeclaration(node) && ast === page) {
     if (node.name.getText(ast) === "items") items = node.initializer.arguments[0];
     if (node.name.getText(ast) === "handleKeyDown") keydown = node.initializer;
     if (node.name.getText(ast) === "pickSearchFolder") pickSearchFolder = node.initializer;
+    if (node.name.getText(ast) === "finishFolderPicker") finishFolderPicker = node.initializer;
   }
   if (ast === page && ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect" &&
       node.arguments[0]?.getText(ast).includes("lastActiveElementRef.current = document.activeElement")) focus = node.arguments[0];
@@ -24,7 +28,7 @@ function visit(node, ast) {
       node.initializer.getText(ast).includes("setQuickSearchMode")) shortcuts[node.name.text] = node.initializer;
   ts.forEachChild(node, child => visit(child, ast));
 }
-visit(page, page); visit(app, app);
+visit(page, page); visit(app, app); visit(folderDialog, folderDialog);
 const execute = (node, ast, context) => {
   assert.ok(node, "production callback exists");
   return vm.runInNewContext(ts.transpileModule(`(${node.getText(ast)})`, {
@@ -99,26 +103,51 @@ function mount(overrides = {}) {
   assert.deepEqual(Array.from(view.results(), item => item.title), ["selected.txt"]);
   view.results()[0].onSelect();
   assert.deepEqual(view.calls, [["onSelectFile", "C:/picked/selected.txt", undefined, "C:/picked"], ["onClose"]]);
-  const events = [], calls = [], scopeContext = {};
-  let resolve;
+  const events = [], scopeContext = {};
   const context = {
-    scopeContext, scopeContextRef: { current: scopeContext }, folderPickerPending: { current: false },
-    chosenFolder: "C:/previous", projectScope: '["C:/repo"]', projectRoots: ["C:/repo"],
+    scopeContext, scopeContextRef: { current: scopeContext }, projectScope: '["C:/repo"]',
     scopeTriggerRef: { current: { focus: () => events.push(["focus"]) } },
-    setScopeMenuOpen: value => events.push(["menu", value]), setScopeError: value => events.push(["error", value]),
+    setScopeMenuOpen: value => events.push(["menu", value]), setFolderPicker: value => events.push(["picker", value]),
     setSelectedFolder: value => events.push(["selected", value]),
-    tauriInvoke: (method, args) => { calls.push({ method, args }); return new Promise(done => { resolve = done; }); },
+    requestAnimationFrame: callback => callback(),
   };
   const pick = execute(pickSearchFolder, page, context);
-  const cancelled = pick(); await pick();
-  assert.equal(calls.length, 1, "only one native picker can be pending");
-  assert.equal(calls[0].args.initialDirectory, "C:/previous");
-  resolve(null); await cancelled;
+  const finish = execute(finishFolderPicker, page, context);
+  pick();
+  assert.deepEqual(events.slice(0, 2), [["menu", false], ["picker", scopeContext]]);
+  finish();
   assert.equal(events.filter(([type]) => type === "selected").length, 0, "cancel preserves the previous scope");
-  const chosen = pick(); resolve("C:/picked"); await chosen;
+  assert.equal(events.at(-1)[0], "focus");
+  pick(); finish("C:/picked");
   assert.equal(events.find(([type]) => type === "selected")[1].path, "C:/picked");
-  const stale = pick(); context.scopeContextRef.current = {}; resolve("C:/stale"); await stale;
+  pick(); context.scopeContextRef.current = {}; finish("C:/stale");
   assert.equal(events.filter(([type]) => type === "selected").length, 1, "late picker results cannot affect another project or opening");
+}
+{
+  const location = execute(folderLocation, folderDialog, {
+    parentFsPath: value => value.replace(/[/\\][^/\\]+$/, "") || "/", baseNameFsPath: value => value.split(/[/\\]/).at(-1),
+  });
+  assert.equal(location("relative", true), null);
+  assert.equal(location("C:/", true).parent, null);
+  assert.equal(location("//server/share/", false).parent, null);
+  assert.equal(location("C:/repo/测试", true).directory, "C:/repo");
+  assert.equal(location("C:/repo/测试", true).prefix, "测试");
+  assert.equal(location("C:/repo/", true).directory, "C:/repo/");
+  const requests = [], states = [];
+  const context = { directory: "C:/repo", normalize: async value => value, setListing: value => states.push(value),
+    tauriInvoke: (method, args) => new Promise(resolve => requests.push({ method, args, resolve })) };
+  const read = execute(folderListEffect, folderDialog, context);
+  const flush = () => new Promise(resolve => setImmediate(resolve));
+  const cancel = read(); await flush();
+  assert.equal(requests[0].args.path, "C:/repo");
+  cancel(); context.directory = "C:/other"; const finish = read(); await flush();
+  requests[0].resolve([{ name: "stale", isDirectory: true }]);
+  requests[1].resolve([{ name: "file.txt", isDirectory: false }, { name: "folder2", isDirectory: true }, { name: "folder1", isDirectory: true }]);
+  await flush();
+  assert.equal(states.length, 1);
+  assert.equal(states[0].directory, "C:/other");
+  assert.deepEqual(Array.from(states[0].entries, entry => entry.name), ["folder1", "folder2"]);
+  finish();
 }
 {
   const view = mount({ mode: "files", query: "", workspacePath: "C:/repo",

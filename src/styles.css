@@ -5541,7 +5541,62 @@ html, body, #root {
 .quick-search-scope-trigger:hover, .quick-search-scope-menu button:hover,
 .quick-search-scope-menu button:focus-visible { background: var(--bg-hover); }
 .quick-search-scope-menu button[aria-checked="true"]::after { content: "✓"; margin-inline-start: 8px; }
-.quick-search-scope-error { padding: 6px 14px; color: var(--text-secondary); }
+
+.search-folder-dialog {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  width: min(560px, calc(100vw - 32px));
+  max-width: none;
+  max-height: calc(100vh - 32px);
+  padding: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  box-shadow: 0 20px 48px rgb(0 0 0 / 45%);
+}
+.search-folder-dialog::backdrop { background: rgb(0 0 0 / 24%); }
+.search-folder-dialog form { display: flex; flex-direction: column; gap: 12px; padding: 18px; }
+.search-folder-dialog h2 { font-size: 16px; margin: 0; }
+.search-folder-path { display: flex; gap: 6px; }
+.search-folder-path input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  padding: 6px 8px;
+}
+.search-folder-dialog button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.search-folder-dialog button:enabled:hover, .search-folder-dialog [aria-selected="true"] { background: var(--bg-hover); }
+.search-folder-dialog button:disabled { opacity: .45; cursor: default; }
+.search-folder-current { align-self: flex-start; }
+.search-folder-entries {
+  display: flex;
+  flex-direction: column;
+  height: min(224px, 40vh);
+  overflow: auto;
+  padding: 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-primary);
+}
+.search-folder-entries button { width: 100%; text-align: start; }
+.search-folder-entries [role="status"] { margin: auto; padding: 8px; color: var(--text-secondary); }
+.search-folder-dialog footer { display: flex; justify-content: flex-end; gap: 8px; }
+.search-folder-dialog footer button[type="submit"] { background: var(--accent-blue); color: white; }
 
 .quick-search-results {
   max-height: 360px;
