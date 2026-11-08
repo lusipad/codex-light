@@ -165,7 +165,11 @@ impl ChatgptService {
                 let origin=tauri::Url::parse(&credentials.origin).map_err(|_|unavailable())?;
                 let mut source=entry.source.clone();
                 let mut authenticated=source.authenticated;
-                for step in 0..=5 {
+                let readiness_deadline=tokio::time::Instant::now()+Duration::from_secs(15);
+                let mut readiness_delay=500;
+                let mut readiness_retries=0;
+                let mut hops=0;
+                loop {
                     self.check_image_asset(&entry, &request, &registration)?;
                     share_network_allowed(&call, source.url.as_str()).await?;
                     self.check_image_asset(&entry, &request, &registration)?;
@@ -180,7 +184,8 @@ impl ChatgptService {
                     self.check_image_asset(&entry, &request, &registration)?;
                     if response.body.len() as u64 > MAX_RESPONSE { return Err(failure("invalid_response", "Image response is too large")); }
                     if matches!(response.status,301|302|303|307|308) {
-                        if step==5 {return Err(failure("invalid_response", "Too many image redirects"));}
+                        if hops==5 {return Err(failure("invalid_response", "Too many image redirects"));}
+                        hops+=1;
                         let location=response.headers.get("location").ok_or_else(||failure("invalid_response", "Image redirect target missing"))?;
                         let next=source.url.join(location).map_err(|_|failure("invalid_response", "Invalid image redirect"))?;
                         source=AssetSource { url:public_url(next.as_str(), &credentials.origin)?, authenticated:false, json_refresh:false };
@@ -190,9 +195,20 @@ impl ChatgptService {
                         return Err(ServiceError { code:match response.status {401=>"unauthorized",403=>"forbidden",404=>"not_found",429=>"rate_limited",_=>"service_error"}, message:"Image download failed", status:Some(response.status) });
                     }
                     if source.json_refresh {
-                        if step==5 {return Err(failure("invalid_response", "Too many image resource refreshes"));}
+                        if hops==5 {return Err(failure("invalid_response", "Too many image resource refreshes"));}
                         let body:Value=serde_json::from_slice(&response.body).map_err(|_|failure("invalid_response", "Invalid image URL response"))?;
-                        let target=if source.url.path().starts_with("/backend-api/files/download/") {
+                        let pointer=source.url.path().starts_with("/backend-api/files/download/");
+                        if pointer && body["status"]=="retry" {
+                            let remaining=readiness_deadline.saturating_duration_since(tokio::time::Instant::now());
+                            if readiness_retries==9 || remaining.is_zero() {
+                                return Err(failure("processing", "Original image is not ready"));
+                            }
+                            tokio::time::sleep(Duration::from_millis(readiness_delay).min(remaining)).await;
+                            readiness_delay=library_file_retry_delay(readiness_delay);
+                            readiness_retries+=1;
+                            continue;
+                        }
+                        let target=if pointer {
                             body.get("download_url")
                         } else {
                             body.get("content_url").or_else(||body.get("download_url")).or_else(||body.get("thumbnail_url"))
@@ -200,6 +216,7 @@ impl ChatgptService {
                         let target=target
                             .and_then(Value::as_str).filter(|url|!url.trim().is_empty()).ok_or_else(||failure("invalid_response", "Image URL missing"))?;
                         source=asset_source(target, &credentials.origin, true)?;
+                        hops+=1;
                         // A JSON resolution to a public URL also permanently drops credentials.
                         authenticated &= source.authenticated;
                         continue;
@@ -211,7 +228,6 @@ impl ChatgptService {
                     self.check_image_asset(&entry, &request, &registration)?;
                     return Ok(json!({"dataUrl":format!("data:{mime};base64,{}",base64::engine::general_purpose::STANDARD.encode(response.body))}));
                 }
-                unreachable!()
             }=>result,
         };
         self.check_image_asset(&entry, &request, &registration)?;
