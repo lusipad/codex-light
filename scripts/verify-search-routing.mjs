@@ -5,7 +5,7 @@ import ts from "typescript";
 
 const parse = path => ts.createSourceFile(path, fs.readFileSync(path, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const page = parse("src/components/QuickSearchModal.tsx"), app = parse("src/App.tsx"), folderDialog = parse("src/components/SearchFolderDialog.tsx");
-let items, keydown, focus, appSlash, selectedFileSearchText, rememberWorkspaceFile, pickSearchFolder, finishFolderPicker, folderLocation, folderListEffect;
+let items, keydown, focus, appSlash, sidebarSearch, selectedFileSearchText, rememberWorkspaceFile, pickSearchFolder, finishFolderPicker, folderLocation, folderListEffect;
 const shortcuts = {};
 const helpers = [];
 function visit(node, ast) {
@@ -24,6 +24,7 @@ function visit(node, ast) {
   if (ast === page && ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect" &&
       node.arguments[0]?.getText(ast).includes("lastActiveElementRef.current = document.activeElement")) focus = node.arguments[0];
   if (ast === app && ts.isJsxAttribute(node) && node.name.getText(ast) === "onSelectSlashCommand") appSlash = node.initializer.expression;
+  if (ast === app && ts.isJsxAttribute(node) && node.name.getText(ast) === "onOpenQuickSearch") sidebarSearch = node.initializer.expression;
   if (ast === app && ts.isPropertyAssignment(node) && ["command-palette", "command-palette-alt", "file-search"].includes(node.name.text) &&
       node.initializer.getText(ast).includes("setQuickSearchMode")) shortcuts[node.name.text] = node.initializer;
   ts.forEachChild(node, child => visit(child, ast));
@@ -44,18 +45,18 @@ function mount(overrides = {}) {
     folderScope: undefined,
     scopeTriggerRef: { current: null },
     threads: [], workspaceFileHits: [], recentFiles: [], recentHistory: [], recentLookup: null, skills: [], SLASH_COMMANDS: [slash],
-    REMOTE_THREAD_LIMIT: 9,
+    REMOTE_THREAD_LIMIT: 9, REMOTE_CHAT_LIMIT: 25,
     runCmd: "npm run dev", testCmd: "npm test", buildCmd: "npm run build",
     selectedIndex: 0,
     baseNameFsPath: path => path.split(/[\\/]/).at(-1),
     setPathRetry: updater => calls.push(["retry", updater(0)]),
     setRecentRetry: updater => calls.push(["recent retry", updater(0)]),
-    inputRef: { current: { focus() {} } },
+    inputRef: { current: { focus() {}, select() {} } },
     React: { createElement() { return {}; } },
     ...overrides,
   };
   for (const icon of ["Command", "MessageSquare", "Play", "Folder", "Settings", "FileText", "BookOpen"]) context[icon] = () => null;
-  for (const name of ["onSelectSlashCommand", "onClose", "onTriggerCommand", "onSelectFile", "onSearchFiles", "onSelectThread", "onNavigateSettings", "onNavigateRoute", "onStartNewChat", "onSelectSkill"]) {
+  for (const name of ["onSelectSlashCommand", "onClose", "onTriggerCommand", "onSelectFile", "onSearchFiles", "onSearchChats", "onSelectThread", "onNavigateSettings", "onNavigateRoute", "onStartNewChat", "onSelectSkill"]) {
     context[name] = (...args) => calls.push([name, ...args]);
   }
   context.setSelectedIndex = value => { context.selectedIndex = typeof value === "function" ? value(context.selectedIndex) : value; };
@@ -273,6 +274,26 @@ function mount(overrides = {}) {
   assert.equal(view.context.query, "", "official file drill-in clears search");
   assert.deepEqual(view.calls, [["onSearchFiles"]], "drill-in changes mode without closing");
   assert.equal(focused, 1, "mouse drill-in restores focus to the search input");
+}
+{
+  const view = mount({ query: "切换聊天" });
+  view.results().find(item => item.id === "search-chats")?.onSelect();
+  assert.deepEqual(view.calls, [["onSearchChats"]]);
+  assert.equal(view.context.query, "切换聊天", "chat drill-in retains the current query");
+  view.context.mode = "chats"; view.context.query = "";
+  view.context.threads = Array.from({ length: 30 }, (_, i) => ({ id: String(i), name: `聊天 ${i}` }));
+  const results = view.results();
+  assert.equal(results.length, 25);
+  assert.ok(results.every(item => item.category === "thread"));
+  results[0].onSelect();
+  assert.deepEqual(view.calls.slice(1), [["onSelectThread", "0"], ["onClose"]]);
+  const entry = [];
+  execute(sidebarSearch, app, {
+    setQuickSearchInitialQuery: seed => entry.push(seed.value),
+    setQuickSearchMode: mode => entry.push(mode),
+    setShowQuickSearch: open => entry.push(open),
+  })();
+  assert.deepEqual(entry, ["", "chats", true], "sidebar opens the dedicated chat mode");
 }
 {
   const view = mount();

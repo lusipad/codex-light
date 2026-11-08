@@ -952,7 +952,7 @@ export const App: React.FC = () => {
   const [petVisible, setPetVisible] = useState<boolean>(false);
   const petPreferencesState = usePetPreferences();
   const [showQuickSearch, setShowQuickSearch] = useState<boolean>(false);
-  const [quickSearchMode, setQuickSearchMode] = useState<"root" | "files">("root");
+  const [quickSearchMode, setQuickSearchMode] = useState<"root" | "chats" | "files">("root");
   const [quickSearchInitialQuery, setQuickSearchInitialQuery] = useState({ value: "" });
   const lastFileSearchSeed = useRef("");
   const [showFindBar, setShowFindBar] = useState<boolean>(false);
@@ -5446,7 +5446,7 @@ export const App: React.FC = () => {
         onOpenAgentsMd={() => setShowAgentsMdModal(true)}
         onOpenQuickSearch={() => {
           setQuickSearchInitialQuery({ value: "" });
-          setQuickSearchMode("root");
+          setQuickSearchMode("chats");
           setShowQuickSearch(true);
         }}
         onToggleCollapse={() => setSidebarCollapsed((v) => !v)}
@@ -7004,6 +7004,7 @@ export const App: React.FC = () => {
         onClose={() => setShowQuickSearch(false)}
         onSelectThread={selectThread}
         onSearchFiles={() => setQuickSearchMode("files")}
+        onSearchChats={() => setQuickSearchMode("chats")}
         onSelectFile={(filePath, isDirectory, chosenRoot) => {
           const cwd = activeWorkspace?.path || "";
           if (chosenRoot && !fileSearchRoot(filePath, [chosenRoot])) return;

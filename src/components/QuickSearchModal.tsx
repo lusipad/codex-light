@@ -22,7 +22,7 @@ import type { SlashCommand } from "../slashCommands";
 
 export interface QuickSearchModalProps {
   open: boolean;
-  mode?: "root" | "files";
+  mode?: "root" | "chats" | "files";
   initialQuery: { value: string };
   threads: ThreadSummary[];
   skills: SkillInfoItem[];
@@ -38,6 +38,7 @@ export interface QuickSearchModalProps {
   onSelectThread: (threadId: string) => void;
   onSelectFile: (filePath: string, isDirectory?: boolean, chosenRoot?: string) => void;
   onSearchFiles: () => void;
+  onSearchChats: () => void;
   onSelectSkill: (skillId: string) => void;
   onNavigateSettings: (slug: SettingsSectionSlug) => void;
   onNavigateRoute: (route: MainViewRoute) => void;
@@ -68,6 +69,7 @@ const REMOTE_QUERY_MIN_LENGTH = 3;
 const REMOTE_DEBOUNCE_MS = 200;
 /** 单次协议搜索返回上限（与本地结果数量保持平衡）。 */
 const REMOTE_THREAD_LIMIT = 9;
+const REMOTE_CHAT_LIMIT = 25;
 const REMOTE_THREAD_STALE_MS = 30_000;
 /** 查询 -> 结果缓存上限，避免反复输入同一查询词时重复请求。 */
 const REMOTE_CACHE_LIMIT = 40;
@@ -119,7 +121,7 @@ interface RemoteSearchResults {
   query: string;
   workspacePath?: string;
   fileScope?: string;
-  mode: "root" | "files";
+  mode: "root" | "chats" | "files";
   files: RemoteFileResult[];
   threads: RemoteThreadResult[];
 }
@@ -200,7 +202,7 @@ function normalizeRemoteFileHits(
   return results;
 }
 
-function normalizeRemoteThreadHits(raw: unknown): RemoteThreadResult[] {
+function normalizeRemoteThreadHits(raw: unknown, limit: number): RemoteThreadResult[] {
   if (!Array.isArray(raw)) return [];
   const results: RemoteThreadResult[] = [];
   const seen = new Set<string>();
@@ -220,7 +222,7 @@ function normalizeRemoteThreadHits(raw: unknown): RemoteThreadResult[] {
       preview: typeof thread.preview === "string" ? thread.preview : null,
       cwd: typeof thread.cwd === "string" ? thread.cwd : null,
     });
-    if (results.length >= REMOTE_THREAD_LIMIT) break;
+    if (results.length >= limit) break;
   }
 
   return results;
@@ -230,22 +232,23 @@ function normalizeRemoteThreadHits(raw: unknown): RemoteThreadResult[] {
  * 调用 `thread/search` 搜索历史会话。
  * 返回结构为 `{ data: [{ snippet, thread }] }`（兼容 `threads` 扁平数组）。
  */
-async function searchThreadsProtocol(query: string): Promise<RemoteThreadResult[]> {
+async function searchThreadsProtocol(query: string, limit: number): Promise<RemoteThreadResult[]> {
   try {
     const response = await callAppServer<
       | { data?: ThreadSearchEntry[]; threads?: ThreadSearchEntry[] }
       | ThreadSearchEntry[]
     >("thread/search", {
       searchTerm: query,
-      limit: REMOTE_THREAD_LIMIT,
+      limit,
+      archived: false,
     });
-    if (Array.isArray(response)) return normalizeRemoteThreadHits(response);
+    if (Array.isArray(response)) return normalizeRemoteThreadHits(response, limit);
     const entries = Array.isArray(response?.data)
       ? response.data
       : Array.isArray(response?.threads)
       ? response.threads
       : [];
-    return normalizeRemoteThreadHits(entries);
+    return normalizeRemoteThreadHits(entries, limit);
   } catch {
     // 静默降级：无 app-server 时继续使用本地 threads 过滤。
     return [];
@@ -267,6 +270,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   onSelectThread,
   onSelectFile,
   onSearchFiles,
+  onSearchChats,
   onSelectSkill,
   onNavigateSettings,
   onNavigateRoute,
@@ -435,11 +439,11 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
     return () => { disposed = true; };
   }, [pathRequest]);
 
-  // root: 3+ characters, 200ms debounce, including catch-to-empty 30s cache.
+  // Root requires three characters. Dedicated chat search accepts any nonempty query.
   useEffect(() => {
     const trimmed = query.trim();
     const canSearch =
-      open && mode === "root" && trimmed.length >= REMOTE_QUERY_MIN_LENGTH && isTauriRuntime();
+      open && (mode === "chats" ? trimmed.length > 0 : mode === "root" && trimmed.length >= REMOTE_QUERY_MIN_LENGTH) && isTauriRuntime();
     if (!canSearch) {
       if (mode !== "files" || !open || !workspacePath) {
         setRemoteResults(null);
@@ -462,7 +466,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
 
     let cancelled = false;
     const timer = window.setTimeout(async () => {
-      const threads = await searchThreadsProtocol(trimmed);
+      const threads = await searchThreadsProtocol(trimmed, mode === "chats" ? REMOTE_CHAT_LIMIT : REMOTE_THREAD_LIMIT);
       if (cancelled) return;
 
       const cache = remoteCacheRef.current;
@@ -669,8 +673,9 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
     // Threads —— 协议结果优先，本地结果按 id 去重补充。
     const remoteThreads = remote?.threads ?? [];
     const remoteThreadIds = new Set(remoteThreads.map((t) => t.id));
+    const threadLimit = mode === "chats" ? REMOTE_CHAT_LIMIT : REMOTE_THREAD_LIMIT;
 
-    remoteThreads.slice(0, REMOTE_THREAD_LIMIT).forEach((t) => {
+    remoteThreads.slice(0, threadLimit).forEach((t) => {
       results.push({
         id: `rth-${t.id}`,
         category: "thread",
@@ -688,14 +693,14 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
 
     threads
       .filter((t) => {
-        if (mode !== "root" || q.length < 2 || remoteThreadIds.has(t.id)) return false;
+        if (mode === "files" || (mode === "root" && q.length < 2) || remoteThreadIds.has(t.id)) return false;
         return (
           t.name?.toLowerCase().includes(q) ||
           t.preview?.toLowerCase().includes(q) ||
           t.id.toLowerCase().includes(q)
         );
       })
-      .slice(0, Math.max(0, REMOTE_THREAD_LIMIT - remoteThreads.length))
+      .slice(0, Math.max(0, threadLimit - remoteThreads.length))
       .forEach((t) => {
         results.push({
           id: `th-${t.id}`,
@@ -712,6 +717,15 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
         });
       });
 
+    if (mode === "chats") return results.filter(item => item.category === "thread");
+
+    if (mode === "root" && (!q || "切换聊天… 搜索聊天 search chats switch chat".includes(q))) {
+      results.push({
+        id: "search-chats", category: "action", section: "操作",
+        title: "切换聊天…", icon: <MessageSquare size={14} />,
+        onSelect: () => { onSearchChats(); inputRef.current?.focus(); inputRef.current?.select(); },
+      });
+    }
     if (mode === "root" && (!q || "搜索文件 search files workspace project cmd+p".includes(q))) {
       results.push({
         id: "search-files", category: "action", section: "操作",
@@ -965,6 +979,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
     onSelectThread,
     onSelectFile,
     onSearchFiles,
+    onSearchChats,
     onSelectSkill,
     onClose,
     runCmd,
@@ -1045,12 +1060,12 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
             ref={inputRef}
             type="text"
             className="quick-search-input"
-            aria-label={mode === "files" ? "搜索文件" : "搜索聊天或运行命令"}
-            placeholder={mode === "files" ? "搜索文件" : "搜索聊天或运行命令"}
+            aria-label={mode === "files" ? "搜索文件" : mode === "chats" ? "搜索聊天" : "搜索聊天或运行命令"}
+            placeholder={mode === "files" ? "搜索文件" : mode === "chats" ? "搜索聊天" : "搜索聊天或运行命令"}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
-          {isTauriRuntime() && <div className="quick-search-scope" onBlur={event => {
+          {mode !== "chats" && isTauriRuntime() && <div className="quick-search-scope" onBlur={event => {
             if (!event.currentTarget.contains(event.relatedTarget)) setScopeMenuOpen(false);
           }} onKeyDown={event => {
             if (event.nativeEvent.isComposing || event.keyCode === 229) return;

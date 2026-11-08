@@ -63,7 +63,7 @@ let cases = 0;
   assert.ok(!all(view.render()).some(node => node.type === "ThreadActionsMenu" && ["项目侧边栏选项", "聊天侧边栏选项"].includes(node.props.triggerAriaLabel)), "08 ordinary organization controls and custom/project duplication are absent"); cases++;
 }
 function search(view, value) {
-  all(view.render()).find(node => node.type === "button" && node.props.title === "搜索聊天与文件 (Ctrl+K)").props.onClick();
+  all(view.render()).find(node => node.type === "button" && node.props.title === "搜索聊天").props.onClick();
   all(view.render()).find(node => node.type === "input" && node.props.placeholder === "搜索聊天或任务...").props.onChange({ target: { value } });
 }
 {

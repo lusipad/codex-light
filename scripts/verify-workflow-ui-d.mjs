@@ -17,11 +17,11 @@ const react = { Fragment: "fragment", createElement: (type, props, ...children) 
 };
 vm.runInNewContext(compile(fs.readFileSync("src/components/QuickSearchModal.tsx", "utf8")), {
   exports, console, require: id => id === "react" ? react : id === "lucide-react" ? new Proxy({}, { get: (_, name) => String(name) }) :
-    id.endsWith("slashCommands") ? { SLASH_COMMANDS: [] } : {},
+    id.endsWith("slashCommands") ? { SLASH_COMMANDS: [] } : id === "../bridge" ? { isTauriRuntime: () => true } : {},
 });
 const props = { open: true, mode: "root", initialQuery: { value: "" }, threads: [{ id: "thread-a", name: "Existing conversation" }], skills: [],
   onClose() { closed++; }, onSelectThread(id) { assert.equal(id, "thread-a"); selected++; },
-  onStartNewChat() {}, onTriggerCommand() {}, onNavigateRoute() {}, onNavigateSettings() {}, onSearchFiles() {},
+  onStartNewChat() {}, onTriggerCommand() {}, onNavigateRoute() {}, onNavigateSettings() {}, onSearchFiles() {}, onSearchChats() {},
 };
 const render = () => { cursor = 0; tree = exports.QuickSearchModal(props); };
 render();
@@ -48,6 +48,12 @@ props.initialQuery = { value: "src/测试.rs" }; render();
 assert.equal(searchInput().props.value, "src/测试.rs", "a repeated opening can restore the same seed");
 props.mode = "root"; props.initialQuery = { value: "" }; render();
 assert.equal(searchInput().props.value, "", "root opening never leaks a files seed");
+props.mode = "chats"; render();
+assert.equal(searchInput().props.placeholder, "搜索聊天");
+assert.ok(!all(tree).some(node => node.props.className === "quick-search-scope-trigger"), "chat-only mode hides the file scope selector");
+const chatRows = all(tree).filter(node => node.props.className?.split(" ").includes("quick-search-row"));
+assert.equal(chatRows.length, 1);
+assert.match(text(chatRows[0]), /Existing conversation/);
 console.log("PASS WFD08 production command dialog: current Chinese scopes, real selection, close and IME boundary");
 
 const appSource = fs.readFileSync("src/App.tsx", "utf8");

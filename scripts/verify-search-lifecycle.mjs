@@ -231,4 +231,19 @@ await check("SB07 root queries use length three and 200ms, files accept one char
   cleanup();
   assert.match(text, /REMOTE_DEBOUNCE_MS = 200/);
 });
+await check("SB13 chat search opens local content for a single character and ignores late results", async () => {
+  const view = mount();
+  Object.assign(view.context, { mode: "chats", query: "" });
+  await view.start(); assert.equal(view.requests.length, 0, "empty chat mode uses loaded history only");
+  view.context.query = " 测 ";
+  const cleanup = await view.start();
+  assert.equal(view.requests[0]?.method, "thread/search");
+  assert.equal(view.requests[0].args.searchTerm, "测");
+  assert.equal(view.requests[0].args.limit, 25);
+  assert.equal(view.requests[0].args.archived, false);
+  cleanup();
+  view.context.mode = "root"; await view.start();
+  resolveThreads(view.requests[0]); await flush();
+  assert.equal(view.context.results, null);
+});
 if (failures.length) process.exitCode = 1;

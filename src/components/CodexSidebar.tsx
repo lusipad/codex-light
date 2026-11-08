@@ -1523,7 +1523,7 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
                 setShowSearchInput((v) => !v);
               }
             }}
-            title="搜索聊天与文件 (Ctrl+K)"
+            title="搜索聊天"
           >
             <SearchIcon size={15} />
           </button>
