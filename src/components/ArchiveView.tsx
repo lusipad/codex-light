@@ -609,20 +609,23 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
     { value: "special:none", label: "聊天" }, { value: "special:automations", label: "定时任务" },
   ], [projects]);
   const activeProjectFilter = projectOptions.some(option => option.value === projectFilter) ? projectFilter : "all";
-  const settingsGroups = useMemo(() => {
-    if (activeProjectFilter === "special:automations") return [];
-    const cloudItems: ArchivedThread[] = kindFilter !== "local" && cloudArchive?.identity
+  const { groups: settingsGroups, hasEntries } = useMemo(() => {
+    if (!settings) return { groups: [], hasEntries: false };
+    const cloudItems: ArchivedThread[] = cloudArchive?.identity
       && ["ready", "loading", "error"].includes(cloudArchive.status)
       ? cloudArchive.items.map(task => ({ id: task.id, name: task.title, createdAt: task.createdAt ?? undefined,
         updatedAt: task.updatedAt ?? undefined, archiveSource: "cloud-task", environmentLabel: task.environmentLabel, displayTime: task.displayTime })) : [];
-    const conversations: ArchivedThread[] = kindFilter !== "local" && conversationArchive?.identity
+    const conversations: ArchivedThread[] = conversationArchive?.identity
       && ["ready", "loading", "error"].includes(conversationArchive.status)
       ? conversationArchive.items.map(item => ({ id: item.id, name: item.title, createdAt: item.createdAt ?? undefined,
         updatedAt: item.updatedAt ?? undefined, archiveSource: "chatgpt-conversation", gizmoId: item.gizmoId, displayTime: item.displayTime })) : [];
-    const durable: ArchivedThread[] = kindFilter !== "local" && durableArchive?.identity
+    const durable: ArchivedThread[] = durableArchive?.identity
       ? durableArchive.items.map(chat => ({ id: chat.id, name: chat.title, createdAt: chat.createdAt, updatedAt: chat.updatedAt,
         displayTime: chat.updatedAt ?? chat.createdAt ?? null, archiveSource: "durable", durableChat: chat, environmentLabel: chat.session.binding.name })) : [];
-    const entries = [...(kindFilter === "cloud" ? [] : threads), ...cloudItems, ...conversations, ...durable].map(thread => {
+    const allEntries = [...threads, ...cloudItems, ...conversations, ...durable];
+    const hasEntries = allEntries.length > 0;
+    if (activeProjectFilter === "special:automations") return { groups: [], hasEntries };
+    const entries = allEntries.filter(thread => kindFilter === "all" || (kindFilter === "cloud") === Boolean(thread.archiveSource)).map(thread => {
       let project: typeof projects[number] | undefined;
       if (thread.archiveSource === "chatgpt-conversation") project = projects.find(item => item.entity?.id === thread.gizmoId);
       const hasWorkspaceOverride = !thread.archiveSource && Object.prototype.hasOwnProperty.call(projectMembership.workspaceProjectAssignments, thread.id);
@@ -653,9 +656,10 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
       : time(b) - time(a) || archiveTitle(a).localeCompare(archiveTitle(b));
     const result = [...groups.values()];
     for (const group of result) group.threads.sort(compare);
-    return result.sort((a, b) => (sortKey === "alphabetical" ? 0 : Math.max(0, ...b.threads.map(time)) - Math.max(0, ...a.threads.map(time)))
+    result.sort((a, b) => (sortKey === "alphabetical" ? 0 : Math.max(0, ...b.threads.map(time)) - Math.max(0, ...a.threads.map(time)))
       || a.label.localeCompare(b.label) || a.id.localeCompare(b.id));
-  }, [threads, projects, projectMembership, workspaceHints, activeProjectFilter, kindFilter, sortKey, query, cloudArchive, conversationArchive, durableArchive]);
+    return { groups: result, hasEntries };
+  }, [settings, threads, projects, projectMembership, workspaceHints, activeProjectFilter, kindFilter, sortKey, query, cloudArchive, conversationArchive, durableArchive]);
   const displayedGroups = settings ? settingsGroups : [{ id: "global", label: "", threads: visible }];
   const canDeleteAll = !loading && !error && threads.length > 0 &&
     (!settings || (kindFilter === "local" && activeProjectFilter === "all" && !search.trim() && !query));
@@ -683,7 +687,14 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
     && (!conversationArchive || conversationArchive.status === "ready") && (!durableArchive || durableArchive.status === "ready");
   const unavailableSource = settings && (activeProjectFilter === "special:automations" || (kindFilter === "cloud" && !cloudReady));
   const localSourceVisible = !settings || kindFilter !== "cloud";
-  const emptyReady = (!localSourceVisible || (!error && !loading)) && !unavailableSource && (!cloudVisible || !hasCloudSource || cloudReady);
+  const localReady = !localSourceVisible || (!error && !loading);
+  const cloudWaiting = cloudVisible && [cloudArchive, conversationArchive, durableArchive].some(reader => reader?.status === "loading" || reader?.status === "error");
+  const settingsNoMatches = settings && hasEntries && kindFilter === "all" && threads.length > 0 && !cloudWaiting;
+  const emptyReady = localReady && !unavailableSource && (!cloudVisible || !hasCloudSource || cloudReady || settingsNoMatches);
+  const noMatches = settings ? hasEntries : Boolean(query);
+  const emptyLabel = cloudVisible && hasCloudSource
+    ? noMatches ? "当前已读取的聊天中未找到匹配项" : "当前已读取的来源中没有归档聊天"
+    : noMatches ? "未找到匹配的归档聊天" : "暂无已归档的聊天";
   const refreshSources = () => { if (localSourceVisible) void load(); if (cloudVisible) { refreshCloudSource("cloud-task"); refreshCloudSource("chatgpt-conversation"); refreshCloudSource("durable"); } };
 
   return (
@@ -720,13 +731,13 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
       </header>
 
       {settings && <>
-        <div className="archive-settings-toolbar">
+        {hasEntries && <div className="archive-settings-toolbar">
           <input className="archive-search" type="search" aria-label="搜索已归档的聊天" placeholder="搜索已归档的聊天" value={search} onChange={event => setSearch(event.target.value)} />
           <div className="archive-settings-filters">
             <ArchiveFilterMenu kindFilter={kindFilter} sortKey={sortKey} onKindFilterChange={setKindFilter} onSortKeyChange={setSortKey} />
             <GeneralPreferenceSelect id="archive-project-filter" label="按项目筛选已归档的聊天" value={activeProjectFilter} options={projectOptions} onChange={setProjectFilter} />
           </div>
-        </div>
+        </div>}
         {kindFilter === "all" && !hasCloudSource && <div className="archive-source-notice" role="status">当前仅列出本地归档，云端归档尚未接入，全部聊天的来源不完整。</div>}
         {cloudVisible && cloudArchive && !conversationArchive && <div className="archive-source-notice" role="status">云端任务归档；ChatGPT 会话归档尚未接入，当前结果不代表完整云端归档。</div>}
         {cloudVisible && conversationArchive && <div className="archive-source-notice" role="status">按当前账号资格读取归档来源。ChatGPT 会话页面尚未接入；当前列表仅包含已读取的页。</div>}
@@ -779,16 +790,19 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
 
       {error && localSourceVisible && (
         <div className="archive-error">
-          <span>无法读取归档会话：{error}</span>
+          <span>{settings ? "无法加载已归档的聊天" : "无法读取归档会话"}：{error}</span>
           <button type="button" onClick={() => void load()}>
             重试
           </button>
         </div>
       )}
 
+      {settings && localSourceVisible && loading && displayedCount === 0 && (
+        <div className="archive-empty" role="status">正在加载已归档的聊天…</div>
+      )}
       {emptyReady && displayedCount === 0 && (
         <div className="archive-empty">
-          <div className="archive-empty-title">{settings && hasCloudSource && kindFilter !== "local" ? (query ? "当前已读取的聊天中未找到匹配项" : "当前已读取的来源中没有归档聊天") : query ? "未找到匹配的归档聊天" : "暂无已归档的聊天"}</div>
+          <div className="archive-empty-title" role={settings ? "status" : undefined}>{emptyLabel}</div>
         </div>
       )}
 
@@ -869,7 +883,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
         );
       })}
 
-      {!unavailableSource && !(cloudVisible && hasCloudSource && !cloudReady && displayedCount === 0) && <footer className="archive-footer">
+      {(!settings || displayedCount > 0) && !unavailableSource && <footer className="archive-footer">
         {settings && hasCloudSource && kindFilter !== "local" ? `已显示 ${displayedCount} 个聊天（仅当前账号已读取的来源与页）` : <>共 {displayedCount} 个{settings ? "本地归档聊天" : "归档会话"}{loading ? "（加载中…）" : ""}</>}
       </footer>}
       {cloudDeleteTarget && <CloudArchiveDeleteDialog title={archiveTitle(cloudDeleteTarget.thread)} fallbackRef={viewRef}

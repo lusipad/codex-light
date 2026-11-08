@@ -227,6 +227,8 @@
 }
 
 .archive-settings .archive-header { align-items: center; justify-content: flex-end; }
+.archive-settings .archive-empty { align-items: flex-start; padding: 12px 0; }
+.archive-settings .archive-empty-title { color: var(--text-secondary); font-weight: 400; }
 .archive-settings-toolbar { display: flex; align-items: center; gap: 8px; }
 .archive-settings-toolbar .archive-search { flex: 1; min-width: 0; background: transparent; }
 .archive-settings-filters { display: flex; flex: none; gap: 8px; }

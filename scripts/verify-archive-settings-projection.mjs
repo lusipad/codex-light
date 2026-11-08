@@ -27,7 +27,7 @@ vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { target: ts.Sc
   exports: output, console, Date, Intl, Set, Map, document: { body: {} },
   require(name) {
     if (name === "react") return { ...React, default: React };
-    if (name === "../bridge") return { callAppServer: async (method, params) => { assert.equal(method, "thread/list"); assert.equal(params.archived, true); reads++; return { data: reply, nextCursor: null }; } };
+    if (name === "../bridge") return { callAppServer: async (method, params) => { assert.equal(method, "thread/list"); assert.equal(params.archived, true); reads++; if (reply instanceof Error) throw reply; return { data: reply, nextCursor: null }; } };
     if (name.endsWith(".css")) return {};
     if (name === "../sidebarProjects") {
       const module = {};
@@ -137,6 +137,28 @@ assert.equal(filter(tree), undefined); assert.equal(nodes(tree, cls("archive-tit
 assert.deepEqual(ids(tree), ["b"], "AS09: global retains legacy search, no settings projection");
 nodes(tree, n => n.type === "input")[0].props.onChange({ target: { value: "CAFÉ 独立记录" } }); tree = render();
 assert.deepEqual(ids(tree), [], "AS11: standalone archive keeps its title-only search");
+props.surface = "settings"; tree = render();
+nodes(tree, n => n.type === "input")[0].props.onChange({ target: { value: "" } }); tree = render();
+props.cloudArchive = { status: "signed_out", items: [] };
+project(tree).props.onChange("all"); tree = render();
+nodes(tree, n => n.type === "input")[0].props.onChange({ target: { value: "missing" } }); tree = render();
+assert.ok(text(tree).includes("当前已读取的聊天中未找到匹配项"), "AS12: signed-out cloud does not mask a local search miss");
+assert.ok(text(tree).includes("请登录 ChatGPT"));
+assert.ok(filter(tree), "AS12: no match preserves search and filters");
+nodes(tree, n => n.type === "input")[0].props.onChange({ target: { value: "" } }); tree = render();
+filter(tree).props.onKindFilterChange("local"); tree = render();
+project(tree).props.onChange("project:local::two"); tree = render();
+assert.ok(text(tree).includes("未找到匹配的归档聊天"), "AS12: project filter without text is still a search miss");
+const refresh = () => nodes(tree, cls("archive-refresh"))[0].props.onClick();
+reply = []; refresh(); tree = render();
+assert.ok(text(tree).includes("正在加载已归档的聊天"));
+for (let i=0;i<8;i++) await Promise.resolve(); tree = render();
+assert.equal(filter(tree), undefined, "AS13: empty underlying data hides the toolbar");
+assert.ok(text(tree).includes("暂无已归档的聊天"));
+reply = Error("offline archive fixture"); refresh();
+for (let i=0;i<8;i++) await Promise.resolve(); tree = render();
+assert.ok(text(tree).includes("无法加载已归档的聊天"));
+assert.equal(nodes(tree, cls("archive-empty")).length, 0, "AS13: failure is not a successful empty read");
 // Exercise the actual local menu's JSX and handlers without a browser DOM.
 slots.length = 0;
 const selection = [];
@@ -165,4 +187,4 @@ nodes(menuTree, n => n.props?.role === "menuitemradio").at(-1).props.onClick();
 assert.deepEqual(selection, [["sort", "alphabetical"]]); assert.equal(returned, 2);
 const css = fs.readFileSync("src/components/ArchiveView.css", "utf8");
 assert.match(css, /\.archive-filter-menu \[role=menuitemradio\]\s*\{/, "AS10: nested group radios receive button styles");
-console.log("PASS AS01–AS11: settings sort/group/filter, project identity, read-only projections, rollout basename and Unicode search, restore readback and standalone isolation");
+console.log("PASS AS01–AS13: settings sort/group/filter, Unicode search, scoped empty/loading/error, restore readback and standalone isolation");
