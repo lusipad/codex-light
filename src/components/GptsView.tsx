@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { AlertTriangle, Bot, Ellipsis, Link, MessageCircle, Search, Star, X } from "lucide-react";
+import { AlertTriangle, Bot, Check, Ellipsis, Link, MessageCircle, Search, Star, X } from "lucide-react";
 import { tauriListen } from "../bridge";
 import { copyTextToClipboard } from "../clipboard";
 import { serviceErrorMessage, type GptAssetRef } from "../chatgptService";
@@ -151,7 +151,13 @@ function GptDetail({ state, access, scope, onClose, onResource }: { state: Detai
             {error && <div className="gpts-inline-error"><p role="alert">{error}</p><button onClick={() => setRevision(value => value + 1)}>重试详情</button></div>}
             <GptAbout blocks={about} />
             {aboutError && <div className="gpts-inline-error"><p role="alert">{aboutError}</p><button onClick={() => setAboutRevision(value => value + 1)}>重试附加信息</button></div>}
-            {resource.tools.length > 0 && <section className="gpt-detail-tools" aria-label="功能"><h3>功能</h3>{resource.tools.map(tool => <div key={tool.type}><strong>{tool.title}</strong>{tool.description && <p>{tool.description}</p>}</div>)}</section>}
+            {resource.tools.length > 0 && <section className="gpt-detail-tools" aria-label="功能">
+              <h3>功能</h3>
+              <ul>{resource.tools.map(tool => <li key={tool.type}>
+                <Check size={16} aria-hidden="true" />
+                <div>{tool.title}{tool.description && <p>{tool.description}</p>}</div>
+              </li>)}</ul>
+            </section>}
             {restricted && <p className="gpt-restriction" role="status"><AlertTriangle size={16} />{restrictions[restricted]}</p>}
           </>}
       </div>

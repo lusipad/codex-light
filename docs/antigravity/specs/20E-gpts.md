@@ -108,6 +108,12 @@ Sidebar 的 GPT 入口另要求 ChatGPT sidebar mode/相应分支、`chatgpt.isC
 
 本轮验收：由已发布的非私有详情展示「GPT 操作」和「复制链接」，成功时重开可见「链接已复制」，失败可重试。Escape 先关闭菜单并回焦，再关闭详情；写剪贴板前确认仍处于该详情。缺失发布或可见性信息时保守隐藏。固定到侧边栏、举报、作者更多作品与 GPT 对话继续独立验收。
 
+### 详情功能列表与同作者卡片
+
+同一基准 `716164.ac9a1c8325.js` 21500、27010、29972 附近，真实工具由元数据按支持类型映射、按标题去重；「功能」分组保留来源顺序，每项左侧为绿色勾，说明另起一行并与标题对齐。无可展示工具时隐藏整组。验收使用原有工具解析和详情夹具，检查图标不进入可访问名称、支持项不重复、空值不造功能。
+
+同 chunk 19745 的同作者读取使用真实作者 ID，非迁移展示分支下读取 `/gizmo_creators/{uid}/gizmos`。27864 处使用作者名称与横向卡片，30383 处 `ed` 点击直接调用 `onStartChat(resource)`。同作者分组需与真实 GPT 对话路由一起验收。
+
 - “我的 GPT”在 gate2160578039=true 时进应用路由；false 时通过官方 browser bridge 打开 management URL，不能总按同一种页面呈现。
 - 管理 guard 检查当前 auth/account、accounts/check、当前 Statsig account context 一致、有效订阅或允许 plan；workspace FE controls / RBAC下另要求 `chatgpt.workspace.gpt.crud`。context不符、设置缺失、加载失败不放行。
 - Create 受 config2513446768.disable_gpt_creation、2160578039、1663164947、插件创建权限影响；可能进入 GptCreatePluginPrompt 或真实 GPT Builder（fresh chunk `page-924feacfde40.js`），不是本地技能页。migration banner另受2562735250.enabled、身份、套餐、workspace权限及可迁移真实资源控制。未核实值不显示全员固定退休日。

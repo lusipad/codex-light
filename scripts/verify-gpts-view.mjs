@@ -204,6 +204,10 @@ await check("catalog resource opens immediately; about is independent and refres
   const h = await boot(); card(h, "真实 GPT").props.onClick({ currentTarget: card(h, "真实 GPT").element }); h.render(); await flush();
   assert.equal(latest(h, "detail"), undefined, "ordinary public resource does not force a detail request");
   assert.match(text(h.render()), /真实 GPT|网页搜索/); assert.equal(latest(h, "about").args[1], "g1");
+  const capabilities = walk(h.render()).find(node => node.props?.["aria-label"] === "功能");
+  assert.ok(capabilities);
+  assert.match(text(capabilities), /网页搜索/);
+  assert.equal(walk(capabilities).find(node => node.type === "Check")?.props["aria-hidden"], "true");
   latest(h, "about").reject(Error("about failure")); await flush(); assert.match(text(h.render()), /about failure/); assert.match(text(h.render()), /真实 GPT/);
   button(h, "重试附加信息").props.onClick(); h.render(); latest(h, "about").resolve(h.data.parseGptAbout({ about_blocks: [{ type: "rating", avg: 4.6, count_str: "100+" }] })); await flush();
   assert.match(text(h.render()), /4.6|100\+/); assert.equal(button(h, "开始聊天").props.disabled, true); h.unmount();
