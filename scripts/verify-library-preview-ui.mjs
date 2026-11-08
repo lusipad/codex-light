@@ -77,7 +77,7 @@ function paneHarness(stored = null) {
     setTimeout: fn => { timers.set(++nextTimer, fn); return nextTimer; }, clearTimeout: id => timers.delete(id),
     require: name => {
       if (name === "react") return React;
-      if (name === "lucide-react") return { Download: "Download", X: "X" };
+      if (name === "lucide-react") return { Download: "Download", File: "File", FileImage: "FileImage", FileVideo: "FileVideo", X: "X" };
       if (name.endsWith(".css")) return {};
       if (name === "./MarkdownView") return { MarkdownView: "MarkdownView" };
       if (name === "../libraryPreview") return preview;
@@ -177,6 +177,23 @@ for (const [name, mime, size] of [["big.txt", "text/plain", 41943041], ["unknown
   p = paneHarness(); p.render({ request: request(), onClose() {} }); p.metadata[0].resolve(fileInfo(name, mime, size)); await flush();
   assert.equal(p.contents.length, 0); assert.match(text(p.render()), size === 41943041 ? /文件过大/ : /无法预览/); p.unmount();
 }
+p = paneHarness(); p.render({ request: request(), onClose() {} });
+p.metadata[0].resolve(fileInfo("视频文件.mp4", "video/mp4")); await flush();
+const fallback = walk(p.render()).find(node => node.props.className === "library-preview-unavailable");
+assert.ok(fallback, "unrenderable ordinary files show the centered download fallback");
+assert.match(text(fallback), /无法预览.*视频文件\.mp4.*下载文件/);
+const fallbackDownload = walk(fallback).find(node => node.type === "button" && text(node) === "下载文件");
+fallbackDownload.props.onClick(); byButton(p, "下载文件").props.onClick();
+assert.equal(p.contents.length, 1);
+assert.equal(walk(p.render()).filter(node => node.type === "button" && (node.props["aria-label"] === "下载文件" || text(node) === "下载文件")
+  && node.props.disabled).length, 2, "both entry points share the pending state");
+p.unmount();
+assert.equal(p.contents[0].signal.aborted, true);
+p = paneHarness(); p.render({ request: request(), onClose() {} });
+p.metadata[0].resolve({ ...fileInfo("不可下载.bin", "application/octet-stream"), provider: "google_drive" }); await flush();
+assert.match(text(p.render()), /此类文件无法下载/);
+assert.equal(byButton(p, "下载文件"), undefined);
+p.unmount();
 p = paneHarness(); req = request(); p.render({ request: req, onClose() {} }); p.metadata[0].resolve(fileInfo("image.png", "image/png", 41943040)); await flush();
 assert.equal(p.contents.length, 1, "40MiB equality permits read");
 p.contents[0].resolve({ bytes: new Uint8Array([1, 2]).buffer, mimeType: "image/png" }); await flush();

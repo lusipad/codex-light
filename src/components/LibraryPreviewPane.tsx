@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Download, X } from "lucide-react";
+import { Download, File, FileImage, FileVideo, X } from "lucide-react";
 import { readLibraryFile, readLibraryFileContent, type LibraryAccess } from "../libraryClient";
 import { LIBRARY_PREVIEW_MAX_BYTES, libraryPreviewKind, type LibraryFile } from "../libraryPreview";
 import { serviceErrorMessage } from "../chatgptService";
@@ -139,6 +139,11 @@ export const LibraryPreviewPane: React.FC<{ request: LibraryPreviewRequest; onCl
   const canDownload = file && !tooLarge && !specialArtifact && kind !== "deep-research" && file.state !== "trashed"
     && (file.provider == null || file.provider === "native");
   const currentDownload = download?.request === request && !request.controller.signal.aborted ? download : null;
+  const downloading = !!currentDownload && currentDownload.error === undefined;
+  const downloadError = currentDownload?.error !== undefined && <p role="alert">无法下载文件。{currentDownload.error}</p>;
+  const unavailable = file && !current.loading && !current.error && !tooLarge && !specialArtifact
+    && (kind === "unsupported" || (kind === "image" && file.file_size_bytes == null));
+  const UnavailableIcon = kind === "image" ? FileImage : file?.mime_type?.toLowerCase().startsWith("video/") ? FileVideo : File;
   const downloadFile = async () => {
     if (!file || !canDownload || downloadOperation.current || request.controller.signal.aborted) return;
     const controller = new AbortController();
@@ -179,12 +184,12 @@ export const LibraryPreviewPane: React.FC<{ request: LibraryPreviewRequest; onCl
         }
       }} />}
     <header className="library-preview-header"><span title={name}>{name}</span>
-      {canDownload && <button type="button" aria-label="下载文件" title="下载文件" disabled={!!currentDownload && currentDownload.error === undefined}
+      {canDownload && <button type="button" aria-label="下载文件" title="下载文件" disabled={downloading}
         onClick={downloadFile}><Download size={18} aria-hidden="true" /></button>}
       <button type="button" aria-label="关闭预览" onClick={onClose}><X size={18} aria-hidden="true" /></button>
     </header>
     <div className={`library-preview-body${kind === "text" || kind === "markdown" ? " document" : ""}`}>
-      {currentDownload?.error !== undefined && <p role="alert">无法下载文件。{currentDownload.error}</p>}
+      {!unavailable && downloadError}
       {(!current || current.loading) && <p role="status" aria-label="正在加载预览">正在加载预览</p>}
       {current?.error && <section><h3>{file ? "无法显示预览" : "无法打开此文件"}</h3><p role="alert">{current.error}</p>
         {current.retry && <button type="button" onClick={() => setRevision(value => value + 1)}>重试</button>}</section>}
@@ -199,7 +204,16 @@ export const LibraryPreviewPane: React.FC<{ request: LibraryPreviewRequest; onCl
             onError={() => { if (renderedState.current === current && !request.controller.signal.aborted) setImageError(true); }} />}
           {imageError && <section><p role="alert">无法显示预览</p><button type="button" onClick={() => setRevision(value => value + 1)}>重试预览</button></section>}
         </div>}
-        {(kind === "unsupported" || (kind === "image" && file?.file_size_bytes == null)) && <h3>无法预览</h3>}
+        {unavailable && <section className="library-preview-unavailable" aria-labelledby="library-preview-unavailable-title">
+          <span className="library-preview-unavailable-icon"><UnavailableIcon size={32} aria-hidden="true" /></span>
+          <div className="library-preview-unavailable-copy">
+            <h2 id="library-preview-unavailable-title">无法预览</h2>
+            <p className="library-preview-unavailable-name">{name}</p>
+            <p>{canDownload ? "此文件类型可下载" : "此类文件无法下载"}</p>
+          </div>
+          {canDownload && <button type="button" disabled={downloading} onClick={downloadFile}>下载文件</button>}
+          {downloadError}
+        </section>}
         {pendingType && <h3>无法显示预览</h3>}
       </>}
     </div>
