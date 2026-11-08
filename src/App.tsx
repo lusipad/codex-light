@@ -3858,9 +3858,12 @@ export const App: React.FC = () => {
   }, [activeThreadId, refreshThreadQueue]);
 
   // Thread Pin, Rename, Archive
+  const pinMutationPendingRef = useRef(false);
   const handleTogglePinThread = useCallback(
-    async (threadId: string, e: React.MouseEvent) => {
-      e.stopPropagation();
+    async (threadId: string, e?: React.MouseEvent) => {
+      e?.stopPropagation();
+      if (pinMutationPendingRef.current) return;
+      pinMutationPendingRef.current = true;
       const nextPinned = !pinnedThreadIds.includes(threadId);
       try {
         const updated = await tauriInvoke<string[]>("thread_toggle_pin", {
@@ -3870,9 +3873,12 @@ export const App: React.FC = () => {
         setPinnedThreadIds(updated);
       } catch (err) {
         console.warn("thread_toggle_pin failed:", err);
+        showAppToast("无法更新置顶状态。请重试。", "error");
+      } finally {
+        pinMutationPendingRef.current = false;
       }
     },
-    [pinnedThreadIds]
+    [pinnedThreadIds, showAppToast]
   );
 
   const handleRenameThread = useCallback(
@@ -4191,7 +4197,7 @@ export const App: React.FC = () => {
       }
     },
     "pin-thread": () => {
-      if (activeThreadId) void handleTogglePinThread(activeThreadId, {} as any);
+      if (activeThreadId) void handleTogglePinThread(activeThreadId);
     },
     "archive-thread": () => {
       if (activeThreadObj) void handleArchiveThread(activeThreadObj);
@@ -4538,7 +4544,7 @@ export const App: React.FC = () => {
     } else if (action === "archive_thread") {
       if (activeThreadObj) void handleArchiveThread(activeThreadObj);
     } else if (action === "toggle_thread_pin") {
-      if (activeThreadId) handleTogglePinThread(activeThreadId, {} as any);
+      if (activeThreadId) handleTogglePinThread(activeThreadId);
     } else if (action === "toggle_pet") {
       setPetVisible((v) => !v);
     } else if (action === "open_usage_settings" || action === "show_status") {
@@ -4882,7 +4888,7 @@ export const App: React.FC = () => {
           }
         } else if (id === "toggle_thread_pin") {
           if (activeThreadId) {
-            await handleTogglePinThread(activeThreadId, {} as any);
+            await handleTogglePinThread(activeThreadId);
             setPinnedSummaryVisible((v) => !v);
           }
         } else if (id === "new_side_chat") {
@@ -5667,6 +5673,8 @@ export const App: React.FC = () => {
             onRevealPath={handleRevealPath}
             onDeleteThread={handleDeleteThread}
             onRenameThread={handleRenameThread}
+            pinnedThreadIds={pinnedThreadIds}
+            onTogglePinThread={handleTogglePinThread}
             refreshToken={projectsRefreshToken}
             onProjectsChanged={() => { setProjectsRefreshToken((c) => c + 1); refreshThreads(); }}
             onThreadsChanged={refreshThreads}

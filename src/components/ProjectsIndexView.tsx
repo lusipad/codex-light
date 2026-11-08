@@ -42,6 +42,8 @@ export interface ProjectsIndexViewProps {
   onRevealPath?: (path: string) => void;
   onDeleteThread?: (thread: ThreadSummary, e: React.MouseEvent) => void;
   onRenameThread?: (threadId: string, newName: string) => void;
+  pinnedThreadIds?: string[];
+  onTogglePinThread?: (threadId: string) => void;
 
   /* ── 以下均为可选新增 props（向后兼容，不传时行为不变） ── */
   /** app-server 连接 / 父级数据刷新时递增此值，可触发重新拉取项目列表。 */
@@ -144,6 +146,8 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
   onRevealPath,
   onDeleteThread,
   onRenameThread,
+  pinnedThreadIds,
+  onTogglePinThread,
   refreshToken,
   onProjectsChanged,
   onThreadsChanged,
@@ -787,11 +791,15 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
                       onClick={(e) => e.stopPropagation()}
                     >
                       <ThreadActionsMenu triggerAriaLabel="聊天操作" items={[
+                        ...(onTogglePinThread && pinnedThreadIds ? [{
+                          id: "pin", label: pinnedThreadIds.includes(t.id) ? "取消置顶聊天" : "置顶聊天",
+                        }] : []),
                         ...(onRenameThread ? [{ id: "rename", label: "重命名聊天" }] : []),
                         { id: "copy-link", label: "复制深层链接" },
                         ...(t.cwd ? [{ id: "copy-cwd", label: "复制工作目录" }] : []),
                       ]} onSelect={action => {
-                        if (action === "rename") setRenamingThread(t);
+                        if (action === "pin") onTogglePinThread?.(t.id);
+                        else if (action === "rename") setRenamingThread(t);
                         else if (action === "copy-link") void copyProjectThreadValue(`codex://threads/${encodeURIComponent(t.id)}`, "深层链接");
                         else if (action === "copy-cwd" && t.cwd) void copyProjectThreadValue(t.cwd, "工作目录");
                       }} />

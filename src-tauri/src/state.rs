@@ -505,6 +505,25 @@ mod workspace_transition_tests {
         fs::remove_dir(&directory).unwrap();
     }
 
+    #[test]
+    fn thread_pin_persistence_preserves_other_chats_and_rejects_failed_write() {
+        let (manager, directory) = fixture();
+        let path = directory.join("pin-state.json");
+        assert_eq!(manager.toggle_thread_pinned_at_path("first", true, &path).unwrap(), ["first"]);
+        assert_eq!(manager.toggle_thread_pinned_at_path("second", true, &path).unwrap(), ["second", "first"]);
+        assert!(manager.toggle_thread_pinned_at_path("first", false, &directory).is_err());
+        assert_eq!(manager.list_pinned_threads(), ["second", "first"]);
+        let persisted: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(persisted[PINNED_THREAD_IDS_KEY], json!(["second", "first"]));
+        assert_eq!(persisted["unrelated"], "keep");
+
+        assert_eq!(manager.toggle_thread_pinned_at_path("first", false, &path).unwrap(), ["second"]);
+        let persisted: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(persisted[PINNED_THREAD_IDS_KEY], json!(["second"]));
+        fs::remove_file(&path).unwrap();
+        fs::remove_dir(&directory).unwrap();
+    }
+
     fn fixture() -> (DesktopStateManager, PathBuf) {
         let map = json!({
             "unrelated":"keep",
@@ -1775,11 +1794,16 @@ impl DesktopStateManager {
 
     pub fn update_value_persisted<F>(&self, key: &str, update: F) -> Result<Value, String>
     where F: FnOnce(Value) -> Result<Value, String> {
+        self.update_value_persisted_at_path(key, update, &desktop_global_state_path())
+    }
+
+    fn update_value_persisted_at_path<F>(&self, key: &str, update: F, state_path: &Path) -> Result<Value, String>
+    where F: FnOnce(Value) -> Result<Value, String> {
         let mut guard = self.state_map.lock().unwrap();
         let value = update(guard.get(key).cloned().unwrap_or(Value::Null))?;
         let mut next = guard.clone();
         next.insert(key.to_string(), value.clone());
-        persist_state_map(&next, &desktop_global_state_path())?;
+        persist_state_map(&next, state_path)?;
         *guard = next;
         Ok(value)
     }
@@ -2018,14 +2042,22 @@ impl DesktopStateManager {
             .unwrap_or_default()
     }
 
-    pub fn toggle_thread_pinned(&self, thread_id: &str, pinned: bool) -> Vec<String> {
-        let mut current = self.list_pinned_threads();
-        current.retain(|id| id != thread_id);
-        if pinned {
-            current.insert(0, thread_id.to_string());
-        }
-        self.set_value(PINNED_THREAD_IDS_KEY, json!(current));
-        current
+    pub fn toggle_thread_pinned(&self, thread_id: &str, pinned: bool) -> Result<Vec<String>, String> {
+        self.toggle_thread_pinned_at_path(thread_id, pinned, &desktop_global_state_path())
+    }
+
+    fn toggle_thread_pinned_at_path(&self, thread_id: &str, pinned: bool, state_path: &Path) -> Result<Vec<String>, String> {
+        let updated = self.update_value_persisted_at_path(PINNED_THREAD_IDS_KEY, |value| {
+            let mut ids: Vec<&str> = value.as_array().into_iter().flatten()
+                .filter_map(Value::as_str)
+                .filter(|id| *id != thread_id)
+                .collect();
+            if pinned {
+                ids.insert(0, thread_id);
+            }
+            Ok(json!(ids))
+        }, state_path)?;
+        serde_json::from_value(updated).map_err(|error| error.to_string())
     }
 
     pub fn list_archived_threads(&self) -> Vec<Value> {

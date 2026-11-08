@@ -1047,7 +1047,7 @@ fn thread_toggle_pin(
     thread_id: String,
     pinned: bool,
 ) -> Result<Vec<String>, String> {
-    Ok(state.desktop_state.toggle_thread_pinned(&thread_id, pinned))
+    state.desktop_state.toggle_thread_pinned(&thread_id, pinned)
 }
 
 #[tauri::command]
