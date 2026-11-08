@@ -10,7 +10,9 @@ import {
   Settings,
   X,
 } from "lucide-react";
+import { homeDir, normalize as normalizeFsPath } from "@tauri-apps/api/path";
 import { callAppServer, isTauriRuntime } from "../bridge";
+import { baseNameFsPath, getMetadata, joinFsPath } from "../fsClient";
 import { createFuzzyFileSearch } from "../fuzzyFileSearch";
 import { MainViewRoute, ProjectScriptCommands, SettingsSectionSlug, SkillInfoItem, ThreadSummary } from "../types";
 import { SLASH_COMMANDS } from "../slashCommands";
@@ -29,7 +31,7 @@ export interface QuickSearchModalProps {
   workspacePath?: string;
   onClose: () => void;
   onSelectThread: (threadId: string) => void;
-  onSelectFile: (filePath: string) => void;
+  onSelectFile: (filePath: string, isDirectory?: boolean) => void;
   onSearchFiles: () => void;
   onSelectSkill: (skillId: string) => void;
   onNavigateSettings: (slug: SettingsSectionSlug) => void;
@@ -120,10 +122,20 @@ function joinRootPath(root: string, relPath: string): string {
   return `${cleanRoot}${separator}${cleanRel}`;
 }
 
-/** 文件去重键：统一分隔符；Windows 盘符路径大小写不敏感。 */
+/** 文件去重键：统一分隔符；Windows 路径大小写不敏感。 */
 function fileDedupeKey(filePath: string): string {
   const normalized = filePath.replace(/\\/g, "/").replace(/\/+$/, "");
-  return /^[a-zA-Z]:\//.test(normalized) ? normalized.toLowerCase() : normalized;
+  return /^(?:[a-z]:|\/\/)/i.test(normalized) ? normalized.toLowerCase() : normalized;
+}
+
+async function resolveFileSearchPath(query: string, workspacePath: string): Promise<string | null> {
+  if (/[\r\n\0]/.test(query) || /^[\\/]{2}[?.][\\/]/.test(query)) return null;
+  const fromHome = query === "~" || query.startsWith("~/");
+  const path = await normalizeFsPath(fromHome ? joinFsPath(await homeDir(), query.slice(2)) : query);
+  if (/^[a-zA-Z]:|^[\\/]{2}/.test(path) && path.split(/[\\/]+/).some(part => /[. ]$/.test(part))) return null;
+  const root = fileDedupeKey(await normalizeFsPath(workspacePath));
+  const key = fileDedupeKey(path);
+  return key === root || key.startsWith(root + "/") ? path : null;
 }
 
 function normalizeRemoteFileHits(
@@ -247,6 +259,18 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
     null
   );
   const [remoteLoading, setRemoteLoading] = useState(false);
+  const [pathRetry, setPathRetry] = useState(0);
+  const trimmedQuery = query.trim();
+  const pathQuery = mode === "files" && /^(?:~(?:\/|$)|[a-zA-Z]:[\\/]|\/|\\\\)/.test(trimmedQuery)
+    ? trimmedQuery : null;
+  const pathRequest = useMemo(() => open && workspacePath && pathQuery ? { pathQuery, workspacePath } : null,
+    [open, workspacePath, pathQuery, pathRetry, initialQuery]);
+  const [pathResult, setPathResult] = useState<{
+    request: NonNullable<typeof pathRequest>;
+    match?: { path: string; isDirectory: boolean };
+    failed?: boolean;
+  } | null>(null);
+  const pathLookup = pathResult?.request === pathRequest ? pathResult : null;
   const inputRef = useRef<HTMLInputElement | null>(null);
   const lastActiveElementRef = useRef<HTMLElement | null>(null);
   const fileSearchRef = useRef<ReturnType<typeof createFuzzyFileSearch> | null>(null);
@@ -300,8 +324,30 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   }, [open, mode, workspacePath]);
 
   useEffect(() => {
-    if (open && mode === "files") void fileSearchRef.current?.update(query);
-  }, [open, mode, workspacePath, query]);
+    if (open && mode === "files") void fileSearchRef.current?.update(pathQuery ? "" : query);
+  }, [open, mode, workspacePath, query, pathQuery]);
+
+  useEffect(() => {
+    if (!pathRequest || !isTauriRuntime()) return;
+    let disposed = false;
+    void (async () => {
+      try {
+        const path = await resolveFileSearchPath(pathRequest.pathQuery, pathRequest.workspacePath);
+        if (disposed) return;
+        const metadata = path ? await getMetadata(path) : null;
+        if (!disposed) setPathResult({
+          request: pathRequest,
+          match: path && (metadata?.isFile || metadata?.isDirectory) ? { path, isDirectory: metadata.isDirectory } : undefined,
+        });
+      } catch (error) {
+        if (!disposed) setPathResult({
+          request: pathRequest,
+          failed: !/\(os error [23]\)|\bENOENT\b/i.test(String(error)),
+        });
+      }
+    })();
+    return () => { disposed = true; };
+  }, [pathRequest]);
 
   // root: 3+ characters, 200ms debounce, including catch-to-empty 30s cache.
   useEffect(() => {
@@ -359,6 +405,24 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
         ? remoteResults
         : null;
     const results: SearchResultItem[] = [];
+    if (pathQuery) {
+      if (pathLookup?.match) {
+        const { path, isDirectory } = pathLookup.match;
+        results.push({
+          id: `rfile-${path}`, category: "file", section: "文件",
+          title: baseNameFsPath(path) || path, subtitle: path,
+          icon: isDirectory ? <Folder size={14} /> : <FileText size={14} />,
+          onSelect: () => { onSelectFile(path, isDirectory); onClose(); },
+        });
+      } else if (pathLookup?.failed) {
+        results.push({
+          id: "retry-file-lookup", category: "action", section: "文件",
+          title: "无法检查路径。选择此项以重试", icon: <FileText size={14} />,
+          onSelect: () => { setPathRetry(value => value + 1); inputRef.current?.focus(); },
+        });
+      }
+      return results;
+    }
 
     // ── 0. 斜杠命令索引 (Slash commands) ──
     const isSlashOnly = q.startsWith("/");
@@ -764,6 +828,8 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
     threads,
     skills,
     remoteResults,
+    pathQuery,
+    pathLookup,
     onStartNewChat,
     onTriggerCommand,
     onSelectSlashCommand,
@@ -828,6 +894,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   };
 
   if (!open) return null;
+  const loading = pathQuery ? !!pathRequest && isTauriRuntime() && !pathLookup : remoteLoading;
 
   return (
     <div className="quick-search-backdrop" onClick={onClose}>
@@ -854,18 +921,18 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
         </div>
 
         <div className="quick-search-results">
-          {remoteLoading && (
+          {loading && (
             <div
               className="empty-hint-small"
               style={{ padding: "8px 12px", textAlign: "left", opacity: 0.75 }}
             >
-              {mode === "files" ? "正在搜索文件…" : "正在搜索会话…"}
+              {pathQuery ? "正在检查文件…" : mode === "files" ? "正在搜索文件…" : "正在搜索会话…"}
             </div>
           )}
           {items.length === 0 ? (
-            remoteLoading ? null : (
+            loading ? null : (
               <div className="empty-hint-small" style={{ padding: "20px 0" }}>
-                {mode === "files" && !query.trim() ? "输入以搜索文件" : "未找到匹配项"}
+                {pathQuery ? "未找到匹配的文件" : mode === "files" && !query.trim() ? "输入以搜索文件" : "未找到匹配项"}
               </div>
             )
           ) : (

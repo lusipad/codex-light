@@ -96,11 +96,12 @@ function WorkspaceFileTree({ width, onResize, children }: {
 
 type WorkspaceEntryRenderer = (item: DirectoryEntryItem, depth: number, expanded: boolean, toggle: (value?: boolean) => void, groupId: string) => React.ReactNode;
 
-function WorkspaceDirectoryEntry({ item, depth, refreshToken, renderRow }: {
+function WorkspaceDirectoryEntry({ item, depth, refreshToken, renderRow, reveal }: {
   item: DirectoryEntryItem;
   depth: number;
   refreshToken: DirectoryEntryItem[];
   renderRow: WorkspaceEntryRenderer;
+  reveal?: { path: string };
 }) {
   const [expanded, setExpanded] = useState(false);
   const [entries, setEntries] = useState<DirectoryEntryItem[]>([]);
@@ -108,6 +109,12 @@ function WorkspaceDirectoryEntry({ item, depth, refreshToken, renderRow }: {
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
   const groupId = React.useId();
+  useEffect(() => {
+    if (!reveal || !item.isDirectory) return;
+    const target = reviewPathKey(reveal.path);
+    const branch = reviewPathKey(item.path);
+    if (target === branch || target.startsWith(branch + "/")) setExpanded(true);
+  }, [reveal, item.path, item.isDirectory]);
   useEffect(() => {
     if (!expanded || !item.isDirectory) return;
     let disposed = false;
@@ -143,7 +150,7 @@ function WorkspaceDirectoryEntry({ item, depth, refreshToken, renderRow }: {
       {error ? <div className="workspace-tree-status" role="alert" title={error} style={{ paddingLeft: (depth + 1) * 16 + 8 }}>
         目录无法访问 <button type="button" onClick={() => setRetry(value => value + 1)}>重试</button>
       </div> : !loading && entries.length === 0 ? <div className="workspace-tree-status" style={{ paddingLeft: (depth + 1) * 16 + 8 }}>目录为空</div> :
-        entries.map(child => <WorkspaceDirectoryEntry key={child.path} item={child} depth={depth + 1} refreshToken={refreshToken} renderRow={renderRow} />)}
+        entries.map(child => <WorkspaceDirectoryEntry key={child.path} item={child} depth={depth + 1} refreshToken={refreshToken} renderRow={renderRow} reveal={reveal} />)}
     </div>}
   </React.Fragment>;
 }
@@ -175,6 +182,7 @@ export interface DiffDrawerProps {
   onClose: () => void;
   selectedPreviewFile?: string | null;
   previewRequestId?: number;
+  directoryReveal?: { cwd: string; path: string } | null;
   onSelectPreviewFile?: (file: string | null) => void;
   onFilePreviewHandlerChange?: (handler: ((path: string) => Promise<boolean>) | null) => void;
   onSendReviewComment?: (commentPrompt: string) => void;
@@ -521,6 +529,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   onClose,
   selectedPreviewFile,
   previewRequestId,
+  directoryReveal,
   onSelectPreviewFile,
   onFilePreviewHandlerChange,
   onSendReviewComment,
@@ -847,6 +856,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   }, [gitStatus, diffMode]);
   const fsWatchTimerRef = useRef<number | null>(null);
   const lastExternalPreviewRequestRef = useRef<string | null>(null);
+  const lastDirectoryRevealRef = useRef<typeof directoryReveal>(null);
   const appServerConnectedRef = useRef<boolean | null>(null);
   const [watchEpoch, setWatchEpoch] = useState(0);
 
@@ -1569,6 +1579,21 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   }, [open, cwd, connectionIdentity, selectedPreviewFile, previewRequestId, selectedReviewFinding]);
 
   useEffect(() => {
+    if (!open || !directoryReveal || directoryReveal.cwd !== cwd || lastDirectoryRevealRef.current === directoryReveal) return;
+    lastDirectoryRevealRef.current = directoryReveal;
+    setActiveTab("files");
+    if (currentDir !== cwd) {
+      ++dirLoadSeqRef.current;
+      setDirEntries([]);
+      setDirError(null);
+      setExplorerDraft(null);
+    }
+    setCurrentDir(cwd);
+    setFileFilterQuery("");
+    setSelectedTreePath(directoryReveal.path);
+  }, [open, cwd, currentDir, directoryReveal]);
+
+  useEffect(() => {
     if (!selectedReviewFinding) { setActiveReviewFinding(null); return; }
     if (!open || reviewPathKey(selectedReviewFinding.rootPath) !== reviewPathKey(cwd)
       || !modelReviewComments.some(comment => comment.id === selectedReviewFinding.id)) return;
@@ -1807,16 +1832,17 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     const isRenaming =
       explorerDraft?.mode === "rename" &&
       explorerDraft.targetPath === item.path;
+    const selected = selectedTreePath !== null && reviewPathKey(selectedTreePath) === reviewPathKey(item.path);
     return (
       <div
         key={item.path}
         className={`diff-file-row fe-file-row ${
-          selectedTreePath === item.path ? "active" : ""
+          selected ? "active" : ""
         } ${isRenaming ? "fe-renaming" : ""}`}
         role="treeitem" tabIndex={0} aria-label={item.name}
         aria-level={depth + 1} aria-expanded={item.isDirectory ? expanded : undefined}
         aria-owns={item.isDirectory && expanded ? groupId : undefined}
-        aria-selected={selectedTreePath === item.path}
+        aria-selected={selected}
         style={{ paddingLeft: depth * 16 + 8 }}
         onClick={() => setSelectedTreePath(item.path)}
         onDoubleClick={() => {
@@ -2725,7 +2751,8 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                 {dirLoading ? "正在加载目录…" : "目录为空"}
               </div>
             ) : (
-              dirEntries.map(item => <WorkspaceDirectoryEntry key={`${connectionIdentity}:${currentDir}:${item.path}`} item={item} depth={0} refreshToken={dirEntries} renderRow={renderFileTreeEntry} />)
+              dirEntries.map(item => <WorkspaceDirectoryEntry key={`${connectionIdentity}:${currentDir}:${item.path}`} item={item} depth={0} refreshToken={dirEntries} renderRow={renderFileTreeEntry}
+                reveal={directoryReveal?.cwd === cwd && currentDir === cwd ? directoryReveal : undefined} />)
             )}
           </div>
 

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
+import path from "node:path";
 import ts from "typescript";
 
 const text = fs.readFileSync(new URL("../src/components/QuickSearchModal.tsx", import.meta.url), "utf8");
@@ -15,12 +16,15 @@ function visit(node) {
 visit(ast);
 const remoteEffect = effects.find(node => node.getText(ast).includes("const canSearch"));
 const fileEffect = effects.find(node => node.getText(ast).includes("const search = createFuzzyFileSearch"));
-const fileQueryEffect = effects.find(node => node.getText(ast).includes("fileSearchRef.current?.update(query)"));
+const fileQueryEffect = effects.find(node => node.getText(ast).includes("fileSearchRef.current?.update("));
+const lookupEffect = effects.find(node => node.getText(ast).includes("await getMetadata(path)"));
 assert.ok(remoteEffect);
 const js = ts.transpileModule(`${declarations.join("\n")}\n({
   effect:${remoteEffect.getText(ast)},
   files:${fileEffect.getText(ast)},
-  fileQuery:${fileQueryEffect.getText(ast)}
+  fileQuery:${fileQueryEffect.getText(ast)},
+  lookup:${lookupEffect.getText(ast)},
+  resolveFileSearchPath: typeof resolveFileSearchPath === "function" ? resolveFileSearchPath : undefined
 })`, {
   compilerOptions: { target: ts.ScriptTarget.ES2022 },
 }).outputText;
@@ -34,7 +38,10 @@ function mount() {
   const timers = new Map(), requests = [], fileControllers = [];
   let clock = 1000, timerId = 0;
   const context = {
-    open: true, query: "target", workspacePath: "C:/repo-A", mode: "root",
+    open: true, query: "target", workspacePath: "C:/repo-A", mode: "root", pathQuery: null,
+    homeDir: async () => "C:\\Users\\tester",
+    normalizeFsPath: async value => path.win32.normalize(value),
+    joinFsPath: path.win32.join,
     remoteCacheRef: { current: new Map() },
     fileSearchRef: { current: null },
     createFuzzyFileSearch(roots, callbacks) {
@@ -54,6 +61,8 @@ function mount() {
     },
     setRemoteResults(value) { context.results = typeof value === "function" ? value(context.results) : value; },
     setRemoteLoading(value) { context.loading = value; },
+    getMetadata(path) { const pending = deferred(); requests.push({ method: "fs/getMetadata", path, ...pending }); return pending.promise; },
+    setPathResult(result) { context.pathResult = result; },
   };
   return {
     context, requests, timers, fileControllers, ...vm.runInNewContext(js, context),
@@ -74,6 +83,44 @@ async function check(name, test) {
   try { await test(); console.log(`PASS ${name}`); }
   catch (error) { failures.push(name); console.error(`FAIL ${name}: ${error.message}`); }
 }
+await check("SB08 direct paths resolve only inside the selected workspace", async () => {
+  const view = mount();
+  const resolve = view.resolveFileSearchPath;
+  assert.equal(typeof resolve, "function", "direct path resolver exists");
+  assert.equal(await resolve("C:/repo-A/src/测试.rs", "c:/repo-a"), "C:\\repo-A\\src\\测试.rs");
+  assert.equal(await resolve("~/project/src", "C:/Users/tester/project"), "C:\\Users\\tester\\project\\src");
+  for (const query of ["C:/repo-A-other/a", "C:/repo-A/../private/a", "C:/repo-A/dir/.. /a", "//?/C:/repo-A/a"]) {
+    assert.equal(await resolve(query, "C:/repo-A"), null, query);
+  }
+});
+await check("SB09 direct lookups bypass fuzzy and reject late metadata after leaving", async () => {
+  const view = mount(), { context } = view;
+  Object.assign(context, { mode: "files", query: "C:/repo-A/old", pathQuery: "C:/repo-A/old",
+    pathRequest: { pathQuery: "C:/repo-A/old", workspacePath: "C:/repo-A" } });
+  const filesCleanup = view.files(); view.fileQuery();
+  assert.equal(view.fileControllers[0].updates[0], "");
+  const oldCleanup = view.lookup(); await flush();
+  assert.equal(view.requests[0].path, "C:\\repo-A\\old");
+  oldCleanup();
+  context.pathRequest = { pathQuery: "C:/repo-A/new", workspacePath: "C:/repo-A" };
+  const currentCleanup = view.lookup(); await flush();
+  view.requests[1].resolve({ isDirectory: true }); await flush();
+  view.requests[0].resolve({ isFile: true }); await flush();
+  assert.equal(context.pathResult.match.path, "C:\\repo-A\\new");
+  assert.equal(context.pathResult.match.isDirectory, true);
+  currentCleanup(); filesCleanup();
+});
+await check("SB10 direct lookup distinguishes absence and errors without automatic retry", async () => {
+  for (const [error, failed] of [[Error("系统找不到指定的文件。 (os error 2)"), false], [Error("access denied"), true]]) {
+    const view = mount();
+    view.context.pathRequest = { pathQuery: "C:/repo-A/file", workspacePath: "C:/repo-A" };
+    const cleanup = view.lookup(); await flush();
+    view.requests[0].reject(error); await flush();
+    assert.equal(view.context.pathResult.failed, failed);
+    assert.equal(view.requests.length, 1);
+    cleanup();
+  }
+});
 await check("SB01 failed thread empty results have a bounded thirty-second cache", async () => {
   const view = mount(), cleanup = await view.start();
   view.requests.forEach(request => request.reject(Error("service offline")));

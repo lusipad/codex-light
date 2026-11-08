@@ -611,6 +611,7 @@ export const App: React.FC = () => {
   const [reviewRuns, setReviewRuns] = useState<ReviewRun[]>([]);
   const [selectedReviewFinding, setSelectedReviewFinding] = useState<ModelReviewComment | null>(null);
   const [previewRequestId, setPreviewRequestId] = useState(0);
+  const [directoryReveal, setDirectoryReveal] = useState<{ cwd: string; path: string } | null>(null);
   const skillFilePreviewHandlerRef = useRef<((path: string) => Promise<boolean>) | null>(null);
   const registerSkillFilePreviewHandler = useCallback((handler: ((path: string) => Promise<boolean>) | null) => {
     skillFilePreviewHandlerRef.current = handler;
@@ -6722,6 +6723,7 @@ export const App: React.FC = () => {
         onClose={() => setShowRightDrawer(false)}
         selectedPreviewFile={selectedPreviewFile}
         previewRequestId={previewRequestId}
+        directoryReveal={directoryReveal}
         onFilePreviewHandlerChange={registerSkillFilePreviewHandler}
         onSelectPreviewFile={setSelectedPreviewFile}
         onSendReviewComment={(comment) => handleSendMessage(comment)}
@@ -6818,8 +6820,13 @@ export const App: React.FC = () => {
         onClose={() => setShowQuickSearch(false)}
         onSelectThread={selectThread}
         onSearchFiles={() => setQuickSearchMode("files")}
-        onSelectFile={(filePath) => {
-          openPreviewFile(filePath);
+        onSelectFile={(filePath, isDirectory) => {
+          if (isDirectory && activeWorkspace?.path) {
+            setDirectoryReveal({ cwd: activeWorkspace.path, path: filePath });
+            setShowRightDrawer(true);
+          } else {
+            openPreviewFile(filePath);
+          }
         }}
         onSelectSkill={(skillId) => {
           setPromptInput((prev) => `${prev} $${skillId} `);

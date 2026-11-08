@@ -4,7 +4,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 const source = fs.readFileSync('src/components/DiffDrawer.tsx', 'utf8');
 const ast = ts.createSourceFile('drawer.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-const names = ['WorkspaceDirectoryEntry', 'toDirectoryEntryItems', 'compareDirectoryEntries'];
+const names = ['WorkspaceDirectoryEntry', 'toDirectoryEntryItems', 'compareDirectoryEntries', 'reviewPathKey'];
 const declarations = ast.statements.filter(n => ts.isFunctionDeclaration(n) && names.includes(n.name?.text));
 assert.equal(declarations.length, names.length);
 const code = ts.transpileModule(declarations.map(n => n.getText(ast)).join('\n') + '\nWorkspaceDirectoryEntry', {compilerOptions:{jsx:ts.JsxEmit.React,target:ts.ScriptTarget.ES2022}}).outputText;
@@ -28,6 +28,23 @@ function mount() {
   const settle=async()=>{await new Promise(resolve => setImmediate(resolve));render();};
   render();
   return {values,props,reads,fallbacks,watches,stops,render,settle,get tree(){return tree;},expand:value=>{toggle(value);render();},dispose:()=>cleanups.forEach(fn=>fn?.())};
+}
+{
+ const view=mount();
+ view.props.reveal={path:'d:\\root\\src-other'};
+ view.render();view.render();
+ assert.equal(view.reads.length,0,'similarly prefixed sibling does not expand');
+ const reveal={path:'d:\\root\\src\\nested'};
+ view.props.reveal=reveal;
+ view.render();view.render();
+ assert.equal(view.reads.length,1,'a reveal opens the matching ancestor');
+ view.reads[0].resolve([{fileName:'nested',isDirectory:true}]);await view.settle();
+ assert.equal(view.tree.children[1].children[1][0].props.reveal,reveal,'nested branches receive the same scoped request');
+ view.expand(false);
+ assert.equal(view.tree.children[0].props.expanded,false,'the user can collapse a revealed branch');
+ view.props.reveal={...reveal};view.render();view.render();
+ assert.equal(view.reads.length,2,'another explicit reveal reopens the branch');
+ view.dispose();
 }
 {
  const view=mount();assert.equal(view.reads.length,0,'collapsed tree does not traverse disk');

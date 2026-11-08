@@ -33,11 +33,13 @@ const slash = { id: "goal", command: "/goal", title: "Goal", description: "goal"
 function mount(overrides = {}) {
   const calls = [];
   const context = {
-    query: "goal", mode: "root", workspacePath: "repo-B", remoteResults: null,
+    query: "goal", mode: "root", workspacePath: "repo-B", remoteResults: null, pathQuery: null, pathLookup: null,
     threads: [], workspaceFileHits: [], skills: [], SLASH_COMMANDS: [slash],
     REMOTE_THREAD_LIMIT: 9,
     runCmd: "npm run dev", testCmd: "npm test", buildCmd: "npm run build",
     selectedIndex: 0,
+    baseNameFsPath: path => path.split(/[\\/]/).at(-1),
+    setPathRetry: updater => calls.push(["retry", updater(0)]),
     inputRef: { current: { focus() {} } },
     React: { createElement() { return {}; } },
     ...overrides,
@@ -50,6 +52,18 @@ function mount(overrides = {}) {
   context.setQuery = value => { context.query = value; };
   for (const helper of helpers) vm.runInNewContext(ts.transpileModule(helper.getText(page), {}).outputText, context);
   return { context, calls, results: () => execute(items, page, context)() };
+}
+{
+  const view = mount({ mode: "files", query: "C:/repo/src", pathQuery: "C:/repo/src",
+    pathLookup: { match: { path: "C:/repo/src", isDirectory: true } } });
+  view.results()[0].onSelect();
+  assert.deepEqual(view.calls, [["onSelectFile", "C:/repo/src", true], ["onClose"]]);
+  view.calls.length = 0;
+  view.context.pathLookup = { failed: true };
+  const retry = view.results()[0];
+  assert.equal(retry.title, "无法检查路径。选择此项以重试");
+  retry.onSelect();
+  assert.deepEqual(view.calls, [["retry", 1]], "retry keeps the menu open and only refreshes the lookup");
 }
 {
   const view = mount();
