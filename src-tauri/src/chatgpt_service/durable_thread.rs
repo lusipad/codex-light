@@ -69,6 +69,15 @@ enum Operation {
         skill: Option<String>,
         private_draft: bool,
     },
+    StartEnvironmentReply {
+        thread_id: String,
+        client_user_message_id: uuid::Uuid,
+        cwd: String,
+        text: String,
+        service_tier: Option<String>,
+        model: Option<String>,
+        effort: Option<String>,
+    },
     Preferences,
     SetupPreferences,
     Requirements,
@@ -193,6 +202,37 @@ impl Operation {
                 ("config/read", json!({"cwd":null,"includeLayers":false}), 30)
             }
             Self::Requirements => ("configRequirements/read", Value::Null, 30),
+            Self::StartEnvironmentReply {
+                thread_id,
+                client_user_message_id,
+                cwd,
+                text,
+                service_tier,
+                model,
+                effort,
+            } if opaque(&thread_id)
+                && !client_user_message_id.is_nil()
+                && cwd.starts_with('/')
+                && opaque(&cwd)
+                && !text.trim().is_empty()
+                && !text.contains('\0')
+                && text.encode_utf16().count() <= 32768
+                && [service_tier.as_deref(), model.as_deref(), effort.as_deref()]
+                    .into_iter()
+                    .flatten()
+                    .all(opaque) =>
+            {
+                (
+                    "turn/start",
+                    json!({
+                        "threadId":thread_id,"clientUserMessageId":client_user_message_id.to_string(),
+                        "cwd":cwd,"turnTrigger":"composer","model":model,"effort":effort,
+                        "serviceTier":service_tier,"collaborationMode":null,
+                        "input":[{"type":"text","text":text,"text_elements":[]}]
+                    }),
+                    30,
+                )
+            }
             Self::StartRepositoryApply {
                 thread_id,
                 client_user_message_id,
@@ -454,6 +494,7 @@ impl ChatgptService {
         RunFuture: Future<Output = Result<Value, DurableError>>,
     {
         let setup_write = matches!(&request.operation, Operation::StartEnvironmentSetup { .. });
+        let reply_write = matches!(&request.operation, Operation::StartEnvironmentReply { .. });
         let setup_config = matches!(&request.operation, Operation::SetupPreferences);
         let wire = request.operation.wire()?;
         let method = wire.method;
@@ -464,7 +505,12 @@ impl ChatgptService {
             .map(str::to_owned);
         let turn_write = method == "turn/start";
         let unconfirmed = || {
-            if setup_write {
+            if reply_write {
+                failure(
+                    "cloud_setup_reply_unconfirmed",
+                    "Cloud environment reply delivery is unconfirmed",
+                )
+            } else if setup_write {
                 failure(
                     "cloud_setup_turn_unconfirmed",
                     "Cloud environment setup turn delivery is unconfirmed",

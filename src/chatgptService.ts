@@ -295,6 +295,8 @@ export type CloudThreadOperation =
   | { kind: "start_environment_setup"; threadId: string; clientUserMessageId: string; cwd: string;
     model: string | null; effort: string | null; serviceTier: string | null; repositories: { name: string; ref: string }[];
     skill: string | null; privateDraft: boolean }
+  | { kind: "start_environment_reply"; threadId: string; clientUserMessageId: string; cwd: string; text: string;
+    model: string | null; effort: string | null; serviceTier: string | null }
   | { kind: "preferences" | "setup_preferences" | "requirements" };
 
 export async function callCloudThread(operation: CloudThreadOperation, identity: ServiceIdentity, signal: AbortSignal): Promise<unknown> {
@@ -721,6 +723,7 @@ export function serviceErrorMessage(error: unknown): string {
     cloud_draft_save_unconfirmed: "保存结果尚未确认，请先核对服务端草稿。",
     cloud_repository_apply_unconfirmed: "应用消息的投递结果尚未确认。",
     cloud_setup_turn_unconfirmed: "设置消息的投递结果尚未确认，请先核对会话。",
+    cloud_setup_reply_unconfirmed: "回复的投递结果尚未确认，请先核对会话。",
     cloud_draft_pending: "此环境已有正在处理或尚未确认的草稿请求，请检查聊天列表。",
     cloud_resume_timeout: "恢复云端会话超时。", cloud_thread_closing: "云端会话正在关闭。",
     network_error: "服务连接失败，请检查网络后重试。", timeout: "服务请求超时，请重试。",

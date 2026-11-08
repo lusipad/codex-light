@@ -178,4 +178,34 @@ mod durable_apply_tests {
         }).await.unwrap();
         assert_eq!(response.body, json!({"turn":{"id":"turn-A"}}));
     }
+
+    #[tokio::test]
+    async fn durable_reply_preserves_composer_text_and_correlates_one_dispatch() {
+        let reply = json!({"kind":"start_environment_reply","threadId":"thread-A","clientUserMessageId":MESSAGE_ID,
+            "cwd":"/workspace","text":"请安装依赖。\n使用 npm。","serviceTier":"flex","model":"model-A","effort":"medium"});
+        for response in [
+            Ok(json!({"turn":{"id":"turn-A","clientUserMessageId":MESSAGE_ID}})),
+            Err(crate::durable::Error::Timeout),
+        ] {
+            let service = ChatgptService::default();
+            let sends = AtomicUsize::new(0);
+            let expected_success = response.is_ok();
+            let result = service.durable_thread_with(request(reply.clone()), cloud_profile(), share_rpc, |_, wire, _| {
+                sends.fetch_add(1, Ordering::SeqCst);
+                assert_eq!(wire.method, "turn/start");
+                assert_eq!(wire.params, json!({
+                    "threadId":"thread-A","clientUserMessageId":MESSAGE_ID,"cwd":"/workspace","turnTrigger":"composer",
+                    "model":"model-A","effort":"medium","serviceTier":"flex","collaborationMode":null,
+                    "input":[{"type":"text","text":"请安装依赖。\n使用 npm。","text_elements":[]}]
+                }));
+                std::future::ready(response)
+            }).await;
+            assert_eq!(sends.load(Ordering::SeqCst), 1);
+            if expected_success {
+                assert_eq!(result.unwrap().body, json!({"turn":{"id":"turn-A"}}));
+            } else {
+                assert_eq!(result.unwrap_err().code, "cloud_setup_reply_unconfirmed");
+            }
+        }
+    }
 }

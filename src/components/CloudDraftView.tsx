@@ -15,6 +15,7 @@ import { extractTextFromItem } from "../threadText";
 import type { TurnItem } from "../types";
 import { renderCloudEnvironmentFields } from "./CloudEnvironmentsView";
 import { CloudDraftNetworkFields } from "./CloudDraftNetworkFields";
+import { CloudEnvironmentReply } from "./CloudEnvironmentReply";
 import { CloudDraftRepositories, sameRepositorySelection, type RepositorySelection } from "./CloudDraftRepositories";
 import { MarkdownView } from "./MarkdownView";
 import { UserMessageBubble } from "./UserMessageBubble";
@@ -327,6 +328,8 @@ export function CloudDraftView({ session, persisted, onBack }: { session: CloudD
           </>}
         </div>
       </div>
+      {scope && history && (!session.setup || setupStatus === "sent" || setupStatus === "no_pending") &&
+        <CloudEnvironmentReply session={session} history={history} scope={scope} revision={applyWake} refreshHistory={refreshHistory} />}
     </section>
     {panelOpen && <aside id="cloud-draft-environment" className="cloud-draft-environment" aria-labelledby="cloud-draft-environment-heading" onKeyDown={event => {
       if (event.key === "Escape" && !event.nativeEvent.isComposing) { event.stopPropagation(); if (!editing) setPanelOpen(false); }

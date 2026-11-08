@@ -68,6 +68,7 @@ export function cloudEnvironmentHarness({ listenerError, deferredListener = fals
       if (name === "../cloudEnvironmentAccess") return { readCloudEnvironmentAccess: signal => call("access", [], signal) };
       if (name === "../cloudDraftSession") return { createCloudDraftSession: (environment, names, current, signal) => call("create", [environment, names, current], signal) };
       if (name === "../cloudDraftRepositoryApply") return { pendingRepositoryApplySession: () => pendingDraft };
+      if (name === "../cloudEnvironmentReply") return { pendingCloudReplySession: () => null };
       if (name === "../cloudEnvironmentSetup") return {
         hasPendingCloudEnvironmentSetup: () => false,
         openCloudEnvironmentSetup: (selection, current, signal) => call("setup", [selection, current], signal),

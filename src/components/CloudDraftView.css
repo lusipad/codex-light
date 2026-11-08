@@ -46,6 +46,12 @@
 .cloud-draft-environment .cloud-draft-heading h2 { flex: none; }
 .cloud-draft-environment .cloud-draft-heading button { margin-inline-start: auto; }
 .cloud-draft-timeline { padding-bottom: 24px; }
+.cloud-environment-reply { margin: 0 auto 16px; width: min(720px, calc(100% - 32px)); flex-shrink: 0; }
+.cloud-environment-reply > :is([role="status"], [role="alert"]) { margin-block-end: 6px; }
+.cloud-environment-reply-box { display: flex; align-items: flex-end; border: 1px solid var(--border-subtle); border-radius: 16px; background: var(--bg-surface-2); }
+.cloud-environment-reply-box:focus-within { border-color: var(--text-tertiary); }
+.cloud-environment-reply-box .composer-textarea { flex: 1; min-width: 0; min-height: 52px; box-sizing: border-box; }
+.cloud-environment-reply-box button { flex-shrink: 0; margin: 8px; }
 .cloud-draft-fields { overflow: auto; padding: 16px; overflow-wrap: anywhere; }
 .cloud-draft-turn { display: flex; flex-direction: column; gap: 12px; }
 .cloud-draft-script-form { margin-top: 24px; gap: 12px; }
