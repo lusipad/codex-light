@@ -283,6 +283,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
   useEffect(() => {
     if (openMenu !== "project") setProjectQuery("");
     if (openMenu !== "cloud") setCloudQuery("");
+    if (openMenu === "cloud") void homeCloud?.load();
     if (!openMenu || openMenu === "model" || openMenu === "model-recent") return;
     const updateBounds = () => {
       const menu = menuRef.current;
@@ -645,7 +646,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
   const currentBranch = gitStatus?.branch || "main";
   const filteredWorkspaces = workspaces.filter(ws =>
     `${ws.label} ${ws.path}`.toLocaleLowerCase().includes(projectQuery.trim().toLocaleLowerCase()));
-  const cloudItems = homeCloud?.items?.filter(item => item.name.toLocaleLowerCase().includes(cloudQuery.trim().toLocaleLowerCase()));
+  const cloudItems = homeCloud?.filterItems(cloudQuery);
 
   return (
     <div
@@ -798,8 +799,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
                   onClick={() => {
                     setAutocompleteMode(null);
                     homeCloud.setActive(true);
-                    setOpenMenu("cloud");
-                    if (!homeCloud.items) void homeCloud.load();
+                    closeComposerMenu();
                   }}>
                   <span className="popover-item-header"><Cloud size={14} /> 云端</span>
                   {cloudActive && <CheckIcon size={13} />}
@@ -812,14 +812,8 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
             <button ref={node => { menuTriggersRef.current.cloud = node; }} type="button" className="composer-top-chip composer-cloud-target"
               aria-label="选择云环境" aria-haspopup="menu" aria-expanded={openMenu === "cloud"}
               aria-controls={openMenu === "cloud" ? "composer-cloud-menu" : undefined} disabled={homeCloud.busy}
-              onKeyDown={event => {
-                handleComposerTriggerKeys(event, "cloud");
-                if ((event.key === "ArrowDown" || event.key === "ArrowUp") && !homeCloud.items) void homeCloud.load();
-              }}
-              onClick={() => {
-                setOpenMenu(menu => menu === "cloud" ? null : "cloud");
-                if (openMenu !== "cloud" && !homeCloud.items) void homeCloud.load();
-              }}>
+              onKeyDown={event => handleComposerTriggerKeys(event, "cloud")}
+              onClick={() => setOpenMenu(menu => menu === "cloud" ? null : "cloud")}>
               <Cloud size={13} /><span>{homeCloud.target?.session.binding.name || "选择环境"}</span><ChevronDownIcon size={11} />
             </button>
             {openMenu === "cloud" && <div id="composer-cloud-menu" ref={menuRef} role="menu" aria-label="选择云环境"
@@ -827,15 +821,26 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
               <input type="search" className="popover-search-input" aria-label="搜索环境" placeholder="搜索环境…"
                 value={cloudQuery} onChange={event => setCloudQuery(event.target.value)} />
               {homeCloud.loading && <div role="status" className="popover-section-label">正在读取环境…</div>}
-              {!homeCloud.loading && homeCloud.error && <button type="button" role="menuitem"
-                className="popover-menu-item" onClick={() => void homeCloud.load()}>重试读取环境</button>}
-              {!homeCloud.loading && cloudItems?.length === 0 && <div className="popover-section-label">未找到环境</div>}
+              {!homeCloud.loading && homeCloud.catalogError && <>
+                <div role="alert" className="popover-section-label">{homeCloud.catalogError}</div>
+                <button type="button" role="menuitem" className="popover-menu-item"
+                  onClick={() => void homeCloud.load(true)}>重试读取环境</button>
+              </>}
+              {!homeCloud.loading && !homeCloud.catalogError && cloudItems?.length === 0 &&
+                <div className="popover-section-label">未找到环境</div>}
               {cloudItems?.map(item => {
                 const selected = homeCloud.target?.session.binding.configId === item.id;
-                return <button key={item.id} type="button" role="menuitemradio" aria-checked={selected}
+                const repo = homeCloud.repositoryNames.get(item.repositories[0]?.id)?.split("/").at(-1);
+                const more = item.repositories.length - 1;
+                const summary = repo && (more > 0 || repo.toLowerCase() !== item.name.toLowerCase())
+                  ? more > 0 ? `${repo} +${more}` : repo : null;
+                return <button key={item.id} type="button" role="menuitemradio" aria-label={item.name} aria-checked={selected}
                   className={`popover-menu-item ${selected ? "selected" : ""}`}
                   onClick={() => { homeCloud.select(item); closeComposerMenu(); }}>
-                  <span className="popover-item-header"><Cloud size={14} /><span className="popover-item-title">{item.name}</span></span>
+                  <span className="popover-item-header composer-cloud-row"><Cloud size={14} />
+                    <span className="popover-item-title">{item.name}</span>
+                    {summary && <span className="popover-item-desc">{summary}</span>}
+                  </span>
                   {selected && <CheckIcon size={13} />}
                 </button>;
               })}

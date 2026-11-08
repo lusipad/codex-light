@@ -2476,6 +2476,20 @@ html, body, #root {
   white-space: nowrap;
 }
 
+.composer-cloud-row {
+  min-width: 0;
+}
+
+.composer-cloud-row > svg {
+  flex-shrink: 0;
+}
+
+.composer-cloud-row > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .composer-mode-badge {
   font-size: calc(11px * var(--font-ui-scale, 1));
   padding: 1px 7px;
