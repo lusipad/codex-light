@@ -1,5 +1,10 @@
 # 实施日志（按轮次）
 
+## 2026-11-09 — 15J 设置归档搜索字段
+
+- 固定 Store `26.1103.4239.0` 的 `499225.6d2e47bea2.js` 896486、897489 附近表明本地归档候选含记录路径 basename，查询和候选均执行 NFC；同版协议 `ThreadListResponse` 给出可空的 `Thread.path`。验收覆盖搜索记录文件名、Unicode 等价输入、目录前缀排除、项目筛选与排序保留，搜索阶段零额外服务请求。
+- 复用既有文件名提取和本地筛选。113 项前端回放及 Windows 打包通过，隔离原生验证搜索和清空。[验收记录](antigravity/acceptance/15J-archive-search.md)
+
 ## 2026-11-09 — 03J 自动审核拒绝的文件差异
 
 - 官方 `async__182735.bb2cb0d2af.js` 1447798、5124782 附近读取审核 ID、目标变更项与嵌套的 `review.status`。`async__225284.63835849b6.js` 361043、369300 附近提供自动拒绝摘要、警示和展开详情。协议字段与同基准 Store 的 `ItemGuardianApprovalReviewCompletedNotification` 对照。验收验证明确的补丁拒绝、跨项隔离、重复事件和终态，使用语言包文案。

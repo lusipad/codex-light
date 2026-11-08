@@ -39,6 +39,7 @@ type ArchiveReader = ArchivedCloudTasksState | ArchivedConversationsState | Arch
 
 interface ArchivedThread extends ThreadSummary {
   archiveSource?: ArchiveSource;
+  path?: string | null;
   durableChat?: CloudRecentChat;
   gizmoId?: string | null;
   environmentLabel?: string | null;
@@ -592,12 +593,14 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
     [loading]
   );
 
-  const query = useDeferredValue(search.trim().toLocaleLowerCase());
+  const settings = surface === "settings";
+  const searchQuery = search.trim().toLocaleLowerCase();
+  const currentQuery = settings ? searchQuery.normalize("NFC") : searchQuery;
+  const query = useDeferredValue(currentQuery);
   const visible = useMemo(() => threads.filter((thread) =>
     !query || (thread.name || thread.preview || thread.id).toLocaleLowerCase().includes(query)
   ), [threads, query]);
 
-  const settings = surface === "settings";
   const projects = useMemo(() => settings ? buildSidebarProjectGroups(workspaces, projectMembership) : [], [settings, workspaces, projectMembership]);
   const projectOptions = useMemo(() => [
     { value: "all", label: "所有项目" },
@@ -635,8 +638,9 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
         }
       }
       return { thread, groupId: project ? `project:local::${project.id}` : "special:none", label: project?.label ?? "" };
-    }).filter(entry => (activeProjectFilter === "all" || entry.groupId === activeProjectFilter)
-      && (!query || [archiveTitle(entry.thread), entry.label, archiveRepo(entry.thread.cwd), entry.thread.environmentLabel || ""].some(value => value.toLocaleLowerCase().includes(query))));
+    }).filter(({ thread, groupId, label }) => (activeProjectFilter === "all" || groupId === activeProjectFilter)
+      && (!query || [archiveTitle(thread), label, archiveRepo(thread.cwd), thread.environmentLabel || "",
+        thread.archiveSource ? "" : archiveRepo(thread.path)].some(value => value.toLocaleLowerCase().normalize("NFC").includes(query))));
     const groups = new Map<string, { id: string; label: string; threads: ArchivedThread[] }>();
     for (const entry of entries) {
       const id = activeProjectFilter === "all" ? entry.groupId : "all";
@@ -660,7 +664,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
     setDeleteTarget(null);
     if (!confirmed || !deleteTarget || mutationPendingRef.current || loading) return;
     if (projectDeleteTarget) {
-      if (!settings || !onDeleteProject || error || activeProjectFilter !== "all" || query !== search.trim().toLocaleLowerCase()) return;
+      if (!settings || !onDeleteProject || error || activeProjectFilter !== "all" || query !== currentQuery) return;
       const group = settingsGroups.find(item => item.id === projectDeleteTarget.projectId);
       const currentIds = localArchiveIds(group?.threads ?? []);
       if (group?.label !== projectDeleteTarget.label || currentIds.length !== projectDeleteTarget.threadIds.length ||

@@ -5,7 +5,7 @@ import ts from "typescript";
 
 const source = fs.readFileSync("src/components/ArchiveView.tsx", "utf8");
 const rows = [
-  { id: "a", name: "Zulu", updatedAt: 20, createdAt: 40, cwd: "D:/One" },
+  { id: "a", name: "Zulu", updatedAt: 20, createdAt: 40, cwd: "D:/One", path: "D:\\unrelated-parent\\Cafe\u0301 独立记录 nonce hidden-tail.jsonl" },
   { id: "b", name: "Alpha", updatedAt: 20, createdAt: 30, cwd: "D:/Two" },
   { id: "c", name: "Alpha", updatedAt: 10, createdAt: 50, cwd: "D:/One/child" },
   { id: "d", name: "Delta", updatedAt: 0, createdAt: 60, cwd: "D:/One" },
@@ -113,7 +113,19 @@ filter(tree).props.onKindFilterChange("all"); tree = render();
 assert.ok(text(tree).includes("云端归档尚未接入"));
 assert.equal(reads, 1, "AS07: projections do not read/write backend");
 assert.deepEqual(writes, []);
-const search = nodes(tree, n => n.type === "input")[0]; search.props.onChange({ target: { value: "Alpha" } }); tree = render();
+const search = nodes(tree, n => n.type === "input")[0];
+search.props.onChange({ target: { value: "  CAFÉ 独立记录  " } }); tree = render();
+assert.deepEqual(ids(tree), ["a"], "AS11: setting search uses canonical Unicode and actual rollout basename");
+for (const value of ["unrelated-parent", "hidden-tail"]) {
+  search.props.onChange({ target: { value } }); tree = render();
+  assert.deepEqual(ids(tree), [], "AS11: parent folders and words beyond the third are excluded");
+}
+project(tree).props.onChange("project:local::two"); tree = render();
+search.props.onChange({ target: { value: "CAFÉ 独立记录" } }); tree = render();
+assert.deepEqual(ids(tree), [], "AS11: rollout match cannot bypass project filtering");
+project(tree).props.onChange(one.value); tree = render();
+assert.equal(reads, 1, "AS11: metadata searches do not read from the server");
+search.props.onChange({ target: { value: "Alpha" } }); tree = render();
 assert.deepEqual(ids(tree), ["c", "b"]);
 await nodes(tree, n => n.type === "button" && n.props.className === "archive-refresh")[0].props.onClick();
 for(let i=0;i<8;i++) await Promise.resolve(); tree = render();
@@ -123,6 +135,8 @@ assert.deepEqual(writes, [["restore", "c"]]); assert.deepEqual(ids(tree), ["b"],
 props.surface = "global"; tree = render();
 assert.equal(filter(tree), undefined); assert.equal(nodes(tree, cls("archive-title")).map(text).join(""), "归档", "AS09: standalone heading stays unchanged"); assert.ok(text(tree).includes("归档的会话不会出现在侧边栏"));
 assert.deepEqual(ids(tree), ["b"], "AS09: global retains legacy search, no settings projection");
+nodes(tree, n => n.type === "input")[0].props.onChange({ target: { value: "CAFÉ 独立记录" } }); tree = render();
+assert.deepEqual(ids(tree), [], "AS11: standalone archive keeps its title-only search");
 // Exercise the actual local menu's JSX and handlers without a browser DOM.
 slots.length = 0;
 const selection = [];
@@ -151,4 +165,4 @@ nodes(menuTree, n => n.props?.role === "menuitemradio").at(-1).props.onClick();
 assert.deepEqual(selection, [["sort", "alphabetical"]]); assert.equal(returned, 2);
 const css = fs.readFileSync("src/components/ArchiveView.css", "utf8");
 assert.match(css, /\.archive-filter-menu \[role=menuitemradio\]\s*\{/, "AS10: nested group radios receive button styles");
-console.log("PASS AS01–AS10: production settings sort/group/filter, exact roots and precedence, live memo dependencies, honest cloud gap, read-only projections, restore readback and legacy surface");
+console.log("PASS AS01–AS11: settings sort/group/filter, project identity, read-only projections, rollout basename and Unicode search, restore readback and standalone isolation");
