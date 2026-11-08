@@ -5,9 +5,8 @@ import { loadRepositoryConnections, loadRepositoryInstallations, loadRepositoryP
   type RepositoryCandidate, type RepositoryConnection, type RepositoryInstallation } from "../cloudRepositoryDiscovery";
 import type { CloudRepository } from "../cloudEnvironmentService";
 
-export type RepositorySelection = CloudRepository & { name: string };
+export type RepositorySelection = CloudRepository & { name: string; repositoryName?: string | null };
 type Selection = RepositorySelection;
-const maxRepositories = 16;
 const connectionKey = (connection: RepositoryConnection) => JSON.stringify([connection.connectorId, connection.linkId]);
 
 export function sameRepositorySelection(left: readonly CloudRepository[], right: readonly CloudRepository[]) {
@@ -29,14 +28,15 @@ export function CloudDraftRepositories({ original, selection, disabled, identity
       <button type="button" className="window-chrome-icon-btn" aria-label={`Remove ${repo.name}`} disabled={disabled}
         onClick={() => onChange(selection.filter(row => row.id !== repo.id))}><X size={13} aria-hidden="true" /></button>
     </div>)}
-    {open && <RepositoryDialog original={original} initial={selection} identity={identity} scope={scope}
+    {open && <CloudRepositoryDialog original={original} initial={selection} identity={identity} scope={scope}
       onClose={() => setOpen(false)} onRestoreFocus={() => trigger.current?.focus()} onSave={next => { onChange(next); setOpen(false); }} />}
   </section>;
 }
 
-function RepositoryDialog({ original, initial, identity, scope, onClose, onRestoreFocus, onSave }: {
+export function CloudRepositoryDialog({ original, initial, identity, scope, onClose, onRestoreFocus, onSave, create = false }: {
   original: Selection[]; initial: Selection[]; identity: ServiceIdentity; scope: AbortSignal;
   onClose: () => void; onRestoreFocus: () => void; onSave: (selection: Selection[]) => void;
+  create?: boolean;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const restoreFocus = useRef(onRestoreFocus);
@@ -46,6 +46,7 @@ function RepositoryDialog({ original, initial, identity, scope, onClose, onResto
   const [choice, setChoice] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const maxRepositories = create ? 100 : 16;
   useEffect(() => {
     const element = dialog.current;
     element?.showModal();
@@ -71,10 +72,12 @@ function RepositoryDialog({ original, initial, identity, scope, onClose, onResto
       if (current.length >= maxRepositories || current.some(repo => repo.id === candidate.id)) return current;
       const retained = original.find(repo => repo.id === candidate.id) ?? initial.find(repo => repo.id === candidate.id);
       return retained ? [...current, retained] : candidate.default_branch
-        ? [...current, { id: candidate.id, name: candidate.repository_full_name, ref: candidate.default_branch }] : current;
+        ? [...current, { id: candidate.id, name: candidate.repository_full_name, ref: candidate.default_branch,
+          ...(create ? { repositoryName: candidate.name } : {}) }] : current;
     });
   };
-  return <dialog ref={dialog} className="cloud-draft-domain-dialog cloud-draft-repository-dialog" aria-labelledby={heading}
+  const validSelection = create ? !!selected[0]?.repositoryName : !sameRepositorySelection(initial, selected);
+  return <dialog ref={dialog} className={`cloud-draft-domain-dialog cloud-draft-repository-dialog${create ? " cloud-create-repository-dialog" : ""}`} aria-labelledby={heading}
     onCancel={event => { event.preventDefault(); onClose(); }}
     onClick={event => { if (event.target === event.currentTarget) onClose(); }}
     onKeyDown={event => {
@@ -83,28 +86,33 @@ function RepositoryDialog({ original, initial, identity, scope, onClose, onResto
       if (event.key === "Escape" && (event.nativeEvent.isComposing || event.keyCode === 229)) event.preventDefault();
     }}>
     <div>
-      <header className="cloud-draft-repository-heading"><h3 id={heading}>Add git repository</h3>
+      <header className="cloud-draft-repository-heading"><h3 id={heading}>{create ? "创建云端环境" : "Add git repository"}</h3>
         <button type="button" className="window-chrome-icon-btn" aria-label="关闭仓库选择器" onClick={onClose}><X size={16} aria-hidden="true" /></button>
       </header>
+      {create && <p>选择代码仓库，以便 Codex 确定需要安装哪些内容以及如何配置你的环境</p>}
       {error ? <div role="alert">{error} <button type="button" onClick={() => setAttempt(value => value + 1)}>再次尝试加载 GitHub 连接</button></div>
         : connections === null ? <p role="status">正在加载 GitHub 连接…</p> : <>
           {connections.length > 0 && <label>GitHub 连接<select value={choice} onChange={event => setChoice(event.target.value)}>
             {connections.map(item => <option key={connectionKey(item)} value={connectionKey(item)}>{item.label}</option>)}
           </select></label>}
           {connection?.status === "connected" ? <ConnectionRepositories key={choice} connection={connection} identity={identity} scope={scope}
-            selected={selected} retained={[...original, ...initial]} onChange={change} />
+            selected={selected} retained={[...original, ...initial]} maxRepositories={maxRepositories} onChange={change} />
             : <p role="status">{connection?.status === "reconnect" ? "请重新连接 GitHub，以加载你的代码仓库"
               : connection?.status === "disabled" ? "此 GitHub 连接已被管理员禁用。" : "连接 GitHub，即可查看你的代码仓库"}</p>}
         </>}
-      <footer className="cloud-envs-footer"><button type="button" onClick={onClose}>取消</button>
-        <button type="button" disabled={selected.length > maxRepositories || sameRepositorySelection(initial, selected)}
-          onClick={() => onSave(selected)}>Save</button></footer>
+      {create && selected.length > 0 && !validSelection && <p role="alert">首个仓库缺少名称，请选择其他仓库。</p>}
+      <footer className="cloud-envs-footer">
+        {create && <span className="cloud-create-repository-count" role="status">{selected.length ? `已选择 ${selected.length} 项` : "未选择任何项"}</span>}
+        <button type="button" onClick={onClose}>取消</button>
+        <button type="button" disabled={selected.length > maxRepositories || !validSelection}
+          onClick={() => onSave(selected)}>{create ? "开始设置" : "Save"}</button></footer>
     </div>
   </dialog>;
 }
 
-function ConnectionRepositories({ connection, identity, scope, selected, retained, onChange }: {
+function ConnectionRepositories({ connection, identity, scope, selected, retained, maxRepositories, onChange }: {
   connection: RepositoryConnection; identity: ServiceIdentity; scope: AbortSignal; selected: Selection[]; retained: Selection[];
+  maxRepositories: number;
   onChange: (candidate: RepositoryCandidate, checked: boolean) => void;
 }) {
   const [installations, setInstallations] = useState<RepositoryInstallation[] | null>(null);
@@ -136,14 +144,15 @@ function ConnectionRepositories({ connection, identity, scope, selected, retaine
       : installations === null && <p role="status">组织加载中…</p>}
     <input type="search" aria-label="搜索代码仓库" placeholder="搜索" value={query} onChange={event => setQuery(event.target.value)} />
     {query.trim() === debounced ? <RepositoryResults key={JSON.stringify([installation?.id, debounced])}
-      {...{ connection, identity, scope, installation, selected, retained, onChange }} query={debounced} />
+      {...{ connection, identity, scope, installation, selected, retained, maxRepositories, onChange }} query={debounced} />
       : <p role="status">代码仓库加载中…</p>}
   </>;
 }
 
-function RepositoryResults({ connection, identity, scope, installation, query, selected, retained, onChange }: {
+function RepositoryResults({ connection, identity, scope, installation, query, selected, retained, maxRepositories, onChange }: {
   connection: RepositoryConnection; identity: ServiceIdentity; scope: AbortSignal; installation: RepositoryInstallation | null;
   query: string; selected: Selection[]; retained: Selection[]; onChange: (candidate: RepositoryCandidate, checked: boolean) => void;
+  maxRepositories: number;
 }) {
   const [rows, setRows] = useState<RepositoryCandidate[]>([]);
   const [page, setPage] = useState(1);

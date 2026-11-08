@@ -232,6 +232,7 @@ pub(super) fn repository_body(operation: &ServiceOperation, body: &Value) -> Ser
             let rows = body["repositories"].as_array().ok_or_else(malformed)?;
             let repositories = rows.iter().map(|row| {
                 Ok(json!({"id":text(&row["id"])?,"repository_full_name":text(&row["repository_full_name"])?,
+                    "name":text(&row["name"]).ok(),
                     "default_branch":row["default_branch"].as_str().filter(|branch| !branch.trim().is_empty() && !branch.chars().any(char::is_control))}))
             }).collect::<ServiceResult<Vec<_>>>()?;
             Ok(json!({"repositories":repositories}))

@@ -23,6 +23,8 @@ await test('create eligibility and direct experience are independently confirmed
   const h = fixture();
   h.c.gates['375130565'] = true;
   assert.equal((await h.read()).canCreate, true);
+  assert.equal((await h.read()).directCreate, null);
+  h.c.gates['3620782482'] = false;
   assert.equal((await h.read()).directCreate, false);
   h.c.compact = true; h.c.hashed = true;
   h.c.gates['3620782482'] = true;

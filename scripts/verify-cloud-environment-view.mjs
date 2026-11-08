@@ -69,6 +69,13 @@ export function cloudEnvironmentHarness({ listenerError, deferredListener = fals
       if (name === "../cloudDraftSession") return { createCloudDraftSession: (environment, names, current, signal) => call("create", [environment, names, current], signal) };
       if (name === "../cloudDraftRepositoryApply") return { pendingRepositoryApplySession: () => pendingDraft };
       if (name === "../cloudEnvironmentReply") return { pendingCloudReplySession: () => null };
+      if (name === "./CloudDraftRepositories") return { CloudRepositoryDialog: ({ onClose, onSave, initial }) =>
+        React.createElement("div", { role: "dialog", initial },
+          React.createElement("button", { onClick: onClose }, "取消选择"),
+          React.createElement("button", { onClick: () => onSave([
+            { id: "repo-a", name: "owner/full-a", repositoryName: "canonical-a", ref: "main" },
+            { id: "repo-b", name: "owner/full-b", repositoryName: "canonical-b", ref: "release" },
+          ]) }, "开始设置")) };
       if (name === "../cloudEnvironmentSetup") return {
         hasPendingCloudEnvironmentSetup: () => false,
         openCloudEnvironmentSetup: (selection, current, signal) => call("setup", [selection, current], signal),
@@ -233,7 +240,32 @@ await check("direct creation requires both gates and only opens the confirmed se
   h.unmount();
   const picker = await boot(cloudEnvironmentHarness({ onOpenDraft: () => assert.fail("wrong gate branch") }), undefined,
     { canCreate: true, directCreate: false });
-  assert.equal(button(picker, "创建环境").props.disabled, true);
+  assert.equal(button(picker, "创建环境").props.disabled, false);
+  button(picker, "创建环境").props.onClick();
+  assert.equal(count(picker, "setup"), 0);
+  button(picker, "取消选择").props.onClick();
+  assert.equal(count(picker, "setup"), 0);
   picker.unmount();
+  const unknown = await boot(cloudEnvironmentHarness({ onOpenDraft: () => assert.fail("unconfirmed gate") }), undefined,
+    { canCreate: true, directCreate: null });
+  assert.equal(button(unknown, "创建环境").props.disabled, true);
+  unknown.unmount();
+});
+await check("picker creation uses the first repository short name and preserves selected branches", async () => {
+  const h = await boot(cloudEnvironmentHarness({ onOpenDraft: () => assert.fail("unconfirmed setup") }), undefined,
+    { canCreate: true, directCreate: false });
+  button(h, "创建环境").props.onClick();
+  button(h, "开始设置").props.onClick();
+  assert.equal(count(h, "setup"), 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(latest(h, "setup").args[0])), {
+    name: "canonical-a", repositories: [
+      { repositoryId: "repo-a", name: "owner/full-a", ref: "main" },
+      { repositoryId: "repo-b", name: "owner/full-b", ref: "release" },
+    ],
+  });
+  latest(h, "setup").reject({ status: 403, message: "fixture refusal" }); await flush();
+  button(h, "创建环境").props.onClick();
+  assert.equal(walk(h.render()).find(node => node.props.role === "dialog").props.initial.length, 2);
+  h.unmount();
 });
 console.log(`PASS ${passed} cloud environment production JSX/hook scenarios; ReactDOM, bridge/access/service transport and lucide are explicit offline boundaries. HTTP, native UI, physical IME and pixel parity remain unverified.`);

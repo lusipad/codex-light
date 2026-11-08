@@ -4,7 +4,7 @@ type Connector = { id: string; name: string; disabled: boolean };
 type Link = { id: string; connector_id: string; available: boolean; nickname: string | null };
 export type RepositoryConnection = { connectorId: string; linkId: string | null; label: string; status: "connected" | "connect" | "disabled" | "reconnect" };
 export type RepositoryInstallation = { id: string; account_login: string; account_type: string };
-export type RepositoryCandidate = { id: string; repository_full_name: string; default_branch: string | null };
+export type RepositoryCandidate = { id: string; name: string | null; repository_full_name: string; default_branch: string | null };
 
 export async function loadRepositoryConnections(identity: ServiceIdentity, signal: AbortSignal): Promise<RepositoryConnection[]> {
   const [builtin, enterprise, accessible] = await Promise.all([

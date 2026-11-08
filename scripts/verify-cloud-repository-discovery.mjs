@@ -15,7 +15,7 @@ const outputs = {
   ] },
   cloud_github_installations: { memberships: [{ id: "37", account_login: "owner", account_type: "Organization" }],
     other: [{ id: "37", account_login: "duplicate", account_type: "User" }] },
-  cloud_github_repositories: { repositories: Array.from({ length: 20 }, (_, i) => ({ id: String(i), repository_full_name: `owner/repo-${i}`, default_branch: i ? null : "release" })) },
+  cloud_github_repositories: { repositories: Array.from({ length: 20 }, (_, i) => ({ id: String(i), name: i ? null : "canonical-name", repository_full_name: `owner/repo-${i}`, default_branch: i ? null : "release" })) },
 };
 const exports = {};
 const identity = { accountId: "account", userId: "user", generation: 1 };
@@ -42,6 +42,8 @@ assert.deepEqual(calls.at(-1).params, { connectorId: "default", linkId: "persona
 const page = await exports.loadRepositoryPage(connections[0], installation, " 中文 & repo ", 2, identity, signal);
 assert.equal(page.nextPage, 3);
 assert.equal(page.rows[0].default_branch, "release");
+assert.equal(page.rows[0].name, "canonical-name");
+assert.equal(page.rows[1].name, null);
 assert.equal(page.rows[1].default_branch, null);
 assert.deepEqual(calls.at(-1).params, { connectorId: "default", linkId: "personal", page: 2, query: "中文 & repo",
   installation: { id: "37", accountLogin: "owner", accountType: "Organization" } });

@@ -5677,16 +5677,18 @@ mod tests {
     #[tokio::test]
     async fn cloud_repository_discovery_reads_repository_pages_and_omits_foreign_fields() {
         let service = ChatgptService::default();
-        let raw = json!({"repositories":[{"id":"github-42","repository_full_name":"example/one","default_branch":"release","unrelated":"omitted"},
-            {"id":"github-51","repository_full_name":"example/two"}]});
+        let raw = json!({"repositories":[{"id":"github-42","name":"canonical-name","repository_full_name":"example/one","default_branch":"release","unrelated":"omitted"},
+            {"id":"github-51","repository_full_name":"example/two"},
+            {"id":"github-52","repository_full_name":"example/three","name":"invalid\nname"}]});
         let transport = instructions_transport(&[200], &[raw]);
         let mut input = request("cloud-github-page");
         input.operation = ServiceOperation::CloudGithubRepositories;
         input.params = json!({"connectorId":"connector","linkId":"link","page":1,"query":""});
         let result = service.read_with(input, share_rpc, &transport).await.unwrap();
         assert_eq!(result.body, json!({"repositories":[
-            {"id":"github-42","repository_full_name":"example/one","default_branch":"release"},
-            {"id":"github-51","repository_full_name":"example/two","default_branch":null}
+            {"id":"github-42","name":"canonical-name","repository_full_name":"example/one","default_branch":"release"},
+            {"id":"github-51","name":null,"repository_full_name":"example/two","default_branch":null},
+            {"id":"github-52","name":null,"repository_full_name":"example/three","default_branch":null}
         ]}));
         let calls = transport.requests.lock().unwrap();
         assert_eq!(calls.len(), 1);

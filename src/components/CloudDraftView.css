@@ -103,6 +103,19 @@
 .cloud-draft-repository-dialog .cloud-draft-repository-option { display: flex; align-items: center; gap: 8px; padding-block: 4px; overflow-wrap: anywhere; }
 .cloud-draft-repository-option input[type="checkbox"] { width: auto; flex-shrink: 0; }
 .cloud-draft-repository-dialog .cloud-envs-footer { bottom: -24px; margin-top: 0; }
+.cloud-create-repository-dialog { width: min(480px, 92vw); max-height: min(92dvh, calc(100dvh - 2rem)); border-radius: 16px; }
+.cloud-create-repository-dialog .cloud-create-repository-count { margin-inline-end: auto; color: var(--text-secondary); }
+.cloud-create-repository-dialog :is(select, input[type="search"]) {
+  box-sizing: border-box;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-surface-2);
+  color: var(--text-primary);
+  font: inherit;
+  padding: 6px 8px;
+}
+.cloud-create-repository-dialog select { margin-inline-start: 8px; }
+.cloud-create-repository-dialog input[type="search"] { width: 100%; }
 
 @media (max-width: 720px) {
   .cloud-draft-view { position: relative; }

@@ -9,7 +9,7 @@ export interface CloudEnvironmentAccess {
   rbacEnabled: boolean;
   gateEvidence: string;
   canCreate: boolean;
-  directCreate: boolean;
+  directCreate: boolean | null;
 }
 const object = (value: unknown): value is Record<string, any> => value !== null && typeof value === "object" && !Array.isArray(value);
 const personalPlans = new Set(["free", "go", "plus", "prolite", "pro", "promax"]);
@@ -70,8 +70,9 @@ export async function readCloudEnvironmentAccess(signal: AbortSignal): Promise<C
   const after = await serviceIdentity(signal);
   if (identity.accountId !== after.accountId || identity.userId !== after.userId || identity.generation !== after.generation)
     throw Error("读取期间账号发生变化，请重试。");
+  const experience = gateValue("3620782482");
   return { identity, available, canManage, rbacEnabled, gateEvidence,
     canCreate: available && gateValue("375130565") === true,
-    directCreate: gateValue("3620782482") === true,
+    directCreate: typeof experience === "boolean" ? experience : null,
   };
 }
