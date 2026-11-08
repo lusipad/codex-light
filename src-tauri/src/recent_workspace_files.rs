@@ -2,6 +2,7 @@ use std::path::{Component, Path};
 use std::process::Stdio;
 use std::sync::Mutex;
 use std::time::{Duration, UNIX_EPOCH};
+use serde_json::{json, Map, Value};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::oneshot;
@@ -12,12 +13,97 @@ const EXCLUDED_DIRS: &[&str] = &[
 ];
 const MAX_CANDIDATES: usize = 20;
 static ACTIVE_SCAN: Mutex<Option<(String, oneshot::Sender<()>)>> = Mutex::new(None);
+const ATOMS_KEY: &str = "electron-persisted-atom-state";
+const HISTORY_KEY: &str = "recent-workspace-files-v3";
+const MAX_HISTORY: usize = 100;
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RecentWorkspaceFile {
     path: String,
     updated_at: u64,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FileAccess {
+    host_id: String,
+    thread_id: String,
+    path: String,
+    updated_at: u64,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    deleted: bool,
+}
+
+fn path_key(path: &str) -> String {
+    let mut key = path.replace('\\', "/");
+    key.truncate(key.trim_end_matches('/').len());
+    if key.as_bytes().get(1) == Some(&b':') || key.starts_with("//") {
+        key = key.to_lowercase();
+    }
+    key
+}
+
+fn in_scope(path: &str, root: &str) -> bool {
+    let valid = |value: &str| Path::new(value).is_absolute()
+        && !Path::new(value).components().any(|part| part == Component::ParentDir);
+    valid(path) && valid(root) && path_key(path).strip_prefix(&path_key(root)).is_some_and(|tail| tail.starts_with('/') && tail.len() > 1)
+}
+
+fn object_or_empty(value: Value) -> Result<Map<String, Value>, String> {
+    match value {
+        Value::Null => Ok(Map::new()),
+        Value::Object(map) => Ok(map),
+        _ => Err("最近文件记录格式无效".into()),
+    }
+}
+
+fn merge_access(previous: Value, access: FileAccess) -> Result<Value, String> {
+    let mut atoms = object_or_empty(previous)?;
+    let mut history = object_or_empty(atoms.remove(HISTORY_KEY).unwrap_or(Value::Null))?;
+    let key = json!([access.host_id, access.thread_id, path_key(&access.path)]).to_string();
+    let timestamp = |value: &Value| value["updatedAt"].as_u64().unwrap_or_default();
+    if history.get(&key).is_none_or(|record| timestamp(record) <= access.updated_at) {
+        history.insert(key, serde_json::to_value(access).map_err(|error| error.to_string())?);
+    }
+    let mut records: Vec<_> = history.into_iter().collect();
+    records.sort_by_key(|(_, record)| std::cmp::Reverse(timestamp(record)));
+    atoms.insert(HISTORY_KEY.into(), Value::Object(records.into_iter().take(MAX_HISTORY).collect()));
+    Ok(Value::Object(atoms))
+}
+
+pub(crate) fn record_access(state: &crate::state::DesktopStateManager, root: &str, path: String, thread_id: String, updated_at: u64) -> Result<(), String> {
+    if !in_scope(&path, root) {
+        return Err("最近文件超出工作区范围".into());
+    }
+    state.update_value_persisted(ATOMS_KEY, |previous| merge_access(previous, FileAccess {
+        host_id: "local".into(), thread_id, path, updated_at, deleted: false,
+    }))?;
+    Ok(())
+}
+
+pub(crate) async fn read_history(atoms: Value, root: &str) -> Result<Vec<RecentWorkspaceFile>, String> {
+    let mut atoms = object_or_empty(atoms)?;
+    let history = object_or_empty(atoms.remove(HISTORY_KEY).unwrap_or(Value::Null))?;
+    let mut records: Vec<FileAccess> = history.into_values().filter_map(|record| serde_json::from_value(record).ok())
+        .filter(|record: &FileAccess| record.host_id == "local" && in_scope(&record.path, root)).collect();
+    records.sort_by_key(|record| (std::cmp::Reverse(record.updated_at), !record.deleted));
+    let mut seen = std::collections::HashSet::new();
+    let mut files = Vec::new();
+    for record in records {
+        if !seen.insert(path_key(&record.path)) || record.deleted {
+            continue;
+        }
+        if tokio::fs::symlink_metadata(&record.path).await.is_ok_and(|metadata| metadata.is_file()) {
+            files.push(RecentWorkspaceFile { path: record.path, updated_at: record.updated_at });
+            if files.len() == 10 { break; }
+        }
+    }
+    Ok(files)
+}
+
+pub(crate) fn history_snapshot(state: &crate::state::DesktopStateManager) -> Value {
+    state.get_value(ATOMS_KEY)
 }
 
 pub(crate) fn cancel(request_id: &str) {
@@ -134,6 +220,38 @@ mod tests {
             assert!(file_entry(&root, invalid.as_bytes()).await.unwrap().is_none());
         }
         std::fs::remove_file(path).unwrap();
+        std::fs::remove_dir(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn recent_history_projects_local_existing_files_and_respects_tombstones() {
+        let root = std::env::temp_dir().join(format!("codex-recent-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("测试🚀.txt");
+        std::fs::write(&path, b"private fixture").unwrap();
+        let access = |host: &str, thread: &str, updated_at, deleted| FileAccess {
+            host_id: host.into(), thread_id: thread.into(), path: path.to_string_lossy().into_owned(), updated_at, deleted,
+        };
+        let mut atoms = merge_access(json!({ "unrelated": 5 }), access("local", "one", 10, false)).unwrap();
+        atoms = merge_access(atoms, access("local", "one", 5, false)).unwrap();
+        atoms = merge_access(atoms, access("remote", "one", 20, false)).unwrap();
+        let serialized = serde_json::to_vec(&atoms).unwrap();
+        let rows = read_history(serde_json::from_slice(&serialized).unwrap(), root.to_str().unwrap()).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].updated_at, 10);
+        atoms = merge_access(atoms, access("local", "other", 10, true)).unwrap();
+        assert!(read_history(atoms.clone(), root.to_str().unwrap()).await.unwrap().is_empty());
+        atoms = merge_access(atoms, access("local", "one", 30, false)).unwrap();
+        assert_eq!(read_history(atoms.clone(), root.to_str().unwrap()).await.unwrap()[0].updated_at, 30);
+        std::fs::remove_file(path.clone()).unwrap();
+        assert!(read_history(atoms.clone(), root.to_str().unwrap()).await.unwrap().is_empty());
+        assert!(read_history(atoms.clone(), root.join("other").to_str().unwrap()).await.unwrap().is_empty());
+        assert_eq!(atoms["unrelated"], 5);
+        for i in 1..=110 {
+            atoms = merge_access(atoms, access("local", &format!("thread-{i}"), 30 + i, false)).unwrap();
+        }
+        assert_eq!(atoms[HISTORY_KEY].as_object().unwrap().len(), 100);
+        assert!(merge_access(json!({(HISTORY_KEY): []}), access("local", "one", 40, false)).is_err());
         std::fs::remove_dir(root).unwrap();
     }
 }

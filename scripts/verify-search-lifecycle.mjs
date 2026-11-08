@@ -71,6 +71,7 @@ function mount() {
       const pending = deferred(); requests.push({ method, args, ...pending }); return pending.promise;
     },
     setRecentResult(result) { context.recentResult = result; },
+    setHistoryResult(result) { context.historyResult = result; },
   };
   return {
     context, requests, timers, fileControllers, ...vm.runInNewContext(js, context),
@@ -98,17 +99,21 @@ await check("SB11 empty file scan cancels on scope change and cannot apply late 
   const cleanup = view.recent();
   assert.equal(view.requests[0].args.root, "C:/repo-A");
   cleanup();
-  assert.equal(view.requests[1].method, "fs_cancel_recent_workspace_files");
-  assert.equal(view.requests[1].args.requestId, "scan-id");
-  view.requests[0].resolve([{ path: "C:/repo-A/a.txt", updatedAt: 1 }]); await flush();
+  assert.equal(view.requests[2].method, "fs_cancel_recent_workspace_files");
+  assert.equal(view.requests[2].args.requestId, "scan-id");
+  view.requests[0].resolve([{ path: "C:/repo-A/a.txt", updatedAt: 1 }]);
+  view.requests[1].resolve([{ path: "C:/repo-A/a.txt", updatedAt: 2 }]); await flush();
   assert.equal(view.context.recentResult, undefined);
+  assert.equal(view.context.historyResult, undefined);
   view.context.recentRequest = { workspacePath: "C:/repo-B" };
   const finish = view.recent();
-  view.requests[2].reject(Error("missing ripgrep")); await flush();
+  view.requests[3].resolve([{ path: "C:/repo-B/b.txt", updatedAt: 3 }]);
+  view.requests[4].reject(Error("missing ripgrep")); await flush();
   assert.equal(view.context.recentResult.request.workspacePath, "C:/repo-B");
+  assert.equal(view.context.historyResult.files[0].path, "C:/repo-B/b.txt");
   assert.equal(view.context.recentResult.files, undefined);
   finish();
-  assert.equal(view.requests.length, 3, "settled scans require no cancellation");
+  assert.equal(view.requests.length, 5, "settled scans require no cancellation");
 });
 await check("SB08 direct paths resolve only inside the selected workspace", async () => {
   const view = mount();

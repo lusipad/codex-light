@@ -35,7 +35,7 @@ function mount(overrides = {}) {
   const calls = [];
   const context = {
     query: "goal", mode: "root", workspacePath: "repo-B", remoteResults: null, pathQuery: null, pathLookup: null,
-    threads: [], workspaceFileHits: [], recentFiles: [], recentLookup: null, skills: [], SLASH_COMMANDS: [slash],
+    threads: [], workspaceFileHits: [], recentFiles: [], recentHistory: [], recentLookup: null, skills: [], SLASH_COMMANDS: [slash],
     REMOTE_THREAD_LIMIT: 9,
     runCmd: "npm run dev", testCmd: "npm test", buildCmd: "npm run build",
     selectedIndex: 0,
@@ -73,7 +73,9 @@ function mount(overrides = {}) {
   view.context.workspacePath = "C:/another";
   assert.equal(view.results().length, 0, "recent paths cannot leak to another workspace");
   let history = {};
-  const remember = execute(rememberWorkspaceFile, app, { fileDedupeKey: view.context.fileDedupeKey, setRecentFilesByWorkspace: update => { history = update(history); } });
+  const writes = [];
+  const remember = execute(rememberWorkspaceFile, app, { fileDedupeKey: view.context.fileDedupeKey, setRecentFilesByWorkspace: update => { history = update(history); },
+    isTauriRuntime: () => true, activeThreadId: "thread-a", tauriInvoke: (method, args) => { writes.push({ method, args }); return Promise.resolve(); } });
   for (const path of recentFiles.slice().reverse()) remember("C:/repo", path);
   remember("C:/other", "C:/other/isolated.txt");
   remember("c:\\REPO", "c:\\repo\\recent-4.txt");
@@ -82,6 +84,7 @@ function mount(overrides = {}) {
   assert.equal(history["c:/repo"].filter(file => /recent-4/i.test(file.path)).length, 1);
   assert.ok(!history["c:/repo"].some(file => file.path.includes("secret.txt")));
   assert.deepEqual(Array.from(history["c:/other"], file => file.path), ["C:/other/isolated.txt"]);
+  assert.ok(writes.every(write => write.method === "fs_record_recent_file_access" && write.args.threadId === "thread-a" && !write.args.path.includes("secret.txt")));
 }
 {
   const view = mount({ mode: "files", query: "", workspacePath: "C:/repo",
@@ -91,6 +94,9 @@ function mount(overrides = {}) {
   assert.deepEqual(Array.from(view.results(), row => row.title), ["changed.txt", "OPEN.txt"]);
   assert.ok(view.results().every(row => row.section === "最近文件"));
   view.context.recentLookup = {};
+  view.context.recentHistory = [{ path: "C:/repo/before-restart.txt", updatedAt: 40 }];
+  assert.equal(view.results()[0].title, "before-restart.txt", "disk scan failure preserves loaded history");
+  view.context.recentHistory = [];
   assert.equal(view.results()[0].title, "open.txt", "scan failure preserves opened history");
   view.results()[1].onSelect();
   assert.deepEqual(view.calls, [["recent retry", 1]]);

@@ -984,6 +984,18 @@ fn fs_cancel_recent_workspace_files(request_id: String) {
 }
 
 #[tauri::command]
+async fn fs_recent_file_history(state: State<'_, AppState>, root: String) -> Result<Vec<recent_workspace_files::RecentWorkspaceFile>, String> {
+    recent_workspace_files::read_history(recent_workspace_files::history_snapshot(&state.desktop_state), &root).await
+}
+
+#[tauri::command]
+async fn fs_record_recent_file_access(state: State<'_, AppState>, root: String, path: String, thread_id: String, updated_at: u64) -> Result<(), String> {
+    let desktop = state.desktop_state.clone();
+    tokio::task::spawn_blocking(move || recent_workspace_files::record_access(&desktop, &root, path, thread_id, updated_at))
+        .await.map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn fs_list_dir(
     path: String,
     show_hidden: Option<bool>,
@@ -2416,6 +2428,8 @@ pub fn run() {
             fs_list_dir,
             fs_recent_workspace_files,
             fs_cancel_recent_workspace_files,
+            fs_recent_file_history,
+            fs_record_recent_file_access,
             fs_read_preview,
             fs_write_file,
             fs_search_files,

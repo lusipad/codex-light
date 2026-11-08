@@ -274,7 +274,9 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   const recentRequest = useMemo(() => open && mode === "files" && workspacePath && !trimmedQuery
     ? { workspacePath } : null, [open, mode, workspacePath, trimmedQuery, recentRetry, initialQuery]);
   const [recentResult, setRecentResult] = useState<{ request: NonNullable<typeof recentRequest>; files?: RecentFile[] } | null>(null);
+  const [historyResult, setHistoryResult] = useState<{ request: NonNullable<typeof recentRequest>; files: RecentFile[] } | null>(null);
   const recentLookup = recentResult?.request === recentRequest ? recentResult : null;
+  const recentHistory = historyResult?.request === recentRequest ? historyResult.files : undefined;
   const pathQuery = mode === "files" && /^(?:~(?:\/|$)|[a-zA-Z]:[\\/]|\/|\\\\)/.test(trimmedQuery)
     ? trimmedQuery : null;
   const pathRequest = useMemo(() => open && workspacePath && pathQuery ? { pathQuery, workspacePath } : null,
@@ -346,6 +348,10 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
     const requestId = crypto.randomUUID();
     let disposed = false;
     let settled = false;
+    void tauriInvoke<RecentFile[]>("fs_recent_file_history", { root: recentRequest.workspacePath }).then(
+      files => { if (!disposed) setHistoryResult({ request: recentRequest, files }); },
+      error => { if (!disposed) console.warn("最近文件记录读取失败", error); },
+    );
     void tauriInvoke<RecentFile[]>("fs_recent_workspace_files", { root: recentRequest.workspacePath, requestId }).then(
       files => { settled = true; if (!disposed) setRecentResult({ request: recentRequest, files }); },
       () => { settled = true; if (!disposed) setRecentResult({ request: recentRequest }); },
@@ -458,7 +464,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
       const root = `${fileDedupeKey(workspacePath)}/`;
       const seen = new Set<string>();
       const section = recentLookup?.files?.length ? "最近文件" : "最近打开";
-      const candidates = [...(recentFiles ?? []), ...(recentLookup?.files ?? [])].sort((a, b) => b.updatedAt - a.updatedAt);
+      const candidates = [...(recentFiles ?? []), ...(recentHistory ?? []), ...(recentLookup?.files ?? [])].sort((a, b) => b.updatedAt - a.updatedAt);
       for (const { path } of candidates) {
         const key = fileDedupeKey(path);
         if (!key.startsWith(root) || seen.has(key)) continue;
@@ -883,6 +889,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
     mode,
     workspacePath,
     recentFiles,
+    recentHistory,
     recentLookup,
     threads,
     skills,
