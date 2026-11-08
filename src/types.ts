@@ -353,7 +353,8 @@ export type MainViewRoute =
   | "sites"
   | "library"
   | "cloud-draft"
-  | "cloud-environments";
+  | "cloud-environments"
+  | "cloud-create";
 
 export type TurnCompletionPolicy = "always" | "unfocused" | "off";
 

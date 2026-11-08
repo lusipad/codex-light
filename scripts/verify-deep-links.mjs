@@ -16,11 +16,13 @@ const settle = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(
 const A = "11111111-1111-1111-1111-111111111111";
 const B = "22222222-2222-2222-2222-222222222222";
 const thread = id => ({ thread: { id } });
+const threadLink = (generation, threadId) => ({ generation, kind: "thread", threadId });
+const cloudLink = generation => ({ generation, kind: "cloud_environment_create" });
 
-function fixture(overrides = {}) {
-  const calls = [], listeners = [], selected = [], errors = [];
+function fixture(overrides = {}, initial = threadLink(1, A)) {
+  const calls = [], listeners = [], selected = [], errors = [], cloudOpened = [];
   const controller = new AbortController();
-  let pending = { generation: 1, threadId: A }, revision = 0;
+  let pending = initial, revision = 0;
   const behavior = {
     read: async id => thread(id),
     acknowledge: async generation => {
@@ -62,10 +64,11 @@ function fixture(overrides = {}) {
     signal: controller.signal,
     navigationRevision: () => revision,
     selectThread: async id => { selected.push(id); },
+    openCloudEnvironmentCreate: () => cloudOpened.push("create"),
     onError: message => errors.push(message),
   });
   return {
-    calls, listeners, selected, errors, controller, installation,
+    calls, listeners, selected, errors, cloudOpened, controller, installation,
     emit(name = "native-deep-link") {
       for (const item of listeners) if (item.active && item.name === name) item.callback({});
     },
@@ -107,7 +110,7 @@ function fixture(overrides = {}) {
 {
   const readA = defer(), f = fixture({ read: id => id === A ? readA.promise : Promise.resolve(thread(B)) });
   await f.installation; await settle();
-  f.setPending({ generation: 2, threadId: B }); f.emit(); await settle();
+  f.setPending(threadLink(2, B)); f.emit(); await settle();
   assert.deepEqual(f.selected, [B]);
   readA.resolve(thread(A)); await settle();
   assert.deepEqual(f.selected, [B]);
@@ -121,7 +124,7 @@ function fixture(overrides = {}) {
   let first = true;
   const f = fixture({ acknowledge: () => first ? (first = false, ack.promise) : Promise.resolve(true) });
   await f.installation; await settle();
-  f.setPending({ generation: 2, threadId: B });
+  f.setPending(threadLink(2, B));
   ack.resolve(false); await settle();
   assert.deepEqual(f.selected, [B]);
   assert.equal(f.count("thread/read"), 2);
@@ -133,7 +136,7 @@ function fixture(overrides = {}) {
   const ack = defer();
   const f = fixture({ acknowledge: generation => generation === 1 ? ack.promise : Promise.resolve(true) });
   await f.installation; await settle();
-  f.setPending({ generation: 2, threadId: B }); f.emit(); await settle();
+  f.setPending(threadLink(2, B)); f.emit(); await settle();
   ack.resolve(true); await settle();
   assert.deepEqual(f.selected, [B]);
   await f.cleanup();
@@ -219,6 +222,30 @@ for (const invalidate of ["identity", "unmount"]) {
   await f.cleanup();
 }
 
+// Cold queue and later wake use the same handshake without local conversation metadata.
+for (const cold of [true, false]) {
+  const f = fixture({}, cold ? cloudLink(1) : null);
+  await f.installation; await settle();
+  if (!cold) {
+    assert.deepEqual(f.cloudOpened, []);
+    f.setPending(cloudLink(1));
+  }
+  f.emit(); f.emit(); await settle();
+  assert.deepEqual(f.cloudOpened, ["create"]);
+  assert.deepEqual(f.selected, []);
+  assert.equal(f.count("thread/read"), 0);
+  assert.equal(f.count("deep_link_acknowledge"), 1);
+  await f.cleanup();
+}
+{
+  const ack = defer();
+  const f = fixture({ acknowledge: () => ack.promise }, cloudLink(1));
+  await f.installation; await settle();
+  f.navigate(); ack.resolve(true); await settle();
+  assert.deepEqual(f.cloudOpened, []);
+  await f.cleanup();
+}
+
 // Static integration checks complement the production-controller VM tests.
 const app = fs.readFileSync("src/App.tsx", "utf8");
 const install = app.indexOf("const installed = installDeepLinkReceiver(");
@@ -228,6 +255,7 @@ assert.match(effect, /if \(isQuickChatWindow \|\| isThreadWindow \|\| !appServer
 assert.match(effect, /navigationRevision:[\s\S]*navigationRequestRef\.current[\s\S]*deepLinkRouteRef\.current\.revision/);
 assert.match(effect, /signal: pending\.signal/);
 assert.match(effect, /selectThread,/);
+assert.match(effect, /openCloudEnvironmentCreate:[\s\S]*cloudDraftRef\.current\?\.session\.setup[\s\S]*setActiveRoute\("cloud-create"\)/);
 assert.match(effect, /pending\.abort\(\)/);
 assert.match(effect, /installed\.then\(unlisten => unlisten\(\)\)/);
 assert.match(effect, /\[isQuickChatWindow, isThreadWindow, appServerStatus\.connected, threadEventsReady, accountInfo,/);

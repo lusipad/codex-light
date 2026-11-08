@@ -15,7 +15,7 @@ const access = { identity, available: true, canManage: true, rbacEnabled: false,
 const summary = (id = "one", extra = {}) => ({ id, name: `环境 ${id}`, version_id: "v1", share_settings: "private", repositories: [{ repository_id: "repo", ref: "main" }], ...extra });
 const config = (id = "one", extra = {}) => ({ ...summary(id), status: "ready", network_policy: { type: "disabled" }, ...extra });
 
-export function cloudEnvironmentHarness({ listenerError, deferredListener = false, embedded = false, onOpenDraft, pendingDraft = null } = {}) {
+export function cloudEnvironmentHarness({ listenerError, deferredListener = false, embedded = false, onOpenDraft, pendingDraft = null, onCloseCreate } = {}) {
   const hooks = [], effects = [], layouts = [], calls = [], listeners = [], timers = new Map(), elements = new Map(), events = new Map();
   let cursor = 0, domIndex = 0, writes = 0, clock = 0, nextTimer = 0, tree, unlistened = 0;
   const document = { body: {}, activeElement: null,
@@ -32,6 +32,7 @@ export function cloudEnvironmentHarness({ listenerError, deferredListener = fals
       const key = `${domIndex++}:${type}:${props?.key ?? ""}`;
       let element = elements.get(key);
       if (!element) { element = { focus() { document.activeElement = this; }, contains(value) { return value === this; },
+        showModal() { this.open = true; }, close() { this.open = false; },
         getBoundingClientRect() { return { right: 900, bottom: 200, top: 172 }; },
         querySelector() { return walk(tree).find(n => n.props.role === "menuitem" && !n.props.disabled)?.element; },
       }; elements.set(key, element); }
@@ -42,6 +43,7 @@ export function cloudEnvironmentHarness({ listenerError, deferredListener = fals
     useState(initial) { const i = cursor++; if (!(i in hooks)) hooks[i] = typeof initial === "function" ? initial() : initial;
       return [hooks[i], value => { writes++; hooks[i] = typeof value === "function" ? value(hooks[i]) : value; }]; },
     useRef(initial) { const i = cursor++; return hooks[i] ?? (hooks[i] = { current: initial }); },
+    useId() { return `test-id-${cursor++}`; },
   };
   const effect = queue => (fn, deps) => { const i = cursor++, old = hooks[i];
     if (!old || !deps || deps.some((value, j) => !Object.is(value, old.deps?.[j]))) {
@@ -86,7 +88,7 @@ export function cloudEnvironmentHarness({ listenerError, deferredListener = fals
     },
   });
   return { calls, listeners, document, data,
-    render() { cursor = 0; domIndex = 0; tree = view.CloudEnvironmentsView({ embedded, onOpenDraft }); while (layouts.length) layouts.shift()(); while (effects.length) effects.shift()(); return tree; },
+    render() { cursor = 0; domIndex = 0; tree = view.CloudEnvironmentsView({ embedded, onOpenDraft, onCloseCreate }); while (layouts.length) layouts.shift()(); while (effects.length) effects.shift()(); return tree; },
     tick(ms) { clock += ms; for (const [id, timer] of [...timers]) if (timer.due <= clock) { timers.delete(id); timer.callback(); } },
     invalidate() { listeners.at(-1).callback(); },
     key(value) { for (const fn of events.get("keydown") ?? []) fn({ preventDefault() {}, stopPropagation() {}, ...value }); },
@@ -267,5 +269,37 @@ await check("picker creation uses the first repository short name and preserves 
   button(h, "创建环境").props.onClick();
   assert.equal(walk(h.render()).find(node => node.props.role === "dialog").props.initial.length, 2);
   h.unmount();
+});
+await check("external creation waits for access, never reads the catalog and starts direct setup once", async () => {
+  const opened = [];
+  const h = cloudEnvironmentHarness({ onCloseCreate: () => assert.fail("unexpected close"), onOpenDraft: (...args) => opened.push(args) });
+  assert.match(text(h.render()), /正在加载/); await flush();
+  assert.equal(count(h, "setup"), 0);
+  latest(h, "access").resolve({ ...access, canCreate: true, directCreate: true }); await flush();
+  h.render(); h.render();
+  assert.equal(count(h, "catalog"), 0); assert.equal(count(h, "setup"), 1);
+  assert.equal(JSON.stringify(latest(h, "setup").args[0]), '{"name":"New environment","repositories":[]}');
+  const session = { threadId: "link-setup", identity };
+  latest(h, "setup").resolve({ status: "ready", session, persisted: true }); await flush();
+  h.render(); assert.deepEqual(opened, [[session, true]]); assert.equal(count(h, "setup"), 1);
+  h.unmount();
+});
+await check("external picker cancel and unavailable/unknown gates close without creating", async () => {
+  for (const gate of [{ canCreate: true, directCreate: false }, { canCreate: true, directCreate: null }, { canCreate: false, directCreate: true }]) {
+    let closes = 0;
+    const h = cloudEnvironmentHarness({ onCloseCreate: () => closes++, onOpenDraft: () => assert.fail("unexpected draft") });
+    h.render(); await flush(); latest(h, "access").resolve({ ...access, ...gate }); await flush();
+    h.render(); button(h, gate.directCreate === false ? "取消选择" : "关闭").props.onClick();
+    assert.equal(closes, 1); assert.equal(count(h, "catalog"), 0); assert.equal(count(h, "setup"), 0); h.unmount();
+  }
+});
+await check("external identity invalidation closes and rejects a late setup receipt", async () => {
+  let closes = 0;
+  const h = cloudEnvironmentHarness({ onCloseCreate: () => closes++, onOpenDraft: () => assert.fail("old account opened a draft") });
+  h.render(); await flush(); latest(h, "access").resolve({ ...access, canCreate: true, directCreate: true }); await flush();
+  h.render(); const setup = latest(h, "setup"); h.invalidate();
+  assert.equal(closes, 1); assert.equal(setup.signal.aborted, true);
+  setup.resolve({ status: "ready", session: { threadId: "old-account", identity }, persisted: true }); await flush();
+  h.render(); assert.equal(count(h, "access"), 1); assert.equal(count(h, "setup"), 1); h.unmount();
 });
 console.log(`PASS ${passed} cloud environment production JSX/hook scenarios; ReactDOM, bridge/access/service transport and lucide are explicit offline boundaries. HTTP, native UI, physical IME and pixel parity remain unverified.`);

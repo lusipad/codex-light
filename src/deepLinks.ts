@@ -1,12 +1,15 @@
 import { callAppServer, tauriInvoke, tauriListen } from "./bridge";
 
-interface PendingLink { generation: number; threadId: string }
+type PendingLink = { generation: number } & (
+  { kind: "thread"; threadId: string } | { kind: "cloud_environment_create" }
+);
 
 /** Install only after main's event subscription and app-server are ready. */
 export async function installDeepLinkReceiver(options: {
   signal: AbortSignal;
   navigationRevision: () => string | number;
   selectThread: (threadId: string) => Promise<void>;
+  openCloudEnvironmentCreate: () => void;
   onError: (message: string) => void;
 }): Promise<() => void> {
   let observed = 0;
@@ -27,10 +30,12 @@ export async function installDeepLinkReceiver(options: {
       observed = pending.generation;
       attempt = ++operation;
       let failure: unknown;
-      try {
-        const result = await callAppServer("thread/read", { threadId: pending.threadId, includeTurns: false });
-        if (result?.thread?.id !== pending.threadId) throw Error("目标会话不存在或不可用。");
-      } catch (error) { failure = error; }
+      if (pending.kind === "thread") {
+        try {
+          const result = await callAppServer("thread/read", { threadId: pending.threadId, includeTurns: false });
+          if (result?.thread?.id !== pending.threadId) throw Error("目标会话不存在或不可用。");
+        } catch (error) { failure = error; }
+      }
       if (!current()) return;
       const accepted = await tauriInvoke<boolean>("deep_link_acknowledge", { generation: pending.generation });
       if (!current()) return;
@@ -38,9 +43,10 @@ export async function installDeepLinkReceiver(options: {
       // Later manual navigation wins over a URL whose metadata was still loading.
       if (revision !== options.navigationRevision()) return;
       if (failure) { options.onError(`无法打开会话链接：${String(failure)}`); return; }
-      await options.selectThread(pending.threadId);
+      if (pending.kind === "thread") await options.selectThread(pending.threadId);
+      else if (pending.kind === "cloud_environment_create") options.openCloudEnvironmentCreate();
     } catch (error) {
-      if (current() && revision === options.navigationRevision()) options.onError(`无法接收会话链接：${String(error)}`);
+      if (current() && revision === options.navigationRevision()) options.onError(`无法接收链接：${String(error)}`);
     }
   };
   let unlisten: (() => void) | undefined;
@@ -52,7 +58,7 @@ export async function installDeepLinkReceiver(options: {
   } catch (error) {
     unlisten?.();
     options.signal.removeEventListener("abort", stop);
-    if (!options.signal.aborted) options.onError(`无法监听会话链接：${String(error)}`);
+    if (!options.signal.aborted) options.onError(`无法监听链接：${String(error)}`);
   }
   return () => {
     stop(); unlisten?.(); invalidate?.();

@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronRight, Ellipsis, Plus, Search } from "lucide-react";
 import { tauriListen } from "../bridge";
@@ -29,7 +29,9 @@ export function renderCloudEnvironmentFields({ detail, repository, showScripts =
 
 export type OpenCloudDraft = (session: CloudDraftSession, persisted: boolean) => void;
 
-export const CloudEnvironmentsView: React.FC<{ embedded?: boolean; onOpenDraft?: OpenCloudDraft; returnFocusId?: string }> = ({ embedded = false, onOpenDraft, returnFocusId }) => {
+export const CloudEnvironmentsView: React.FC<{
+  embedded?: boolean; onOpenDraft?: OpenCloudDraft; returnFocusId?: string; onCloseCreate?: () => void;
+}> = ({ embedded = false, onOpenDraft, returnFocusId, onCloseCreate }) => {
   const [revision, setRevision] = useState(0);
   const [access, setAccess] = useState<CloudEnvironmentAccess | null>(null);
   const [catalog, setCatalog] = useState<CloudCatalog | null>(null);
@@ -50,6 +52,9 @@ export const CloudEnvironmentsView: React.FC<{ embedded?: boolean; onOpenDraft?:
   const [pickerOpen, setPickerOpen] = useState(false);
   const [setupRepositories, setSetupRepositories] = useState<RepositorySelection[]>([]);
   const createTrigger = useRef<HTMLButtonElement>(null);
+  const linkStarted = useRef<AbortController | null>(null);
+  const linkDialog = useRef<HTMLDialogElement>(null);
+  const linkTitle = useId();
   const returnedFocus = useRef(false);
   const catalogBusy = useRef(false);
   const catalogSequence = useRef(0);
@@ -89,6 +94,7 @@ export const CloudEnvironmentsView: React.FC<{ embedded?: boolean; onOpenDraft?:
         const stop = await tauriListen("chatgpt-service:invalidated", () => {
           if (disposed) return;
           controller.abort(); detailSource.current?.abort(); creating.current?.abort(); setCreatingId(null); setCreateError(null);
+          if (onCloseCreate) { onCloseCreate(); return; }
           setAccess(null); setPickerOpen(false); setSetupRepositories([]); setCatalog(null); setNames({}); setSelectedId(null); setDetail(null); setMenu(null);
           restoreFocus.current = null; setRevision(value => value + 1);
         });
@@ -101,11 +107,11 @@ export const CloudEnvironmentsView: React.FC<{ embedded?: boolean; onOpenDraft?:
           try { setSetupPending(hasPendingCloudEnvironmentSetup(current.identity)); }
           catch (cause) { setCreateError(serviceErrorMessage(cause)); }
         }
-        if (current.available) await readCatalog(current); else setLoading(false);
+        if (!onCloseCreate && current.available) await readCatalog(current); else setLoading(false);
       } catch (cause) { if (!controller.signal.aborted) { setError(serviceErrorMessage(cause)); setLoading(false); } }
     })();
     return () => { disposed = true; controller.abort(); detailSource.current?.abort(); creating.current?.abort(); unlisten?.(); };
-  }, [revision]);
+  }, [revision, onCloseCreate]);
   useEffect(() => { noResultRefresh.current = null; }, [query]);
   useEffect(() => {
     const search = query.trim();
@@ -213,6 +219,45 @@ export const CloudEnvironmentsView: React.FC<{ embedded?: boolean; onOpenDraft?:
       }
     }
   };
+  useEffect(() => {
+    const controller = source.current;
+    if (!onCloseCreate || loading || error || createError || !access?.canCreate || !controller
+      || controller.signal.aborted || linkStarted.current === controller
+      || (!setupPending && access.directCreate === null)) return;
+    linkStarted.current = controller;
+    void openSetup();
+  }, [onCloseCreate, loading, error, createError, access, setupPending]);
+
+  const showLinkDialog = !!onCloseCreate && !loading && !pickerOpen && !creatingId
+    && (!!error || !!createError || !access?.canCreate || (!setupPending && access.directCreate === null));
+  useLayoutEffect(() => {
+    const dialog = linkDialog.current;
+    if (showLinkDialog) dialog?.showModal();
+    return () => dialog?.close();
+  }, [showLinkDialog]);
+  const picker = pickerOpen && access?.canCreate && source.current && <CloudRepositoryDialog create original={setupRepositories} initial={setupRepositories}
+    identity={access.identity} scope={source.current.signal} onClose={onCloseCreate ?? (() => setPickerOpen(false))}
+    onRestoreFocus={() => createTrigger.current?.focus()} onSave={selected => void openSetup(selected)} />;
+  if (onCloseCreate) return <div className="cloud-envs-page">
+    {!pickerOpen && !showLinkDialog && <p className="cloud-envs-state" role="status">{loading ? "正在加载…" : "正在启动设置…"}</p>}
+    {showLinkDialog && <dialog ref={linkDialog} className="cloud-draft-domain-dialog" aria-labelledby={linkTitle}
+      onCancel={event => { event.preventDefault(); onCloseCreate(); }}
+      onKeyDown={event => {
+        event.stopPropagation();
+        if (event.key === "Escape" && (event.nativeEvent.isComposing || event.keyCode === 229)) event.preventDefault();
+      }}>
+      <div><h3 id={linkTitle}>{createError ? "无法启动云端环境设置" : "云环境不可用"}</h3>
+        <p>{createError ?? error ?? "此工作空间无法设置云环境"}</p>
+        <footer className="cloud-envs-footer">
+          {error && <button type="button" onClick={() => setRevision(value => value + 1)}>重试</button>}
+          {createError && access?.canCreate && <button type="button" onClick={() => void openSetup(setupRepositories.length ? setupRepositories : undefined)}>重试</button>}
+          <button type="button" autoFocus onClick={onCloseCreate}>关闭</button>
+        </footer>
+      </div>
+    </dialog>}
+    {picker}
+  </div>;
+
   return <div className={`cloud-envs-page${embedded ? " cloud-envs-embedded" : ""}`}>
     <div className="cloud-envs-content">
       {selectedId ? <>
@@ -247,9 +292,7 @@ export const CloudEnvironmentsView: React.FC<{ embedded?: boolean; onOpenDraft?:
         </section>}
       </>}
     </div>
-    {pickerOpen && access?.canCreate && source.current && <CloudRepositoryDialog create original={setupRepositories} initial={setupRepositories}
-      identity={access.identity} scope={source.current.signal} onClose={() => setPickerOpen(false)}
-      onRestoreFocus={() => createTrigger.current?.focus()} onSave={selected => void openSetup(selected)} />}
+    {picker}
     {menu && createPortal(<div ref={menuRef} className="cloud-envs-menu" role="menu" aria-label={`针对 ${menu.item.name} 的操作`} style={{ left: menu.left, top: menu.top }}>{menuCanEdit && <button type="button" role="menuitem" disabled={!onOpenDraft || !!creatingId} onClick={() => void openEdit()}>{menu.item.versionRevision === 1 ? "继续设置" : "编辑"}</button>}<button type="button" role="menuitem" onClick={() => void openDetail(menu.item.id)}>查看</button><button type="button" role="menuitem" disabled title="环境删除尚未接入">删除环境</button></div>, document.body)}
   </div>;
 };

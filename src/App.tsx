@@ -332,7 +332,9 @@ export const App: React.FC = () => {
   const promptStorageKey = isQuickChatWindow ? "codex_quick_chat_prompt_drafts_v1" : threadWindowId ? `codex_thread_window_drafts_v1:${threadWindowId}` : "codex_composer_prompt_drafts_v1";
   // Primary Route & Shell Layout State
   const [activeRoute, commitActiveRoute] = useState<MainViewRoute>(() => window.location.pathname === "/code-review" ? "code-review" : parseSitesLocation(window.location.href) ? "sites" : "home");
-  const [cloudDraft, setCloudDraft] = useState<{ session: CloudDraftSession; persisted: boolean; origin: "settings" | "cloud-environments" } | null>(null);
+  const [cloudDraft, setCloudDraft] = useState<{ session: CloudDraftSession; persisted: boolean; origin: "settings" | "cloud-environments" | "home" } | null>(null);
+  const cloudDraftRef = useRef(cloudDraft);
+  cloudDraftRef.current = cloudDraft;
   const [libraryCleanupTab, setLibraryCleanupTab] = useState<"all" | "images" | null>(null);
   const [libraryNavigation, setLibraryNavigation] = useState<LibraryNavigation | null>(null);
   const libraryNavigationRef = useRef<LibraryNavigation | null>(null);
@@ -361,6 +363,7 @@ export const App: React.FC = () => {
     if (personalizationNavigationGuardRef.current?.(apply) === false) return;
     apply();
   }, []);
+  const closeCloudCreate = useCallback(() => setActiveRoute("home"), [setActiveRoute]);
   const openRemotePullRequest = (url: string) => {
     setRemotePullRequestUrl(parseRemotePullRequestUrl(url).url);
     setActiveRoute("code-review");
@@ -638,7 +641,7 @@ export const App: React.FC = () => {
       if (pending.signal.aborted) return;
       pending.abort(); setShareAvailable(false); setShareThreadId(null);
       setCloudDraft(null);
-      if (activeRouteRef.current === "cloud-draft") setActiveRoute("cloud-environments");
+      if (activeRouteRef.current === "cloud-draft") setActiveRoute(cloudDraftRef.current?.origin === "home" ? "home" : "cloud-environments");
       setShareAccessRevision(value => value + 1);
     });
     return () => { pending.abort(); void listener.then(unlisten => unlisten()).catch(() => {}); };
@@ -2671,13 +2674,17 @@ export const App: React.FC = () => {
       signal: pending.signal,
       navigationRevision: () => `${navigationRequestRef.current}:${deepLinkRouteRef.current.revision}`,
       selectThread,
+      openCloudEnvironmentCreate: () => {
+        if (activeRouteRef.current === "cloud-draft" && cloudDraftRef.current?.session.setup) return;
+        setActiveRoute("cloud-create");
+      },
       onError: message => showAppToast(message, "error"),
     });
     return () => {
       pending.abort();
       void installed.then(unlisten => unlisten()).catch(() => {});
     };
-  }, [isQuickChatWindow, isThreadWindow, appServerStatus.connected, threadEventsReady, accountInfo, selectThread, showAppToast]);
+  }, [isQuickChatWindow, isThreadWindow, appServerStatus.connected, threadEventsReady, accountInfo, selectThread, setActiveRoute, showAppToast]);
 
   useEffect(() => {
     if (!isThreadWindow) return;
@@ -5560,11 +5567,14 @@ export const App: React.FC = () => {
             if (cloudDraft.origin === "settings") setSettingsInitialSection("codex-cloud");
             setActiveRoute(cloudDraft.origin);
           }} />
-        ) : activeRoute === "cloud-environments" || activeRoute === "cloud-draft" ? (
+        ) : activeRoute === "cloud-environments" || activeRoute === "cloud-draft" || activeRoute === "cloud-create" ? (
           <div className="full-route-view cloud-envs-route-view">
             <div className="full-route-container cloud-envs-route-container">
-              <CloudEnvironmentsView returnFocusId={cloudDraft?.origin === "cloud-environments" ? cloudDraft.session.binding.configId : undefined} onOpenDraft={(session, persisted) => {
-                setCloudDraft({ session, persisted, origin: "cloud-environments" });
+              <CloudEnvironmentsView key={activeRoute === "cloud-create" ? "create-link" : "list"}
+                onCloseCreate={activeRoute === "cloud-create" ? closeCloudCreate : undefined}
+                returnFocusId={cloudDraft?.origin === "cloud-environments" ? cloudDraft.session.binding.configId : undefined} onOpenDraft={(session, persisted) => {
+                if (activeRoute === "cloud-create" && activeRouteRef.current !== "cloud-create") return;
+                setCloudDraft({ session, persisted, origin: activeRoute === "cloud-create" ? "home" : "cloud-environments" });
                 setActiveRoute("cloud-draft");
               }} />
             </div>

@@ -8,7 +8,28 @@ pub const EVENT: &str = "native-deep-link";
 #[serde(rename_all = "camelCase")]
 pub struct PendingLink {
     pub generation: u64,
-    pub thread_id: String,
+    #[serde(flatten)]
+    target: LinkTarget,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", rename_all_fields = "camelCase")]
+enum LinkTarget {
+    Thread { thread_id: String },
+    CloudEnvironmentCreate,
+}
+
+fn parse_target(value: &str) -> Option<LinkTarget> {
+    if let Some((scheme, rest)) = value.split_once("://") {
+        if scheme.eq_ignore_ascii_case("codex") {
+            if let Some((host, path)) = rest.split_once('/') {
+                if host.eq_ignore_ascii_case("cloud-environments") && path == "new" {
+                    return Some(LinkTarget::CloudEnvironmentCreate);
+                }
+            }
+        }
+    }
+    parse_thread_url(value).map(|thread_id| LinkTarget::Thread { thread_id })
 }
 
 /// The bare local thread URLs produced by this app. Other official routes need separate contracts.
@@ -49,13 +70,13 @@ pub struct DeepLinkState(Mutex<Queue>);
 
 impl DeepLinkState {
     pub fn enqueue(&self, value: &str) -> bool {
-        let Some(thread_id) = parse_thread_url(value) else { return false };
+        let Some(target) = parse_target(value) else { return false };
         let mut queue = self.0.lock().unwrap_or_else(|error| error.into_inner());
-        if queue.pending.as_ref().is_some_and(|pending| pending.thread_id == thread_id) {
+        if queue.pending.as_ref().is_some_and(|pending| pending.target == target) {
             return false;
         }
         queue.generation += 1;
-        queue.pending = Some(PendingLink { generation: queue.generation, thread_id });
+        queue.pending = Some(PendingLink { generation: queue.generation, target });
         true
     }
 
@@ -146,11 +167,44 @@ mod tests {
         assert!(state.enqueue(&link(B)));
         assert!(!state.acknowledge("main", first.generation).unwrap());
         let latest = state.peek("main").unwrap().unwrap();
-        assert_eq!(latest.thread_id, B);
+        assert_eq!(latest.target, LinkTarget::Thread { thread_id: B.into() });
+        assert_eq!(serde_json::to_value(&latest).unwrap(), serde_json::json!({
+            "kind": "thread", "generation": latest.generation, "threadId": B,
+        }));
         assert!(state.acknowledge("main", latest.generation).unwrap());
         assert!(state.peek("main").unwrap().is_none());
         assert!(!state.acknowledge("main", latest.generation).unwrap());
         assert!(state.enqueue(&link(B)), "a new delivery after consumption is valid");
+    }
+
+    #[test]
+    fn cloud_create_requires_the_native_destination_and_uses_the_same_queue() {
+        let state = DeepLinkState::default();
+        assert!(state.enqueue(&link(A)));
+        let thread = state.peek("main").unwrap().unwrap();
+        for unsupported in [
+            "https://chatgpt.com/cloud-environments/new",
+            "codex://cloud-environments/new?utm_source=chatgpt.com",
+            "codex://cloud-environments/new#",
+            "codex://cloud-environments/new?",
+            "codex://cloud-environments/new/",
+            "codex://cloud-environments/other/../new",
+            "codex://cloud-environments/%6eew",
+            "codex://cloud-environments:42/new",
+            "codex://user@cloud-environments/new",
+            "codex-dev://cloud-environments/new",
+        ] {
+            assert!(!state.enqueue(unsupported), "{unsupported}");
+            assert_eq!(state.peek("main").unwrap().unwrap(), thread);
+        }
+        assert!(state.enqueue("codex://cloud-environments/new"));
+        assert!(!state.enqueue("CODEX://CLOUD-ENVIRONMENTS/new"));
+        assert!(!state.acknowledge("main", thread.generation).unwrap());
+        let create = state.peek("main").unwrap().unwrap();
+        assert_eq!(serde_json::to_value(&create).unwrap(), serde_json::json!({
+            "kind": "cloud_environment_create", "generation": create.generation,
+        }));
+        assert!(state.acknowledge("main", create.generation).unwrap());
     }
 
     #[test]
