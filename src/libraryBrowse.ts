@@ -27,6 +27,18 @@ export function isNativeLibraryDirectory(id: string): boolean {
   return !id.startsWith("library:") && !/^external-(?:gdrive|box|dropbox|sharepoint|onedrive|imanage):/u.test(id);
 }
 
+export function parseLibraryFileLocation(value: string | URL): string | null {
+  const url = new URL(value, "http://localhost");
+  const match = /^\/library\/file\/([^/]+)\/?$/.exec(url.pathname);
+  if (!match || url.searchParams.has("account_id") || url.searchParams.has("review_access_requests")) return null;
+  try {
+    const id = decodeURIComponent(match[1]);
+    return /^libfile[_-][A-Za-z0-9_-]+$/u.test(id) ? id : null;
+  } catch {
+    return null;
+  }
+}
+
 export function parseLibraryLocation(value: string | URL): LibraryBrowseScope | null {
   const url = new URL(value, "http://localhost");
   const match = libraryPath.exec(url.pathname);

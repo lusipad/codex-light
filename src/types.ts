@@ -352,6 +352,7 @@ export type MainViewRoute =
   | "gpts"
   | "sites"
   | "library"
+  | "library-file"
   | "cloud-draft"
   | "cloud-environments"
   | "cloud-create"

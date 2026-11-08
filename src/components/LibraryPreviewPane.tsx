@@ -24,7 +24,7 @@ interface PreviewState {
 // These artifacts require their own gated surface or source-chat navigation.
 const specialArtifacts = new Set(["writing_block", "automation_plan", "flashcards", "app_block", "site_preview", "chat_message_snapshot"]);
 
-export const LibraryPreviewPane: React.FC<{ request: LibraryPreviewRequest; onClose: () => void }> = ({ request, onClose }) => {
+export const LibraryPreviewPane: React.FC<{ request: LibraryPreviewRequest; onClose: () => void; standalone?: boolean }> = ({ request, onClose, standalone = false }) => {
   const [state, setState] = useState<PreviewState | null>(null);
   const [revision, setRevision] = useState(0);
   const [imageLoaded, setImageLoaded] = useState(false);
@@ -96,7 +96,7 @@ export const LibraryPreviewPane: React.FC<{ request: LibraryPreviewRequest; onCl
     return () => { window.removeEventListener("keydown", keydown, true); clearTimeout(timeout); };
   }, [request, onClose]);
   useEffect(() => () => dragCleanup.current?.(), [request]);
-  const full = bounds.width > 0 && bounds.width < 672;
+  const full = standalone || (bounds.width > 0 && bounds.width < 672);
   const maxWidth = Math.max(320, bounds.width - 352);
   const initialWidth = bounds.width ? Math.max(320, Math.min(bounds.height * 1.6, bounds.width - 500), Math.min(640, bounds.width - 352)) : 600;
   const restoredWidth = storedWidth === null ? initialWidth : storedWidth <= 1 ? storedWidth * bounds.width : storedWidth;

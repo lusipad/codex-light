@@ -32,6 +32,46 @@ export interface LibraryNavigation {
 }
 interface LibraryViewProps { onNavigationChange?: (navigation: LibraryNavigation | null) => void; routeUrl?: boolean }
 
+export function LibraryFileRoute({ id, onClose }: { id: string; onClose: () => void }) {
+  const [revision, setRevision] = useState(0);
+  const [state, setState] = useState<{ request?: LibraryPreviewRequest; error?: string; retry?: true }>({});
+  useEffect(() => {
+    const controller = new AbortController();
+    let unlisten: (() => void) | undefined;
+    setState({});
+    void (async () => {
+      try {
+        unlisten = await tauriListen("chatgpt-service:invalidated", () => {
+          if (controller.signal.aborted) return;
+          controller.abort();
+          onClose();
+        });
+        if (controller.signal.aborted) { unlisten(); return; }
+        const access = await readLibraryAccess(controller.signal);
+        if (controller.signal.aborted) return;
+        setState(access.available ? { request: { id, name: "", access, controller } }
+          : { error: "当前账号无法访问资料库。" });
+      } catch (cause) {
+        if (!controller.signal.aborted) setState({ error: serviceErrorMessage(cause), retry: true });
+      }
+    })();
+    return () => { controller.abort(); unlisten?.(); };
+  }, [id, onClose, revision]);
+  const request = state.request;
+  return <div className="library-workspace">
+    {request && request.id === id && !request.controller.signal.aborted
+      ? <LibraryPreviewPane request={request} onClose={onClose} standalone />
+      : <div className="library-view-container">
+        {state.error ? <><h1>无法打开此文件</h1><p role="alert">{state.error}</p></>
+          : <p role="status">正在加载预览</p>}
+        <div>
+          {state.retry && <button type="button" onClick={() => setRevision(value => value + 1)}>重试</button>}
+          <button type="button" onClick={onClose}>关闭预览</button>
+        </div>
+      </div>}
+  </div>;
+}
+
 export const LibraryView: React.FC<LibraryViewProps> = ({ onNavigationChange, routeUrl = false }) => {
   const [revision, setRevision] = useState(0);
   const [viewMode, setViewMode] = useState<LibraryBrowseMode>("grid");

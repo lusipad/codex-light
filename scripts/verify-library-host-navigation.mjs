@@ -13,6 +13,7 @@ function walk(node) {
 walk(ast); assert.ok(callback);
 const calls = [];
 const context = {
+  closeLibraryFile: () => calls.push("close-file"),
   activeRouteRef: { current: "library" },
   libraryNavigationRef: { current: { canGoBack: true, canGoForward: true, back: () => calls.push("back"), forward: () => calls.push("forward") } },
   routeHistoryRef: { current: { entries: ["home", "library", "settings"], index: 1 } },
@@ -26,5 +27,8 @@ context.libraryNavigationRef.current.canGoBack = false;
 context.navigateRouteHistory(-1); assert.equal(calls.at(-1), "home"); assert.equal(context.routeHistoryRef.current.index, 0);
 context.activeRouteRef.current = "settings"; context.navigateRouteHistory(1);
 assert.equal(calls.at(-1), "library", "other views use existing history even if stale library data exists");
+context.activeRouteRef.current = "library-file";
+context.navigateRouteHistory(1); assert.equal(calls.at(-1), "library");
+context.navigateRouteHistory(-1); assert.equal(calls.at(-1), "close-file");
 assert.ok(source.includes("onNavigationChange={updateLibraryNavigation}"));
 console.log("PASS production App titlebar prioritizes current Library directory back/forward and preserves main route history at the root and on other views");

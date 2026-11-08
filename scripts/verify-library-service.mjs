@@ -9,7 +9,7 @@ const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve()
 const nodes = node => node && typeof node === "object" ? [node, ...(node.children ?? []).flatMap(nodes)] : [];
 const text = tree => nodes(tree).flatMap(node => node.children.filter(child => typeof child === "string")).join(" ");
 const button = (tree, label) => { const found = nodes(tree).find(node => node.type === "button" && text(node) === label); assert.ok(found, label); return found; };
-export function harness(listenerError = null, storage = new Map(), href) {
+export function harness(listenerError = null, storage = new Map(), href, fileRoute) {
   const contexts = new Map(), effects = [], accesses = [], reads = [], paths = [], images = [], paginationObservers = [];
   class PaginationObserver {
     constructor(callback) { this.callback = callback; paginationObservers.push(this); }
@@ -91,7 +91,8 @@ export function harness(listenerError = null, storage = new Map(), href) {
       return active.length;
     },
     get navigation() { return navigation; }, setListenError(value) { listenerError = value; }, render() {
-    used = new Set(); const tree = renderComponent(exports.LibraryView, { onNavigationChange, routeUrl: href !== undefined });
+    used = new Set(); const tree = fileRoute ? renderComponent(exports.LibraryFileRoute, fileRoute)
+      : renderComponent(exports.LibraryView, { onNavigationChange, routeUrl: href !== undefined });
     for (const [key, owner] of contexts) if (!used.has(key)) { owner.hooks.forEach(hook => hook?.cleanup?.()); contexts.delete(key); }
     while (effects.length) effects.shift()(); return tree;
   }, invalidate() { listener(); }, unmount() { for (const owner of contexts.values()) owner.hooks.forEach(hook => hook?.cleanup?.()); }, get writes() { return writes; } };

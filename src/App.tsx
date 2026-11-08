@@ -144,8 +144,8 @@ import { ImagesView } from "./components/ImagesView";
 import { GptsView } from "./components/GptsView";
 import { SitesView } from "./components/SitesView";
 import { parseSitesLocation, type SitesNavigation } from "./sitesNavigation";
-import { LibraryView, type LibraryNavigation } from "./components/LibraryView";
-import { libraryLocationUrl, parseLibraryLocation } from "./libraryBrowse";
+import { LibraryFileRoute, LibraryView, type LibraryNavigation } from "./components/LibraryView";
+import { libraryLocationUrl, parseLibraryFileLocation, parseLibraryLocation } from "./libraryBrowse";
 import { LibraryCleanupView } from "./components/LibraryCleanupView";
 import { CloudEnvironmentsView } from "./components/CloudEnvironmentsView";
 import { CloudDraftView } from "./components/CloudDraftView";
@@ -337,9 +337,12 @@ export const App: React.FC = () => {
   const [threadEventsReady, setThreadEventsReady] = useState(false);
   const promptStorageKey = isQuickChatWindow ? "codex_quick_chat_prompt_drafts_v1" : threadWindowId ? `codex_thread_window_drafts_v1:${threadWindowId}` : "codex_composer_prompt_drafts_v1";
   // Primary Route & Shell Layout State
+  const [libraryFileId, setLibraryFileId] = useState(() => !isQuickChatWindow && !isThreadWindow
+    ? parseLibraryFileLocation(window.location.href) : null);
   const [activeRoute, commitActiveRoute] = useState<MainViewRoute>(() => window.location.pathname === "/code-review" ? "code-review"
     : parseSitesLocation(window.location.href) ? "sites"
-      : !isQuickChatWindow && !isThreadWindow && parseLibraryLocation(window.location.href) ? "library" : "home");
+      : libraryFileId ? "library-file"
+        : !isQuickChatWindow && !isThreadWindow && parseLibraryLocation(window.location.href) ? "library" : "home");
   const isCloudChatRoute = activeRoute === "cloud-draft" || activeRoute === "cloud-new-chat";
   const [cloudDraft, setCloudDraft] = useState<{ session: CloudDraftSession; persisted: boolean; origin: "settings" | "cloud-environments" | "home"; title?: string } | null>(null);
   const refreshCloudRecentRef = useRef<(() => void) | null>(null);
@@ -375,6 +378,12 @@ export const App: React.FC = () => {
     apply();
   }, []);
   const closeCloudCreate = useCallback(() => setActiveRoute("home"), [setActiveRoute]);
+  const closeLibraryFile = useCallback(() => {
+    if (activeRouteRef.current === "library-file" && parseLibraryFileLocation(window.location.href) === libraryFileId) {
+      setLibraryCleanupTab(null);
+      setActiveRoute("library");
+    }
+  }, [libraryFileId, setActiveRoute]);
   const openRemotePullRequest = (url: string) => {
     setRemotePullRequestUrl(parseRemotePullRequestUrl(url).url);
     setActiveRoute("code-review");
@@ -382,16 +391,23 @@ export const App: React.FC = () => {
   useEffect(() => {
     const restorePageRoute = () => {
       if (parseSitesLocation(window.location.href)) setActiveRoute("sites");
-      else if (!isQuickChatWindow && !isThreadWindow && parseLibraryLocation(window.location.href)) {
-        setLibraryCleanupTab(null);
-        setActiveRoute("library");
-      } else if (activeRouteRef.current === "sites" || activeRouteRef.current === "library") setActiveRoute("home");
+      else {
+        const id = !isQuickChatWindow && !isThreadWindow ? parseLibraryFileLocation(window.location.href) : null;
+        if (id) {
+          setLibraryFileId(id);
+          setActiveRoute("library-file");
+        } else if (!isQuickChatWindow && !isThreadWindow && parseLibraryLocation(window.location.href)) {
+          setLibraryCleanupTab(null);
+          setActiveRoute("library");
+        } else if (["sites", "library", "library-file"].includes(activeRouteRef.current)) setActiveRoute("home");
+      }
     };
     window.addEventListener("popstate", restorePageRoute);
     return () => window.removeEventListener("popstate", restorePageRoute);
   }, [isQuickChatWindow, isThreadWindow, setActiveRoute]);
   useEffect(() => {
-    if ((activeRoute !== "library" || libraryCleanupTab) && parseLibraryLocation(window.location.href)) {
+    if (((activeRoute !== "library" || libraryCleanupTab) && parseLibraryLocation(window.location.href))
+      || (activeRoute !== "library-file" && parseLibraryFileLocation(window.location.href))) {
       window.history.replaceState(window.history.state, "", libraryLocationUrl(window.location.href, null));
     }
     const url = new URL(window.location.href);
@@ -427,6 +443,8 @@ export const App: React.FC = () => {
       navigatingRouteHistoryRef.current = false;
       return;
     }
+    // A direct file address is scoped to this visit and must not be replayed from shell history.
+    if (activeRoute === "library-file") return;
     const history = routeHistoryRef.current;
     if (history.entries[history.index] === activeRoute) return;
     history.entries = [...history.entries.slice(0, history.index + 1), activeRoute];
@@ -434,6 +452,7 @@ export const App: React.FC = () => {
     setRouteHistoryVersion((version) => version + 1);
   }, [activeRoute]);
   const { canGoBack, canGoForward } = useMemo(() => {
+    if (activeRoute === "library-file") return { canGoBack: true, canGoForward: false };
     const history = routeHistoryRef.current;
     return {
       canGoBack: (activeRoute === "library" && !libraryCleanupTab && libraryNavigation?.canGoBack) || (activeRoute === "sites" && sitesNavigation?.canGoBack) || history.index > 0,
@@ -441,6 +460,10 @@ export const App: React.FC = () => {
     };
   }, [routeHistoryVersion, activeRoute, libraryCleanupTab, libraryNavigation, sitesNavigation]);
   const navigateRouteHistory = useCallback((direction: -1 | 1): void => {
+    if (activeRouteRef.current === "library-file") {
+      if (direction < 0) closeLibraryFile();
+      return;
+    }
     if (activeRouteRef.current === "sites") {
       const navigation = sitesNavigationRef.current;
       if (direction < 0 ? navigation?.canGoBack : navigation?.canGoForward) {
@@ -463,7 +486,7 @@ export const App: React.FC = () => {
     history.index = nextIndex;
     setRouteHistoryVersion((version) => version + 1);
     setActiveRoute(history.entries[nextIndex]);
-  }, []);
+  }, [closeLibraryFile, setActiveRoute]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
     if (typeof window !== "undefined" && window.innerWidth <= 960) {
       return true;
@@ -5694,6 +5717,12 @@ export const App: React.FC = () => {
           <div className="full-route-view sites-route-view">
             <div className="full-route-container sites-route-container">
               <SitesView onNavigationChange={updateSitesNavigation} onSaveError={message => showAppToast(message, "error")} />
+            </div>
+          </div>
+        ) : activeRoute === "library-file" && libraryFileId ? (
+          <div className="full-route-view library-route-view">
+            <div className="full-route-container library-route-container">
+              <LibraryFileRoute key={libraryFileId} id={libraryFileId} onClose={closeLibraryFile} />
             </div>
           </div>
         ) : activeRoute === "library" ? (

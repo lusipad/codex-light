@@ -158,6 +158,10 @@ assert.equal(h.reads.at(-1).directoryId, "A/中文"); h.unmount();
     assert.equal(routed.browse.parseLibraryLocation(`/library${suffix}`), null, suffix);
   }
   assert.equal(routed.browse.libraryLocationUrl("/library/d/A?tab=all&search=secret&source=uploaded&other=1", null), "/?other=1");
+  assert.equal(routed.browse.parseLibraryFileLocation("/library/file/libfile%5Ffde1%5Fabc"), "libfile_fde1_abc");
+  for (const href of ["/library/file/libfile_", "/library/file/libfile_%2Fabc", "/library/file/%ZZ",
+    "/library/file/external-gdrive%3Afile", "/library/share/libfile_abc", "/library?file_id=libfile_abc",
+    "/library/file/libfile_abc?account_id=other"]) assert.equal(routed.browse.parseLibraryFileLocation(href), null, href);
   routed.unmount();
 }
 console.log("PASS 18E production Library directory activation, direct URL, titlebar history, independent path retry and account cancellation");

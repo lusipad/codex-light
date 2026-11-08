@@ -47,3 +47,9 @@ Store26.1027.3384.0；同会话固定asar整包hash6fbedf054a8d8cafaf5c745b40aa5
 - PDF探针使用独立编译夹具、生成两页本地PDF，file origin的sandboxed Blob iframe显示插件阻止图标，未显示文档。DevTools脚本粘贴被保护阻止且未执行；没有放行粘贴、取消sandbox或改官方配置。本结果只证明该探针路径不可用，不能推广为WebView2不支持PDF；生产tauri origin和官方专用viewer均未完成。
 
 阶段验证和交付以[18F-A记录](../acceptance/18F-library-preview.md)的实际结果为准。
+
+## 独立文件地址
+
+Store `26.1103.4239.0`（asar SHA-256 `fb47d6491dc3006b708cb1e14de479b882bf50f88b7daa81818f154c253266aa`）中，`366057.8dff3ed0b6.js` 101943 附近注册 `/library/file/:libraryFileId`，`101313.c9b3ce267b.js` 11238 起的 `AoIz` 先确认会话账号、资料库资格及文件身份，再读文件。17972 附近的独立页使用主区标题栏并在关闭时导航至 `/library`。列表行的面板继续走 `678608.f43ff490bd.js` 39776 的独立路由状态与返回位置。带 `file_id` 的分享入口是另一分支。
+
+验收。主窗从原生文件地址直接进入全宽预览，不读取目录。账号校验完成后走既有 metadata 和内容，403/404 沿现有终止规则，资格读取失败可重试。关闭回普通资料库；离开、切换地址或账号失效时取消旧请求，账号切换清除文件地址。仅接受当前固定宿主支持的 native ID；分享、provider、特殊内容及完整官方像素继续独立验收。

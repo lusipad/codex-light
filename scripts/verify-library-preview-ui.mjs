@@ -22,6 +22,30 @@ oldPane.props.onClose(); assert.ok(walk(h.render()).some(node => node.type === "
 h.invalidate(); assert.equal(newPane.props.request.controller.signal.aborted, true);
 assert.equal(walk(h.render()).some(node => node.type === "LibraryPreviewPane"), false);
 
+let directClosed = 0;
+const direct = harness(null, new Map(), undefined, { id: "libfile_direct", onClose: () => directClosed++ });
+assert.match(text(direct.render()), /正在加载预览/);
+await flush();
+direct.accesses.at(-1).reject(Error("资格读取失败")); await flush();
+assert.match(text(direct.render()), /资格读取失败/);
+walk(direct.render()).find(node => node.type === "button" && text(node) === "重试").props.onClick();
+direct.render(); await flush(); direct.accesses.at(-1).resolve(access); await flush();
+const directPane = walk(direct.render()).find(node => node.type === "LibraryPreviewPane");
+assert.equal(directPane.props.standalone, true);
+assert.equal(directPane.props.request.id, "libfile_direct");
+assert.equal(direct.reads.length, 0, "direct preview does not fetch the directory");
+direct.invalidate();
+assert.equal(directPane.props.request.controller.signal.aborted, true);
+assert.equal(directClosed, 1);
+assert.equal(walk(direct.render()).some(node => node.type === "LibraryPreviewPane"), false);
+direct.unmount();
+
+const denied = harness(null, new Map(), undefined, { id: "libfile_direct", onClose: () => {} });
+denied.render(); await flush(); denied.accesses.at(-1).resolve({ ...access, available: false }); await flush();
+assert.match(text(denied.render()), /无法访问资料库/);
+assert.equal(walk(denied.render()).some(node => node.type === "LibraryPreviewPane"), false);
+denied.unmount();
+
 const compile = file => ts.transpileModule(fs.readFileSync(file, "utf8"), { compilerOptions: {
   target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React,
 } }).outputText;
