@@ -1521,6 +1521,7 @@ fn git_diff(
     staged: Option<bool>,
     base_branch: Option<String>,
     review_base_commit: Option<String>,
+    previous_file_path: Option<String>,
 ) -> Result<String, String> {
     git::git_diff_for_path(
         &cwd,
@@ -1528,6 +1529,7 @@ fn git_diff(
         staged.unwrap_or(false),
         base_branch,
         review_base_commit,
+        previous_file_path,
     )
 }
 

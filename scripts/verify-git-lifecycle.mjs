@@ -50,6 +50,20 @@ function mount() {
 }
 async function flush() { for (let i = 0; i < 8; ++i) await Promise.resolve(); }
 {
+  const view = mount();
+  view.context.gitStatus.entries[0].previousPath = "old [1].ts";
+  const cleanup = view.effect();
+  assert.equal(view.requests[0].params.previousFilePath, "old [1].ts");
+  cleanup();
+  view.context.selectedFile = "other.ts";
+  const nextCleanup = view.effect();
+  assert.equal(view.requests[1].params.previousFilePath, null, "old path never leaks into another selection");
+  nextCleanup();
+  view.requests[0].resolve("old rename");
+  view.requests[1].resolve("other patch");
+  await flush();
+}
+{
   const view = mount(), cleanup = view.effect();
   cleanup();
   view.requests[0].resolve("old patch"); await flush();

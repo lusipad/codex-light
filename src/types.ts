@@ -75,6 +75,7 @@ export interface FilePreviewResult {
 export interface GitFileEntry {
   status: string;
   path: string;
+  previousPath?: string;
   staged: boolean;
   unstaged: boolean;
   untracked: boolean;

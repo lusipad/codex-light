@@ -15,6 +15,8 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 pub struct GitFileEntry {
     pub status: String,
     pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_path: Option<String>,
     pub staged: bool,
     pub unstaged: bool,
     pub untracked: bool,
@@ -151,7 +153,7 @@ mod merge_base_tests {
         commit("after base");
         fs::write(root.join("first.txt"), "committed first\nworking first\n").unwrap();
         fs::write(root.join("second.txt"), "working second\n").unwrap();
-        let diff = git_diff_for_path(&cwd, None, false, None, Some(base.clone())).unwrap();
+        let diff = git_diff_for_path(&cwd, None, false, None, Some(base.clone()), None).unwrap();
         assert!(diff.contains("+committed first"));
         assert!(diff.contains("+working first"));
         assert!(diff.contains("+working second"));
@@ -161,13 +163,14 @@ mod merge_base_tests {
             true,
             Some("missing-ignored-branch".to_string()),
             Some(base),
+            None,
         )
         .unwrap();
         assert!(file_diff.contains("+committed first"));
         assert!(file_diff.contains("+working first"));
         assert!(!file_diff.contains("second.txt"));
         for invalid in ["missing-ref", "--all", ""] {
-            assert!(git_diff_for_path(&cwd, None, false, None, Some(invalid.to_string())).is_err());
+            assert!(git_diff_for_path(&cwd, None, false, None, Some(invalid.to_string()), None).is_err());
         }
         fs::remove_dir_all(&root).unwrap();
     }
@@ -332,9 +335,11 @@ pub fn git_status_for_path(target_path: &str) -> GitStatusInfo {
                 continue;
             };
             // Porcelain -z puts the destination first and the source in its own record.
-            if status_code.contains(['R', 'C']) {
-                records.next();
-            }
+            let previous_path = if status_code.contains(['R', 'C']) {
+                records.next().filter(|path| status_code.contains('R') && !path.is_empty())
+            } else {
+                None
+            };
             let b0 = status_code.as_bytes()[0] as char;
             let b1 = status_code.as_bytes()[1] as char;
             let untracked = status_code == "??";
@@ -343,6 +348,7 @@ pub fn git_status_for_path(target_path: &str) -> GitStatusInfo {
             entries.push(GitFileEntry {
                 status: status_code.trim().to_string(),
                 path: file_path.to_string(),
+                previous_path: previous_path.map(str::to_owned),
                 staged,
                 unstaged,
                 untracked,
@@ -392,8 +398,20 @@ pub fn git_diff_for_path(
     staged: bool,
     base_branch: Option<String>,
     review_base_commit: Option<String>,
+    previous_file_path: Option<String>,
 ) -> Result<String, String> {
     let git_root = find_git_root(target_path).ok_or("Not a git repository")?;
+    let read_selected_diff = |options: &[&str], path: &str| {
+        let previous = previous_file_path.as_deref().filter(|old| !old.is_empty() && *old != path);
+        let mut args = vec!["--literal-pathspecs", "diff"];
+        if previous.is_some() {
+            args.push("--find-renames");
+        }
+        args.extend_from_slice(options);
+        args.extend(["--", path]);
+        args.extend(previous);
+        run_git(&git_root, &args)
+    };
     if let Some(base) = review_base_commit {
         if base.trim().is_empty() {
             return Err("Review base commit is required".to_string());
@@ -404,14 +422,14 @@ pub fn git_diff_for_path(
             &["rev-parse", "--verify", "--end-of-options", &reference],
         )?;
         if let Some(fp) = file_path.filter(|f| !f.is_empty()) {
-            return run_git(&git_root, &["--literal-pathspecs", "diff", resolved.trim(), "--", &fp]);
+            return read_selected_diff(&[resolved.trim()], &fp);
         }
         return run_git(&git_root, &["diff", resolved.trim(), "--"]);
     }
     if let Some(base) = base_branch.filter(|b| !b.trim().is_empty()) {
         let range = format!("{}...HEAD", base.trim());
         if let Some(fp) = file_path.filter(|f| !f.is_empty()) {
-            return run_git(&git_root, &["--literal-pathspecs", "diff", &range, "--", &fp]);
+            return read_selected_diff(&[&range], &fp);
         }
         return run_git(&git_root, &["diff", &range]);
     }
@@ -436,10 +454,9 @@ pub fn git_diff_for_path(
             }
         }
         if staged {
-            return run_git(&git_root, &["--literal-pathspecs", "diff", "--staged", "--", &fp]);
+            return read_selected_diff(&["--staged"], &fp);
         }
-        let wt_diff = run_git(&git_root, &["--literal-pathspecs", "diff", "HEAD", "--", &fp])
-            .or_else(|_| run_git(&git_root, &["--literal-pathspecs", "diff", "--", &fp]))?;
+        let wt_diff = read_selected_diff(&["HEAD"], &fp).or_else(|_| read_selected_diff(&[], &fp))?;
         return Ok(wt_diff);
     }
 
@@ -620,7 +637,7 @@ mod index_action_tests {
         fixture.write(neighbor, b"neighbor after\n");
         let status = git_status_for_path(&fixture.cwd);
         assert!(status.entries.iter().any(|entry| entry.path == target && entry.unstaged));
-        let diff = git_diff_for_path(&fixture.cwd, Some(target.into()), false, None, None).unwrap();
+        let diff = git_diff_for_path(&fixture.cwd, Some(target.into()), false, None, None, None).unwrap();
         assert!(diff.contains("+target after"));
         assert!(!diff.contains("neighbor after"));
         git_stage_file(&fixture.cwd, Some(target.into())).unwrap();
@@ -642,6 +659,28 @@ mod index_action_tests {
         assert_eq!(status.entries.len(), 2);
         assert!(status.entries.iter().any(|entry| entry.path == "改名 后.txt" && entry.staged && entry.status == "R"));
         assert!(status.entries.iter().any(|entry| entry.path == "second.txt" && entry.untracked));
+    }
+
+    #[test]
+    fn selected_rename_diff_keeps_old_and_new_content() {
+        let fixture = Fixture::new(true);
+        fixture.git(&["config", "status.renames", "true"]);
+        let destination = "改名 [1].txt";
+        fixture.git(&["mv", "tracked.txt", destination]);
+        fixture.write("改名 1.txt", b"unrelated content\n");
+        git_stage_file(&fixture.cwd, Some("改名 1.txt".into())).unwrap();
+        let entry = git_status_for_path(&fixture.cwd).entries.into_iter().find(|entry| entry.path == destination).unwrap();
+        assert_eq!(entry.previous_path.as_deref(), Some("tracked.txt"));
+        let staged = git_diff_for_path(&fixture.cwd, Some(entry.path.clone()), true, None, None, entry.previous_path.clone()).unwrap();
+        assert!(staged.contains("rename from tracked.txt"), "{staged}");
+        assert!(staged.contains("similarity index 100%"), "{staged}");
+        assert!(!staged.contains("new file mode"));
+        fixture.write(destination, b"original\nx\n");
+        let working = git_diff_for_path(&fixture.cwd, Some(entry.path), false, None, None, entry.previous_path).unwrap();
+        assert!(working.contains("rename from tracked.txt"), "{working}");
+        assert!(working.contains("+x\n"));
+        assert!(!working.contains("+original"));
+        assert!(!working.contains("unrelated content"));
     }
 
     #[test]

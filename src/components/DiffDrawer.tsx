@@ -960,6 +960,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     invoke<string>("git_diff", {
       cwd,
       filePath: selectedFile,
+      previousFilePath: gitStatus?.entries?.find(entry => entry.path === selectedFile)?.previousPath ?? null,
       staged: diffMode === "staged",
       baseBranch: diffMode === "branch" ? baseBranch : null,
       reviewBaseCommit: diffMode === "branch" && reviewTarget?.cwd === cwd && reviewTarget.baseBranch === baseBranch ? reviewTarget.mergeBase : null,
