@@ -34,6 +34,14 @@ check("actual display avatar and vanity usage are trimmed; unrelated fallbacks a
   assert.equal(item.avatarUrl, "https://fixture.invalid/avatar.png"); assert.equal(item.usage, "10K+");
   assert.equal(d.parseGptSection(cut([resource("b", { author: { name: "unsupported alias" } })])).items[0].author, undefined);
 });
+check("published nonprivate GPT links use the official encoded short URL or ID", () => {
+  const link = fields => d.gptPublicLink(d.parseGptResource(resource("g-fixture", fields)));
+  assert.equal(link({ live_version: 2, share_recipient: "public", short_url: " g-x/测试 " }),
+    "https://chatgpt.com/g/g-x%2F%E6%B5%8B%E8%AF%95");
+  assert.equal(link({ live_version: 2, share_recipient: "link", short_url: " " }), "https://chatgpt.com/g/g-fixture");
+  for (const fields of [{ live_version: 0, share_recipient: "public" }, { live_version: 2, share_recipient: "private" },
+    { live_version: 2 }, { share_recipient: "public" }]) assert.equal(link(fields), null);
+});
 check("snorlax filtering preserves raw page size and true-empty distinction", () => {
   const filtered = d.parseGptSection(cut([resource("s", { gizmo_type: "snorlax" })], "next"));
   assert.equal(filtered.items.length, 0); assert.equal(filtered.rawItemCount, 1);

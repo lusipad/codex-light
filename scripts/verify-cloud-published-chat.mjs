@@ -15,21 +15,24 @@ const signal = () => new AbortController().signal;
 
 function fixture(storage = new Map(), queue = new Map()) {
   const calls = [], exports = {};
-  let locked = false, rootVersion = "v2", activeIdentity = identity;
+  const locks = new Set();
+  let rootVersion = "v2", activeIdentity = identity;
   let start = async () => ({ thread: { id: "remote-thread" } });
   vm.runInNewContext(compiled, {
     exports, localStorage: {
+      get length() { return storage.size; },
+      key: index => [...storage.keys()][index] ?? null,
       getItem: key => storage.get(key) ?? null,
       setItem: (key, value) => storage.set(key, value),
       removeItem: key => storage.delete(key),
     },
     crypto: { randomUUID: () => "message-uuid" },
-    navigator: { locks: { async request(_, { ifAvailable }, run) {
+    navigator: { locks: { async request(key, { ifAvailable }, run) {
       assert.equal(ifAvailable, true);
-      if (locked) return run(null);
-      locked = true;
+      if (locks.has(key)) return run(null);
+      locks.add(key);
       try { return await run({}); }
-      finally { locked = false; }
+      finally { locks.delete(key); }
     } } },
     require(name) {
       if (name === "./chatgptService") return {
@@ -95,7 +98,29 @@ function fixture(storage = new Map(), queue = new Map()) {
   await assert.rejects(reopened.startPublishedCloudChat(target, "keep me", signal(), () => assert.fail("ambiguous opened")),
     error => error.code === "cloud_thread_start_unconfirmed");
   assert.equal(reopened.readPublishedCloudStart(target).text, "keep me");
+  const updated = { ...target, versionId: "v3" };
+  reopened.setRoot("v3");
+  await assert.rejects(reopened.startPublishedCloudChat(updated, "keep me", signal(), () => assert.fail("version change reopened")),
+    error => error.code === "cloud_thread_start_unconfirmed");
+  assert.equal(reopened.readPublishedCloudStart(updated).text, "keep me");
   assert.deepEqual(reopened.calls, []);
+}
+
+{
+  const oldKey = 'published-cloud-chat-v1:["account","user","asenvcfg_saved","v1"]';
+  const record = { text: "already queued", messageId: "message-uuid", threadId: "remote-thread", queued: true };
+  const f = fixture(new Map([[oldKey, JSON.stringify(record)]]));
+  assert.equal(f.readPublishedCloudStart(target).threadId, "remote-thread");
+  assert.equal(f.readPublishedCloudStart({ ...target, session: { ...target.session, identity: { ...identity, userId: "other" } } }), null);
+  assert.equal(f.readPublishedCloudStart({ ...target, session: { ...target.session, binding: { ...binding, configId: "asenvcfg_saved_other" } } }), null);
+  const conflictingKey = 'published-cloud-chat-v1:["account","user","asenvcfg_saved","v3"]';
+  f.storage.set(conflictingKey, JSON.stringify(record));
+  await assert.rejects(f.startPublishedCloudChat(target, "", signal(), () => assert.fail("ambiguous receipt opened")), /多条/);
+  assert.equal(f.storage.size, 2);
+  f.storage.delete(conflictingKey);
+  await f.startPublishedCloudChat(target, "", signal(), session => session.threadId === "remote-thread");
+  assert.deepEqual(f.calls, ["binding"]);
+  assert.equal(f.storage.size, 0);
 }
 {
   const f = fixture();
@@ -111,7 +136,7 @@ function fixture(storage = new Map(), queue = new Map()) {
   const response = new Promise(done => { resolve = done; });
   f.setStart(() => response);
   const opening = f.startPublishedCloudChat(target, "single launch", signal(), () => true);
-  await assert.rejects(f.startPublishedCloudChat(target, "single launch", signal(), () => assert.fail("duplicate opened")), /已有云端聊天/);
+  await assert.rejects(f.startPublishedCloudChat({ ...target, versionId: "v3" }, "single launch", signal(), () => assert.fail("duplicate opened")), /已有云端聊天/);
   resolve({ thread: { id: "remote-thread" } });
   await opening;
   assert.equal(f.calls.filter(call => call === "start").length, 1);

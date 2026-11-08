@@ -24,11 +24,23 @@ export async function verifyPublishedCloudTarget(target: PublishedCloudTarget, s
 }
 
 interface StartRecord { text: string; messageId: string; threadId?: string; queued?: true }
-const startKey = ({ session: { identity, binding }, versionId }: PublishedCloudTarget) =>
-  `published-cloud-chat-v1:${JSON.stringify([identity.accountId, identity.userId, binding.configId, versionId])}`;
+const startScope = ({ session: { identity, binding } }: PublishedCloudTarget) =>
+  `published-cloud-chat-v1:${JSON.stringify([identity.accountId, identity.userId, binding.configId])}`;
 
-export function readPublishedCloudStart(target: PublishedCloudTarget): StartRecord | null {
-  const raw = localStorage.getItem(startKey(target));
+function storedStartKey(scope: string): string | null {
+  const prefix = `${scope.slice(0, -1)},`;
+  let stored: string | null = null;
+  for (let index = 0; index < localStorage.length; index++) {
+    const key = localStorage.key(index);
+    if (!key?.startsWith(prefix)) continue;
+    if (stored !== null) throw Error("此环境有多条待核对的云端聊天记录。");
+    stored = key;
+  }
+  return stored;
+}
+
+function readStartRecord(key: string): StartRecord | null {
+  const raw = localStorage.getItem(key);
   if (raw === null) return null;
   const entry = JSON.parse(raw) as StartRecord | null;
   if (!entry || typeof entry.text !== "string" || !entry.text.trim() || entry.text.length > cloudReplyMaxLength || entry.text.includes("\0")
@@ -38,17 +50,23 @@ export function readPublishedCloudStart(target: PublishedCloudTarget): StartReco
   return entry;
 }
 
+export function readPublishedCloudStart(target: PublishedCloudTarget): StartRecord | null {
+  const key = storedStartKey(startScope(target));
+  return key === null ? null : readStartRecord(key);
+}
+
 export async function startPublishedCloudChat(
   target: PublishedCloudTarget, text: string, signal: AbortSignal, open: (session: CloudDraftSession) => boolean,
 ) {
   const { session: { identity, binding } } = target;
-  const key = startKey(target);
+  const scope = startScope(target);
   signal.throwIfAborted();
   if (!navigator.locks) throw Error("当前窗口无法安全创建云端聊天。");
-  await navigator.locks.request(key, { ifAvailable: true }, async lock => {
+  await navigator.locks.request(scope, { ifAvailable: true }, async lock => {
     if (!lock) throw Error("此环境已有云端聊天正在启动。");
     signal.throwIfAborted();
-    let entry = readPublishedCloudStart(target);
+    const key = storedStartKey(scope) ?? `${scope.slice(0, -1)},${JSON.stringify(target.versionId)}]`;
+    let entry = readStartRecord(key);
     if (entry && !entry.threadId) throw { code: "cloud_thread_start_unconfirmed" };
     let name = binding.name;
     if (!entry) {

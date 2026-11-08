@@ -92,6 +92,14 @@ export function parseGptResource(value: unknown): GptResource | null {
   };
 }
 
+export function gptPublicLink(resource: GptResource): string | null {
+  const gizmo = object(resource.raw.gizmo);
+  if (typeof gizmo.live_version !== "number" || !Number.isInteger(gizmo.live_version) || gizmo.live_version < 1 ||
+    typeof gizmo.share_recipient !== "string" || !gizmo.share_recipient.trim() || gizmo.share_recipient === "private") return null;
+  const slug = typeof gizmo.short_url === "string" ? gizmo.short_url.trim() : "";
+  return `https://chatgpt.com/g/${encodeURIComponent(slug || resource.id)}`;
+}
+
 export function parseGptSection(value: unknown): GptSection {
   const section = object(value), info = object(section.info), page = object(section.list);
   const items = list(page.items);

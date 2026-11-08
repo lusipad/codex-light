@@ -85,6 +85,7 @@ export function gptsHarness({ listenerError, deferredListener = false, href = "h
         if (name === "lucide-react") return new Proxy({}, { get: (_, key) => String(key) });
         if (name.endsWith(".css")) return {};
         if (name === "../gptsData") return load("src/gptsData.ts");
+        if (name === "../clipboard") return { copyTextToClipboard: async () => assert.fail("unexpected clipboard write") };
         if (name === "../chatgptService") return { serviceErrorMessage: error => error.message || error.code };
         if (name === "../bridge") return { tauriListen: (_name, callback) => {
           const pending = deferred(); listeners.push({ callback, ...pending });

@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { AlertTriangle, Bot, MessageCircle, Search, X } from "lucide-react";
+import { AlertTriangle, Bot, Ellipsis, Link, MessageCircle, Search, Star, X } from "lucide-react";
 import { tauriListen } from "../bridge";
+import { copyTextToClipboard } from "../clipboard";
 import { serviceErrorMessage, type GptAssetRef } from "../chatgptService";
 import { readGptsAccess, readGptsDiscovery, readGptsSearch, readGptsCategory, readGptsDetail, readGptsAbout, readGptsAvatar,
   type GptsAccess, type GptsDiscoveryResult, type GptsSectionResult } from "../gptsClient";
-import { appendGptPage, gptRestriction, type GptResource, type GptSection, type GptAboutBlock } from "../gptsData";
+import { appendGptPage, gptPublicLink, gptRestriction, type GptResource, type GptSection, type GptAboutBlock } from "../gptsData";
 import { LibraryStickyHeader } from "./LibraryStickyHeader";
 import "./GptsView.css";
 
@@ -39,8 +40,9 @@ function GptAvatar({ asset, access, scope }: { asset: GptAssetRef | null; access
 function GptAbout({ blocks }: { blocks: GptAboutBlock[] }) {
   return blocks.length ? <div className="gpt-about-blocks">{blocks.map((block, index) => <div key={index}>
     {block.type === "generic_title_subtitle" ? <><strong>{block.title}</strong><span>{block.subtitle}</span></>
-      : block.type === "rating" ? <><strong>{block.avg} ★</strong><span>{block.count}</span></>
-        : <><strong>{block.category}</strong>{block.categoryRanking != null && <span>#{block.categoryRanking}</span>}</>}
+      : block.type === "rating" ? <><strong><Star size={16} aria-hidden="true" />{block.avg}</strong><span>{block.count}</span></>
+        : block.categoryRanking == null ? <><strong>{block.category}</strong><span>类别</span></>
+          : <><strong>#{block.categoryRanking}</strong><span>位于 {block.categoryLocale ? `${block.categoryLocale} 的 ` : ""}{block.category} 类别中</span></>}
   </div>)}</div> : null;
 }
 
@@ -53,6 +55,19 @@ function GptDetail({ state, access, scope, onClose, onResource }: { state: Detai
   const [aboutError, setAboutError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0), [aboutRevision, setAboutRevision] = useState(0);
   const dialog = useRef<HTMLDivElement>(null), close = useRef<HTMLButtonElement>(null);
+  const actions = useRef<HTMLDivElement>(null), actionTrigger = useRef<HTMLButtonElement>(null), copyItem = useRef<HTMLButtonElement>(null);
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const [copyResult, setCopyResult] = useState<{ link: string; ok: boolean } | null>(null);
+  const publicLink = resource ? gptPublicLink(resource) : null;
+  useEffect(() => {
+    if (!actionsOpen || !publicLink) return;
+    copyItem.current?.focus();
+    const outside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !actions.current?.contains(event.target)) setActionsOpen(false);
+    };
+    document.addEventListener("pointerdown", outside);
+    return () => document.removeEventListener("pointerdown", outside);
+  }, [actionsOpen, publicLink]);
   useEffect(() => {
     if (state.resource && !access.refreshDetails && !revision) return;
     const controller = new AbortController();
@@ -76,9 +91,19 @@ function GptDetail({ state, access, scope, onClose, onResource }: { state: Detai
     close.current?.focus();
     const previousOverflow = document.body.style.overflow; document.body.style.overflow = "hidden";
     const keydown = (event: KeyboardEvent) => {
-      if (event.isComposing) return;
-      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); }
+      if (event.isComposing || event.keyCode === 229) return;
+      if (event.key === "Escape") {
+        event.preventDefault(); event.stopPropagation();
+        if (copyItem.current) { setActionsOpen(false); actionTrigger.current?.focus(); }
+        else onClose();
+      }
       if (event.key === "Tab") {
+        if (copyItem.current) {
+          event.preventDefault();
+          setActionsOpen(false);
+          (event.shiftKey ? actionTrigger : close).current?.focus();
+          return;
+        }
         const controls = [...(dialog.current?.querySelectorAll<HTMLElement>('button:not(:disabled),a[href],input:not(:disabled),[tabindex="0"]') ?? [])];
         const first = controls[0], last = controls.at(-1);
         if (!dialog.current?.contains(document.activeElement)) { event.preventDefault(); first?.focus(); }
@@ -92,12 +117,37 @@ function GptDetail({ state, access, scope, onClose, onResource }: { state: Detai
   const restricted = resource && gptRestriction(resource.tags, access);
   return createPortal(<div className="gpt-detail-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
     <div ref={dialog} className="gpt-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="gpt-detail-title" aria-describedby="gpt-detail-description">
-      <button ref={close} className="gpt-detail-close" type="button" onClick={onClose} aria-label="关闭 GPT 详情"><X size={20} /></button>
+      <div className="gpt-detail-controls">
+        {publicLink && <div ref={actions} className="gpt-detail-actions">
+          <button ref={actionTrigger} type="button" aria-label="GPT 操作" aria-haspopup="menu" aria-expanded={actionsOpen}
+            onClick={() => setActionsOpen(value => !value)}
+            onKeyDown={event => {
+              if (!event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229 && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+                event.preventDefault(); setActionsOpen(true); copyItem.current?.focus();
+              }
+            }}><Ellipsis size={20} /></button>
+          {actionsOpen && <div className="gpt-detail-action-menu" role="menu" aria-label="GPT 操作">
+            <button ref={copyItem} type="button" role="menuitem" onClick={async () => {
+              setActionsOpen(false); actionTrigger.current?.focus();
+              if (scope.aborted) return;
+              const ok = await copyTextToClipboard(publicLink);
+              if (scope.aborted || !actionTrigger.current) return;
+              setCopyResult({ link: publicLink, ok });
+              if (document.activeElement === document.body) actionTrigger.current.focus();
+            }}><Link size={16} />{copyResult?.link === publicLink && copyResult.ok ? "链接已复制" : "复制链接"}</button>
+          </div>}
+        </div>}
+        <button ref={close} type="button" onClick={onClose} aria-label="关闭 GPT 详情"><X size={20} /></button>
+      </div>
       <div className="gpt-detail-scroll">
         {!resource ? <div className="gpts-state"><h2 id="gpt-detail-title">{error ? "无法加载此 GPT" : "正在加载 GPT 详情"}</h2><p id="gpt-detail-description">{error || "正在加载有关此 GPT 的信息"}</p>{error && <button onClick={() => setRevision(value => value + 1)}>重试</button>}</div>
           : <><GptAvatar asset={assets.find(item => item.id === resource.id) ?? null} access={access} scope={scope} />
             <h2 id="gpt-detail-title">{resource.name}</h2>{resource.author && <p className="gpt-detail-author">作者：{resource.author}</p>}
             <p id="gpt-detail-description" className="gpt-detail-description">{resource.description}</p>
+            {publicLink && copyResult?.link === publicLink &&
+              <p className={copyResult.ok ? "gpts-sr-only" : "gpts-inline-error"} role="status">
+                {copyResult.ok ? "链接已复制" : "无法复制链接，请重试。"}
+              </p>}
             {error && <div className="gpts-inline-error"><p role="alert">{error}</p><button onClick={() => setRevision(value => value + 1)}>重试详情</button></div>}
             <GptAbout blocks={about} />
             {aboutError && <div className="gpts-inline-error"><p role="alert">{aboutError}</p><button onClick={() => setAboutRevision(value => value + 1)}>重试附加信息</button></div>}

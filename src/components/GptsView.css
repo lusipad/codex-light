@@ -55,7 +55,12 @@ button.gpt-card:hover { background:var(--bg-hover,rgba(128,128,128,.1)); }
 .gpts-sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
 .gpt-detail-backdrop { position:fixed; inset:0; z-index:1000; display:flex; justify-content:center; align-items:center; background:#0009; padding:24px; box-sizing:border-box; }
 .gpt-detail-dialog { position:relative; display:flex; flex-direction:column; width:min(896px,100%); max-height:calc(100dvh - 48px); min-height:320px; overflow:hidden; border-radius:16px; background:var(--bg-surface-elevated,var(--bg-card)); color:var(--text-primary); box-shadow:0 20px 80px #0004; }
-.gpt-detail-close { position:absolute; top:16px; right:16px; display:flex; align-items:center; justify-content:center; padding:6px; border:0; border-radius:50%; background:transparent; z-index:1; }
+.gpt-detail-controls { position:absolute; top:16px; right:16px; display:flex; gap:4px; z-index:1; }
+.gpt-detail-controls button { display:flex; align-items:center; justify-content:center; padding:6px; border:0; border-radius:50%; background:transparent; }
+.gpt-detail-controls button:hover { background:var(--bg-surface-secondary); }
+.gpt-detail-actions { position:relative; }
+.gpt-detail-action-menu { position:absolute; top:100%; right:0; min-width:144px; padding:4px; border:1px solid var(--border-subtle); border-radius:8px; background:var(--bg-surface-elevated,var(--bg-card)); }
+.gpt-detail-action-menu button { justify-content:start; gap:8px; width:100%; border-radius:4px; white-space:nowrap; }
 .gpt-detail-scroll { overflow:auto; padding:80px 40px 16px; text-align:center; min-height:0; }
 .gpt-detail-scroll > .gpt-avatar { width:80px; height:80px; margin:0 auto 16px; }
 .gpt-detail-scroll > .gpt-avatar svg { width:36px; height:36px; }
@@ -63,7 +68,8 @@ button.gpt-card:hover { background:var(--bg-hover,rgba(128,128,128,.1)); }
 .gpt-detail-author { color:var(--text-muted); font-size:14px; margin:8px 0 16px; }
 .gpt-detail-description { font-size:16px; line-height:24px; margin:16px auto; max-width:640px; overflow-wrap:anywhere; white-space:pre-wrap; }
 .gpt-about-blocks { display:flex; flex-wrap:wrap; justify-content:center; gap:24px; margin-top:16px; }
-.gpt-about-blocks > div { display:flex; flex-direction:column; gap:4px; font-size:14px; }
+.gpt-about-blocks > div { display:flex; flex-direction:column; align-items:center; gap:8px; font-size:14px; }
+.gpt-about-blocks strong { display:flex; align-items:center; gap:8px; }
 .gpt-about-blocks span { font-size:12px; color:var(--text-muted); }
 .gpt-detail-tools { text-align:start; margin:32px auto 16px; max-width:560px; }
 .gpt-detail-tools h3 { font-size:16px; font-weight:600; }
