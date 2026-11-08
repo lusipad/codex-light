@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { CircleX, Lightbulb } from "lucide-react";
+import { CircleX, Cloud, Lightbulb } from "lucide-react";
 import {
   FolderIcon,
   LaptopIcon,
@@ -34,6 +34,7 @@ import { isTauriRuntime } from "../bridge";
 import { baseNameFsPath } from "../fsClient";
 
 import type { ComposerEnterBehavior } from "../composerPreferences";
+import type { useHomeCloudComposer } from "../useHomeCloudComposer";
 import { acceleratorFromEvent, commandId, normalizeAccelerator, type KeyBinding } from "../shortcuts";
 import { findModel, getDefaultModel, getSupportedEfforts, getFastServiceTier, resolveServiceTier, getModelEligibility, type ModelConfiguration, type ModelEligibilityContext, type ServiceTierAccess } from "../modelCapabilities";
 
@@ -61,6 +62,9 @@ export interface ComposerBoxProps {
   // Execution mode & permissions
   useWorktree: boolean;
   onSetUseWorktree: (val: boolean) => void;
+  homeCloud?: ReturnType<typeof useHomeCloudComposer>;
+  onCreateCloudEnvironment?: () => void;
+  onManageCloudEnvironments?: () => void;
   permissionMode: "custom" | "ask" | "auto" | "full";
   onSelectPermissionMode: (mode: "ask" | "auto" | "full") => void;
   // Model, effort, speed, plan mode
@@ -147,6 +151,9 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
   onCreateBranch,
   useWorktree,
   onSetUseWorktree,
+  homeCloud,
+  onCreateCloudEnvironment,
+  onManageCloudEnvironments,
   permissionMode,
   onSelectPermissionMode,
   models,
@@ -211,10 +218,12 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
   }, [promptInput, variant, actualTextareaRef]);
 
   const [openMenu, setOpenMenu] = useState<
-    "project" | "env" | "branch" | "plus" | "permission" | "model" | "model-recent" | null
+    "project" | "env" | "cloud" | "branch" | "plus" | "permission" | "model" | "model-recent" | null
   >(null);
   const [newBranchInput, setNewBranchInput] = useState("");
   const [projectQuery, setProjectQuery] = useState("");
+  const [cloudQuery, setCloudQuery] = useState("");
+  const cloudActive = variant === "home" && homeCloud?.active === true;
   const [isDictating, setIsDictating] = useState(false);
   const [dictationError, setDictationError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -273,6 +282,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
 
   useEffect(() => {
     if (openMenu !== "project") setProjectQuery("");
+    if (openMenu !== "cloud") setCloudQuery("");
     if (!openMenu || openMenu === "model" || openMenu === "model-recent") return;
     const updateBounds = () => {
       const menu = menuRef.current;
@@ -453,6 +463,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     onPromptInputChange(val);
+    if (cloudActive) return;
 
     if (val.startsWith("/") && !val.includes(" ")) {
       setAutocompleteMode("slash");
@@ -497,9 +508,9 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
     actualTextareaRef.current?.focus();
   };
 
-  const autocompleteItems = React.useMemo(() => autocompleteMode
+  const autocompleteItems = React.useMemo(() => !cloudActive && autocompleteMode
     ? getAutocompleteItems(autocompleteMode, autocompleteQuery, workspaceFiles, workspaceFileHits, skills)
-    : [], [autocompleteMode, autocompleteQuery, workspaceFiles, workspaceFileHits, skills]);
+    : [], [cloudActive, autocompleteMode, autocompleteQuery, workspaceFiles, workspaceFileHits, skills]);
 
   useEffect(() => {
     const handleCommand = (event: Event) => {
@@ -507,6 +518,10 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
           !boxRef.current?.contains(document.activeElement) ||
           document.activeElement?.closest("[role='dialog'], [role='menu']")) return;
       const id = (event as CustomEvent<{ id: string }>).detail?.id;
+      if (cloudActive && id?.startsWith("composer-") && id !== "composer-submit" && id !== "composer-clear") {
+        event.preventDefault();
+        return;
+      }
       const activeModel = findModel(models, selectedModelId) || (!selectedModelId ? getDefaultModel(models, modelEligibilityContext) : undefined);
       const efforts = getSupportedEfforts(activeModel, modelEligibilityContext);
       const submit = (queue: boolean) => {
@@ -565,7 +580,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
     };
     window.addEventListener("codex:keyboard-command", handleCommand);
     return () => window.removeEventListener("codex:keyboard-command", handleCommand);
-  }, [models, selectedModelId, reasoningEffort, submissionDisabled, promptInput, attachedFiles,
+  }, [cloudActive, models, selectedModelId, reasoningEffort, submissionDisabled, promptInput, attachedFiles,
     autocompleteMode, autocompleteItems, isStreaming, onSendMessage, onQueueMessage, onPromptInputChange,
     onAttachFiles, onToggleFastMode, onTogglePlanMode, onSelectReasoningEffort, modelsLoading,
     selectionPending, selectionDisabledReason, modelEligibilityContext, serviceTierAccess, fastMode, serviceTier, onSelectConfiguration]);
@@ -630,17 +645,18 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
   const currentBranch = gitStatus?.branch || "main";
   const filteredWorkspaces = workspaces.filter(ws =>
     `${ws.label} ${ws.path}`.toLocaleLowerCase().includes(projectQuery.trim().toLocaleLowerCase()));
+  const cloudItems = homeCloud?.items?.filter(item => item.name.toLocaleLowerCase().includes(cloudQuery.trim().toLocaleLowerCase()));
 
   return (
     <div
       className={`codex-two-tier-composer ${variant} ${isDragging ? "dragging-over" : ""}`}
       ref={boxRef}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
+      onDragOver={cloudActive ? undefined : handleDragOver}
+      onDragLeave={cloudActive ? undefined : handleDragLeave}
+      onDrop={cloudActive ? undefined : handleDrop}
       style={{ position: "relative" }}
     >
-      {isDragging && (
+      {!cloudActive && isDragging && (
         <div className="composer-drag-drop-overlay">
           <span>📎 释放鼠标以附带文件或图像至当前对话</span>
         </div>
@@ -649,7 +665,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
       <div className="composer-context-topbar">
         <div className="composer-context-left">
           {/* 1. Project Pill */}
-          <div className="composer-dropdown-anchor">
+          {!cloudActive && <div className="composer-dropdown-anchor">
             <button
               ref={(node) => { menuTriggersRef.current.project = node; }}
               type="button"
@@ -715,14 +731,15 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
                 </button>
               </div>
             )}
-          </div>
+          </div>}
 
           {/* 2. Local / Worktree Environment Pill */}
           <div className="composer-dropdown-anchor">
             <button
               ref={(node) => { menuTriggersRef.current.env = node; }}
               type="button"
-              className={`composer-top-chip ${useWorktree ? "worktree-active" : ""}`}
+              className={`composer-top-chip ${!cloudActive && useWorktree ? "worktree-active" : ""}`}
+              disabled={cloudActive && homeCloud?.busy}
               aria-haspopup="menu"
               aria-expanded={openMenu === "env"}
               aria-controls={openMenu === "env" ? "composer-env-menu" : undefined}
@@ -730,8 +747,8 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
               onClick={() => setOpenMenu((m) => (m === "env" ? null : "env"))}
               title="选择聊天的运行位置"
             >
-              {useWorktree ? <WorktreeIcon size={13} /> : <LaptopIcon size={13} />}
-              <span>{useWorktree ? "新工作树" : "本地"}</span>
+              {cloudActive ? <Cloud size={13} /> : useWorktree ? <WorktreeIcon size={13} /> : <LaptopIcon size={13} />}
+              <span>{cloudActive ? "云端" : useWorktree ? "新工作树" : "本地"}</span>
               <ChevronDownIcon size={11} />
             </button>
 
@@ -741,9 +758,10 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
                 <button
                   type="button"
                   role="menuitemradio"
-                  aria-checked={!useWorktree}
-                  className={`popover-menu-item ${!useWorktree ? "selected" : ""}`}
+                  aria-checked={!cloudActive && !useWorktree}
+                  className={`popover-menu-item ${!cloudActive && !useWorktree ? "selected" : ""}`}
                   onClick={() => {
+                    homeCloud?.setActive(false);
                     onSetUseWorktree(false);
                     closeComposerMenu();
                   }}
@@ -754,14 +772,15 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
                       <span className="popover-item-title">本地</span>
                     </div>
                   </div>
-                  {!useWorktree && <CheckIcon size={13} />}
+                  {!cloudActive && !useWorktree && <CheckIcon size={13} />}
                 </button>
                 <button
                   type="button"
                   role="menuitemradio"
-                  aria-checked={useWorktree}
-                  className={`popover-menu-item ${useWorktree ? "selected" : ""}`}
+                  aria-checked={!cloudActive && useWorktree}
+                  className={`popover-menu-item ${!cloudActive && useWorktree ? "selected" : ""}`}
                   onClick={() => {
+                    homeCloud?.setActive(false);
                     onSetUseWorktree(true);
                     closeComposerMenu();
                   }}
@@ -772,11 +791,61 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
                       <span className="popover-item-title">新建本地工作树</span>
                     </div>
                   </div>
-                  {useWorktree && <CheckIcon size={13} />}
+                  {!cloudActive && useWorktree && <CheckIcon size={13} />}
                 </button>
+                {variant === "home" && homeCloud?.available && <button type="button" role="menuitemradio"
+                  aria-checked={cloudActive} className={`popover-menu-item ${cloudActive ? "selected" : ""}`}
+                  onClick={() => {
+                    setAutocompleteMode(null);
+                    homeCloud.setActive(true);
+                    setOpenMenu("cloud");
+                    if (!homeCloud.items) void homeCloud.load();
+                  }}>
+                  <span className="popover-item-header"><Cloud size={14} /> 云端</span>
+                  {cloudActive && <CheckIcon size={13} />}
+                </button>}
               </div>
             )}
           </div>
+
+          {cloudActive && homeCloud && <div className="composer-dropdown-anchor">
+            <button ref={node => { menuTriggersRef.current.cloud = node; }} type="button" className="composer-top-chip composer-cloud-target"
+              aria-label="选择云环境" aria-haspopup="menu" aria-expanded={openMenu === "cloud"}
+              aria-controls={openMenu === "cloud" ? "composer-cloud-menu" : undefined} disabled={homeCloud.busy}
+              onKeyDown={event => {
+                handleComposerTriggerKeys(event, "cloud");
+                if ((event.key === "ArrowDown" || event.key === "ArrowUp") && !homeCloud.items) void homeCloud.load();
+              }}
+              onClick={() => {
+                setOpenMenu(menu => menu === "cloud" ? null : "cloud");
+                if (openMenu !== "cloud" && !homeCloud.items) void homeCloud.load();
+              }}>
+              <Cloud size={13} /><span>{homeCloud.target?.session.binding.name || "选择环境"}</span><ChevronDownIcon size={11} />
+            </button>
+            {openMenu === "cloud" && <div id="composer-cloud-menu" ref={menuRef} role="menu" aria-label="选择云环境"
+              className="composer-popover-menu top-left" onKeyDown={handleComposerMenuKeys}>
+              <input type="search" className="popover-search-input" aria-label="搜索环境" placeholder="搜索环境…"
+                value={cloudQuery} onChange={event => setCloudQuery(event.target.value)} />
+              {homeCloud.loading && <div role="status" className="popover-section-label">正在读取环境…</div>}
+              {!homeCloud.loading && homeCloud.error && <button type="button" role="menuitem"
+                className="popover-menu-item" onClick={() => void homeCloud.load()}>重试读取环境</button>}
+              {!homeCloud.loading && cloudItems?.length === 0 && <div className="popover-section-label">未找到环境</div>}
+              {cloudItems?.map(item => {
+                const selected = homeCloud.target?.session.binding.configId === item.id;
+                return <button key={item.id} type="button" role="menuitemradio" aria-checked={selected}
+                  className={`popover-menu-item ${selected ? "selected" : ""}`}
+                  onClick={() => { homeCloud.select(item); closeComposerMenu(); }}>
+                  <span className="popover-item-header"><Cloud size={14} /><span className="popover-item-title">{item.name}</span></span>
+                  {selected && <CheckIcon size={13} />}
+                </button>;
+              })}
+              <div className="popover-divider" />
+              {onCreateCloudEnvironment && <button type="button" role="menuitem" className="popover-menu-item"
+                onClick={() => { closeComposerMenu(); onCreateCloudEnvironment(); }}>创建环境</button>}
+              {onManageCloudEnvironments && <button type="button" role="menuitem" className="popover-menu-item"
+                onClick={() => { closeComposerMenu(); onManageCloudEnvironments(); }}>管理环境</button>}
+            </div>}
+          </div>}
 
           {variant === "thread" && (
           <div className="composer-dropdown-anchor">
@@ -867,7 +936,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
 
         {/* Right indicators on top bar */}
         <div className="composer-context-right">
-          {fastMode && (
+          {!cloudActive && fastMode && (
             <span className="composer-mode-badge fast" onClick={onToggleFastMode} title="点击关闭极速模式">
               ⚡ Fast
             </span>
@@ -877,7 +946,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
 
       {/* ── Tier 2: Inner Input Surface ── */}
       <div className="composer-inner-surface" style={{ position: "relative" }}>
-        {autocompleteMode && (
+        {!cloudActive && autocompleteMode && (
           <ComposerAutocomplete
             items={autocompleteItems}
             selectedIndex={autocompleteIndex}
@@ -887,7 +956,10 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
         )}
 
         {/* Attached File Chips */}
-        {dropError && <div role="alert">{dropError}</div>}
+        {!cloudActive && dropError && <div role="alert">{dropError}</div>}
+        {cloudActive && homeCloud?.error && <div role="alert">{homeCloud.error}</div>}
+        {cloudActive && homeCloud?.entry && !homeCloud.entry.threadId && <div role="status">云端聊天的创建结果尚未确认。</div>}
+        {cloudActive && homeCloud?.busy && <div role="status">正在启动云端聊天…</div>}
         {attachedFiles.length > 0 && (
           <div className="composer-attachments-row">
             {attachedFiles.map((file) => (
@@ -905,7 +977,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
           className="composer-textarea"
           rows={variant === "home" ? 2 : 2}
           placeholder={
-            planMode
+            !cloudActive && planMode
               ? "计划模式：描述你想实现的目标，Codex 将先分步制定计划再执行..."
               : variant === "home"
               ? "随心输入"
@@ -914,6 +986,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
               : "随心输入 (@ 引用文件或技能，/ 快捷命令)"
           }
           value={promptInput}
+          readOnly={cloudActive && (homeCloud?.busy || !!homeCloud?.entry)}
           onChange={handleInputChange}
           onKeyDown={handleKeyDown}
           onCompositionStart={() => { composingRef.current = true; }}
@@ -924,7 +997,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
         {/* Bottom Controls inside Input Surface */}
         <div className="composer-bottom-bar">
           {/* Left: + button & Permission Pill */}
-          <div className="composer-bottom-left">
+          {!cloudActive && <div className="composer-bottom-left">
             <div className="composer-dropdown-anchor">
               <button
                 ref={(node) => { menuTriggersRef.current.plus = node; }}
@@ -1079,11 +1152,11 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
                 <span>计划</span>
               </button>
             )}
-          </div>
+          </div>}
 
           {/* Right: Combined Model+Effort Dropdown + Mic + Send */}
           <div className="composer-bottom-right">
-            <ModelSelector
+            {!cloudActive && <ModelSelector
               models={models}
               modelsLoading={modelsLoading}
               modelsError={modelsError}
@@ -1107,10 +1180,10 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
               onSelectModel={onSelectModel}
               onSelectReasoningEffort={onSelectReasoningEffort}
               onToggleFastMode={onToggleFastMode}
-            />
+            />}
 
             {/* Mic / Voice Dictation Button */}
-            <button
+            {!cloudActive && <button
               type="button"
               className={`composer-icon-circle-btn ${isDictating ? "dictating" : ""}`}
               onClick={toggleDictation}
@@ -1118,8 +1191,8 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
               title={isDictating ? "停止浏览器听写" : "浏览器 Web Speech 听写（回退）"}
             >
               <MicIcon size={15} />
-            </button>
-            {dictationError && <span role="alert">{dictationError}</span>}
+            </button>}
+            {!cloudActive && dictationError && <span role="alert">{dictationError}</span>}
 
             {/* Send / Stop Button */}
             {isStreaming ? (
@@ -1135,7 +1208,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
               <button
                 type="button"
                 className="send-action-btn"
-                disabled={!promptInput.trim() && attachedFiles.length === 0}
+                disabled={cloudActive ? !homeCloud?.canSend : !promptInput.trim() && attachedFiles.length === 0}
                 onClick={() => onSendMessage()}
                 title={composerEnterBehavior === "cmdAlways" || (composerEnterBehavior === "cmdIfMultiline" && promptInput.includes("\n")) ? "发送 (Ctrl+Enter)" : "发送 (Enter)"}
               >

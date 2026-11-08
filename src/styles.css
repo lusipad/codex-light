@@ -2469,6 +2469,13 @@ html, body, #root {
   color: var(--accent-blue);
 }
 
+.composer-cloud-target > span {
+  max-width: min(160px, 42vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .composer-mode-badge {
   font-size: calc(11px * var(--font-ui-scale, 1));
   padding: 1px 7px;

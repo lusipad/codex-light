@@ -5,7 +5,7 @@ import { changeCloudEnvironmentReply, cloudReplyMaxLength } from "./cloudEnviron
 import { resolveCloudSetupModel } from "./cloudSetupModel";
 
 export interface PublishedCloudTarget {
-  session: CloudDraftSession;
+  session: Pick<CloudDraftSession, "identity" | "binding">;
   versionId: string;
 }
 

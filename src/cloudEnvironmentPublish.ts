@@ -71,7 +71,7 @@ export async function advanceCloudPublication(
   const { identity, threadId, binding } = session;
   const { configId, draftId, environmentId } = binding;
   signal.throwIfAborted();
-  if (!draftId || identity.accountId !== binding.accountId || identity.userId !== binding.userId)
+  if (!draftId || !environmentId || identity.accountId !== binding.accountId || identity.userId !== binding.userId)
     throw Error("环境发布与当前草稿账号不匹配。");
   if (!navigator.locks) throw Error("当前窗口无法安全发布环境。");
   const key = storageKey(session);

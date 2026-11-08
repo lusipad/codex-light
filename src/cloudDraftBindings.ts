@@ -5,7 +5,7 @@ type Account = Pick<ServiceIdentity, "accountId" | "userId">;
 export interface CloudDraftBinding extends Account {
   configId: string;
   draftId: string | null;
-  environmentId: string;
+  environmentId: string | null;
   name: string;
   repositoryNamesById: Record<string, string>;
   conversation?: true;
@@ -16,12 +16,14 @@ const key = "environment-setup-server-configs-v1";
 function bindingFrom(value: unknown): CloudDraftBinding | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const { accountId, userId, configId, draftId, environmentId, name, repositoryNamesById } = value as CloudDraftBinding;
-  if (![accountId, userId, configId, environmentId].every(id => typeof id === "string" && id.length > 0)
+  const conversation = (value as CloudDraftBinding).conversation === true && draftId === null;
+  if (![accountId, userId, configId].every(id => typeof id === "string" && id.length > 0)
+    || (environmentId === null ? !conversation : typeof environmentId !== "string" || !environmentId)
     || (draftId !== null && (typeof draftId !== "string" || !draftId))
     || typeof name !== "string" || !repositoryNamesById || typeof repositoryNamesById !== "object"
     || Array.isArray(repositoryNamesById) || Object.values(repositoryNamesById).some(name => typeof name !== "string")) return null;
   return { accountId, userId, configId, draftId, environmentId, name, repositoryNamesById,
-    ...((value as CloudDraftBinding).conversation === true && draftId === null ? { conversation: true as const } : {}) };
+    ...(conversation ? { conversation: true as const } : {}) };
 }
 
 function bindings(): Map<string, CloudDraftBinding> {

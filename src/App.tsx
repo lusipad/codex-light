@@ -149,6 +149,7 @@ import { LibraryCleanupView } from "./components/LibraryCleanupView";
 import { CloudEnvironmentsView } from "./components/CloudEnvironmentsView";
 import { CloudDraftView } from "./components/CloudDraftView";
 import { CloudNewChatView } from "./components/CloudNewChatView";
+import { useHomeCloudComposer } from "./useHomeCloudComposer";
 import type { PublishedCloudTarget } from "./cloudPublishedChat";
 import type { CloudDraftSession } from "./cloudDraftSession";
 import { applyCloudRecentAction, readCloudRecentChats, sameCloudRecentIdentity, type CloudRecentAction, type CloudRecentChat } from "./cloudRecentChats";
@@ -1034,6 +1035,9 @@ export const App: React.FC = () => {
     return workspaces.find((w) => w.active) || workspaces[0] || null;
   }, [workspaces]);
   const modelAccountIdentity = JSON.stringify(accountInfo);
+  const homeCloud = useHomeCloudComposer(activeRoute === "home" && appServerStatus.connected &&
+    accountInfo?.account?.type === "chatgpt" && !isQuickChatWindow && !isThreadWindow
+    ? JSON.stringify([modelAccountIdentity, shareAccessRevision, navigationRequestRef.current]) : null);
   const worktreeCreationControllersRef = useRef(new Map<AbortController, MainViewRoute>());
   const worktreeProjectScope = JSON.stringify([sidebarProjectMembership.selectedProjectId, sidebarProjectMembership.localProjects?.find(project => project.id === sidebarProjectMembership.selectedProjectId)?.rootPaths]);
   const skillTrialContextKey = JSON.stringify([modelAccountIdentity, activeWorkspace?.path, worktreeProjectScope, appServerStatus.connected, appServerStatus.binaryPath, appServerStatus.appServerVersion, appServerStatus.userAgent]);
@@ -3124,6 +3128,7 @@ export const App: React.FC = () => {
   // Send or Steer Message
   const handleSendMessage = useCallback(async (overrideText?: string) => {
     if (activeRouteRef.current === "cloud-draft" || activeRouteRef.current === "cloud-new-chat") return;
+    if (activeRouteRef.current === "home" && homeCloud.active) return;
     const rawText = (typeof overrideText === "string" ? overrideText : promptInput).trim();
     if (!rawText && attachedFiles.length === 0) return;
     if (sendStartPendingRef.current.has(threadRequestRef.current)) return;
@@ -3355,6 +3360,7 @@ export const App: React.FC = () => {
     }
   }, [
     promptInput,
+    homeCloud.active,
     setPromptInput,
     setThreadPrompt,
     moveHomePromptToThread,
@@ -5896,17 +5902,29 @@ export const App: React.FC = () => {
 
               {!showPopoutModal && (
               <ComposerBox
-                  dictationSessionKey={promptDraftKey}
+                  dictationSessionKey={homeCloud.active ? "home-cloud" : promptDraftKey}
                 composerEnterBehavior={composerEnterBehavior}
                 keyBindings={keyboardState.bindings}
-                submissionDisabled={queueBusy || modelSelection.selectionPending || !!modelSelection.selectionDisabledReason || sendStartPendingRef.current.has(threadRequestRef.current)}
+                submissionDisabled={homeCloud.active ? !homeCloud.canSend : queueBusy || modelSelection.selectionPending || !!modelSelection.selectionDisabledReason || sendStartPendingRef.current.has(threadRequestRef.current)}
               variant="home"
-              promptInput={promptInput}
-              onPromptInputChange={setPromptInput}
-              onSendMessage={handleSendMessage}
+              homeCloud={homeCloud}
+              onCreateCloudEnvironment={() => setActiveRoute("cloud-create")}
+              onManageCloudEnvironments={() => { setSettingsInitialSection("codex-cloud"); setActiveRoute("settings"); }}
+              promptInput={homeCloud.active ? homeCloud.entry?.text ?? homeCloud.prompt : promptInput}
+              onPromptInputChange={homeCloud.active ? homeCloud.setPrompt : setPromptInput}
+              onSendMessage={homeCloud.active ? () => {
+                const navigation = navigationRequestRef.current;
+                return homeCloud.send(session => {
+                  if (activeRouteRef.current !== "home" || navigationRequestRef.current !== navigation) return false;
+                  setCloudDraft({ session, persisted: true, origin: "home" });
+                  setActiveRoute("cloud-draft");
+                  refreshCloudRecentRef.current?.();
+                  return true;
+                });
+              } : handleSendMessage}
               onInterruptTurn={handleInterruptTurn}
               onQueueMessage={handleEnqueueFollowup}
-              isStreaming={isStreaming}
+              isStreaming={!homeCloud.active && isStreaming}
               workspaces={workspaces}
               activeWorkspace={activeWorkspace}
               onSelectWorkspace={handleSelectWorkspace}
@@ -5941,10 +5959,10 @@ export const App: React.FC = () => {
               onToggleFastMode={toggleFastMode}
               planMode={planMode}
               onTogglePlanMode={handleTogglePlanMode}
-              attachedFiles={attachedFiles}
+              attachedFiles={homeCloud.active ? [] : attachedFiles}
               onAttachFiles={handleAttachFiles}
               onAppshot={handleAppshot}
-              onAddAttachedFiles={(newFiles) =>
+              onAddAttachedFiles={homeCloud.active ? undefined : (newFiles) =>
                 setAttachedFiles((prev) => mergeAttachmentItems(prev, newFiles))
               }
               onRemoveAttachedFile={handleRemoveAttachedFile}

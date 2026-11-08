@@ -10,12 +10,13 @@ export interface CloudEnvironmentAccess {
   gateEvidence: string;
   canCreate: boolean;
   directCreate: boolean | null;
+  canStartChat?: boolean;
 }
 const object = (value: unknown): value is Record<string, any> => value !== null && typeof value === "object" && !Array.isArray(value);
 const personalPlans = new Set(["free", "go", "plus", "prolite", "pro", "promax"]);
 
 /** New cloud settings uses svt/Tv; legacy onboarding and GPT access are separate contracts. */
-export async function readCloudEnvironmentAccess(signal: AbortSignal): Promise<CloudEnvironmentAccess> {
+export async function readCloudEnvironmentAccess(signal: AbortSignal, checkExecution = false): Promise<CloudEnvironmentAccess> {
   const identity = await serviceIdentity(signal);
   const [auth, accounts, bootstrap] = await Promise.all([
     callAppServer("account/read", { refreshToken: false }),
@@ -66,13 +67,24 @@ export async function readCloudEnvironmentAccess(signal: AbortSignal): Promise<C
       }
     }
   }
+  const canCreate = available && gateValue("375130565") === true;
+  let canStartChat = false;
+  if (checkExecution && canCreate) {
+    const enforceFirstParty = gateValue("3683713372");
+    if (enforceFirstParty === false) canStartChat = true;
+    else if (enforceFirstParty === true) {
+      const preferences = await callAppServer("config/read", { cwd: null, includeLayers: false });
+      canStartChat = object(preferences) && object(preferences.config) &&
+        (preferences.config.model_provider ?? "openai") === "openai";
+    }
+  }
   signal.throwIfAborted();
   const after = await serviceIdentity(signal);
   if (identity.accountId !== after.accountId || identity.userId !== after.userId || identity.generation !== after.generation)
     throw Error("读取期间账号发生变化，请重试。");
   const experience = gateValue("3620782482");
   return { identity, available, canManage, rbacEnabled, gateEvidence,
-    canCreate: available && gateValue("375130565") === true,
+    canCreate, ...(checkExecution ? { canStartChat } : {}),
     directCreate: typeof experience === "boolean" ? experience : null,
   };
 }

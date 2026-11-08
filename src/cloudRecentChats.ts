@@ -72,9 +72,9 @@ export async function readCloudRecentChats(identity: ServiceIdentity, signal: Ab
       const environment = environments?.[0];
       if (known && environment?.environmentConfigId != null && environment.environmentConfigId !== known.configId) continue;
       const configId = environment?.environmentConfigId ?? known?.configId;
-      const environmentId = environment?.environmentId ?? known?.environmentId;
+      const environmentId = environment?.environmentId ?? known?.environmentId ?? null;
       if (typeof configId !== "string" || !/^(?:[A-Za-z0-9_-]+~)?asenvcfg_[A-Za-z0-9_-]+(?![\s\S])/.test(configId)
-        || typeof environmentId !== "string" || !environmentId.trim()) continue;
+        || (environmentId === null ? !known : typeof environmentId !== "string" || !environmentId.trim())) continue;
       const time = [thread.recencyAt, thread.updatedAt, thread.createdAt]
         .find((value): value is number => typeof value === "number" && Number.isFinite(value)) ?? 0;
       const binding = { accountId: identity.accountId, userId: identity.userId,
