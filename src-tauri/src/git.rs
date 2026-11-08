@@ -405,6 +405,82 @@ pub enum GitDiffScope {
     Unstaged,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitComparisonFile {
+    path: String,
+    status: String,
+    patch: String,
+}
+
+pub fn git_branch_comparison(
+    cwd: &str,
+    base_branch: &str,
+    review_base_commit: Option<&str>,
+) -> Result<Vec<GitComparisonFile>, String> {
+    let root = find_git_root(cwd).ok_or("Not a git repository")?;
+    let base = if let Some(commit) = review_base_commit {
+        let reference = format!("{}^{{commit}}", commit.trim());
+        run_git(&root, &["rev-parse", "--verify", "--end-of-options", &reference])?
+    } else {
+        merge_base(&root, base_branch)?
+    };
+    let output = run_git(&root, &[
+        "diff", "--patch-with-raw", "-z", "--find-renames", "--no-ext-diff", "--no-textconv",
+        "--no-color", "--submodule=short", base.trim(), "--",
+    ])?;
+    let mut files = Vec::new();
+    if !output.is_empty() {
+        let (raw, patch) = output.split_once("\0\0").ok_or("Invalid Git comparison output")?;
+        let mut records = raw.split('\0');
+        let mut sections = std::iter::once(0)
+            .chain(patch.match_indices("\ndiff --git ").map(|(index, _)| index + 1))
+            .chain(std::iter::once(patch.len()));
+        let mut start = sections.next().unwrap_or(0);
+        while let Some(record) = records.next() {
+            let status = record.strip_prefix(':').and_then(|line| line.split_whitespace().last())
+                .and_then(|value| value.chars().next()).ok_or("Invalid Git comparison status")?;
+            let mut path = records.next().ok_or("Missing Git comparison path")?;
+            if matches!(status, 'R' | 'C') {
+                path = records.next().ok_or("Missing Git comparison destination")?;
+            }
+            let end = sections.next().ok_or("Missing Git comparison patch")?;
+            let file_patch = &patch[start..end];
+            if !file_patch.starts_with("diff --git ") {
+                return Err("Invalid Git comparison patch".into());
+            }
+            files.push(GitComparisonFile { path: path.into(), status: status.to_string(), patch: file_patch.into() });
+            start = end;
+        }
+        if sections.next().is_some() {
+            return Err("Unexpected Git comparison patch".into());
+        }
+    }
+    for (path, patch) in read_untracked_patches(&root, None)? {
+        if let Some(file) = files.iter_mut().find(|file| file.path == path) {
+            file.patch.push_str(&patch);
+        } else {
+            files.push(GitComparisonFile { path, status: "??".into(), patch });
+        }
+    }
+    Ok(files)
+}
+
+fn read_untracked_patches(root: &str, selected: Option<&str>) -> Result<Vec<(String, String)>, String> {
+    let mut args = vec!["--literal-pathspecs", "ls-files", "--others", "--exclude-standard", "-z", "--"];
+    args.extend(selected);
+    run_git(root, &args)?.split_terminator('\0')
+        // Nested repositories are listed as directories, not individual untracked files.
+        .filter(|path| !path.is_empty() && !path.ends_with('/'))
+        .map(|path| {
+            let patch = run_git_with_diff_status(
+                root, &["diff", "--no-index", "--no-ext-diff", "--no-color", "--", "/dev/null", path], true,
+            )?;
+            Ok((path.to_owned(), patch))
+        })
+        .collect()
+}
+
 pub fn git_diff_for_path(
     target_path: &str,
     file_path: Option<String>,
@@ -457,17 +533,8 @@ pub fn git_diff_for_path(
             .or_else(|_| run_git(&git_root, &["hash-object", "-t", "tree", "--stdin"]))?;
         read_diff(&[base.trim()])?
     };
-    let mut untracked = vec!["--literal-pathspecs", "ls-files", "--others", "--exclude-standard", "-z", "--"];
-    untracked.extend(selected);
-    for path in run_git(&git_root, &untracked)?.split_terminator('\0') {
-        // Nested repositories are listed as directories, not individual untracked files.
-        if !path.is_empty() && !path.ends_with('/') {
-            patch.push_str(&run_git_with_diff_status(
-                &git_root,
-                &["diff", "--no-index", "--no-ext-diff", "--", "/dev/null", path],
-                true,
-            )?);
-        }
+    for (_, untracked) in read_untracked_patches(&git_root, selected)? {
+        patch.push_str(&untracked);
     }
     Ok(patch)
 }
@@ -646,6 +713,45 @@ mod index_action_tests {
                 .starts_with("codex-index-actions-"));
             fs::remove_dir_all(target).unwrap();
         }
+    }
+
+    #[test]
+    fn branch_comparison_returns_paths_and_patches_from_the_merge_base() {
+        let fixture = Fixture::new(true);
+        let commit = |message: &str| {
+            fixture.git(&["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                "-c", "commit.gpgsign=false", "commit", "-m", message]);
+        };
+        let original = fixture.git(&["rev-parse", "HEAD"]);
+        let feature = fixture.git(&["branch", "--show-current"]);
+        fixture.git(&["checkout", "-b", "comparison-base"]);
+        fixture.write("base-only.txt", b"base branch\n");
+        fixture.git(&["add", "-A"]);
+        commit("base branch change");
+        fixture.git(&["checkout", feature.trim()]);
+        fixture.write("committed-only.txt", b"committed branch change\n");
+        fixture.git(&["mv", "tracked.txt", "改名 [1].txt"]);
+        fixture.git(&["add", "-A"]);
+        commit("feature branch change");
+        assert!(git_status_for_path(&fixture.cwd).entries.is_empty());
+
+        let files = git_branch_comparison(&fixture.cwd, "comparison-base", None).unwrap();
+        assert_eq!(files.len(), 2);
+        let committed = files.iter().find(|file| file.path == "committed-only.txt").unwrap();
+        assert_eq!(committed.status, "A");
+        assert!(committed.patch.contains("+committed branch change"));
+        assert!(!committed.patch.contains("rename from"));
+        let renamed = files.iter().find(|file| file.path == "改名 [1].txt").unwrap();
+        assert_eq!(renamed.status, "R");
+        assert!(renamed.patch.contains("rename from tracked.txt"));
+        assert!(!renamed.patch.contains("committed-only.txt"));
+
+        fixture.write("committed-only.txt", b"committed branch change\nlatest worktree change\n");
+        fixture.write("local [1].txt", b"untracked file\n");
+        let files = git_branch_comparison(&fixture.cwd, "missing-base", Some(&original)).unwrap();
+        assert!(files.iter().any(|file| file.path == "committed-only.txt" && file.patch.contains("+latest worktree change")));
+        assert!(files.iter().any(|file| file.path == "local [1].txt" && file.status == "??" && file.patch.contains("+untracked file")));
+        assert!(git_branch_comparison(&fixture.cwd, "missing-base", None).is_err());
     }
 
     #[test]

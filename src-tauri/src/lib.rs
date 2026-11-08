@@ -1537,6 +1537,12 @@ async fn git_diff(
 }
 
 #[tauri::command]
+async fn git_branch_comparison(cwd: String, base_branch: String, review_base_commit: Option<String>) -> Result<Vec<git::GitComparisonFile>, String> {
+    tokio::task::spawn_blocking(move || git::git_branch_comparison(&cwd, &base_branch, review_base_commit.as_deref()))
+        .await.map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn git_merge_base(cwd: String, base_branch: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || git::merge_base(&cwd, &base_branch))
         .await
@@ -2470,6 +2476,7 @@ pub fn run() {
             detect_project_scripts,
             git_status,
             git_diff,
+            git_branch_comparison,
             git_merge_base,
             git_stage,
             git_unstage,

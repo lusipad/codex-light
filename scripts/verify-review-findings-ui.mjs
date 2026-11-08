@@ -78,11 +78,11 @@ const text = tree => !tree || typeof tree !== "object" ? String(tree ?? "") : ty
     gitStatus: { additions: 20, deletions: 12, entries: [{ path: "a.ts", unstaged: true }, { path: "b.ts", staged: true }] } };
   const rawNodes = node => node && typeof node === "object" ? [node, ...node.children.flatMap(rawNodes)] : [];
   const header = view => text(rawNodes(view.tree).find(node => node.props.className === "diff-file-list-header"));
-  const scoped = mount("DiffDrawer", props, { requestedDiffMode: "unstaged", diffContent: diff });
+  const scoped = mount("DiffDrawer", props, { requestedDiffMode: "unstaged", scopedDiffContent: diff });
   assert.match(header(scoped), /已更改的文件 \(1\)\+2 -2/);
-  const uncommitted = mount("DiffDrawer", props, { requestedDiffMode: "working", diffContent: diff });
+  const uncommitted = mount("DiffDrawer", props, { requestedDiffMode: "working", scopedDiffContent: diff });
   assert.match(header(uncommitted), /已更改的文件 \(2\)\+2 -2/);
-  const selected = mount("DiffDrawer", props, { requestedDiffMode: "unstaged", diffContent: diff, selectedFile: "a.ts" });
+  const selected = mount("DiffDrawer", props, { requestedDiffMode: "unstaged", scopedDiffContent: diff, selectedFile: "a.ts" });
   assert.doesNotMatch(header(selected), /\+\d|-[0-9]/);
   const empty = mount("DiffDrawer", { ...props, gitStatus: { entries: [{ path: "b.ts", staged: true }] } }, { requestedDiffMode: "unstaged" });
   assert.match(text(empty.tree), /无未暂存更改/);
@@ -94,7 +94,7 @@ const text = tree => !tree || typeof tree !== "object" ? String(tree ?? "") : ty
     "diff --git a/b.ts b/b.ts", "--- a/b.ts", "+++ b/b.ts", "@@ -1,2 +1 @@", "-before", "-second", "+after",
   ].join("\n");
   const split = mount("DiffDrawer", { cwd: "D:/repo", gitStatus: { entries: [{ path: "a.ts" }, { path: "b.ts" }] }, onClose() {}, onRefreshGit() {} },
-    { diffContent: uneven, diffLayout: "split", wordWrap: true });
+    { scopedDiffContent: uneven, diffLayout: "split", wordWrap: true });
   const grid = nodes(split.tree).find(node => node.props.className?.startsWith("diff-split-grid"));
   assert.ok(grid.props.className.includes("diff-word-wrap"));
   const [oldColumn, newColumn] = grid.children;
@@ -132,7 +132,7 @@ assert.equal(opened.id, "a");
 
 for (const layout of ["unified", "split"]) {
   const sent = [];
-  const ui = mount("DiffDrawer", { cwd: "D:/repo", gitStatus: { entries: [{ path: "a.ts" }, { path: "b.ts" }] }, onClose() {}, onRefreshGit() {}, modelReviewComments: all, onSendReviewComment: prompt => sent.push(prompt) }, { diffContent: diff, diffLayout: layout });
+  const ui = mount("DiffDrawer", { cwd: "D:/repo", gitStatus: { entries: [{ path: "a.ts" }, { path: "b.ts" }] }, onClose() {}, onRefreshGit() {}, modelReviewComments: all, onSendReviewComment: prompt => sent.push(prompt) }, { scopedDiffContent: diff, diffLayout: layout });
   const list = nodes(ui.tree);
   const cards = list.filter(node => node.props["data-review-finding"]);
   assert.equal(cards.length, 5, `${layout}: each finding is retained exactly once`);
@@ -151,7 +151,7 @@ for (const layout of ["unified", "split"]) {
 
 // The existing manual composer still sends only after an explicit user action.
 const sent = [];
-const manual = mount("DiffDrawer", { cwd: "D:/repo", gitStatus: { entries: [{ path: "a.ts", unstaged: true }] }, onClose() {}, onRefreshGit() {}, onSendReviewComment: value => sent.push(value) }, { diffContent: diff, requestedDiffMode: "unstaged", selectedFile: "staged-only.ts", commentLineIdx: 5, commentText: "Check this change" });
+const manual = mount("DiffDrawer", { cwd: "D:/repo", gitStatus: { entries: [{ path: "a.ts", unstaged: true }] }, onClose() {}, onRefreshGit() {}, onSendReviewComment: value => sent.push(value) }, { scopedDiffContent: diff, requestedDiffMode: "unstaged", selectedFile: "staged-only.ts", commentLineIdx: 5, commentText: "Check this change" });
 assert.equal(sent.length, 0);
 nodes(manual.tree).find(node => node.tag === "button" && text(node) === "发送给 Codex").props.onClick();
 assert.equal(sent.length, 1);

@@ -761,8 +761,8 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   );
   const [viewedFiles, setViewedFiles] = useState<Record<string, boolean>>({});
   const [wordWrap, setWordWrap] = useState<boolean>(false);
-  const [diffContent, setDiffContent] = useState<string>("");
-  const [loadingDiff, setLoadingDiff] = useState(false);
+  const [scopedDiffContent, setDiffContent] = useState<string>("");
+  const [loadingScopedDiff, setLoadingDiff] = useState(false);
 
   useEffect(() => {
     if (selectedPreviewFile !== undefined) {
@@ -871,9 +871,52 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   const [explorerBusy, setExplorerBusy] = useState(false);
   const dirLoadSeqRef = useRef(0);
 
+  const branchRequest = useMemo(() => {
+    if (!open || activeTab !== "changes" || diffMode !== "branch" || !gitPreferencesReady || !cwd || !baseBranch) return null;
+    const reviewBaseCommit = reviewTarget?.cwd === cwd && reviewTarget.baseBranch === baseBranch
+      ? reviewTarget.mergeBase : null;
+    return { cwd, baseBranch, reviewBaseCommit };
+  }, [open, activeTab, diffMode, gitPreferencesReady, cwd, baseBranch, reviewTarget, gitStatus, connectionIdentity]);
+  const [branchResult, setBranchResult] = useState<{
+    request: NonNullable<typeof branchRequest>;
+    files: { path: string; status: string; patch: string }[];
+    error?: string;
+  } | null>(null);
+  const branchComparison = branchResult?.request === branchRequest ? branchResult : null;
+  const branchPending = Boolean(branchRequest && !branchComparison);
+  const branchPatch = useMemo(() => {
+    if (!branchComparison) return "";
+    return branchComparison.files.find(file => file.path === selectedFile)?.patch
+      ?? branchComparison.files.map(file => file.patch).join("");
+  }, [branchComparison, selectedFile]);
+  const diffContent = diffMode === "branch" ? branchPatch : scopedDiffContent;
+  const loadingDiff = diffMode === "branch" ? branchPending : loadingScopedDiff;
+
+  useEffect(() => {
+    if (!branchRequest) return;
+    let disposed = false;
+    invoke<NonNullable<typeof branchResult>["files"]>("git_branch_comparison", branchRequest)
+      .then(files => { if (!disposed) setBranchResult({ request: branchRequest, files }); })
+      .catch(error => { if (!disposed) setBranchResult({ request: branchRequest, files: [], error: String(error) }); });
+    return () => { disposed = true; };
+  }, [branchRequest]);
+
   const displayedEntries = useMemo(() => {
     if (diffMode === "lastTurn") return [];
     const list = gitStatus?.entries || [];
+    if (diffMode === "branch") {
+      const worktreeEntries = new Map(list.map(entry => [entry.path, entry]));
+      return (branchComparison?.files ?? []).map(({ path, status }) => {
+        const local = worktreeEntries.get(path);
+        return {
+          path,
+          status,
+          staged: local?.staged ?? false,
+          unstaged: local?.unstaged ?? false,
+          untracked: local?.untracked ?? false,
+        };
+      });
+    }
     if (diffMode === "staged") {
       return list.filter((e) => e.staged);
     }
@@ -881,7 +924,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
       return list.filter((e) => e.unstaged || e.untracked);
     }
     return list;
-  }, [gitStatus, diffMode]);
+  }, [gitStatus, diffMode, branchComparison]);
   const fsWatchTimerRef = useRef<number | null>(null);
   const lastExternalPreviewRequestRef = useRef<string | null>(null);
   const lastDirectoryRevealRef = useRef<typeof directoryReveal>(null);
@@ -910,6 +953,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
 
   useEffect(() => {
     if (!open || activeTab !== "changes" || !cwd) return;
+    if (diffMode === "branch") return;
     if (!gitPreferencesReady) { setDiffContent("Git 设置尚未读取，请在设置中重新读取。"); setLoadingDiff(false); return; }
     let disposed = false;
     if (diffMode === "lastTurn") {
@@ -968,14 +1012,14 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
       previousFilePath: diffMode === "unstaged" ? null : gitStatus?.entries?.find(entry => entry.path === filePath)?.previousPath ?? null,
       staged: diffMode === "staged",
       unstaged: diffMode === "unstaged",
-      baseBranch: diffMode === "branch" ? baseBranch : null,
-      reviewBaseCommit: diffMode === "branch" && reviewTarget?.cwd === cwd && reviewTarget.baseBranch === baseBranch ? reviewTarget.mergeBase : null,
+      baseBranch: null,
+      reviewBaseCommit: null,
     })
       .then((res) => { if (!disposed) setDiffContent(res); })
       .catch((err) => { if (!disposed) setDiffContent(`Error loading diff: ${String(err)}`); })
       .finally(() => { if (!disposed) setLoadingDiff(false); });
     return () => { disposed = true; };
-  }, [open, activeTab, cwd, selectedFile, diffMode, baseBranch, selectedCommitHash, gitStatus, turns, reviewTarget, gitPreferencesReady, recordedTurnDiff, displayedEntries]);
+  }, [open, activeTab, cwd, selectedFile, diffMode, selectedCommitHash, gitStatus, turns, gitPreferencesReady, recordedTurnDiff, displayedEntries]);
 
   /**
    * List one directory: app-server `fs/readDirectory` first, then the legacy
@@ -1200,12 +1244,15 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     }
   };
 
+  const discardableEntries = diffMode === "branch"
+    ? displayedEntries.filter(entry => entry.unstaged || entry.untracked)
+    : displayedEntries;
   const handleDiscardAll = async () => {
-    const count = displayedEntries.length;
+    const count = discardableEntries.length;
     if (count === 0) return;
     if (!confirm(`确定放弃全部 ${count} 个文件的未提交更改吗？此操作无法撤销。`)) return;
     try {
-      for (const entry of displayedEntries) {
+      for (const entry of discardableEntries) {
         await invoke("git_discard", { cwd, filePath: entry.path });
       }
       setSelectedFile(null);
@@ -1810,7 +1857,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     : "";
 
   const parsedLines = useMemo(() => parseUnifiedDiff(diffContent), [diffContent]);
-  const visibleDiffStats = diffMode === "working" || diffMode === "unstaged" || diffMode === "staged"
+  const visibleDiffStats = diffMode === "working" || diffMode === "unstaged" || diffMode === "staged" || diffMode === "branch"
     ? loadingDiff || displayedEntries.some(entry => entry.path === selectedFile)
       ? null
       : {
@@ -2214,9 +2261,10 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
               <span className="muted-text">基准分支:</span>
               <select
                 className="branch-input-mini"
-                value={baseBranch || "main"}
+                value={baseBranch}
                 onChange={(e) => setBaseBranch(e.target.value)}
               >
+                <option value="" disabled>选择基准分支</option>
                 {branches.length > 0 ? (
                   branches.map((b) => (
                     <option key={b} value={b}>
@@ -2265,6 +2313,11 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                     ))
                   )}
                 </div>
+              </div>
+            ) : diffMode === "branch" && (branchPending || branchComparison?.error !== undefined || !baseBranch) ? (
+              <div className="empty-hint-small" role={branchComparison?.error !== undefined ? "alert" : "status"}>
+                {branchPending ? "正在读取分支差异…" : branchComparison?.error !== undefined
+                  ? `无法读取分支差异：${branchComparison.error}` : "请选择基准分支。"}
               </div>
             ) : displayedEntries.length === 0 && modelReviewComments.length === 0 ? (
               /* Official Codex App 1:1 Empty State Card */
@@ -2333,6 +2386,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                         type="button"
                         className="mini-link-btn danger"
                         onClick={handleDiscardAll}
+                        disabled={diffMode === "branch" && discardableEntries.length === 0}
                         title="放弃工作区中全部未提交的修改"
                       >
                         全放弃
@@ -2400,14 +2454,14 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                                 -
                               </button>
                             )}
-                            <button
+                            {(diffMode !== "branch" || entry.unstaged || entry.untracked) && <button
                               type="button"
                               className="mini-action-btn danger"
                               onClick={() => handleDiscard(entry.path)}
                               title="放弃更改"
                             >
                               <TrashIcon size={12} />
-                            </button>
+                            </button>}
                           </div>
                         </div>
                       );

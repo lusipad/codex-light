@@ -6,13 +6,16 @@ const source = fs.readFileSync("src/components/DiffDrawer.tsx", "utf8");
 const ast = ts.createSourceFile("DiffDrawer.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const callbacks = {};
 const indexButtons = {};
-let effect, keydown;
+let effect, branchEffect, branchPatch, keydown;
 let projectEntries;
 function visit(node) {
   if (ts.isVariableDeclaration(node) && node.name.getText(ast) === "displayedEntries") projectEntries = node.initializer.arguments[0];
+  if (ts.isVariableDeclaration(node) && node.name.getText(ast) === "branchPatch") branchPatch = node.initializer.arguments[0];
   if (ts.isVariableDeclaration(node) && ["handleCommit", "handleCommitAndPush", "handlePush", "handleStage", "handleUnstage"].includes(node.name.getText(ast))) callbacks[node.name.getText(ast)] = node.initializer;
   if (ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect" &&
       node.arguments[0]?.getText(ast).includes('invoke<string>("git_diff"')) effect = node.arguments[0];
+  if (ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect" &&
+      node.arguments[0]?.getText(ast).includes('"git_branch_comparison"')) branchEffect = node.arguments[0];
   if (ts.isJsxSelfClosingElement(node) && node.getText(ast).includes("输入 Git 提交说明")) {
     keydown = node.attributes.properties.find(attr => ts.isJsxAttribute(attr) && attr.name.getText(ast) === "onKeyDown").initializer.expression;
   }
@@ -43,14 +46,45 @@ function mount() {
     setCommitMessage(value) { context.commitMessage = typeof value === "function" ? value(context.commitMessage) : value; },
     onRefreshGit: () => events.push(["refresh"]), showToast: message => events.push(["toast", message]),
   };
-  for (const name of ["Committing", "Pushing", "IndexWriting", "LoadingDiff", "DiffContent", "Commits", "SelectedCommitHash"]) {
+  for (const name of ["Committing", "Pushing", "IndexWriting", "LoadingDiff", "DiffContent", "Commits", "SelectedCommitHash", "BranchResult"]) {
     const key = name[0].toLowerCase() + name.slice(1);
     context[`set${name}`] = value => { context[key] = value; events.push([key, value]); };
   }
   const render = node => { assert.ok(node, "production callback must exist"); return vm.runInNewContext(compile(node), context); };
-  return { context, requests, events, commit: render(callbacks.handleCommit), both: render(callbacks.handleCommitAndPush), push: render(callbacks.handlePush), stage: render(callbacks.handleStage), unstage: render(callbacks.handleUnstage), effect: render(effect), projectEntries: render(projectEntries) };
+  return { context, requests, events, commit: render(callbacks.handleCommit), both: render(callbacks.handleCommitAndPush), push: render(callbacks.handlePush), stage: render(callbacks.handleStage), unstage: render(callbacks.handleUnstage), effect: render(effect), projectEntries: render(projectEntries), branchEffect: render(branchEffect), branchPatch: render(branchPatch) };
 }
 async function flush() { for (let i = 0; i < 8; ++i) await Promise.resolve(); }
+{
+  const view = mount();
+  view.context.diffMode = "branch";
+  view.context.gitStatus.entries = [];
+  view.context.branchRequest = { cwd: "repo-A", baseBranch: "old", reviewBaseCommit: null };
+  view.branchEffect()();
+  const current = { cwd: "repo-A", baseBranch: "new", reviewBaseCommit: "fixed-commit" };
+  view.context.branchRequest = current;
+  const cleanup = view.branchEffect();
+  assert.equal(view.requests[1].method, "git_branch_comparison");
+  assert.deepEqual(view.requests[1].params, current);
+  view.requests[1].resolve([
+    { path: "committed.ts", status: "A", patch: "first patch\n" },
+    { path: "renamed.ts", status: "R", patch: "second patch\n" },
+  ]);
+  await flush();
+  view.requests[0].reject(Error("late failure"));
+  await flush();
+  assert.equal(view.context.branchResult.request, current);
+  view.context.branchComparison = view.context.branchResult;
+  const entries = Array.from(view.projectEntries());
+  assert.deepEqual(entries.map(entry => entry.path), ["committed.ts", "renamed.ts"]);
+  assert.ok(entries.every(entry => !entry.staged && !entry.unstaged && !entry.untracked));
+  view.context.selectedFile = null;
+  assert.equal(view.branchPatch(), "first patch\nsecond patch\n");
+  view.context.selectedFile = "renamed.ts";
+  assert.equal(view.branchPatch(), "second patch\n");
+  view.effect();
+  assert.equal(view.requests.length, 2, "selection reuses the matching branch patch");
+  cleanup();
+}
 {
   const view = mount();
   view.context.gitStatus.entries = [
