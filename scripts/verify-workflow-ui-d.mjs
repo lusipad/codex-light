@@ -13,7 +13,7 @@ let cursor = 0, tree, closed = 0, selected = 0;
 const react = { Fragment: "fragment", createElement: (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity) }),
   useState(value) { const i = cursor++; if (!(i in hooks)) hooks[i] = value; return [hooks[i], next => { hooks[i] = typeof next === "function" ? next(hooks[i]) : next; }]; },
   useRef(value) { const i = cursor++; return hooks[i] ??= { current: value }; },
-  useMemo(fn) { cursor++; return fn(); }, useEffect() { cursor++; },
+  useMemo(fn) { cursor++; return fn(); }, useCallback(fn) { cursor++; return fn; }, useEffect() { cursor++; },
 };
 vm.runInNewContext(compile(fs.readFileSync("src/components/QuickSearchModal.tsx", "utf8")), {
   exports, console, require: id => id === "react" ? react : id === "lucide-react" ? new Proxy({}, { get: (_, name) => String(name) }) :

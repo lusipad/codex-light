@@ -46,6 +46,7 @@ function mount(overrides = {}) {
     scopeTriggerRef: { current: null },
     threads: [], workspaceFileHits: [], recentFiles: [], recentHistory: [], recentLookup: null, skills: [], SLASH_COMMANDS: [slash],
     REMOTE_THREAD_LIMIT: 9, REMOTE_CHAT_LIMIT: 25,
+    chatPaging: null,
     runCmd: "npm run dev", testCmd: "npm test", buildCmd: "npm run build",
     selectedIndex: 0,
     baseNameFsPath: path => path.split(/[\\/]/).at(-1),
@@ -56,7 +57,7 @@ function mount(overrides = {}) {
     ...overrides,
   };
   for (const icon of ["Command", "MessageSquare", "Play", "Folder", "Settings", "FileText", "BookOpen"]) context[icon] = () => null;
-  for (const name of ["onSelectSlashCommand", "onClose", "onTriggerCommand", "onSelectFile", "onSearchFiles", "onSearchChats", "onSelectThread", "onNavigateSettings", "onNavigateRoute", "onStartNewChat", "onSelectSkill"]) {
+  for (const name of ["onSelectSlashCommand", "onClose", "onTriggerCommand", "onSelectFile", "onSearchFiles", "onSearchChats", "onSelectThread", "onNavigateSettings", "onNavigateRoute", "onStartNewChat", "onSelectSkill", "loadMoreChats"]) {
     context[name] = (...args) => calls.push([name, ...args]);
   }
   context.setSelectedIndex = value => { context.selectedIndex = typeof value === "function" ? value(context.selectedIndex) : value; };
@@ -283,8 +284,8 @@ function mount(overrides = {}) {
   view.context.mode = "chats"; view.context.query = "";
   view.context.threads = Array.from({ length: 30 }, (_, i) => ({ id: String(i), name: `聊天 ${i}` }));
   const results = view.results();
-  assert.equal(results.length, 25);
-  assert.ok(results.every(item => item.category === "thread"));
+  assert.equal(results.filter(item => item.category === "thread").length, 25);
+  assert.equal(results.at(-1).id, "show-more-chats");
   results[0].onSelect();
   assert.deepEqual(view.calls.slice(1), [["onSelectThread", "0"], ["onClose"]]);
   const entry = [];
@@ -294,6 +295,10 @@ function mount(overrides = {}) {
     setShowQuickSearch: open => entry.push(open),
   })();
   assert.deepEqual(entry, ["", "chats", true], "sidebar opens the dedicated chat mode");
+  view.context.chatPaging = { limit: 50, threads: [{ id: "0", name: "same server hit" }, { id: "new", name: "new hit" }] };
+  const expanded = view.results();
+  assert.equal(expanded.length, 31, "expanded results deduplicate loaded history against server pages");
+  assert.ok(expanded.every(item => item.category === "thread"));
 }
 {
   const view = mount();

@@ -7,9 +7,11 @@ import ts from "typescript";
 const text = fs.readFileSync(new URL("../src/components/QuickSearchModal.tsx", import.meta.url), "utf8");
 const ast = ts.createSourceFile("QuickSearchModal.tsx", text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const declarations = [], effects = [];
+let loadMoreChats;
 function visit(node) {
   if (ts.isFunctionDeclaration(node) && node.name) declarations.push(node.getText(ast));
   if (ts.isVariableDeclaration(node) && /^REMOTE_/.test(node.name.getText(ast))) declarations.push(`const ${node.getText(ast)};`);
+  if (ts.isVariableDeclaration(node) && node.name.getText(ast) === "loadMoreChats") loadMoreChats = node.initializer.arguments[0];
   if (ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect") effects.push(node.arguments[0]);
   ts.forEachChild(node, visit);
 }
@@ -26,6 +28,7 @@ const js = ts.transpileModule(`${declarations.join("\n")}\n({
   fileQuery:${fileQueryEffect.getText(ast)},
   lookup:${lookupEffect.getText(ast)},
   recent:${recentEffect.getText(ast)},
+  more:${loadMoreChats.getText(ast)},
   resolveFileSearchPath: typeof resolveFileSearchPath === "function" ? resolveFileSearchPath : undefined
 })`, {
   compilerOptions: { target: ts.ScriptTarget.ES2022 },
@@ -39,12 +42,15 @@ const flush = async () => { for (let n = 0; n < 16; n++) await Promise.resolve()
 function mount() {
   const timers = new Map(), requests = [], fileControllers = [];
   let clock = 1000, timerId = 0;
+  const scope = {};
   const context = {
     open: true, query: "target", workspacePath: "C:/repo-A", fileRoots: ["C:/repo-A"], fileScope: '["C:/repo-A"]', mode: "root", pathQuery: null, recentRequest: null,
     homeDir: async () => "C:\\Users\\tester",
     normalizeFsPath: async value => path.win32.normalize(value),
     joinFsPath: path.win32.join,
     remoteCacheRef: { current: new Map() },
+    chatSearchScope: scope, chatSearchScopeRef: { current: scope }, chatPageRequest: { current: null },
+    chatPaging: null, trimmedQuery: "target", setChatPagination: page => { context.chatPaging = page; },
     fileSearchRef: { current: null },
     createFuzzyFileSearch(roots, callbacks) {
       const controller = { roots, callbacks, updates: [], disposed: false,
@@ -239,11 +245,32 @@ await check("SB13 chat search opens local content for a single character and ign
   const cleanup = await view.start();
   assert.equal(view.requests[0]?.method, "thread/search");
   assert.equal(view.requests[0].args.searchTerm, "测");
-  assert.equal(view.requests[0].args.limit, 25);
+  assert.equal(view.requests[0].args.limit, 26);
   assert.equal(view.requests[0].args.archived, false);
   cleanup();
   view.context.mode = "root"; await view.start();
   resolveThreads(view.requests[0]); await flush();
   assert.equal(view.context.results, null);
+});
+await check("SB14 chat pagination serializes requests, retries, stops a repeated cursor and ignores old scope", async () => {
+  const view = mount(), { context } = view;
+  await view.more(null);
+  assert.equal(context.chatPaging.limit, 50);
+  assert.equal(view.requests.length, 0, "extra loaded chats need no RPC");
+  const first = view.more("cursor-1");
+  await view.more("cursor-1");
+  assert.equal(view.requests.length, 1);
+  assert.equal(view.requests[0].args.cursor, "cursor-1");
+  view.requests[0].reject(Error("network")); await first;
+  assert.equal(context.chatPaging.limit, 50, "failure preserves the last visible page size");
+  const retry = view.more("cursor-1");
+  view.requests[1].resolve({ data: [{ thread: { id: "new-chat" } }], nextCursor: "cursor-1" }); await retry;
+  assert.equal(context.chatPaging.limit, 75);
+  assert.equal(context.chatPaging.threads[0].id, "new-chat");
+  assert.equal(context.chatPaging.nextCursor, null);
+  const stale = view.more("cursor-2"), before = context.chatPaging;
+  context.chatSearchScopeRef.current = {};
+  view.requests[2].resolve({ data: [{ thread: { id: "wrong-query" } }], nextCursor: null }); await stale;
+  assert.equal(context.chatPaging, before, "old query cannot append its page");
 });
 if (failures.length) process.exitCode = 1;

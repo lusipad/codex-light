@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BookOpen,
   ChevronDown,
@@ -124,6 +124,21 @@ interface RemoteSearchResults {
   mode: "root" | "chats" | "files";
   files: RemoteFileResult[];
   threads: RemoteThreadResult[];
+  nextCursor?: string | null;
+}
+
+interface ChatSearchPage {
+  threads: RemoteThreadResult[];
+  nextCursor: string | null;
+}
+
+interface ChatPagination {
+  scope: object;
+  limit: number;
+  threads: RemoteThreadResult[];
+  nextCursor?: string | null;
+  usedCursors: string[];
+  loading: boolean;
 }
 
 /** Windows 下协议返回的 path 是相对 root 的路径，绝对路径 = root + "\\" + path。 */
@@ -232,26 +247,27 @@ function normalizeRemoteThreadHits(raw: unknown, limit: number): RemoteThreadRes
  * 调用 `thread/search` 搜索历史会话。
  * 返回结构为 `{ data: [{ snippet, thread }] }`（兼容 `threads` 扁平数组）。
  */
-async function searchThreadsProtocol(query: string, limit: number): Promise<RemoteThreadResult[]> {
+async function searchThreadsProtocol(query: string, limit: number, cursor?: string): Promise<ChatSearchPage | null> {
   try {
     const response = await callAppServer<
-      | { data?: ThreadSearchEntry[]; threads?: ThreadSearchEntry[] }
+      | { data?: ThreadSearchEntry[]; threads?: ThreadSearchEntry[]; nextCursor?: string | null }
       | ThreadSearchEntry[]
     >("thread/search", {
       searchTerm: query,
       limit,
       archived: false,
+      ...(cursor !== undefined ? { cursor } : {}),
     });
-    if (Array.isArray(response)) return normalizeRemoteThreadHits(response, limit);
+    if (Array.isArray(response)) return { threads: normalizeRemoteThreadHits(response, limit), nextCursor: null };
     const entries = Array.isArray(response?.data)
       ? response.data
       : Array.isArray(response?.threads)
       ? response.threads
       : [];
-    return normalizeRemoteThreadHits(entries, limit);
+    return { threads: normalizeRemoteThreadHits(entries, limit), nextCursor: typeof response?.nextCursor === "string" ? response.nextCursor : null };
   } catch {
     // 静默降级：无 app-server 时继续使用本地 threads 过滤。
-    return [];
+    return null;
   }
 }
 
@@ -292,6 +308,12 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   const [selectedFolder, setSelectedFolder] = useState<{ projectScope: string; path: string } | null>(null);
   const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
   const trimmedQuery = query.trim();
+  const chatSearchScope = useMemo(() => ({}), [open, mode, trimmedQuery, workspacePath, initialQuery]);
+  const chatSearchScopeRef = useRef(chatSearchScope);
+  chatSearchScopeRef.current = chatSearchScope;
+  const chatPageRequest = useRef<object | null>(null);
+  const [chatPagination, setChatPagination] = useState<ChatPagination | null>(null);
+  const chatPaging = chatPagination?.scope === chatSearchScope ? chatPagination : null;
   const projectScope = JSON.stringify(workspaceRoots?.length ? workspaceRoots : workspacePath ? [workspacePath] : []);
   const projectRoots = useMemo(() => JSON.parse(projectScope) as string[], [projectScope]);
   const chosenFolder = selectedFolder?.projectScope === projectScope ? selectedFolder.path : undefined;
@@ -325,7 +347,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   const fileSearchRef = useRef<ReturnType<typeof createFuzzyFileSearch> | null>(null);
   /** 查询词 -> 协议结果缓存：避免每次渲染/重复输入重复请求 app-server。 */
   const remoteCacheRef = useRef<
-    Map<string, { threads: RemoteThreadResult[]; updatedAt: number }>
+    Map<string, ChatSearchPage & { updatedAt: number }>
   >(new Map());
 
   const runCmd = projectScripts?.runCommand || "npm run dev";
@@ -455,7 +477,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
     const cacheKey = `${mode}\u0000${workspacePath || ""}\u0000${trimmed}`;
     const cached = remoteCacheRef.current.get(cacheKey);
     if (cached && Date.now() - cached.updatedAt < REMOTE_THREAD_STALE_MS) {
-      setRemoteResults({ query: trimmed, workspacePath, mode, files: [], threads: cached.threads });
+      setRemoteResults({ query: trimmed, workspacePath, mode, files: [], threads: cached.threads, nextCursor: cached.nextCursor });
       setRemoteLoading(false);
       return;
     }
@@ -466,17 +488,18 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
 
     let cancelled = false;
     const timer = window.setTimeout(async () => {
-      const threads = await searchThreadsProtocol(trimmed, mode === "chats" ? REMOTE_CHAT_LIMIT : REMOTE_THREAD_LIMIT);
+      const page = await searchThreadsProtocol(trimmed, mode === "chats" ? REMOTE_CHAT_LIMIT + 1 : REMOTE_THREAD_LIMIT)
+        ?? { threads: [], nextCursor: null };
       if (cancelled) return;
 
       const cache = remoteCacheRef.current;
-      cache.set(cacheKey, { threads, updatedAt: Date.now() });
+      cache.set(cacheKey, { ...page, updatedAt: Date.now() });
       if (cache.size > REMOTE_CACHE_LIMIT) {
         const oldestKey = cache.keys().next().value as string | undefined;
         if (oldestKey !== undefined) cache.delete(oldestKey);
       }
 
-      setRemoteResults({ query: trimmed, workspacePath, mode, files: [], threads });
+      setRemoteResults({ query: trimmed, workspacePath, mode, files: [], ...page });
       setRemoteLoading(false);
     }, REMOTE_DEBOUNCE_MS);
 
@@ -485,6 +508,28 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
       window.clearTimeout(timer);
     };
   }, [open, query, workspacePath, mode]);
+
+  const loadMoreChats = useCallback(async (cursor?: string | null) => {
+    if (chatSearchScopeRef.current !== chatSearchScope || chatPageRequest.current === chatSearchScope) return;
+    const page = chatPaging ?? { scope: chatSearchScope, limit: REMOTE_CHAT_LIMIT, threads: [], usedCursors: [], loading: false };
+    const expanded = { ...page, limit: page.limit + REMOTE_CHAT_LIMIT };
+    if (cursor == null) {
+      setChatPagination(expanded);
+      return;
+    }
+    chatPageRequest.current = chatSearchScope;
+    setChatPagination({ ...expanded, loading: true });
+    const next = await searchThreadsProtocol(trimmedQuery, REMOTE_CHAT_LIMIT + 1, cursor);
+    if (chatPageRequest.current === chatSearchScope) chatPageRequest.current = null;
+    if (chatSearchScopeRef.current !== chatSearchScope) return;
+    if (!next) {
+      setChatPagination({ ...page, loading: false });
+      return;
+    }
+    const usedCursors = [...page.usedCursors, cursor];
+    setChatPagination({ ...expanded, threads: [...page.threads, ...next.threads], loading: false, usedCursors,
+      nextCursor: next.nextCursor !== null && usedCursors.includes(next.nextCursor) ? null : next.nextCursor });
+  }, [chatPaging, chatSearchScope, trimmedQuery]);
 
   const items = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -671,9 +716,11 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
     }
 
     // Threads —— 协议结果优先，本地结果按 id 去重补充。
-    const remoteThreads = remote?.threads ?? [];
+    const remoteThreads = mode === "chats" && chatPaging?.threads.length
+      ? [...new Map([...remote?.threads ?? [], ...chatPaging.threads].map(thread => [thread.id, thread])).values()]
+      : remote?.threads ?? [];
     const remoteThreadIds = new Set(remoteThreads.map((t) => t.id));
-    const threadLimit = mode === "chats" ? REMOTE_CHAT_LIMIT : REMOTE_THREAD_LIMIT;
+    const threadLimit = mode === "chats" ? chatPaging?.limit ?? REMOTE_CHAT_LIMIT : REMOTE_THREAD_LIMIT;
 
     remoteThreads.slice(0, threadLimit).forEach((t) => {
       results.push({
@@ -691,7 +738,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
       });
     });
 
-    threads
+    const localThreads = threads
       .filter((t) => {
         if (mode === "files" || (mode === "root" && q.length < 2) || remoteThreadIds.has(t.id)) return false;
         return (
@@ -699,7 +746,8 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
           t.preview?.toLowerCase().includes(q) ||
           t.id.toLowerCase().includes(q)
         );
-      })
+      });
+    localThreads
       .slice(0, Math.max(0, threadLimit - remoteThreads.length))
       .forEach((t) => {
         results.push({
@@ -717,7 +765,18 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
         });
       });
 
-    if (mode === "chats") return results.filter(item => item.category === "thread");
+    if (mode === "chats") {
+      const cursor = chatPaging?.nextCursor === undefined ? remote?.nextCursor : chatPaging.nextCursor;
+      const chats = results.filter(item => item.category === "thread");
+      if (chatPaging?.loading || remoteThreads.length + localThreads.length > threadLimit || cursor != null) {
+        chats.push({
+          id: "show-more-chats", category: "action", section: "聊天",
+          title: chatPaging?.loading ? "正在搜索会话…" : "显示更多", icon: <MessageSquare size={14} />,
+          onSelect: () => void loadMoreChats(cursor),
+        });
+      }
+      return chats;
+    }
 
     if (mode === "root" && (!q || "切换聊天… 搜索聊天 search chats switch chat".includes(q))) {
       results.push({
@@ -969,6 +1028,8 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
     threads,
     skills,
     remoteResults,
+    chatPaging,
+    loadMoreChats,
     pathQuery,
     pathLookup,
     onStartNewChat,
