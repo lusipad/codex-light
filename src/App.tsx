@@ -647,6 +647,7 @@ export const App: React.FC = () => {
   const pendingNewThreadProjectRef = useRef<SidebarLocalProject | null>(null);
   const pendingProjectlessRef = useRef(false);
   const [pinnedThreadIds, setPinnedThreadIds] = useState<string[]>([]);
+  const threadPinRevisionRef = useRef(0);
   const [pinnedProjectIds, setPinnedProjectIds] = useState<string[] | null>(null);
   const projectPinRevisionRef = useRef(0);
   const projectPinPendingRef = useRef(false);
@@ -1210,6 +1211,7 @@ export const App: React.FC = () => {
   // 1. Load Workspaces & Thread Metadata from Rust DesktopStateManager
   const refreshWorkspaceGenerationRef = useRef(0);
   const refreshWorkspacesAndMeta = useCallback(async () => {
+    const threadPinRevision = threadPinRevisionRef.current;
     const projectPinRevision = projectPinRevisionRef.current;
     const generation = ++refreshWorkspaceGenerationRef.current;
     let wsList: WorkspaceRootItem[] | undefined;
@@ -1232,7 +1234,7 @@ export const App: React.FC = () => {
       }>("threads_meta_get");
       if (generation !== refreshWorkspaceGenerationRef.current) return;
       if (meta) {
-        setPinnedThreadIds(meta.pinnedThreadIds || []);
+        if (threadPinRevision === threadPinRevisionRef.current) setPinnedThreadIds(meta.pinnedThreadIds || []);
         if (projectPinRevision === projectPinRevisionRef.current) setPinnedProjectIds(meta.pinnedProjectIds || []);
         setWorkspaceHints(meta.workspaceHints || {});
         setSidebarProjectMembership(meta.projectMembership ?? {
@@ -2111,7 +2113,7 @@ export const App: React.FC = () => {
               activeThreadIdRef.current = null;
               setActiveThreadId(null);
               setTurns([]);
-              setActiveRoute("home");
+              if (activeRouteRef.current === "thread") setActiveRoute("home");
             }
           }
         } else if (method === NOTIFICATION.THREAD_UNARCHIVED) {
@@ -3901,10 +3903,11 @@ export const App: React.FC = () => {
   };
 
   const pinMutationPendingRef = useRef(false);
+  const archiveMutationPendingRef = useRef(false);
   const handleTogglePinThread = useCallback(
     async (threadId: string, e?: React.MouseEvent) => {
       e?.stopPropagation();
-      if (pinMutationPendingRef.current) return;
+      if (pinMutationPendingRef.current || archiveMutationPendingRef.current) return;
       pinMutationPendingRef.current = true;
       const nextPinned = !pinnedThreadIds.includes(threadId);
       try {
@@ -3912,6 +3915,7 @@ export const App: React.FC = () => {
           threadId,
           pinned: nextPinned,
         });
+        ++threadPinRevisionRef.current;
         setPinnedThreadIds(updated);
       } catch (err) {
         console.warn("thread_toggle_pin failed:", err);
@@ -3937,31 +3941,79 @@ export const App: React.FC = () => {
     [showAppToast]
   );
 
-  const archiveMutationPendingRef = useRef(false);
+  const undoProjectArchive = useCallback(async (thread: ThreadSummary, restorePin: { beforeThreadId: string | null } | null) => {
+    if (archiveMutationPendingRef.current || pinMutationPendingRef.current) {
+      showAppToast("聊天操作正在进行，请稍后在设置中恢复。", "error");
+      return;
+    }
+    archiveMutationPendingRef.current = true;
+    try {
+      const receipt = await tauriInvoke<{ pinnedThreadIds: string[]; localStateError: boolean }>("thread_archive_toggle", {
+        thread, archive: false, restorePin,
+      });
+      ++threadPinRevisionRef.current;
+      setPinnedThreadIds(receipt.pinnedThreadIds);
+      await refreshThreads();
+      setArchiveRefreshTick(value => value + 1);
+      showAppToast(receipt.localStateError ? "聊天已恢复，本地状态未能保存。" : "聊天已恢复", receipt.localStateError ? "error" : "success");
+    } catch {
+      showAppToast("聊天恢复未确认。请在设置中刷新已归档的聊天。", "error");
+    } finally {
+      archiveMutationPendingRef.current = false;
+    }
+  }, [refreshThreads, showAppToast]);
+
   const handleArchiveThread = useCallback(
-    async (thread: ThreadSummary, e?: React.MouseEvent) => {
+    async (thread: ThreadSummary, e?: React.MouseEvent, project?: { allowRunning: boolean }) => {
       e?.stopPropagation();
-      if (archiveMutationPendingRef.current) return;
+      if (archiveMutationPendingRef.current || pinMutationPendingRef.current) {
+        if (project) throw Error("聊天操作正在进行，请稍后重试。");
+        return;
+      }
       archiveMutationPendingRef.current = true;
       try {
-        await tauriInvoke("thread_archive_toggle", {
+        if (project) {
+          const automations = await tauriInvoke<{ targetThreadId?: string | null }[]>("automations_list");
+          if (automations.some(task => task.targetThreadId === thread.id)) {
+            throw Error("此聊天关联了计划任务，暂无法在项目页归档。");
+          }
+          const latest = threadsRef.current.find(item => item.id === thread.id);
+          if (!latest || !thread.projectId || latest.projectId !== thread.projectId) {
+            throw Error("聊天的项目归属已变化，请刷新后重试。");
+          }
+          const status = typeof latest.status === "string" ? latest.status : latest.status?.type;
+          if ((status === "active" || status === "running") && !project.allowRunning) {
+            throw Error("聊天正在运行，请重新打开归档操作并确认。");
+          }
+          thread = latest;
+        }
+        const receipt = await tauriInvoke<{ pinnedThreadIds: string[]; pinPlacement: { beforeThreadId: string | null } | null; localStateError: boolean }>("thread_archive_toggle", {
           thread,
           archive: true,
         });
+        ++threadPinRevisionRef.current;
+        setPinnedThreadIds(receipt.pinnedThreadIds);
         refreshThreadsGenerationRef.current += 1;
         activitySessionRef.current = excludeActivityThreads(activitySessionRef.current, [thread.id]);
         setThreads((prev) => prev.filter((t) => t.id !== thread.id));
         setArchiveRefreshTick((v) => v + 1);
-        if (activeThreadIdRef.current === thread.id) {
+        if (!project && activeThreadIdRef.current === thread.id) {
           startNewThread();
+        }
+        if (project) {
+          showAppToast(receipt.localStateError ? "聊天已归档，本地状态未能保存。" : "聊天已归档",
+            receipt.localStateError ? "error" : "success", { label: "撤销", onClick: () => { void undoProjectArchive(thread, receipt.pinPlacement); } });
+        } else if (receipt.localStateError) {
+          showAppToast("聊天已归档，本地状态未能保存。", "error");
         }
       } catch (err) {
         showAppToast(`归档会话失败：${String(err)}`, "error");
+        if (project) throw err;
       } finally {
         archiveMutationPendingRef.current = false;
       }
     },
-    [startNewThread, showAppToast]
+    [startNewThread, showAppToast, undoProjectArchive]
   );
 
   // Both archive entry points share the same service mutation boundary.
@@ -5720,6 +5772,7 @@ export const App: React.FC = () => {
             onRenameThread={handleRenameThread}
             pinnedThreadIds={pinnedThreadIds}
             onTogglePinThread={handleTogglePinThread}
+            onArchiveProjectThread={(thread, allowRunning) => handleArchiveThread(thread, undefined, { allowRunning })}
             isProjectPinned={isProjectPinned}
             onSetProjectPinned={pinnedProjectIds ? setProjectPinned : undefined}
             refreshToken={projectsRefreshToken}

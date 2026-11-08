@@ -19,6 +19,12 @@ const LOCAL_PROJECTS_ATOM_KEY: &str = "local-projects";
 const PROJECT_ORDER_ATOM_KEY: &str = "project-order";
 const SELECTED_PROJECT_ATOM_KEY: &str = "selected-project";
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ArchivePinPlacement {
+    pub before_thread_id: Option<String>,
+}
+
 fn workspace_server_project_id(
     state: &Map<String, Value>,
     identity: &str,
@@ -540,6 +546,31 @@ mod workspace_transition_tests {
         let disk: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         assert_eq!(disk[PINNED_THREAD_IDS_KEY], json!(["chat"]));
         assert_eq!(disk[PINNED_PROJECT_IDS_KEY], json!(["first"]));
+        fs::remove_file(&path).unwrap();
+        fs::remove_dir(&directory).unwrap();
+    }
+
+    #[test]
+    fn archive_restores_original_pin_position_after_concurrent_unrelated_pin() {
+        let (manager, directory) = fixture();
+        let path = directory.join("archive-state.json");
+        manager.set_value_persisted_at_path(PINNED_THREAD_IDS_KEY, json!(["first", "target", "last"]), &path).unwrap();
+        let target = json!({"id":"target", "projectId":"project"});
+        let archived = manager.finish_thread_archive_at_path(target.clone(), true, None, &path);
+        assert_eq!(archived["pinnedThreadIds"], json!(["first", "last"]));
+        assert_eq!(archived["pinPlacement"], json!({"beforeThreadId":"last"}));
+        assert_eq!(manager.list_archived_threads(), vec![target.clone()]);
+        manager.toggle_thread_pinned_at_path("new", true, &path).unwrap();
+        let restored = manager.finish_thread_archive_at_path(target.clone(), false,
+            Some(ArchivePinPlacement { before_thread_id: Some("last".into()) }), &path);
+        assert_eq!(restored["pinnedThreadIds"], json!(["new", "first", "target", "last"]));
+        assert!(manager.list_archived_threads().is_empty());
+        let failed = manager.finish_thread_archive_at_path(target, true, None, &directory);
+        assert_eq!(failed["localStateError"], true);
+        assert!(failed["pinPlacement"].is_null());
+        assert_eq!(manager.list_pinned_threads(), ["new", "first", "target", "last"]);
+        let disk: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(disk[PINNED_THREAD_IDS_KEY], json!(["new", "first", "target", "last"]));
         fs::remove_file(&path).unwrap();
         fs::remove_dir(&directory).unwrap();
     }
@@ -2115,6 +2146,50 @@ impl DesktopStateManager {
             .and_then(|v| v.as_array())
             .cloned()
             .unwrap_or_default()
+    }
+
+    pub(crate) fn finish_thread_archive(&self, thread: Value, archive: bool, restore_pin: Option<ArchivePinPlacement>) -> Value {
+        self.finish_thread_archive_at_path(thread, archive, restore_pin, &desktop_global_state_path())
+    }
+
+    fn finish_thread_archive_at_path(&self, thread: Value, archive: bool, restore_pin: Option<ArchivePinPlacement>, path: &Path) -> Value {
+        let id = thread["id"].as_str().unwrap_or_default().to_owned();
+        let mut state = self.state_map.lock().unwrap();
+        let mut next = state.clone();
+        let mut archived = next.get(ARCHIVED_THREADS_KEY).and_then(Value::as_array).cloned().unwrap_or_default();
+        archived.retain(|item| item["id"].as_str() != Some(&id));
+        if archive { archived.insert(0, thread); }
+        next.insert(ARCHIVED_THREADS_KEY.into(), json!(archived));
+        let original_pins = next.get(PINNED_THREAD_IDS_KEY).and_then(Value::as_array).cloned().unwrap_or_default();
+        let mut pins = original_pins.clone();
+        let mut placement = Value::Null;
+        if archive {
+            if let Some(index) = pins.iter().position(|pin| pin.as_str() == Some(&id)) {
+                placement = json!({"beforeThreadId": pins.iter().skip(index + 1)
+                    .filter_map(Value::as_str).find(|pin| *pin != id)});
+                pins.retain(|pin| pin.as_str() != Some(&id));
+            }
+        } else if let Some(restore) = restore_pin {
+            if !pins.iter().any(|pin| pin.as_str() == Some(&id)) {
+                let index = restore.before_thread_id.as_deref()
+                    .and_then(|before| pins.iter().position(|pin| pin.as_str() == Some(before)))
+                    .unwrap_or(pins.len());
+                pins.insert(index, json!(id));
+            }
+        }
+        if pins != original_pins { next.insert(PINNED_THREAD_IDS_KEY.into(), json!(pins)); }
+        match persist_state_map(&next, path) {
+            Ok(()) => {
+                *state = next;
+                json!({"pinnedThreadIds": pins, "pinPlacement": placement, "localStateError": false})
+            }
+            Err(_) => {
+                // The service already confirmed the archive change. Keep the local
+                // cache in step, but do not report a pin change that did not persist.
+                state.insert(ARCHIVED_THREADS_KEY.into(), json!(archived));
+                json!({"pinnedThreadIds": original_pins, "pinPlacement": null, "localStateError": true})
+            }
+        }
     }
 
     pub(crate) fn update_archived_thread(&self, thread: Value, archive: bool) -> Vec<Value> {

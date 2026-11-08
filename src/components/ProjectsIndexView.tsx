@@ -24,7 +24,7 @@ import {
   updateProject,
 } from "../projects";
 import { ThreadActionsMenu } from "./ThreadActionsMenu";
-import { ProjectEditDialog, ProjectRemoveDialog } from "./ProjectEditDialog";
+import { ProjectArchiveDialog, ProjectEditDialog, ProjectRemoveDialog } from "./ProjectEditDialog";
 import { RenameThreadDialog } from "./RenameThreadDialog";
 import { copyTextToClipboard } from "../clipboard";
 import "./ProjectsIndexView.css";
@@ -47,6 +47,7 @@ export interface ProjectsIndexViewProps {
   onTogglePinThread?: (threadId: string) => void;
   isProjectPinned?: (projectId: string) => boolean;
   onSetProjectPinned?: (projectId: string, pinned: boolean) => void | Promise<void>;
+  onArchiveProjectThread?: (thread: ThreadSummary, allowRunning: boolean) => Promise<void>;
 
   /* ── 以下均为可选新增 props（向后兼容，不传时行为不变） ── */
   /** app-server 连接 / 父级数据刷新时递增此值，可触发重新拉取项目列表。 */
@@ -153,6 +154,7 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
   onTogglePinThread,
   isProjectPinned,
   onSetProjectPinned,
+  onArchiveProjectThread,
   refreshToken,
   onProjectsChanged,
   onThreadsChanged,
@@ -186,6 +188,7 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [removingProject, setRemovingProject] = useState<Project | null>(null);
   const [renamingThread, setRenamingThread] = useState<ThreadSummary | null>(null);
+  const [archivingThread, setArchivingThread] = useState<ThreadSummary | null>(null);
   const [draftName, setDraftName] = useState("");
   const [draftRoots, setDraftRoots] = useState<string[]>([]);
   const [draftManualRoot, setDraftManualRoot] = useState("");
@@ -808,11 +811,16 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
                         ...(onRenameThread ? [{ id: "rename", label: "重命名聊天" }] : []),
                         { id: "copy-link", label: "复制深层链接" },
                         ...(t.cwd ? [{ id: "copy-cwd", label: "复制工作目录" }] : []),
+                        ...(onArchiveProjectThread ? [{ id: "archive", label: "归档聊天", separatorBefore: true }] : []),
                       ]} onSelect={action => {
                         if (action === "pin") onTogglePinThread?.(t.id);
                         else if (action === "rename") setRenamingThread(t);
                         else if (action === "copy-link") void copyProjectThreadValue(`codex://threads/${encodeURIComponent(t.id)}`, "深层链接");
                         else if (action === "copy-cwd" && t.cwd) void copyProjectThreadValue(t.cwd, "工作目录");
+                        else if (action === "archive" && onArchiveProjectThread) {
+                          if (status === "active" || status === "running") setArchivingThread(t);
+                          else void onArchiveProjectThread(t, false).catch(() => {});
+                        }
                       }} />
                       <button type="button" className="thread-icon-btn" aria-label="打开聊天"
                         onClick={() => onSelectThread(t.id)}><ArrowRightIcon size={14} /></button>
@@ -1027,6 +1035,11 @@ export const ProjectsIndexView: React.FC<ProjectsIndexViewProps> = ({
           onClose={() => setRenamingThread(null)} onSave={value => {
             const name = value.trim();
             if (name && name !== renamingThread.name) onRenameThread?.(renamingThread.id, name);
+          }} />}
+        {archivingThread && <ProjectArchiveDialog key={`archive:${archivingThread.id}`} fallbackRef={searchRef}
+          onClose={() => setArchivingThread(null)} onArchive={async () => {
+            await onArchiveProjectThread?.(archivingThread, true);
+            setArchivingThread(null);
           }} />}
 
         {/* 列表：真实项目实体；协议失败时回退 workspace 视图 */}

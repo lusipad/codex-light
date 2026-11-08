@@ -146,9 +146,13 @@ export function ProjectEditDialog({ project, onSave, onRemove, onClose }: {
   </dialog>;
 }
 
-export function ProjectRemoveDialog({ name, onRemove, onClose, fallbackRef }: {
-  name: string;
-  onRemove: () => Promise<void>;
+function ProjectConfirmDialog({ title, description, confirmLabel, pendingLabel, failure, onConfirm, onClose, fallbackRef }: {
+  title: string;
+  description: string;
+  confirmLabel: string;
+  pendingLabel: string;
+  failure: string;
+  onConfirm: () => Promise<void>;
   onClose: () => void;
   fallbackRef: React.RefObject<HTMLInputElement | null>;
 }) {
@@ -169,7 +173,7 @@ export function ProjectRemoveDialog({ name, onRemove, onClose, fallbackRef }: {
   }, [fallbackRef]);
   const dismiss = () => { if (!pending.current) onClose(); };
   return <dialog ref={dialogRef} className="project-edit-dialog project-remove-dialog"
-    aria-labelledby="project-remove-title" aria-describedby="project-remove-description" aria-busy={busy}
+    aria-labelledby="project-confirm-title" aria-describedby="project-confirm-description" aria-busy={busy}
     onCancel={event => { event.preventDefault(); dismiss(); }}
     onMouseDown={event => {
       if (event.target !== event.currentTarget) return;
@@ -183,7 +187,7 @@ export function ProjectRemoveDialog({ name, onRemove, onClose, fallbackRef }: {
       setBusy(true);
       setError(false);
       try {
-        await onRemove();
+        await onConfirm();
       } catch {
         setError(true);
       } finally {
@@ -191,13 +195,36 @@ export function ProjectRemoveDialog({ name, onRemove, onClose, fallbackRef }: {
         setBusy(false);
       }
     }}>
-      <h2 id="project-remove-title">移除 {name}？</h2>
-      <p id="project-remove-description">这只会从应用中移除该项目。你电脑上的文件和现有聊天不会被删除。</p>
-      {error && <p role="alert" className="project-edit-error">未成功移除 {name}</p>}
+      <h2 id="project-confirm-title">{title}</h2>
+      <p id="project-confirm-description">{description}</p>
+      {error && <p role="alert" className="project-edit-error">{failure}</p>}
       <footer>
         <button ref={cancelRef} type="button" className="secondary-pill-action-btn" disabled={busy} onClick={dismiss}>取消</button>
-        <button type="submit" className="secondary-pill-action-btn project-edit-remove" disabled={busy}>{busy ? "移除中…" : "移除项目"}</button>
+        <button type="submit" className="secondary-pill-action-btn project-edit-remove" disabled={busy}>{busy ? pendingLabel : confirmLabel}</button>
       </footer>
     </form>
   </dialog>;
+}
+
+export function ProjectRemoveDialog({ name, onRemove, onClose, fallbackRef }: {
+  name: string;
+  onRemove: () => Promise<void>;
+  onClose: () => void;
+  fallbackRef: React.RefObject<HTMLInputElement | null>;
+}) {
+  return <ProjectConfirmDialog title={`移除 ${name}？`}
+    description="这只会从应用中移除该项目。你电脑上的文件和现有聊天不会被删除。"
+    confirmLabel="移除项目" pendingLabel="移除中…" failure={`未成功移除 ${name}`}
+    onConfirm={onRemove} onClose={onClose} fallbackRef={fallbackRef} />;
+}
+
+export function ProjectArchiveDialog({ onArchive, onClose, fallbackRef }: {
+  onArchive: () => Promise<void>;
+  onClose: () => void;
+  fallbackRef: React.RefObject<HTMLInputElement | null>;
+}) {
+  return <ProjectConfirmDialog title="停止并归档此聊天？"
+    description="归档会停止所有正在进行的工作。你可以稍后在设置中恢复该聊天。"
+    confirmLabel="停止并归档" pendingLabel="归档中…" failure="聊天归档未成功"
+    onConfirm={onArchive} onClose={onClose} fallbackRef={fallbackRef} />;
 }

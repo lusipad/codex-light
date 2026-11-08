@@ -72,12 +72,46 @@ for(const change of ['close','identity','remove','already-read','notification-be
 }
 {
   let threads=[{id:'archived'},{id:'keep'}],started=0,ticks=0,rpc=0;const errors=[],pending=deferred();
-  const context={...activity.exports,activitySessionRef:{current:null},archiveMutationPendingRef:{current:false},activeThreadIdRef:{current:'archived'},refreshThreadsGenerationRef:{current:0},setThreads:update=>{threads=update(threads);},setArchiveRefreshTick:()=>ticks++,startNewThread:()=>started++,showAppToast:(...args)=>errors.push(args),tauriInvoke:async()=>{rpc++;return pending.promise;}};
+  const context={...activity.exports,activitySessionRef:{current:null},archiveMutationPendingRef:{current:false},pinMutationPendingRef:{current:false},threadPinRevisionRef:{current:0},setPinnedThreadIds:()=>{},activeThreadIdRef:{current:'archived'},refreshThreadsGenerationRef:{current:0},setThreads:update=>{threads=update(threads);},setArchiveRefreshTick:()=>ticks++,startNewThread:()=>started++,showAppToast:(...args)=>errors.push(args),tauriInvoke:async()=>{rpc++;return pending.promise;}};
   const archive=run('handleArchiveThread',context);const first=archive({id:'archived'});await archive({id:'archived'});assert.equal(rpc,1,'no-event and duplicate gestures reach one real boundary');
-  context.activeThreadIdRef.current='new-thread';pending.resolve([]);await first;
+  context.activeThreadIdRef.current='new-thread';pending.resolve({pinnedThreadIds:[],pinPlacement:null,localStateError:false});await first;
   assert.deepEqual(threads,[{id:'keep'}]);assert.equal(started,0,'late archive never leaves a newer thread');assert.equal(ticks,1);
   context.tauriInvoke=async()=>{throw Error('service denied');};await archive({id:'keep'},{stopPropagation(){}});
   assert.deepEqual(threads,[{id:'keep'}]);assert.equal(context.refreshThreadsGenerationRef.current,1);assert.equal(ticks,1);assert.match(errors[0][0],/service denied/);assert.equal(context.archiveMutationPendingRef.current,false);
+}
+{
+  const target={id:'target',projectId:'project',status:{type:'active'}}, placement={beforeThreadId:'next'};
+  const invokes=[],toasts=[];
+  let threads=[target],pins=['target','next'],schedules=[{targetThreadId:'target'}];
+  const context={...activity.exports,activitySessionRef:{current:null},archiveMutationPendingRef:{current:false},pinMutationPendingRef:{current:false},
+    threadPinRevisionRef:{current:0},threadsRef:{current:threads},activeThreadIdRef:{current:'target'},refreshThreadsGenerationRef:{current:0},
+    setThreads:update=>{threads=update(threads);},setArchiveRefreshTick:()=>{},setPinnedThreadIds:ids=>{pins=ids;},
+    refreshThreads:async()=>{threads=[target];},startNewThread:()=>assert.fail('project archive changed route'),
+    showAppToast:(...args)=>toasts.push(args),tauriInvoke:async(method,args)=>{
+      invokes.push([method,args]);
+      if(method==='automations_list')return schedules;
+      return {pinnedThreadIds:args.archive?['next']:['target','next'],pinPlacement:placement,localStateError:false};
+    }};
+  context.undoProjectArchive=run('undoProjectArchive',context);
+  const archive=run('handleArchiveThread',context);
+  await assert.rejects(archive(target,undefined,{allowRunning:true}),/计划任务/);
+  schedules=[];
+  await assert.rejects(archive(target,undefined,{allowRunning:false}),/正在运行/);
+  assert.deepEqual(invokes.map(([method])=>method),['automations_list','automations_list']);
+  await archive(target,undefined,{allowRunning:true});
+  assert.deepEqual(Array.from(threads),[]);
+  assert.deepEqual(pins,['next']);
+  assert.equal(toasts.at(-1)[2].label,'撤销');
+  toasts.at(-1)[2].onClick(); await flush();
+  assert.equal(invokes.at(-1)[1].archive,false);
+  assert.equal(invokes.at(-1)[1].restorePin,placement);
+  assert.deepEqual(pins,['target','next']);
+  assert.deepEqual(threads,[target]);
+  const notification={...context,params:{threadId:'target'},activeRouteRef:{current:'projects'},
+    threadRequestRef:{current:0},threadHistoryBufferRef:{current:{discard(){}}},finishedTurnIdsRef:{current:new Set()},
+    setActiveThreadId:()=>{},setTurns:()=>{},setActiveRoute:()=>assert.fail('archive notification changed project route')};
+  vm.runInNewContext(transpile(`(()=>${removal})()`),notification);
+  assert.equal(notification.activeThreadIdRef.current,null);
 }
 {
   const pending=deferred();const generation={current:0};let threads=[{id:'gone'},{id:'keep'}];

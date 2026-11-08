@@ -1067,25 +1067,26 @@ async fn thread_archive_toggle(
     state: State<'_, AppState>,
     thread: Value,
     archive: bool,
-) -> Result<Vec<Value>, String> {
+    restore_pin: Option<state::ArchivePinPlacement>,
+) -> Result<Value, String> {
     thread_archive_with(
         thread,
         archive,
         |method, params| state.app_server.call(&app, method, Some(params)),
-        |thread, archive| state.desktop_state.update_archived_thread(thread, archive),
+        |thread, archive| state.desktop_state.finish_thread_archive(thread, archive, restore_pin),
     ).await
 }
 
-async fn thread_archive_with<Call, Rpc, Merge>(
+async fn thread_archive_with<Call, Rpc, Merge, Output>(
     thread: Value,
     archive: bool,
     call: Call,
     merge: Merge,
-) -> Result<Vec<Value>, String>
+) -> Result<Output, String>
 where
     Call: FnOnce(&'static str, Value) -> Rpc,
     Rpc: std::future::Future<Output = Result<Value, String>>,
-    Merge: FnOnce(Value, bool) -> Vec<Value>,
+    Merge: FnOnce(Value, bool) -> Output,
 {
     let tid = thread.get("id").and_then(Value::as_str).ok_or("Missing thread.id")?.to_string();
     let method = if archive { "thread/archive" } else { "thread/unarchive" };
