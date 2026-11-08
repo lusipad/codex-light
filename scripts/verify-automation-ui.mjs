@@ -207,4 +207,39 @@ for (const failure of dirtyFailures) console.error(`FAIL ${failure}`);
 assert.equal(dirtyFailures.length, 0, "configuration discard protection and edit-to-detail navigation");
 console.log("PASS production Automation JSX: documented local table/filter/search/detail, actual unavailable callback, create failure/retry/cancel and cleanup");
 console.log("PASS actual pause/resume/delete confirmation, loading/error/retry and name/next-run/update local sorting");
+const summaries = surface();
+const clockLabel = (hour, minute) => new Intl.DateTimeFormat("zh-CN", { hour: "numeric", minute: "2-digit" })
+  .format(new Date(2024, 0, 1, hour, minute));
+const scheduleCases = [
+  ["Daily", "rrule:byminute=0;FREQ=DAILY;byhour=9", `每天 ${clockLabel(9, 0)}`],
+  ["Weekdays", "BYDAY=FR,MO,TH,TU,WE;BYHOUR=9;FREQ=WEEKLY;BYMINUTE=30", `工作日 ${clockLabel(9, 30)}`],
+  ["Weekend", "FREQ=WEEKLY;BYDAY=SA,SU;BYHOUR=9;BYMINUTE=30", `周末 ${clockLabel(9, 30)}`],
+  ["Monday", "BYDAY=MO;FREQ=WEEKLY;BYHOUR=10;BYMINUTE=0", "星期一（时间：10:00）"],
+  ["Two days", "FREQ=WEEKLY;BYDAY=MO,SU;BYHOUR=10;BYMINUTE=0", "星期日和星期一（时间：10:00）"],
+  ["Hours", "INTERVAL=2;FREQ=HOURLY;BYMINUTE=0", "每 2 小时"],
+  ["Hours with all days", "FREQ=HOURLY;BYDAY=SU,MO,TU,WE,TH,FR,SA", "每小时"],
+  ["Forty-eight hours", "FREQ=HOURLY;INTERVAL=48", "每2 天"],
+  ["Hourly with ignored day restriction", "FREQ=HOURLY;BYDAY=MO", "自定义安排"],
+  ["Alternating weeks", "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO;BYHOUR=10;BYMINUTE=0", "自定义安排"],
+  ["Invalid hour", "FREQ=DAILY;BYHOUR=24;BYMINUTE=0", "自定义安排"],
+  ["Multiple hours", "FREQ=DAILY;BYHOUR=9,10;BYMINUTE=0", "自定义安排"],
+  ["Missing minute", "FREQ=DAILY;BYHOUR=9", "自定义安排"],
+  ["One time", "FREQ=DAILY;COUNT=1;BYHOUR=9;BYMINUTE=0", "自定义安排"],
+  ["Minutes", "FREQ=MINUTELY;INTERVAL=30", "自定义安排"],
+  ["Day range", "FREQ=WEEKLY;BYDAY=WE,MO,TU;BYHOUR=10;BYMINUTE=0", "一-三（时间：10:00）"],
+];
+summaries.control.list = scheduleCases.map(([name, rrule], i) => ({ ...tasks[0], id: `schedule-${i}`, name, rrule }));
+summaries.render(); summaries.effects(); await summaries.settle();
+const rowLabels = () => summaries.nodes().filter(node => node.props.className === "automation-task-schedule").map(node => node.children.join(""));
+assert.deepEqual(rowLabels(), scheduleCases.map(([, , label]) => label), "table describes supported RRULE semantics");
+summaries.button("Monday").props.onClick(); summaries.render();
+assert.ok(summaries.nodes().some(node => node.type === "dd" && node.children.join("") === scheduleCases[3][2]), "detail shares the schedule summary");
+summaries.button("编辑").props.onClick(); summaries.render();
+assert.ok(summaries.nodes().some(node => node.type === "input" && node.props.value === scheduleCases[3][1]), "edit preserves the original RRULE");
+summaries.button("取消").props.onClick(); summaries.render();
+summaries.nodes().find(node => node.props.placeholder === "搜索任务").props.onChange({ target: { value: "工作日" } }); summaries.render();
+assert.deepEqual(rowLabels(), [scheduleCases[1][2]], "search matches the summary visible in the table");
+assert.ok(summaries.calls.every(call => call.method === "automations_list"), "reading and searching summaries never writes");
+summaries.unmount();
+console.log("PASS RRULE schedule summaries in table, detail and search; unsupported rules fall back");
 console.log("NOT TESTED: official layout/pixel parity, native GUI or real task execution");

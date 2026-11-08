@@ -40,6 +40,63 @@ const SCHEDULE_PRESETS = [
   { label: "每小时", rrule: "FREQ=HOURLY;INTERVAL=1" },
 ];
 
+const SCHEDULE_DAYS = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"];
+const SCHEDULE_TIME = new Intl.DateTimeFormat("zh-CN", { hour: "numeric", minute: "2-digit" });
+const SCHEDULE_FALLBACK = "自定义安排";
+
+function scheduleLabel(item: AutomationItem): string {
+  const fields = new Map<string, string>();
+  for (const part of item.rrule.trim().toUpperCase().replace(/^RRULE:/, "").split(";")) {
+    if (!part.trim()) continue;
+    const [key, value, extra] = part.split("=").map(text => text.trim());
+    if (!value || extra !== undefined || fields.has(key) ||
+        !["FREQ", "INTERVAL", "BYDAY", "BYHOUR", "BYMINUTE", "WKST"].includes(key)) return SCHEDULE_FALLBACK;
+    fields.set(key, value);
+  }
+  const intervalText = fields.get("INTERVAL") ?? "1";
+  const interval = Number(intervalText);
+  const weekStart = fields.get("WKST");
+  if (!/^\+?\d+$/.test(intervalText) || interval < 1 || interval > 0xffffffff ||
+      (weekStart && !SCHEDULE_DAYS.includes(weekStart))) return SCHEDULE_FALLBACK;
+
+  const days = fields.get("BYDAY")?.split(",").map(day => day.trim()).filter(Boolean) ?? [];
+  if (days.some(day => !SCHEDULE_DAYS.includes(day))) return SCHEDULE_FALLBACK;
+  const weekdays = SCHEDULE_DAYS.filter(day => days.includes(day));
+  const everyDay = weekdays.length === 0 || weekdays.length === 7;
+  const hour = fields.get("BYHOUR");
+  const minute = fields.get("BYMINUTE");
+  if ((hour !== undefined && (!/^\+?\d+$/.test(hour) || Number(hour) > 23)) ||
+      (minute !== undefined && (!/^\+?\d+$/.test(minute) || Number(minute) > 59))) return SCHEDULE_FALLBACK;
+
+  const freq = fields.get("FREQ");
+  if (freq === "HOURLY") {
+    // The local hourly scheduler has no weekday filter.
+    if (!everyDay || hour !== undefined) return SCHEDULE_FALLBACK;
+    const count = interval.toLocaleString("zh-CN");
+    if (interval === 1) return "每小时";
+    if (interval === 24) return "每天";
+    if (interval === 168) return "每周";
+    if (interval % 168 === 0) return `每 ${(interval / 168).toLocaleString("zh-CN")} 周`;
+    if (interval % 24 === 0) return `每${(interval / 24).toLocaleString("zh-CN")} 天`;
+    return `每 ${count} 小时`;
+  }
+  if (interval !== 1 || hour === undefined || minute === undefined ||
+      (freq !== "DAILY" && (freq !== "WEEKLY" || !weekdays.length))) return SCHEDULE_FALLBACK;
+
+  const time = SCHEDULE_TIME.format(new Date(2024, 0, 1, Number(hour), Number(minute)));
+  if (everyDay) return `每天 ${time}`;
+  const indices = weekdays.map(day => SCHEDULE_DAYS.indexOf(day));
+  if (indices.join() === "1,2,3,4,5") return `工作日 ${time}`;
+  if (indices.join() === "0,6") return `周末 ${time}`;
+  const names = indices.map(index => `星期${"日一二三四五六"[index]}`);
+  const dayLabel = indices.length > 2
+    ? indices.every((index, i) => index === indices[0] + i)
+      ? `${names[0].slice(-1)}-${names.at(-1)?.slice(-1)}`
+      : new Intl.ListFormat("zh-CN").format(names.map(name => name.slice(-1)))
+    : new Intl.ListFormat("zh-CN").format(names);
+  return `${dayLabel}（时间：${time}）`;
+}
+
 const MAX_RUN_HISTORY = 20;
 
 type SchedulerUiState = "loading" | "ready" | "unavailable" | "error";
@@ -565,8 +622,7 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
       if (item.status === "DELETED") return false;
       const status = item.status === "PAUSED" ? "PAUSED" : "ACTIVE";
       if (statusFilter !== "ALL" && statusFilter !== status) return false;
-      const label = SCHEDULE_PRESETS.find(preset => preset.rrule === item.rrule)?.label ?? "自定义安排";
-      return !q || [item.name, item.prompt, ...item.cwds, label].some(value => value.toLocaleLowerCase().includes(q));
+      return !q || [item.name, item.prompt, ...item.cwds, scheduleLabel(item)].some(value => value.toLocaleLowerCase().includes(q));
     });
     if (sortOrder === "title_asc") items.sort((a, b) => a.name.localeCompare(b.name, "zh-CN", { numeric: true, sensitivity: "base" }));
     if (sortOrder === "updated_at_desc") items.sort((a, b) => b.updatedAt - a.updatedAt);
@@ -591,7 +647,6 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
   const selectedRuns = selectedItem ? runHistory.filter(record => record.automationId === selectedItem.id) : [];
   const stateOptions = [["ALL", "全部"], ["ACTIVE", "已开启"], ["PAUSED", "已暂停"], ["COMPLETED", "已完成"]] as const;
   const sortOptions = [["automatic", "自动"], ["next_run_asc", "下次运行"], ["updated_at_desc", "最近更新"], ["title_asc", "名称"]] as const;
-  const scheduleLabel = (item: AutomationItem) => SCHEDULE_PRESETS.find(preset => preset.rrule === item.rrule)?.label ?? "自定义安排";
   const configurationDirty = showCreateForm && JSON.stringify([name, kind, rrule, prompt, execEnv, selectedModel]) !== configurationBaselineRef.current;
   const nextRunLabel = (item: AutomationItem) => {
     if (item.status === "PAUSED") return "已暂停";

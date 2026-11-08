@@ -12,7 +12,7 @@ const scripts = [
   'verify-images-data.mjs', 'verify-images-assets.mjs', 'verify-images-view.mjs',
   'verify-cloud-environments.mjs', 'verify-cloud-draft-bindings.mjs', 'verify-cloud-draft-resume.mjs', 'verify-cloud-environment-setup.mjs', 'verify-cloud-environment-reply.mjs', 'verify-cloud-environment-access.mjs', 'verify-cloud-environment-data.mjs',
   'verify-cloud-repository-discovery.mjs', 'verify-cloud-environment-publish.mjs', 'verify-cloud-published-chat.mjs', 'verify-home-cloud-composer.mjs', 'verify-cloud-recent-chats.mjs', 'verify-deep-links.mjs',
-  'verify-help-menu.mjs', 'verify-project-move-keyboard.mjs', 'verify-turn-controls.mjs',
+  'verify-help-menu.mjs', 'verify-project-move-keyboard.mjs', 'verify-turn-controls.mjs', 'verify-automation-ui.mjs',
   'verify-gpts-data.mjs', 'verify-gpts-read.mjs', 'verify-gpts-service.mjs',
   'verify-sites-data.mjs', 'verify-sites-read.mjs', 'verify-sites-service.mjs', 'verify-sites-navigation.mjs',
   'verify-sites-settings-client.mjs', 'verify-sites-settings-ui.mjs',
