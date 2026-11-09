@@ -32,7 +32,7 @@ import { AppearanceSettings } from "./AppearanceSettings";
 import { KeyboardShortcutsSettings } from "./KeyboardShortcutsSettings";
 import type { KeyboardPreferencesState } from "../keyboardPreferences";
 import type { AppearanceState } from "../appearancePreferences";
-import { GeneralOpenPreferences } from "./GeneralOpenPreferences";
+import { GeneralOpenPreferences, type BottomPanelLauncherPreference } from "./GeneralOpenPreferences";
 import { GeneralPreferenceSelect } from "./GeneralPreferenceSelect";
 import "./SettingsView.css";
 import type { ComposerEnterBehavior } from "../composerPreferences";
@@ -122,6 +122,7 @@ interface SettingsViewProps {
   composerEnterSaving: boolean;
   composerEnterError: string | null;
   onSetComposerEnterBehavior: (value: ComposerEnterBehavior) => void;
+  bottomPanelLauncher?: BottomPanelLauncherPreference;
   appServerStatus: AppServerStatus;
   models: ModelInfo[];
   activeWorkspaceRoot?: string;
@@ -156,6 +157,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   keyboardState,
   appearanceState,
   composerEnterBehavior, composerEnterSaving, composerEnterError, onSetComposerEnterBehavior,
+  bottomPanelLauncher,
   appServerStatus,
   activeWorkspaceRoot = "",
   workspaceRoots,
@@ -331,7 +333,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <div className="settings-scroll-container settings-general-content">
             <section className="settings-general-group" aria-labelledby="general-preferences-heading">
               <h3 id="general-preferences-heading">常规</h3>
-              <GeneralOpenPreferences />
+              <GeneralOpenPreferences bottomPanelLauncher={bottomPanelLauncher} />
             </section>
             <section className="settings-general-group" aria-labelledby="composer-preferences-heading">
               <h3 id="composer-preferences-heading">编辑器</h3>

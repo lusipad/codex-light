@@ -25,6 +25,7 @@ function terminalAppearance(element: HTMLElement) {
 }
 
 export type TerminalPanelRequest = { action: "open-terminal" | "toggle-bottom" };
+export const BOTTOM_PANEL_LAUNCHER_KEY = "app-shell-bottom-panel-launcher-visible";
 
 interface TerminalDockProps {
   open?: boolean;
@@ -32,6 +33,7 @@ interface TerminalDockProps {
   onClose: () => void;
   panelRequest?: TerminalPanelRequest | null;
   onPanelRequestHandled?: (request: TerminalPanelRequest) => void;
+  onBottomVisibilityChange?: (visible: boolean) => void;
   pendingCommand?: { id: number; command: string; cwd?: string } | null;
   onCommandHandled?: (id: number) => void;
   pendingAction?: EnvironmentActionRunRequest | null;
@@ -53,6 +55,8 @@ const terminalDockPositions = ["left", "right", "bottom"] as const;
 const terminalDockLabels = { left: "左侧终端", right: "右侧终端", bottom: "底部终端" };
 
 async function readTerminalLocation(): Promise<"bottom" | "right"> {
+  const launcher = await invoke<unknown>("desktop_state_get", { key: BOTTOM_PANEL_LAUNCHER_KEY }).catch(() => null);
+  if (launcher === false) return "right";
   const value = await invoke<unknown>("desktop_state_get", { key: "defaultTerminalLocation" }).catch(() => null);
   return value === "right" ? "right" : "bottom";
 }
@@ -80,6 +84,7 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
   onClose,
   panelRequest,
   onPanelRequestHandled,
+  onBottomVisibilityChange,
   pendingCommand,
   onCommandHandled,
   pendingAction,
@@ -104,8 +109,11 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
   };
   const groups = terminalDockGroups(tabs, selection);
   const visibleGroups = groups.filter(group => !hiddenDocks.includes(group.position));
+  const bottomVisible = open && visibleGroups.some(group => group.position === "bottom");
   const hiddenGroups = groups.filter(group => hiddenDocks.includes(group.position));
   const bothSides = visibleGroups.some(group => group.position === "left") && visibleGroups.some(group => group.position === "right");
+  useEffect(() => { onBottomVisibilityChange?.(bottomVisible); }, [bottomVisible, onBottomVisibilityChange]);
+  useEffect(() => () => onBottomVisibilityChange?.(false), [onBottomVisibilityChange]);
   const revealDock = (position: TerminalDockPosition) => {
     setHiddenDocks(current => current.includes(position) ? current.filter(dock => dock !== position) : current);
   };

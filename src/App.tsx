@@ -109,7 +109,7 @@ import {
 import { MarkdownView } from "./components/MarkdownView";
 import { UserMessageBubble } from "./components/UserMessageBubble";
 import { DiffDrawer } from "./components/DiffDrawer";
-import { TerminalDock, type TerminalPanelRequest } from "./components/TerminalDock";
+import { BOTTOM_PANEL_LAUNCHER_KEY, TerminalDock, type TerminalPanelRequest } from "./components/TerminalDock";
 import { EnvironmentActions } from "./components/EnvironmentActions";
 import type { EnvironmentActionRunRequest } from "./environmentActions";
 import { WorktreesView } from "./components/WorktreesView";
@@ -538,6 +538,10 @@ export const App: React.FC = () => {
   const activityScopeRef = useRef("");
   const [showRightDrawer, setShowRightDrawer] = useState<boolean>(false);
   const [showTerminal, setShowTerminal] = useState<boolean>(false);
+  const [bottomPanelVisible, setBottomPanelVisible] = useState(false);
+  const [bottomPanelLauncherVisible, setBottomPanelLauncherVisible] = useState<boolean | null>(null);
+  const [bottomPanelLauncherSaving, setBottomPanelLauncherSaving] = useState(false);
+  const bottomPanelLauncherPending = useRef(false);
   const [terminalPanelRequest, setTerminalPanelRequest] = useState<TerminalPanelRequest | null>(null);
   const requestTerminalPanel = (action: TerminalPanelRequest["action"]) => {
     if (isCloudChatRoute) return;
@@ -1623,6 +1627,32 @@ export const App: React.FC = () => {
       setComposerEnterSaving(false);
     }
   }, [composerEnterBehavior]);
+
+  useEffect(() => {
+    let cancelled = false;
+    tauriInvoke<unknown>("desktop_state_get", { key: BOTTOM_PANEL_LAUNCHER_KEY })
+      .then(value => { if (!cancelled) setBottomPanelLauncherVisible(value !== false); })
+      .catch(() => { if (!cancelled) setBottomPanelLauncherVisible(true); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const saveBottomPanelLauncher = async (value: boolean) => {
+    if (bottomPanelLauncherPending.current || bottomPanelLauncherVisible === null ||
+      bottomPanelLauncherVisible === value) return;
+    bottomPanelLauncherPending.current = true;
+    setBottomPanelLauncherSaving(true);
+    try {
+      await tauriInvoke("desktop_state_set", { key: BOTTOM_PANEL_LAUNCHER_KEY, value });
+      const saved = await tauriInvoke<unknown>("desktop_state_get", { key: BOTTOM_PANEL_LAUNCHER_KEY });
+      setBottomPanelLauncherVisible(saved !== false);
+      if (saved !== value) throw new Error("底部面板设置读回不一致");
+    } catch (error) {
+      showAppToast(`未能确认底部面板设置：${String(error)}`, "error");
+    } finally {
+      bottomPanelLauncherPending.current = false;
+      setBottomPanelLauncherSaving(false);
+    }
+  };
 
   // Connect & Subscribe to App-Server Events on Mount
   useEffect(() => {
@@ -5783,6 +5813,15 @@ export const App: React.FC = () => {
                 <SquarePlusIcon size={16} />
               </button>
             </div>
+            {bottomPanelLauncherVisible === true && (activeRoute === "home" || activeRoute === "thread") && (
+              <button type="button" className={`window-chrome-icon-btn ${bottomPanelVisible ? "active" : ""}`}
+                aria-label="显示/隐藏底部面板" aria-pressed={bottomPanelVisible}
+                title={["显示/隐藏底部面板", effectiveBindings("toggle-bottom-panel", keyboardState.bindings).join(" / ")
+                  .replaceAll("CmdOrCtrl", "Ctrl").replaceAll("Control", "Ctrl")].filter(Boolean).join(" · ")}
+                onClick={() => requestTerminalPanel("toggle-bottom")}>
+                <BottomPanelIcon size={16} />
+              </button>
+            )}
           </div>}
         </header>
 
@@ -6100,6 +6139,11 @@ export const App: React.FC = () => {
         ) : activeRoute === "settings" ? (
           <div className="settings-full-route-view">
             <SettingsView
+              bottomPanelLauncher={{
+                visible: bottomPanelLauncherVisible !== false,
+                busy: bottomPanelLauncherVisible === null || bottomPanelLauncherSaving,
+                save: value => void saveBottomPanelLauncher(value),
+              }}
               cloudEnvironmentFocusId={cloudDraft?.origin === "settings" ? cloudDraft.session.binding.configId : undefined}
               onOpenCloudDraft={(session, persisted) => {
                 setCloudDraft({ session, persisted, origin: "settings" });
@@ -6910,6 +6954,7 @@ export const App: React.FC = () => {
             onClose={() => setShowTerminal(false)}
             panelRequest={terminalPanelRequest}
             onPanelRequestHandled={request => setTerminalPanelRequest(current => current === request ? null : current)}
+            onBottomVisibilityChange={setBottomPanelVisible}
             pendingCommand={pendingTermCommand}
             pendingAction={environmentActionWaiter.current?.scope === environmentActionScope ? pendingEnvironmentAction : null}
             onActionResult={handleEnvironmentActionResult}

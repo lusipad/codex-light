@@ -144,5 +144,18 @@ console.log('PASS portal menu: composing keys ignored, measured viewport positio
   assert.equal(controls[1].props.value, fixture.preferredShell);
   assert.equal(controls[1].props.options.length, 2);
   assert.equal(controls.every(control => control.props.disabled), true, 'loading disables service changes');
+  const changes = [];
+  cursor = 0;
+  const off = flatten(module.exports.GeneralOpenPreferences({ bottomPanelLauncher: {
+    visible: false, busy: false, save: value => changes.push(value),
+  } }));
+  const toggle = off.find(node => node.props.role === 'switch');
+  assert.equal(toggle.props.checked, false);
+  assert.ok(!off.some(node => node.props.className === 'terminal-location-options'));
+  toggle.props.onChange({ target: { checked: true } });
+  assert.deepEqual(changes, [true]);
+  cursor = 0;
+  const on = flatten(module.exports.GeneralOpenPreferences({ bottomPanelLauncher: { visible: true, busy: false } }));
+  assert.ok(on.some(node => node.props.className === 'terminal-location-options'));
 }
 console.log('PASS general production consumer: service options, confirmed values, loading lock, custom menu replacing native selects');

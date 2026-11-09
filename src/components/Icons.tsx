@@ -334,9 +334,9 @@ export function SidebarLeftIcon({ size = 16 }: { size?: number }) {
 
 export function BottomPanelIcon({ size = 16 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-      <rect width="18" height="18" x="3" y="3" rx="2" />
-      <path d="M3 15h18" />
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.05" strokeLinecap="round" aria-hidden="true">
+      <rect width="12" height="10" x="2" y="3" rx="1.87" />
+      <path d="M5.33 10.17h5.34" />
     </svg>
   );
 }

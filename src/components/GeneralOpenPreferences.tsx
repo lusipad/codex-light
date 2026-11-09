@@ -11,7 +11,13 @@ export interface DesktopOpenPreferences {
   defaultTerminalLocation: "bottom" | "right";
 }
 
-export const GeneralOpenPreferences: React.FC = () => {
+export interface BottomPanelLauncherPreference {
+  visible: boolean;
+  busy: boolean;
+  save: (visible: boolean) => void;
+}
+
+export const GeneralOpenPreferences: React.FC<{ bottomPanelLauncher?: BottomPanelLauncherPreference }> = ({ bottomPanelLauncher } = {}) => {
   const [preferences, setPreferences] = useState<DesktopOpenPreferences | null>(null);
   const [busy, setBusy] = useState(true);
   const [refresh, setRefresh] = useState(0);
@@ -73,7 +79,19 @@ export const GeneralOpenPreferences: React.FC = () => {
         options={preferences.shells.map(shell => ({ value: shell.id, label: shell.label }))}
         onChange={value => void savePreference("shell", value)} />
     </div>}
-    <div className="form-field">
+    {bottomPanelLauncher && <div className="form-field">
+      <label htmlFor="bottom-panel-launcher">底部面板</label>
+      <p className="card-subtitle-desc" id="bottom-panel-launcher-description">在应用标题栏中显示底部面板控件</p>
+      <div className="bottom-panel-launcher-setting">
+        <label className="switch-control">
+          <input id="bottom-panel-launcher" type="checkbox" role="switch" checked={bottomPanelLauncher.visible}
+            aria-describedby="bottom-panel-launcher-description" aria-disabled={bottomPanelLauncher.busy}
+            onChange={event => bottomPanelLauncher.save(event.target.checked)} />
+          <span className="switch-slider" aria-hidden="true" />
+        </label>
+      </div>
+    </div>}
+    {bottomPanelLauncher?.visible !== false && <div className="form-field">
       <label id="default-terminal-location-label">默认终端位置</label>
       <p className="card-subtitle-desc" id="default-terminal-location-description">选择终端快捷键和环境操作在何处打开终端标签页</p>
       <div className="terminal-location-options" role="group" aria-labelledby="default-terminal-location-label"
@@ -84,7 +102,7 @@ export const GeneralOpenPreferences: React.FC = () => {
               if (preferences?.defaultTerminalLocation !== value) void savePreference("terminal-location", value);
             }}>{label}</button>)}
       </div>
-    </div>
+    </div>}
     {error && <div role="alert">{error}<button type="button" disabled={busy} onClick={() => setRefresh(value => value + 1)}>重新读取</button></div>}
   </>;
 };

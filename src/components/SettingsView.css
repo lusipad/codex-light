@@ -74,12 +74,39 @@
   grid-column: 1 / -1;
 }
 
-.terminal-location-options {
+.terminal-location-options,
+.bottom-panel-launcher-setting {
   grid-column: 2;
   grid-row: 1 / span 2;
   justify-self: end;
   display: inline-flex;
+}
+
+.terminal-location-options {
   gap: 2px;
+}
+
+.bottom-panel-launcher-setting .switch-control {
+  width: 32px;
+  height: 20px;
+}
+
+.bottom-panel-launcher-setting input:not(:checked) + .switch-slider {
+  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+}
+
+.bottom-panel-launcher-setting .switch-slider::before {
+  top: 2px;
+  left: 2px;
+}
+
+.bottom-panel-launcher-setting input:checked + .switch-slider::before {
+  transform: translateX(12px);
+}
+
+.bottom-panel-launcher-setting input:focus-visible + .switch-slider {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 3px;
 }
 
 .terminal-location-options > button {
@@ -112,7 +139,8 @@
     grid-row: auto;
   }
 
-  .terminal-location-options {
+  .terminal-location-options,
+  .bottom-panel-launcher-setting {
     grid-column: 1;
     grid-row: auto;
     justify-self: start;

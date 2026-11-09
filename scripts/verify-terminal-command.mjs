@@ -121,9 +121,10 @@ function mount() {
 // The actual App acknowledgment must not clear a newer toolbar command.
 const appSource = fs.readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const appAst = ts.createSourceFile("App.tsx", appSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-let ack;
+let ack, launcherSave;
 function findAck(node) {
   if (ts.isVariableDeclaration(node) && node.name.getText(appAst) === "handleTerminalCommandHandled") ack = node.initializer.arguments[0];
+  if (ts.isVariableDeclaration(node) && node.name.getText(appAst) === "saveBottomPanelLauncher") launcherSave = node.initializer;
   ts.forEachChild(node, findAck);
 }
 findAck(appAst);
@@ -133,6 +134,34 @@ const ackCallback = vm.runInNewContext(ts.transpileModule(`(${ack.getText(appAst
 });
 ackCallback(1); assert.equal(pending.id, 2);
 ackCallback(2); assert.equal(pending, null);
+const launcherKey = "app-shell-bottom-panel-launcher-visible";
+{
+  const requests = [], gate = deferred(), errors = [];
+  const context = {
+    BOTTOM_PANEL_LAUNCHER_KEY: launcherKey, bottomPanelLauncherVisible: true, bottomPanelLauncherPending: { current: false },
+    setBottomPanelLauncherVisible(value) { context.bottomPanelLauncherVisible = value; },
+    setBottomPanelLauncherSaving(value) { context.saving = value; },
+    tauriInvoke(method, args) {
+      assert.equal(args.key, launcherKey); requests.push(method);
+      return method === "desktop_state_set" ? gate.promise : Promise.resolve(false);
+    },
+    showAppToast(message) { errors.push(message); },
+  };
+  const save = vm.runInNewContext(ts.transpileModule(`(${launcherSave.getText(appAst)})`, {}).outputText, context);
+  const first = save(false); await save(false);
+  assert.deepEqual(requests, ["desktop_state_set"], "one pending preference write");
+  assert.equal(context.bottomPanelLauncherVisible, true, "keep confirmed visibility during write");
+  gate.resolve(); await first;
+  assert.deepEqual(requests, ["desktop_state_set", "desktop_state_get"]);
+  assert.equal(context.bottomPanelLauncherVisible, false);
+  assert.equal(context.saving, false);
+  await save(false);
+  assert.equal(requests.length, 2, "same preference is a no-op");
+  context.tauriInvoke = async () => { throw Error("disk denied"); };
+  await save(true);
+  assert.equal(context.bottomPanelLauncherVisible, false);
+  assert.match(errors.at(-1), /disk denied/);
+}
 assert.ok(!source.includes("if (!open) return null"), "TC05: hiding must preserve the terminal DOM");
 assert.ok(appSource.includes("terminalWasOpened.current &&"), "TC05: retain the dock after first open");
 console.log("PASS TC01–TC07 production command effects: readiness, cancellation, no replay, explicit retry, hidden failure, workspace identity, last-tab recovery and App acknowledgment");
@@ -176,6 +205,7 @@ console.log("PASS TC09: command dispatch and last-visible-tab closure reveal the
   const right = { position: "right", selected: b, dockTabs: [b] };
   const focused = [], added = [], acknowledged = [];
   const context = {
+    BOTTOM_PANEL_LAUNCHER_KEY: launcherKey,
     open: true, handledPanelRequest: { current: null }, groups: [right, bottom], hiddenDocks: [],
     get visibleGroups() { return context.groups.filter(group => !context.hiddenDocks.includes(group.position)); },
     onPanelRequestHandled(request) { acknowledged.push(request); },
@@ -186,7 +216,9 @@ console.log("PASS TC09: command dispatch and last-visible-tab closure reveal the
     addNewTerminal(position) { added.push(position); return "new"; },
     xtermMapRef: { current: new Map([["a", { term: { focus() { focused.push("a"); } } }]]) },
     invoke(method, args) {
-      assert.equal(method, "desktop_state_get"); assert.equal(args.key, "defaultTerminalLocation");
+      assert.equal(method, "desktop_state_get");
+      if (args.key === launcherKey) return Promise.resolve(context.launcherVisible);
+      assert.equal(args.key, "defaultTerminalLocation");
       return Promise.resolve(context.storedLocation);
     },
   };
@@ -223,5 +255,15 @@ console.log("PASS TC09: command dispatch and last-visible-tab closure reveal the
   cleanup();
   gate.resolve("right"); await flush();
   assert.equal(added.length, 2, "superseded location reads cannot start an obsolete terminal");
+  context.groups = [right];
+  context.invoke = (_method, args) => Promise.resolve(args.key === launcherKey ? context.launcherVisible : "bottom");
+  context.launcherVisible = false;
+  await request("open-terminal");
+  assert.equal(context.activeTabId, "b", "disabled launcher routes terminal launches right");
+  await request("toggle-bottom");
+  assert.equal(added.at(-1), "bottom", "explicit bottom command bypasses the launcher preference");
+  context.launcherVisible = true;
+  await request("open-terminal");
+  assert.equal(added.at(-1), "bottom", "restoring the launcher restores the saved default");
 }
 console.log("PASS TC10: bottom-only toggle, terminal focus/reuse, empty destination and request deduplication");
