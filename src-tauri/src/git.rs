@@ -429,6 +429,18 @@ pub fn git_branch_comparison(
         "diff", "--patch-with-raw", "-z", "--find-renames", "--no-ext-diff", "--no-textconv",
         "--no-color", "--submodule=short", base.trim(), "--",
     ])?;
+    let mut files = parse_comparison_files(&output)?;
+    for (path, patch) in read_untracked_patches(&root, None)? {
+        if let Some(file) = files.iter_mut().find(|file| file.path == path) {
+            file.patch.push_str(&patch);
+        } else {
+            files.push(GitComparisonFile { path, status: "??".into(), patch });
+        }
+    }
+    Ok(files)
+}
+
+fn parse_comparison_files(output: &str) -> Result<Vec<GitComparisonFile>, String> {
     let mut files = Vec::new();
     if !output.is_empty() {
         let (raw, patch) = output.split_once("\0\0").ok_or("Invalid Git comparison output")?;
@@ -454,13 +466,6 @@ pub fn git_branch_comparison(
         }
         if sections.next().is_some() {
             return Err("Unexpected Git comparison patch".into());
-        }
-    }
-    for (path, patch) in read_untracked_patches(&root, None)? {
-        if let Some(file) = files.iter_mut().find(|file| file.path == path) {
-            file.patch.push_str(&patch);
-        } else {
-            files.push(GitComparisonFile { path, status: "??".into(), patch });
         }
     }
     Ok(files)
@@ -752,6 +757,45 @@ mod index_action_tests {
         assert!(files.iter().any(|file| file.path == "committed-only.txt" && file.patch.contains("+latest worktree change")));
         assert!(files.iter().any(|file| file.path == "local [1].txt" && file.status == "??" && file.patch.contains("+untracked file")));
         assert!(git_branch_comparison(&fixture.cwd, "missing-base", None).is_err());
+    }
+
+    #[test]
+    fn commit_history_and_patches_are_bound_to_the_branch_and_commit() {
+        let fixture = Fixture::new(true);
+        let commit = |message: &str| {
+            fixture.git(&["add", "-A"]);
+            fixture.git(&["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                "-c", "commit.gpgsign=false", "commit", "-m", message]);
+        };
+        let root_commit = fixture.git(&["rev-parse", "HEAD"]);
+        let root_files = commit_diff(&fixture.cwd, &root_commit).unwrap();
+        assert_eq!(root_files.len(), 1);
+        assert!(root_files[0].patch.contains("+original"));
+        let feature = fixture.git(&["branch", "--show-current"]);
+        fixture.git(&["checkout", "-b", "comparison-base"]);
+        fixture.write("base.txt", b"base only\n");
+        commit("base-side commit");
+        fixture.git(&["checkout", feature.trim()]);
+        fixture.write("tracked.txt", b"feature snapshot\n");
+        commit("feature commit");
+        fixture.git(&["checkout", "-b", "topic"]);
+        fixture.write("topic.txt", b"topic snapshot\n");
+        commit("topic commit");
+        fixture.git(&["checkout", feature.trim()]);
+        fixture.git(&["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+            "-c", "commit.gpgsign=false", "merge", "--no-ff", "-m", "merge topic", "topic"]);
+        fixture.write("topic.txt", b"worktree only\n");
+        let commits = list_commits(&fixture.cwd, 100, Some("comparison-base")).unwrap();
+        assert_eq!(commits.len(), 3);
+        assert_eq!(commits[0].subject, "merge topic");
+        let merged = commit_diff(&fixture.cwd, &commits[0].hash).unwrap();
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].path, "topic.txt");
+        assert!(merged[0].patch.contains("+topic snapshot"));
+        assert!(!merged[0].patch.contains("worktree only"));
+        assert!(list_commits(&fixture.cwd, 100, Some(feature.trim())).unwrap().is_empty());
+        assert!(list_commits(&fixture.cwd, 100, Some("missing")).is_err());
+        assert!(commit_diff(&fixture.cwd, "--help").is_err());
     }
 
     #[test]
@@ -2785,17 +2829,15 @@ pub fn check_gh_cli_status() -> GhCliStatus {
     }
 }
 
-pub fn list_commits(target_path: &str, limit: usize) -> Result<Vec<GitCommitInfo>, String> {
+pub fn list_commits(target_path: &str, limit: usize, base_branch: Option<&str>) -> Result<Vec<GitCommitInfo>, String> {
     let git_root = find_git_root(target_path).ok_or("Not a git repository")?;
     let limit_arg = format!("-n{}", limit.clamp(1, 200));
-    let raw = run_git(
-        &git_root,
-        &[
-            "log",
-            &limit_arg,
-            "--pretty=format:%H%x1f%h%x1f%s%x1f%an%x1f%cr",
-        ],
-    )?;
+    let range = base_branch.map(|branch| merge_base(&git_root, branch)
+        .map(|base| format!("{}..HEAD", base.trim()))).transpose()?;
+    let mut args = vec!["log", &limit_arg, "--pretty=format:%H%x1f%h%x1f%s%x1f%an%x1f%cr"];
+    args.extend(range.as_deref());
+    args.push("--");
+    let raw = run_git(&git_root, &args)?;
     let mut commits = Vec::new();
     for line in raw.lines() {
         let parts: Vec<&str> = line.split('\x1f').collect();
@@ -2812,13 +2854,23 @@ pub fn list_commits(target_path: &str, limit: usize) -> Result<Vec<GitCommitInfo
     Ok(commits)
 }
 
-pub fn commit_diff(target_path: &str, commit_hash: &str) -> Result<String, String> {
+pub fn commit_diff(target_path: &str, commit_hash: &str) -> Result<Vec<GitComparisonFile>, String> {
     let git_root = find_git_root(target_path).ok_or("Not a git repository")?;
     let h = commit_hash.trim();
     if h.is_empty() {
         return Err("Commit hash cannot be empty".to_string());
     }
-    run_git(&git_root, &["show", "--patch", "--format=medium", h])
+    if !matches!(h.len(), 40 | 64) || !h.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("A full commit hash is required".to_string());
+    }
+    let reference = format!("{h}^{{commit}}");
+    let commit = run_git(&git_root, &["rev-parse", "--verify", "--end-of-options", &reference])?;
+    let output = run_git(&git_root, &[
+        "diff-tree", "--root", "--no-commit-id", "-r", "-m", "--first-parent",
+        "--patch-with-raw", "-z", "--find-renames", "--no-ext-diff", "--no-textconv",
+        "--no-color", "--submodule=short", commit.trim(), "--",
+    ])?;
+    parse_comparison_files(&output)
 }
 
 pub fn push_changes(target_path: &str, force_with_lease: bool) -> Result<String, String> {

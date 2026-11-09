@@ -1781,13 +1781,15 @@ fn gh_status() -> Result<GhCliStatus, String> {
 }
 
 #[tauri::command]
-fn git_log_commits(cwd: String, limit: Option<usize>) -> Result<Vec<GitCommitInfo>, String> {
-    git::list_commits(&cwd, limit.unwrap_or(50))
+async fn git_log_commits(cwd: String, limit: Option<usize>, base_branch: Option<String>) -> Result<Vec<GitCommitInfo>, String> {
+    tokio::task::spawn_blocking(move || git::list_commits(&cwd, limit.unwrap_or(50), base_branch.as_deref()))
+        .await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn git_commit_diff(cwd: String, commit_hash: String) -> Result<String, String> {
-    git::commit_diff(&cwd, &commit_hash)
+async fn git_commit_diff(cwd: String, commit_hash: String) -> Result<Vec<git::GitComparisonFile>, String> {
+    tokio::task::spawn_blocking(move || git::commit_diff(&cwd, &commit_hash))
+        .await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

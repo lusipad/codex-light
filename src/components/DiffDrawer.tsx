@@ -789,10 +789,6 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     }
   }, [selectedPreviewFile]);
 
-  // Commits state
-  const [commits, setCommits] = useState<GitCommitInfo[]>([]);
-  const [selectedCommitHash, setSelectedCommitHash] = useState<string | null>(null);
-
   // Inline line review comment state
   const [commentLineIdx, setCommentLineIdx] = useState<number | null>(null);
   const [commentText, setCommentText] = useState("");
@@ -887,42 +883,70 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   const [explorerBusy, setExplorerBusy] = useState(false);
   const dirLoadSeqRef = useRef(0);
 
-  const branchRequest = useMemo(() => {
-    if (!open || activeTab !== "changes" || diffMode !== "branch" || !gitPreferencesReady || !cwd || !baseBranch) return null;
+  const showingComparison = diffMode === "branch" || diffMode === "commits";
+  const historyScope = JSON.stringify([baseBranchScope, baseBranch]);
+  const historyRequest = useMemo(() => {
+    if (!open || activeTab !== "changes" || diffMode !== "commits" || !cwd || !baseBranch) return null;
+    return { cwd, baseBranch, limit: 100 };
+  }, [open, activeTab, diffMode, cwd, baseBranch, historyScope, gitStatus]);
+  const [historyResult, setHistoryResult] = useState<{
+    request: NonNullable<typeof historyRequest>;
+    commits: GitCommitInfo[];
+    error?: string;
+  } | null>(null);
+  const history = historyResult?.request === historyRequest ? historyResult : null;
+  const [commitSelection, setCommitSelection] = useState<{ scope: string; hash: string } | null>(null);
+  const selectedCommitHash = commitSelection?.scope === historyScope &&
+    history?.commits.some(commit => commit.hash === commitSelection.hash) ? commitSelection.hash : "";
+
+  useEffect(() => {
+    if (!historyRequest) return;
+    let disposed = false;
+    invoke<GitCommitInfo[]>("git_log_commits", historyRequest)
+      .then(commits => { if (!disposed) setHistoryResult({ request: historyRequest, commits }); })
+      .catch(error => { if (!disposed) setHistoryResult({ request: historyRequest, commits: [], error: String(error) }); });
+    return () => { disposed = true; };
+  }, [historyRequest]);
+
+  const comparisonRequest = useMemo(() => {
+    if (!open || activeTab !== "changes" || !cwd || !baseBranch) return null;
+    if (diffMode === "commits") return selectedCommitHash
+      ? { command: "git_commit_diff", args: { cwd, commitHash: selectedCommitHash } } : null;
+    if (diffMode !== "branch") return null;
     const reviewBaseCommit = reviewTarget?.cwd === cwd && reviewTarget.baseBranch === baseBranch
       ? reviewTarget.mergeBase : null;
-    return { cwd, baseBranch, reviewBaseCommit };
-  }, [open, activeTab, diffMode, gitPreferencesReady, cwd, baseBranch, reviewTarget, gitStatus, baseBranchScope]);
-  const [branchResult, setBranchResult] = useState<{
-    request: NonNullable<typeof branchRequest>;
+    return { command: "git_branch_comparison", args: { cwd, baseBranch, reviewBaseCommit } };
+  }, [open, activeTab, diffMode, cwd, baseBranch, reviewTarget, gitStatus, baseBranchScope, selectedCommitHash]);
+  const [comparisonResult, setComparisonResult] = useState<{
+    request: NonNullable<typeof comparisonRequest>;
     files: { path: string; status: string; patch: string }[];
     error?: string;
   } | null>(null);
-  const branchComparison = branchResult?.request === branchRequest ? branchResult : null;
-  const branchPending = Boolean(branchRequest && !branchComparison);
-  const branchPatch = useMemo(() => {
-    if (!branchComparison) return "";
-    return branchComparison.files.find(file => file.path === selectedFile)?.patch
-      ?? branchComparison.files.map(file => file.patch).join("");
-  }, [branchComparison, selectedFile]);
-  const diffContent = diffMode === "branch" ? branchPatch : scopedDiffContent;
-  const loadingDiff = diffMode === "branch" ? branchPending : loadingScopedDiff;
+  const comparison = comparisonResult?.request === comparisonRequest ? comparisonResult : null;
+  const comparisonPending = Boolean(comparisonRequest && !comparison);
+  const comparisonPatch = useMemo(() => {
+    if (!comparison) return "";
+    return comparison.files.find(file => file.path === selectedFile)?.patch
+      ?? comparison.files.map(file => file.patch).join("");
+  }, [comparison, selectedFile]);
+  const diffContent = showingComparison ? comparisonPatch : scopedDiffContent;
+  const loadingDiff = showingComparison ? comparisonPending : loadingScopedDiff;
 
   useEffect(() => {
-    if (!branchRequest) return;
+    if (!comparisonRequest) return;
     let disposed = false;
-    invoke<NonNullable<typeof branchResult>["files"]>("git_branch_comparison", branchRequest)
-      .then(files => { if (!disposed) setBranchResult({ request: branchRequest, files }); })
-      .catch(error => { if (!disposed) setBranchResult({ request: branchRequest, files: [], error: String(error) }); });
+    invoke<NonNullable<typeof comparisonResult>["files"]>(comparisonRequest.command, comparisonRequest.args)
+      .then(files => { if (!disposed) setComparisonResult({ request: comparisonRequest, files }); })
+      .catch(error => { if (!disposed) setComparisonResult({ request: comparisonRequest, files: [], error: String(error) }); });
     return () => { disposed = true; };
-  }, [branchRequest]);
+  }, [comparisonRequest]);
 
   const displayedEntries = useMemo(() => {
     if (diffMode === "lastTurn") return [];
     const list = gitStatus?.entries || [];
-    if (diffMode === "branch") {
-      const worktreeEntries = new Map(list.map(entry => [entry.path, entry]));
-      return (branchComparison?.files ?? []).map(({ path, status }) => {
+    if (diffMode === "branch" || diffMode === "commits") {
+      const worktreeEntries = new Map((diffMode === "branch" ? list : []).map(entry => [entry.path, entry]));
+      return (comparison?.files ?? []).map(({ path, status }) => {
         const local = worktreeEntries.get(path);
         return {
           path,
@@ -940,7 +964,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
       return list.filter((e) => e.unstaged || e.untracked);
     }
     return list;
-  }, [gitStatus, diffMode, branchComparison]);
+  }, [gitStatus, diffMode, comparison]);
   const fsWatchTimerRef = useRef<number | null>(null);
   const lastExternalPreviewRequestRef = useRef<string | null>(null);
   const lastDirectoryRevealRef = useRef<typeof directoryReveal>(null);
@@ -963,7 +987,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
 
   useEffect(() => {
     if (!open || activeTab !== "changes" || !cwd) return;
-    if (diffMode === "branch") return;
+    if (diffMode === "branch" || diffMode === "commits") return;
     if (!gitPreferencesReady) { setDiffContent("Git 设置尚未读取，请在设置中重新读取。"); setLoadingDiff(false); return; }
     let disposed = false;
     if (diffMode === "lastTurn") {
@@ -994,25 +1018,6 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
       setLoadingDiff(false);
       return;
     }
-    if (diffMode === "commits") {
-      setLoadingDiff(true);
-      invoke<GitCommitInfo[]>("git_log_commits", { cwd, limit: 40 })
-        .then((list) => {
-          if (disposed) return "";
-          setCommits(list);
-          const hash = selectedCommitHash || list[0]?.hash || null;
-          setSelectedCommitHash(hash);
-          if (hash) {
-            return invoke<string>("git_commit_diff", { cwd, commitHash: hash });
-          }
-          return "";
-        })
-        .then((txt) => { if (!disposed) setDiffContent(txt || ""); })
-        .catch((err) => { if (!disposed) setDiffContent(`Error loading commit history: ${String(err)}`); })
-        .finally(() => { if (!disposed) setLoadingDiff(false); });
-      return () => { disposed = true; };
-    }
-
     const filePath = (diffMode === "staged" || diffMode === "unstaged") &&
       !displayedEntries.some(entry => entry.path === selectedFile) ? null : selectedFile;
     setLoadingDiff(true);
@@ -1029,7 +1034,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
       .catch((err) => { if (!disposed) setDiffContent(`Error loading diff: ${String(err)}`); })
       .finally(() => { if (!disposed) setLoadingDiff(false); });
     return () => { disposed = true; };
-  }, [open, activeTab, cwd, selectedFile, diffMode, selectedCommitHash, gitStatus, turns, gitPreferencesReady, recordedTurnDiff, displayedEntries]);
+  }, [open, activeTab, cwd, selectedFile, diffMode, gitStatus, turns, gitPreferencesReady, recordedTurnDiff, displayedEntries]);
 
   /**
    * List one directory: app-server `fs/readDirectory` first, then the legacy
@@ -1254,7 +1259,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     }
   };
 
-  const discardableEntries = diffMode === "branch"
+  const discardableEntries = showingComparison
     ? displayedEntries.filter(entry => entry.unstaged || entry.untracked)
     : displayedEntries;
   const handleDiscardAll = async () => {
@@ -1867,7 +1872,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     : "";
 
   const parsedLines = useMemo(() => parseUnifiedDiff(diffContent), [diffContent]);
-  const visibleDiffStats = diffMode === "working" || diffMode === "unstaged" || diffMode === "staged" || diffMode === "branch"
+  const visibleDiffStats = diffMode === "working" || diffMode === "unstaged" || diffMode === "staged" || showingComparison
     ? loadingDiff || displayedEntries.some(entry => entry.path === selectedFile)
       ? null
       : {
@@ -2266,7 +2271,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
             </div>
           </div>
 
-          {diffMode === "branch" && (
+          {showingComparison && (
             <div className="diff-branch-filter-row">
               <span className="muted-text">基准分支:</span>
               <select
@@ -2278,6 +2283,25 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                 {baseBranch && !branches.includes(baseBranch) && <option value={baseBranch}>{baseBranch}</option>}
                 {branches.map(branch => <option key={branch} value={branch}>{branch}</option>)}
               </select>
+              {diffMode === "commits" && !!history?.commits.length && (
+                <select
+                  className="branch-input-mini"
+                  aria-label="分支提交"
+                  style={{ minWidth: 0 }}
+                  value={selectedCommitHash}
+                  onChange={event => {
+                    setCommitSelection({ scope: historyScope, hash: event.target.value });
+                    setSelectedFile(null);
+                    setCommentLineIdx(null);
+                    setCommentText("");
+                  }}
+                >
+                  <option value="" disabled>选择提交</option>
+                  {history.commits.map(commit => (
+                    <option key={commit.hash} value={commit.hash}>{commit.shortHash} {commit.subject}</option>
+                  ))}
+                </select>
+              )}
             </div>
           )}
 
@@ -2285,39 +2309,16 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
           <div className="diff-content-scroll-area workspace-review-body">
             {diffMode === "lastTurn" ? (
               <pre className="diff-code-content" style={{ whiteSpace: wordWrap ? "pre-wrap" : "pre", padding: 16 }}>{loadingDiff ? "读取中…" : diffContent}</pre>
-            ) : diffMode === "commits" ? (
-              <div className="diff-file-list" style={{ maxHeight: "none", borderBottom: "none" }}>
-                <div className="diff-file-list-header">
-                  <span>最近提交 ({commits.length})</span>
-                </div>
-                <div className="diff-file-items">
-                  {commits.length === 0 ? (
-                    <div className="empty-hint-small">暂无提交记录</div>
-                  ) : (
-                    commits.map((c) => (
-                      <div
-                        key={c.hash}
-                        className={`diff-file-row ${
-                          selectedCommitHash === c.hash ? "active" : ""
-                        }`}
-                        onClick={() => setSelectedCommitHash(c.hash)}
-                      >
-                        <span className="git-status-tag status-m">{c.shortHash}</span>
-                        <span className="diff-file-path" title={c.subject}>
-                          {c.subject}
-                        </span>
-                        <span className="muted-text" style={{ fontSize: "calc(11px * var(--font-ui-scale, 1))" }}>
-                          {c.relativeTime}
-                        </span>
-                      </div>
-                    ))
-                  )}
-                </div>
+            ) : showingComparison && !baseBranch ? (
+              <div className="empty-hint-small" role="status">请选择基准分支。</div>
+            ) : diffMode === "commits" && !selectedCommitHash ? (
+              <div className="empty-hint-small" role={history?.error !== undefined ? "alert" : "status"}>
+                {!history ? "正在读取分支提交…" : history.error !== undefined
+                  ? `无法读取分支提交：${history.error}` : history.commits.length ? "请选择一个提交。" : "当前分支没有超出基准的提交。"}
               </div>
-            ) : diffMode === "branch" && (branchPending || branchComparison?.error !== undefined || !baseBranch) ? (
-              <div className="empty-hint-small" role={branchComparison?.error !== undefined ? "alert" : "status"}>
-                {branchPending ? "正在读取分支差异…" : branchComparison?.error !== undefined
-                  ? `无法读取分支差异：${branchComparison.error}` : "请选择基准分支。"}
+            ) : showingComparison && (comparisonPending || comparison?.error !== undefined) ? (
+              <div className="empty-hint-small" role={comparison?.error !== undefined ? "alert" : "status"}>
+                {comparisonPending ? "正在读取差异…" : `无法读取差异：${comparison?.error}`}
               </div>
             ) : displayedEntries.length === 0 && modelReviewComments.length === 0 ? (
               /* Official Codex App 1:1 Empty State Card */
@@ -2341,7 +2342,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                     ? "代码更改将在此处显示"
                     : diffMode === "working"
                     ? "项目工作区当前没有变动，修改文件后将自动显示在这里"
-                    : "此分支与基准分支内容一致"}
+                    : diffMode === "commits" ? "该提交与父提交没有文件差异" : "此分支与基准分支内容一致"}
                 </div>
               </div>
             ) : (
@@ -2366,6 +2367,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                       >
                         所有更改
                       </button>
+                      {diffMode !== "commits" && <>
                       <button
                         type="button"
                         className="mini-link-btn"
@@ -2391,6 +2393,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                       >
                         全放弃
                       </button>
+                      </>}
                     </div>
                   </div>
 
@@ -2454,7 +2457,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                                 -
                               </button>
                             )}
-                            {(diffMode !== "branch" || entry.unstaged || entry.untracked) && <button
+                            {(diffMode === "branch" ? entry.unstaged || entry.untracked : diffMode !== "commits") && <button
                               type="button"
                               className="mini-action-btn danger"
                               onClick={() => handleDiscard(entry.path)}
