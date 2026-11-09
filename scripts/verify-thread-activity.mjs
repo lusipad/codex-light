@@ -33,7 +33,7 @@ const unread = { revision: "r2", firstUnread: { type: "threadStart" } };
 const threads = [{ id: "unread", readState: unread }, { id: "read", readState: read }, { id: "unsupported" }];
 const ids = run("activityThreadIds", {
   activityPriorityVisible: true,
-  activityPins: new Set(),
+  activityExclusions: new Set(),
   activitySnapshot: beginActivitySession(threads, "local", Date.now()),
   inboxItems: [{ id: "old-local", threadId: "read", read: false }],
 })();
@@ -43,11 +43,13 @@ const activityCases = [
   { id: "approval", status: { type: "waitingOnApproval" } },
   { id: "input", status: { type: "active", activeFlags: ["waitingOnUserInput"] } },
 ];
-const attention = run("activityAttentionCount", { threads: activityCases, threadNeedsAttention })();
+const attention = run("activityAttentionCount", { threads: activityCases, threadNeedsAttention, activityHiddenScheduled: null })();
 assert.equal(attention, 3, "unread and waiting need attention, running alone and old inbox history do not");
+assert.equal(run("activityAttentionCount", { threads: activityCases, threadNeedsAttention,
+  activityHiddenScheduled: new Set(["unread"]) })(), 2);
 assert.deepEqual(Array.from(run("activityThreadIds", {
   activityPriorityVisible: true,
-  activityPins: new Set(),
+  activityExclusions: new Set(),
   activitySnapshot: beginActivitySession(activityCases, "local", Date.now()),
 })()), ["approval", "input", "unread", "running"]);
 assert.equal(threadNeedsAttention({ id: "cleared", readState: read, status: "idle" }), false);
@@ -128,7 +130,8 @@ const bulkContext = {
   activitySessionRef: { current: {scope:"local",threadIds:["unread"]} },
   activityGenerationRef: { current: 1 }, activityScopeRef: { current: "local" },
   activityPriorityVisibleRef: { current: true },
-  activityPinsRef: { current: new Set() },
+  activityExclusionsRef: { current: new Set() },
+  activityScheduleIdsRef: { current: null },
   callAppServer: async (...args) => { bulkCalls.push(args); return args[0] === "thread/read" ? {readState:unread} : new Promise(resolve => { finish = resolve; }); },
   refreshThreads: async () => refreshes++, showAppToast: (...args) => errors.push(args),
 };

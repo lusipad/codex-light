@@ -288,6 +288,7 @@ for (const windowKind of ["main", "thread", "quick"]) {
   const callback = vm.runInNewContext(compile(`(${automationFinished.getText(appAst)})`), {
     disposed: false, isThreadWindow: windowKind === "thread", isQuickChatWindow: windowKind === "quick",
     showAppToast: () => toasts++, setInboxItems: () => inboxWrites++, refreshThreads: () => {},
+    setActivityScheduleRevision: () => {},
     notify: value => automationEvents.push(value), notificationContextRef: { current: { ready: true } }, shouldNotifyTurn,
   });
   callback({ id: "job", finishedAt: 42, status: "completed", threadId: "t" });

@@ -68,6 +68,9 @@ export interface CodexSidebarProps {
   onToggleActivityPriority?: () => void;
   activityPinnedVisible?: boolean;
   onToggleActivityPinned?: () => void;
+  activityScheduledVisible?: boolean;
+  activityScheduleIds?: ReadonlySet<string> | null;
+  onToggleActivityScheduled?: () => void;
   activityThreadIds: string[];
   activityVisibleCount?: number;
   onLoadMoreActivity?: () => void;
@@ -158,6 +161,9 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
   onToggleActivityPriority,
   activityPinnedVisible = false,
   onToggleActivityPinned,
+  activityScheduledVisible = false,
+  activityScheduleIds = null,
+  onToggleActivityScheduled,
   activityThreadIds,
   activityVisibleCount = 10,
   onLoadMoreActivity,
@@ -508,10 +514,11 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
     if (!activityOnly || !activityPinnedVisible) return [];
     const byId = new Map(threads.map(thread => [thread.id, thread]));
     return [...new Set(pinnedThreadIds)].flatMap(id => {
+      if (!activityScheduledVisible && activityScheduleIds?.has(id)) return [];
       const thread = byId.get(id);
       return thread ? [thread] : [];
     });
-  }, [activityOnly, activityPinnedVisible, threads, pinnedThreadIds]);
+  }, [activityOnly, activityPinnedVisible, threads, pinnedThreadIds, activityScheduledVisible, activityScheduleIds]);
   const activityPinnedCount = activityPinnedCollapsed ? 0 : activityPinnedThreads.length;
   const activityRowCount = activityThreads.length + activityPinnedCount +
     activityRecentGroups.reduce((total, group) => total + group.threads.length, 0);
@@ -1877,11 +1884,15 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
                 ...(onToggleActivityPinned ? [
                   { id: "pinned", label: "已置顶", type: "checkbox" as const, checked: activityPinnedVisible },
                 ] : []),
+                ...(onToggleActivityScheduled ? [{
+                  id: "scheduled", label: "定时任务", type: "checkbox" as const, checked: activityScheduledVisible,
+                  disabled: activityScheduleIds === null,
+                }] : []),
               {
                 id: "mark-all-read",
                 label: "全部标为已读",
                 separatorBefore: Boolean(onToggleActivityPriority),
-                disabled: !activityThreads.some(thread => thread.readState?.firstUnread != null),
+                disabled: !activityThreads.some(thread => !activityScheduleIds?.has(thread.id) && thread.readState?.firstUnread != null),
               }, {
                 id: "archive",
                 label: "归档聊天",
@@ -1894,6 +1905,7 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
               onSelect={id => {
                 if (id === "priority") onToggleActivityPriority?.();
                 else if (id === "pinned") onToggleActivityPinned?.();
+                else if (id === "scheduled") onToggleActivityScheduled?.();
                 else if (id === "archive") onArchiveActivity();
                 else if (id === "mark-all-read") onMarkAllRead();
               }}

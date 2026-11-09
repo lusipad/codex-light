@@ -3,9 +3,10 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 const ast=ts.createSourceFile('App.tsx',fs.readFileSync('src/App.tsx','utf8'),ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
-const declarations=new Map(); let removal;
+const declarations=new Map(); let removal, scheduledEffect;
 function visit(n){
   if(ts.isVariableDeclaration(n))declarations.set(n.name.getText(ast),n.initializer);
+  if(ts.isCallExpression(n)&&n.expression.getText(ast)==='useEffect'&&n.arguments[0]?.getText(ast).includes('await getSchedulerStatus()'))scheduledEffect=n.arguments[0];
   if(ts.isIfStatement(n)&&n.expression.getText(ast).includes('NOTIFICATION.THREAD_ARCHIVED')&&n.expression.getText(ast).includes('NOTIFICATION.THREAD_DELETED'))removal=n.thenStatement.getText(ast);
   ts.forEachChild(n,visit);
 }
@@ -21,7 +22,7 @@ const unread=revision=>({revision,firstUnread:{type:'threadStart'}});
 const rows=Array.from({length:13},(_,i)=>({id:`t${i}`,readState:unread('list-old')}));
 function mount(){
   const writes=[],errors=[];let state=null,refreshes=0;
-  const context={...activity.exports,...protocol.exports,threadsRef:{current:rows},activitySessionRef:{current:null},activityGenerationRef:{current:0},activityScopeRef:{current:'local'},activityPriorityVisibleRef:{current:true},activityPinsRef:{current:new Set()},personalizationNavigationGuardRef:{current:null},readStateWritesRef:{current:new Set()},Date,
+  const context={...activity.exports,...protocol.exports,threadsRef:{current:rows},activitySessionRef:{current:null},activityGenerationRef:{current:0},activityScopeRef:{current:'local'},activityPriorityVisibleRef:{current:true},activityExclusionsRef:{current:new Set()},activityScheduleIdsRef:{current:null},personalizationNavigationGuardRef:{current:null},readStateWritesRef:{current:new Set()},Date,
     setActivitySession:value=>{state=typeof value==='function'?value(state):value;},refreshThreads:async()=>{refreshes++;},showAppToast:(...args)=>errors.push(args),callAppServer:async(method,args)=>{writes.push({method,args});return method==='thread/read'?{readState:unread('fresh-read')}:{readState:read};}};
   return {context,writes,errors,get state(){return state;},get refreshes(){return refreshes;},toggle:()=>run('toggleActivity',context)(),bulk:()=>run('markAllThreadsRead',context)(),more:()=>run('loadMoreActivity',context)(),clear:()=>run('clearReadActivity',context)()};
 }
@@ -154,14 +155,15 @@ for(const reopen of [false,true]){
   assert.ok(view.writes.filter(x=>x.method==='thread/read').every(x=>x.args.includeTurns===false));
   assert.equal(rows[0].readState.revision,'list-old','no optimistic receipt overwrite');
 }
-for(const change of ['close','identity','hide-priority','independent-pin','remove','already-read','notification-before-render']){
+for(const change of ['close','identity','hide-priority','independent-pin','scheduled','remove','already-read','notification-before-render']){
   const view=mount();view.context.threadsRef.current=[rows[0]];view.toggle();const pending=deferred();
   view.context.callAppServer=async(method,args)=>{view.writes.push({method,args});return pending.promise;};
   const first=view.bulk();await flush();await view.bulk();assert.equal(view.writes.length,1,'same-thread single flight');
   if(change==='close')view.toggle();
   if(change==='identity')view.context.activityScopeRef.current='other';
   if(change==='hide-priority')view.context.activityPriorityVisibleRef.current=false;
-  if(change==='independent-pin')view.context.activityPinsRef.current.add('t0');
+  if(change==='independent-pin')view.context.activityExclusionsRef.current.add('t0');
+  if(change==='scheduled')view.context.activityScheduleIdsRef.current=new Set(['t0']);
   if(change==='remove')view.context.activitySessionRef.current.threadIds=[];
   if(change==='notification-before-render')vm.runInNewContext(transpile(`(()=>${removal})()`),{...view.context,params:{threadId:'t0'},refreshThreadsGenerationRef:{current:0},activeThreadIdRef:{current:'other'},setThreads:()=>{}});
   pending.resolve({readState:change==='already-read'?read:unread('late')});await first;
@@ -171,17 +173,36 @@ for(const change of ['close','identity','hide-priority','independent-pin','remov
   if(change==='identity')assert.equal(view.refreshes,0,'old identity does not refresh new identity');
 }
 {
+  const old=deferred(), latest=deferred(), unavailable=deferred(), late=deferred(), scope={current:'local'};
+  const requests=[old,latest,unavailable,late], catalogs=[];
+  let poll, cleared=false;
+  const effect=vm.runInNewContext(transpile(`(${scheduledEffect.getText(ast)})`),{
+    isTauriRuntime:()=>true,isQuickChatWindow:false,activityScope:'local',activityScopeRef:scope,
+    getSchedulerStatus:()=>requests.shift().promise,
+    setActivityScheduleCatalog:catalog=>catalogs.push(Array.from(catalog.ids)),
+    window:{setInterval:(fn,ms)=>{assert.equal(ms,60_000);poll=fn;return 1;},clearInterval:()=>{cleared=true;}},
+  });
+  const cleanup=effect();poll();
+  old.resolve({activityThreadIds:['old']});latest.resolve({activityThreadIds:['latest']});await flush();
+  assert.deepEqual(catalogs,[['latest']]);
+  poll();unavailable.reject(Error('temporary failure'));await flush();
+  assert.deepEqual(catalogs,[['latest']]);
+  poll();scope.current='different';late.resolve({activityThreadIds:[]});await flush();
+  assert.deepEqual(catalogs,[['latest']]);
+  cleanup();assert.equal(cleared,true);
+}
+{
   const view=mount();
   view.toggle();
-  view.context.activityPinsRef.current=new Set(['t0','t12']);
+  view.context.activityExclusionsRef.current=new Set(['t0','t12']);
   let targets;
   view.context.setActivityArchive=selection=>{targets=selection.targets;};
   run('openActivityArchive',view.context)();
   assert.equal(targets.length,11);
-  assert.ok(targets.every(row=>!view.context.activityPinsRef.current.has(row.id)));
+  assert.ok(targets.every(row=>!view.context.activityExclusionsRef.current.has(row.id)));
   await view.bulk();
   assert.equal(view.writes.filter(({method})=>method==='thread/readState/update').length,11);
-  assert.ok(view.writes.every(({args})=>!view.context.activityPinsRef.current.has(args.threadId)));
+  assert.ok(view.writes.every(({args})=>!view.context.activityExclusionsRef.current.has(args.threadId)));
 }
 {
   const view=mount(),ctx=view.context;

@@ -200,4 +200,20 @@ function search(view, value) {
   assert.deepEqual(ids(view),["t2","t1","t0"]);
   cases++;
 }
+{
+  const idsOfRuns=new Set(["t11","t10"]);
+  const view=mount({ ...base, activityThreadIds:["t11"],pinnedThreadIds:["t10"],
+    activityPinnedVisible:true,activityScheduleIds:idsOfRuns,onToggleActivityScheduled:()=>{view.props.activityScheduledVisible=true;} });
+  assert.deepEqual(ids(view),["t11"]);
+  const item=()=>options(view).props.items.find(item=>item.id==="scheduled");
+  assert.equal(item().label,"定时任务");
+  assert.equal(item().checked,false);
+  assert.equal(options(view).props.items.find(item=>item.id==="mark-all-read").disabled,true);
+  options(view).props.onSelect("scheduled");
+  assert.equal(item().checked,true);
+  assert.deepEqual(ids(view),["t11","t10"]);
+  view.props.activityScheduleIds=null;
+  assert.equal(item().disabled,true);
+  cases++;
+}
 console.log(`PASS ${cases} Activity production-sidebar session projection sequences (L2; no browser/native/official pixel claim)`);
