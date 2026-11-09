@@ -78,10 +78,57 @@ for (const scenario of ["Enter", " ", "composition", "nested"]) {
 {
   const f = await readyRecommendedSkills(); getCard(f).props.onClick();
   f.buttons("刷新推荐目录")[0].props.onClick();
-  f.calls.at(-1).resolve({ skills: [{ id: "demo", name: "Changed", description: "", repoPath: "skills/.curated/demo" }], repoRoot: "C:/other-cache", source: "cache", fetchedAt: null, error: null });
+  f.calls.at(-1).resolve({ skills: [{ id: "demo", name: "Spreadsheet", description: "", repoPath: "skills/.curated/demo" }], repoRoot: "C:/other-cache", source: "cache", fetchedAt: null, error: null });
   await flushRecommendedSkills();
   const pending = getPreview(f).props.loadContents();
   assert.equal(f.calls.at(-1).args[0], "C:/other-cache/skills/.curated/demo/SKILL.md", "RP02 open preview follows the current official catalog source");
   f.calls.at(-1).resolve(""); assert.equal(await pending, ""); f.unmount();
 }
 console.log("PASS RP01/RP04-RP09 default-root footer, synchronous write lock, copy/discovery distinction, initial/session mapping, metadata transition, source snapshot and keyboard isolation");
+
+{
+  const names = ["playwright", "other-tool", "PDF", "doc", "Imagegen", "sora", "spreadsheet", "pdf", "PDF ", "Pdf"];
+  const skills = names.map((name, index) => ({ id: `id-${index}`, name, description: "Shared description", repoPath: `skills/.curated/id-${index}` }));
+  const mappedKeys = [];
+  const options = { catalog: { skills, repoRoot: "C:/cache", source: "cache", fetchedAt: null, error: null }, searchQuery: " ",
+    onInstalledCardKeysChange: keys => mappedKeys.push(Array.from(keys)), installedSkills: [] };
+  const f = await readyRecommendedSkills(options);
+  const cardKeys = () => f.nodes(node => node.props.role === "button").map(node => node.props.key);
+  assert.deepEqual(Array.from(cardKeys()), ["id-4", "id-5", "id-2", "id-7", "id-8", "id-9"],
+    "RB01 default browse only shows the official curated order, with a six-item folded limit");
+  const expand = () => f.nodes(node => node.tag === "button" && typeof node.props["aria-expanded"] === "boolean")[0];
+  assert.equal(expand().props["aria-expanded"], false);
+  assert.equal(f.buttons("查看doc, spreadsheet，另有 1 项").length, 1);
+  expand().props.onClick();
+  assert.deepEqual(Array.from(cardKeys()), ["id-4", "id-5", "id-2", "id-7", "id-8", "id-9", "id-3", "id-6", "id-0"]);
+  assert.equal(expand().props["aria-expanded"], true);
+  f.nodes(node => node.props.key === "id-0")[0].props.onClick();
+  getPreview(f).props.footer.children[0].props.onClick(click);
+  f.calls.at(-1).resolve({ destination: "C:/home/skills/playwright" }); await flushRecommendedSkills();
+  f.calls.at(-1).resolve({ found: true, errors: [] }); await flushRecommendedSkills();
+  options.installedSkills = [{ key: "playwright-path", name: "playwright", path: "C:/home/skills/playwright/SKILL.md" }];
+  f.render();
+  assert.deepEqual(mappedKeys.at(-1), ["playwright-path"]);
+  f.buttons("收起")[0].props.onClick();
+  assert.equal(cardKeys().length, 6);
+  assert.deepEqual(mappedKeys.at(-1), [], "RB04 a collapsed recommendation must not hide its installed overview card");
+  expand().props.onClick();
+  assert.deepEqual(mappedKeys.at(-1), ["playwright-path"]);
+  options.searchQuery = "  SHARED DESCRIPTION "; f.render();
+  const resultKeys = f.nodes(node => node.props.role === "button" || node.props.role === "group").map(node => node.props.key);
+  assert.deepEqual(Array.from(resultKeys), skills.map(skill => skill.id), "RB02 search includes non-curated results in catalog order without folding");
+  assert.equal(expand(), undefined);
+  options.searchQuery = "other-tool"; f.render();
+  assert.deepEqual(Array.from(cardKeys()), ["id-1"]);
+  assert.deepEqual(mappedKeys.at(-1), []);
+  options.searchQuery = ""; f.render();
+  assert.equal(cardKeys().length, 6, "RB03 returning from search resets the browse disclosure");
+  f.unmount();
+  for (const length of [8, 9]) {
+    const small = await readyRecommendedSkills({ catalog: { ...options.catalog, skills: skills.slice(0, length) } });
+    assert.equal(small.nodes(node => node.props.role === "button").length, length - 1);
+    assert.equal(small.nodes(node => node.props["aria-expanded"] !== undefined).length, 0);
+    small.unmount();
+  }
+}
+console.log("PASS 13H default curated ranking, full-catalog search and accessible disclosure boundaries");

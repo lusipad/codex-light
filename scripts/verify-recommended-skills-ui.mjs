@@ -13,7 +13,7 @@ vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/recommendedSkills.ts"
 const click = { stopPropagation() {} };
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
-const skill = { id: "demo", name: "Demo Skill", description: "Description", repoPath: "skills/.curated/demo" };
+const skill = { id: "demo", name: "PDF", description: "Description", repoPath: "skills/.curated/demo" };
 const catalog = { skills: [skill], repoRoot: "C:/cache/skills", source: "cache", fetchedAt: null, error: null };
 const destination = "C:/home/skills/demo";
 function mount(options = {}) {
@@ -79,7 +79,7 @@ async function ready(options) {
   const f = mount(options);
   assert.equal(f.calls[0].method, "read");
   assert.equal(f.calls[0].args[0], false, "初次挂载不能强制网络刷新");
-  f.calls[0].resolve(catalog); await flush();
+  f.calls[0].resolve(options?.catalog ?? catalog); await flush();
   return f;
 }
 {
@@ -90,11 +90,11 @@ async function ready(options) {
   assert.equal(f.calls[1].args[0], true);
   f.calls[1].resolve({ ...catalog, error: "offline", source: "cache" }); await flush();
   assert.match(f.text(), /offline.*仍显示已读取的目录/);
-  assert.match(f.text(), /Demo Skill/);
+  assert.match(f.text(), /PDF/);
   f.buttons("刷新推荐目录")[0].props.onClick(click);
   f.calls[2].reject(Error("network down")); await flush();
   assert.match(f.text(), /network down/);
-  assert.match(f.text(), /Demo Skill/, "刷新读取抛错仍保留已有目录");
+  assert.match(f.text(), /PDF/, "刷新读取抛错仍保留已有目录");
 }
 {
   const f = await ready();

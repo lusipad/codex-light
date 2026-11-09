@@ -8,6 +8,11 @@ import {
 import { readFileText } from "../fsClient";
 import { SkillPreviewDialog } from "./SkillPreviewDialog";
 
+const featuredSkillRanks = new Map(
+  ["imagegen", "sora", "pdf", "doc", "spreadsheet", "playwright"].map((name, index) => [name, index]),
+);
+const featuredLimit = 6;
+
 interface Props {
   workspaceRoot: string;
   onInstalled: () => Promise<void>;
@@ -28,16 +33,30 @@ export function RecommendedSkillsPanel({ workspaceRoot, onInstalled, writeBusy, 
   const [outcomes, setOutcomes] = useState<Record<string, { kind: "success" | "error"; text: string }>>({});
   const [installedIds, setInstalledIds] = useState<Set<string>>(new Set());
   const [previewId, setPreviewId] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
   const alive = useRef(true);
   const readPending = useRef<Promise<void> | null>(null);
   const installPending = useRef(false);
   const copiedIds = useRef(new Set<string>());
 
-  const entries = (catalog?.skills ?? []).map(skill => ({ skill, installed: matchRecommendedSkill(skill, installedSkills) }))
+  const query = searchQuery.trim().toLowerCase();
+  const searching = query.length > 0;
+  const skills = catalog?.skills ?? [];
+  const candidates = searching
+    ? skills.filter(skill => `${skill.name} ${skill.description}`.toLowerCase().includes(query))
+    : skills.map(skill => ({ skill, rank: featuredSkillRanks.get(recommendedSkillDisplayName(skill.name).trim().toLowerCase()) }))
+      .filter(entry => entry.rank !== undefined || featuredSkillRanks.has(entry.skill.name.trim().toLowerCase()))
+      .sort((a, b) => (a.rank ?? Infinity) - (b.rank ?? Infinity))
+      .map(entry => entry.skill);
+  const entries = candidates.map(skill => ({ skill, installed: matchRecommendedSkill(skill, installedSkills) }))
     .filter(entry => installedIds.has(entry.skill.id) || !entry.installed);
-  const installedKeys = JSON.stringify([...new Set(entries.flatMap(entry => installedSkills
+  const canExpand = !searching && entries.length >= featuredLimit + 3;
+  const visibleEntries = canExpand && !expanded ? entries.slice(0, featuredLimit) : entries;
+  const hiddenNames = canExpand ? entries.slice(featuredLimit).map(entry => entry.skill.name) : [];
+  const installedKeys = JSON.stringify([...new Set(visibleEntries.flatMap(entry => installedSkills
     .filter(item => matchRecommendedSkill(entry.skill, [item])).map(item => item.key)))]);
   useEffect(() => { onInstalledCardKeysChange(JSON.parse(installedKeys)); }, [installedKeys, onInstalledCardKeysChange]);
+  useEffect(() => { if (searching) setExpanded(false); }, [searching]);
   const preview = catalog?.skills.find(skill => skill.id === previewId);
   const previewInstalledKey = preview ? matchRecommendedSkill(preview, installedSkills)?.key : undefined;
   useEffect(() => { if (!preview || previewInstalledKey) setPreviewId(null); }, [preview?.id, previewInstalledKey]);
@@ -113,7 +132,7 @@ export function RecommendedSkillsPanel({ workspaceRoot, onInstalled, writeBusy, 
     </p>}
     {!loading && catalog?.skills.length === 0 && <p className="empty-hint">推荐目录没有可用技能。</p>}
     <div className="scrollable-items pm-recommended-skills-grid">
-      {entries.filter(({ skill, installed }) => `${skill.name} ${recommendedSkillDisplayName(skill.name)} ${skill.description} ${installed?.displayName ?? ""}`.toLowerCase().includes(searchQuery.trim().toLowerCase())).map(({ skill, installed }) =>
+      {visibleEntries.map(({ skill, installed }) =>
         <div className={installed ? "pm-recommended-installed" : "item-card"} key={skill.id}
           role={installed ? "group" : "button"} tabIndex={installed ? -1 : 0} aria-label={installed ? `${installed.displayName ?? skill.name} 已安装` : undefined}
           onClick={installed ? undefined : () => setPreviewId(skill.id)} onKeyDown={installed ? undefined : event => {
@@ -131,6 +150,10 @@ export function RecommendedSkillsPanel({ workspaceRoot, onInstalled, writeBusy, 
           onClick={event => { event.stopPropagation(); void install(skill); }}>{busyId === skill.id && !installedIds.has(skill.id) && <Loader2 size={14} className="pm-spin" aria-hidden="true" />}{installedIds.has(skill.id) ? "已安装" : "安装技能"}</button></>}
       </div>)}
     </div>
+    {canExpand && <button type="button" className="pm-recommended-disclosure" aria-expanded={expanded}
+      onClick={() => setExpanded(current => !current)}>
+      {expanded ? "收起" : `查看${hiddenNames.slice(0, 2).join(", ")}，另有 ${hiddenNames.length - 2} 项`}
+    </button>}
     {preview && catalog && !previewInstalledKey && <SkillPreviewDialog
       key={preview.id} identity={preview.id} name={recommendedSkillDisplayName(preview.name)} rawName={preview.name}
       description={preview.description} path={recommendedSkillFilePath(catalog.repoRoot, preview)} busy={writeBusy || busyId !== null}
