@@ -42,6 +42,7 @@ import { buildSidebarProjectGroups, sidebarThreadProjects, splitPinnedSidebarPro
 import type { Project } from "../projects";
 
 import { sameCloudRecentIdentity, type CloudRecentAction, type CloudRecentChat } from "../cloudRecentChats";
+import type { ActivityRecentGroup } from "../threadActivity";
 
 export interface CodexSidebarProps {
   collapsed: boolean;
@@ -62,6 +63,7 @@ export interface CodexSidebarProps {
   activeThreadId: string | null;
   activityAttentionCount: number;
   activityOnly: boolean;
+  activityRecentGroups?: ActivityRecentGroup[];
   activityThreadIds: string[];
   activityVisibleCount?: number;
   onLoadMoreActivity?: () => void;
@@ -147,6 +149,7 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
   activeThreadId,
   activityAttentionCount,
   activityOnly,
+  activityRecentGroups = [],
   activityThreadIds,
   activityVisibleCount = 10,
   onLoadMoreActivity,
@@ -491,6 +494,16 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
   }, [threads, activityThreadIds]);
   const activityLabel = activityOnly ? "关闭活动视图"
     : activityAttentionCount > 0 ? "查看活动，有聊天需要关注" : "查看活动";
+  const activityRowCount = activityThreads.length + activityRecentGroups.reduce((total, group) => total + group.threads.length, 0);
+  const activityQuery = searchQuery.trim().toLowerCase();
+  let recentSlots = Math.max(0, activityVisibleCount - activityThreads.length);
+  const visibleActivityRecent = activityOnly ? activityRecentGroups.flatMap(group => {
+    const page = group.threads.slice(0, recentSlots);
+    recentSlots -= page.length;
+    const threads = activityQuery
+      ? page.filter(thread => (thread.name || thread.preview || thread.id).toLowerCase().includes(activityQuery)) : page;
+    return threads.length ? [{ ...group, threads }] : [];
+  }) : [];
 
   const filteredThreads = useMemo(() => {
     const visible = activityOnly ? activityThreads.slice(0, activityVisibleCount) : threads;
@@ -1909,12 +1922,24 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
               </div>
             ) : renderThreadRow(row.thread, false, activityOnly ? undefined : recentOrderContext))
           )}
-          {activityOnly && activityThreads.length > activityVisibleCount && onLoadMoreActivity && (
+        </div>
+        {visibleActivityRecent.map(group => (
+          <React.Fragment key={group.dayStart}>
+            <div className="sidebar-section-header-row" style={{ marginTop: 16 }}>
+              <span className="sidebar-section-label">{group.label}</span>
+            </div>
+            <div className="sidebar-section-list">
+              {group.threads.map(thread => renderThreadRow(thread, false))}
+            </div>
+          </React.Fragment>
+        ))}
+        {activityOnly && activityRowCount > activityVisibleCount && onLoadMoreActivity && (
+          <div className="sidebar-section-list">
             <button type="button" className="sidebar-project-show-more" onClick={onLoadMoreActivity}>
               展开显示
             </button>
-          )}
-        </div>
+          </div>
+        )}
       </div>
 
       {/* ── 5. 会话「移动到分区」浮动菜单 ── */}

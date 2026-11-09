@@ -7,7 +7,7 @@ const compile=file=>ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOpt
 vm.runInNewContext(compile('src/protocol.ts'),{exports:protocol.exports});
 const activity={exports:{}};
 vm.runInNewContext(compile('src/threadActivity.ts'),{exports:activity.exports,require:()=>protocol.exports});
-const {beginActivitySession,mergeActivitySession,clearReadActivityThreads,restoreActivityThreads,threadNeedsAttention}=activity.exports;
+const {beginActivitySession,mergeActivitySession,clearReadActivityThreads,restoreActivityThreads,activityRecentGroups,threadNeedsAttention}=activity.exports;
 assert.equal(typeof beginActivitySession,'function','09C: session must have an explicit opening snapshot');
 const at=1793952000500;
 const unread={revision:'r1',firstUnread:{type:'threadStart'}};
@@ -51,4 +51,24 @@ const restored=restoreActivityThreads(undoSession,originalOrder,['approval','unr
 assert.deepEqual(Array.from(restored.threadIds),['approval','unread','new-unread','running'],'confirmed idle rows return in order without duplicates; missing row stays out');
 assert.equal(restored.visibleCount,undoSession.visibleCount);
 assert.equal(restoreActivityThreads(restored,originalOrder,['approval','unread','old-idle'],current.filter(t=>t.id!=='old-idle')),restored);
+const opened=new Date(2026,10,9,12).getTime();
+const seconds=(day,hour=0)=>new Date(2026,10,day,hour).getTime()/1000;
+const history=[
+  {id:'priority',updatedAt:seconds(9,11),readState:unread},
+  {id:'today',updatedAt:seconds(9,10),readState:read},
+  {id:'yesterday',updatedAt:seconds(8,10),readState:read},
+  {id:'boundary',updatedAt:seconds(3),readState:read},
+  {id:'too-old',updatedAt:seconds(3)-1,readState:read},
+];
+const snapshot=beginActivitySession(history,'local',opened);
+const groupIds=groups=>Array.from(groups,group=>[group.label,Array.from(group.threads,t=>t.id)]);
+assert.deepEqual(groupIds(activityRecentGroups(snapshot,history,opened)),[
+  ['今天',['today']],['昨天',['yesterday']],['星期二',['boundary']],
+]);
+const refreshed=history.map(t=>t.id==='yesterday'?{...t,updatedAt:seconds(9,11)}:t);
+assert.deepEqual(groupIds(activityRecentGroups(mergeActivitySession(snapshot,refreshed),refreshed,opened)),
+  groupIds(activityRecentGroups(snapshot,history,opened)),'recent bucket is frozen while snapshot stays open');
+const finished=history.map(t=>t.id==='priority'?{...t,readState:read}:t);
+const clearedRecent=clearReadActivityThreads(mergeActivitySession(snapshot,finished),finished);
+assert.deepEqual(groupIds(activityRecentGroups(clearedRecent,finished,opened))[0],['今天',['priority','today']]);
 console.log('PASS 09C activity session: source-derived priority, retention, creation seconds, membership, removal and reopening');

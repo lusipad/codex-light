@@ -2,7 +2,7 @@ import { usePetPreferences } from "./petPreferences";
 import { mergeHookRoots } from "./hooksSettingsModel";
 import { createEnvironmentWorktree, type WorktreeCreationOptions } from "./worktreeCreation";
 import { installWorktreeCleanup } from "./worktreeCleanup";
-import { activityThreadIsRunning, beginActivitySession, clearReadActivityThreads, excludeActivityThreads, mergeActivitySession, restoreActivityThreads, threadHasActivity, threadNeedsAttention, type ActivitySession } from "./threadActivity";
+import { activityRecentGroups, activityThreadIsRunning, beginActivitySession, clearReadActivityThreads, excludeActivityThreads, mergeActivitySession, restoreActivityThreads, threadHasActivity, threadNeedsAttention, type ActivitySession } from "./threadActivity";
 import { useExternalImports } from "./externalImport";
 import { useCodeReviewPreferences } from "./reviewPreferences";
 import { buildQuickReviewPrompt, parseReviewFindings, type ModelReviewComment } from "./reviewFindings";
@@ -534,6 +534,7 @@ export const App: React.FC = () => {
     return () => window.removeEventListener("resize", handleResize);
   }, []);
   const [activitySession, setActivitySession] = useState<ActivitySession | null>(null);
+  const [activityCalendarDay, setActivityCalendarDay] = useState(0);
   const activitySessionRef = useRef<ActivitySession | null>(null);
   const activityGenerationRef = useRef(0);
   const activityScopeRef = useRef("");
@@ -4963,6 +4964,21 @@ export const App: React.FC = () => {
     if (activitySession !== activitySnapshot) setActivitySession(current => current === activitySession ? activitySnapshot : current);
   }, [activitySession, activitySnapshot]);
   const activityThreadIds = useMemo(() => activitySnapshot?.threadIds ?? [], [activitySnapshot]);
+  useEffect(() => {
+    if (!activityOnly) return;
+    let timer: number;
+    const updateDay = () => {
+      const day = new Date();
+      setActivityCalendarDay(day.setHours(0, 0, 0, 0));
+      day.setDate(day.getDate() + 1);
+      timer = window.setTimeout(updateDay, day.getTime() - Date.now());
+    };
+    updateDay();
+    return () => window.clearTimeout(timer);
+  }, [activityOnly]);
+  const activityHistory = useMemo(() => activitySnapshot
+    ? activityRecentGroups(activitySnapshot, threads, activityCalendarDay || Date.now()) : [],
+  [activitySnapshot, threads, activityCalendarDay]);
   const toggleActivity = useCallback(() => {
     const generation = ++activityGenerationRef.current;
     if (activitySessionRef.current) {
@@ -5623,6 +5639,7 @@ export const App: React.FC = () => {
         activityAttentionCount={activityAttentionCount}
         activityOnly={activityOnly}
         activityThreadIds={activityThreadIds}
+        activityRecentGroups={activityHistory}
         activityVisibleCount={activitySnapshot?.visibleCount ?? 10}
         onLoadMoreActivity={loadMoreActivity}
         onClearReadActivity={canClearReadActivity ? clearReadActivity : undefined}

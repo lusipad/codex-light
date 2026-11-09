@@ -145,4 +145,21 @@ function search(view, value) {
   assert.equal(options(view).props.items.find(item => item.id === "archive").disabled,true);
   cases++;
 }
+{
+  const recent = [{id:"today",name:"Today item"},{id:"yesterday",name:"Yesterday item"}];
+  const view = mount({ ...base, threads: [...threads,...recent], activityThreadIds: sessionIds.slice(0,9),
+    activityRecentGroups: [{dayStart:2,label:"今天",threads:[recent[0]]},{dayStart:1,label:"昨天",threads:[recent[1]]}],
+    onLoadMoreActivity: () => { view.props.activityVisibleCount=20; } });
+  assert.deepEqual(ids(view),[...sessionIds.slice(0,9),"today"]);
+  assert.ok(text(view.render()).includes("今天"));
+  assert.ok(!text(view.render()).includes("昨天"));
+  button(view,"展开显示").props.onClick();
+  assert.deepEqual(ids(view),[...sessionIds.slice(0,9),"today","yesterday"]);
+  assert.ok(text(view.render()).includes("昨天"));
+  view.props.activityThreadIds=[];
+  assert.equal(options(view).props.items.find(item=>item.id==="archive").disabled,true);
+  assert.equal(options(view).props.items.find(item=>item.id==="mark-all-read").disabled,true);
+  assert.deepEqual(ids(view),["today","yesterday"]);
+  cases++;
+}
 console.log(`PASS ${cases} Activity production-sidebar session projection sequences (L2; no browser/native/official pixel claim)`);
