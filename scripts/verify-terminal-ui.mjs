@@ -96,8 +96,8 @@ assert.equal(dock.focused, "terminal-tab-b");
 assert.equal(dock.closed, undefined, "the remaining group stays open");
 dock.visibleGroups = groups.slice(1);
 hideDock("right");
-assert.equal(dock.closed, true, "the last visible group uses the app-wide toggle");
-assert.deepEqual(Array.from(dock.hiddenDocks), ["left"], "global reopening retains the last visible group");
+assert.equal(dock.closed, undefined, "hiding the last group keeps its session mounted");
+assert.deepEqual(Array.from(dock.hiddenDocks), ["left", "right"], "each group's visibility remains independent");
 const start = vm.runInNewContext(compile(startResize), dock);
 const resize = vm.runInNewContext(compile(resizeDock), dock);
 const grip = {
@@ -191,7 +191,7 @@ stop();assert.equal(disconnected,true);assert.equal(fontListeners.size,0);
 let released=0,cleared=0;
 const tabContext={
   tabs:[{id:"a"},{id:"b"}],activeTabId:"a",
-  hiddenDocks:[], revealDock(){},
+  hiddenDocks:[], revealDock(){}, setHiddenDocks(){},
   tabDragRef:{current:null},
   xtermMapRef:{current:new Map([["a",{releaseInput(){released++;},term:{clear(){cleared++;},dispose(){}},output:{dispose(){}},cancelHydration(){},el:{remove(){}}}]])},
   invoke:()=>Promise.resolve(),setTabs:()=>{},setActiveTabId:()=>{},

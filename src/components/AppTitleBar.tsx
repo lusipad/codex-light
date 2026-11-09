@@ -55,7 +55,8 @@ const MENU_SECTIONS: Array<{ id: string; label: string; entries: MenuEntry[] }> 
     label: "视图",
     entries: [
       { type: "item", id: "toggle-sidebar", label: "切换侧边栏", shortcut: "Ctrl+B" },
-      { type: "item", id: "toggle-terminal", label: "切换底部面板", shortcut: "Ctrl+J" },
+      { type: "item", id: "toggle-terminal", label: "打开终端", shortcut: "Ctrl+`" },
+      { type: "item", id: "toggle-bottom-panel", label: "显示/隐藏底部面板", shortcut: "Ctrl+J" },
       { type: "item", id: "toggle-changes", label: "切换变更面板", shortcut: "Ctrl+Alt+B" },
       { type: "separator" },
       { type: "item", id: "command-palette", label: "命令面板", shortcut: "Ctrl+K" },

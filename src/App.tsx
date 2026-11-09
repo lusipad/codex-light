@@ -109,7 +109,7 @@ import {
 import { MarkdownView } from "./components/MarkdownView";
 import { UserMessageBubble } from "./components/UserMessageBubble";
 import { DiffDrawer } from "./components/DiffDrawer";
-import { TerminalDock } from "./components/TerminalDock";
+import { TerminalDock, type TerminalPanelRequest } from "./components/TerminalDock";
 import { EnvironmentActions } from "./components/EnvironmentActions";
 import type { EnvironmentActionRunRequest } from "./environmentActions";
 import { WorktreesView } from "./components/WorktreesView";
@@ -538,6 +538,12 @@ export const App: React.FC = () => {
   const activityScopeRef = useRef("");
   const [showRightDrawer, setShowRightDrawer] = useState<boolean>(false);
   const [showTerminal, setShowTerminal] = useState<boolean>(false);
+  const [terminalPanelRequest, setTerminalPanelRequest] = useState<TerminalPanelRequest | null>(null);
+  const requestTerminalPanel = (action: TerminalPanelRequest["action"]) => {
+    if (isCloudChatRoute) return;
+    setTerminalPanelRequest({ action: showTerminal ? action : "open-terminal" });
+    setShowTerminal(true);
+  };
   const [terminalTargetCwd, setTerminalTargetCwd] = useState<string | null>(null);
   const [pendingEnvironmentAction, setPendingEnvironmentAction] = useState<EnvironmentActionRunRequest | null>(null);
   const environmentActionScopeRef = useRef("");
@@ -2461,10 +2467,26 @@ export const App: React.FC = () => {
       }
       if (runShortcutAction(shortcutId)) e.preventDefault();
     };
-    window.addEventListener("keydown", onKeyDown);
+    // xterm handles keydown at the input before it bubbles to the window.
+    const isTerminalKey = (e: KeyboardEvent) => Boolean((e.target as HTMLElement | null)?.closest?.(".xterm"));
+    const onTerminalKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || !isTerminalKey(e)) return;
+      onKeyDown(e);
+      if (e.defaultPrevented) e.stopPropagation();
+    };
+    const onWindowKeyDown = (e: KeyboardEvent) => {
+      if (!isTerminalKey(e)) onKeyDown(e);
+    };
+    window.addEventListener("keydown", onTerminalKeyDown, true);
+    window.addEventListener("keydown", onWindowKeyDown);
     const reset = () => matcher.reset();
     window.addEventListener("blur", reset);
-    return () => { matcher.reset(); window.removeEventListener("keydown", onKeyDown); window.removeEventListener("blur", reset); };
+    return () => {
+      matcher.reset();
+      window.removeEventListener("keydown", onTerminalKeyDown, true);
+      window.removeEventListener("keydown", onWindowKeyDown);
+      window.removeEventListener("blur", reset);
+    };
   }, [runShortcutAction, isQuickChatWindow]);
 
   // Auto-scroll timeline
@@ -4376,8 +4398,8 @@ export const App: React.FC = () => {
       }
     },
     "toggle-sidebar": () => setSidebarCollapsed((v) => !v),
-    "toggle-terminal": () => setShowTerminal((v) => !v),
-    "toggle-bottom-panel": () => setShowTerminal((v) => !v),
+    "toggle-terminal": () => requestTerminalPanel("open-terminal"),
+    "toggle-bottom-panel": () => requestTerminalPanel("toggle-bottom"),
     "toggle-changes": () => setShowRightDrawer((v) => !v),
     "zoom-in": () => applyZoom(zoomRef.current + 0.1),
     "zoom-out": () => applyZoom(zoomRef.current - 0.1),
@@ -4584,6 +4606,7 @@ export const App: React.FC = () => {
         settings: (payload) => appCommandRef.current("settings", payload),
         "toggle-sidebar": (payload) => appCommandRef.current("toggle-sidebar", payload),
         "toggle-terminal": (payload) => appCommandRef.current("toggle-terminal", payload),
+        "toggle-bottom-panel": (payload) => appCommandRef.current("toggle-bottom-panel", payload),
         "toggle-changes": (payload) => appCommandRef.current("toggle-changes", payload),
         "command-palette": (payload) => appCommandRef.current("command-palette", payload),
         "file-search": (payload) => appCommandRef.current("file-search", payload),
@@ -6885,6 +6908,8 @@ export const App: React.FC = () => {
             open={showTerminal}
             cwd={terminalTargetCwd ?? activeWorkspace?.path ?? ""}
             onClose={() => setShowTerminal(false)}
+            panelRequest={terminalPanelRequest}
+            onPanelRequestHandled={request => setTerminalPanelRequest(current => current === request ? null : current)}
             pendingCommand={pendingTermCommand}
             pendingAction={environmentActionWaiter.current?.scope === environmentActionScope ? pendingEnvironmentAction : null}
             onActionResult={handleEnvironmentActionResult}
@@ -6931,7 +6956,7 @@ export const App: React.FC = () => {
         selectedReviewFinding={reviewFindings.comments.find(comment => comment.id === selectedReviewFinding?.id) ?? null}
         initialTab={initialWorkbenchTab}
         initialSidePrompt={sideChatPrompt}
-        onOpenTerminal={() => setShowTerminal((v) => !v)}
+        onOpenTerminal={() => requestTerminalPanel("open-terminal")}
         onOpenSideChat={() => {
           setInitialWorkbenchTab("sideChat");
           setShowRightDrawer(true);

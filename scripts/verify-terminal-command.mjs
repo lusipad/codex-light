@@ -5,10 +5,14 @@ import ts from "typescript";
 
 const source = fs.readFileSync(new URL("../src/components/TerminalDock.tsx", import.meta.url), "utf8");
 const ast = ts.createSourceFile("TerminalDock.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-let commandEffect, closeTab, retry;
+let commandEffect, closeTab, retry, panelEffect, focusEffect;
 function visit(node) {
   if (ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect" &&
       node.arguments[0]?.getText(ast).includes("await entry.ready")) commandEffect = node.arguments[0];
+  if (ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect" &&
+      node.arguments[0]?.getText(ast).includes("handledPanelRequest.current")) panelEffect = node.arguments[0];
+  if (ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect" &&
+      node.arguments[0]?.getText(ast).includes("entry.term.focus()")) focusEffect = node.arguments[0];
   if (ts.isVariableDeclaration(node) && node.name.getText(ast) === "closeTerminalTab") closeTab = node.initializer;
   if (ts.isJsxElement(node) && node.children.some(child => ts.isJsxText(child) && child.text === "重试命令")) {
     retry = node.openingElement.attributes.properties.find(attr => ts.isJsxAttribute(attr) && attr.name.getText(ast) === "onClick")?.initializer.expression;
@@ -25,6 +29,7 @@ function mount() {
     open: true, pendingCommand: { id: 1, command: "npm test" }, activeTabId: "a", cwd: "repo-A",
     tabs: [{ id: "a", cwd: "repo-A" }], lastExecutedCmdId: { current: null },
     hiddenDocks: [],
+    setHiddenDocks(value) { context.hiddenDocks = value; },
     revealDock(position) { context.hiddenDocks = context.hiddenDocks.filter(dock => dock !== position); },
     tabDragRef: { current: null },
     cancelTabDrag() { context.tabDragRef.current = null; },
@@ -160,3 +165,40 @@ console.log("PASS TC08: queued environment command workspace identity and cancel
   assert.equal(view.requests[0].args.sessionId, "a");
 }
 console.log("PASS TC09: command dispatch and last-visible-tab closure reveal the surviving session");
+{
+  const a = { id: "a" }, b = { id: "b" }, action = { id: "action", action: { id: "setup" } };
+  const bottom = { position: "bottom", selected: a, dockTabs: [a, action] };
+  const right = { position: "right", selected: b, dockTabs: [b] };
+  const focused = [], added = [], acknowledged = [];
+  const context = {
+    open: true, handledPanelRequest: { current: null }, groups: [right, bottom], hiddenDocks: [],
+    get visibleGroups() { return context.groups.filter(group => !context.hiddenDocks.includes(group.position)); },
+    onPanelRequestHandled(request) { acknowledged.push(request); },
+    hideDock(position) { context.hiddenDocks.push(position); },
+    revealDock(position) { context.hiddenDocks = context.hiddenDocks.filter(dock => dock !== position); },
+    setActiveTabId(id) { context.activeTabId = id; },
+    setPanelFocusId(id) { context.panelFocusId = id; },
+    addNewTerminal(position) { added.push(position); return "new"; },
+    xtermMapRef: { current: new Map([["a", { term: { focus() { focused.push("a"); } } }]]) },
+  };
+  const handle = vm.runInNewContext(compile(panelEffect), context);
+  const focus = vm.runInNewContext(compile(focusEffect), context);
+  const request = action => { context.panelRequest = { action }; handle(); };
+  request("toggle-bottom"); handle();
+  assert.deepEqual(context.hiddenDocks, ["bottom"], "hide only the bottom once per request");
+  assert.deepEqual(context.visibleGroups, [right]);
+  request("toggle-bottom"); focus();
+  assert.deepEqual(context.hiddenDocks, []);
+  assert.deepEqual(focused, ["a"]);
+  bottom.selected = action;
+  request("open-terminal"); bottom.selected = a; focus();
+  request("open-terminal"); focus();
+  assert.deepEqual(focused, ["a", "a", "a"], "repeat launch focuses the ordinary terminal");
+  assert.equal(context.activeTabId, "a");
+  assert.equal(added.length, 0);
+  context.groups = [right];
+  request("toggle-bottom"); handle();
+  assert.deepEqual(added, ["bottom"], "create only when bottom is empty");
+  assert.equal(acknowledged.length, 5);
+}
+console.log("PASS TC10: bottom-only toggle, terminal focus/reuse, empty destination and request deduplication");

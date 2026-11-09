@@ -6,7 +6,7 @@ export type NumberShortcutTarget = "tabs" | "sidebar";
 export type BindingUpdate = { type: "set" | "append" | "remove"; accelerator: string } |
   { type: "replace"; accelerator: string; previousAccelerator: string } | { type: "clear" | "reset" };
 export const configurableShortcuts = SHORTCUTS.filter(shortcut => SHORTCUT_COMMAND_IDS[shortcut.id] && shortcut.id !== "find-in-chat");
-const nativeCommands = ["new-chat", "open-settings", "toggle-sidebar", "toggle-terminal", "toggle-changes",
+const nativeCommands = ["new-chat", "open-settings", "toggle-sidebar", "toggle-terminal", "toggle-bottom-panel", "toggle-changes",
   "command-palette", "file-search", "zoom-in", "zoom-out", "zoom-reset"];
 export function nativeAccelerators(bindings: KeyBinding[], suspended = false, target: NumberShortcutTarget = "tabs"): Record<string, string | null> {
   return Object.fromEntries(nativeCommands.map(id => {

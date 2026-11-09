@@ -38,11 +38,12 @@ pub const NATIVE_TRAY_EVENT: &str = "native-tray";
 /// Stable id of the system tray icon (useful for `app.tray_by_id`).
 pub const TRAY_ICON_ID: &str = "codex-tray";
 
-const SHORTCUT_MENU_ITEMS: [(&str, &str, &str); 10] = [
+const SHORTCUT_MENU_ITEMS: [(&str, &str, &str); 11] = [
     ("new-chat", "new-chat", "CmdOrCtrl+N"),
     ("open-settings", "settings", "CmdOrCtrl+,"),
     ("toggle-sidebar", "toggle-sidebar", "CmdOrCtrl+Shift+S"),
     ("toggle-terminal", "toggle-terminal", "Control+`"),
+    ("toggle-bottom-panel", "toggle-bottom-panel", "CmdOrCtrl+J"),
     ("toggle-changes", "toggle-changes", "CmdOrCtrl+Alt+B"),
     ("command-palette", "command-palette", "CmdOrCtrl+K"),
     ("file-search", "file-search", "CmdOrCtrl+P"),
@@ -310,7 +311,8 @@ pub fn build_app_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> 
         true,
         &[
             &item(app, "toggle-sidebar", "Toggle Sidebar", Some("CmdOrCtrl+B"))?,
-            &item(app, "toggle-terminal", "Toggle Terminal", Some("CmdOrCtrl+J"))?,
+            &item(app, "toggle-terminal", "Open Terminal", Some("Control+`"))?,
+            &item(app, "toggle-bottom-panel", "Toggle Bottom Panel", Some("CmdOrCtrl+J"))?,
             &item(
                 app,
                 "toggle-changes",
@@ -477,6 +479,7 @@ pub fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
         | "quit"
         | "toggle-sidebar"
         | "toggle-terminal"
+        | "toggle-bottom-panel"
         | "toggle-changes"
         | "command-palette"
         | "file-search"

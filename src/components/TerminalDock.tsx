@@ -24,10 +24,14 @@ function terminalAppearance(element: HTMLElement) {
   };
 }
 
+export type TerminalPanelRequest = { action: "open-terminal" | "toggle-bottom" };
+
 interface TerminalDockProps {
   open?: boolean;
   cwd: string;
   onClose: () => void;
+  panelRequest?: TerminalPanelRequest | null;
+  onPanelRequestHandled?: (request: TerminalPanelRequest) => void;
   pendingCommand?: { id: number; command: string; cwd?: string } | null;
   onCommandHandled?: (id: number) => void;
   pendingAction?: EnvironmentActionRunRequest | null;
@@ -69,6 +73,8 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
   open = true,
   cwd,
   onClose,
+  panelRequest,
+  onPanelRequestHandled,
   pendingCommand,
   onCommandHandled,
   pendingAction,
@@ -79,6 +85,8 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
   const [fontSize, setFontSize] = useState<number>(12);
   const [actionsOpen, setActionsOpen] = useState<TerminalDockPosition | false>(false);
   const [hiddenDocks, setHiddenDocks] = useState<TerminalDockPosition[]>([]);
+  const [panelFocusId, setPanelFocusId] = useState<string | null>(null);
+  const handledPanelRequest = useRef<TerminalPanelRequest | null>(null);
   const [dockHeight, setDockHeight] = useState<number>(260);
   const [dockWidths, setDockWidths] = useState({ left: 360, right: 360 });
   const [commandError, setCommandError] = useState<string | null>(null);
@@ -104,14 +112,11 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
     setHiddenDocks(current => current.includes(position) ? current.filter(dock => dock !== position) : current);
   };
   const hideDock = (position: TerminalDockPosition) => {
-    const remaining = visibleGroups.filter(group => group.position !== position);
-    const fallback = remaining.find(group => group.selected.id === activeTabId) ?? remaining[0];
-    if (!fallback) {
-      onClose();
-      return;
-    }
     setHiddenDocks(current => current.includes(position) ? current : [...current, position]);
     if (actionsOpen === position) setActionsOpen(false);
+    const remaining = visibleGroups.filter(group => group.position !== position);
+    const fallback = remaining.find(group => group.selected.id === activeTabId) ?? remaining[0];
+    if (!fallback) return;
     setActiveTabId(fallback.selected.id);
     requestAnimationFrame(() => document.getElementById(`terminal-tab-${fallback.selected.id}`)?.focus());
   };
@@ -591,7 +596,36 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
     setTabs((prev) => [...prev, next]);
     revealDock(dockPosition);
     setActiveTabId(id);
+    return id;
   };
+
+  useEffect(() => {
+    if (!open || !panelRequest || handledPanelRequest.current === panelRequest) return;
+    handledPanelRequest.current = panelRequest;
+    onPanelRequestHandled?.(panelRequest);
+    const bottom = groups.find(group => group.position === "bottom");
+    if (panelRequest.action === "toggle-bottom" && bottom && !hiddenDocks.includes("bottom")) {
+      hideDock("bottom");
+      return;
+    }
+    const target = panelRequest.action === "toggle-bottom" || !bottom?.selected.action
+      ? bottom?.selected
+      : bottom.dockTabs.find(tab => !tab.action);
+    if (target) {
+      revealDock("bottom");
+      setActiveTabId(target.id);
+      setPanelFocusId(target.id);
+    } else {
+      setPanelFocusId(addNewTerminal("bottom"));
+    }
+  }, [open, panelRequest]);
+
+  useEffect(() => {
+    if (!open || panelFocusId == null) return;
+    const entry = xtermMapRef.current.get(panelFocusId);
+    if (entry && visibleGroups.some(group => group.selected.id === panelFocusId)) entry.term.focus();
+    setPanelFocusId(null);
+  }, [open, panelFocusId]);
 
   const interruptActiveTerminal = (sessionId = activeTabId) => {
     invoke("terminal_write", {
@@ -703,6 +737,7 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
     const remaining = tabs.filter((t) => t.id !== id);
     if (remaining.length === 0) {
       onClose();
+      setHiddenDocks([]);
       const id = crypto.randomUUID();
       setTabs([
         {

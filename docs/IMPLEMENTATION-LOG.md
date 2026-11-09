@@ -2720,3 +2720,8 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 
 - 按官方隐藏面板保留标签的规则，分组独立隐藏。复用「终端操作」恢复原会话，关闭最后一个可见标签会显示剩余会话。
 - 原生实测右侧与底部各自显隐，恢复后进程号一致。前端 117 项、Rust 全库 722 项、通知适配器及 Windows 打包通过。官方配对像素和远端 CI 待验。详见 [07I 验收](antigravity/acceptance/07I-terminal-visibility.md)。
+
+## 2026-11-09 — 打开终端与切换底部面板分流
+
+- 按官方 Windows 命令分开视图菜单与快捷键。复用终端选择和恢复路径，Ctrl+J 只切换底部，打开终端恢复或聚焦默认面板。
+- 原生复测 xterm 输入焦点、菜单、标签与 PID 保留。117 项前端回归、722 项 Rust 测试、通知适配器及 Windows 打包通过。远端 CI 仍待恢复，右侧默认位置偏好和像素对照待验。详见 [07J 验收](antigravity/acceptance/07J-terminal-commands.md)。

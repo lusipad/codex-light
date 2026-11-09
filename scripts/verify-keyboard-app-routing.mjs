@@ -32,8 +32,10 @@ const context={...registry.exports,Date:{now:()=>now},
  handleSetThreadReadState:async(...args)=>events.push(['receipt',...args]),isThreadReadState:value=>!!value,
  handleDeleteThread:async thread=>events.push(['delete',thread.id]),handleCreateBranch:async name=>events.push(['branch',name]),
  startNewThread:()=>events.push(['new']),handleOpenQuickChat:()=>{},
+ requestTerminalPanel:action=>events.push(['terminal',action]),
  CustomEvent:class {constructor(type,options){this.type=type;Object.assign(this,options);this.defaultPrevented=false;}preventDefault(){this.defaultPrevented=true;}},
- window:{addEventListener:(type,fn)=>windowListeners.set(type,fn),removeEventListener:type=>windowListeners.delete(type),
+ window:{addEventListener:(type,fn,capture)=>windowListeners.set(capture?`${type}:capture`:type,fn),
+  removeEventListener:(type,fn,capture)=>windowListeners.delete(capture?`${type}:capture`:type),
   dispatchEvent:event=>{events.push(['component',event.detail.id]);if(componentHandles)event.preventDefault();return !event.defaultPrevented;},prompt:()=>null},
  document:{querySelector:selector=>selector.includes('aria-modal')||selector.includes('dialog[')?(modal?{}:null):selector==='.diff-drawer'?{}:null,
   querySelectorAll:()=>renderedCollapsed?[]:rows},
@@ -48,13 +50,16 @@ const target=kind=>({value:'text',selectionStart:0,selectionEnd:0,closest:select
  if(kind==='composer'&&(selector.includes('.codex-two-tier-composer')||selector.startsWith('input,')))return {};
  if(kind==='approval'&&selector.includes('[data-keyboard-approval]'))return {};
  if(kind==='input'&&selector.startsWith('input,'))return {};
+ if(kind==='terminal'&&selector==='.xterm')return {};
  return null;
 }});
 function key(key,extra={}){
- now+=300;let prevented=false;
+ now+=300;let prevented=false,stopped=false;
  const event={key,code:'',keyCode:0,ctrlKey:false,metaKey:false,altKey:false,shiftKey:false,repeat:false,isComposing:false,defaultPrevented:false,target:target('body'),
-  preventDefault(){prevented=true;this.defaultPrevented=true;},...extra};
- windowListeners.get('keydown')(event);return prevented;
+  preventDefault(){prevented=true;this.defaultPrevented=true;},stopPropagation(){stopped=true;},...extra};
+ windowListeners.get('keydown:capture')(event);
+ if(!stopped) windowListeners.get('keydown')(event);
+ return prevented;
 }
 context.keyboardBindingsRef.current=[{command:'composer.submit',key:'Enter'}];
 assert.equal(key('Enter',{target:target('composer')}),true);assert.equal(events.at(-1)[1],'composer-submit');
@@ -69,6 +74,18 @@ assert.equal(key('Enter',{target:target('composer'),isComposing:true}),false);
 assert.equal(key('Enter',{target:target('composer'),repeat:true}),true);
 modal=true;const beforeModal=events.length;assert.equal(key('n',{ctrlKey:true}),false);assert.equal(events.length,beforeModal);modal=false;
 context.keyboardState.capturing.current=true;assert.equal(key('n',{ctrlKey:true}),false);context.keyboardState.capturing.current=false;
+context.keyboardBindingsRef.current=[];
+const terminal=target('terminal');
+const captureResults=[];
+assert.equal(key('j',{ctrlKey:true,target:terminal,stopPropagation(){captureResults.push('stopped');}}),true);
+assert.deepEqual(captureResults,['stopped'],'terminal shortcut must stop before xterm input processing');
+assert.deepEqual(events.at(-1),['terminal','toggle-bottom']);
+assert.equal(key('`',{code:'Backquote',ctrlKey:true,target:terminal}),true);
+assert.deepEqual(events.at(-1),['terminal','open-terminal']);
+assert.equal(key('j',{target:terminal}),false,'ordinary terminal input remains available');
+assert.equal(key('j',{ctrlKey:true,isComposing:true,target:terminal}),false);
+context.keyboardBindingsRef.current=[{command:'toggleBottomPanel',key:null}];
+assert.equal(key('j',{ctrlKey:true,target:terminal}),false,'disabled binding reaches the terminal');
 // Body selection follows visible DOM order, ignores hidden/duplicates, does not wrap.
 context.shortcutHandlersRef.current['previous-thread']();assert.deepEqual(events.at(-1),['select','b']);
 context.activeThreadId='b';assert.equal(context.shortcutHandlersRef.current['previous-thread'](),false);
