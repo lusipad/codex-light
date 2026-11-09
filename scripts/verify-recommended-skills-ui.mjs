@@ -54,7 +54,8 @@ function mount(options = {}) {
   function render() {
     cursor = 0;
     tree = exports.RecommendedSkillsPanel({
-      installedSkills: options.installedSkills ?? [], renderInstalledSkill: key => ({tag:"installed-card",props:{key},children:[]}), onInstalledCardKeysChange: options.onInstalledCardKeysChange ?? (() => {}), searchQuery: options.searchQuery ?? "",
+      installedSkills: options.installedSkills ?? [], renderInstalledSkill: (key, active) => ({tag:"installed-card",props:{key,active},children:[]}), onInstalledCardKeysChange: options.onInstalledCardKeysChange ?? (() => {}), searchQuery: options.searchQuery ?? "",
+      activeSearchResultIndex: options.activeSearchResultIndex, onSearchResultCountChange: options.onSearchResultCountChange,
       workspaceRoot: options.root ?? "C:/Project", writeBusy: options.writeBusy ?? false,
       onInstalled: async () => { refreshes++; if (options.refreshError) throw Error("parent refresh failed"); },
       beginInstall: () => { writes++; if (blocked || options.denyWrite) return false; blocked = true; return true; },

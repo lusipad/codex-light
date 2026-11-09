@@ -955,6 +955,14 @@
   outline-offset: 3px;
 }
 
+.pm-directory-page [data-skill-search-result="true"] {
+  background-color: color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+
+.pm-directory-page .item-card[data-skill-search-result="true"] {
+  background-color: color-mix(in srgb, var(--text-primary) 5%, var(--bg-card, #1c1c1c));
+}
+
 .pm-recommended-disclosure {
   width: 100%;
   min-height: 32px;

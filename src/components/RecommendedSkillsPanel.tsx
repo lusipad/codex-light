@@ -20,12 +20,14 @@ interface Props {
   beginInstall: () => boolean;
   finishInstall: () => void;
   installedSkills: InstalledRecommendedSkill[];
-  renderInstalledSkill: (key: string) => React.ReactNode;
+  renderInstalledSkill: (key: string, searchActive?: boolean) => React.ReactNode;
   onInstalledCardKeysChange: (keys: string[]) => void;
   searchQuery?: string;
+  activeSearchResultIndex?: number;
+  onSearchResultCountChange?: (count: number) => void;
 }
 
-export function RecommendedSkillsPanel({ workspaceRoot, onInstalled, writeBusy, beginInstall, finishInstall, installedSkills, renderInstalledSkill, onInstalledCardKeysChange, searchQuery = "" }: Props) {
+export function RecommendedSkillsPanel({ workspaceRoot, onInstalled, writeBusy, beginInstall, finishInstall, installedSkills, renderInstalledSkill, onInstalledCardKeysChange, searchQuery = "", activeSearchResultIndex, onSearchResultCountChange }: Props) {
   const [catalog, setCatalog] = useState<RecommendedSkillsResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,6 +59,8 @@ export function RecommendedSkillsPanel({ workspaceRoot, onInstalled, writeBusy, 
     .filter(item => matchRecommendedSkill(entry.skill, [item])).map(item => item.key)))]);
   useEffect(() => { onInstalledCardKeysChange(JSON.parse(installedKeys)); }, [installedKeys, onInstalledCardKeysChange]);
   useEffect(() => { if (searching) setExpanded(false); }, [searching]);
+  const searchResultCount = searching ? visibleEntries.length : 0;
+  useEffect(() => { onSearchResultCountChange?.(searchResultCount); }, [searchResultCount, onSearchResultCountChange]);
   const preview = catalog?.skills.find(skill => skill.id === previewId);
   const previewInstalledKey = preview ? matchRecommendedSkill(preview, installedSkills)?.key : undefined;
   useEffect(() => { if (!preview || previewInstalledKey) setPreviewId(null); }, [preview?.id, previewInstalledKey]);
@@ -132,14 +136,15 @@ export function RecommendedSkillsPanel({ workspaceRoot, onInstalled, writeBusy, 
     </p>}
     {!loading && catalog?.skills.length === 0 && <p className="empty-hint">推荐目录没有可用技能。</p>}
     <div className="scrollable-items pm-recommended-skills-grid">
-      {visibleEntries.map(({ skill, installed }) =>
+      {visibleEntries.map(({ skill, installed }, index) =>
         <div className={installed ? "pm-recommended-installed" : "item-card"} key={skill.id}
           role={installed ? "group" : "button"} tabIndex={installed ? -1 : 0} aria-label={installed ? `${installed.displayName ?? skill.name} 已安装` : undefined}
+          data-skill-search-result={searching && !installed ? String(index === activeSearchResultIndex) : undefined}
           onClick={installed ? undefined : () => setPreviewId(skill.id)} onKeyDown={installed ? undefined : event => {
             if (event.target !== event.currentTarget || event.nativeEvent.isComposing || event.keyCode === 229) return;
             if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setPreviewId(skill.id); }
           }}>
-        {installed ? <>{renderInstalledSkill(installed.key)}
+        {installed ? <>{renderInstalledSkill(installed.key, searching ? index === activeSearchResultIndex : undefined)}
           {outcomes[skill.id]?.kind === "error" && <p role="alert">{outcomes[skill.id].text}</p>}
         </> : <><div className="item-card-main">
           <strong>{recommendedSkillDisplayName(skill.name)}</strong>

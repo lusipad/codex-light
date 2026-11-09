@@ -33,8 +33,11 @@ const installed = { key: "actual-path", name: "demo", path: "C:/home/skills/demo
   f.unmount();
 }
 {
-  const keys = [], options = { installedSkills: [], onInstalledCardKeysChange: value => keys.push(value) };
+  const keys = [], counts = [], options = { installedSkills: [], onInstalledCardKeysChange: value => keys.push(value),
+    searchQuery: "PDF", activeSearchResultIndex: 0, onSearchResultCountChange: count => counts.push(count) };
   const f = await readyRecommendedSkills(options);
+  assert.equal(getCard(f).props["data-skill-search-result"], "true");
+  assert.equal(counts.at(-1), 1);
   getCard(f).props.onClick();
   const action = getPreview(f).props.footer.children[0].props.onClick;
   action(click); action(click);
@@ -53,6 +56,8 @@ const installed = { key: "actual-path", name: "demo", path: "C:/home/skills/demo
   options.installedSkills = [installed]; f.render();
   assert.equal(getPreview(f), undefined, "RP06 actual metadata replaces the recommendation preview instance");
   assert.equal(f.nodes(node => node.tag === "installed-card").length, 1);
+  assert.equal(f.nodes(node => node.tag === "installed-card")[0].props.active, true, "the mapped card inherits the result selection once");
+  assert.equal(f.nodes(node => node.props["data-skill-search-result"] !== undefined).length, 0, "the wrapper must not be an extra keyboard result");
   assert.match(f.text(), /发现待确认.*offline/, "RP08 metadata transition must retain visible discovery failure");
   assert.deepEqual(Array.from(keys.at(-1)), [installed.key], "RP06 parent can remove the duplicate overview card");
   options.installedSkills = []; f.render();

@@ -237,6 +237,9 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     }
   }, [initialTab]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [skillSearchIndex, setSkillSearchIndex] = useState(0);
+  const [recommendedSearchCount, setRecommendedSearchCount] = useState(0);
+  const pageRef = useRef<HTMLDivElement>(null);
   const [skills, setSkills] = useState<SkillInfoItem[]>([]);
   const [selectedSkill, setSelectedSkill] = useState<SkillInfoItem | null>(null);
   const [selectedSkillKey, setSelectedSkillKey] = useState<string | null>(null);
@@ -1222,7 +1225,25 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   const filteredSkillRows = skillRows.filter(
     (row) => matchesSearch(row.name) || matchesSearch(row.description)
   );
-  const renderSkillRow = (row: SkillRow) => (
+  const visibleSkillRows = filteredSkillRows.filter(row => manageOnly || !recommendedInstalledKeys.includes(row.key));
+  const searchingSkills = !manageOnly && subTab === "skills" && search.length > 0;
+  const activeSkillSearchIndex = Math.min(skillSearchIndex, visibleSkillRows.length + recommendedSearchCount - 1);
+  const handleSkillSearchKey = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!searchingSkills || event.nativeEvent.isComposing || event.keyCode === 229) return;
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp" && event.key !== "Enter") return;
+    const results = pageRef.current?.querySelectorAll<HTMLElement>("[data-skill-search-result]");
+    if (!results?.length) return;
+    const current = Math.min(skillSearchIndex, results.length - 1);
+    event.preventDefault();
+    if (event.key === "Enter") {
+      results[current].click();
+      return;
+    }
+    const next = Math.max(0, Math.min(current + (event.key === "ArrowDown" ? 1 : -1), results.length - 1));
+    setSkillSearchIndex(next);
+    results[next].scrollIntoView({ block: "nearest" });
+  };
+  const renderSkillRow = (row: SkillRow, searchActive?: boolean) => (
     <div
       key={row.key}
       className={`skill-list-row ${
@@ -1230,6 +1251,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       }`}
       role="button"
       tabIndex={0}
+      data-skill-search-result={searchActive === undefined ? undefined : String(searchActive)}
       onKeyDown={(event) => {
         if (event.target !== event.currentTarget) return;
         if (event.key === "Enter" || event.key === " ") {
@@ -1722,7 +1744,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   const isInstalledBusy = installedLoading && installedData === null;
 
   return (
-    <div className={`panel-page pm-extensions-page ${manageOnly ? "pm-management-page" : "pm-directory-page"}`}>
+    <div ref={pageRef} className={`panel-page pm-extensions-page ${manageOnly ? "pm-management-page" : "pm-directory-page"}`}>
       <div className="panel-page-header">
         <div>
           <h2>{manageOnly ? "插件" : subTab === "skills" ? "技能" : "插件"}</h2>
@@ -1737,7 +1759,8 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
             aria-label={manageOnly ? "搜索插件、技能或 MCP" : subTab === "skills" ? "搜索技能" : "搜索插件"}
             placeholder={manageOnly ? "搜索插件、技能或 MCP..." : subTab === "skills" ? "搜索技能" : "搜索插件"}
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => { setSearchQuery(e.target.value); setSkillSearchIndex(0); }}
+            onKeyDown={handleSkillSearchKey}
           />
           {!manageOnly && subTab === "plugins" && onManagePlugins && (
             <button type="button" className="secondary-btn" onClick={onManagePlugins}>管理</button>
@@ -1992,7 +2015,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
               </div>
             )}
             <div className="scrollable-items pm-installed-skills-grid">
-              {filteredSkillRows.filter(row => manageOnly || !recommendedInstalledKeys.includes(row.key)).map(renderSkillRow)}
+              {visibleSkillRows.map((row, index) => renderSkillRow(row, searchingSkills ? index === activeSkillSearchIndex : undefined))}
               {filteredSkillRows.length === 0 && (
                 <div className="empty-hint">没有匹配的技能。</div>
               )}
@@ -2129,11 +2152,13 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       {subTab === "skills" && !manageOnly && <RecommendedSkillsPanel key={JSON.stringify([activeWorkspaceRoot, connectionIdentity])}
         workspaceRoot={activeWorkspaceRoot} onInstalled={refreshRecommendedSkills} writeBusy={skillWriteBusy}
         searchQuery={searchQuery} onInstalledCardKeysChange={setRecommendedInstalledKeys}
+        activeSearchResultIndex={activeSkillSearchIndex - visibleSkillRows.length}
+        onSearchResultCountChange={setRecommendedSearchCount}
         installedSkills={skillRows.filter(row => row.remote !== null).map(row => ({
           key: row.key, name: row.remote?.name ?? row.local?.name ?? row.name,
           path: row.remote?.path || row.local?.path || "", displayName: row.remote?.interface?.displayName?.trim() || undefined, scope: row.scope,
         }))}
-        renderInstalledSkill={key => { const row = skillRows.find(item => item.key === key); return row ? renderSkillRow(row) : null; }}
+        renderInstalledSkill={(key, searchActive) => { const row = skillRows.find(item => item.key === key); return row ? renderSkillRow(row, searchActive) : null; }}
         beginInstall={() => {
           if (skillWritePendingRef.current) return false;
           skillWritePendingRef.current = true;
