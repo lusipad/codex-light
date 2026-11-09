@@ -21,16 +21,22 @@ function mount(invoke) {
   let workspaces = [{ id: "old", serverProjectId: "old-server" }], hints = { old: "old-path" }, pins = ["old-pin"];
   let membership = { threadProjectAssignments: { old: { projectKind: "local", projectId: "old" } }, projectlessThreadIds: [], workspaceProjectAssignments: {} };
   const calls = [], warnings = [];
+  const threadPinRevisionRef = { current: 0 }, projectPinRevisionRef = { current: 0 };
+  let projectPins = ["old-project-pin"];
   const refresh = vm.runInNewContext(code, {
     refreshWorkspaceGenerationRef: { current: 0 },
+    threadPinRevisionRef, projectPinRevisionRef,
     tauriInvoke: async method => { calls.push(method); return invoke(method, calls.length); },
     setWorkspaces: value => { workspaces = value; },
     setWorkspaceHints: value => { hints = value; },
     setPinnedThreadIds: value => { pins = value; },
+    setPinnedProjectIds: value => { projectPins = value; },
     setSidebarProjectMembership: value => { membership = value; },
     console: { warn: (...args) => warnings.push(args) },
   });
-  return { refresh, calls, warnings, workspaces: () => workspaces, hints: () => hints, pins: () => pins, membership: () => membership };
+  return { refresh, calls, warnings, threadPinRevisionRef, projectPinRevisionRef,
+    workspaces: () => workspaces, hints: () => hints, pins: () => pins,
+    projectPins: () => projectPins, membership: () => membership };
 }
 const newest = [{ id: "new", path: "D:/same-root", serverProjectId: "new-server" }];
 {
@@ -67,6 +73,18 @@ const newest = [{ id: "new", path: "D:/same-root", serverProjectId: "new-server"
   const view = mount(async method => { if (method === "threads_meta_get") throw Error("metadata unavailable"); return newest; });
   await view.refresh(); assert.equal(view.workspaces()[0].serverProjectId, "old-server", "metadata failure cannot publish a partial identity snapshot");
   assert.equal(view.hints().old, "old-path"); assert.equal(view.warnings.length, 1);
+}
+{
+  const metadata = deferred();
+  const view = mount(async method => method === "workspace_list" ? newest : metadata.promise);
+  const pending = view.refresh();
+  view.threadPinRevisionRef.current++;
+  view.projectPinRevisionRef.current++;
+  metadata.resolve({ pinnedThreadIds: ["stale-thread"], pinnedProjectIds: ["stale-project"] });
+  await pending;
+  assert.deepEqual(view.pins(), ["old-pin"], "a newer thread pin write supersedes older metadata");
+  assert.deepEqual(view.projectPins(), ["old-project-pin"], "a newer project pin write supersedes older metadata");
+  assert.equal(view.workspaces()[0].id, "new", "newer pin writes do not discard workspace identity");
 }
 console.log("PASS actual workspace identity refresh: explicit binding passthrough, stale workspace/metadata rejection and failure retention (L2)");
 

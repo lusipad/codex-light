@@ -13,11 +13,17 @@ function visit(node) {
 visit(ast);
 assert.ok(callback, "execute the actual refreshThreads callback");
 const code = ts.transpileModule(`(${callback})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+const protocol = { exports: {} };
+vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/protocol.ts", "utf8"), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+}).outputText, { exports: protocol.exports });
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
 function mount(rpc) {
   const calls = [], warnings = [], commits = [], readiness = [];
   const refresh = vm.runInNewContext(code, {
     refreshThreadsGenerationRef: { current: 0 },
+    threadListRestoreRef: { current: null },
+    isThreadReadState: protocol.exports.isThreadReadState,
     callAppServer: async (method, params) => { calls.push({ method, params }); return rpc(params, calls.length); },
     setThreads: value => commits.push(value),
     setChatHistoryReady: value => readiness.push(value),
@@ -41,6 +47,7 @@ function mount(rpc) {
   page.resolve({ data: [{ id: "b" }], nextCursor: null }); await pending;
   assert.equal(view.commits[0].length, 2);
   assert.deepEqual(view.readiness, [true]);
+  assert.deepEqual(view.warnings, [], "successful pagination must not throw during publication");
 }
 {
   const view = mount(async p => { if (p.cursor) throw Error("second page failed"); return { data: [{ id: "a" }], nextCursor: "later" }; });

@@ -75,18 +75,33 @@ console.log("PASS changed/cleared submit and queue release legacy keys; pending/
 
 const app = fs.readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const appAst = ts.createSourceFile("App.tsx", app, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-let composers = 0;
+const sendBindings = new Map();
 function checkWiring(node) {
   if (ts.isJsxSelfClosingElement(node) && node.tagName.getText(appAst) === "ComposerBox") {
-    composers++;
-    const prop = node.attributes.properties.find(p => p.name?.getText(appAst) === "onQueueMessage");
-    assert.equal(prop?.initializer?.expression?.getText(appAst), "handleEnqueueFollowup");
-    const sendProp = node.attributes.properties.find(p => p.name?.getText(appAst) === "onSendMessage");
-    assert.equal(sendProp?.initializer?.expression?.getText(appAst), "handleSendMessage");
+    const prop = name => node.attributes.properties.find(p => ts.isJsxAttribute(p) && p.name.getText(appAst) === name);
+    assert.equal(prop("onQueueMessage")?.initializer?.expression?.getText(appAst), "handleEnqueueFollowup");
+    sendBindings.set(prop("variant").initializer.text, prop("onSendMessage").initializer.expression.getText(appAst));
   }
   ts.forEachChild(node, checkWiring);
 }
-checkWiring(appAst); assert.equal(composers, 2);
+checkWiring(appAst); assert.equal(sendBindings.size, 2);
+const localSend = () => assert.fail("active Cloud Home cannot submit to the local chat");
+const sendContext = { handleSendMessage: localSend, homeCloud: { active: false } };
+assert.equal(vm.runInNewContext(sendBindings.get("thread"), sendContext), localSend);
+assert.equal(vm.runInNewContext(sendBindings.get("home"), sendContext), localSend);
+const cloudSession = { threadId: "cloud" };
+const routes = [];
+Object.assign(sendContext, {
+  homeCloud: { active: true, send: apply => apply(cloudSession) },
+  navigationRequestRef: { current: 1 },
+  activeRouteRef: { current: "home" },
+  setCloudDraft: draft => assert.equal(draft.session, cloudSession),
+  setActiveRoute: route => routes.push(route),
+  refreshCloudRecentRef: { current: null },
+});
+assert.equal(vm.runInNewContext(sendBindings.get("home"), sendContext)(), true);
+assert.deepEqual(routes, ["cloud-draft"]);
+assert.equal(vm.runInNewContext(sendBindings.get("thread"), sendContext), localSend);
 assert.ok(!source.includes("Alt+Enter 加入队列"));
 console.log("PASS both actual App composers use the real queue handler without false Alt+Enter hints");
 

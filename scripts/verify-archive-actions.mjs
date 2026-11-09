@@ -20,12 +20,15 @@ function mount() {
   const calls = [], mutations = [], notices = [], context = {
     useCallback: f => f, useMemo: f => f(), requestSeqRef: { current: 0 }, mountedRef: { current: true },
     mutationPendingRef: { current: false }, threads: [{ id: "keep", name: "Original" }], loading: false, error: null, busyId: null, restoredThread: null,
-    deleteTarget: null, onShowToast: (...args) => notices.push(args),
+    deleteTarget: null, projectDeleteTarget: null, onDeleteProject: undefined, onShowToast: (...args) => notices.push(args),
   };
   context.callAppServer = (method, params) => { const p = deferred(); calls.push({ method, params, ...p }); return p.promise; };
   for (const name of ["onDelete", "onDeleteAll", "onUnarchive"]) context[name] = thread => { const p = deferred(); mutations.push({ name, thread, ...p }); return p.promise; };
   for (const [setter, key] of [["setThreads", "threads"], ["setLoading", "loading"], ["setError", "error"], ["setBusyId", "busyId"], ["setRestoredThread", "restoredThread"], ["setDeleteTarget", "deleteTarget"]]) context[setter] = value => { context[key] = typeof value === "function" ? value(context[key]) : value; };
-  for (const name of ["load", "mutate", "handleDelete", "handleDeleteDecision", "handleUnarchive"]) if (callbacks[name]) context[name] = vm.runInNewContext(compile(`(${callbacks[name]})`), context);
+  for (const name of ["load", "mutate", "handleDelete", "handleUnarchive"]) context[name] = vm.runInNewContext(compile(`(${callbacks[name]})`), context);
+  // React keeps the current render's target when the decision clears state.
+  const decision = vm.runInNewContext(compile(`(deleteTarget) => (${callbacks.handleDeleteDecision})`), context);
+  context.handleDeleteDecision = confirmed => decision(context.deleteTarget)(confirmed);
   return { context, calls, mutations, notices };
 }
 {
@@ -87,6 +90,8 @@ for (const late of ["error", "success"]) {
 {
   const v = mount(); v.context.handleDelete({ id: "keep" });
   const deleting = v.context.handleDeleteDecision(true);
+  assert.equal(v.mutations.length, 1);
+  assert.equal(v.mutations[0].thread.id, "keep");
   v.mutations[0].reject(Error("unsupported")); await flush();
   assert.equal(v.calls.length, 1, "AA04: uncertain delete result requires a real list read, never a write retry");
   v.calls[0].resolve({ data: [{ id: "keep" }], nextCursor: null }); await deleting;

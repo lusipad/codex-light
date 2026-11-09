@@ -72,7 +72,22 @@ assert.equal(text, "manual");
 assert.ok(source.includes("return () => stopDictation(false);"));
 assert.ok(source.includes("[dictationSessionKey]"));
 const app = fs.readFileSync("src/App.tsx", "utf8");
-assert.equal((app.match(/dictationSessionKey=\{promptDraftKey\}/g) || []).length, 2);
+const appAst = ts.createSourceFile("App.tsx", app, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+const sessionKeys = new Map();
+function collectSessionKeys(node) {
+  if (ts.isJsxSelfClosingElement(node) && node.tagName.getText(appAst) === "ComposerBox") {
+    const prop = name => node.attributes.properties.find(p => ts.isJsxAttribute(p) && p.name.getText(appAst) === name);
+    sessionKeys.set(prop("variant").initializer.text, prop("dictationSessionKey").initializer.expression.getText(appAst));
+  }
+  ts.forEachChild(node, collectSessionKeys);
+}
+collectSessionKeys(appAst);
+assert.equal(sessionKeys.size, 2);
+for (const active of [false, true]) {
+  const state = { promptDraftKey: "local-draft", homeCloud: { active } };
+  assert.equal(vm.runInNewContext(sessionKeys.get("thread"), state), "local-draft");
+  assert.equal(vm.runInNewContext(sessionKeys.get("home"), state), active ? "home-cloud" : "local-draft");
+}
 console.log("PASS VS01-VS04: remove ineffective settings; production dictation callbacks accumulate results, stop safely, isolate sessions/manual edits and surface failures");
 const view = {};
 vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/components/VoiceSettings.tsx", "utf8"), {
