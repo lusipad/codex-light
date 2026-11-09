@@ -6,7 +6,7 @@ import ts from "typescript";
 const parse = path => ts.createSourceFile(path, fs.readFileSync(path, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const page = parse("src/components/QuickSearchModal.tsx"), app = parse("src/App.tsx"), folderDialog = parse("src/components/SearchFolderDialog.tsx");
 let items, keydown, focus, pageSelection, appSlash, sidebarSearch, selectedFileSearchText, rememberWorkspaceFile, pickSearchFolder, finishFolderPicker, folderLocation, folderListEffect;
-let chatProjectLabel;
+let chatProjectLabel, selectedIndexExpression, selectResult;
 const chatStates = {};
 const shortcuts = {};
 const helpers = [];
@@ -21,6 +21,8 @@ function visit(node, ast) {
   if (ts.isVariableDeclaration(node) && ast === page) {
     if (["emptyChat", "chatLoading"].includes(node.name.getText(ast))) chatStates[node.name.getText(ast)] = node.initializer;
     if (node.name.getText(ast) === "items") items = node.initializer.arguments[0];
+    if (node.name.getText(ast) === "selectedIndex") selectedIndexExpression = node.initializer;
+    if (node.name.getText(ast) === "selectResult") selectResult = node.initializer.arguments[0];
     if (node.name.getText(ast) === "handleKeyDown") keydown = node.initializer;
     if (node.name.getText(ast) === "pickSearchFolder") pickSearchFolder = node.initializer;
     if (node.name.getText(ast) === "finishFolderPicker") finishFolderPicker = node.initializer;
@@ -118,13 +120,16 @@ function mount(overrides = {}) {
   const view = mount({ mode: "chats", query: "项目", getChatProjectLabel: resolve,
     threads: [{ id: "legacy", projectId: "server-project" }, { id: "loaded", name: "项目本地候选", cwd: "D:/projects/main" }],
     remoteResults: { mode: "chats", query: "项目", workspacePath: "repo-B", threads: remoteThreads } });
-  assert.deepEqual(Array.from(view.results(), row => row.rightLabel), ["已重命名项目", "", "已重命名项目", "folder", "已重命名项目"]);
+  assert.deepEqual(Object.fromEntries(view.results().map(row => [row.id, row.rightLabel])), {
+    "th-unknown": "已重命名项目", "th-excluded": "", "th-legacy": "已重命名项目",
+    "th-ordinary": "folder", "th-loaded": "已重命名项目",
+  });
 }
 {
   const match = { id: "content-match", name: "Design", cwd: "D:/private/workspace", snippet: "命中的正文" };
   const view = mount({ mode: "chats", query: "正文", remoteResults: { mode: "chats", query: "正文", workspacePath: "repo-B", threads: [match] },
     threads: [{ id: "local-only", name: "正文标题" }] });
-  const [remote, local] = view.results();
+  const [local, remote] = view.results();
   assert.equal(remote.subtitle, "命中的正文");
   assert.equal(remote.rightLabel, "workspace");
   assert.equal(local.subtitle, undefined);
@@ -147,16 +152,54 @@ function mount(overrides = {}) {
   } });
   const rows = view.results();
   assert.deepEqual(Array.from(rows, row => [row.id, row.subtitle]), [
-    ["th-content", "修复-UI 的正文"], ["th-no-snippet", "feature/修复-UI"],
-    ["th-title", undefined], ["th-branch-only", "feature/修复-UI"],
+    ["th-title", undefined], ["th-content", "修复-UI 的正文"],
+    ["th-branch-only", "feature/修复-UI"], ["th-no-snippet", "feature/修复-UI"],
   ]);
-  rows.at(-1).onSelect();
+  rows.find(row => row.id === "th-branch-only").onSelect();
   assert.deepEqual(view.calls, [["onSelectThread", "branch-only"], ["onClose"]]);
   view.context.query = "";
   assert.ok(view.results().every(row => row.subtitle === undefined), "idle results do not expose branch previews");
   view.context.query = query;
   view.context.mode = "root";
   assert.equal(view.results().some(row => row.id === "th-branch-only"), false);
+}
+{
+  const query = "repair";
+  const view = mount({ mode: "chats", query, threads: [
+    { id: "older", name: "repair", updatedAt: 2 },
+    { id: "newer", name: "repair", recencyAt: 5, updatedAt: 1 },
+    { id: "branch", name: "分支候选", gitInfo: { branch: "feature/repair" } },
+    { id: "folder", name: "目录候选", cwd: "D:/repair" },
+  ] });
+  const select = () => execute(selectedIndexExpression, page, view.context);
+  const initial = view.results();
+  assert.deepEqual(Array.from(initial, row => row.id), ["th-newer", "th-older", "th-branch", "th-folder"]);
+  Object.assign(view.context, { items: initial, chatSelection: null, otherSelectedIndex: 0,
+    setChatSelection: value => { view.context.chatSelection = value; } });
+  execute(selectResult, page, view.context)(2);
+  view.context.remoteResults = { mode: "chats", query, workspacePath: "repo-B", threads: [
+    { id: "branch", name: "旧服务标题", snippet: "repair 正文" },
+    ...Array.from({ length: 26 }, (_, i) => ({ id: `content-${i}`, name: "正文", snippet: "repair", updatedAt: -i - 1 })),
+  ] };
+  view.context.chatPaging = { limit: 25, threads: [{ id: "branch", name: "重复结果" }] };
+  const ranked = view.results();
+  view.context.items = ranked;
+  assert.equal(ranked.length, 26);
+  assert.equal(ranked.at(-1).id, "show-more-chats");
+  assert.deepEqual(Array.from(ranked.slice(0, 3), row => [row.id, row.title, row.subtitle]), [
+    ["th-newer", "repair", undefined], ["th-older", "repair", undefined], ["th-branch", "分支候选", "repair 正文"],
+  ]);
+  assert.equal(ranked[select()].id, "th-branch", "response preserves the explicit selected identity");
+  view.context.items = ranked.filter(row => row.id !== "th-branch");
+  view.context.selectedIndex = select();
+  assert.equal(view.context.selectedIndex, -1, "an item pushed out of the page leaves no active row");
+  const key = execute(keydown, page, view.context);
+  key({ key: "Enter", nativeEvent: {}, preventDefault() {} });
+  assert.equal(view.calls.length, 0, "Enter must not open a replacement result");
+  key({ key: "ArrowUp", nativeEvent: {}, preventDefault() {} });
+  assert.equal(view.context.selectedIndex, view.context.items.length - 1);
+  view.context.chatSearchScope = {};
+  assert.equal(select(), 0, "another query cannot inherit the previous selection");
 }
 {
   const view = mount({ mode: "chats", query: "", chatHistoryReady: false, trimmedQuery: "", items: [], isTauriRuntime: () => true });
@@ -425,15 +468,16 @@ function mount(overrides = {}) {
   view.context.chatPaging.loading = true;
   view.context.items = expanded;
   execute(pageSelection, page, view.context)();
-  assert.equal(expanded[view.context.selectedIndex].title, "new hit", "a server duplicate is not a newly revealed chat");
+  assert.equal(expanded[view.context.selectedIndex].title, "聊天 25", "selection moves to the highest ranked newly revealed chat");
   assert.equal(view.calls.at(-1)[2], "center");
-  assert.equal(view.context.pendingChatSelection.current.selectedId, "th-new");
+  assert.equal(view.context.pendingChatSelection.current.selectedId, "th-25");
   view.context.chatPaging.loading = false;
   view.context.items = [{ id: "th-other-new", category: "thread" }, ...expanded];
   execute(pageSelection, page, view.context)();
-  assert.equal(view.context.items[view.context.selectedIndex].id, "th-new", "late page completion preserves the first newly selected chat");
+  assert.equal(view.context.items[view.context.selectedIndex].id, "th-25", "late page completion preserves the first newly selected chat");
   assert.equal(view.context.pendingChatSelection.current, null);
   view.context.pendingChatSelection.current = { scope: {}, ids: new Set() };
+  view.context.selectedIndex = 0;
   execute(pageSelection, page, view.context)();
   assert.equal(view.context.selectedIndex, 0);
   assert.equal(view.context.pendingChatSelection.current, null, "changed scope drops the old selection");

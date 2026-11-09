@@ -2846,3 +2846,8 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 
 - 按官方聊天元数据和预览结构接入分支匹配。复用现有字面高亮、协议正文分页与聊天 ID 导航。宽窄原生窗口覆盖标题、正文与分支行及键盘打开。
 - 125 项发布回放、官方 CLI 隔离搜索探针和 EXE、MSI、NSIS 打包通过。跨来源排序、模糊匹配和官方配对像素待验。详见[验收记录](antigravity/acceptance/08R-chat-search-branch.md)。
+
+## 2026-11-09 — 聊天搜索排序与异步选中
+
+- 先按聊天 ID 合并，再按标题、正文、分支及来源排序和限量。使用聊天身份保存显式选中，延迟正文到达后 Enter 仍打开原项。
+- 125 项发布回放、Store CLI 搜索探针、原生宽窄窗口与 Windows 打包通过。官方模糊评分和配对像素待验。详见[验收记录](antigravity/acceptance/08S-chat-search-ranking.md)。

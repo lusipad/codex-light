@@ -94,6 +94,9 @@ interface ThreadSearchThread {
   preview?: string | null;
   cwd?: string | null;
   projectId?: string | null;
+  recencyAt?: number | null;
+  updatedAt?: number;
+  createdAt?: number;
 }
 
 /** `thread/search` 返回项：schema 为 { snippet, thread }，同时兼容扁平的 thread 数组。 */
@@ -113,12 +116,8 @@ export interface RecentFile {
   updatedAt: number;
 }
 
-interface RemoteThreadResult {
+interface RemoteThreadResult extends ThreadSearchThread {
   id: string;
-  name?: string | null;
-  preview?: string | null;
-  cwd?: string | null;
-  projectId?: string | null;
   snippet?: string;
 }
 
@@ -243,6 +242,9 @@ function normalizeRemoteThreadHits(raw: unknown, limit: number): RemoteThreadRes
       preview: typeof thread.preview === "string" ? thread.preview : null,
       cwd: typeof thread.cwd === "string" ? thread.cwd : null,
       projectId: typeof thread.projectId === "string" ? thread.projectId : thread.projectId === null ? null : undefined,
+      recencyAt: Number.isFinite(thread.recencyAt) ? thread.recencyAt : undefined,
+      updatedAt: Number.isFinite(thread.updatedAt) ? thread.updatedAt : undefined,
+      createdAt: Number.isFinite(thread.createdAt) ? thread.createdAt : undefined,
       snippet: typeof item.snippet === "string" ? item.snippet.trim() || undefined : undefined,
     });
     if (results.length >= limit) break;
@@ -316,7 +318,8 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
   // A new opening takes effect before the search effects read the query.
   const query = draft.initialQuery === initialQuery ? draft.value : initialQuery.value;
   const setQuery = (value: string) => setDraft({ initialQuery, value });
-  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [otherSelectedIndex, setSelectedIndex] = useState(0);
+  const [chatSelection, setChatSelection] = useState<{ scope: object; id: string } | null>(null);
   const [remoteResults, setRemoteResults] = useState<RemoteSearchResults | null>(
     null
   );
@@ -735,81 +738,53 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
       results.push(...slashItems);
     }
 
-    // Threads —— 协议结果优先，本地结果按 id 去重补充。
-    const remoteThreads = mode === "chats" && chatPaging?.threads.length
-      ? [...new Map([...remote?.threads ?? [], ...chatPaging.threads].map(thread => [thread.id, thread])).values()]
-      : remote?.threads ?? [];
-    const remoteThreadIds = new Set(remoteThreads.map((t) => t.id));
-    const threadLimit = mode === "chats" ? chatPaging?.limit ?? REMOTE_CHAT_LIMIT : REMOTE_THREAD_LIMIT;
-    const branchPreview = (thread: ThreadSummary, title: string): string | undefined => {
-      const branch = thread.gitInfo?.branch;
-      return mode === "chats" && q && typeof branch === "string" &&
-        branch.toLowerCase().includes(q) && !title.toLowerCase().includes(q) ? branch : undefined;
-    };
-    const chatSource = (thread: RemoteThreadResult) => {
-      const loaded = thread.projectId === undefined ? threads.find(candidate => candidate.id === thread.id) : undefined;
-      const source = loaded ? { ...thread, projectId: loaded.projectId, cwd: thread.cwd ?? loaded.cwd } : thread;
-      return getChatProjectLabel(source) ?? baseNameFsPath(source.cwd ?? "");
-    };
-
-    remoteThreads.slice(0, threadLimit).forEach((t) => {
-      const title = t.name || t.preview || t.id;
-      const loaded = mode === "chats" && !t.snippet ? threads.find(thread => thread.id === t.id) : undefined;
-      results.push({
-        id: `th-${t.id}`,
-        category: "thread",
-        section: "聊天",
-        title,
-        subtitle: mode === "chats" ? t.snippet ?? (loaded ? branchPreview(loaded, title) : undefined)
-          : `历史会话${t.cwd ? ` · ${t.cwd}` : ""}`,
-        rightLabel: mode === "chats" ? chatSource(t) : t.cwd ? t.cwd.split(/[/\\]/).pop() : "Chat",
-        icon: <MessageSquare size={14} />,
-        onSelect: () => {
-          onSelectThread(t.id);
-          onClose();
-        },
-      });
+    const threadRow = (thread: ThreadSummary, section: string, rightLabel: string, subtitle?: string): SearchResultItem => ({
+      id: `th-${thread.id}`, category: "thread", section,
+      title: thread.name || thread.preview || thread.id,
+      subtitle, rightLabel, icon: <MessageSquare size={14} />,
+      onSelect: () => { onSelectThread(thread.id); onClose(); },
     });
-
-    const emptyChatQuery = mode === "chats" && !trimmedQuery;
-    const pinnedRanks = emptyChatQuery ? new Map([...new Set(pinnedThreadIds)].map((id, index) => [id, index])) : undefined;
-    const localMatches = (t: ThreadSummary) =>
-      t.name?.toLowerCase().includes(q) || t.preview?.toLowerCase().includes(q) || t.id.toLowerCase().includes(q);
-    const localThreads = threads.filter(t => mode !== "files" && (mode !== "root" || q.length >= 2) &&
-      !remoteThreadIds.has(t.id) && (localMatches(t) || branchPreview(t, t.name || t.preview || t.id)));
-    if (pinnedRanks) {
-      localThreads.sort((a, b) => {
-        const aRank = pinnedRanks.get(a.id);
-        const bRank = pinnedRanks.get(b.id);
-        if (aRank !== undefined || bRank !== undefined) return (aRank ?? pinnedRanks.size) - (bRank ?? pinnedRanks.size);
-        return (b.recencyAt ?? b.updatedAt ?? b.createdAt ?? 0) - (a.recencyAt ?? a.updatedAt ?? a.createdAt ?? 0);
-      });
-    } else if (mode === "chats") {
-      localThreads.sort((a, b) => Number(localMatches(b)) - Number(localMatches(a)));
-    }
-    localThreads
-      .slice(0, Math.max(0, threadLimit - remoteThreads.length))
-      .forEach((t) => {
-        const title = t.name || t.preview || t.id;
-        results.push({
-          id: `th-${t.id}`,
-          category: "thread",
-          section: pinnedRanks?.has(t.id) ? "已置顶聊天" : "聊天",
-          title,
-          subtitle: mode === "chats" ? branchPreview(t, title) : `历史会话 · ${t.cwd || ""}`,
-          rightLabel: mode === "chats" ? chatSource(t) : t.cwd ? t.cwd.split(/[/\\]/).pop() : "Chat",
-          icon: <MessageSquare size={14} />,
-          onSelect: () => {
-            onSelectThread(t.id);
-            onClose();
-          },
-        });
-      });
-
+    const matches = (value: string | null | undefined) => value?.toLowerCase().includes(q) === true;
     if (mode === "chats") {
+      const threadLimit = chatPaging?.limit ?? REMOTE_CHAT_LIMIT;
+      const pinned = new Map([...new Set(pinnedThreadIds)].map((id, index) => [id, index]));
+      const candidates = new Map<string, { thread: ThreadSummary; snippet?: string; protocol: boolean }>();
+      for (const thread of threads) {
+        if (!candidates.has(thread.id)) candidates.set(thread.id, { thread, protocol: false });
+      }
+      if (q) for (const hit of [...remote?.threads ?? [], ...chatPaging?.threads ?? []]) {
+        const loaded = candidates.get(hit.id);
+        if (loaded) {
+          loaded.protocol = true;
+          loaded.snippet ??= hit.snippet;
+          loaded.thread = {
+            ...hit, ...loaded.thread, cwd: loaded.thread.cwd ?? hit.cwd,
+            projectId: loaded.thread.projectId === undefined ? hit.projectId : loaded.thread.projectId,
+          };
+        } else candidates.set(hit.id, { thread: hit, snippet: hit.snippet, protocol: true });
+      }
+      const ranked = [];
+      for (const { thread, snippet, protocol } of candidates.values()) {
+        const title = thread.name || thread.preview || thread.id;
+        const source = getChatProjectLabel(thread) ?? baseNameFsPath(thread.cwd ?? "");
+        const branch = typeof thread.gitInfo?.branch === "string" ? thread.gitInfo.branch : undefined;
+        const titleMatch = matches(title);
+        const branchMatch = q !== "" && matches(branch);
+        const rank = !q ? pinned.get(thread.id) ?? pinned.size
+          : titleMatch || (q.length >= 8 && thread.id.toLowerCase().startsWith(q)) ? 0
+          : snippet || matches(thread.preview) ? 1
+          : branchMatch ? 2
+          : matches(source) || matches(thread.cwd) || matches(thread.id) ? 3 : 4;
+        if (rank === 4 && q && !protocol) continue;
+        const subtitle = q ? snippet ?? (!titleMatch && branchMatch ? branch : undefined) : undefined;
+        ranked.push({ thread, source, subtitle,
+          rank, recency: thread.recencyAt ?? thread.updatedAt ?? thread.createdAt ?? 0 });
+      }
+      ranked.sort((a, b) => a.rank - b.rank || b.recency - a.recency);
+      const chats = ranked.slice(0, threadLimit).map(({ thread, source, subtitle }) =>
+        threadRow(thread, !q && pinned.has(thread.id) ? "已置顶聊天" : "聊天", source, subtitle));
       const cursor = chatPaging?.nextCursor === undefined ? remote?.nextCursor : chatPaging.nextCursor;
-      const chats = results.filter(item => item.category === "thread");
-      if (trimmedQuery && (chatPaging?.loading || remoteThreads.length + localThreads.length > threadLimit || cursor != null)) {
+      if (q && (chatPaging?.loading || ranked.length > threadLimit || cursor != null)) {
         const visibleIds = new Set(chats.map(item => item.id));
         chats.push({
           id: "show-more-chats", category: "action", section: "聊天",
@@ -822,6 +797,16 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
         });
       }
       return chats;
+    }
+    if (mode === "root") {
+      const remoteThreads = remote?.threads ?? [];
+      const remoteThreadIds = new Set(remoteThreads.map(thread => thread.id));
+      const localThreads = q.length >= 2 ? threads.filter(thread => !remoteThreadIds.has(thread.id) &&
+        (matches(thread.name) || matches(thread.preview) || matches(thread.id))) : [];
+      for (const [index, thread] of [...remoteThreads, ...localThreads].slice(0, REMOTE_THREAD_LIMIT).entries()) {
+        const subtitle = index < remoteThreads.length ? `历史会话${thread.cwd ? ` · ${thread.cwd}` : ""}` : `历史会话 · ${thread.cwd || ""}`;
+        results.push(threadRow(thread, "聊天", thread.cwd ? thread.cwd.split(/[/\\]/).pop() ?? "" : "Chat", subtitle));
+      }
     }
 
     if (mode === "root" && (!q || "切换聊天… 搜索聊天 search chats switch chat".includes(q))) {
@@ -1097,10 +1082,19 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
     buildCmd,
   ]);
 
+  const selectedIndex = mode === "chats"
+    ? chatSelection?.scope === chatSearchScope ? items.findIndex(item => item.id === chatSelection.id) : 0
+    : otherSelectedIndex;
+  const selectResult = useCallback((index: number) => {
+    if (mode === "chats") {
+      const id = items[index]?.id;
+      setChatSelection(id ? { scope: chatSearchScope, id } : null);
+    } else setSelectedIndex(index);
+  }, [mode, items, chatSearchScope]);
   const selectAndScroll = useCallback((index: number, block: ScrollLogicalPosition = "nearest") => {
-    setSelectedIndex(index);
+    selectResult(index);
     resultsRef.current?.querySelector<HTMLElement>(`[data-search-index="${index}"]`)?.scrollIntoView({ block });
-  }, []);
+  }, [selectResult]);
 
   useEffect(() => {
     const pending = pendingChatSelection.current;
@@ -1118,8 +1112,8 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
       return;
     }
     pendingChatSelection.current = null;
-    setSelectedIndex(0);
-  }, [items, chatSearchScope, chatPaging?.loading, selectAndScroll]);
+    if (mode !== "chats") setSelectedIndex(0);
+  }, [items, mode, chatSearchScope, chatPaging?.loading, selectAndScroll]);
 
   const createChatRef = useRef<HTMLButtonElement>(null);
   const emptyChat = mode === "chats" && !trimmedQuery && chatHistoryReady && items.length === 0;
@@ -1138,7 +1132,8 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
       selectAndScroll((selectedIndex + 1) % Math.max(1, items.length));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      selectAndScroll((selectedIndex - 1 + items.length) % Math.max(1, items.length));
+      selectAndScroll(selectedIndex < 0 ? Math.max(0, items.length - 1)
+        : (selectedIndex - 1 + items.length) % Math.max(1, items.length));
     } else if (e.key === "Tab") {
       e.preventDefault();
       if (items.length === 0) { scopeTriggerRef.current?.focus(); return; }
@@ -1274,7 +1269,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
                     }`}
                     data-search-index={index}
                     onClick={item.onSelect}
-                    onMouseEnter={() => setSelectedIndex(index)}
+                    onMouseEnter={() => selectResult(index)}
                   >
                     <div className="quick-search-row-icon">{item.icon}</div>
                     <div className="quick-search-row-content">
