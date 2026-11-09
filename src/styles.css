@@ -2195,6 +2195,16 @@ button.file-change-name:hover { text-decoration: underline; }
   padding: 6px 10px 4px;
 }
 
+.sidebar-activity-pinned-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
 .sidebar-section-label {
   font-size: calc(11.5px * var(--font-ui-scale, 1));
   font-weight: 500;

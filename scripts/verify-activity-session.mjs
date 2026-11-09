@@ -79,4 +79,7 @@ assert.deepEqual(groupIds(activityRecentGroups(chronological,withOld,opened,fals
 assert.ok(groupIds(activityRecentGroups(chronological,withOld,opened,false)).some(([,ids])=>ids.includes('old-priority')));
 assert.ok(!groupIds(activityRecentGroups(chronological,withOld,opened,false)).some(([,ids])=>ids.includes('too-old')));
 assert.ok(!groupIds(activityRecentGroups(chronological,withOld,opened)).some(([,ids])=>ids.includes('old-priority')));
+const pinned=new Set(['today','old-priority']);
+assert.ok(!groupIds(activityRecentGroups(chronological,withOld,opened,false,pinned))
+  .some(([,ids])=>ids.some(id=>pinned.has(id))),'date list must exclude independent pins, including Priority when that section is hidden');
 console.log('PASS 09C activity session: source-derived priority, retention, creation seconds, membership, removal and reopening');

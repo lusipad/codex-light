@@ -21,7 +21,7 @@ const unread=revision=>({revision,firstUnread:{type:'threadStart'}});
 const rows=Array.from({length:13},(_,i)=>({id:`t${i}`,readState:unread('list-old')}));
 function mount(){
   const writes=[],errors=[];let state=null,refreshes=0;
-  const context={...activity.exports,...protocol.exports,threadsRef:{current:rows},activitySessionRef:{current:null},activityGenerationRef:{current:0},activityScopeRef:{current:'local'},activityPriorityVisibleRef:{current:true},personalizationNavigationGuardRef:{current:null},readStateWritesRef:{current:new Set()},Date,
+  const context={...activity.exports,...protocol.exports,threadsRef:{current:rows},activitySessionRef:{current:null},activityGenerationRef:{current:0},activityScopeRef:{current:'local'},activityPriorityVisibleRef:{current:true},activityPinsRef:{current:new Set()},personalizationNavigationGuardRef:{current:null},readStateWritesRef:{current:new Set()},Date,
     setActivitySession:value=>{state=typeof value==='function'?value(state):value;},refreshThreads:async()=>{refreshes++;},showAppToast:(...args)=>errors.push(args),callAppServer:async(method,args)=>{writes.push({method,args});return method==='thread/read'?{readState:unread('fresh-read')}:{readState:read};}};
   return {context,writes,errors,get state(){return state;},get refreshes(){return refreshes;},toggle:()=>run('toggleActivity',context)(),bulk:()=>run('markAllThreadsRead',context)(),more:()=>run('loadMoreActivity',context)(),clear:()=>run('clearReadActivity',context)()};
 }
@@ -154,13 +154,14 @@ for(const reopen of [false,true]){
   assert.ok(view.writes.filter(x=>x.method==='thread/read').every(x=>x.args.includeTurns===false));
   assert.equal(rows[0].readState.revision,'list-old','no optimistic receipt overwrite');
 }
-for(const change of ['close','identity','hide-priority','remove','already-read','notification-before-render']){
+for(const change of ['close','identity','hide-priority','independent-pin','remove','already-read','notification-before-render']){
   const view=mount();view.context.threadsRef.current=[rows[0]];view.toggle();const pending=deferred();
   view.context.callAppServer=async(method,args)=>{view.writes.push({method,args});return pending.promise;};
   const first=view.bulk();await flush();await view.bulk();assert.equal(view.writes.length,1,'same-thread single flight');
   if(change==='close')view.toggle();
   if(change==='identity')view.context.activityScopeRef.current='other';
   if(change==='hide-priority')view.context.activityPriorityVisibleRef.current=false;
+  if(change==='independent-pin')view.context.activityPinsRef.current.add('t0');
   if(change==='remove')view.context.activitySessionRef.current.threadIds=[];
   if(change==='notification-before-render')vm.runInNewContext(transpile(`(()=>${removal})()`),{...view.context,params:{threadId:'t0'},refreshThreadsGenerationRef:{current:0},activeThreadIdRef:{current:'other'},setThreads:()=>{}});
   pending.resolve({readState:change==='already-read'?read:unread('late')});await first;
@@ -168,6 +169,19 @@ for(const change of ['close','identity','hide-priority','remove','already-read',
   assert.equal(view.context.readStateWritesRef.current.size,0);
   assert.equal(view.errors.length,0);
   if(change==='identity')assert.equal(view.refreshes,0,'old identity does not refresh new identity');
+}
+{
+  const view=mount();
+  view.toggle();
+  view.context.activityPinsRef.current=new Set(['t0','t12']);
+  let targets;
+  view.context.setActivityArchive=selection=>{targets=selection.targets;};
+  run('openActivityArchive',view.context)();
+  assert.equal(targets.length,11);
+  assert.ok(targets.every(row=>!view.context.activityPinsRef.current.has(row.id)));
+  await view.bulk();
+  assert.equal(view.writes.filter(({method})=>method==='thread/readState/update').length,11);
+  assert.ok(view.writes.every(({args})=>!view.context.activityPinsRef.current.has(args.threadId)));
 }
 {
   const view=mount(),ctx=view.context;

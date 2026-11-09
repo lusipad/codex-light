@@ -180,4 +180,24 @@ function search(view, value) {
   assert.deepEqual(ids(view),sessionIds.slice(0,10));
   cases++;
 }
+{
+  const priority=sessionIds.slice(0,8);
+  const history=threads[0];
+  const view=mount({ ...base, activityThreadIds:priority, pinnedThreadIds:["t2","t1"],activityPinnedVisible:true,
+    activityRecentGroups:[{dayStart:1,label:"昨天",threads:[history]}] });
+  const pinnedHeading=()=>all(view.render()).find(node=>node.type==="button" && text(node)==="置顶");
+  assert.deepEqual(ids(view),[...priority,"t2","t1"]);
+  assert.ok(button(view,"展开显示"));
+  pinnedHeading().props.onClick();
+  assert.equal(pinnedHeading().props["aria-expanded"],false);
+  assert.deepEqual(ids(view),[...priority,"t0"]);
+  assert.equal(button(view,"展开显示"),undefined);
+  view.props.activityPriorityVisible=false;
+  assert.deepEqual(ids(view),["t0"]);
+  assert.ok(options(view));
+  assert.equal(options(view).props.items.find(item=>item.id==="archive").disabled,true);
+  pinnedHeading().props.onClick();
+  assert.deepEqual(ids(view),["t2","t1","t0"]);
+  cases++;
+}
 console.log(`PASS ${cases} Activity production-sidebar session projection sequences (L2; no browser/native/official pixel claim)`);

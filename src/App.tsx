@@ -179,6 +179,7 @@ import { listProjects, type Project } from "./projects";
 
 type ProjectArchiveUndo = { thread: ThreadSummary; pinPlacement: { beforeThreadId: string | null } | null };
 const ACTIVITY_PRIORITY_KEY = "sidebar-priority-show-priority-v1";
+const ACTIVITY_PINNED_KEY = "sidebar-priority-show-pinned-v1";
 
 /** Reasoning items carry `summary[]` + `content[]` (and streamed text). */
 function selectedFileSearchText(): string | undefined {
@@ -542,6 +543,8 @@ export const App: React.FC = () => {
     targets: ThreadSummary[];
   } | null>(null);
   const [activityPriorityVisible, setActivityPriorityVisible] = useState(() => localStorage.getItem(ACTIVITY_PRIORITY_KEY) !== "false");
+  const [activityPinnedVisible, setActivityPinnedVisible] = useState(() => localStorage.getItem(ACTIVITY_PINNED_KEY) === "true");
+  const activityPinsRef = useRef<ReadonlySet<string>>(new Set());
   const activityPriorityVisibleRef = useRef(activityPriorityVisible);
   const updateActivityPriority = useCallback((visible: boolean) => {
     activityPriorityVisibleRef.current = visible;
@@ -553,11 +556,18 @@ export const App: React.FC = () => {
     localStorage.setItem(ACTIVITY_PRIORITY_KEY, String(visible));
     updateActivityPriority(visible);
   }, [updateActivityPriority]);
+  const toggleActivityPinned = useCallback(() => {
+    const visible = !activityPinnedVisible;
+    localStorage.setItem(ACTIVITY_PINNED_KEY, String(visible));
+    setActivityPinnedVisible(visible);
+  }, [activityPinnedVisible]);
   useEffect(() => {
     const sync = (event: StorageEvent) => {
-      if (event.storageArea === localStorage && (event.key === ACTIVITY_PRIORITY_KEY || event.key === null)) {
+      if (event.storageArea !== localStorage) return;
+      if (event.key === ACTIVITY_PRIORITY_KEY || event.key === null) {
         updateActivityPriority(event.newValue !== "false");
       }
+      if (event.key === ACTIVITY_PINNED_KEY || event.key === null) setActivityPinnedVisible(event.newValue === "true");
     };
     window.addEventListener("storage", sync);
     return () => window.removeEventListener("storage", sync);
@@ -4978,15 +4988,18 @@ export const App: React.FC = () => {
   const activityScope = JSON.stringify([modelAccountIdentity, appServerStatus.connected,
     appServerStatus.binaryPath, appServerStatus.appServerVersion, appServerStatus.userAgent]);
   activityScopeRef.current = activityScope;
+  const activityPins = useMemo(() => new Set(activityPinnedVisible ? pinnedThreadIds : []), [activityPinnedVisible, pinnedThreadIds]);
+  activityPinsRef.current = activityPins;
   const activitySnapshot = useMemo(() => activitySession?.scope === activityScope
-    ? mergeActivitySession(activitySession, threads) : null, [activitySession, activityScope, threads]);
+    ? mergeActivitySession(activitySession, threads, activityPins) : null, [activitySession, activityScope, threads, activityPins]);
   activitySessionRef.current = activitySnapshot;
   const activityOnly = activitySnapshot !== null;
   useEffect(() => {
     if (activitySession !== activitySnapshot) setActivitySession(current => current === activitySession ? activitySnapshot : current);
   }, [activitySession, activitySnapshot]);
-  const activityThreadIds = useMemo(() => activityPriorityVisible ? activitySnapshot?.threadIds ?? [] : [],
-    [activitySnapshot, activityPriorityVisible]);
+  const activityThreadIds = useMemo(() => activityPriorityVisible
+    ? activitySnapshot?.threadIds.filter(id => !activityPins.has(id)) ?? [] : [],
+  [activitySnapshot, activityPriorityVisible, activityPins]);
   useEffect(() => {
     if (!activityOnly) return;
     let timer: number;
@@ -5000,8 +5013,8 @@ export const App: React.FC = () => {
     return () => window.clearTimeout(timer);
   }, [activityOnly]);
   const activityHistory = useMemo(() => activitySnapshot
-    ? activityRecentGroups(activitySnapshot, threads, activityCalendarDay || Date.now(), activityPriorityVisible) : [],
-  [activitySnapshot, threads, activityCalendarDay, activityPriorityVisible]);
+    ? activityRecentGroups(activitySnapshot, threads, activityCalendarDay || Date.now(), activityPriorityVisible, activityPins) : [],
+  [activitySnapshot, threads, activityCalendarDay, activityPriorityVisible, activityPins]);
   const toggleActivity = useCallback(() => {
     const generation = ++activityGenerationRef.current;
     if (activitySessionRef.current) {
@@ -5012,7 +5025,7 @@ export const App: React.FC = () => {
     const scope = activityScopeRef.current;
     const apply = () => {
       if (generation !== activityGenerationRef.current || scope !== activityScopeRef.current) return;
-      const session = beginActivitySession(threadsRef.current, scope, Date.now());
+      const session = beginActivitySession(threadsRef.current, scope, Date.now(), activityPinsRef.current);
       activitySessionRef.current = session;
       setActivitySession(session);
     };
@@ -5025,7 +5038,7 @@ export const App: React.FC = () => {
   const clearReadActivity = useCallback(() => {
     const session = activitySessionRef.current;
     if (!session || session.scope !== activityScopeRef.current || !activityPriorityVisibleRef.current) return;
-    const cleared = clearReadActivityThreads(session, threadsRef.current);
+    const cleared = clearReadActivityThreads(session, threadsRef.current, activityPinsRef.current);
     if (cleared === session) return;
     activitySessionRef.current = cleared;
     setActivitySession(cleared);
@@ -5043,6 +5056,7 @@ export const App: React.FC = () => {
     if (!session || session.scope !== activityScopeRef.current || !activityPriorityVisibleRef.current) return;
     const byId = new Map(threadsRef.current.map(thread => [thread.id, thread]));
     const targets = session.threadIds.flatMap(id => {
+      if (activityPinsRef.current.has(id)) return [];
       const thread = byId.get(id);
       return thread ? [thread] : [];
     });
@@ -5061,7 +5075,7 @@ export const App: React.FC = () => {
       let localStateError = false;
       for (const target of selection.targets) {
         if (!sameSession() || !activityPriorityVisibleRef.current) break;
-        if (!activitySessionRef.current?.threadIds.includes(target.id)) continue;
+        if (activityPinsRef.current.has(target.id) || !activitySessionRef.current?.threadIds.includes(target.id)) continue;
         const latest = threadsRef.current.find(thread => thread.id === target.id);
         if (!latest || (activityThreadIsRunning(latest) && !activityThreadIsRunning(target))) continue;
         try {
@@ -5101,9 +5115,10 @@ export const App: React.FC = () => {
     if (!session || !activityPriorityVisibleRef.current) return;
     const generation = activityGenerationRef.current;
     const ids = new Set(session.threadIds);
-    const unread = threadsRef.current.filter(thread => ids.has(thread.id) && isThreadReadState(thread.readState) && thread.readState.firstUnread != null);
+    const unread = threadsRef.current.filter(thread => ids.has(thread.id) && !activityPinsRef.current.has(thread.id) &&
+      isThreadReadState(thread.readState) && thread.readState.firstUnread != null);
     const current = (id: string) => activityPriorityVisibleRef.current && generation === activityGenerationRef.current && session.scope === activityScopeRef.current &&
-      activitySessionRef.current?.threadIds.includes(id);
+      !activityPinsRef.current.has(id) && activitySessionRef.current?.threadIds.includes(id);
     let attempted = false;
     await Promise.all(unread.map(async thread => {
       if (!current(thread.id) || readStateWritesRef.current.has(thread.id)) return;
@@ -5665,6 +5680,8 @@ export const App: React.FC = () => {
         activityRecentGroups={activityHistory}
         activityPriorityVisible={activityPriorityVisible}
         onToggleActivityPriority={toggleActivityPriority}
+        activityPinnedVisible={activityPinnedVisible}
+        onToggleActivityPinned={toggleActivityPinned}
         activityVisibleCount={activitySnapshot?.visibleCount ?? 10}
         onLoadMoreActivity={loadMoreActivity}
         onClearReadActivity={canClearReadActivity ? clearReadActivity : undefined}

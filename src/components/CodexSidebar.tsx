@@ -66,6 +66,8 @@ export interface CodexSidebarProps {
   activityRecentGroups?: ActivityRecentGroup[];
   activityPriorityVisible?: boolean;
   onToggleActivityPriority?: () => void;
+  activityPinnedVisible?: boolean;
+  onToggleActivityPinned?: () => void;
   activityThreadIds: string[];
   activityVisibleCount?: number;
   onLoadMoreActivity?: () => void;
@@ -154,6 +156,8 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
   activityRecentGroups = [],
   activityPriorityVisible = true,
   onToggleActivityPriority,
+  activityPinnedVisible = false,
+  onToggleActivityPinned,
   activityThreadIds,
   activityVisibleCount = 10,
   onLoadMoreActivity,
@@ -499,9 +503,23 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
   }, [threads, activityThreadIds, activityPriorityVisible]);
   const activityLabel = activityOnly ? "关闭活动视图"
     : activityAttentionCount > 0 ? "查看活动，有聊天需要关注" : "查看活动";
-  const activityRowCount = activityThreads.length + activityRecentGroups.reduce((total, group) => total + group.threads.length, 0);
+  const [activityPinnedCollapsed, setActivityPinnedCollapsed] = useState(() => localStorage.getItem("codex_activity_pinned_collapsed") === "true");
+  const activityPinnedThreads = useMemo(() => {
+    if (!activityOnly || !activityPinnedVisible) return [];
+    const byId = new Map(threads.map(thread => [thread.id, thread]));
+    return [...new Set(pinnedThreadIds)].flatMap(id => {
+      const thread = byId.get(id);
+      return thread ? [thread] : [];
+    });
+  }, [activityOnly, activityPinnedVisible, threads, pinnedThreadIds]);
+  const activityPinnedCount = activityPinnedCollapsed ? 0 : activityPinnedThreads.length;
+  const activityRowCount = activityThreads.length + activityPinnedCount +
+    activityRecentGroups.reduce((total, group) => total + group.threads.length, 0);
   const activityQuery = searchQuery.trim().toLowerCase();
-  let recentSlots = Math.max(0, activityVisibleCount - activityThreads.length);
+  const pinnedPage = activityPinnedThreads.slice(0, activityPinnedCollapsed ? 0 : Math.max(0, activityVisibleCount - activityThreads.length));
+  const visibleActivityPins = activityQuery ? pinnedPage.filter(thread => (thread.name || thread.preview || thread.id).toLowerCase().includes(activityQuery)) : pinnedPage;
+  const showActivityPins = activityPinnedThreads.length > 0 && (activityPinnedCollapsed || visibleActivityPins.length > 0);
+  let recentSlots = Math.max(0, activityVisibleCount - activityThreads.length - activityPinnedCount);
   const visibleActivityRecent = activityOnly ? activityRecentGroups.flatMap(group => {
     const page = group.threads.slice(0, recentSlots);
     recentSlots -= page.length;
@@ -509,6 +527,13 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
       ? page.filter(thread => (thread.name || thread.preview || thread.id).toLowerCase().includes(activityQuery)) : page;
     return threads.length ? [{ ...group, threads }] : [];
   }) : [];
+  const activityPinnedHeading = <button type="button" className="sidebar-section-label sidebar-activity-pinned-toggle"
+    aria-expanded={!activityPinnedCollapsed} onClick={() => {
+      localStorage.setItem("codex_activity_pinned_collapsed", String(!activityPinnedCollapsed));
+      setActivityPinnedCollapsed(!activityPinnedCollapsed);
+    }}>
+    {activityPinnedCollapsed ? <ChevronRightIcon size={12} /> : <ChevronDownIcon size={12} />}置顶
+  </button>;
 
   const filteredThreads = useMemo(() => {
     const visible = activityOnly ? activityThreads.slice(0, activityVisibleCount) : threads;
@@ -1835,19 +1860,22 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
 
         {/* Section C: 聊天列表 (Chats / Activity) —— 对标官方 TasksSection */}
         <div className="sidebar-section-header-row" style={{ marginTop: 12 }}>
-          <span className="sidebar-section-label">
+          {activityOnly && !activityPriorityVisible && showActivityPins ? activityPinnedHeading : <span className="sidebar-section-label">
             {activityOnly
               ? activityPriorityVisible ? "优先事项" : visibleActivityRecent[0]?.label ?? "今天"
               : organizeMode === "list"
               ? "聊天"
               : "最近"}
-          </span>
+          </span>}
           {activityOnly ? <div className="sidebar-section-tools">
             <ThreadActionsMenu
               items={[
                 ...(onToggleActivityPriority ? [
                   { id: "show", label: "显示", type: "label" as const },
                   { id: "priority", label: "优先事项部分", type: "checkbox" as const, checked: activityPriorityVisible },
+                ] : []),
+                ...(onToggleActivityPinned ? [
+                  { id: "pinned", label: "已置顶", type: "checkbox" as const, checked: activityPinnedVisible },
                 ] : []),
               {
                 id: "mark-all-read",
@@ -1865,6 +1893,7 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
               align="left"
               onSelect={id => {
                 if (id === "priority") onToggleActivityPriority?.();
+                else if (id === "pinned") onToggleActivityPinned?.();
                 else if (id === "archive") onArchiveActivity();
                 else if (id === "mark-all-read") onMarkAllRead();
               }}
@@ -1935,9 +1964,17 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
             ) : renderThreadRow(row.thread, false, activityOnly ? undefined : recentOrderContext))
           )}
         </div>}
+        {showActivityPins && <>
+          {activityPriorityVisible && <div className="sidebar-section-header-row" style={{ marginTop: 16 }}>
+            {activityPinnedHeading}
+          </div>}
+          {!activityPinnedCollapsed && <div className="sidebar-section-list">
+            {visibleActivityPins.map(thread => renderThreadRow(thread, false))}
+          </div>}
+        </>}
         {visibleActivityRecent.map((group, index) => (
           <React.Fragment key={group.dayStart}>
-            {(activityPriorityVisible || index > 0) && <div className="sidebar-section-header-row" style={{ marginTop: 16 }}>
+            {(activityPriorityVisible || showActivityPins || index > 0) && <div className="sidebar-section-header-row" style={{ marginTop: 16 }}>
               <span className="sidebar-section-label">{group.label}</span>
             </div>}
             <div className="sidebar-section-list">
