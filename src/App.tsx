@@ -542,6 +542,8 @@ export const App: React.FC = () => {
   const [bottomPanelLauncherVisible, setBottomPanelLauncherVisible] = useState<boolean | null>(null);
   const [bottomPanelLauncherSaving, setBottomPanelLauncherSaving] = useState(false);
   const bottomPanelLauncherPending = useRef(false);
+  const bottomPanelMenuPending = useRef(false);
+  const canShowBottomPanelLauncher = !isQuickChatWindow && (activeRoute === "home" || activeRoute === "thread");
   const [terminalPanelRequest, setTerminalPanelRequest] = useState<TerminalPanelRequest | null>(null);
   const requestTerminalPanel = (action: TerminalPanelRequest["action"]) => {
     if (isCloudChatRoute) return;
@@ -1651,6 +1653,31 @@ export const App: React.FC = () => {
     } finally {
       bottomPanelLauncherPending.current = false;
       setBottomPanelLauncherSaving(false);
+    }
+  };
+
+  const showBottomPanelLauncherMenu = async (event: React.MouseEvent<HTMLElement> | React.KeyboardEvent<HTMLElement>) => {
+    if (!canShowBottomPanelLauncher || bottomPanelLauncherVisible === null || !isTauriRuntime() ||
+      event.defaultPrevented || (event.target as HTMLElement).closest("input, textarea, select, [contenteditable='true']")) return;
+    const keyboard = "key" in event;
+    if (keyboard && (event.nativeEvent.isComposing || event.keyCode === 229 ||
+      !(event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey)))) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (bottomPanelMenuPending.current || bottomPanelLauncherPending.current) return;
+    const anchor = keyboard ? (event.target as HTMLElement).getBoundingClientRect()
+      : { left: event.clientX, bottom: event.clientY };
+    bottomPanelMenuPending.current = true;
+    try {
+      await tauriInvoke("bottom_panel_launcher_menu", {
+        x: Math.round(anchor.left * window.devicePixelRatio),
+        y: Math.round(anchor.bottom * window.devicePixelRatio),
+        checked: bottomPanelLauncherVisible,
+      });
+    } catch (error) {
+      showAppToast(`未能打开底部面板菜单：${String(error)}`, "error");
+    } finally {
+      bottomPanelMenuPending.current = false;
     }
   };
 
@@ -4534,6 +4561,12 @@ export const App: React.FC = () => {
 
   const handleAppCommand = useCallback(async (command: string, payload?: any) => {
     if (keyboardState.capturing.current) return;
+    if (command === "toggle-bottom-panel-launcher") {
+      if (canShowBottomPanelLauncher && bottomPanelLauncherVisible !== null) {
+        await saveBottomPanelLauncher(!bottomPanelLauncherVisible);
+      }
+      return;
+    }
     const shortcutAction = shortcutHandlersRef.current[command];
     if (projectMoveConfirmation && (
       (typeof shortcutAction === "function" && !["zoom-in", "zoom-out", "zoom-reset"].includes(command)) ||
@@ -4620,7 +4653,8 @@ export const App: React.FC = () => {
       return;
     }
     showAppToast(`暂未实现命令：${command}`, "info");
-  }, [applyZoom, cycleTheme, handlePickNewFolder, showAppToast, projectMoveConfirmation, runShortcutAction]);
+  }, [applyZoom, cycleTheme, handlePickNewFolder, showAppToast, projectMoveConfirmation, runShortcutAction,
+    canShowBottomPanelLauncher, bottomPanelLauncherVisible, saveBottomPanelLauncher]);
   const appCommandRef = useRef(handleAppCommand);
   appCommandRef.current = handleAppCommand;
 
@@ -4637,6 +4671,7 @@ export const App: React.FC = () => {
         "toggle-sidebar": (payload) => appCommandRef.current("toggle-sidebar", payload),
         "toggle-terminal": (payload) => appCommandRef.current("toggle-terminal", payload),
         "toggle-bottom-panel": (payload) => appCommandRef.current("toggle-bottom-panel", payload),
+        "toggle-bottom-panel-launcher": () => appCommandRef.current("toggle-bottom-panel-launcher"),
         "toggle-changes": (payload) => appCommandRef.current("toggle-changes", payload),
         "command-palette": (payload) => appCommandRef.current("command-palette", payload),
         "file-search": (payload) => appCommandRef.current("file-search", payload),
@@ -5530,9 +5565,12 @@ export const App: React.FC = () => {
         {/* Top Window / Thread Chrome Header */}
         <header
           className="main-top-navbar"
-          data-tauri-drag-region
+          data-tauri-drag-region={canShowBottomPanelLauncher ? "deep" : true}
+          onContextMenu={showBottomPanelLauncherMenu}
+          onKeyDown={showBottomPanelLauncherMenu}
           onDoubleClick={async (e) => {
-            if ((e.target as HTMLElement).closest("button, input, select, textarea, .clickable, .window-chrome-icon-btn, .project-branch-pill")) {
+            if (canShowBottomPanelLauncher ||
+              (e.target as HTMLElement).closest("button, input, select, textarea, .clickable, .window-chrome-icon-btn, .project-branch-pill")) {
               return;
             }
             try {
@@ -5813,7 +5851,7 @@ export const App: React.FC = () => {
                 <SquarePlusIcon size={16} />
               </button>
             </div>
-            {bottomPanelLauncherVisible === true && (activeRoute === "home" || activeRoute === "thread") && (
+            {bottomPanelLauncherVisible === true && canShowBottomPanelLauncher && (
               <button type="button" className={`window-chrome-icon-btn ${bottomPanelVisible ? "active" : ""}`}
                 aria-label="显示/隐藏底部面板" aria-pressed={bottomPanelVisible}
                 title={["显示/隐藏底部面板", effectiveBindings("toggle-bottom-panel", keyboardState.bindings).join(" / ")

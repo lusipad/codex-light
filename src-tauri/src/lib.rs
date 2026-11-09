@@ -2362,6 +2362,7 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            menu::bottom_panel_launcher_menu,
             deep_links::deep_link_pending,
             deep_links::deep_link_acknowledge,
             notification_broker::notification_view_update,

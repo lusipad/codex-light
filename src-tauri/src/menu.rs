@@ -33,6 +33,7 @@ use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 /// Event emitted when an application menu item is activated.
 pub const NATIVE_MENU_EVENT: &str = "native-menu";
+const BOTTOM_PANEL_LAUNCHER_MENU_PREFIX: &str = "toggle-bottom-panel-launcher:";
 /// Event emitted for tray icon/menu interactions.
 pub const NATIVE_TRAY_EVENT: &str = "native-tray";
 /// Stable id of the system tray icon (useful for `app.tray_by_id`).
@@ -431,6 +432,10 @@ fn resolve_tray_icon<R: Runtime>(app: &AppHandle<R>) -> Option<Image<'static>> {
 /// Tray-related ids are handled natively here; every other known app-menu id is
 /// forwarded to the frontend as `native-menu { id }`.
 pub fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
+    if let Some(label) = id.strip_prefix(BOTTOM_PANEL_LAUNCHER_MENU_PREFIX) {
+        let _ = app.emit_to(label, NATIVE_MENU_EVENT, json!({ "id": "toggle-bottom-panel-launcher" }));
+        return;
+    }
     match id {
         "tray-open" => {
             show_main_window(app);
@@ -495,6 +500,22 @@ pub fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
         // Predefined items (undo/copy/separators/…) have no frontend action.
         _ => {}
     }
+}
+
+#[tauri::command]
+pub async fn bottom_panel_launcher_menu(
+    window: tauri::WebviewWindow,
+    x: i32,
+    y: i32,
+    checked: bool,
+) -> Result<(), String> {
+    let id = format!("{BOTTOM_PANEL_LAUNCHER_MENU_PREFIX}{}", window.label());
+    let label = if checked { "✓ 底部面板" } else { "底部面板" };
+    let item = MenuItem::with_id(&window, id, label, true, None::<&str>)
+        .map_err(|error| error.to_string())?;
+    let menu = Menu::with_items(&window, &[&item]).map_err(|error| error.to_string())?;
+    window.popup_menu_at(&menu, tauri::PhysicalPosition::new(x, y))
+        .map_err(|error| error.to_string())
 }
 
 fn focused_menu_window<R: Runtime>(app: &AppHandle<R>) -> Option<tauri::WebviewWindow<R>> {

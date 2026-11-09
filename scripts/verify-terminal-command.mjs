@@ -121,10 +121,11 @@ function mount() {
 // The actual App acknowledgment must not clear a newer toolbar command.
 const appSource = fs.readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const appAst = ts.createSourceFile("App.tsx", appSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-let ack, launcherSave;
+let ack, launcherSave, launcherMenu;
 function findAck(node) {
   if (ts.isVariableDeclaration(node) && node.name.getText(appAst) === "handleTerminalCommandHandled") ack = node.initializer.arguments[0];
   if (ts.isVariableDeclaration(node) && node.name.getText(appAst) === "saveBottomPanelLauncher") launcherSave = node.initializer;
+  if (ts.isVariableDeclaration(node) && node.name.getText(appAst) === "showBottomPanelLauncherMenu") launcherMenu = node.initializer;
   ts.forEachChild(node, findAck);
 }
 findAck(appAst);
@@ -161,6 +162,37 @@ const launcherKey = "app-shell-bottom-panel-launcher-visible";
   await save(true);
   assert.equal(context.bottomPanelLauncherVisible, false);
   assert.match(errors.at(-1), /disk denied/);
+}
+{
+  const requests = [], gate = deferred();
+  const context = {
+    canShowBottomPanelLauncher: true, bottomPanelLauncherVisible: true, isTauriRuntime: () => true,
+    bottomPanelMenuPending: { current: false }, bottomPanelLauncherPending: { current: false },
+    window: { devicePixelRatio: 1.25 },
+    tauriInvoke(method, args) { requests.push({ method, ...args }); return gate.promise; },
+  };
+  const show = vm.runInNewContext(ts.transpileModule(`(${launcherMenu.getText(appAst)})`, {}).outputText, context);
+  const event = (extra = {}) => ({
+    defaultPrevented: false, clientX: 80, clientY: 44, nativeEvent: { isComposing: false },
+    target: { closest: () => null, getBoundingClientRect: () => ({ left: 16, bottom: 32 }) },
+    preventDefault() { this.defaultPrevented = true; }, stopPropagation() {}, ...extra,
+  });
+  const pointer = event();
+  const first = show(pointer);
+  assert.equal(pointer.defaultPrevented, true);
+  await show(event());
+  assert.deepEqual(requests, [{ method: "bottom_panel_launcher_menu", x: 100, y: 55, checked: true }]);
+  gate.resolve(); await first;
+  context.bottomPanelLauncherVisible = false;
+  await show(event({ key: "F10", shiftKey: true }));
+  assert.deepEqual(requests.at(-1), { method: "bottom_panel_launcher_menu", x: 20, y: 40, checked: false });
+  await show(event({ key: "ContextMenu", nativeEvent: { isComposing: true } }));
+  const edit = event({ target: { closest: () => ({}) } });
+  await show(edit);
+  assert.equal(edit.defaultPrevented, false, "editable header inputs retain their context menu");
+  context.canShowBottomPanelLauncher = false;
+  await show(event());
+  assert.equal(requests.length, 2);
 }
 assert.ok(!source.includes("if (!open) return null"), "TC05: hiding must preserve the terminal DOM");
 assert.ok(appSource.includes("terminalWasOpened.current &&"), "TC05: retain the dock after first open");
