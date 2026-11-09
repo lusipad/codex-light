@@ -297,10 +297,11 @@
   text-align: right;
 }
 
-.automation-detail-actions {
+.automation-detail-header-actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  align-items: center;
+  flex: none;
+  gap: 4px;
 }
 
 .automation-config-fieldset {

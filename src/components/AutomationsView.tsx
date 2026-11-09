@@ -13,6 +13,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { tauriInvoke } from "../bridge";
+import { ThreadActionsMenu } from "./ThreadActionsMenu";
 import "./AutomationsView.css";
 import {
   getSchedulerStatus,
@@ -824,7 +825,30 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
         </aside>}
         {(showCreateForm || selectedItem) && <aside className="automation-detail" aria-label={showCreateForm ? "任务配置" : "任务详情"}>
           <header className="automation-detail-header"><h2>{showCreateForm ? editingItem ? "编辑定时任务" : "添加定时任务" : selectedItem?.name}</h2>
-            <button ref={detailCloseRef} type="button" className="automation-close" aria-label="关闭任务详情" disabled={writeBusy} onClick={closeTaskPanel}><X size={16} /></button>
+            <div className="automation-detail-header-actions">
+              {!showCreateForm && selectedItem && <>
+                <ThreadActionsMenu
+                  key={selectedItem.id}
+                  triggerAriaLabel="已安排任务操作"
+                  items={[
+                    { id: "run", label: runBusyId === selectedItem.id ? "触发中…" : "立即运行", icon: <Play size={14} />,
+                      disabled: writeBusy || runBusyId !== null },
+                    { id: "status", label: selectedItem.status === "PAUSED" ? "继续" : "暂停",
+                      icon: selectedItem.status === "PAUSED" ? <Play size={14} /> : <Pause size={14} />, disabled: writeBusy },
+                    { id: "delete", label: "删除", icon: <Trash2 size={14} />, danger: true, disabled: writeBusy },
+                  ]}
+                  onSelect={id => {
+                    if (writePendingRef.current) return;
+                    if (id === "run") return handleRunNow(selectedItem);
+                    if (id === "status") return handleToggleStatus(selectedItem);
+                    if (id === "delete") return handleDelete(selectedItem.id);
+                  }}
+                />
+                <button type="button" className="automation-close" aria-label="编辑任务" title="编辑任务"
+                  disabled={writeBusy} onClick={() => handleStartEdit(selectedItem)}><Edit2 size={16} /></button>
+              </>}
+              <button ref={detailCloseRef} type="button" className="automation-close" aria-label="关闭任务详情" disabled={writeBusy} onClick={closeTaskPanel}><X size={16} /></button>
+            </div>
           </header>
       {showCreateForm && (
         <fieldset className="automation-config-fieldset" disabled={writeBusy} style={{ minWidth: 0 }}>
@@ -950,17 +974,8 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
               <div><dt>下次运行</dt><dd>{nextRunLabel(selectedItem)}</dd></div>
               <div><dt>已安排</dt><dd>{scheduleLabel(selectedItem, selectedEntry?.nextRunAt)}</dd></div>
             </dl>
-            <div className="automation-detail-actions">
-              <button type="button" className="secondary-btn" onClick={() => handleRunNow(selectedItem)} disabled={runBusyId !== null}
-                title={schedulerState === "unavailable" ? "调度器不可用，任务尚未运行" : "立即运行"}>
-                <Play size={14} />{runBusyId === selectedItem.id ? "触发中…" : "立即运行"}</button>
-              <button type="button" className="secondary-btn" disabled={writeBusy} onClick={() => handleStartEdit(selectedItem)}><Edit2 size={14} />编辑</button>
-              <button type="button" className="secondary-btn" disabled={writeBusy} onClick={() => handleToggleStatus(selectedItem)}>
-                {selectedItem.status === "PAUSED" ? <Play size={14} /> : <Pause size={14} />}{selectedItem.status === "PAUSED" ? "启用" : "暂停"}</button>
-              <button type="button" className="danger-btn-sm" disabled={writeBusy} onClick={() => handleDelete(selectedItem.id)}><Trash2 size={14} />删除</button>
-              {selectedItem.kind === "goal" && selectedItem.status !== "COMPLETED" && <button type="button" className="secondary-btn" disabled={writeBusy}
-                onClick={() => handleToggleStatus(selectedItem, "COMPLETED")}><CheckCircle2 size={14} />完成</button>}
-            </div>
+            {selectedItem.kind === "goal" && selectedItem.status !== "COMPLETED" && <button type="button" className="secondary-btn" disabled={writeBusy}
+              onClick={() => handleToggleStatus(selectedItem, "COMPLETED")}><CheckCircle2 size={14} />完成</button>}
             {(schedulerState === "unavailable" || schedulerState === "error") && <div className="automation-detail-error" role="status">
               <p>{schedulerState === "unavailable" ? "调度器不可用，任务尚未运行。" : schedulerError}</p>
               <button type="button" className="secondary-btn" onClick={handleRefreshSchedule} disabled={schedulerBusy}>{schedulerBusy ? "刷新中…" : "重试"}</button>

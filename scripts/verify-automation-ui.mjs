@@ -65,6 +65,7 @@ function surface(props = {}) {
     if (name === "lucide-react") return new Proxy({}, { get: (_, key) => String(key) });
     if (name === "../bridge") return bridge;
     if (name === "../automationsClient") return scheduler;
+    if (name === "./ThreadActionsMenu") return { ThreadActionsMenu: "ThreadActionsMenu" };
     if (name === "../types" || name.endsWith(".css")) return {};
     throw Error(`Unexpected dependency ${name}`);
   } });
@@ -73,7 +74,15 @@ function surface(props = {}) {
   const walk = node => !node || typeof node !== "object" ? [] : [node, ...node.children.flatMap(walk)];
   const content = node => node == null || typeof node === "boolean" ? "" : typeof node === "object" ? node.children.map(content).join(" ") : String(node);
   const button = label => walk(tree).find(node => node.type === "button" && (node.props["aria-label"] === label || content(node).trim() === label));
+  const menu = () => walk(tree).find(node => node.type === "ThreadActionsMenu" && node.props.triggerAriaLabel === "已安排任务操作");
+  const selectAction = id => {
+    const actionMenu = menu();
+    const item = actionMenu.props.items.find(item => item.id === id);
+    assert.ok(item && !item.disabled, `available menu action ${id}`);
+    return actionMenu.props.onSelect(id);
+  };
   return { calls, control, render, effects, nodes: () => walk(tree), text: () => content(tree), button,
+    menu, selectAction,
     settle: async () => { await flush(); render(); effects(); },
     unmount: () => { for (const slot of slots) slot?.stop?.(); assert.equal(timers.size, 0); assert.equal(stopped, 1); } };
 }
@@ -87,11 +96,13 @@ for (const owner of ["current-thread", "other-thread"]) {
   assert.equal(drawer.button("Active fixture"), undefined);
   if (owner === "current-thread") {
     assert.match(drawer.text(), /Paused fixture/);
-    assert.ok(drawer.button("编辑"));
+    assert.ok(drawer.button("编辑任务"));
+    assert.ok(drawer.menu());
   } else {
     assert.match(drawer.text(), /未找到已安排任务/);
     assert.doesNotMatch(drawer.text(), /Paused fixture/);
-    assert.equal(drawer.button("编辑"), undefined);
+    assert.equal(drawer.button("编辑任务"), undefined);
+    assert.equal(drawer.menu(), undefined);
   }
   const keydown = drawer.nodes()[0].props.onKeyDown;
   const event = { key: "Escape", nativeEvent: { isComposing: true }, preventDefault() {}, stopPropagation() {} };
@@ -110,6 +121,7 @@ assert.ok(h.button("添加"));
 assert.doesNotMatch(h.text(), /~\/\.codex|automation\.toml|当前时间|已配置.*个任务|推荐预设模板|每日代码质量|每周一依赖|长期目标 \/goal/u);
 assert.ok(h.button("Active fixture")); assert.equal(h.button("Paused fixture"), undefined, "default active filter excludes paused local tasks");
 assert.equal(h.button("立即运行"), undefined, "row actions belong in selected details rather than every row");
+assert.equal(h.menu(), undefined);
 for (const label of ["任务", "下次运行", "已安排"]) assert.match(h.text(), new RegExp(label));
 const search = h.nodes().find(node => node.type === "input" && node.props.placeholder === "搜索任务");
 assert.ok(search); assert.equal(search.props.maxLength, 256);
@@ -123,10 +135,12 @@ assert.equal(h.button("Active fixture"), undefined); assert.ok(h.button("Paused 
 h.nodes().find(node => node.type === "input" && node.props.placeholder === "搜索任务").props.onChange({ target: { value: "" } }); h.render();
 h.button("Active fixture").props.onClick(); h.render();
 assert.equal(h.nodes().some(node => node.props["aria-modal"] === true), false, "documented local detail outlet is not forced into a modal");
-for (const action of ["立即运行", "编辑", "暂停"]) assert.ok(h.button(action), `detail retains ${action}`);
-assert.ok(h.nodes().some(node => node.type === "button" && /删除/.test(node.props["aria-label"] || node.children.join(""))), "delete remains reachable from detail");
+assert.ok(h.button("编辑任务"));
+assert.deepEqual(Array.from(h.menu().props.items, item => item.label), ["立即运行", "暂停", "删除"]);
+assert.equal(h.menu().props.items.at(-1).danger, true);
+assert.equal(h.button("删除"), undefined, "danger action stays within the menu");
 const before = h.calls.length;
-h.button("立即运行").props.onClick(); await h.settle();
+await h.selectAction("run"); await h.settle();
 assert.equal(h.calls.length, before, "unavailable scheduler never invokes a run or implicit fallback");
 assert.match(h.text(), /尚未运行/, "actual callback reports that the task did not run");
 const presented = [h.text(), ...h.nodes().map(node => node.props.title || "")].join("\n");
@@ -163,14 +177,15 @@ assert.equal(create.calls.filter(call => call.method === "automation_save").leng
 assert.equal(create.nodes().some(node => node.type === "textarea"), false); create.unmount();
 const edits = surface(); edits.render(); edits.effects(); await edits.settle();
 edits.button("Active fixture").props.onClick(); edits.render();
-await edits.button("暂停").props.onClick(); await edits.settle();
+await edits.selectAction("status"); await edits.settle();
 assert.equal(edits.calls.filter(call => call.method === "automation_save").at(-1).args.item.status, "PAUSED");
-await edits.button("启用").props.onClick(); await edits.settle();
+assert.equal(edits.menu().props.items.find(item => item.id === "status").label, "继续");
+await edits.selectAction("status"); await edits.settle();
 assert.equal(edits.calls.filter(call => call.method === "automation_save").at(-1).args.item.status, "ACTIVE");
 edits.control.confirm = false; const beforeCancel = edits.calls.length;
-await edits.button("删除").props.onClick(); await edits.settle();
+await edits.selectAction("delete"); await edits.settle();
 assert.equal(edits.calls.length, beforeCancel, "cancelled confirmation cannot delete");
-edits.control.confirm = true; await edits.button("删除").props.onClick(); await edits.settle();
+edits.control.confirm = true; await edits.selectAction("delete"); await edits.settle();
 assert.equal(edits.calls.filter(call => call.method === "automation_delete").at(-1).args.id, "active-task"); edits.unmount();
 
 const failed = surface(); let resolveList;
@@ -221,11 +236,11 @@ for (const exit of ["关闭任务详情", "取消"]) {
   const edit = surface();
   try {
     edit.render(); edit.effects(); await edit.settle(); edit.button("Active fixture").props.onClick(); edit.render();
-    edit.button("编辑").props.onClick(); edit.render(); edit.control.confirm = true;
+    edit.button("编辑任务").props.onClick(); edit.render(); edit.control.confirm = true;
     edit.button(exit).props.onClick(); edit.render();
     assert.equal(edit.nodes().some(node => node.type === "textarea"), false);
     assert.ok(edit.nodes().some(node => node.type === "aside" && node.props["aria-label"] === "任务详情"), `${exit} from editing returns to selected detail`);
-    assert.ok(edit.button("立即运行"), `${exit} preserves selected task actions`);
+    assert.ok(edit.menu(), `${exit} preserves selected task actions`);
   } catch (error) { dirtyFailures.push(`edit/${exit}: ${error.message}`); }
   finally { edit.unmount(); }
 }
@@ -263,7 +278,7 @@ const rowLabels = () => summaries.nodes().filter(node => node.props.className ==
 assert.deepEqual(rowLabels(), scheduleCases.map(([, , label]) => label), "table describes supported RRULE semantics");
 summaries.button("Monday").props.onClick(); summaries.render();
 assert.ok(summaries.nodes().some(node => node.type === "dd" && node.children.join("") === scheduleCases[3][2]), "detail shares the schedule summary");
-summaries.button("编辑").props.onClick(); summaries.render();
+summaries.button("编辑任务").props.onClick(); summaries.render();
 assert.ok(summaries.nodes().some(node => node.type === "input" && node.props.value === scheduleCases[3][1]), "edit preserves the original RRULE");
 summaries.button("取消").props.onClick(); summaries.render();
 summaries.nodes().find(node => node.props.placeholder === "搜索任务").props.onChange({ target: { value: "工作日" } }); summaries.render();
@@ -289,14 +304,14 @@ const onceLabels = () => once.nodes().filter(node => node.props.className === "a
 assert.deepEqual(onceLabels(), [dateTimeLabel(pending), dateTimeLabel(anchor), "自定义安排", "自定义安排"]);
 once.button("Pending once").props.onClick(); once.render();
 assert.ok(once.nodes().some(node => node.type === "dd" && node.children.join("") === dateTimeLabel(pending)));
-once.button("编辑").props.onClick(); once.render();
+once.button("编辑任务").props.onClick(); once.render();
 assert.ok(once.nodes().some(node => node.type === "textarea" && node.props.value === onceRule));
 once.button("取消").props.onClick(); once.render();
 once.nodes().find(node => node.props.placeholder === "搜索任务").props.onChange({ target: { value: dateTimeLabel(anchor) } }); once.render();
 assert.deepEqual(onceLabels(), [dateTimeLabel(anchor)]);
 assert.ok(once.calls.every(call => call.method === "automations_list"));
 once.button("Consumed once").props.onClick(); once.render();
-once.button("编辑").props.onClick(); once.render();
+once.button("编辑任务").props.onClick(); once.render();
 once.nodes().find(node => node.type === "input" && node.props.value === "Consumed once").props.onChange({ target: { value: "Renamed once" } }); once.render();
 once.button("保存修改").props.onClick(); await once.settle();
 assert.equal(once.calls.find(call => call.method === "automation_save")?.args.item.rrule, onceRule);
