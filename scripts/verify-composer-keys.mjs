@@ -16,6 +16,7 @@ let sent = 0, queued = 0, prevented = 0;
 const context = vm.createContext({
   isStreaming: true, autocompleteMode: null, composerEnterBehavior: "enter", promptInput: "hello",
   submissionDisabled: false, keyBindings: [], commandId: id => `composer.${id.slice(9)}`,
+  cloudActive: false, followUpMode: "steer",
   acceleratorFromEvent: e => `${e.ctrlKey || e.metaKey ? "Ctrl+" : ""}${e.shiftKey ? "Shift+" : ""}${e.key}`,
   normalizeAccelerator: value => value.toLowerCase(),
   onSendMessage: () => sent++, onQueueMessage: () => queued++,
@@ -33,6 +34,15 @@ assert.deepEqual(press({ altKey: true }), [0, 0, 0], "Alt+Enter must not silentl
 assert.deepEqual(press({ shiftKey: true }), [0, 0, 0]);
 assert.deepEqual(press({ ctrlKey: true, shiftKey: true }), [0, 0, 0]);
 console.log("PASS Enter preference: send, invert-to-queue and modifier exclusions");
+
+context.followUpMode = "queue";
+assert.deepEqual(press(), [0, 1, 1], "queue mode changes the ordinary running submission");
+assert.deepEqual(press({ ctrlKey: true }), [1, 0, 1], "inversion steers exactly one submission");
+assert.deepEqual(press(), [0, 1, 1], "inversion does not change the preference");
+context.cloudActive = true;
+assert.deepEqual(press(), [1, 0, 1], "local mode cannot route cloud input to the local queue");
+context.cloudActive = false;
+context.followUpMode = "steer";
 
 context.composerEnterBehavior = "cmdAlways";
 assert.deepEqual(press(), [0, 0, 0]);
@@ -79,6 +89,7 @@ const sendBindings = new Map();
 function checkWiring(node) {
   if (ts.isJsxSelfClosingElement(node) && node.tagName.getText(appAst) === "ComposerBox") {
     const prop = name => node.attributes.properties.find(p => ts.isJsxAttribute(p) && p.name.getText(appAst) === name);
+    assert.equal(prop("followUpMode")?.initializer?.expression?.getText(appAst), "followUpMode");
     assert.equal(prop("onQueueMessage")?.initializer?.expression?.getText(appAst), "handleEnqueueFollowup");
     sendBindings.set(prop("variant").initializer.text, prop("onSendMessage").initializer.expression.getText(appAst));
   }

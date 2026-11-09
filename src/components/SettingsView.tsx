@@ -35,7 +35,7 @@ import type { AppearanceState } from "../appearancePreferences";
 import { GeneralOpenPreferences, type BottomPanelLauncherPreference } from "./GeneralOpenPreferences";
 import { GeneralPreferenceSelect } from "./GeneralPreferenceSelect";
 import "./SettingsView.css";
-import type { ComposerEnterBehavior } from "../composerPreferences";
+import type { ComposerEnterBehavior, FollowUpMode } from "../composerPreferences";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Search, X, Settings, Bell, Download, User, Palette, Archive, Mic, HardDrive, SlidersHorizontal,
   Sparkles, Cat, Keyboard, ChartNoAxesCombined, Plug, Monitor, Camera, Globe, Webhook, Cable,
@@ -122,6 +122,7 @@ interface SettingsViewProps {
   composerEnterSaving: boolean;
   composerEnterError: string | null;
   onSetComposerEnterBehavior: (value: ComposerEnterBehavior) => void;
+  followUp: { mode: FollowUpMode; saving: boolean; error: string; onChange: (value: FollowUpMode) => void };
   bottomPanelLauncher?: BottomPanelLauncherPreference;
   appServerStatus: AppServerStatus;
   models: ModelInfo[];
@@ -156,7 +157,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   externalImportsState,
   keyboardState,
   appearanceState,
-  composerEnterBehavior, composerEnterSaving, composerEnterError, onSetComposerEnterBehavior,
+  composerEnterBehavior, composerEnterSaving, composerEnterError, onSetComposerEnterBehavior, followUp,
   bottomPanelLauncher,
   appServerStatus,
   activeWorkspaceRoot = "",
@@ -349,6 +350,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   ]}
                   onChange={value => onSetComposerEnterBehavior(value as ComposerEnterBehavior)} />
                 {composerEnterError && <p role="alert">{composerEnterError}</p>}
+              </div>
+              <div className="form-field">
+                <label htmlFor="follow-up-mode">后续消息处理方式</label>
+                <p className="card-subtitle-desc">在 Codex 运行时将后续消息加入队列，或引导当前运行。按 {composerEnterBehavior === "enter" ? "Ctrl + Enter" : "Ctrl + Shift + Enter"} 可对单条消息执行相反操作</p>
+                <GeneralPreferenceSelect id="follow-up-mode" label="后续消息处理方式" value={followUp.mode}
+                  disabled={followUp.saving}
+                  options={[{ value: "queue", label: "排队" }, { value: "steer", label: "引导" }]}
+                  onChange={value => followUp.onChange(value === "queue" ? "queue" : "steer")}
+                  onReselect={() => { if (followUp.error) followUp.onChange(followUp.mode); }} />
+                {followUp.error && <p role="alert">{followUp.error}</p>}
               </div>
             </section>
             <ExperimentalFeatures connected={appServerStatus.connected} />

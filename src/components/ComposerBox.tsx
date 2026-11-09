@@ -33,7 +33,7 @@ import { ModelSelector } from "./ModelSelector";
 import { isTauriRuntime } from "../bridge";
 import { baseNameFsPath } from "../fsClient";
 
-import type { ComposerEnterBehavior } from "../composerPreferences";
+import type { ComposerEnterBehavior, FollowUpMode } from "../composerPreferences";
 import type { useHomeCloudComposer } from "../useHomeCloudComposer";
 import { acceleratorFromEvent, commandId, normalizeAccelerator, type KeyBinding } from "../shortcuts";
 import { findModel, getDefaultModel, getSupportedEfforts, getFastServiceTier, resolveServiceTier, getModelEligibility, type ModelConfiguration, type ModelEligibilityContext, type ServiceTierAccess } from "../modelCapabilities";
@@ -41,6 +41,7 @@ import { findModel, getDefaultModel, getSupportedEfforts, getFastServiceTier, re
 export interface ComposerBoxProps {
   dictationSessionKey: string;
   composerEnterBehavior: ComposerEnterBehavior;
+  followUpMode?: FollowUpMode;
   keyBindings?: KeyBinding[];
   submissionDisabled?: boolean;
   variant: "home" | "thread";
@@ -137,6 +138,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
   variant,
   promptInput,
   onPromptInputChange,
+  followUpMode = "steer",
   onSendMessage,
   onQueueMessage,
   onInterruptTurn,
@@ -549,7 +551,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
           if (modelsLoading || selectionPending || selectionDisabledReason) handled = false;
           else { setAutocompleteMode(null); setOpenMenu("model-recent"); }
           break;
-        case "composer-submit": handled = submit(false); break;
+        case "composer-submit": handled = submit(isStreaming && !cloudActive && followUpMode === "queue"); break;
         case "composer-steer": handled = isStreaming && submit(false); break;
         case "composer-queue": handled = isStreaming && submit(true); break;
         case "composer-clear": onPromptInputChange(""); break;
@@ -582,7 +584,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
     window.addEventListener("codex:keyboard-command", handleCommand);
     return () => window.removeEventListener("codex:keyboard-command", handleCommand);
   }, [cloudActive, models, selectedModelId, reasoningEffort, submissionDisabled, promptInput, attachedFiles,
-    autocompleteMode, autocompleteItems, isStreaming, onSendMessage, onQueueMessage, onPromptInputChange,
+    autocompleteMode, autocompleteItems, isStreaming, followUpMode, onSendMessage, onQueueMessage, onPromptInputChange,
     onAttachFiles, onToggleFastMode, onTogglePlanMode, onSelectReasoningEffort, modelsLoading,
     selectionPending, selectionDisabledReason, modelEligibilityContext, serviceTierAccess, fastMode, serviceTier, onSelectConfiguration]);
 
@@ -619,12 +621,14 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
     const accelerator = acceleratorFromEvent(e as unknown as KeyboardEvent);
     if (accelerator && keyBindings.some(binding => binding.key &&
         normalizeAccelerator(binding.key.split(/\s+/, 1)[0]) === normalizeAccelerator(accelerator))) return;
-    const shouldQueue = isStreaming && modifier &&
+    const shouldInvertFollowUp = isStreaming && !cloudActive && modifier &&
       (composerEnterBehavior === "enter" ? !e.shiftKey : e.shiftKey);
-    if (shouldQueue) {
-      if (keyBindings.some(binding => binding.command === commandId("composer-queue"))) return;
+    if (shouldInvertFollowUp) {
+      const command = followUpMode === "queue" ? "composer-steer" : "composer-queue";
+      if (keyBindings.some(binding => binding.command === commandId(command))) return;
       e.preventDefault();
-      onQueueMessage();
+      if (followUpMode === "queue") onSendMessage();
+      else onQueueMessage();
       return;
     }
     const shouldSend =
@@ -632,10 +636,12 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
         (composerEnterBehavior === "cmdIfMultiline" && !promptInput.includes("\n")));
 
     if (shouldSend) {
+      const queue = isStreaming && !cloudActive && followUpMode === "queue";
       if (keyBindings.some(binding => binding.command === commandId("composer-submit") ||
-          (isStreaming && binding.command === commandId("composer-steer")))) return;
+          (isStreaming && !cloudActive && binding.command === commandId(queue ? "composer-queue" : "composer-steer")))) return;
       e.preventDefault();
-      onSendMessage();
+      if (queue) onQueueMessage();
+      else onSendMessage();
     }
   };
 

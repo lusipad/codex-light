@@ -25,7 +25,7 @@ import { buildSkillTrialPrompt } from "./skillTrialPrompt";
 import { ShareThreadDialog } from "./components/ShareThreadDialog";
 import { readShareAccess } from "./shareAccess";
 import { installDeepLinkReceiver } from "./deepLinks";
-import { normalizeComposerEnterBehavior, type ComposerEnterBehavior } from "./composerPreferences";
+import { normalizeComposerEnterBehavior, normalizeFollowUpMode, type ComposerEnterBehavior, type FollowUpMode } from "./composerPreferences";
 import { CommandExecutionCard } from "./components/CommandExecutionCard";
 import { mergeTimelineItem, recordPatchAutoReviewDenial, ThreadHistoryBuffer, isCurrentThreadRequest } from "./threadTimeline";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -681,6 +681,10 @@ export const App: React.FC = () => {
   const [composerEnterError, setComposerEnterError] = useState<string | null>(null);
   const composerEnterRevisionRef = useRef(0);
   const composerEnterPendingRef = useRef(true);
+  const [followUpMode, setFollowUpMode] = useState<FollowUpMode>("steer");
+  const [followUpSaving, setFollowUpSaving] = useState(true);
+  const [followUpError, setFollowUpError] = useState("");
+  const followUpPendingRef = useRef(true);
   const [reviewLastResult, setReviewLastResult] = useState<string | null>(null);
   const [reviewRuns, setReviewRuns] = useState<ReviewRun[]>([]);
   const [selectedReviewFinding, setSelectedReviewFinding] = useState<ModelReviewComment | null>(null);
@@ -1690,6 +1694,38 @@ export const App: React.FC = () => {
       setComposerEnterSaving(false);
     }
   }, [composerEnterBehavior]);
+
+  useEffect(() => {
+    let cancelled = false;
+    tauriInvoke("desktop_state_get", { key: "followUpQueueMode" }).then(value => {
+      if (!cancelled) setFollowUpMode(normalizeFollowUpMode(value));
+    }).catch(() => {
+      if (!cancelled) setFollowUpError("无法读取后续消息的处理方式");
+    }).finally(() => {
+      if (cancelled) return;
+      followUpPendingRef.current = false;
+      setFollowUpSaving(false);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleSetFollowUpMode = useCallback(async (value: FollowUpMode) => {
+    if (followUpPendingRef.current || (value === followUpMode && !followUpError)) return;
+    followUpPendingRef.current = true;
+    setFollowUpSaving(true);
+    setFollowUpError("");
+    try {
+      await tauriInvoke("desktop_state_set", { key: "followUpQueueMode", value });
+      const saved = await tauriInvoke("desktop_state_get", { key: "followUpQueueMode" });
+      if (saved !== value) throw new Error("保存后读回不一致");
+      setFollowUpMode(value);
+    } catch (error) {
+      setFollowUpError(`无法保存后续消息的处理方式：${String(error)}`);
+    } finally {
+      followUpPendingRef.current = false;
+      setFollowUpSaving(false);
+    }
+  }, [followUpMode, followUpError]);
 
   useEffect(() => {
     let cancelled = false;
@@ -5520,6 +5556,7 @@ export const App: React.FC = () => {
     <ComposerBox
       dictationSessionKey={promptDraftKey}
       composerEnterBehavior={composerEnterBehavior}
+      followUpMode={followUpMode}
       keyBindings={keyboardState.bindings}
       submissionDisabled={queueBusy || modelSelection.selectionPending || !!modelSelection.selectionDisabledReason || sendStartPendingRef.current.has(threadRequestRef.current)}
       variant="thread"
@@ -6469,6 +6506,7 @@ export const App: React.FC = () => {
               composerEnterSaving={composerEnterSaving}
               composerEnterError={composerEnterError}
               onSetComposerEnterBehavior={handleSetComposerEnterBehavior}
+              followUp={{ mode: followUpMode, saving: followUpSaving, error: followUpError, onChange: handleSetFollowUpMode }}
               appServerStatus={appServerStatus}
               models={getPickerModels(models)}
               initialSection={settingsInitialSection}
@@ -6558,6 +6596,7 @@ export const App: React.FC = () => {
               <ComposerBox
                   dictationSessionKey={homeCloud.active ? "home-cloud" : promptDraftKey}
                 composerEnterBehavior={composerEnterBehavior}
+                followUpMode={followUpMode}
                 keyBindings={keyboardState.bindings}
                 submissionDisabled={homeCloud.active ? !homeCloud.canSend : queueBusy || modelSelection.selectionPending || !!modelSelection.selectionDisabledReason || sendStartPendingRef.current.has(threadRequestRef.current)}
               variant="home"

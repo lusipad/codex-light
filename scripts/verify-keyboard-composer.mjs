@@ -82,6 +82,11 @@ assert.equal(composer.command("composer-steer"), false, "same-tick duplicate blo
 await Promise.resolve();
 assert.equal(composer.command("composer-queue"), true); assert.equal(queued, 1); assert.equal(sent, 1);
 await Promise.resolve();
+composer.props.followUpMode = "queue"; composer.render(); composer.focus(n => n.type === "textarea");
+assert.equal(composer.command("composer-submit"), true); assert.equal(queued, 2); assert.equal(sent, 1);
+await Promise.resolve();
+assert.equal(composer.command("composer-steer"), true); assert.equal(sent, 2); assert.equal(queued, 2);
+await Promise.resolve();
 composer.props.submissionDisabled = true; composer.render(); composer.focus(n => n.type === "textarea");
 assert.equal(composer.command("composer-submit"), false);
 composer.props.submissionDisabled = false; composer.render(); composer.focus(n => n.type === "textarea");

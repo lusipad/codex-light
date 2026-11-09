@@ -23,7 +23,7 @@ const scripts = [
   'verify-sites-sharing-invitation-data.mjs', 'verify-sites-sharing-invitations-client.mjs', 'verify-sites-sharing-invitation-search.mjs', 'verify-sites-sharing-invite-input.mjs',
   'verify-appearance-color.mjs', 'verify-system-fonts.mjs', 'verify-general-preference-select.mjs',
   'verify-settings-ui-correction.mjs', 'verify-appearance-theme-state.mjs', 'verify-appearance-theme-ui.mjs',
-  'verify-general-open.mjs', 'verify-notification-settings-ui.mjs',
+  'verify-general-open.mjs', 'verify-general-enter.mjs', 'verify-notification-settings-ui.mjs',
   'verify-voice-settings.mjs', 'verify-composer-keys.mjs', 'verify-agent-execution-b.mjs',
   'verify-account-notifications.mjs', 'verify-account-notifications-ui.mjs',
   'verify-command-cards.mjs', 'verify-tool-cards.mjs', 'verify-user-message-presentation.mjs',

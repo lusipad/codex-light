@@ -59,11 +59,14 @@ console.log("PASS GS02-GS03: production three-mode Enter behavior, multiline, IM
 
 const appSource = fs.readFileSync("src/App.tsx", "utf8");
 const appAst = ts.createSourceFile("App.tsx", appSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-let saveHandler, loadEffect;
+let saveHandler, loadEffect, followUpSave, followUpLoad;
 function findApp(node) {
   if (ts.isVariableDeclaration(node) && node.name.getText(appAst) === "handleSetComposerEnterBehavior") saveHandler = node.initializer.arguments[0].getText(appAst);
   if (ts.isCallExpression(node) && node.expression.getText(appAst) === "useEffect" &&
       node.arguments[0]?.getText(appAst).includes('key: "composerEnterBehavior"')) loadEffect = node.arguments[0].getText(appAst);
+  if (ts.isVariableDeclaration(node) && node.name.getText(appAst) === "handleSetFollowUpMode") followUpSave = node.initializer.arguments[0].getText(appAst);
+  if (ts.isCallExpression(node) && node.expression.getText(appAst) === "useEffect" &&
+      node.arguments[0]?.getText(appAst).includes('key: "followUpQueueMode"')) followUpLoad = node.arguments[0].getText(appAst);
   ts.forEachChild(node, findApp);
 }
 findApp(appAst);
@@ -115,3 +118,52 @@ assert.equal(startup.state.value, "cmdAlways"); assert.equal(startup.state.busy,
 assert.match(appSource, /\[composerEnterSaving, setComposerEnterSaving\] = useState\(true\)/);
 assert.match(appSource, /composerEnterPendingRef = useRef\(true\)/);
 console.log("PASS GS04 startup race: edits disabled until the persisted preference has loaded");
+
+const normalizeFollowUpMode = vm.runInNewContext(compile(fs.readFileSync("src/composerPreferences.ts", "utf8").replaceAll("export ", "")) + "\nnormalizeFollowUpMode");
+for (const value of [undefined, null, "interrupt", "invalid", "steer"]) assert.equal(normalizeFollowUpMode(value), "steer");
+assert.equal(normalizeFollowUpMode("queue"), "queue");
+function mountFollowUp(invoke) {
+  const calls = [];
+  const ctx = {
+    followUpMode: "steer", followUpError: "", followUpPendingRef: { current: true }, saving: true,
+    normalizeFollowUpMode,
+    setFollowUpMode: mode => { ctx.followUpMode = mode; },
+    setFollowUpError: error => { ctx.followUpError = error; },
+    setFollowUpSaving: saving => { ctx.saving = saving; },
+    tauriInvoke: (method, args) => { assert.equal(args.key, "followUpQueueMode"); calls.push(method); return invoke(method, args); },
+  };
+  return { calls, ctx, save: vm.runInNewContext(compile(`(${followUpSave})`), ctx),
+    load: vm.runInNewContext(compile(`(${followUpLoad})`), ctx) };
+}
+const followUpWrite = defer();
+let storedMode = null;
+const follow = mountFollowUp(async (method, args) => {
+  if (method === "desktop_state_set") { await followUpWrite.promise; storedMode = args.value; }
+  return storedMode;
+});
+follow.load(); await follow.save("queue");
+assert.deepEqual(follow.calls, ["desktop_state_get"]);
+await new Promise(setImmediate);
+await follow.save("steer");
+assert.equal(follow.calls.length, 1);
+const changing = follow.save("queue");
+await follow.save("queue");
+assert.equal(follow.calls.length, 2);
+assert.equal(follow.ctx.followUpMode, "steer");
+followUpWrite.resolve(); await changing;
+assert.equal(follow.ctx.followUpMode, "queue");
+const restarted = mountFollowUp(async () => storedMode);
+restarted.load(); await new Promise(setImmediate);
+assert.equal(restarted.ctx.followUpMode, "queue");
+for (const kind of ["write", "readback"]) {
+  const refused = mountFollowUp(async method => {
+    if (kind === "write" && method === "desktop_state_set") throw Error("denied");
+    return null;
+  });
+  refused.load(); await new Promise(setImmediate); await refused.save("queue");
+  assert.equal(refused.ctx.followUpMode, "steer");
+  assert.equal(refused.ctx.saving, false);
+  assert.match(refused.ctx.followUpError, /无法保存后续消息/);
+}
+assert.match(settings, /后续消息处理方式/);
+console.log("PASS 16K follow-up preference: guarded writes, authoritative readback, persistence on remount and visible failures");

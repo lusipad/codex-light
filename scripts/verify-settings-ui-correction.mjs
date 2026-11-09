@@ -27,6 +27,7 @@ function mount(section) {
     activeWorkspaceRoot: 'D:/isolated', accountIdentity: 'isolated-account', archiveViewProps: {}, appearanceState: {}, notificationState: {},
     keyboardState: {}, gitPreferencesState: {}, codeReviewPreferencesState: {}, petPreferencesState: {}, externalImportsState: {},
     composerEnterBehavior: 'enter', composerEnterSaving: false, composerEnterError: null,
+    followUp: { mode: 'steer', saving: false, error: '', onChange: value => calls.push(['follow-up', value]) },
     onSetComposerEnterBehavior: value => calls.push(['enter', value]), onConfigUpdated() {}, onRestartAppServer() {},
     onTogglePetVisible() {}, onRunEnvironmentCommand() {}, onNavigationGuardChange: guard => { props.guard = guard; },
   };
@@ -57,6 +58,11 @@ test('Appearance is one dedicated instant-save surface', () => {
 });
 test('General keeps real external-open and Enter consumers without debug/reset cards', () => {
   const page = mount('general-settings'); assert.ok(page.child('GeneralOpenPreferences'));
+  const followUp = page.by(n => n.props.id === 'follow-up-mode');
+  assert.equal(followUp.props.value, 'steer');
+  assert.deepEqual(Array.from(followUp.props.options, option => option.label), ['排队', '引导']);
+  followUp.props.onChange('queue');
+  assert.deepEqual(page.calls.at(-1), ['follow-up', 'queue']);
   assert.equal(page.child('NotificationSettings')?.props.state, page.props.notificationState, 'local notification group belongs in General');
   assert.equal(mount('notifications').child('NotificationSettings'), undefined, 'account notification route cannot reuse local preferences');
   assert.ok(mount('notifications').child('AccountNotificationSettings'), 'account notification route delegates its own remote settings');
@@ -67,7 +73,7 @@ test('General keeps real external-open and Enter consumers without debug/reset c
   assert.doesNotMatch(content(page.render()), /App-Server|恢复出厂|自定义 Codex CLI/);
   const enter = page.by(n => n.props.id === 'composer-enter-behavior');
   assert.equal(enter.type.name, 'GeneralPreferenceSelect');
-  enter.props.onChange('cmdAlways'); assert.deepEqual(page.calls, [['enter', 'cmdAlways']]);
+  enter.props.onChange('cmdAlways'); assert.deepEqual(page.calls, [['follow-up', 'queue'], ['enter', 'cmdAlways']]);
   page.props.composerEnterSaving = true; page.render();
   assert.equal(page.by(n => n.props.id === 'composer-enter-behavior').props.disabled, true);
   page.props.composerEnterError = '写入失败'; page.render(); assert.ok(page.by(n => n.props.role === 'alert' && content(n) === '写入失败'));
