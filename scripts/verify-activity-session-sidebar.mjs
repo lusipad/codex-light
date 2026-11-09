@@ -162,4 +162,22 @@ function search(view, value) {
   assert.deepEqual(ids(view),["today","yesterday"]);
   cases++;
 }
+{
+  const view=mount({ ...base, activityRecentGroups:[{dayStart:1,label:"昨天",threads:[threads[0]]}],
+    onToggleActivityPriority:()=>{view.props.activityPriorityVisible=!view.props.activityPriorityVisible;},activityPriorityVisible:true });
+  const toggle=()=>options(view).props.items.find(item=>item.id==="priority");
+  assert.equal(toggle().type,"checkbox");
+  assert.equal(toggle().checked,true);
+  options(view).props.onSelect("priority");
+  assert.equal(toggle().checked,false);
+  assert.deepEqual(ids(view),["t0"]);
+  assert.ok(!text(view.render()).includes("优先事项"));
+  assert.equal(options(view).props.items.find(item=>item.id==="archive").disabled,true);
+  assert.equal(options(view).props.items.find(item=>item.id==="mark-all-read").disabled,true);
+  assert.ok(text(view.render()).includes("昨天"));
+  options(view).props.onSelect("priority");
+  assert.equal(toggle().checked,true);
+  assert.deepEqual(ids(view),sessionIds.slice(0,10));
+  cases++;
+}
 console.log(`PASS ${cases} Activity production-sidebar session projection sequences (L2; no browser/native/official pixel claim)`);

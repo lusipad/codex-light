@@ -71,4 +71,12 @@ assert.deepEqual(groupIds(activityRecentGroups(mergeActivitySession(snapshot,ref
 const finished=history.map(t=>t.id==='priority'?{...t,readState:read}:t);
 const clearedRecent=clearReadActivityThreads(mergeActivitySession(snapshot,finished),finished);
 assert.deepEqual(groupIds(activityRecentGroups(clearedRecent,finished,opened))[0],['今天',['priority','today']]);
+const oldPriority={id:'old-priority',updatedAt:seconds(1),readState:unread};
+const withOld=[...refreshed,oldPriority];
+const chronological=mergeActivitySession(snapshot,withOld);
+assert.deepEqual(groupIds(activityRecentGroups(chronological,withOld,opened,false))[0],
+  ['今天',['priority','yesterday','today']],'without Priority, use live recency and include former Priority in the date list');
+assert.ok(groupIds(activityRecentGroups(chronological,withOld,opened,false)).some(([,ids])=>ids.includes('old-priority')));
+assert.ok(!groupIds(activityRecentGroups(chronological,withOld,opened,false)).some(([,ids])=>ids.includes('too-old')));
+assert.ok(!groupIds(activityRecentGroups(chronological,withOld,opened)).some(([,ids])=>ids.includes('old-priority')));
 console.log('PASS 09C activity session: source-derived priority, retention, creation seconds, membership, removal and reopening');

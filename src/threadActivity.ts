@@ -45,16 +45,17 @@ export interface ActivityRecentGroup {
   threads: ThreadSummary[];
 }
 
-function activityRecentEntries(session: ActivitySession, threads: ThreadSummary[]) {
+function activityRecentEntries(session: ActivitySession, threads: ThreadSummary[], showPriority = true) {
   const cutoff = new Date(session.activatedAt);
   cutoff.setHours(0, 0, 0, 0);
   cutoff.setDate(cutoff.getDate() - 6);
   const priority = new Set(session.threadIds);
   return threads.flatMap(thread => {
-    if (priority.has(thread.id)) return [];
-    const time = session.recentTimes.get(thread.id) ??
+    const inPriority = priority.has(thread.id);
+    if (showPriority && inPriority) return [];
+    const time = (showPriority ? session.recentTimes.get(thread.id) : undefined) ??
       (thread.recencyAt ?? thread.updatedAt ?? thread.createdAt ?? 0) * 1000;
-    return Number.isFinite(time) && time >= cutoff.getTime() ? [{ thread, time }] : [];
+    return Number.isFinite(time) && (time >= cutoff.getTime() || inPriority) ? [{ thread, time }] : [];
   });
 }
 
@@ -66,14 +67,14 @@ function rememberActivityRecentTimes(session: ActivitySession, threads: ThreadSu
   return { ...session, recentTimes };
 }
 
-export function activityRecentGroups(session: ActivitySession, threads: ThreadSummary[], now: number): ActivityRecentGroup[] {
+export function activityRecentGroups(session: ActivitySession, threads: ThreadSummary[], now: number, showPriority = true): ActivityRecentGroup[] {
   const today = new Date(now);
   today.setHours(0, 0, 0, 0);
   const yesterday = new Date(today);
   yesterday.setDate(yesterday.getDate() - 1);
   const groups: ActivityRecentGroup[] = [];
   const seen = new Set<string>();
-  for (const { thread, time } of activityRecentEntries(session, threads).sort((a, b) => b.time - a.time)) {
+  for (const { thread, time } of activityRecentEntries(session, threads, showPriority).sort((a, b) => b.time - a.time)) {
     if (seen.has(thread.id)) continue;
     seen.add(thread.id);
     const day = new Date(time);

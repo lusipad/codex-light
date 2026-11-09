@@ -64,6 +64,8 @@ export interface CodexSidebarProps {
   activityAttentionCount: number;
   activityOnly: boolean;
   activityRecentGroups?: ActivityRecentGroup[];
+  activityPriorityVisible?: boolean;
+  onToggleActivityPriority?: () => void;
   activityThreadIds: string[];
   activityVisibleCount?: number;
   onLoadMoreActivity?: () => void;
@@ -150,6 +152,8 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
   activityAttentionCount,
   activityOnly,
   activityRecentGroups = [],
+  activityPriorityVisible = true,
+  onToggleActivityPriority,
   activityThreadIds,
   activityVisibleCount = 10,
   onLoadMoreActivity,
@@ -486,12 +490,13 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
   }, [collapsed, threads, hoverCard, dragVisual, renamingThread, closeHoverCard]);
 
   const activityThreads = useMemo(() => {
+    if (!activityPriorityVisible) return [];
     const byId = new Map(threads.map((thread) => [thread.id, thread]));
     return [...new Set(activityThreadIds)].flatMap((id) => {
       const thread = byId.get(id);
       return thread ? [thread] : [];
     });
-  }, [threads, activityThreadIds]);
+  }, [threads, activityThreadIds, activityPriorityVisible]);
   const activityLabel = activityOnly ? "关闭活动视图"
     : activityAttentionCount > 0 ? "查看活动，有聊天需要关注" : "查看活动";
   const activityRowCount = activityThreads.length + activityRecentGroups.reduce((total, group) => total + group.threads.length, 0);
@@ -1832,16 +1837,22 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
         <div className="sidebar-section-header-row" style={{ marginTop: 12 }}>
           <span className="sidebar-section-label">
             {activityOnly
-              ? "优先事项"
+              ? activityPriorityVisible ? "优先事项" : visibleActivityRecent[0]?.label ?? "今天"
               : organizeMode === "list"
               ? "聊天"
               : "最近"}
           </span>
           {activityOnly ? <div className="sidebar-section-tools">
             <ThreadActionsMenu
-              items={[{
+              items={[
+                ...(onToggleActivityPriority ? [
+                  { id: "show", label: "显示", type: "label" as const },
+                  { id: "priority", label: "优先事项部分", type: "checkbox" as const, checked: activityPriorityVisible },
+                ] : []),
+              {
                 id: "mark-all-read",
                 label: "全部标为已读",
+                separatorBefore: Boolean(onToggleActivityPriority),
                 disabled: !activityThreads.some(thread => thread.readState?.firstUnread != null),
               }, {
                 id: "archive",
@@ -1853,11 +1864,12 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
               label={<FilterIcon size={12} />}
               align="left"
               onSelect={id => {
-                if (id === "archive") onArchiveActivity();
+                if (id === "priority") onToggleActivityPriority?.();
+                else if (id === "archive") onArchiveActivity();
                 else if (id === "mark-all-read") onMarkAllRead();
               }}
             />
-            {onClearReadActivity && (
+            {activityPriorityVisible && onClearReadActivity && (
               <button type="button" className="sidebar-mini-tool-btn"
                 aria-label="清除已读聊天" title="清除已读聊天" onClick={onClearReadActivity}>
                 <RefreshIcon size={12} />
@@ -1889,7 +1901,7 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
           </div>}
         </div>
 
-        <div className="sidebar-section-list">
+        {(!activityOnly || activityPriorityVisible) && <div className="sidebar-section-list">
           {recentRows.length === 0 ? (
             <div className="sidebar-project-empty" style={{ paddingLeft: 12 }}>
               {activityOnly
@@ -1922,12 +1934,12 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
               </div>
             ) : renderThreadRow(row.thread, false, activityOnly ? undefined : recentOrderContext))
           )}
-        </div>
-        {visibleActivityRecent.map(group => (
+        </div>}
+        {visibleActivityRecent.map((group, index) => (
           <React.Fragment key={group.dayStart}>
-            <div className="sidebar-section-header-row" style={{ marginTop: 16 }}>
+            {(activityPriorityVisible || index > 0) && <div className="sidebar-section-header-row" style={{ marginTop: 16 }}>
               <span className="sidebar-section-label">{group.label}</span>
-            </div>
+            </div>}
             <div className="sidebar-section-list">
               {group.threads.map(thread => renderThreadRow(thread, false))}
             </div>

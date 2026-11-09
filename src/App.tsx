@@ -178,6 +178,7 @@ import { buildSidebarProjectGroups, sidebarThreadProjects, resolveNewThreadProje
 import { listProjects, type Project } from "./projects";
 
 type ProjectArchiveUndo = { thread: ThreadSummary; pinPlacement: { beforeThreadId: string | null } | null };
+const ACTIVITY_PRIORITY_KEY = "sidebar-priority-show-priority-v1";
 
 /** Reasoning items carry `summary[]` + `content[]` (and streamed text). */
 function selectedFileSearchText(): string | undefined {
@@ -535,14 +536,35 @@ export const App: React.FC = () => {
   }, []);
   const [activitySession, setActivitySession] = useState<ActivitySession | null>(null);
   const [activityCalendarDay, setActivityCalendarDay] = useState(0);
-  const activitySessionRef = useRef<ActivitySession | null>(null);
-  const activityGenerationRef = useRef(0);
-  const activityScopeRef = useRef("");
   const [activityArchive, setActivityArchive] = useState<{
     scope: string;
     generation: number;
     targets: ThreadSummary[];
   } | null>(null);
+  const [activityPriorityVisible, setActivityPriorityVisible] = useState(() => localStorage.getItem(ACTIVITY_PRIORITY_KEY) !== "false");
+  const activityPriorityVisibleRef = useRef(activityPriorityVisible);
+  const updateActivityPriority = useCallback((visible: boolean) => {
+    activityPriorityVisibleRef.current = visible;
+    setActivityPriorityVisible(visible);
+    if (!visible) setActivityArchive(null);
+  }, []);
+  const toggleActivityPriority = useCallback(() => {
+    const visible = !activityPriorityVisibleRef.current;
+    localStorage.setItem(ACTIVITY_PRIORITY_KEY, String(visible));
+    updateActivityPriority(visible);
+  }, [updateActivityPriority]);
+  useEffect(() => {
+    const sync = (event: StorageEvent) => {
+      if (event.storageArea === localStorage && (event.key === ACTIVITY_PRIORITY_KEY || event.key === null)) {
+        updateActivityPriority(event.newValue !== "false");
+      }
+    };
+    window.addEventListener("storage", sync);
+    return () => window.removeEventListener("storage", sync);
+  }, [updateActivityPriority]);
+  const activitySessionRef = useRef<ActivitySession | null>(null);
+  const activityGenerationRef = useRef(0);
+  const activityScopeRef = useRef("");
   const [showRightDrawer, setShowRightDrawer] = useState<boolean>(false);
   const [showTerminal, setShowTerminal] = useState<boolean>(false);
   const [bottomPanelVisible, setBottomPanelVisible] = useState(false);
@@ -4963,7 +4985,8 @@ export const App: React.FC = () => {
   useEffect(() => {
     if (activitySession !== activitySnapshot) setActivitySession(current => current === activitySession ? activitySnapshot : current);
   }, [activitySession, activitySnapshot]);
-  const activityThreadIds = useMemo(() => activitySnapshot?.threadIds ?? [], [activitySnapshot]);
+  const activityThreadIds = useMemo(() => activityPriorityVisible ? activitySnapshot?.threadIds ?? [] : [],
+    [activitySnapshot, activityPriorityVisible]);
   useEffect(() => {
     if (!activityOnly) return;
     let timer: number;
@@ -4977,8 +5000,8 @@ export const App: React.FC = () => {
     return () => window.clearTimeout(timer);
   }, [activityOnly]);
   const activityHistory = useMemo(() => activitySnapshot
-    ? activityRecentGroups(activitySnapshot, threads, activityCalendarDay || Date.now()) : [],
-  [activitySnapshot, threads, activityCalendarDay]);
+    ? activityRecentGroups(activitySnapshot, threads, activityCalendarDay || Date.now(), activityPriorityVisible) : [],
+  [activitySnapshot, threads, activityCalendarDay, activityPriorityVisible]);
   const toggleActivity = useCallback(() => {
     const generation = ++activityGenerationRef.current;
     if (activitySessionRef.current) {
@@ -5001,7 +5024,7 @@ export const App: React.FC = () => {
   }, []);
   const clearReadActivity = useCallback(() => {
     const session = activitySessionRef.current;
-    if (!session || session.scope !== activityScopeRef.current) return;
+    if (!session || session.scope !== activityScopeRef.current || !activityPriorityVisibleRef.current) return;
     const cleared = clearReadActivityThreads(session, threadsRef.current);
     if (cleared === session) return;
     activitySessionRef.current = cleared;
@@ -5017,7 +5040,7 @@ export const App: React.FC = () => {
   }, [activityScope, activityOnly]);
   const openActivityArchive = useCallback(() => {
     const session = activitySessionRef.current;
-    if (!session || session.scope !== activityScopeRef.current) return;
+    if (!session || session.scope !== activityScopeRef.current || !activityPriorityVisibleRef.current) return;
     const byId = new Map(threadsRef.current.map(thread => [thread.id, thread]));
     const targets = session.threadIds.flatMap(id => {
       const thread = byId.get(id);
@@ -5029,7 +5052,7 @@ export const App: React.FC = () => {
     const isCurrent = () => selection.scope === activityScopeRef.current;
     const sameSession = () => isCurrent() && selection.generation === activityGenerationRef.current &&
       activitySessionRef.current?.scope === selection.scope;
-    if (!sameSession()) return;
+    if (!sameSession() || !activityPriorityVisibleRef.current) return;
     if (archiveMutationPendingRef.current || pinMutationPendingRef.current) throw Error("聊天操作正在进行");
     archiveMutationPendingRef.current = true;
     try {
@@ -5037,7 +5060,7 @@ export const App: React.FC = () => {
       const archived: ProjectArchiveUndo[] = [];
       let localStateError = false;
       for (const target of selection.targets) {
-        if (!sameSession()) break;
+        if (!sameSession() || !activityPriorityVisibleRef.current) break;
         if (!activitySessionRef.current?.threadIds.includes(target.id)) continue;
         const latest = threadsRef.current.find(thread => thread.id === target.id);
         if (!latest || (activityThreadIsRunning(latest) && !activityThreadIsRunning(target))) continue;
@@ -5075,11 +5098,11 @@ export const App: React.FC = () => {
   }, [archiveLocalThread, refreshThreads, showAppToast, startNewThread, undoProjectArchive]);
   const markAllThreadsRead = useCallback(async () => {
     const session = activitySessionRef.current;
-    if (!session) return;
+    if (!session || !activityPriorityVisibleRef.current) return;
     const generation = activityGenerationRef.current;
     const ids = new Set(session.threadIds);
     const unread = threadsRef.current.filter(thread => ids.has(thread.id) && isThreadReadState(thread.readState) && thread.readState.firstUnread != null);
-    const current = (id: string) => generation === activityGenerationRef.current && session.scope === activityScopeRef.current &&
+    const current = (id: string) => activityPriorityVisibleRef.current && generation === activityGenerationRef.current && session.scope === activityScopeRef.current &&
       activitySessionRef.current?.threadIds.includes(id);
     let attempted = false;
     await Promise.all(unread.map(async thread => {
@@ -5640,6 +5663,8 @@ export const App: React.FC = () => {
         activityOnly={activityOnly}
         activityThreadIds={activityThreadIds}
         activityRecentGroups={activityHistory}
+        activityPriorityVisible={activityPriorityVisible}
+        onToggleActivityPriority={toggleActivityPriority}
         activityVisibleCount={activitySnapshot?.visibleCount ?? 10}
         onLoadMoreActivity={loadMoreActivity}
         onClearReadActivity={canClearReadActivity ? clearReadActivity : undefined}
