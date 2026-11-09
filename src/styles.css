@@ -7078,41 +7078,6 @@ button.file-change-name:hover { text-decoration: underline; }
   border-radius: 10px;
 }
 
-.sidebar-activity-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin: 0 8px 6px;
-  padding: 7px 9px;
-  border-radius: 7px;
-  color: var(--text-secondary);
-  background: var(--bg-hover);
-  font-size: var(--text-xs);
-}
-
-.sidebar-activity-banner strong {
-  color: var(--text-primary);
-  font-weight: 500;
-}
-
-.sidebar-activity-banner > div {
-  display: flex;
-  gap: 8px;
-}
-
-.sidebar-activity-banner button {
-  padding: 0;
-  border: 0;
-  color: var(--text-tertiary);
-  background: transparent;
-  font: inherit;
-  cursor: pointer;
-}
-
-.sidebar-activity-banner button:hover {
-  color: var(--text-primary);
-}
-
 .codex-two-tier-composer.home .composer-context-topbar {
   padding: 0 8px 4px;
 }

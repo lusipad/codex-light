@@ -8,6 +8,8 @@ const text = node => node && typeof node === "object" ? node.children.map(text).
 const rows = view => all(view.render()).filter(node => node.props["data-thread-id"]);
 const ids = view => rows(view).map(node => node.props["data-thread-id"]);
 const button = (view, label) => all(view.render()).find(node => node.type === "button" && text(node) === label);
+const options = view => all(view.render()).find(node => node.type === "ThreadActionsMenu" && node.props.triggerAriaLabel === "活动视图选项");
+const bell = view => all(view.render()).find(node => node.type === "button" && node.props.className?.startsWith("sidebar-top-icon-btn") && typeof node.props["aria-pressed"] === "boolean");
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
 const threads = Array.from({ length: 12 }, (_, i) => ({
   id: `t${i}`, name: `Session ${i}`, updatedAt: i, cwd: "D:/parity/alpha",
@@ -80,17 +82,44 @@ function search(view, value) {
 }
 {
   let bulk = 0;
-  const view = mount({ ...base, onMarkAllRead: () => bulk++ });
-  search(view, "Session 11");
-  button(view, "全部已读").props.onClick();
+  const view = mount({ ...base, threads: threads.map(thread => thread.id === "t0" ? thread :
+    { ...thread, readState: { revision: "read", firstUnread: null } }), onMarkAllRead: () => bulk++ });
+  assert.ok(!ids(view).includes("t0"));
+  const menu = options(view);
+  const item = menu.props.items.find(item => item.label === "全部标为已读");
+  assert.equal(item.disabled, false);
+  menu.props.onSelect(item.id);
   assert.equal(bulk, 1);
   assert.deepEqual(view.props.activityThreadIds, sessionIds, "11 bulk callback retains full parent scope beyond page/search"); cases++;
+  view.props.threads = view.props.threads.map(thread => ({ ...thread, readState: { revision: "read", firstUnread: null } }));
+  const readMenu = options(view);
+  assert.equal(readMenu.props.items[0].disabled, true);
 }
 {
   const view = mount({ ...base, activityOnly: false, pinnedThreadIds: ["t0"] });
   assert.ok(text(view.render()).includes("置顶"));
   assert.ok(all(view.render()).some(node => node.type === "ThreadActionsMenu" && node.props.triggerAriaLabel === "聊天侧边栏选项"));
-  assert.equal(button(view, "全部已读"), undefined);
+  assert.equal(options(view), undefined);
   assert.equal(typeof button(view, "展开显示")?.props.onClick, "function", "12 normal projects retain their independent pagination"); cases++;
+}
+{
+  const view = mount({ ...base, activityOnly: false, activityThreadIds: [], activityAttentionCount: 0,
+    onToggleActivity: () => { view.props.activityOnly = !view.props.activityOnly; } });
+  assert.equal(bell(view).props["aria-label"], "查看活动");
+  view.props.activityAttentionCount = 1;
+  assert.equal(bell(view).props["aria-label"], "查看活动，有聊天需要关注");
+  let prevented = false;
+  bell(view).props.onContextMenu({ preventDefault() { prevented = true; } });
+  assert.equal(prevented, true);
+  assert.deepEqual(view.calls, []);
+  bell(view).props.onClick();
+  assert.equal(bell(view).props["aria-label"], "关闭活动视图");
+  assert.equal(bell(view).props["aria-pressed"], true);
+  assert.ok(text(view.render()).includes("优先事项"));
+  assert.ok(text(view.render()).includes("暂无需要关注的聊天"));
+  assert.ok(!text(view.render()).includes("收件箱"));
+  bell(view).props.onClick();
+  assert.equal(bell(view).props["aria-pressed"], false);
+  cases++;
 }
 console.log(`PASS ${cases} Activity production-sidebar session projection sequences (L2; no browser/native/official pixel claim)`);

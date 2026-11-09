@@ -484,6 +484,8 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
       return thread ? [thread] : [];
     });
   }, [threads, activityThreadIds]);
+  const activityLabel = activityOnly ? "关闭活动视图"
+    : activityAttentionCount > 0 ? "查看活动，有聊天需要关注" : "查看活动";
 
   const filteredThreads = useMemo(() => {
     const visible = activityOnly ? activityThreads.slice(0, activityVisibleCount) : threads;
@@ -1503,12 +1505,10 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
             type="button"
             className={`sidebar-top-icon-btn ${activityOnly ? "active" : ""}`}
             onClick={onToggleActivity}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              onNavigate("inbox");
-            }}
+            onContextMenu={(event) => event.preventDefault()}
             aria-pressed={activityOnly}
-            title="查看活动"
+            aria-label={activityLabel}
+            title={activityLabel}
           >
             <BellIcon size={15} />
             {activityAttentionCount > 0 && <span className="sidebar-bell-dot" />}
@@ -1530,17 +1530,6 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
         </div>
 
       </div>
-
-      {activityOnly && (
-        <div className="sidebar-activity-banner">
-          <strong>活动</strong>
-          <div>
-            <button type="button" onClick={() => onNavigate("inbox")} title="查看收件箱">收件箱</button>
-            <button type="button" onClick={onMarkAllRead}>全部已读</button>
-            <button type="button" onClick={onToggleActivity}>关闭</button>
-          </div>
-        </div>
-      )}
 
       {/* Optional inline search input */}
       {showSearchInput && (
@@ -1825,12 +1814,25 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
         <div className="sidebar-section-header-row" style={{ marginTop: 12 }}>
           <span className="sidebar-section-label">
             {activityOnly
-              ? "活动"
+              ? "优先事项"
               : organizeMode === "list"
               ? "聊天"
               : "最近"}
           </span>
-          {!activityOnly && <div className="sidebar-section-tools">
+          {activityOnly ? <div className="sidebar-section-tools">
+            <ThreadActionsMenu
+              items={[{
+                id: "mark-all-read",
+                label: "全部标为已读",
+                disabled: !activityThreads.some(thread => thread.readState?.firstUnread != null),
+              }]}
+              triggerAriaLabel="活动视图选项"
+              buttonClassName="sidebar-mini-tool-btn"
+              label={<FilterIcon size={12} />}
+              align="left"
+              onSelect={onMarkAllRead}
+            />
+          </div> : <div className="sidebar-section-tools">
             <ThreadActionsMenu
               items={organizeItems}
               triggerAriaLabel="聊天侧边栏选项"
@@ -1860,7 +1862,7 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
           {recentRows.length === 0 ? (
             <div className="sidebar-project-empty" style={{ paddingLeft: 12 }}>
               {activityOnly
-                ? "暂无需要关注的事项"
+                ? "暂无需要关注的聊天"
                 : "暂无聊天"}
             </div>
           ) : (

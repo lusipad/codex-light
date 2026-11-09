@@ -2740,3 +2740,8 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 
 - 添加 Windows 原生「底部面板」菜单项，复用常规设置的保存和读回流程。空白标题栏支持右键，左键拖动与双击由 Tauri 处理。
 - 隔离原生验证勾选、持久化、Escape、Shift+F10、左键拖动及双击最大化和还原。前端 117 项、Rust 全库 722 项与 Windows 打包通过。配对像素、多窗实时同步与远端 CI 待验。详见 [07M 验收](antigravity/acceptance/07M-header-context-menu.md)。
+
+## 2026-11-09 — 活动侧栏的优先事项菜单
+
+- 依据当前官方包，将批量已读放入「活动视图选项」，移除自建横幅和铃铛右键跳转。复用菜单组件与真实会话回执。
+- 原生验证右键、键盘回焦、12 条未读落盘、已读禁用和重开空态。117 项前端、722 项 Rust、通知适配器和 Windows 打包通过。官方配对像素、完整活动分组和远端 CI 待验。详见 [09D 验收](antigravity/acceptance/09D-activity-header.md)。
