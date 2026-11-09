@@ -391,17 +391,31 @@
 .automation-delete-dialog::backdrop { background: rgb(0 0 0 / 50%); }
 .automation-delete-dialog h2 { margin: 0 28px 8px 0; font-size: 16px; }
 .automation-delete-dialog p { margin: 0; color: var(--text-secondary); }
-.automation-delete-dialog .automation-delete-error { margin-top: 12px; color: #f87171; }
+.automation-delete-dialog .automation-delete-error { margin-top: 12px; color: var(--accent-red); }
 .automation-delete-close { position: absolute; top: 12px; right: 12px; }
-.automation-delete-dialog footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 20px; }
-.automation-delete-submit {
-  border: 0;
+.automation-delete-dialog footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; margin-top: 20px; }
+.automation-delete-dialog footer button {
+  padding: 6px 16px;
+  line-height: 18px;
+}
+.automation-delete-dialog footer .automation-delete-submit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 1px solid transparent;
   border-radius: 8px;
-  padding: 6px 12px;
-  background: #b91c1c;
-  color: #fff;
-  font: inherit;
+  background: color-mix(in srgb, var(--accent-red) 10%, transparent);
+  color: var(--accent-red);
+  font-family: inherit;
+  font-size: inherit;
   cursor: pointer;
 }
-.automation-delete-submit:hover:not(:disabled) { background: #991b1b; }
-.automation-delete-submit:disabled { opacity: .6; cursor: default; }
+.automation-delete-dialog footer .automation-delete-submit:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent-red) 20%, transparent);
+}
+.automation-delete-dialog footer .automation-delete-submit:disabled { cursor: default; }
+@media (prefers-reduced-motion: no-preference) {
+  .automation-delete-spinner { animation: automation-delete-spin .8s linear infinite; }
+}
+@keyframes automation-delete-spin { to { transform: rotate(360deg); } }

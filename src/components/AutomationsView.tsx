@@ -3,6 +3,7 @@ import {
   Edit2,
   Check,
   ListFilter,
+  Loader2,
   X,
   CheckCircle2,
   Clock,
@@ -1100,7 +1101,10 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
           {deleteError && <p className="automation-delete-error" role="alert">{deleteError}</p>}
           <footer>
             <button ref={cancelDeleteRef} type="button" className="secondary-btn" disabled={writeBusy} onClick={dismissDelete}>取消</button>
-            <button type="submit" className="automation-delete-submit" disabled={writeBusy}>删除定时任务</button>
+            <button type="submit" className="automation-delete-submit" disabled={writeBusy}>
+              {writeBusy && <Loader2 className="automation-delete-spinner" size={12} aria-hidden="true" />}
+              删除定时任务
+            </button>
           </footer>
         </form>
       </dialog>}
