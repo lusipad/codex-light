@@ -28,7 +28,13 @@ export function WorktreeSettings() {
   const autoCleanupControl = useRef<HTMLButtonElement>(null);
   const [snapshotInfoOpen, setSnapshotInfoOpen] = useState(false);
   const snapshotInfo = useRef<HTMLSpanElement>(null);
+  const snapshotInfoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const snapshotInfoVisible = useRef(false); snapshotInfoVisible.current = snapshotInfoOpen;
+  const hideSnapshotInfo = () => {
+    if (snapshotInfoTimer.current !== null) clearTimeout(snapshotInfoTimer.current);
+    snapshotInfoTimer.current = null;
+    setSnapshotInfoOpen(false);
+  };
   const readPreferences = () => tauriInvoke<PreferenceSnapshot>("worktree_preferences_read", { hostId: "local" });
   const reloadPreferences = async (version = generation.current) => {
     if (preferencePending.current) return;
@@ -59,11 +65,13 @@ export function WorktreeSettings() {
     });
     void reloadPreferences(version);
     const closeSnapshotInfo = (event: PointerEvent) => {
-      if (snapshotInfoVisible.current && !snapshotInfo.current?.contains(event.target as Node)) setSnapshotInfoOpen(false);
+      if ((snapshotInfoVisible.current || snapshotInfoTimer.current !== null) && !snapshotInfo.current?.contains(event.target as Node)) hideSnapshotInfo();
     };
     if (typeof document !== "undefined") document.addEventListener("pointerdown", closeSnapshotInfo);
     return () => {
       generation.current += 1; preferencePending.current = false; confirmDialog.current?.close();
+      if (snapshotInfoTimer.current !== null) clearTimeout(snapshotInfoTimer.current);
+      snapshotInfoTimer.current = null;
       if (typeof document !== "undefined") document.removeEventListener("pointerdown", closeSnapshotInfo);
     };
   }, []);
@@ -75,12 +83,13 @@ export function WorktreeSettings() {
     setBusy(true); setError(null); setNotice(null);
     try {
       await tauriInvoke("desktop_state_set", { key: "git-worktree-root", value });
+      if (version !== generation.current) return;
       const readback = await readRoot();
       if (readback !== value) throw Error("保存后读回不一致，请核对目录。");
       if (version !== generation.current) return;
-      setSaved(readback); setDraft(readback); setNotice("已保存工作树目录");
+      setSaved(readback); setDraft(readback); setNotice("已保存工作树根目录");
     } catch (error) {
-      if (version === generation.current) setError(`保存工作树目录失败：${String(error)}`);
+      if (version === generation.current) setError(`未成功保存工作树根目录：${String(error)}`);
     } finally {
       if (version === generation.current) { pending.current = false; setBusy(false); }
     }
@@ -126,34 +135,45 @@ export function WorktreeSettings() {
   };
   const values = preferences?.preferences;
   const preferenceDisabled = !values || preferenceBusy;
-  return <div className="settings-scroll-container"><div className="card-section">
-    <h3>工作树</h3>
+  return <div className="settings-scroll-container"><section className="card-section worktree-preferences" aria-labelledby="worktree-preferences-title" aria-busy={preferenceBusy}
+    onKeyDown={event => {
+      if (!ready || busy || draft === saved || confirmDisable || event.nativeEvent.isComposing || event.keyCode === 229) return;
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "s") {
+        event.preventDefault(); event.stopPropagation(); void save();
+      }
+    }}>
+    <h3 id="worktree-preferences-title">创建与清理</h3>
     {error && <p role="alert" className="error-banner">{error}</p>}
     {notice && <p role="status">{notice}</p>}
-    <label className="form-field">
-      <span>工作树目录</span>
-      <input type="text" aria-label="工作树目录" value={draft} disabled={!ready || busy} onChange={event => { setDraft(event.target.value); setNotice(null); }} />
-      <span className="card-subtitle-desc">创建托管工作树的目录。留空使用默认位置。更改后用于新工作树，现有工作树保留在原位置。</span>
-    </label>
-    <button type="button" className="primary-btn" disabled={!ready || busy || draft === saved} onClick={() => void save()}>保存</button>
-  </div><section className="card-section worktree-preferences" aria-labelledby="worktree-preferences-title" aria-busy={preferenceBusy}>
-    <h3 id="worktree-preferences-title">Creation and cleanup</h3>
+    <div className="worktree-preference-row worktree-root-row">
+      <div><label htmlFor="worktree-root">工作树根目录</label><p id="worktree-root-hint">留空以使用默认位置</p></div>
+      <div className="form-field worktree-root-control">
+        <input id="worktree-root" type="text" aria-label="工作树根目录" aria-describedby="worktree-root-hint" value={draft} disabled={!ready || busy}
+          onChange={event => { setDraft(event.target.value); setNotice(null); }} onBlur={() => void save()} />
+      </div>
+    </div>
     {preferenceBusy && !preferences && <p role="status">正在加载工作树偏好…</p>}
     {preferenceError && <div role="alert" className="error-banner">{preferenceError}<button type="button" className="secondary-btn" disabled={preferenceBusy} onClick={() => void reloadPreferences()}>重新读取</button></div>}
     {preferenceNotice && <p role="status">{preferenceNotice}</p>}
     <div className="worktree-preference-row">
-      <div><label htmlFor="worktree-upstream-refresh">创建工作树前始终获取上游更新</label><p>Codex 通常会在常规 Git 操作中获取分支更新。此设置还会在创建每个新工作树前获取上游更新。</p></div>
+      <div><label htmlFor="worktree-upstream-refresh">创建工作树前始终获取上游更新</label></div>
       <button id="worktree-upstream-refresh" type="button" role="switch" aria-label="创建工作树前始终获取上游更新" aria-checked={values?.upstreamRefreshMode === "best-effort"}
         className="worktree-preference-switch" disabled={preferenceDisabled} onClick={() => void savePreferences({ upstreamRefreshMode: values?.upstreamRefreshMode === "never" ? "best-effort" : "never" }, values?.upstreamRefreshMode === "never" ? "上游刷新已启用" : "上游刷新已禁用", "保存上游刷新设置失败")}><span /></button>
     </div>
     <div className="worktree-preference-row">
-      <div><label htmlFor="worktree-auto-cleanup">自动删除旧工作树</label><p>Saves a recovery snapshot first <span id="worktree-snapshot-info-container" ref={snapshotInfo} className="worktree-snapshot-info" onKeyDown={event => {
-        if (event.key === "Escape" && snapshotInfoOpen) { event.preventDefault(); event.stopPropagation(); setSnapshotInfoOpen(false); }
-      }} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setSnapshotInfoOpen(false); }}>
-        <button id="worktree-snapshot-info" type="button" aria-label="About recovery snapshots" aria-expanded={snapshotInfoOpen} aria-describedby={snapshotInfoOpen ? "worktree-snapshot-details" : undefined} onClick={() => setSnapshotInfoOpen(value => !value)}>
+      <div><label htmlFor="worktree-auto-cleanup">自动删除旧工作树</label><p>先保存一份恢复快照 <span id="worktree-snapshot-info-container" ref={snapshotInfo} className="worktree-snapshot-info" onKeyDown={event => {
+        if (event.key === "Escape" && (snapshotInfoOpen || snapshotInfoTimer.current !== null)) { event.preventDefault(); event.stopPropagation(); hideSnapshotInfo(); }
+      }} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) hideSnapshotInfo(); }}>
+        <button id="worktree-snapshot-info" type="button" aria-label="关于恢复快照" aria-expanded={snapshotInfoOpen} aria-describedby={snapshotInfoOpen ? "worktree-snapshot-details" : undefined}
+          onPointerEnter={event => {
+            if (event.pointerType === "touch" || snapshotInfoOpen || snapshotInfoTimer.current !== null) return;
+            snapshotInfoTimer.current = setTimeout(() => { snapshotInfoTimer.current = null; setSnapshotInfoOpen(true); }, 150);
+          }} onPointerLeave={hideSnapshotInfo}
+          onFocus={event => { if (event.currentTarget.matches(":focus-visible")) setSnapshotInfoOpen(true); }}
+          onClick={() => setSnapshotInfoOpen(true)}>
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="6" stroke="currentColor" /><path d="M8 7v4M8 4.5v.5" stroke="currentColor" strokeLinecap="round" /></svg>
         </button>
-        {snapshotInfoOpen && <span id="worktree-snapshot-details" role="tooltip">Saves local commits and current file changes, including untracked files Git doesn’t ignore, in the original repository so you can restore the worktree</span>}
+        {snapshotInfoOpen && <span id="worktree-snapshot-details" role="tooltip">将本地提交和当前文件更改（包括未被 Git 忽略的未跟踪文件）保存到原始代码仓库中，以便恢复工作树</span>}
       </span></p></div>
       <button id="worktree-auto-cleanup" ref={autoCleanupControl} type="button" role="switch" aria-label="自动删除旧工作树" aria-checked={values?.autoCleanupEnabled ?? false}
         aria-haspopup={values?.autoCleanupEnabled ? "dialog" : undefined} aria-expanded={values?.autoCleanupEnabled ? confirmDisable : undefined}
@@ -164,7 +184,7 @@ export function WorktreeSettings() {
         }}><span /></button>
     </div>
     <div className="worktree-preference-row">
-      <div><label htmlFor="worktree-keep-count">Worktrees to keep</label><p>Older worktrees are deleted automatically. Pinned or active chats keep theirs.</p></div>
+      <div><label htmlFor="worktree-keep-count">保留的工作树数量</label><p>较旧的工作树会自动删除。已置顶或进行中的聊天所用的工作树会保留。</p></div>
       <div className="form-field worktree-count-control"><input id="worktree-keep-count" type="number" inputMode="numeric" min={1} step={1} value={countDraft ?? String(values?.keepCount ?? 15)}
         disabled={preferenceDisabled || !values?.autoCleanupEnabled} onChange={event => {
           if (preferencePending.current || !values?.autoCleanupEnabled) return;
@@ -175,23 +195,23 @@ export function WorktreeSettings() {
         }} /></div>
     </div>
     <div className="worktree-preference-row">
-      <div><label htmlFor="worktree-confirm-delete">Ask before deleting worktrees</label></div>
-      <button id="worktree-confirm-delete" type="button" role="switch" aria-label="Ask before deleting worktrees" aria-checked={values?.confirmBeforeDelete ?? true}
-        className="worktree-preference-switch" disabled={preferenceDisabled} onClick={() => void savePreferences({ confirmBeforeDelete: !values?.confirmBeforeDelete }, "", "Couldn’t save your worktree deletion preference")}><span /></button>
+      <div><label htmlFor="worktree-confirm-delete">删除工作树前询问</label></div>
+      <button id="worktree-confirm-delete" type="button" role="switch" aria-label="删除工作树前询问" aria-checked={values?.confirmBeforeDelete ?? true}
+        className="worktree-preference-switch" disabled={preferenceDisabled} onClick={() => void savePreferences({ confirmBeforeDelete: !values?.confirmBeforeDelete }, "", "未能保存工作树删除偏好设置")}><span /></button>
     </div>
     <dialog ref={confirmDialog} className="codex-modal-dialog worktree-disable-dialog" aria-labelledby="worktree-disable-title" aria-describedby="worktree-disable-description"
       onCancel={event => { event.preventDefault(); closeDisable(); }} onKeyDown={event => {
         if (event.key === "Enter" && (event.nativeEvent.isComposing || event.keyCode === 229)) { event.preventDefault(); event.stopPropagation(); }
       }}>
-      <h3 id="worktree-disable-title">禁用工作树自动删除功能？</h3>
-      <p id="worktree-disable-description">我们强烈建议保持自动删除功能开启，以免旧工作树不断累积并占用不必要的磁盘空间。如果你希望自行管理旧工作树，可以关闭此功能，ChatGPT 将停止自动删除它们。</p>
+      <h3 id="worktree-disable-title">关闭工作树自动删除功能？</h3>
+      <p id="worktree-disable-description">旧工作树会一直保留在磁盘上，直至你将其删除</p>
       <div className="worktree-disable-actions">
-        <button ref={cancelDisable} type="button" className="secondary-btn" onClick={closeDisable}>启用自动删除功能</button>
+        <button ref={cancelDisable} type="button" className="secondary-btn" onClick={closeDisable}>取消</button>
         <button type="button" className="primary-btn" disabled={preferenceBusy} onClick={() => {
           if (preferencePending.current) return;
           closeDisable(); latestCountDraft.current = null; setCountDraft(null);
           void savePreferences({ autoCleanupEnabled: false }, "自动删除功能已禁用", "无法保存自动删除设置");
-        }}>禁用自动删除功能</button>
+        }}>关闭</button>
       </div>
     </dialog>
   </section></div>;

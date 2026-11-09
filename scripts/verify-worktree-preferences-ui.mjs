@@ -12,7 +12,7 @@ const flush = async () => { for (let i = 0; i < 16; i++) await Promise.resolve()
 const defaults = () => ({ hostId: "local", preferences: { autoCleanupEnabled: true, keepCount: 15, upstreamRefreshMode: "never", confirmBeforeDelete: true }, expected: {} });
 function mount(options = {}) {
   const hooks = [], effects = [], calls = [], frames = [];
-  const listeners = new Map();
+  const listeners = new Map(), timers = new Map();
   let cursor = 0, tree, changes = 0, focused = "", root = "", data = defaults(), read = options.read ?? (async () => structuredClone(data));
   let write = async args => (data = { hostId: "local", preferences: structuredClone(args.preferences), expected: { revision: calls.length } });
   const modal = { open: false, showModal() { this.open = true; }, close() { this.open = false; } };
@@ -23,7 +23,9 @@ function mount(options = {}) {
     useEffect(callback) { effects.push(callback); },
   };
   const module = { exports: {} };
-  vm.runInNewContext(source, { exports: module.exports, document: { addEventListener: (name, callback) => listeners.set(name, callback), removeEventListener: name => listeners.delete(name) }, requestAnimationFrame: callback => frames.push(callback), require(name) {
+  vm.runInNewContext(source, { exports: module.exports, document: { addEventListener: (name, callback) => listeners.set(name, callback), removeEventListener: name => listeners.delete(name) }, requestAnimationFrame: callback => frames.push(callback),
+    setTimeout: (callback, delay) => { const id = Symbol(); timers.set(id, { callback, delay }); return id; }, clearTimeout: id => timers.delete(id),
+    require(name) {
     if (name === "react") return react;
     if (name.endsWith(".css")) return {};
     if (name === "../bridge") return { tauriInvoke: async (command, args) => {
@@ -44,7 +46,7 @@ function mount(options = {}) {
     frames.splice(0).forEach(callback => callback()); return tree;
   }
   render(); const cleanup = effects[0]();
-  return { calls, modal, render, listeners, text: () => text(render()), get changes() { return changes; }, get focused() { return focused; },
+  return { calls, modal, render, listeners, timers, text: () => text(render()), get changes() { return changes; }, get focused() { return focused; },
     find: id => walk(render()).find(node => node.props.id === id),
     button: label => walk(render()).find(node => node.type === "button" && text(node) === label),
     writes: () => calls.filter(call => call.command === "worktree_preferences_write"),
@@ -56,6 +58,19 @@ const enter = (isComposing = false) => ({ key: "Enter", keyCode: isComposing ? 2
 const page = mount(); await flush(); page.render();
 assert.equal(page.find("worktree-auto-cleanup").props["aria-checked"], true);
 assert.equal(page.find("worktree-keep-count").props.value, "15");
+assert.equal(page.find("worktree-snapshot-info").props["aria-label"], "关于恢复快照");
+page.find("worktree-snapshot-info").props.onFocus({ currentTarget: { matches: selector => selector === ":focus-visible" } });
+assert.match(page.text(), /未被 Git 忽略的未跟踪文件/);
+page.find("worktree-snapshot-info-container").props.onBlur({ currentTarget: { contains: () => false } });
+assert.equal(page.find("worktree-snapshot-details"), undefined);
+page.find("worktree-snapshot-info").props.onPointerEnter({ pointerType: "mouse" });
+const [[timerId, hover]] = page.timers;
+assert.equal(hover.delay, 150);
+assert.equal(page.find("worktree-snapshot-details"), undefined);
+page.timers.delete(timerId); hover.callback();
+assert.ok(page.find("worktree-snapshot-details"));
+page.find("worktree-snapshot-info").props.onPointerLeave();
+assert.equal(page.find("worktree-snapshot-details"), undefined);
 page.find("worktree-snapshot-info").props.onClick(); assert.ok(page.find("worktree-snapshot-details"));
 page.listeners.get("pointerdown")({ target: "inside" }); assert.ok(page.find("worktree-snapshot-details"));
 page.listeners.get("pointerdown")({ target: "outside" }); assert.equal(page.find("worktree-snapshot-details"), undefined);
@@ -64,12 +79,13 @@ page.find("worktree-snapshot-info-container").props.onKeyDown({ key: "Escape", p
 assert.equal(page.find("worktree-snapshot-details"), undefined);
 const edit = value => page.find("worktree-keep-count").props.onChange({ target: { value } });
 edit("21"); page.find("worktree-auto-cleanup").props.onClick();
-assert.equal(page.modal.open, true); assert.equal(page.focused, "启用自动删除功能");
+assert.equal(page.modal.open, true); assert.equal(page.focused, "取消");
+assert.match(page.text(), /关闭工作树自动删除功能？.*旧工作树会一直保留在磁盘上/);
 assert.equal(page.writes().length, 0, "opening confirmation must not disable cleanup");
-page.button("启用自动删除功能").props.onClick(); page.render();
+page.button("取消").props.onClick(); page.render();
 assert.equal(page.modal.open, false); assert.equal(page.focused, "worktree-auto-cleanup");
 assert.equal(page.find("worktree-keep-count").props.value, "21", "cancel retains count draft and enabled preference");
-page.find("worktree-auto-cleanup").props.onClick(); page.button("禁用自动删除功能").props.onClick(); await flush(); page.render();
+page.find("worktree-auto-cleanup").props.onClick(); page.button("关闭").props.onClick(); await flush(); page.render();
 assert.equal(page.writes().at(-1).args.preferences.autoCleanupEnabled, false);
 assert.equal(page.find("worktree-auto-cleanup").props["aria-checked"], false);
 assert.equal(page.find("worktree-keep-count").props.disabled, true); assert.equal(page.find("worktree-keep-count").props.value, "15");
@@ -107,7 +123,9 @@ page.setWrite(async args => ({ ...reread, preferences: args.preferences, expecte
 page.find("worktree-keep-count").props.onBlur(); await flush();
 assert.deepEqual(page.writes().at(-1).args.expected, { external: 2 }, "retry uses refreshed CAS identity");
 assert.match(page.text(), /读回不一致/); assert.equal(page.find("worktree-keep-count").props.value, "41");
+page.find("worktree-snapshot-info").props.onPointerEnter({ pointerType: "mouse" });
 page.unmount();
+assert.equal(page.timers.size, 0);
 assert.equal(page.listeners.size, 0, "snapshot info outside-interaction listener must be released");
 
 const busy = mount(); await flush();
