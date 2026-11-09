@@ -42,7 +42,7 @@ import { buildSidebarProjectGroups, sidebarThreadProjects, splitPinnedSidebarPro
 import type { Project } from "../projects";
 
 import { sameCloudRecentIdentity, type CloudRecentAction, type CloudRecentChat } from "../cloudRecentChats";
-import type { ActivityRecentGroup } from "../threadActivity";
+import { activityCanMarkRead, type ActivityRecentGroup } from "../threadActivity";
 
 export interface CodexSidebarProps {
   collapsed: boolean;
@@ -70,6 +70,7 @@ export interface CodexSidebarProps {
   onToggleActivityPinned?: () => void;
   activityScheduledVisible?: boolean;
   activityScheduleIds?: ReadonlySet<string> | null;
+  activityScheduleUnread?: ReadonlySet<string> | null;
   onToggleActivityScheduled?: () => void;
   activityThreadIds: string[];
   activityVisibleCount?: number;
@@ -84,6 +85,7 @@ export interface CodexSidebarProps {
   onRemoveWorkspace: (path: string, e?: React.MouseEvent) => void;
   onPickNewFolder: () => void;
   onSelectThread: (threadId: string) => void;
+  onSelectScheduledActivityThread?: (threadId: string) => void;
   onTogglePinThread: (threadId: string, e: React.MouseEvent) => void;
   onArchiveThread: (thread: ThreadSummary, e: React.MouseEvent) => void;
   onDeleteThread?: (thread: ThreadSummary, e: React.MouseEvent) => void;
@@ -163,6 +165,7 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
   onToggleActivityPinned,
   activityScheduledVisible = false,
   activityScheduleIds = null,
+  activityScheduleUnread = null,
   onToggleActivityScheduled,
   activityThreadIds,
   activityVisibleCount = 10,
@@ -176,6 +179,7 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
   onRemoveWorkspace,
   onPickNewFolder,
   onSelectThread,
+  onSelectScheduledActivityThread,
   onTogglePinThread,
   onArchiveThread,
   onDeleteThread,
@@ -1235,6 +1239,10 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
 
   const renderThreadRow = (t: ThreadSummary, indented = false, orderContext?: ThreadOrderContext) => {
     const isActive = activeRoute === "thread" && activeThreadId === t.id;
+    const hasUnreadRun = activityOnly && activityScheduleUnread?.has(t.id);
+    const isStreaming = (t as any).isStreaming || t.status === "running";
+    const select = activityOnly && activityScheduleUnread !== null && activityScheduleIds?.has(t.id)
+      ? onSelectScheduledActivityThread ?? onSelectThread : onSelectThread;
     const isPinned = pinnedThreadIds.includes(t.id);
     const canReorder = chatSortMode === "manual" && !!orderContext && !renamingThread;
     const drop = dragVisual?.group === orderContext?.key ? dragVisual?.drop : null;
@@ -1326,7 +1334,7 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
         }}
         onClick={() => {
           if (suppressRowClickRef.current) { suppressRowClickRef.current = false; return; }
-          onSelectThread(t.id);
+          select(t.id);
         }}
         onKeyDownCapture={(e) => {
           if (draggedThreadRef.current?.moved) { e.preventDefault(); e.stopPropagation(); return; }
@@ -1360,7 +1368,7 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
           }
           if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
             e.preventDefault();
-            onSelectThread(t.id);
+            select(t.id);
           }
         }}
         onContextMenu={(e) => {
@@ -1370,17 +1378,18 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
         }}
       >
         <div className="sidebar-thread-left">
+            {!isStreaming && (hasUnreadRun || t.readState?.firstUnread) && (
+              <span className="sidebar-thread-unread-dot" role="img" aria-label="未读消息" title="未读消息" />
+            )}
             <span
               className="sidebar-thread-title"
               onDoubleClick={(e) => {
                 if (!e.defaultPrevented && isActive) setRenamingThread(t);
               }}
             >
-              {(t as any).isStreaming || t.status === "running" ? (
+              {isStreaming && (
                 <span className="sidebar-thread-status-spinner" title="正在运行..." />
-              ) : t.readState?.firstUnread ? (
-                <span className="sidebar-thread-unread-dot" title="未读消息" />
-              ) : null}
+              )}
               {t.name || t.preview || "新聊天"}
             </span>
         </div>
@@ -1892,7 +1901,7 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
                 id: "mark-all-read",
                 label: "全部标为已读",
                 separatorBefore: Boolean(onToggleActivityPriority),
-                disabled: !activityThreads.some(thread => !activityScheduleIds?.has(thread.id) && thread.readState?.firstUnread != null),
+                disabled: !activityThreads.some(thread => activityCanMarkRead(thread, activityScheduleIds, activityScheduleUnread)),
               }, {
                 id: "archive",
                 label: "归档聊天",

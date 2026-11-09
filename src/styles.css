@@ -385,6 +385,21 @@ html, body, #root {
   white-space: nowrap;
 }
 
+.sidebar-thread-unread-dot {
+  display: grid;
+  place-items: center;
+  flex: 0 0 20px;
+  height: 20px;
+}
+
+.sidebar-thread-unread-dot::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-blue);
+}
+
 .sidebar-thread-actions {
   display: none;
   align-items: center;

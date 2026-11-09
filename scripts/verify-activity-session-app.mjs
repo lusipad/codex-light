@@ -22,9 +22,54 @@ const unread=revision=>({revision,firstUnread:{type:'threadStart'}});
 const rows=Array.from({length:13},(_,i)=>({id:`t${i}`,readState:unread('list-old')}));
 function mount(){
   const writes=[],errors=[];let state=null,refreshes=0;
-  const context={...activity.exports,...protocol.exports,threadsRef:{current:rows},activitySessionRef:{current:null},activityGenerationRef:{current:0},activityScopeRef:{current:'local'},activityPriorityVisibleRef:{current:true},activityExclusionsRef:{current:new Set()},activityScheduleIdsRef:{current:null},personalizationNavigationGuardRef:{current:null},readStateWritesRef:{current:new Set()},Date,
+  const context={...activity.exports,...protocol.exports,threadsRef:{current:rows},activitySessionRef:{current:null},activityGenerationRef:{current:0},activityScopeRef:{current:'local'},activityPriorityVisibleRef:{current:true},activityExclusionsRef:{current:new Set()},activityScheduleIdsRef:{current:null},activityScheduleUnreadRef:{current:null},personalizationNavigationGuardRef:{current:null},readStateWritesRef:{current:new Set()},Date,
     setActivitySession:value=>{state=typeof value==='function'?value(state):value;},refreshThreads:async()=>{refreshes++;},showAppToast:(...args)=>errors.push(args),callAppServer:async(method,args)=>{writes.push({method,args});return method==='thread/read'?{readState:unread('fresh-read')}:{readState:read};}};
   return {context,writes,errors,get state(){return state;},get refreshes(){return refreshes;},toggle:()=>run('toggleActivity',context)(),bulk:()=>run('markAllThreadsRead',context)(),more:()=>run('loadMoreActivity',context)(),clear:()=>run('clearReadActivity',context)()};
+}
+for (const outcome of ['success','error','account-changed']) {
+  const view=mount(), ctx=view.context, pending=deferred(), receipts=[];
+  let refreshes=0;
+  ctx.threadsRef.current=[rows[0],rows[1],{id:'run-only',readState:read},{id:'hidden',readState:read}];
+  ctx.activityScheduleIdsRef.current=new Set(['t1','run-only','hidden']);
+  ctx.activityScheduleUnreadRef.current=new Set(['t1','run-only','hidden']);
+  ctx.activityExclusionsRef.current.add('hidden');
+  ctx.Date={now:()=>123};
+  ctx.setActivityScheduleRevision=update=>{refreshes=update(refreshes);};
+  ctx.markActivityRunsRead=(ids,through)=>{receipts.push([Array.from(ids),through]);return pending.promise;};
+  ctx.markScheduledActivityRead=run('markScheduledActivityRead',ctx);
+  view.toggle();
+  assert.ok(view.state.threadIds.includes('run-only'),'run-only unread is a priority member');
+  view.clear();
+  assert.ok(view.state.threadIds.includes('run-only'),'clear keeps pending run unread');
+  const bulk=view.bulk();await flush();
+  assert.deepEqual(receipts,[[['t1','run-only'],123]]);
+  assert.deepEqual(view.writes.map(call=>call.args.threadId),['t0','t0'],'ordinary chats are independent');
+  if(outcome==='account-changed')ctx.activityScopeRef.current='other';
+  if(outcome==='error')pending.reject(Error('disk rejected'));
+  else pending.resolve(2);
+  await bulk;
+  assert.deepEqual(view.writes.map(call=>call.args.threadId),outcome==='success'?['t0','t0','t1','t1']:['t0','t0']);
+  assert.equal(refreshes,outcome==='account-changed'?0:1);
+  assert.equal(view.errors.length,outcome==='error'?1:0);
+  if(outcome==='error')assert.match(view.errors[0][0],/disk rejected/);
+}
+{
+  const {context:ctx}=mount(), receipts=[];
+  let resume;
+  ctx.activityScheduleIdsRef.current=new Set(['run']);
+  ctx.activityScheduleUnreadRef.current=new Set(['run']);
+  ctx.markScheduledActivityRead=(...args)=>receipts.push(args);
+  ctx.personalizationNavigationGuardRef.current=action=>{resume=action;return false;};
+  ctx.worktreeCreationControllersRef={current:{keys:()=>{throw Error('navigation continued');}}};
+  const select=ctx.selectThread=run('selectThread',ctx);
+  await select('run',true);
+  assert.deepEqual(receipts,[]);
+  ctx.activityScopeRef.current='other';resume();
+  assert.deepEqual(receipts,[],'stale guard does not write');
+  ctx.personalizationNavigationGuardRef.current=null;
+  await assert.rejects(select('run',true),/navigation continued/);
+  assert.deepEqual(Array.from(receipts[0][0]),['run']);
+  assert.equal(receipts[0][2],'other');
 }
 {
   const view=mount();

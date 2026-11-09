@@ -1,11 +1,12 @@
 import type { ThreadSummary } from "./types";
 import { isThreadReadState } from "./protocol";
 
-export function threadNeedsAttention(thread: ThreadSummary): boolean {
+export function threadNeedsAttention(thread: ThreadSummary, scheduledUnread?: ReadonlySet<string> | null): boolean {
   const status = thread.status;
   const type = typeof status === "string" ? status : status?.type;
   const flags = typeof status === "object" && status ? status.activeFlags ?? [] : [];
-  return (isThreadReadState(thread.readState) && thread.readState.firstUnread != null) ||
+  return scheduledUnread?.has(thread.id) === true ||
+    (isThreadReadState(thread.readState) && thread.readState.firstUnread != null) ||
     type === "systemError" || type === "waitingOnApproval" || type === "waitingOnUserInput" ||
     flags.includes("waitingOnApproval") || flags.includes("waitingOnUserInput");
 }
@@ -15,8 +16,14 @@ export function activityThreadIsRunning(thread: ThreadSummary): boolean {
   return type === "active" || type === "running";
 }
 
-export function threadHasActivity(thread: ThreadSummary): boolean {
-  return threadNeedsAttention(thread) || activityThreadIsRunning(thread);
+export function threadHasActivity(thread: ThreadSummary, scheduledUnread?: ReadonlySet<string> | null): boolean {
+  return threadNeedsAttention(thread, scheduledUnread) || activityThreadIsRunning(thread);
+}
+
+export function activityCanMarkRead(thread: ThreadSummary, scheduled?: ReadonlySet<string> | null,
+  scheduledUnread?: ReadonlySet<string> | null): boolean {
+  const chatUnread = isThreadReadState(thread.readState) && thread.readState.firstUnread != null;
+  return scheduled?.has(thread.id) ? scheduledUnread != null && (scheduledUnread.has(thread.id) || chatUnread) : chatUnread;
 }
 
 export interface ActivitySession {
@@ -32,8 +39,9 @@ export function excludeActivityThreads(session: ActivitySession | null, ids: str
   return session ? { ...session, threadIds: session.threadIds.filter(id => !ids.includes(id)) } : null;
 }
 
-export function clearReadActivityThreads(session: ActivitySession, threads: ThreadSummary[], pins?: ReadonlySet<string>): ActivitySession {
-  const activeIds = new Set(threads.filter(threadHasActivity).map(thread => thread.id));
+export function clearReadActivityThreads(session: ActivitySession, threads: ThreadSummary[], pins?: ReadonlySet<string>,
+  scheduledUnread?: ReadonlySet<string> | null): ActivitySession {
+  const activeIds = new Set(threads.filter(thread => threadHasActivity(thread, scheduledUnread)).map(thread => thread.id));
   const threadIds = session.threadIds.filter(id => activeIds.has(id));
   return threadIds.length === session.threadIds.length ? session
     : rememberActivityRecentTimes({ ...session, threadIds, recentTimes: new Map() }, threads, pins);
@@ -112,26 +120,27 @@ export function restoreActivityThreads(session: ActivitySession, originalOrder: 
     ? session : { ...session, threadIds };
 }
 
-function activityCandidates(threads: ThreadSummary[]): ThreadSummary[] {
+function activityCandidates(threads: ThreadSummary[], scheduledUnread?: ReadonlySet<string> | null): ThreadSummary[] {
   const priority = (thread: ThreadSummary) => {
     if (threadNeedsAttention({ ...thread, readState: null })) return 0;
-    return isThreadReadState(thread.readState) && thread.readState.firstUnread != null ? 1 : 2;
+    return threadNeedsAttention(thread, scheduledUnread) ? 1 : 2;
   };
-  return threads.filter(threadHasActivity).sort((a, b) => priority(a) - priority(b) ||
+  return threads.filter(thread => threadHasActivity(thread, scheduledUnread)).sort((a, b) => priority(a) - priority(b) ||
     (b.recencyAt ?? b.updatedAt ?? b.createdAt ?? 0) - (a.recencyAt ?? a.updatedAt ?? a.createdAt ?? 0));
 }
 
 export function beginActivitySession(threads: ThreadSummary[], scope: string, activatedAt: number,
-  pins?: ReadonlySet<string>): ActivitySession {
+  pins?: ReadonlySet<string>, scheduledUnread?: ReadonlySet<string> | null): ActivitySession {
   return rememberActivityRecentTimes({
     scope, activatedAt, visibleCount: 10,
-    threadIds: [...new Set(activityCandidates(threads).map(thread => thread.id))],
+    threadIds: [...new Set(activityCandidates(threads, scheduledUnread).map(thread => thread.id))],
     knownThreadIds: [...new Set(threads.map(thread => thread.id))],
     recentTimes: new Map(),
   }, threads, pins);
 }
 
-export function mergeActivitySession(session: ActivitySession, threads: ThreadSummary[], pins?: ReadonlySet<string>): ActivitySession {
+export function mergeActivitySession(session: ActivitySession, threads: ThreadSummary[], pins?: ReadonlySet<string>,
+  scheduledUnread?: ReadonlySet<string> | null): ActivitySession {
   const currentIds = new Set(threads.map(thread => thread.id));
   const knownIds = new Set(session.knownThreadIds);
   // app-server timestamps are seconds; the official catalog compares at second precision.
@@ -139,7 +148,7 @@ export function mergeActivitySession(session: ActivitySession, threads: ThreadSu
     typeof thread.createdAt === "number" && Number.isFinite(thread.createdAt) &&
     thread.createdAt >= Math.floor(session.activatedAt / 1000)).map(thread => thread.id);
   const threadIds = [...new Set([...created, ...session.threadIds.filter(id => currentIds.has(id)),
-    ...activityCandidates(threads).map(thread => thread.id)])];
+    ...activityCandidates(threads, scheduledUnread).map(thread => thread.id)])];
   for (const id of currentIds) knownIds.add(id);
   const unchanged = knownIds.size === session.knownThreadIds.length && threadIds.length === session.threadIds.length &&
     threadIds.every((id, index) => id === session.threadIds[index]);

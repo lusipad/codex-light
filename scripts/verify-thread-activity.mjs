@@ -43,10 +43,15 @@ const activityCases = [
   { id: "approval", status: { type: "waitingOnApproval" } },
   { id: "input", status: { type: "active", activeFlags: ["waitingOnUserInput"] } },
 ];
-const attention = run("activityAttentionCount", { threads: activityCases, threadNeedsAttention, activityHiddenScheduled: null })();
+const attention = run("activityAttentionCount", { threads: activityCases, threadNeedsAttention,
+  activityHiddenScheduled: null, activityScheduleUnread: null })();
 assert.equal(attention, 3, "unread and waiting need attention, running alone and old inbox history do not");
 assert.equal(run("activityAttentionCount", { threads: activityCases, threadNeedsAttention,
-  activityHiddenScheduled: new Set(["unread"]) })(), 2);
+  activityHiddenScheduled: new Set(["unread"]), activityScheduleUnread: null })(), 2);
+assert.equal(run("activityAttentionCount", { threads: activityCases, threadNeedsAttention,
+  activityHiddenScheduled: null, activityScheduleUnread: new Set(["read"]) })(), 4);
+assert.equal(run("activityAttentionCount", { threads: activityCases, threadNeedsAttention,
+  activityHiddenScheduled: new Set(["read"]), activityScheduleUnread: new Set(["read"]) })(), 3);
 assert.deepEqual(Array.from(run("activityThreadIds", {
   activityPriorityVisible: true,
   activityExclusions: new Set(),
@@ -132,6 +137,7 @@ const bulkContext = {
   activityPriorityVisibleRef: { current: true },
   activityExclusionsRef: { current: new Set() },
   activityScheduleIdsRef: { current: null },
+  activityScheduleUnreadRef: { current: null }, activityCanMarkRead: activity.exports.activityCanMarkRead,
   callAppServer: async (...args) => { bulkCalls.push(args); return args[0] === "thread/read" ? {readState:unread} : new Promise(resolve => { finish = resolve; }); },
   refreshThreads: async () => refreshes++, showAppToast: (...args) => errors.push(args),
 };

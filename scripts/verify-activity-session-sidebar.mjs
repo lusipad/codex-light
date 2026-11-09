@@ -216,4 +216,26 @@ function search(view, value) {
   assert.equal(item().disabled,true);
   cases++;
 }
+{
+  const selected=[], reads=[];
+  const view=mount({...base, threads:[{id:"run",name:"Run"}], activityThreadIds:["run"],
+    activityScheduledVisible:true, activityScheduleIds:new Set(["run"]), activityScheduleUnread:new Set(["run"]),
+    onSelectThread:id=>selected.push(id), onSelectScheduledActivityThread:id=>reads.push(id)});
+  const unreadDot=()=>all(rows(view)[0]).some(node=>node.props.className==="sidebar-thread-unread-dot");
+  const canRead=()=>!options(view).props.items.find(item=>item.id==="mark-all-read").disabled;
+  assert.equal(unreadDot(),true);
+  assert.equal(canRead(),true);
+  rows(view)[0].props.onClick();
+  const target={};
+  rows(view)[0].props.onKeyDown({key:"Enter",target,currentTarget:target,preventDefault(){}});
+  assert.deepEqual(reads,["run","run"]);
+  assert.deepEqual(selected,[]);
+  view.props.activityScheduleUnread=new Set();
+  assert.equal(unreadDot(),false);
+  assert.equal(canRead(),false);
+  view.props.activityScheduleUnread=null;
+  rows(view)[0].props.onClick();
+  assert.deepEqual(selected,["run"]);
+  cases++;
+}
 console.log(`PASS ${cases} Activity production-sidebar session projection sequences (L2; no browser/native/official pixel claim)`);
