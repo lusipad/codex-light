@@ -15,6 +15,7 @@ import { homeDir, normalize as normalizeFsPath } from "@tauri-apps/api/path";
 import { callAppServer, isTauriRuntime, tauriInvoke } from "../bridge";
 import { baseNameFsPath, getMetadata, joinFsPath } from "../fsClient";
 import { createFuzzyFileSearch } from "../fuzzyFileSearch";
+import { createChatSearchMatcher, type ChatMatchRange } from "../chatSearchMatch";
 import { MainViewRoute, ProjectScriptCommands, SettingsSectionSlug, SkillInfoItem, ThreadSummary } from "../types";
 import { SLASH_COMMANDS } from "../slashCommands";
 import { SearchFolderDialog } from "./SearchFolderDialog";
@@ -56,6 +57,7 @@ interface SearchResultItem {
   section: string;
   title: string;
   subtitle?: string;
+  subtitleRanges?: ChatMatchRange[];
   shortcut?: string;
   rightLabel?: string;
   icon: React.ReactNode;
@@ -253,8 +255,18 @@ function normalizeRemoteThreadHits(raw: unknown, limit: number): RemoteThreadRes
   return results;
 }
 
-const highlightChatMatch = (text: string, query: string) => {
+const highlightChatMatch = (text: string, query: string, ranges?: ChatMatchRange[]) => {
   if (!query) return text;
+  if (ranges?.length && !text.toLowerCase().includes(query.toLowerCase())) {
+    let offset = 0;
+    const parts: React.ReactNode[] = [];
+    for (const { start, end } of ranges) {
+      parts.push(text.slice(offset, start), <mark key={start}>{text.slice(start, end)}</mark>);
+      offset = end;
+    }
+    parts.push(text.slice(offset));
+    return parts;
+  }
   const literal = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return text.split(new RegExp(`(${literal})`, "giu")).map((part, index) =>
     index % 2 === 1 ? <mark key={index}>{part}</mark> : part);
@@ -764,25 +776,31 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
         } else candidates.set(hit.id, { thread: hit, snippet: hit.snippet, protocol: true });
       }
       const ranked = [];
+      const match = createChatSearchMatcher(trimmedQuery);
       for (const { thread, snippet, protocol } of candidates.values()) {
         const title = thread.name || thread.preview || thread.id;
         const source = getChatProjectLabel(thread) ?? baseNameFsPath(thread.cwd ?? "");
         const branch = typeof thread.gitInfo?.branch === "string" ? thread.gitInfo.branch : undefined;
-        const titleMatch = matches(title);
-        const branchMatch = q !== "" && matches(branch);
+        const titleMatch = match(title);
+        const idMatch = q.length >= 8 && thread.id.toLowerCase().startsWith(q) ? match(thread.id) : null;
+        const contentMatch = titleMatch || idMatch ? null : match(snippet ?? thread.preview);
+        const branchMatch = titleMatch || snippet ? null : match(branch);
+        const sourceMatch = titleMatch || idMatch || snippet || contentMatch || branchMatch ? null : match(source) ?? match(thread.cwd);
         const rank = !q ? pinned.get(thread.id) ?? pinned.size
-          : titleMatch || (q.length >= 8 && thread.id.toLowerCase().startsWith(q)) ? 0
-          : snippet || matches(thread.preview) ? 1
+          : titleMatch || idMatch ? 0
+          : snippet || contentMatch ? 1
           : branchMatch ? 2
-          : matches(source) || matches(thread.cwd) || matches(thread.id) ? 3 : 4;
+          : sourceMatch || matches(thread.id) ? 3 : 4;
         if (rank === 4 && q && !protocol) continue;
-        const subtitle = q ? snippet ?? (!titleMatch && branchMatch ? branch : undefined) : undefined;
-        ranked.push({ thread, source, subtitle,
+        const subtitle = q ? snippet ?? (branchMatch ? branch : undefined) : undefined;
+        const score = (titleMatch ?? idMatch ?? contentMatch ?? branchMatch ?? sourceMatch)?.score ?? 0;
+        ranked.push({ thread, source, subtitle, subtitleRanges: branchMatch?.ranges, score,
           rank, recency: thread.recencyAt ?? thread.updatedAt ?? thread.createdAt ?? 0 });
       }
-      ranked.sort((a, b) => a.rank - b.rank || b.recency - a.recency);
-      const chats = ranked.slice(0, threadLimit).map(({ thread, source, subtitle }) =>
-        threadRow(thread, !q && pinned.has(thread.id) ? "已置顶聊天" : "聊天", source, subtitle));
+      ranked.sort((a, b) => a.rank - b.rank || b.score - a.score || b.recency - a.recency);
+      const chats = ranked.slice(0, threadLimit).map<SearchResultItem>(({ thread, source, subtitle, subtitleRanges }) => ({
+        ...threadRow(thread, !q && pinned.has(thread.id) ? "已置顶聊天" : "聊天", source, subtitle), subtitleRanges,
+      }));
       const cursor = chatPaging?.nextCursor === undefined ? remote?.nextCursor : chatPaging.nextCursor;
       if (q && (chatPaging?.loading || ranked.length > threadLimit || cursor != null)) {
         const visibleIds = new Set(chats.map(item => item.id));
@@ -1276,7 +1294,7 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
                       <span className="quick-search-row-title">{chatRow ? highlightChatMatch(item.title, trimmedQuery) : item.title}</span>
                       {item.subtitle && (
                         <span className="quick-search-row-subtitle">
-                          {chatRow ? highlightChatMatch(item.subtitle, trimmedQuery) : item.subtitle}
+                          {chatRow ? highlightChatMatch(item.subtitle, trimmedQuery, item.subtitleRanges) : item.subtitle}
                         </span>
                       )}
                     </div>

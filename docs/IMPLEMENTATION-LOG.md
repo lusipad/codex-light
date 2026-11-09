@@ -2851,3 +2851,8 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 
 - 先按聊天 ID 合并，再按标题、正文、分支及来源排序和限量。使用聊天身份保存显式选中，延迟正文到达后 Enter 仍打开原项。
 - 125 项发布回放、Store CLI 搜索探针、原生宽窄窗口与 Windows 打包通过。官方模糊评分和配对像素待验。详见[验收记录](antigravity/acceptance/08S-chat-search-ranking.md)。
+
+## 2026-11-09 — 聊天搜索缩写与分支高亮
+
+- 对照固定 asar 匹配导出实现词边界缩写与原文分段高亮。438 组样本的命中与片段一致。宽窄原生窗口验证正反例、正文优先和键盘打开。
+- 125 项发布回放、Store CLI 探针和 Windows 打包通过。官方数值评分与配对像素待验。详见[验收记录](antigravity/acceptance/08T-chat-search-fuzzy.md)。

@@ -6,7 +6,7 @@ import ts from "typescript";
 const parse = path => ts.createSourceFile(path, fs.readFileSync(path, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const page = parse("src/components/QuickSearchModal.tsx"), app = parse("src/App.tsx"), folderDialog = parse("src/components/SearchFolderDialog.tsx");
 let items, keydown, focus, pageSelection, appSlash, sidebarSearch, selectedFileSearchText, rememberWorkspaceFile, pickSearchFolder, finishFolderPicker, folderLocation, folderListEffect;
-let chatProjectLabel, selectedIndexExpression, selectResult;
+let chatProjectLabel, selectedIndexExpression, selectResult, highlightChatMatch;
 const chatStates = {};
 const shortcuts = {};
 const helpers = [];
@@ -23,6 +23,7 @@ function visit(node, ast) {
     if (node.name.getText(ast) === "items") items = node.initializer.arguments[0];
     if (node.name.getText(ast) === "selectedIndex") selectedIndexExpression = node.initializer;
     if (node.name.getText(ast) === "selectResult") selectResult = node.initializer.arguments[0];
+    if (node.name.getText(ast) === "highlightChatMatch") highlightChatMatch = node.initializer;
     if (node.name.getText(ast) === "handleKeyDown") keydown = node.initializer;
     if (node.name.getText(ast) === "pickSearchFolder") pickSearchFolder = node.initializer;
     if (node.name.getText(ast) === "finishFolderPicker") finishFolderPicker = node.initializer;
@@ -38,6 +39,10 @@ function visit(node, ast) {
   ts.forEachChild(node, child => visit(child, ast));
 }
 visit(page, page); visit(app, app); visit(folderDialog, folderDialog);
+const matcher = { exports: {} };
+vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/chatSearchMatch.ts", "utf8"), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+}).outputText, matcher);
 const execute = (node, ast, context) => {
   assert.ok(node, "production callback exists");
   return vm.runInNewContext(ts.transpileModule(`(${node.getText(ast)})`, {
@@ -62,6 +67,7 @@ function mount(overrides = {}) {
     runCmd: "npm run dev", testCmd: "npm test", buildCmd: "npm run build",
     selectedIndex: 0,
     baseNameFsPath: path => path.split(/[\\/]/).at(-1),
+    createChatSearchMatcher: matcher.exports.createChatSearchMatcher,
     getChatProjectLabel: () => undefined,
     setPathRetry: updater => calls.push(["retry", updater(0)]),
     setRecentRetry: updater => calls.push(["recent retry", updater(0)]),
@@ -179,7 +185,7 @@ function mount(overrides = {}) {
   execute(selectResult, page, view.context)(2);
   view.context.remoteResults = { mode: "chats", query, workspacePath: "repo-B", threads: [
     { id: "branch", name: "旧服务标题", snippet: "repair 正文" },
-    ...Array.from({ length: 26 }, (_, i) => ({ id: `content-${i}`, name: "正文", snippet: "repair", updatedAt: -i - 1 })),
+    ...Array.from({ length: 26 }, (_, i) => ({ id: `content-${i}`, name: "正文", snippet: "repair 同类正文", updatedAt: -i - 1 })),
   ] };
   view.context.chatPaging = { limit: 25, threads: [{ id: "branch", name: "重复结果" }] };
   const ranked = view.results();
@@ -200,6 +206,34 @@ function mount(overrides = {}) {
   assert.equal(view.context.selectedIndex, view.context.items.length - 1);
   view.context.chatSearchScope = {};
   assert.equal(select(), 0, "another query cannot inherit the previous selection");
+}
+{
+  const vectors = [
+    ["repair-ui", "ru", [[0, 1], [7, 8]]], ["repair-ui", "rpr", null], ["repair-ui", "epu", null],
+    ["repair-ui", "pai", [[2, 5]]], ["feature/repair-ui", "fru", [[0, 1], [8, 9], [15, 16]]],
+    ["feature/repair-ui", "r/ui", [[5, 6], [7, 8], [15, 17]]],
+    ["feature/repair-ui", "f\\r", [[0, 1], [7, 9]]], ["word", "foo/*", []],
+    ["GitReviewPanel", "grp", [[0, 1], [3, 4], [9, 10]]], ["GitReviewPanel", "gRp", null],
+    ["GitReviewPanel", "G R P", [[0, 1], [3, 4], [9, 10]]],
+    ["read20File", "r2f", [[0, 1], [4, 5], [6, 7]]], ["abc123def", "a13d", null],
+    ["fix🚀launch", "f🚀l", [[0, 1], [3, 6]]], ["feature/修复-界面", "修界", [[8, 9], [11, 12]]],
+    ["foobar", "f b", null], ["foobar", "f*b", [[0, 1], [3, 4]]],
+  ];
+  for (const [text, query, expected] of vectors) {
+    const hit = matcher.exports.createChatSearchMatcher(query)(text);
+    assert.deepEqual(hit ? Array.from(hit.ranges, ({ start, end }) => [start, end]) : null, expected, `${text} / ${query}`);
+  }
+  const view = mount({ mode: "chats", query: "ru", threads: [
+    { id: "long", name: "构建甲", gitInfo: { branch: "feature/repair-ui" }, updatedAt: 20 },
+    { id: "short", name: "构建乙", gitInfo: { branch: "repair-ui" }, updatedAt: 10 },
+  ] });
+  const rows = view.results();
+  assert.deepEqual(Array.from(rows, row => row.id), ["th-short", "th-long"]);
+  const render = execute(highlightChatMatch, page, { React: { createElement: (tag, props, value) => ({ tag, value }) } });
+  assert.deepEqual(Array.from(render(rows[0].subtitle, "ru", rows[0].subtitleRanges), part => part?.value ?? part),
+    ["", "r", "epair-", "u", "i"]);
+  view.context.mode = "root";
+  assert.equal(view.results().some(row => row.id === "th-short"), false);
 }
 {
   const view = mount({ mode: "chats", query: "", chatHistoryReady: false, trimmedQuery: "", items: [], isTauriRuntime: () => true });
