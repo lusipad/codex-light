@@ -23,7 +23,19 @@ function mount(){
   const writes=[],errors=[];let state=null,refreshes=0;
   const context={...activity.exports,...protocol.exports,threadsRef:{current:rows},activitySessionRef:{current:null},activityGenerationRef:{current:0},activityScopeRef:{current:'local'},personalizationNavigationGuardRef:{current:null},readStateWritesRef:{current:new Set()},Date,
     setActivitySession:value=>{state=typeof value==='function'?value(state):value;},refreshThreads:async()=>{refreshes++;},showAppToast:(...args)=>errors.push(args),callAppServer:async(method,args)=>{writes.push({method,args});return method==='thread/read'?{readState:unread('fresh-read')}:{readState:read};}};
-  return {context,writes,errors,get state(){return state;},get refreshes(){return refreshes;},toggle:()=>run('toggleActivity',context)(),bulk:()=>run('markAllThreadsRead',context)(),more:()=>run('loadMoreActivity',context)()};
+  return {context,writes,errors,get state(){return state;},get refreshes(){return refreshes;},toggle:()=>run('toggleActivity',context)(),bulk:()=>run('markAllThreadsRead',context)(),more:()=>run('loadMoreActivity',context)(),clear:()=>run('clearReadActivity',context)()};
+}
+{
+  const view=mount();view.toggle();
+  view.context.threadsRef.current=rows.map(row=>row.id==='t0'?row:{...row,readState:read});
+  const initial=view.state;
+  view.context.activityScopeRef.current='other';view.clear();
+  assert.equal(view.state,initial,'stale identity does not clear');
+  view.context.activityScopeRef.current='local';view.clear();
+  assert.deepEqual(Array.from(view.state.threadIds),['t0']);
+  assert.equal(view.context.activitySessionRef.current,view.state);
+  assert.equal(view.writes.length,0);
+  assert.equal(view.refreshes,0);
 }
 {
   const view=mount(); view.toggle();

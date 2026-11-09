@@ -2,7 +2,7 @@ import { usePetPreferences } from "./petPreferences";
 import { mergeHookRoots } from "./hooksSettingsModel";
 import { createEnvironmentWorktree, type WorktreeCreationOptions } from "./worktreeCreation";
 import { installWorktreeCleanup } from "./worktreeCleanup";
-import { beginActivitySession, excludeActivityThreads, mergeActivitySession, threadNeedsAttention, type ActivitySession } from "./threadActivity";
+import { beginActivitySession, clearReadActivityThreads, excludeActivityThreads, mergeActivitySession, threadHasActivity, threadNeedsAttention, type ActivitySession } from "./threadActivity";
 import { useExternalImports } from "./externalImport";
 import { useCodeReviewPreferences } from "./reviewPreferences";
 import { buildQuickReviewPrompt, parseReviewFindings, type ModelReviewComment } from "./reviewFindings";
@@ -4963,6 +4963,18 @@ export const App: React.FC = () => {
     setActivitySession(current => current?.scope === activityScopeRef.current
       ? { ...current, visibleCount: current.visibleCount + 10 } : current);
   }, []);
+  const clearReadActivity = useCallback(() => {
+    const session = activitySessionRef.current;
+    if (!session || session.scope !== activityScopeRef.current) return;
+    const cleared = clearReadActivityThreads(session, threadsRef.current);
+    if (cleared === session) return;
+    activitySessionRef.current = cleared;
+    setActivitySession(cleared);
+  }, []);
+  const canClearReadActivity = useMemo(() => {
+    const ids = new Set(activityThreadIds);
+    return ids.size > 0 && threads.some(thread => ids.has(thread.id) && !threadHasActivity(thread));
+  }, [activityThreadIds, threads]);
   const markAllThreadsRead = useCallback(async () => {
     const session = activitySessionRef.current;
     if (!session) return;
@@ -5531,6 +5543,7 @@ export const App: React.FC = () => {
         activityThreadIds={activityThreadIds}
         activityVisibleCount={activitySnapshot?.visibleCount ?? 10}
         onLoadMoreActivity={loadMoreActivity}
+        onClearReadActivity={canClearReadActivity ? clearReadActivity : undefined}
         onToggleActivity={toggleActivity}
         onMarkAllRead={markAllThreadsRead}
         hasAgentsMd={agentsMdInfo.found}

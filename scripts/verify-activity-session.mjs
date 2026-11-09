@@ -7,7 +7,7 @@ const compile=file=>ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOpt
 vm.runInNewContext(compile('src/protocol.ts'),{exports:protocol.exports});
 const activity={exports:{}};
 vm.runInNewContext(compile('src/threadActivity.ts'),{exports:activity.exports,require:()=>protocol.exports});
-const {beginActivitySession,mergeActivitySession,threadNeedsAttention}=activity.exports;
+const {beginActivitySession,mergeActivitySession,clearReadActivityThreads,threadNeedsAttention}=activity.exports;
 assert.equal(typeof beginActivitySession,'function','09C: session must have an explicit opening snapshot');
 const at=1793952000500;
 const unread={revision:'r1',firstUnread:{type:'threadStart'}};
@@ -34,4 +34,15 @@ const next=mergeActivitySession(session,[...current,{id:'new-idle',name:'renamed
 assert.equal(new Set(next.threadIds).size,next.threadIds.length,'catalog duplicates are idempotent');
 assert.equal(next.scope,'local');
 assert.equal(next.activatedAt,at);
+const beforeClear={...next,visibleCount:20};
+const cleared=clearReadActivityThreads(beforeClear,current);
+assert.deepEqual(Array.from(cleared.threadIds),['new-unread']);
+assert.equal(cleared.visibleCount,20);
+assert.equal(cleared.activatedAt,at);
+assert.equal(cleared.knownThreadIds,beforeClear.knownThreadIds);
+assert.equal(mergeActivitySession(cleared,current),cleared,'cleared rows do not reappear on unchanged refresh');
+assert.ok(mergeActivitySession(cleared,current.map(t=>t.id==='new-idle'?{...t,status:{type:'active'}}:t)).threadIds.includes('new-idle'));
+assert.equal(clearReadActivityThreads(cleared,current),cleared,'repeated clear is a no-op');
+const mixed=mergeActivitySession(beginActivitySession(data,'local',at),data.map(t=>t.id==='unread'?{...t,readState:read}:t));
+assert.deepEqual(Array.from(clearReadActivityThreads(mixed,data.map(t=>t.id==='unread'?{...t,readState:read}:t)).threadIds),['approval','running']);
 console.log('PASS 09C activity session: source-derived priority, retention, creation seconds, membership, removal and reopening');

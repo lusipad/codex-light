@@ -27,6 +27,12 @@ export function excludeActivityThreads(session: ActivitySession | null, ids: str
   return session ? { ...session, threadIds: session.threadIds.filter(id => !ids.includes(id)) } : null;
 }
 
+export function clearReadActivityThreads(session: ActivitySession, threads: ThreadSummary[]): ActivitySession {
+  const activeIds = new Set(threads.filter(threadHasActivity).map(thread => thread.id));
+  const threadIds = session.threadIds.filter(id => activeIds.has(id));
+  return threadIds.length === session.threadIds.length ? session : { ...session, threadIds };
+}
+
 function activityCandidates(threads: ThreadSummary[]): ThreadSummary[] {
   const priority = (thread: ThreadSummary) => {
     if (threadNeedsAttention({ ...thread, readState: null })) return 0;

@@ -10,6 +10,7 @@ import {
   FolderIcon,
   PlusIcon,
   FilterIcon,
+  RefreshIcon,
   PinIcon,
   ArchiveIcon,
   CloseIcon,
@@ -64,6 +65,7 @@ export interface CodexSidebarProps {
   activityThreadIds: string[];
   activityVisibleCount?: number;
   onLoadMoreActivity?: () => void;
+  onClearReadActivity?: () => void;
   onToggleActivity: () => void;
   onMarkAllRead: () => void;
   hasAgentsMd: boolean;
@@ -147,6 +149,7 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
   activityThreadIds,
   activityVisibleCount = 10,
   onLoadMoreActivity,
+  onClearReadActivity,
   onToggleActivity,
   onMarkAllRead,
   onNavigate,
@@ -1832,6 +1835,12 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
               align="left"
               onSelect={onMarkAllRead}
             />
+            {onClearReadActivity && (
+              <button type="button" className="sidebar-mini-tool-btn"
+                aria-label="清除已读聊天" title="清除已读聊天" onClick={onClearReadActivity}>
+                <RefreshIcon size={12} />
+              </button>
+            )}
           </div> : <div className="sidebar-section-tools">
             <ThreadActionsMenu
               items={organizeItems}

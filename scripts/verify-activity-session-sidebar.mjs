@@ -122,4 +122,14 @@ function search(view, value) {
   assert.equal(bell(view).props["aria-pressed"], false);
   cases++;
 }
+{
+  let calls=0;
+  const view=mount({ ...base, onClearReadActivity: () => calls++ });
+  const clear = () => all(view.render()).find(node => node.type === "button" && node.props["aria-label"] === "清除已读聊天");
+  clear().props.onClick();
+  assert.equal(calls,1);
+  view.props.onClearReadActivity=undefined;
+  assert.equal(clear(),undefined);
+  cases++;
+}
 console.log(`PASS ${cases} Activity production-sidebar session projection sequences (L2; no browser/native/official pixel claim)`);
