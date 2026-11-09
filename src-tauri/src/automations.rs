@@ -48,7 +48,8 @@ const SCAN_INTERVAL: StdDuration = StdDuration::from_secs(30);
 /// Maximum stable jitter (in seconds) added on top of a scheduled occurrence.
 const MAX_JITTER_SECS: u64 = 60;
 /// Version of the on-disk scheduler state file.
-const STATE_VERSION: u32 = 1;
+const STATE_VERSION: u32 = 2;
+const ACTIVITY_RUN_LIMIT: usize = 200;
 /// Salt used when `~/.codex/automations/.run-jitter-salt` is missing.
 const FALLBACK_JITTER_SALT: &[u8] = b"codex-native-automation-scheduler";
 
@@ -677,6 +678,15 @@ struct SchedulerState {
     version: u32,
     updated_at: u64,
     automations: BTreeMap<String, AutomationScheduleState>,
+    activity_runs: Vec<ActivityRunIdentity>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ActivityRunIdentity {
+    automation_id: String,
+    started_at: u64,
+    thread_id: String,
 }
 
 impl Default for SchedulerState {
@@ -685,7 +695,48 @@ impl Default for SchedulerState {
             version: STATE_VERSION,
             updated_at: 0,
             automations: BTreeMap::new(),
+            activity_runs: Vec::new(),
         }
+    }
+}
+
+impl SchedulerState {
+    fn record_activity_run(&mut self, automation_id: &str, started_at: u64, thread_id: &str) {
+        if thread_id.trim().is_empty() {
+            return;
+        }
+        if self.activity_runs.iter()
+            .any(|run| run.automation_id == automation_id && run.started_at == started_at)
+        {
+            return;
+        }
+        self.activity_runs.push(ActivityRunIdentity {
+            automation_id: automation_id.to_owned(),
+            started_at,
+            thread_id: thread_id.to_owned(),
+        });
+        self.activity_runs.sort_by(|a, b| b.started_at.cmp(&a.started_at).then_with(|| a.automation_id.cmp(&b.automation_id)));
+        self.activity_runs.truncate(ACTIVITY_RUN_LIMIT);
+    }
+
+    fn import_legacy_activity_runs(&mut self) {
+        if self.version >= 2 {
+            return;
+        }
+        let known: Vec<_> = self.automations.iter().filter_map(|(id, entry)| {
+            Some((id.clone(), entry.last_run_at?, entry.last_thread_id.clone()?))
+        }).collect();
+        for (id, started_at, thread_id) in known {
+            self.record_activity_run(&id, started_at, &thread_id);
+        }
+    }
+
+    fn activity_thread_ids(&self, automation_ids: &HashSet<&str>) -> Vec<&str> {
+        let mut seen = HashSet::new();
+        self.activity_runs.iter()
+            .filter(|run| automation_ids.contains(run.automation_id.as_str()))
+            .filter_map(|run| seen.insert(run.thread_id.as_str()).then_some(run.thread_id.as_str()))
+            .collect()
     }
 }
 
@@ -701,13 +752,14 @@ fn load_state() -> SchedulerState {
         return SchedulerState::default();
     };
     match serde_json::from_str::<SchedulerState>(&raw) {
-        Ok(state) => {
+        Ok(mut state) => {
             if state.version > STATE_VERSION {
                 eprintln!(
                     "[automations] scheduler state version {} is newer than {}; ignoring unknown fields",
                     state.version, STATE_VERSION
                 );
             }
+            state.import_legacy_activity_runs();
             state
         }
         Err(err) => {
@@ -1193,6 +1245,9 @@ async fn finish_run(
             entry.last_finished_at = Some(finished_at);
             entry.last_thread_id = thread_id.clone();
             entry.last_error = terminal.error.clone();
+            if let Some(thread_id) = thread_id.as_deref() {
+                state.record_activity_run(&item.id, started_at, thread_id);
+            }
             true
         });
         match changed {
@@ -1224,6 +1279,7 @@ async fn monitor_run(app: AppHandle, item: AutomationItem, started_at: u64, mut 
         if let Some(entry) = state.automations.get_mut(&item.id) {
             if entry.last_run_at == Some(started_at) {
                 entry.last_thread_id = Some(outcome.thread_id.clone());
+                state.record_activity_run(&item.id, started_at, &outcome.thread_id);
             }
         }
     });
@@ -1359,6 +1415,8 @@ pub fn scheduler_status() -> Value {
     let now = now_ms();
     let state = read_state();
     let items = config_skills::list_automations();
+    let activity_automation_ids = items.iter().filter(|item| !item.status.eq_ignore_ascii_case("deleted"))
+        .map(|item| item.id.as_str()).collect();
     let entries: Vec<Value> = items
         .iter()
         .map(|item| {
@@ -1391,6 +1449,7 @@ pub fn scheduler_status() -> Value {
         "now": now,
         "stateUpdatedAt": state.updated_at,
         "entries": entries,
+        "activityThreadIds": state.activity_thread_ids(&activity_automation_ids),
     })
 }
 
@@ -1501,6 +1560,47 @@ mod tests {
         json!({"method": "turn/completed", "params": {
             "threadId": thread, "turn": {"id": turn, "status": status, "error": {"message": "detail"}}
         }})
+    }
+
+    #[test]
+    fn activity_run_identities_survive_restart_and_keep_multiple_threads_per_task() {
+        let mut state: SchedulerState = serde_json::from_value(json!({
+            "version": 1,
+            "automations": {
+                "repeat": {"lastRunAt": 10, "lastThreadId": "legacy"},
+                "never": {"lastRunAt": 12},
+            }
+        })).unwrap();
+        state.import_legacy_activity_runs();
+        state.record_activity_run("repeat", 20, "first");
+        state.record_activity_run("repeat", 20, "first");
+        state.record_activity_run("repeat", 30, "second");
+        state.record_activity_run("repeat", 40, "second");
+        state.record_activity_run("removed", 50, "removed-thread");
+        state.record_activity_run("never", 60, "");
+        assert_eq!(state.activity_runs.len(), 5);
+        let root = std::env::temp_dir().join(format!("codex-activity-runs-{}", uuid::Uuid::new_v4()));
+        let path = root.join("scheduler-state.json");
+        persist_state_at(&mut state, &path).unwrap();
+        let mut restored: SchedulerState = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        restored.import_legacy_activity_runs();
+        assert_eq!(restored.version, STATE_VERSION);
+        assert_eq!(restored.activity_thread_ids(&HashSet::from(["repeat", "never"])), ["second", "first", "legacy"]);
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
+    fn activity_run_identities_keep_latest_two_hundred_even_with_late_receipts() {
+        let mut state = SchedulerState::default();
+        for time in 1..=201 {
+            state.record_activity_run("task", time, &format!("thread-{time}"));
+        }
+        state.record_activity_run("late", 0, "old");
+        let ids = state.activity_thread_ids(&HashSet::from(["task", "late"]));
+        assert_eq!(ids.len(), 200);
+        assert_eq!(ids[0], "thread-201");
+        assert_eq!(ids[199], "thread-2");
     }
 
     #[test]

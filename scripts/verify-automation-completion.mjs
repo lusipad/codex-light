@@ -6,7 +6,7 @@ import ts from "typescript";
 const client = { exports: {} };
 vm.runInNewContext(ts.transpileModule(
   fs.readFileSync("src/automationsClient.ts", "utf8") +
-    "\nexport { normalizeFinishedEvent };",
+    "\nexport { normalizeFinishedEvent, normalizeSchedulerStatus };",
   { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } },
 ).outputText, { exports: client.exports, require: () => ({}) });
 for (const status of ["completed", "failed", "interrupted", "unknown"]) {
@@ -16,6 +16,11 @@ for (const status of ["completed", "failed", "interrupted", "unknown"]) {
 }
 assert.equal(client.exports.normalizeFinishedEvent({ id: "task", status: "running" }), null);
 assert.equal(client.exports.normalizeFinishedEvent({ id: "task" }), null);
+const status = client.exports.normalizeSchedulerStatus;
+assert.equal(status({ entries: [] }).activityThreadIds, null, "older backends cannot attest to the identity set");
+assert.equal(status({ activityThreadIds: ["known", 42] }).activityThreadIds, null, "invalid sets are not treated as authoritative");
+assert.deepEqual(Array.from(status({ activityThreadIds: ["new", "old", "new"] }).activityThreadIds), ["new", "old"]);
+assert.deepEqual(Array.from(status({ activityThreadIds: [] }).activityThreadIds), []);
 
 const source = fs.readFileSync("src/components/AutomationsView.tsx", "utf8");
 const ast = ts.createSourceFile("view.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);

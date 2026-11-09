@@ -1,7 +1,7 @@
 // Frontend client for the Rust automation scheduler.
 //
 // Contract (implemented by the concurrent Rust task, may not exist yet):
-//   automations_scheduler_status() -> { running, now, entries[] }
+//   automations_scheduler_status() -> { running, now, entries[], activityThreadIds[] }
 //   automations_run_now({ id })    -> { threadId }
 //   automations_refresh_schedule() -> same as scheduler_status()
 //   events: "automation:run-started" { id, name, at }
@@ -35,6 +35,7 @@ export interface SchedulerStatus {
   running: boolean;
   now: number;
   entries: SchedulerEntry[];
+  activityThreadIds: string[] | null;
 }
 
 export interface AutomationRunStartedEvent {
@@ -153,6 +154,7 @@ function normalizeEntry(raw: unknown): SchedulerEntry | null {
 function normalizeSchedulerStatus(raw: unknown): SchedulerStatus {
   const source = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   const rawEntries = Array.isArray(source.entries) ? source.entries : [];
+  const rawActivityIds: unknown[] | null = Array.isArray(source.activityThreadIds) ? source.activityThreadIds : null;
   const entries: SchedulerEntry[] = [];
   for (const candidate of rawEntries) {
     const entry = normalizeEntry(candidate);
@@ -162,6 +164,8 @@ function normalizeSchedulerStatus(raw: unknown): SchedulerStatus {
     running: source.running === true || source.isRunning === true,
     now: toFiniteNumber(source.now) ?? Date.now(),
     entries,
+    activityThreadIds: rawActivityIds?.every((id): id is string => typeof id === "string" && id.trim().length > 0)
+      ? [...new Set(rawActivityIds)] : null,
   };
 }
 

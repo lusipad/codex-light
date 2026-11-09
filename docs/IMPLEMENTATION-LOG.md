@@ -2775,3 +2775,8 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 
 - 复用真实置顶顺序，接入独立分组、折叠和共用分页。批量操作排除独立置顶聊天。
 - 原生验证排序、折叠、归档范围、置顶未读回执保留及重启读回。117 项前端回放和 Windows 打包通过。详见 [09J 验收](antigravity/acceptance/09J-activity-pinned.md)。
+
+## 2026-11-09 — 计划任务的活动身份数据
+
+- 依据官方运行身份来源，扩展既有调度状态保存真实运行聊天，兼容旧版最后一次记录。状态查询提供去重身份，活动筛选仍待接入。
+- 原生隔离任务两次运行保留两个聊天 ID，724 项 Rust、117 项前端回放和 Windows 打包通过。详见 [09K 验收](antigravity/acceptance/09K-scheduled-run-identity.md)。
