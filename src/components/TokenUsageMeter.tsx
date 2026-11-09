@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useId, useMemo, useState } from "react";
 import "./TokenUsageMeter.css";
 
 export interface TokenUsageSnapshot {
@@ -48,6 +48,39 @@ const RING_SIZE = 20;
 const RING_STROKE = 2.5;
 const RING_RADIUS = (RING_SIZE - RING_STROKE) / 2;
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
+
+export function ComposerContextUsage({ usage }: { usage: TokenUsageSnapshot | null }) {
+  const tooltipId = useId();
+  const [dismissed, setDismissed] = useState(false);
+  const capacity = usage?.modelContextWindow;
+  const last = usage?.last?.totalTokens;
+  if (typeof capacity !== "number" || !Number.isFinite(capacity) || capacity <= 0 ||
+      typeof last !== "number" || !Number.isFinite(last) || last < 0) return null;
+  const used = Math.min(last, capacity);
+  const ratio = used / capacity;
+  const percent = Math.round(ratio * 100);
+  return <span className="composer-context-usage" tabIndex={0} data-dismissed={dismissed}
+    role="img" aria-label={`上下文用量：${percent}%`} aria-describedby={tooltipId}
+    onFocus={() => setDismissed(false)} onPointerEnter={() => setDismissed(false)}
+    onKeyDown={event => {
+      if (event.key !== "Escape" || event.nativeEvent.isComposing || event.keyCode === 229) return;
+      event.stopPropagation();
+      setDismissed(true);
+    }}>
+    <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+      <circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.5" opacity=".35" />
+      <circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.5"
+        pathLength="100" strokeDasharray={`${ratio * 100} 100`} transform="rotate(-90 6 6)" />
+    </svg>
+    <span id={tooltipId} className="composer-context-tooltip" role="tooltip">
+      <span>背景信息窗口：</span>
+      <span className={percent >= 50 ? "composer-context-tooltip-used" : undefined}>
+        {percent}% 已用{percent < 50 ? `（剩余 ${100 - percent}%）` : ""}
+      </span>
+      <span>已用 {Math.round(used / 1000)}k 标记，共 {Math.round(capacity / 1000)}k</span>
+    </span>
+  </span>;
+}
 
 function toFiniteNumber(value: any): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;

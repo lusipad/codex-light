@@ -49,7 +49,7 @@ function mount({ select = async () => snapshot, persist = async () => ({ errors:
     showAppToast: (...args) => calls.push(["toast", ...args]),
     setTimeout: fn => fn(),
   };
-  for (const name of ["Workspaces", "SidebarProjectMembership", "LoadingEarlierTurns", "LoadingThread", "HistoryError", "IsStreaming", "ActiveThreadId", "ActiveTurnId", "ActiveThreadStatus", "Turns", "TurnsCursor", "HasMoreTurns", "PlanSteps", "PlanExplanation", "TurnDiffFiles", "TokenUsage", "AttachedFiles", "ActiveRoute", "ComposerFocusRequest"]) {
+  for (const name of ["Workspaces", "SidebarProjectMembership", "LoadingEarlierTurns", "LoadingThread", "HistoryError", "IsStreaming", "ActiveThreadId", "ActiveTurnId", "ActiveThreadStatus", "Turns", "TurnsCursor", "HasMoreTurns", "PlanSteps", "PlanExplanation", "TurnDiffFiles", "ThreadUsage", "AttachedFiles", "ActiveRoute", "ComposerFocusRequest"]) {
     const key = name[0].toLowerCase() + name.slice(1);
     context[`set${name}`] = value => { state[key] = value; calls.push([`set${name}`, value]); };
   }

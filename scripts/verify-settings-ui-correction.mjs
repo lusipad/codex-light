@@ -28,6 +28,7 @@ function mount(section) {
     keyboardState: {}, gitPreferencesState: {}, codeReviewPreferencesState: {}, petPreferencesState: {}, externalImportsState: {},
     composerEnterBehavior: 'enter', composerEnterSaving: false, composerEnterError: null,
     followUp: { mode: 'steer', saving: false, error: '', onChange: value => calls.push(['follow-up', value]) },
+    contextUsage: { visible: false, saving: false, error: '', onChange: value => calls.push(['context-usage', value]) },
     onSetComposerEnterBehavior: value => calls.push(['enter', value]), onConfigUpdated() {}, onRestartAppServer() {},
     onTogglePetVisible() {}, onRunEnvironmentCommand() {}, onNavigationGuardChange: guard => { props.guard = guard; },
   };
@@ -74,6 +75,11 @@ test('General keeps real external-open and Enter consumers without debug/reset c
   const enter = page.by(n => n.props.id === 'composer-enter-behavior');
   assert.equal(enter.type.name, 'GeneralPreferenceSelect');
   enter.props.onChange('cmdAlways'); assert.deepEqual(page.calls, [['follow-up', 'queue'], ['enter', 'cmdAlways']]);
+  const usage = page.by(n => n.props.id === 'show-context-window-usage');
+  assert.equal(usage.props.role, 'switch');
+  assert.equal(usage.props.checked, false);
+  usage.props.onChange({ target: { checked: true } });
+  assert.deepEqual(page.calls.at(-1), ['context-usage', true]);
   page.props.composerEnterSaving = true; page.render();
   assert.equal(page.by(n => n.props.id === 'composer-enter-behavior').props.disabled, true);
   page.props.composerEnterError = '写入失败'; page.render(); assert.ok(page.by(n => n.props.role === 'alert' && content(n) === '写入失败'));

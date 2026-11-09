@@ -139,7 +139,7 @@ import { ThreadGoalModal } from "./components/ThreadGoalModal";
 import { ApprovalCenter } from "./components/ApprovalCenter";
 import { PlanPanel } from "./components/PlanPanel";
 import { TurnDiffPanel } from "./components/TurnDiffPanel";
-import { TokenUsageMeter } from "./components/TokenUsageMeter";
+import { ComposerContextUsage, TokenUsageMeter } from "./components/TokenUsageMeter";
 import { ToolCallCards } from "./components/ToolCallCards";
 import { TextSelectionToolbar } from "./components/TextSelectionToolbar";
 import { HotkeyWindow } from "./components/HotkeyWindow";
@@ -685,6 +685,10 @@ export const App: React.FC = () => {
   const [followUpSaving, setFollowUpSaving] = useState(true);
   const [followUpError, setFollowUpError] = useState("");
   const followUpPendingRef = useRef(true);
+  const [contextUsageVisible, setContextUsageVisible] = useState(false);
+  const [contextUsageSaving, setContextUsageSaving] = useState(true);
+  const [contextUsageError, setContextUsageError] = useState("");
+  const contextUsagePendingRef = useRef(true);
   const [reviewLastResult, setReviewLastResult] = useState<string | null>(null);
   const [reviewRuns, setReviewRuns] = useState<ReviewRun[]>([]);
   const [selectedReviewFinding, setSelectedReviewFinding] = useState<ModelReviewComment | null>(null);
@@ -768,7 +772,8 @@ export const App: React.FC = () => {
   const sendStartPendingRef = useRef(new Set<number>());
   const [requestResponses, setRequestResponses] = useState<Record<string, RequestResponseState>>({});
   const activePendingRequests = useMemo(() => requestsForThread(pendingRequests, activeThreadId), [pendingRequests, activeThreadId]);
-  const [tokenUsage, setTokenUsage] = useState<TokenUsageSnapshot | null>(null);
+  const [threadUsage, setThreadUsage] = useState<{ threadId: string; usage: TokenUsageSnapshot | null } | null>(null);
+  const tokenUsage = threadUsage?.threadId === activeThreadId ? threadUsage.usage : null;
   const [planSteps, setPlanSteps] = useState<Array<{ step: string; status: string }>>([]);
   const [planExplanation, setPlanExplanation] = useState<string | null>(null);
   const [turnDiffFiles, setTurnDiffFiles] = useState<
@@ -1729,6 +1734,38 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     let cancelled = false;
+    tauriInvoke("desktop_state_get", { key: "show-context-window-usage" }).then(value => {
+      if (!cancelled) setContextUsageVisible(value === true);
+    }).catch(() => {
+      if (!cancelled) setContextUsageError("无法读取上下文窗口用量设置");
+    }).finally(() => {
+      if (cancelled) return;
+      contextUsagePendingRef.current = false;
+      setContextUsageSaving(false);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleSetContextUsageVisible = useCallback(async (value: boolean) => {
+    if (contextUsagePendingRef.current || value === contextUsageVisible) return;
+    contextUsagePendingRef.current = true;
+    setContextUsageSaving(true);
+    setContextUsageError("");
+    try {
+      await tauriInvoke("desktop_state_set", { key: "show-context-window-usage", value });
+      const saved = await tauriInvoke("desktop_state_get", { key: "show-context-window-usage" });
+      if (saved !== value) throw new Error("保存后读回不一致");
+      setContextUsageVisible(value);
+    } catch (error) {
+      setContextUsageError(`无法保存上下文窗口用量设置：${String(error)}`);
+    } finally {
+      contextUsagePendingRef.current = false;
+      setContextUsageSaving(false);
+    }
+  }, [contextUsageVisible]);
+
+  useEffect(() => {
+    let cancelled = false;
     tauriInvoke<unknown>("desktop_state_get", { key: BOTTOM_PANEL_LAUNCHER_KEY })
       .then(value => { if (!cancelled) setBottomPanelLauncherVisible(value !== false); })
       .catch(() => { if (!cancelled) setBottomPanelLauncherVisible(true); });
@@ -2254,7 +2291,12 @@ export const App: React.FC = () => {
             );
           }
         } else if (method === NOTIFICATION.THREAD_TOKEN_USAGE) {
-          setTokenUsage((prev) => mergeTokenUsage(prev, params));
+          if (typeof eventThreadId === "string") {
+            setThreadUsage(previous => ({
+              threadId: eventThreadId,
+              usage: mergeTokenUsage(previous?.threadId === eventThreadId ? previous.usage : null, params),
+            }));
+          }
         } else if (method === NOTIFICATION.THREAD_NAME_UPDATED) {
           const tid = params?.threadId ?? params?.thread_id;
           const name = params?.name ?? params?.threadName ?? null;
@@ -2848,7 +2890,7 @@ export const App: React.FC = () => {
         setPlanSteps([]);
         setPlanExplanation(null);
         setTurnDiffFiles([]);
-        setTokenUsage(null);
+        setThreadUsage(null);
         activeRouteRef.current = "home";
         commitActiveRoute("home");
         setComposerFocusRequest(request => request + 1);
@@ -2938,7 +2980,7 @@ export const App: React.FC = () => {
     setHistoryError(null);
     setTurns([]);
     setIsStreaming(false);
-    setTokenUsage(null);
+    setThreadUsage(null);
     setServerGoal(null);
     setActiveThreadId(threadId);
     setActiveRoute("thread");
@@ -5557,6 +5599,8 @@ export const App: React.FC = () => {
       dictationSessionKey={promptDraftKey}
       composerEnterBehavior={composerEnterBehavior}
       followUpMode={followUpMode}
+      contextUsageIndicator={contextUsageVisible && activeThreadId
+        ? <ComposerContextUsage key={activeThreadId} usage={tokenUsage} /> : undefined}
       keyBindings={keyboardState.bindings}
       submissionDisabled={queueBusy || modelSelection.selectionPending || !!modelSelection.selectionDisabledReason || sendStartPendingRef.current.has(threadRequestRef.current)}
       variant="thread"
@@ -6507,6 +6551,7 @@ export const App: React.FC = () => {
               composerEnterError={composerEnterError}
               onSetComposerEnterBehavior={handleSetComposerEnterBehavior}
               followUp={{ mode: followUpMode, saving: followUpSaving, error: followUpError, onChange: handleSetFollowUpMode }}
+              contextUsage={{ visible: contextUsageVisible, saving: contextUsageSaving, error: contextUsageError, onChange: handleSetContextUsageVisible }}
               appServerStatus={appServerStatus}
               models={getPickerModels(models)}
               initialSection={settingsInitialSection}

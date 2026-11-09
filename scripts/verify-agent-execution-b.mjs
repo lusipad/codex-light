@@ -176,7 +176,7 @@ for (const branch of ["first-resume", "history-fallback", "identity-change"]) {
     normalizeTurnsFromList: () => [], normalizeTurnsFromThread: () => [], workspacesRef: { current: [] },
     listThreadAttachments: async () => [], mergeAttachmentItems: () => [], goalGet: async () => null,
   });
-  for (const name of ["LoadingEarlierTurns", "LoadingThread", "HistoryError", "TokenUsage", "ActiveThreadStatus", "PlanSteps", "TurnDiffFiles", "TurnsCursor", "HasMoreTurns"]) context[`set${name}`] = () => {};
+  for (const name of ["LoadingEarlierTurns", "LoadingThread", "HistoryError", "ThreadUsage", "ActiveThreadStatus", "PlanSteps", "TurnDiffFiles", "TurnsCursor", "HasMoreTurns"]) context[`set${name}`] = () => {};
   let finish, resumes = 0;
   context.callAppServer = async (method, params) => {
     view.calls.push([method, plain(params)]);

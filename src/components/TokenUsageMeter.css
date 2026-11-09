@@ -256,3 +256,34 @@
   border-radius: 0;
   box-shadow: none;
 }
+.composer-context-usage {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  color: var(--text-secondary);
+}
+
+.composer-context-tooltip {
+  position: absolute;
+  z-index: 2;
+  inset-inline-end: 0;
+  bottom: 100%;
+  display: none;
+  width: 152px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-lg);
+  text-align: center;
+  font-size: var(--text-xs);
+}
+
+.composer-context-usage[data-dismissed="false"]:is(:hover, :focus-visible) .composer-context-tooltip {
+  display: grid;
+  gap: 2px;
+}
+.composer-context-tooltip-used { opacity: .6; }

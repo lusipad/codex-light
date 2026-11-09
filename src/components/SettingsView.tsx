@@ -123,6 +123,7 @@ interface SettingsViewProps {
   composerEnterError: string | null;
   onSetComposerEnterBehavior: (value: ComposerEnterBehavior) => void;
   followUp: { mode: FollowUpMode; saving: boolean; error: string; onChange: (value: FollowUpMode) => void };
+  contextUsage: { visible: boolean; saving: boolean; error: string; onChange: (value: boolean) => void };
   bottomPanelLauncher?: BottomPanelLauncherPreference;
   appServerStatus: AppServerStatus;
   models: ModelInfo[];
@@ -157,7 +158,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   externalImportsState,
   keyboardState,
   appearanceState,
-  composerEnterBehavior, composerEnterSaving, composerEnterError, onSetComposerEnterBehavior, followUp,
+  composerEnterBehavior, composerEnterSaving, composerEnterError, onSetComposerEnterBehavior, followUp, contextUsage,
   bottomPanelLauncher,
   appServerStatus,
   activeWorkspaceRoot = "",
@@ -360,6 +361,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   onChange={value => followUp.onChange(value === "queue" ? "queue" : "steer")}
                   onReselect={() => { if (followUp.error) followUp.onChange(followUp.mode); }} />
                 {followUp.error && <p role="alert">{followUp.error}</p>}
+              </div>
+              <div className="form-field">
+                <label htmlFor="show-context-window-usage">显示上下文窗口使用情况</label>
+                <div className="bottom-panel-launcher-setting">
+                  <label className="switch-control">
+                    <input id="show-context-window-usage" type="checkbox" role="switch" checked={contextUsage.visible}
+                      aria-label="在编辑器中显示上下文窗口使用情况" disabled={contextUsage.saving}
+                      onChange={event => contextUsage.onChange(event.target.checked)} />
+                    <span className="switch-slider" aria-hidden="true" />
+                  </label>
+                </div>
+                {contextUsage.error && <p role="alert">{contextUsage.error}</p>}
               </div>
             </section>
             <ExperimentalFeatures connected={appServerStatus.connected} />

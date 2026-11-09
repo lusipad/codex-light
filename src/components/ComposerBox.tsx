@@ -42,6 +42,7 @@ export interface ComposerBoxProps {
   dictationSessionKey: string;
   composerEnterBehavior: ComposerEnterBehavior;
   followUpMode?: FollowUpMode;
+  contextUsageIndicator?: React.ReactNode;
   keyBindings?: KeyBinding[];
   submissionDisabled?: boolean;
   variant: "home" | "thread";
@@ -139,6 +140,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
   promptInput,
   onPromptInputChange,
   followUpMode = "steer",
+  contextUsageIndicator,
   onSendMessage,
   onQueueMessage,
   onInterruptTurn,
@@ -1167,6 +1169,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
 
           {/* Right: Combined Model+Effort Dropdown + Mic + Send */}
           <div className="composer-bottom-right">
+            {!cloudActive && !isDictating && contextUsageIndicator}
             {!cloudActive && <ModelSelector
               models={models}
               modelsLoading={modelsLoading}

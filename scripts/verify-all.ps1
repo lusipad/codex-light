@@ -247,6 +247,7 @@ try {
   Invoke-Step "Workspace explicit open target and lifecycle regression" { node scripts/verify-workspace-open-targets.mjs }
   Invoke-Step "Native open target and isolated PTY regression" { cargo test --manifest-path src-tauri/Cargo.toml desktop_open }
   Invoke-Step "General Enter preference and composer regression" { node scripts/verify-general-enter.mjs }
+  Invoke-Step "Composer context window usage" { node scripts/verify-composer-context-usage.mjs }
   Invoke-Step "Composer multiline input regression" { node scripts/verify-composer-multiline.mjs }
   Invoke-Step "Composer menu keyboard regression" { node scripts/verify-composer-menus.mjs }
   Invoke-Step "Unit 01A Public Shell parity" { node scripts/verify-unit-01a-shell.mjs }
