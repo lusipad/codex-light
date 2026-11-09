@@ -744,7 +744,12 @@ impl SchedulerState {
             read_at: None,
             result: None,
         });
+        self.trim_activity_runs();
+    }
+
+    fn trim_activity_runs(&mut self) {
         self.activity_runs.sort_by(|a, b| b.started_at.cmp(&a.started_at).then_with(|| a.automation_id.cmp(&b.automation_id)));
+        self.activity_runs.dedup_by(|a, b| a.started_at == b.started_at && a.automation_id == b.automation_id);
         self.activity_runs.truncate(ACTIVITY_RUN_LIMIT);
     }
 
@@ -832,13 +837,31 @@ fn scheduler_state_path() -> PathBuf {
         .join("scheduler-state.json")
 }
 
-fn load_state() -> SchedulerState {
+fn decode_scheduler_state(raw: &str) -> serde_json::Result<(SchedulerState, bool)> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct StateFile {
+        #[serde(flatten)]
+        state: SchedulerState,
+        #[serde(default)]
+        unlinked_runs: Vec<ActivityRunIdentity>,
+    }
+
+    let StateFile { mut state, unlinked_runs } = serde_json::from_str(raw)?;
+    let needs_compat_write = state.version <= STATE_VERSION &&
+        state.activity_runs.iter().any(|run| run.thread_id.is_none());
+    state.activity_runs.extend(unlinked_runs.into_iter().filter(|run| run.thread_id.is_none()));
+    state.trim_activity_runs();
+    Ok((state, needs_compat_write))
+}
+
+fn load_state() -> (SchedulerState, bool) {
     let path = scheduler_state_path();
     let Ok(raw) = fs::read_to_string(&path) else {
-        return SchedulerState::default();
+        return (SchedulerState::default(), false);
     };
-    match serde_json::from_str::<SchedulerState>(&raw) {
-        Ok(mut state) => {
+    match decode_scheduler_state(&raw) {
+        Ok((mut state, needs_compat_write)) => {
             if state.version > STATE_VERSION {
                 eprintln!(
                     "[automations] scheduler state version {} is newer than {}; ignoring unknown fields",
@@ -846,11 +869,11 @@ fn load_state() -> SchedulerState {
                 );
             }
             state.import_legacy_activity_runs();
-            state
+            (state, needs_compat_write)
         }
         Err(err) => {
             eprintln!("[automations] failed to parse scheduler state: {err}");
-            SchedulerState::default()
+            (SchedulerState::default(), false)
         }
     }
 }
@@ -861,12 +884,27 @@ fn persist_state(state: &mut SchedulerState) -> Result<(), String> {
 }
 
 fn persist_state_at(state: &mut SchedulerState, path: &std::path::Path) -> Result<(), String> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct StateFile<'a> {
+        version: u32,
+        updated_at: u64,
+        automations: &'a BTreeMap<String, AutomationScheduleState>,
+        activity_runs: Vec<&'a ActivityRunIdentity>,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        unlinked_runs: Vec<&'a ActivityRunIdentity>,
+    }
+
     state.version = STATE_VERSION;
     state.updated_at = now_ms();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    let serialized = serde_json::to_vec_pretty(state).map_err(|error| error.to_string())?;
+    // Earlier builds require a string threadId in every activityRuns item.
+    let (activity_runs, unlinked_runs) = state.activity_runs.iter().partition(|run| run.thread_id.is_some());
+    let file = StateFile { version: state.version, updated_at: state.updated_at,
+        automations: &state.automations, activity_runs, unlinked_runs };
+    let serialized = serde_json::to_vec_pretty(&file).map_err(|error| error.to_string())?;
     let temp_path = path.with_extension("json.tmp");
     fs::write(&temp_path, serialized).map_err(|error| error.to_string())?;
     fs::rename(&temp_path, &path).map_err(|error| error.to_string())
@@ -880,16 +918,16 @@ fn read_state() -> SchedulerState {
     let _guard = STATE_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    load_state()
+    load_state().0
 }
 
 fn mutate_state<T>(mutate: impl FnOnce(&mut SchedulerState) -> T) -> (T, Result<(), String>) {
     let _guard = STATE_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let mut state = load_state();
+    let (mut state, needs_compat_write) = load_state();
     let before = serde_json::to_string(&state).unwrap_or_default();
     let result = mutate(&mut state);
     let after = serde_json::to_string(&state).unwrap_or_default();
-    let persisted = if before != after { persist_state(&mut state) } else { Ok(()) };
+    let persisted = if needs_compat_write || before != after { persist_state(&mut state) } else { Ok(()) };
     (result, persisted)
 }
 
@@ -1746,6 +1784,62 @@ mod tests {
         assert_eq!(restored.mark_activity_runs_read(&tasks, &selected, 32), 1);
         assert_eq!(restored.unread_activity_thread_ids(&tasks), ["outside"]);
         assert_eq!(restored.activity_thread_ids(&tasks), ["running", "shared", "outside", "legacy"]);
+    }
+
+    #[test]
+    fn scheduler_history_disk_file_keeps_the_legacy_reader_working() {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct LegacyState {
+            version: u32,
+            automations: BTreeMap<String, AutomationScheduleState>,
+            activity_runs: Vec<LegacyRun>,
+        }
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct LegacyRun {
+            automation_id: String,
+            started_at: u64,
+            thread_id: String,
+            completed_at: Option<u64>,
+            read_at: Option<u64>,
+        }
+        let root = std::env::temp_dir().join(format!("codex-history-compat-{}", uuid::Uuid::new_v4()));
+        let path = root.join("scheduler-state.json");
+        let mut state = SchedulerState::default();
+        state.automations.insert("task".into(), AutomationScheduleState {
+            last_run_at: Some(30), last_status: Some("failed".into()),
+            consumed_once_at: Some(10), run_count: 2, ..Default::default()
+        });
+        state.complete_activity_run("task", 10, "chat", 20);
+        state.mark_matching_activity_runs_read(25, |_| true);
+        state.finish_activity_run("task", 30, None, 40, &RunTerminal {
+            status: "failed", error: Some("no chat".into()),
+        });
+        persist_state_at(&mut state, &path).unwrap();
+        let raw = fs::read_to_string(&path).unwrap();
+        fs::remove_file(&path).unwrap();
+        fs::remove_dir(&root).unwrap();
+        let old: LegacyState = serde_json::from_str(&raw).unwrap();
+        assert_eq!(old.version, STATE_VERSION);
+        assert_eq!(old.automations["task"].consumed_once_at, Some(10));
+        assert_eq!(old.automations["task"].run_count, 2);
+        assert_eq!(old.automations["task"].last_status.as_deref(), Some("failed"));
+        assert_eq!(old.activity_runs.len(), 1);
+        let run = &old.activity_runs[0];
+        assert_eq!((&*run.automation_id, run.started_at, &*run.thread_id), ("task", 10, "chat"));
+        assert_eq!((run.completed_at, run.read_at), (Some(20), Some(25)));
+        let (restored, needs_compat_write) = decode_scheduler_state(&raw).unwrap();
+        assert!(!needs_compat_write);
+        assert_eq!(restored.activity_runs.len(), 2);
+        assert_eq!(restored.activity_runs[0].result.as_ref().unwrap().error.as_deref(), Some("no chat"));
+        assert_eq!(restored.activity_runs[1].read_at, Some(25));
+        // 10M stored both kinds of records in activityRuns.
+        let previous = serde_json::to_string(&state).unwrap();
+        let (previous, needs_compat_write) = decode_scheduler_state(&previous).unwrap();
+        assert!(needs_compat_write);
+        assert_eq!(serde_json::to_value(previous).unwrap(),
+            serde_json::to_value(restored).unwrap());
     }
 
     #[test]

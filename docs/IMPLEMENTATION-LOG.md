@@ -2821,3 +2821,7 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 
 - 按官方详情的最新与历史区分呈现。复用调度器持久状态，运行失败时即使没有创建聊天也可保存结果，实时事件与持久记录按运行身份合并。
 - 原生宽窄窗口验证离线失败和成功的重启读回。727 项 Rust、123 项发布回放及 Windows 打包通过。详见[验收记录](antigravity/acceptance/10M-local-run-history.md)。
+
+## 2026-11-09 — 运行历史状态兼容
+
+- 新版启动迁移 10M 混合文件，保留无聊天失败，同时让旧构建可读取任务与回执。728 项 Rust、123 项发布回放和 Windows 打包通过，另用新旧原生 EXE 读回隔离副本。详见[验收记录](antigravity/acceptance/10N-run-history-compatibility.md)。
