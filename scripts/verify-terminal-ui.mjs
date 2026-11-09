@@ -7,12 +7,17 @@ const source = fs.readFileSync(new URL("../src/components/TerminalDock.tsx", imp
 const ast = ts.createSourceFile("TerminalDock.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 let tabHandler, actionsHandler, appearance, appearanceEffect, clearTerminal, closeTerminal, moveDock, startResize, resizeDock;
 const fontButtons={};
+const dragHandlers = {};
 function visit(node) {
   if (ts.isVariableDeclaration(node) && node.name.getText(ast)==="clearActiveTerminal") clearTerminal=node.initializer;
   if (ts.isVariableDeclaration(node) && node.name.getText(ast)==="closeTerminalTab") closeTerminal=node.initializer;
   if (ts.isVariableDeclaration(node) && node.name.getText(ast)==="moveActiveDock") moveDock=node.initializer;
   if (ts.isVariableDeclaration(node) && node.name.getText(ast)==="handleStartResize") startResize=node.initializer;
   if (ts.isVariableDeclaration(node) && node.name.getText(ast)==="handleDockResize") resizeDock=node.initializer;
+  if (ts.isVariableDeclaration(node) && ["startTabDrag", "trackTabDrag", "cancelTabDrag", "finishTabDrag"].includes(node.name.getText(ast))) {
+    dragHandlers[node.name.getText(ast)] = node.initializer;
+  }
+  if (ts.isFunctionDeclaration(node) && node.name?.text === "terminalDropPosition") dragHandlers.terminalDropPosition = node;
   if (ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect" && node.arguments[0]?.getText(ast).includes("observer.observe(document.documentElement")) appearanceEffect=node.arguments[0];
   if (ts.isFunctionDeclaration(node) && node.name?.text === "terminalAppearance") appearance = node;
   if (ts.isJsxOpeningElement(node)) {
@@ -40,6 +45,7 @@ const compile = node => ts.transpileModule(`(${node.getText(ast)})`, {compilerOp
 const selected = [], closed = [], focused = [];
 const context = {
   t:{id:"a"}, tabs:[{id:"a"},{id:"b"},{id:"c"}],
+  tabDragRef:{current:null},
   setActiveTabId:id=>selected.push(id), closeTerminalTab:id=>closed.push(id),
   tabListRef:{current:{querySelectorAll:()=>[0,1,2].map(index=>({focus:()=>focused.push(index)}))}},
   setActionsOpen:value=>{context.actionsOpen=value;}, actionsTriggerRef:{current:{focus:()=>focused.push("actions")}},
@@ -89,6 +95,46 @@ for (const [position, event, expected] of [
 }
 assert.deepEqual(dock.captured, [2, 2, 2]);
 
+const bounds = {left:100, top:50, right:900, bottom:650, width:800, height:600};
+const drag = {
+  ...dock, tabDragRef:{current:null}, suppressTabClickRef:{current:false}, preview:null, moved:[],
+  setDropPreview(value) { drag.preview = typeof value === "function" ? value(drag.preview) : value; },
+  moveActiveDock(position, tabId) { drag.moved.push([position, tabId]); },
+};
+for (const [name,node] of Object.entries(dragHandlers)) drag[name] = vm.runInNewContext(compile(node), drag);
+const pointer = (x,y,id=1) => ({
+  pointerId:id, clientX:x, clientY:y, button:0, isPrimary:true, pointerType:"mouse",
+  currentTarget:{closest:()=>({getBoundingClientRect:()=>bounds}),setPointerCapture(){}},
+});
+drag.startTabDrag(pointer(500,630),"b");
+drag.trackTabDrag(pointer(503,631));
+assert.equal(drag.preview,null, "a click with small movement does not enter drag mode");
+drag.finishTabDrag(pointer(503,631));
+assert.equal(drag.suppressTabClickRef.current,false);
+for (const [x,y,position] of [[160,300,"left"],[860,300,"right"],[540,600,"bottom"]]) {
+  drag.startTabDrag(pointer(500,630),"b");
+  drag.trackTabDrag(pointer(x,y,9));
+  assert.equal(drag.preview,null,"another pointer does not control the drag");
+  drag.trackTabDrag(pointer(x,y));
+  assert.equal(drag.preview.position,position);
+  drag.finishTabDrag(pointer(x,y));
+  assert.deepEqual(drag.moved.at(-1),[position,"b"]);
+  assert.equal(drag.preview,null);
+  assert.equal(drag.suppressTabClickRef.current,true);
+}
+for (const [x,y] of [[500,300],[950,300]]) {
+  drag.startTabDrag(pointer(500,630),"b");
+  drag.trackTabDrag(pointer(x,y));
+  assert.equal(drag.preview.position,null,"center and outside are not valid drop targets");
+  drag.finishTabDrag(pointer(x,y));
+}
+drag.startTabDrag(pointer(500,630),"b");
+drag.trackTabDrag(pointer(860,300));
+vm.runInNewContext(compile(tabHandler),drag)(event("Escape"));
+drag.finishTabDrag(pointer(860,300));
+assert.equal(drag.preview,null);
+assert.equal(drag.moved.length,3,"cancelled or invalid drags never move a tab");
+
 const values={"--font-mono":'"Custom Mono", monospace',"--font-code-size":"18px","--bg-primary":"#ffffff","--text-primary":"#111111","--selection-bg":"#abcdef"};
 const read=vm.runInNewContext(compile(appearance),{getComputedStyle:()=>({getPropertyValue:key=>values[key]||""})});
 const result=read({});
@@ -115,6 +161,7 @@ stop();assert.equal(disconnected,true);assert.equal(fontListeners.size,0);
 let released=0,cleared=0;
 const tabContext={
   tabs:[{id:"a"},{id:"b"}],activeTabId:"a",
+  tabDragRef:{current:null},
   xtermMapRef:{current:new Map([["a",{releaseInput(){released++;},term:{clear(){cleared++;},dispose(){}},output:{dispose(){}},cancelHydration(){},el:{remove(){}}}]])},
   invoke:()=>Promise.resolve(),setTabs:()=>{},setActiveTabId:()=>{},
 };

@@ -44,7 +44,15 @@ interface SessionTab {
 }
 
 type TerminalDockPosition = "left" | "right" | "bottom";
+type TerminalDropPreview = { bounds: DOMRect; position: TerminalDockPosition | null };
 
+function terminalDropPosition(bounds: DOMRect, x: number, y: number): TerminalDockPosition | null {
+  if (x < bounds.left || x >= bounds.right || y < bounds.top || y >= bounds.bottom) return null;
+  const across = (x - bounds.left) / bounds.width;
+  if (across < 0.25) return "left";
+  if (across >= 0.75) return "right";
+  return y >= bounds.top + bounds.height * 0.73 ? "bottom" : null;
+}
 
 export const TerminalDock: React.FC<TerminalDockProps> = ({
   open = true,
@@ -75,6 +83,15 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
   const dockPosition = tabs.find(tab => tab.id === activeTabId)?.dockPosition ?? "bottom";
   const sideDock = dockPosition !== "bottom";
   const dockResizeRef = useRef<{ id: number; start: number; size: number; limit: number } | null>(null);
+  const tabDragRef = useRef<{ id: number; tabId: string; x: number; y: number; bounds: DOMRect; moving: boolean } | null>(null);
+  const suppressTabClickRef = useRef(false);
+  const [dropPreview, setDropPreview] = useState<TerminalDropPreview | null>(null);
+
+  useEffect(() => {
+    if (open) return;
+    tabDragRef.current = null;
+    setDropPreview(null);
+  }, [open]);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const actionsTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -532,8 +549,46 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
     }).catch(() => {});
   };
 
-  const moveActiveDock = (position: TerminalDockPosition) => {
-    setTabs(current => current.map(tab => tab.id === activeTabId ? { ...tab, dockPosition: position } : tab));
+  const moveActiveDock = (position: TerminalDockPosition, tabId = activeTabId) => {
+    setTabs(current => current.map(tab => tab.id === tabId ? { ...tab, dockPosition: position } : tab));
+    if (tabId !== activeTabId) setActiveTabId(tabId);
+  };
+
+  const startTabDrag = (event: React.PointerEvent<HTMLButtonElement>, tabId: string) => {
+    if (event.button !== 0 || !event.isPrimary) return;
+    suppressTabClickRef.current = false;
+    if (event.pointerType === "touch") return;
+    const bounds = event.currentTarget.closest(".workspace-main-with-terminal")?.getBoundingClientRect();
+    if (!bounds || !bounds.width || !bounds.height) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    tabDragRef.current = { id: event.pointerId, tabId, x: event.clientX, y: event.clientY, bounds, moving: false };
+  };
+
+  const trackTabDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = tabDragRef.current;
+    if (!drag || drag.id !== event.pointerId) return;
+    if (!drag.moving && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 6) return;
+    drag.moving = true;
+    suppressTabClickRef.current = true;
+    const position = terminalDropPosition(drag.bounds, event.clientX, event.clientY);
+    setDropPreview(current => current?.position === position ? current : { bounds: drag.bounds, position });
+  };
+
+  const cancelTabDrag = (pointerId?: number) => {
+    const drag = tabDragRef.current;
+    if (!drag || (pointerId !== undefined && drag.id !== pointerId)) return;
+    tabDragRef.current = null;
+    if (drag.moving) setDropPreview(null);
+  };
+
+  const finishTabDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = tabDragRef.current;
+    if (!drag || drag.id !== event.pointerId) return;
+    cancelTabDrag(event.pointerId);
+    if (!drag.moving) return;
+    const bounds = event.currentTarget.closest(".workspace-main-with-terminal")?.getBoundingClientRect();
+    const position = bounds && terminalDropPosition(bounds, event.clientX, event.clientY);
+    if (position) moveActiveDock(position, drag.tabId);
   };
 
   const handleStartResize = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -569,6 +624,7 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
   };
 
   const closeTerminalTab = (id: string) => {
+    if (tabDragRef.current?.tabId === id) cancelTabDrag();
     invoke("terminal_close", { sessionId: id }).catch(() => {});
     const entry = xtermMapRef.current.get(id);
     if (entry) {
@@ -606,6 +662,12 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
   return (
     <div className="terminal-dock terminal-dock-workspace" data-position={dockPosition} data-open={open}
       style={{ width: sideDock ? `min(50%, ${dockWidth}px)` : undefined, height: sideDock ? "100%" : `min(80%, ${dockHeight}px)`, display: open ? undefined : "none" }}>
+      {dropPreview && <div className="terminal-drop-preview" aria-hidden="true" data-target={dropPreview.position ?? ""}
+        style={{ left: dropPreview.bounds.left, top: dropPreview.bounds.top, width: dropPreview.bounds.width, height: dropPreview.bounds.height }}>
+        <span data-position="left">停靠左侧</span>
+        <span data-position="right">停靠右侧</span>
+        <span data-position="bottom">停靠底部</span>
+      </div>}
       <div className="terminal-dock-resizer" onPointerDown={handleStartResize} onPointerMove={handleDockResize}
         onLostPointerCapture={() => { dockResizeRef.current = null; }} title={sideDock ? "拖动调整终端宽度" : "拖动调整终端高度"} />
       <div className="terminal-dock-header">
@@ -618,9 +680,22 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
               <button className="terminal-tab-select" role="tab" type="button"
                 id={`terminal-tab-${t.id}`} aria-selected={t.id === activeTabId}
                 aria-controls="terminal-active-panel" tabIndex={t.id === activeTabId ? 0 : -1}
-                onClick={() => setActiveTabId(t.id)}
+                onPointerDown={event => startTabDrag(event, t.id)}
+                onPointerMove={trackTabDrag}
+                onPointerUp={finishTabDrag}
+                onPointerCancel={event => cancelTabDrag(event.pointerId)}
+                onLostPointerCapture={event => cancelTabDrag(event.pointerId)}
+                onClick={event => {
+                  if (event.detail === 0 || !suppressTabClickRef.current) setActiveTabId(t.id);
+                }}
                 onKeyDown={event => {
                   if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                  if (event.key === "Escape" && tabDragRef.current?.moving) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    cancelTabDrag();
+                    return;
+                  }
                   const index = tabs.findIndex(tab => tab.id === t.id);
                   const nextIndex = event.key === "ArrowRight" ? (index + 1) % tabs.length
                     : event.key === "ArrowLeft" ? (index + tabs.length - 1) % tabs.length

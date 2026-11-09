@@ -24,6 +24,8 @@ function mount() {
   const context = {
     open: true, pendingCommand: { id: 1, command: "npm test" }, activeTabId: "a", cwd: "repo-A",
     tabs: [{ id: "a", cwd: "repo-A" }], lastExecutedCmdId: { current: null },
+    tabDragRef: { current: null },
+    cancelTabDrag() { context.tabDragRef.current = null; },
     xtermMapRef: { current: new Map([["a", { ready: ready.promise, term: { dispose() {} }, el: { remove() {} }, output: { dispose() {} }, cancelHydration() {} }]]) },
     commandRetry: 0, selectedShell: "powershell.exe", crypto: { randomUUID: () => "new-session" },
     setCommandError(value) { context.error = value; },
@@ -96,7 +98,9 @@ function mount() {
 }
 {
   const view = mount();
+  view.context.tabDragRef.current = { tabId: "a" };
   view.close("a");
+  assert.equal(view.context.tabDragRef.current, null, "closing the dragged tab cancels its drop");
   assert.equal(view.requests[0].method, "terminal_close");
   assert.equal(view.context.open, false);
   assert.equal(view.context.tabs[0].id, "new-session");
