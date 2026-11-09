@@ -2725,3 +2725,8 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 
 - 按官方 Windows 命令分开视图菜单与快捷键。复用终端选择和恢复路径，Ctrl+J 只切换底部，打开终端恢复或聚焦默认面板。
 - 原生复测 xterm 输入焦点、菜单、标签与 PID 保留。117 项前端回归、722 项 Rust 测试、通知适配器及 Windows 打包通过。远端 CI 仍待恢复，右侧默认位置偏好和像素对照待验。详见 [07J 验收](antigravity/acceptance/07J-terminal-commands.md)。
+
+## 2026-11-09 — 默认终端位置
+
+- 常规设置可在底部与右侧之间选择。复用桌面偏好落盘与确认读回，打开终端和新环境操作遵循偏好，底部面板命令独立。
+- 隔离原生实测首开只起一个 shell、重启读回、真实环境操作输出和重新停靠。前端 117 项、Rust 全库 722 项、通知适配器及 Windows 打包通过。官方布局门控、配对像素和远端 CI 待验。详见 [07K 验收](antigravity/acceptance/07K-terminal-location.md)。

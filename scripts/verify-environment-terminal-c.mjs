@@ -94,6 +94,7 @@ const request = (id = "request-1") => ({
     revealDock(position) { view.context.revealed = position; },
     setTabs(update) { view.context.tabs = update(view.context.tabs); },
     setActiveTabId(id) { view.context.activeTabId = id; },
+    readTerminalLocation: async () => "right",
   });
   const queue = vm.runInNewContext(compile(queueEffect), view.context);
   queue(); queue();
@@ -106,6 +107,15 @@ const request = (id = "request-1") => ({
   assert.equal(view.context.tabs[0].cwd, "environment-definition-root");
   assert.equal(view.context.tabs[0].dockPosition, "right", "rerunning an action retains its panel");
   assert.equal(view.context.revealed, "right", "rerunning reveals the existing action panel");
+  view.context.tabs = [];
+  view.context.pendingAction = request("request-3");
+  const abandoned = queue();
+  abandoned();
+  await flush();
+  assert.equal(view.context.tabs.length, 0, "unmounted action cannot open a terminal");
+  queue(); await flush();
+  assert.equal(view.context.tabs[0].dockPosition, "right", "new action opens only in the preferred panel");
+  assert.equal(view.context.tabs.length, 1);
 }
 {
   const view = mount(), results = [];

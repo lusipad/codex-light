@@ -541,7 +541,7 @@ export const App: React.FC = () => {
   const [terminalPanelRequest, setTerminalPanelRequest] = useState<TerminalPanelRequest | null>(null);
   const requestTerminalPanel = (action: TerminalPanelRequest["action"]) => {
     if (isCloudChatRoute) return;
-    setTerminalPanelRequest({ action: showTerminal ? action : "open-terminal" });
+    setTerminalPanelRequest({ action });
     setShowTerminal(true);
   };
   const [terminalTargetCwd, setTerminalTargetCwd] = useState<string | null>(null);

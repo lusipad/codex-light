@@ -8,6 +8,7 @@ export interface DesktopOpenPreferences {
   preferredTarget: string | null;
   shells: { id: string; label: string }[];
   preferredShell: string;
+  defaultTerminalLocation: "bottom" | "right";
 }
 
 export const GeneralOpenPreferences: React.FC = () => {
@@ -30,7 +31,7 @@ export const GeneralOpenPreferences: React.FC = () => {
     return () => { cancelled = true; alive.current = false; };
   }, [refresh]);
 
-  const savePreference = async (kind: "target" | "shell", value: string) => {
+  const savePreference = async (kind: "target" | "shell" | "terminal-location", value: string) => {
     if (pending.current || !preferences || busy) return;
     pending.current = true;
     setBusy(true);
@@ -40,12 +41,15 @@ export const GeneralOpenPreferences: React.FC = () => {
       await tauriInvoke("desktop_open_preference_set", { kind, value });
       written = true;
       const saved = await tauriInvoke<DesktopOpenPreferences>("desktop_open_preferences");
-      if ((kind === "target" ? saved.preferredTarget : saved.preferredShell) !== value) {
+      const confirmed = kind === "target" ? saved.preferredTarget
+        : kind === "shell" ? saved.preferredShell : saved.defaultTerminalLocation;
+      if (confirmed !== value) {
         throw new Error("保存后的偏好读回不一致");
       }
       if (alive.current) setPreferences(saved);
     } catch (reason) {
-      if (alive.current) setError(`${written ? "已保存，但读取确认失败，请重新读取" : "更新打开偏好失败"}：${String(reason)}`);
+      if (alive.current) setError(`${written ? "已保存，但读取确认失败，请重新读取" :
+        kind === "terminal-location" ? "未能保存终端位置偏好设置" : "更新打开偏好失败"}：${String(reason)}`);
     } finally {
       pending.current = false;
       if (alive.current) setBusy(false);
@@ -69,6 +73,18 @@ export const GeneralOpenPreferences: React.FC = () => {
         options={preferences.shells.map(shell => ({ value: shell.id, label: shell.label }))}
         onChange={value => void savePreference("shell", value)} />
     </div>}
+    <div className="form-field">
+      <label id="default-terminal-location-label">默认终端位置</label>
+      <p className="card-subtitle-desc" id="default-terminal-location-description">选择终端快捷键和环境操作在何处打开终端标签页</p>
+      <div className="terminal-location-options" role="group" aria-labelledby="default-terminal-location-label"
+        aria-describedby="default-terminal-location-description">
+        {([["bottom", "底部"], ["right", "右侧"]] as const).map(([value, label]) =>
+          <button key={value} type="button" aria-pressed={preferences?.defaultTerminalLocation === value}
+            disabled={!preferences} aria-disabled={busy} onClick={() => {
+              if (preferences?.defaultTerminalLocation !== value) void savePreference("terminal-location", value);
+            }}>{label}</button>)}
+      </div>
+    </div>
     {error && <div role="alert">{error}<button type="button" disabled={busy} onClick={() => setRefresh(value => value + 1)}>重新读取</button></div>}
   </>;
 };

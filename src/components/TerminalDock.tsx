@@ -52,6 +52,11 @@ type TerminalDropPreview = { position: TerminalDockPosition | null };
 const terminalDockPositions = ["left", "right", "bottom"] as const;
 const terminalDockLabels = { left: "左侧终端", right: "右侧终端", bottom: "底部终端" };
 
+async function readTerminalLocation(): Promise<"bottom" | "right"> {
+  const value = await invoke<unknown>("desktop_state_get", { key: "defaultTerminalLocation" }).catch(() => null);
+  return value === "right" ? "right" : "bottom";
+}
+
 function terminalDockGroups(tabs: SessionTab[], selection: string[]) {
   return terminalDockPositions.flatMap(position => {
     const dockTabs = tabs.filter(tab => (tab.dockPosition ?? "bottom") === position);
@@ -91,16 +96,9 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
   const [dockWidths, setDockWidths] = useState({ left: 360, right: 360 });
   const [commandError, setCommandError] = useState<string | null>(null);
   const [commandRetry, setCommandRetry] = useState(0);
-  const [tabs, setTabs] = useState<SessionTab[]>(() => [
-    {
-      id: crypto.randomUUID(),
-      title: "终端 1",
-      cwd: cwd || ".",
-      shell: "",
-    },
-  ]);
-  const [selection, setSelection] = useState<string[]>([tabs[0].id]);
-  const activeTabId = selection[0];
+  const [tabs, setTabs] = useState<SessionTab[]>([]);
+  const [selection, setSelection] = useState<string[]>([]);
+  const activeTabId = selection[0] ?? "";
   const setActiveTabId = (id: string) => {
     setSelection(current => current[0] === id ? current : [id, ...current.filter(previous => previous !== id && tabs.some(tab => tab.id === previous))]);
   };
@@ -261,20 +259,26 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
 
   useEffect(() => {
     if (!open || !pendingAction || handledActionsRef.current.has(pendingAction.id)) return;
-    handledActionsRef.current.add(pendingAction.id);
-    const next: SessionTab = {
-      id: pendingAction.sessionId, title: pendingAction.title,
-      cwd: pendingAction.cwd, shell: selectedShell, action: pendingAction,
+    let cancelled = false;
+    const showAction = (position: TerminalDockPosition) => {
+      if (cancelled) return;
+      handledActionsRef.current.add(pendingAction.id);
+      const next: SessionTab = {
+        id: pendingAction.sessionId, title: pendingAction.title, dockPosition: position,
+        cwd: pendingAction.cwd, shell: selectedShell, action: pendingAction,
+      };
+      revealDock(position);
+      setTabs(previous => previous.some(tab => tab.id === next.id)
+        ? previous.map(tab => tab.id === next.id ? next : tab)
+        : [...previous, next]);
+      setActiveTabId(next.id);
+      setCommandError(null);
     };
-    revealDock(tabs.find(tab => tab.id === next.id)?.dockPosition ?? "bottom");
-    setTabs(previous => {
-      const existing = previous.findIndex(tab => tab.id === next.id);
-      return existing < 0 ? [...previous, next] : previous.map((tab, index) =>
-        index === existing ? { ...next, dockPosition: tab.dockPosition } : tab);
-    });
-    setActiveTabId(next.id);
-    setCommandError(null);
-  }, [open, pendingAction, selectedShell]);
+    const existing = tabs.find(tab => tab.id === pendingAction.sessionId);
+    if (existing) showAction(existing.dockPosition ?? "bottom");
+    else void readTerminalLocation().then(showAction);
+    return () => { cancelled = true; };
+  }, [open, pendingAction, selectedShell, tabs]);
 
   const attachDockTerminal = (activeTab: SessionTab, container: HTMLDivElement) => {
     const fitTimers: ReturnType<typeof setTimeout>[] = [];
@@ -547,7 +551,7 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
         revealDock(matchingTab.dockPosition ?? "bottom");
         setActiveTabId(matchingTab.id);
       }
-      else addNewTerminal();
+      else return scheduleDefaultTerminal();
       return;
     }
     const position = activeTab.dockPosition ?? "bottom";
@@ -599,26 +603,43 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
     return id;
   };
 
+  const scheduleDefaultTerminal = () => {
+    let cancelled = false;
+    queueMicrotask(() => { if (!cancelled) addNewTerminal(); });
+    return () => { cancelled = true; };
+  };
+
   useEffect(() => {
     if (!open || !panelRequest || handledPanelRequest.current === panelRequest) return;
-    handledPanelRequest.current = panelRequest;
-    onPanelRequestHandled?.(panelRequest);
-    const bottom = groups.find(group => group.position === "bottom");
-    if (panelRequest.action === "toggle-bottom" && bottom && !hiddenDocks.includes("bottom")) {
-      hideDock("bottom");
-      return;
-    }
-    const target = panelRequest.action === "toggle-bottom" || !bottom?.selected.action
-      ? bottom?.selected
-      : bottom.dockTabs.find(tab => !tab.action);
-    if (target) {
-      revealDock("bottom");
-      setActiveTabId(target.id);
-      setPanelFocusId(target.id);
-    } else {
-      setPanelFocusId(addNewTerminal("bottom"));
-    }
-  }, [open, panelRequest]);
+    let cancelled = false;
+    const showPanel = (position: TerminalDockPosition) => {
+      if (cancelled) return;
+      handledPanelRequest.current = panelRequest;
+      onPanelRequestHandled?.(panelRequest);
+      const group = groups.find(group => group.position === position);
+      if (panelRequest.action === "toggle-bottom" && group && !hiddenDocks.includes(position)) {
+        hideDock(position);
+        return;
+      }
+      const target = panelRequest.action === "toggle-bottom" || !group?.selected.action
+        ? group?.selected
+        : group.dockTabs.find(tab => !tab.action);
+      if (target) {
+        revealDock(position);
+        setActiveTabId(target.id);
+        setPanelFocusId(target.id);
+      } else {
+        setPanelFocusId(addNewTerminal(position));
+      }
+    };
+    if (panelRequest.action === "toggle-bottom") showPanel("bottom");
+    else void readTerminalLocation().then(showPanel);
+    return () => { cancelled = true; };
+  }, [open, panelRequest, tabs, selection, hiddenDocks]);
+
+  useEffect(() => {
+    if (open && !tabs.length && !panelRequest && !pendingAction && !pendingCommand) return scheduleDefaultTerminal();
+  }, [open, tabs.length, panelRequest, pendingAction, pendingCommand]);
 
   useEffect(() => {
     if (!open || panelFocusId == null) return;
@@ -738,16 +759,8 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
     if (remaining.length === 0) {
       onClose();
       setHiddenDocks([]);
-      const id = crypto.randomUUID();
-      setTabs([
-        {
-          id,
-          title: "终端 1",
-          cwd: cwd || ".",
-          shell: selectedShell,
-        },
-      ]);
-      setActiveTabId(id);
+      setTabs([]);
+      setSelection([]);
     } else {
       setTabs(remaining);
       if (activeTabId === id) {

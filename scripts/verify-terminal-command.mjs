@@ -5,7 +5,7 @@ import ts from "typescript";
 
 const source = fs.readFileSync(new URL("../src/components/TerminalDock.tsx", import.meta.url), "utf8");
 const ast = ts.createSourceFile("TerminalDock.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-let commandEffect, closeTab, retry, panelEffect, focusEffect;
+let commandEffect, closeTab, retry, panelEffect, focusEffect, scheduleTerminal, readLocation;
 function visit(node) {
   if (ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect" &&
       node.arguments[0]?.getText(ast).includes("await entry.ready")) commandEffect = node.arguments[0];
@@ -14,6 +14,8 @@ function visit(node) {
   if (ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect" &&
       node.arguments[0]?.getText(ast).includes("entry.term.focus()")) focusEffect = node.arguments[0];
   if (ts.isVariableDeclaration(node) && node.name.getText(ast) === "closeTerminalTab") closeTab = node.initializer;
+  if (ts.isVariableDeclaration(node) && node.name.getText(ast) === "scheduleDefaultTerminal") scheduleTerminal = node.initializer;
+  if (ts.isFunctionDeclaration(node) && node.name?.text === "readTerminalLocation") readLocation = node;
   if (ts.isJsxElement(node) && node.children.some(child => ts.isJsxText(child) && child.text === "重试命令")) {
     retry = node.openingElement.attributes.properties.find(attr => ts.isJsxAttribute(attr) && attr.name.getText(ast) === "onClick")?.initializer.expression;
   }
@@ -30,6 +32,8 @@ function mount() {
     tabs: [{ id: "a", cwd: "repo-A" }], lastExecutedCmdId: { current: null },
     hiddenDocks: [],
     setHiddenDocks(value) { context.hiddenDocks = value; },
+    queueMicrotask,
+    setSelection(value) { context.activeTabId = value[0] ?? ""; },
     revealDock(position) { context.hiddenDocks = context.hiddenDocks.filter(dock => dock !== position); },
     tabDragRef: { current: null },
     cancelTabDrag() { context.tabDragRef.current = null; },
@@ -44,6 +48,7 @@ function mount() {
     addNewTerminal() { context.newTerminals = (context.newTerminals || 0) + 1; },
     onClose() { context.open = false; },
   };
+  context.scheduleDefaultTerminal = vm.runInNewContext(compile(scheduleTerminal), context);
   return { context, ready, requests, acks, effect: vm.runInNewContext(compile(commandEffect), context),
     close: vm.runInNewContext(compile(closeTab), context), retry: vm.runInNewContext(compile(retry), context) };
 }
@@ -97,7 +102,7 @@ function mount() {
 }
 {
   const view = mount();
-  view.context.cwd = "repo-B"; view.effect();
+  view.context.cwd = "repo-B"; view.effect(); await flush();
   assert.equal(view.context.newTerminals, 1, "TC07: new workspace cannot dispatch to the previous terminal");
   assert.equal(view.requests.length, 0);
   view.context.tabs.push({ id: "b", cwd: "repo-B" }); view.effect();
@@ -110,8 +115,8 @@ function mount() {
   assert.equal(view.context.tabDragRef.current, null, "closing the dragged tab cancels its drop");
   assert.equal(view.requests[0].method, "terminal_close");
   assert.equal(view.context.open, false);
-  assert.equal(view.context.tabs[0].id, "new-session");
-  assert.equal(view.context.activeTabId, "new-session", "TC06: last-tab replacement is selected");
+  assert.equal(view.context.tabs.length, 0);
+  assert.equal(view.context.activeTabId, "", "TC06: no placeholder shell after the final close");
 }
 // The actual App acknowledgment must not clear a newer toolbar command.
 const appSource = fs.readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
@@ -180,25 +185,43 @@ console.log("PASS TC09: command dispatch and last-visible-tab closure reveal the
     setPanelFocusId(id) { context.panelFocusId = id; },
     addNewTerminal(position) { added.push(position); return "new"; },
     xtermMapRef: { current: new Map([["a", { term: { focus() { focused.push("a"); } } }]]) },
+    invoke(method, args) {
+      assert.equal(method, "desktop_state_get"); assert.equal(args.key, "defaultTerminalLocation");
+      return Promise.resolve(context.storedLocation);
+    },
   };
+  context.readTerminalLocation = vm.runInNewContext(compile(readLocation), context);
   const handle = vm.runInNewContext(compile(panelEffect), context);
   const focus = vm.runInNewContext(compile(focusEffect), context);
-  const request = action => { context.panelRequest = { action }; handle(); };
-  request("toggle-bottom"); handle();
+  const request = async action => { context.panelRequest = { action }; handle(); await flush(); };
+  await request("toggle-bottom"); handle();
   assert.deepEqual(context.hiddenDocks, ["bottom"], "hide only the bottom once per request");
   assert.deepEqual(context.visibleGroups, [right]);
-  request("toggle-bottom"); focus();
+  await request("toggle-bottom"); focus();
   assert.deepEqual(context.hiddenDocks, []);
   assert.deepEqual(focused, ["a"]);
   bottom.selected = action;
-  request("open-terminal"); bottom.selected = a; focus();
-  request("open-terminal"); focus();
+  await request("open-terminal"); bottom.selected = a; focus();
+  await request("open-terminal"); focus();
   assert.deepEqual(focused, ["a", "a", "a"], "repeat launch focuses the ordinary terminal");
   assert.equal(context.activeTabId, "a");
   assert.equal(added.length, 0);
   context.groups = [right];
-  request("toggle-bottom"); handle();
+  await request("toggle-bottom"); handle();
   assert.deepEqual(added, ["bottom"], "create only when bottom is empty");
   assert.equal(acknowledged.length, 5);
+  context.storedLocation = "right";
+  await request("open-terminal");
+  assert.equal(context.activeTabId, "b", "read the newly saved destination for the next launch");
+  context.groups = [];
+  await request("open-terminal");
+  assert.deepEqual(added, ["bottom", "right"], "empty launch starts one terminal in the preferred panel");
+  const gate = deferred();
+  context.invoke = () => gate.promise;
+  context.panelRequest = { action: "open-terminal" };
+  const cleanup = handle();
+  cleanup();
+  gate.resolve("right"); await flush();
+  assert.equal(added.length, 2, "superseded location reads cannot start an obsolete terminal");
 }
 console.log("PASS TC10: bottom-only toggle, terminal focus/reuse, empty destination and request deduplication");

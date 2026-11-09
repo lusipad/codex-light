@@ -49,6 +49,7 @@ pub struct DesktopOpenPreferences {
     pub preferred_target: Option<String>,
     pub shells: Vec<ShellTarget>,
     pub preferred_shell: String,
+    pub default_terminal_location: String,
 }
 
 fn executable_on_path(name: &str) -> Option<PathBuf> {
@@ -211,6 +212,9 @@ pub fn preferences(state: &DesktopStateManager) -> DesktopOpenPreferences {
         targets,
         shells,
         preferred_shell: shell_id,
+        default_terminal_location: preferred_id(state, "defaultTerminalLocation")
+            .filter(|location| location == "right")
+            .unwrap_or_else(|| "bottom".to_string()),
     }
 }
 
@@ -219,6 +223,12 @@ pub fn set_preference(
     kind: &str,
     value: &str,
 ) -> Result<(), String> {
+    if kind == "terminal-location" {
+        return match value {
+            "bottom" | "right" => state.set_value_persisted("defaultTerminalLocation", json!(value)),
+            _ => Err("终端位置不可用".to_string()),
+        };
+    }
     let current = preferences(state);
     match kind {
         "target" if current.targets.iter().any(|target| target.id == value) => {
@@ -590,6 +600,10 @@ mod tests {
             let home = PathBuf::from(std::env::var_os(MARKER).unwrap());
             assert_eq!(crate::state::codex_home_dir(), home);
             let state = DesktopStateManager::new();
+            assert_eq!(preferences(&state).default_terminal_location, "bottom");
+            set_preference(&state, "terminal-location", "right").unwrap();
+            assert!(set_preference(&state, "terminal-location", "left").is_err());
+            assert_eq!(preferences(&DesktopStateManager::new()).default_terminal_location, "right");
             state.set_value_persisted("openInTargetPreferences", json!({"global":"cursor","perPath":{"D:/old":"finder","D:/keep":"vscode"}})).unwrap();
             persist_workspace_target(&state, "D:/exact", "vscode").unwrap();
             let reloaded = DesktopStateManager::new();
@@ -614,6 +628,8 @@ mod tests {
             let state_file = home.join(".codex-global-state.json");
             std::fs::remove_file(&state_file).unwrap();
             std::fs::create_dir(&state_file).unwrap();
+            assert!(set_preference(&state, "terminal-location", "bottom").is_err());
+            assert_eq!(preferences(&state).default_terminal_location, "right");
             let executed = std::cell::Cell::new(false);
             assert!(persist_then_execute(|| persist_workspace_target(&state, "D:/blocked", "vscode"), || { executed.set(true); Ok(()) }).is_err());
             assert!(!executed.get());

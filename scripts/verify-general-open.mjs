@@ -14,7 +14,7 @@ visit(ast);
 const compile = node => ts.transpileModule(`(${node.getText(ast)})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 const deferred = () => { let resolve, reject; const promise = new Promise((a,b) => {resolve=a;reject=b;}); return {promise,resolve,reject}; };
 const flush = () => new Promise(setImmediate);
-const fixture = { platform:"windows",targets:[{id:"cursor",label:"Cursor"}],preferredTarget:"cursor",shells:[{id:"powershell",label:"PowerShell"},{id:"commandPrompt",label:"CMD"}],preferredShell:"powershell" };
+const fixture = { platform:"windows",targets:[{id:"cursor",label:"Cursor"}],preferredTarget:"cursor",shells:[{id:"powershell",label:"PowerShell"},{id:"commandPrompt",label:"CMD"}],preferredShell:"powershell",defaultTerminalLocation:"bottom" };
 function mount(invoke) {
   const calls=[];
   const context={preferences:fixture,busy:false,pending:{current:false},alive:{current:true},error:null,
@@ -40,6 +40,16 @@ function mount(invoke) {
 }
 assert.match(source,/preferences\?\.platform === "windows"/);
 assert.match(source,/默认文件打开位置/);assert.match(source,/默认打开文件和文件夹的位置/);
+{
+ const view=mount(async method=>method==="desktop_open_preferences"?{...fixture,defaultTerminalLocation:"right"}:undefined);
+ await view.save("terminal-location","right");
+ assert.equal(view.calls[0][1].kind,"terminal-location");
+ assert.equal(view.context.preferences.defaultTerminalLocation,"right");
+ const blocked=mount(async()=>{throw Error("disk denied");});
+ await blocked.save("terminal-location","right");
+ assert.equal(blocked.context.preferences.defaultTerminalLocation,"bottom");
+ assert.match(blocked.context.error,/未能保存终端位置偏好设置/);
+}
 console.log("PASS GT01/GT02/GT06: production load/save, unmount protection, real readback, synchronous write lock, write failure and mismatch (L2)");
 const terminal=fs.readFileSync("src/components/TerminalDock.tsx","utf8");
 const terminalAst=ts.createSourceFile("TerminalDock.tsx",terminal,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
