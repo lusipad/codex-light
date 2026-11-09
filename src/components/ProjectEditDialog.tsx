@@ -154,7 +154,7 @@ function ProjectConfirmDialog({ title, description, confirmLabel, pendingLabel, 
   failure: string;
   onConfirm: () => Promise<void>;
   onClose: () => void;
-  fallbackRef: React.RefObject<HTMLInputElement | null>;
+  fallbackRef?: React.RefObject<HTMLInputElement | null>;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
@@ -168,7 +168,7 @@ function ProjectConfirmDialog({ title, description, confirmLabel, pendingLabel, 
     cancelRef.current?.focus();
     return () => {
       dialog?.close();
-      (trigger?.isConnected ? trigger : fallbackRef.current)?.focus({ preventScroll: true });
+      (trigger?.isConnected ? trigger : fallbackRef?.current)?.focus({ preventScroll: true });
     };
   }, [fallbackRef]);
   const dismiss = () => { if (!pending.current) onClose(); };
@@ -244,4 +244,16 @@ export function ProjectBulkArchiveDialog({ count, projectName, hasRunning, onArc
     description={`${description} 关联计划任务的聊天会保留。`}
     confirmLabel={hasRunning ? "停止并归档" : "全部归档"} pendingLabel="正在归档…" failure={`未成功归档 ${projectName} 中的已开启聊天`}
     onConfirm={onArchive} onClose={onClose} fallbackRef={fallbackRef} />;
+}
+
+export function ActivityArchiveDialog({ count, hasRunning, onArchive, onClose }: {
+  count: number;
+  hasRunning: boolean;
+  onArchive: () => Promise<void>;
+  onClose: () => void;
+}) {
+  return <ProjectConfirmDialog title={hasRunning ? `停止并归档 ${count} 个聊天？` : `要归档 ${count} 个优先聊天吗？`}
+    description={hasRunning ? "归档会停止所有正在进行的工作。你可以稍后在设置中恢复已归档的聊天。" : "最近的聊天不会被归档"}
+    confirmLabel={hasRunning ? "停止并归档" : "归档"} pendingLabel="正在归档…" failure="未能开始归档，请重试"
+    onConfirm={onArchive} onClose={onClose} />;
 }

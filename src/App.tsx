@@ -2,7 +2,7 @@ import { usePetPreferences } from "./petPreferences";
 import { mergeHookRoots } from "./hooksSettingsModel";
 import { createEnvironmentWorktree, type WorktreeCreationOptions } from "./worktreeCreation";
 import { installWorktreeCleanup } from "./worktreeCleanup";
-import { beginActivitySession, clearReadActivityThreads, excludeActivityThreads, mergeActivitySession, threadHasActivity, threadNeedsAttention, type ActivitySession } from "./threadActivity";
+import { activityThreadIsRunning, beginActivitySession, clearReadActivityThreads, excludeActivityThreads, mergeActivitySession, threadHasActivity, threadNeedsAttention, type ActivitySession } from "./threadActivity";
 import { useExternalImports } from "./externalImport";
 import { useCodeReviewPreferences } from "./reviewPreferences";
 import { buildQuickReviewPrompt, parseReviewFindings, type ModelReviewComment } from "./reviewFindings";
@@ -123,6 +123,7 @@ import { KeyboardShortcutsDialog } from "./components/KeyboardShortcutsDialog";
 import { CodexSidebar } from "./components/CodexSidebar";
 import { ComposerBox } from "./components/ComposerBox";
 import { ProjectsIndexView } from "./components/ProjectsIndexView";
+import { ActivityArchiveDialog } from "./components/ProjectEditDialog";
 import { InboxView } from "./components/InboxView";
 import { MiniPetWidget } from "./components/MiniPetWidget";
 import { fileDedupeKey, fileSearchRoot, QuickSearchModal } from "./components/QuickSearchModal";
@@ -536,6 +537,11 @@ export const App: React.FC = () => {
   const activitySessionRef = useRef<ActivitySession | null>(null);
   const activityGenerationRef = useRef(0);
   const activityScopeRef = useRef("");
+  const [activityArchive, setActivityArchive] = useState<{
+    scope: string;
+    generation: number;
+    targets: ThreadSummary[];
+  } | null>(null);
   const [showRightDrawer, setShowRightDrawer] = useState<boolean>(false);
   const [showTerminal, setShowTerminal] = useState<boolean>(false);
   const [bottomPanelVisible, setBottomPanelVisible] = useState(false);
@@ -4050,9 +4056,10 @@ export const App: React.FC = () => {
     [showAppToast]
   );
 
-  const archiveLocalThread = useCallback(async (thread: ThreadSummary) => {
+  const archiveLocalThread = useCallback(async (thread: ThreadSummary, isCurrent?: () => boolean) => {
     const receipt = await tauriInvoke<{ pinnedThreadIds: string[]; pinPlacement: ProjectArchiveUndo["pinPlacement"]; localStateError: boolean }>(
       "thread_archive_toggle", { thread, archive: true });
+    if (isCurrent && !isCurrent()) return receipt;
     ++threadPinRevisionRef.current;
     setPinnedThreadIds(receipt.pinnedThreadIds);
     refreshThreadsGenerationRef.current += 1;
@@ -4062,7 +4069,8 @@ export const App: React.FC = () => {
     return receipt;
   }, []);
 
-  const undoProjectArchive = useCallback(async (archived: ProjectArchiveUndo[]) => {
+  const undoProjectArchive = useCallback(async (archived: ProjectArchiveUndo[], isCurrent?: () => boolean) => {
+    if (isCurrent && !isCurrent()) return;
     if (archiveMutationPendingRef.current || pinMutationPendingRef.current) {
       showAppToast("聊天操作正在进行，请稍后在设置中恢复。", "error");
       return;
@@ -4073,10 +4081,12 @@ export const App: React.FC = () => {
       let localStateError = false;
       // Undo in reverse order so a removed pin's original next neighbour is available.
       for (const { thread, pinPlacement } of [...archived].reverse()) {
+        if (isCurrent && !isCurrent()) return;
         try {
           const receipt = await tauriInvoke<{ pinnedThreadIds: string[]; localStateError: boolean }>("thread_archive_toggle", {
             thread, archive: false, restorePin: pinPlacement,
           });
+          if (isCurrent && !isCurrent()) return;
           ++threadPinRevisionRef.current;
           setPinnedThreadIds(receipt.pinnedThreadIds);
           localStateError ||= receipt.localStateError;
@@ -4084,7 +4094,9 @@ export const App: React.FC = () => {
           failed++;
         }
       }
+      if (isCurrent && !isCurrent()) return;
       await refreshThreads();
+      if (isCurrent && !isCurrent()) return;
       setArchiveRefreshTick(value => value + 1);
       const restored = archived.length - failed;
       if (failed) {
@@ -4975,6 +4987,57 @@ export const App: React.FC = () => {
     const ids = new Set(activityThreadIds);
     return ids.size > 0 && threads.some(thread => ids.has(thread.id) && !threadHasActivity(thread));
   }, [activityThreadIds, threads]);
+  useEffect(() => {
+    setActivityArchive(null);
+  }, [activityScope, activityOnly]);
+  const openActivityArchive = useCallback(() => {
+    const session = activitySessionRef.current;
+    if (!session || session.scope !== activityScopeRef.current) return;
+    const byId = new Map(threadsRef.current.map(thread => [thread.id, thread]));
+    const targets = session.threadIds.flatMap(id => {
+      const thread = byId.get(id);
+      return thread ? [thread] : [];
+    });
+    if (targets.length) setActivityArchive({ scope: session.scope, generation: activityGenerationRef.current, targets });
+  }, []);
+  const confirmActivityArchive = useCallback(async (selection: NonNullable<typeof activityArchive>) => {
+    const isCurrent = () => selection.scope === activityScopeRef.current;
+    const sameSession = () => isCurrent() && selection.generation === activityGenerationRef.current &&
+      activitySessionRef.current?.scope === selection.scope;
+    if (!sameSession()) return;
+    if (archiveMutationPendingRef.current || pinMutationPendingRef.current) throw Error("聊天操作正在进行");
+    archiveMutationPendingRef.current = true;
+    try {
+      const archived: ProjectArchiveUndo[] = [];
+      let localStateError = false;
+      for (const target of selection.targets) {
+        if (!sameSession()) break;
+        if (!activitySessionRef.current?.threadIds.includes(target.id)) continue;
+        const latest = threadsRef.current.find(thread => thread.id === target.id);
+        if (!latest || (activityThreadIsRunning(latest) && !activityThreadIsRunning(target))) continue;
+        try {
+          const receipt = await archiveLocalThread(latest, isCurrent);
+          if (!isCurrent()) return;
+          archived.push({ thread: latest, pinPlacement: receipt.pinPlacement });
+          localStateError ||= receipt.localStateError;
+        } catch {
+          // Only a confirmed archive is counted or offered for undo.
+        }
+      }
+      if (!isCurrent()) return;
+      setActivityArchive(current => current === selection ? null : current);
+      if (archived.some(({ thread }) => thread.id === activeThreadIdRef.current)) startNewThread();
+      const failed = selection.targets.length - archived.length;
+      const message = `已归档 ${archived.length} 个优先聊天${failed ? `；${failed} 个无法归档` : ""}`;
+      showAppToast(message + (localStateError ? "。本地状态未能保存。" : ""),
+        failed || localStateError ? "error" : "success", archived.length ? {
+          label: "撤销", onClick: () => { void undoProjectArchive(archived, isCurrent); },
+        } : undefined);
+      if (failed) void refreshThreads();
+    } finally {
+      archiveMutationPendingRef.current = false;
+    }
+  }, [archiveLocalThread, refreshThreads, showAppToast, startNewThread, undoProjectArchive]);
   const markAllThreadsRead = useCallback(async () => {
     const session = activitySessionRef.current;
     if (!session) return;
@@ -5546,6 +5609,7 @@ export const App: React.FC = () => {
         onClearReadActivity={canClearReadActivity ? clearReadActivity : undefined}
         onToggleActivity={toggleActivity}
         onMarkAllRead={markAllThreadsRead}
+        onArchiveActivity={openActivityArchive}
         hasAgentsMd={agentsMdInfo.found}
         onNavigate={(route) => { if (route === "library") setLibraryCleanupTab(null); setActiveRoute(route); }}
         onStartNewChat={startNewThread}
@@ -7192,6 +7256,11 @@ export const App: React.FC = () => {
       />
 
       {/* ── 9. Global In-App Toast Banner ── */}
+      {activityArchive && activityArchive.scope === activityScope && activityOnly && (
+        <ActivityArchiveDialog count={activityArchive.targets.length}
+          hasRunning={activityArchive.targets.some(activityThreadIsRunning)}
+          onArchive={() => confirmActivityArchive(activityArchive)} onClose={() => setActivityArchive(null)} />
+      )}
       {shareThreadId && <ShareThreadDialog
         key={shareThreadId}
         threadId={shareThreadId}

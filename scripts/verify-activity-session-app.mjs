@@ -26,6 +26,62 @@ function mount(){
   return {context,writes,errors,get state(){return state;},get refreshes(){return refreshes;},toggle:()=>run('toggleActivity',context)(),bulk:()=>run('markAllThreadsRead',context)(),more:()=>run('loadMoreActivity',context)(),clear:()=>run('clearReadActivity',context)()};
 }
 {
+  const view=mount();
+  view.toggle();
+  let selected=null,started=0;
+  const calls=[],toasts=[],undo=[];
+  Object.assign(view.context,{
+    setActivityArchive:value=>{selected=typeof value==='function'?value(selected):value;},
+    archiveMutationPendingRef:{current:false},pinMutationPendingRef:{current:false},
+    activeThreadIdRef:{current:'t0'},startNewThread:()=>started++,
+    showAppToast:(...args)=>toasts.push(args),
+    archiveLocalThread:async thread=>{
+      calls.push(thread.id);
+      if(thread.id==='t2')throw Error('archive rejected');
+      return {pinPlacement:null,localStateError:false};
+    },
+    undoProjectArchive:async (archived,isCurrent)=>{if(isCurrent())undo.push(...archived.map(item=>item.thread.id));},
+  });
+  run('openActivityArchive',view.context)();
+  assert.equal(selected.targets.length,13,'captures full priority set beyond page one');
+  assert.deepEqual(calls,[],'opening confirmation does not write');
+  const confirmation=selected;
+  view.context.threadsRef.current=[...rows.map(row=>row.id==='t1'?{...row,status:{type:'active'}}:row),{id:'new'}];
+  view.context.activitySessionRef.current.threadIds.push('new');
+  await run('confirmActivityArchive',view.context)(confirmation);
+  assert.equal(selected,null);
+  assert.equal(started,1);
+  assert.ok(calls.includes('t12')&&!calls.includes('t1')&&!calls.includes('new'));
+  assert.equal(toasts[0][0],'已归档 11 个优先聊天；2 个无法归档');
+  toasts[0][2].onClick();
+  assert.deepEqual(undo,calls.filter(id=>id!=='t2'));
+  view.context.activityScopeRef.current='other';
+  await run('confirmActivityArchive',view.context)(confirmation);
+  toasts[0][2].onClick();
+  assert.equal(calls.length,12);
+  assert.equal(undo.length,11,'stale account cannot undo');
+}
+{
+  const view=mount();
+  view.toggle();
+  const pending=deferred(), calls=[];
+  const selection={scope:'local',generation:view.context.activityGenerationRef.current,targets:rows.slice(0,2)};
+  Object.assign(view.context,{
+    archiveMutationPendingRef:{current:false},pinMutationPendingRef:{current:false},
+    archiveLocalThread:async (thread,isCurrent)=>{
+      calls.push(thread.id);await pending.promise;assert.equal(isCurrent(),false);
+    },
+    setActivityArchive:()=>assert.fail('stale response updated dialog'),
+  });
+  const confirm=run('confirmActivityArchive',view.context);
+  const result=confirm(selection);
+  await assert.rejects(confirm(selection),/正在进行/);
+  view.context.activityScopeRef.current='other';
+  pending.resolve();await result;
+  assert.deepEqual(calls,['t0']);
+  assert.equal(view.context.archiveMutationPendingRef.current,false);
+}
+{
   const view=mount();view.toggle();
   view.context.threadsRef.current=rows.map(row=>row.id==='t0'?row:{...row,readState:read});
   const initial=view.state;

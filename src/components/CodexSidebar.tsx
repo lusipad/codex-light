@@ -68,6 +68,7 @@ export interface CodexSidebarProps {
   onClearReadActivity?: () => void;
   onToggleActivity: () => void;
   onMarkAllRead: () => void;
+  onArchiveActivity: () => void;
   hasAgentsMd: boolean;
   onNavigate: (route: MainViewRoute) => void;
   onStartNewChat: (workspacePath?: string, project?: SidebarLocalProject) => void;
@@ -152,6 +153,7 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
   onClearReadActivity,
   onToggleActivity,
   onMarkAllRead,
+  onArchiveActivity,
   onNavigate,
   onStartNewChat,
   onRemoveWorkspace,
@@ -1828,12 +1830,19 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
                 id: "mark-all-read",
                 label: "全部标为已读",
                 disabled: !activityThreads.some(thread => thread.readState?.firstUnread != null),
+              }, {
+                id: "archive",
+                label: "归档聊天",
+                disabled: activityThreads.length === 0,
               }]}
               triggerAriaLabel="活动视图选项"
               buttonClassName="sidebar-mini-tool-btn"
               label={<FilterIcon size={12} />}
               align="left"
-              onSelect={onMarkAllRead}
+              onSelect={id => {
+                if (id === "archive") onArchiveActivity();
+                else if (id === "mark-all-read") onMarkAllRead();
+              }}
             />
             {onClearReadActivity && (
               <button type="button" className="sidebar-mini-tool-btn"

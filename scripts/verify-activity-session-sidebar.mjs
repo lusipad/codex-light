@@ -132,4 +132,17 @@ function search(view, value) {
   assert.equal(clear(),undefined);
   cases++;
 }
+{
+  let opened=0;
+  const view=mount({ ...base, onArchiveActivity: () => opened++ });
+  const menu=options(view);
+  const item=menu.props.items.find(item => item.id === "archive");
+  assert.equal(item.label,"归档聊天");
+  assert.equal(item.disabled,false);
+  menu.props.onSelect(item.id);
+  assert.equal(opened,1);
+  view.props.activityThreadIds=[];
+  assert.equal(options(view).props.items.find(item => item.id === "archive").disabled,true);
+  cases++;
+}
 console.log(`PASS ${cases} Activity production-sidebar session projection sequences (L2; no browser/native/official pixel claim)`);

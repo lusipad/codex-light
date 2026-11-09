@@ -10,9 +10,13 @@ export function threadNeedsAttention(thread: ThreadSummary): boolean {
     flags.includes("waitingOnApproval") || flags.includes("waitingOnUserInput");
 }
 
-export function threadHasActivity(thread: ThreadSummary): boolean {
+export function activityThreadIsRunning(thread: ThreadSummary): boolean {
   const type = typeof thread.status === "string" ? thread.status : thread.status?.type;
-  return threadNeedsAttention(thread) || type === "active" || type === "running";
+  return type === "active" || type === "running";
+}
+
+export function threadHasActivity(thread: ThreadSummary): boolean {
+  return threadNeedsAttention(thread) || activityThreadIsRunning(thread);
 }
 
 export interface ActivitySession {
