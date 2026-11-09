@@ -686,16 +686,28 @@ struct SchedulerState {
 struct ActivityRunIdentity {
     automation_id: String,
     started_at: u64,
-    thread_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    thread_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     completed_at: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     read_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    result: Option<ActivityRunResult>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ActivityRunResult {
+    status: String,
+    finished_at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
 }
 
 impl ActivityRunIdentity {
     fn matches(&self, automation_id: &str, started_at: u64, thread_id: &str) -> bool {
-        self.automation_id == automation_id && self.started_at == started_at && self.thread_id == thread_id
+        self.automation_id == automation_id && self.started_at == started_at && self.thread_id.as_deref() == Some(thread_id)
     }
 }
 
@@ -715,6 +727,10 @@ impl SchedulerState {
         if thread_id.trim().is_empty() {
             return;
         }
+        self.ensure_activity_run(automation_id, started_at, Some(thread_id));
+    }
+
+    fn ensure_activity_run(&mut self, automation_id: &str, started_at: u64, thread_id: Option<&str>) {
         if self.activity_runs.iter()
             .any(|run| run.automation_id == automation_id && run.started_at == started_at)
         {
@@ -723,9 +739,10 @@ impl SchedulerState {
         self.activity_runs.push(ActivityRunIdentity {
             automation_id: automation_id.to_owned(),
             started_at,
-            thread_id: thread_id.to_owned(),
+            thread_id: thread_id.map(str::to_owned),
             completed_at: None,
             read_at: None,
+            result: None,
         });
         self.activity_runs.sort_by(|a, b| b.started_at.cmp(&a.started_at).then_with(|| a.automation_id.cmp(&b.automation_id)));
         self.activity_runs.truncate(ACTIVITY_RUN_LIMIT);
@@ -747,16 +764,28 @@ impl SchedulerState {
         let mut seen = HashSet::new();
         self.activity_runs.iter()
             .filter(|run| automation_ids.contains(run.automation_id.as_str()))
-            .filter_map(|run| seen.insert(run.thread_id.as_str()).then_some(run.thread_id.as_str()))
+            .filter_map(|run| run.thread_id.as_deref())
+            .filter(|id| seen.insert(*id))
             .collect()
     }
 
-    fn complete_activity_run(&mut self, automation_id: &str, started_at: u64, thread_id: &str, completed_at: u64) {
-        self.record_activity_run(automation_id, started_at, thread_id);
-        if let Some(run) = self.activity_runs.iter_mut().find(|run| run.matches(automation_id, started_at, thread_id))
-        {
-            run.completed_at.get_or_insert(completed_at);
+    fn finish_activity_run(&mut self, automation_id: &str, started_at: u64, thread_id: Option<&str>, finished_at: u64, terminal: &RunTerminal) {
+        self.ensure_activity_run(automation_id, started_at, thread_id);
+        if let Some(run) = self.activity_runs.iter_mut().find(|run| run.automation_id == automation_id && run.started_at == started_at) {
+            if run.result.is_some() || run.thread_id.as_deref() != thread_id {
+                return;
+            }
+            if terminal.status == "completed" {
+                run.completed_at.get_or_insert(finished_at);
+            }
+            run.result = Some(ActivityRunResult { status: terminal.status.to_owned(), finished_at, error: terminal.error.clone() });
         }
+    }
+
+    #[cfg(test)]
+    fn complete_activity_run(&mut self, automation_id: &str, started_at: u64, thread_id: &str, completed_at: u64) {
+        self.finish_activity_run(automation_id, started_at, Some(thread_id), completed_at,
+            &RunTerminal { status: "completed", error: None });
     }
 
     fn unread_activity_thread_ids(&self, automation_ids: &HashSet<&str>) -> Vec<&str> {
@@ -764,13 +793,15 @@ impl SchedulerState {
         self.activity_runs.iter()
             .filter(|run| run.completed_at.is_some() && run.read_at.is_none()
                 && automation_ids.contains(run.automation_id.as_str()))
-            .filter_map(|run| seen.insert(run.thread_id.as_str()).then_some(run.thread_id.as_str()))
+            .filter_map(|run| run.thread_id.as_deref())
+            .filter(|id| seen.insert(*id))
             .collect()
     }
 
     fn mark_activity_runs_read(&mut self, automation_ids: &HashSet<&str>, thread_ids: &HashSet<String>, through: u64) -> usize {
         self.mark_matching_activity_runs_read(through, |run|
-            automation_ids.contains(run.automation_id.as_str()) && thread_ids.contains(&run.thread_id))
+            automation_ids.contains(run.automation_id.as_str()) &&
+                run.thread_id.as_deref().is_some_and(|id| thread_ids.contains(id)))
     }
 
     fn last_run_unread(&self, automation_id: &str, entry: &AutomationScheduleState) -> bool {
@@ -1300,13 +1331,7 @@ async fn finish_run(
             entry.last_finished_at = Some(finished_at);
             entry.last_thread_id = thread_id.clone();
             entry.last_error = terminal.error.clone();
-            if let Some(thread_id) = thread_id.as_deref() {
-                if terminal.status == "completed" {
-                    state.complete_activity_run(&item.id, started_at, thread_id, finished_at);
-                } else {
-                    state.record_activity_run(&item.id, started_at, thread_id);
-                }
-            }
+            state.finish_activity_run(&item.id, started_at, thread_id.as_deref(), finished_at, &terminal);
             true
         });
         match changed {
@@ -1504,6 +1529,18 @@ pub fn scheduler_status() -> Value {
             })
         })
         .collect();
+    let recent_runs: Vec<_> = state.activity_runs.iter()
+        .filter(|run| activity_automation_ids.contains(run.automation_id.as_str()))
+        .filter_map(|run| {
+            let (status, finished_at, error) = match &run.result {
+                Some(result) => (result.status.as_str(), result.finished_at, result.error.as_deref()),
+                None => ("completed", run.completed_at?, None),
+            };
+            Some(json!({
+                "automationId": run.automation_id, "startedAt": run.started_at,
+                "threadId": run.thread_id, "status": status, "finishedAt": finished_at, "error": error,
+            }))
+        }).collect();
 
     json!({
         "running": STARTED.load(Ordering::SeqCst),
@@ -1512,6 +1549,7 @@ pub fn scheduler_status() -> Value {
         "entries": entries,
         "activityThreadIds": state.activity_thread_ids(&activity_automation_ids),
         "activityUnreadThreadIds": state.unread_activity_thread_ids(&activity_automation_ids),
+        "recentRuns": recent_runs,
     })
 }
 
@@ -1708,6 +1746,24 @@ mod tests {
         assert_eq!(restored.mark_activity_runs_read(&tasks, &selected, 32), 1);
         assert_eq!(restored.unread_activity_thread_ids(&tasks), ["outside"]);
         assert_eq!(restored.activity_thread_ids(&tasks), ["running", "shared", "outside", "legacy"]);
+    }
+
+    #[test]
+    fn run_history_retains_failures_without_creating_activity_threads() {
+        let mut state = SchedulerState::default();
+        state.finish_activity_run("task", 40, None, 41, &RunTerminal {
+            status: "failed", error: Some("no thread".into()),
+        });
+        state.complete_activity_run("task", 20, "known", 21);
+        state.record_activity_run("task", 10, "legacy");
+        let restored: SchedulerState = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        let failure = &restored.activity_runs[0];
+        assert_eq!(failure.thread_id, None);
+        assert_eq!(failure.result.as_ref().unwrap().status, "failed");
+        assert_eq!(failure.result.as_ref().unwrap().error.as_deref(), Some("no thread"));
+        assert_eq!(failure.completed_at, None);
+        assert_eq!(restored.activity_thread_ids(&HashSet::from(["task"])), ["known", "legacy"]);
+        assert_eq!(restored.unread_activity_thread_ids(&HashSet::from(["task"])), ["known"]);
     }
 
     #[test]

@@ -6282,6 +6282,7 @@ export const App: React.FC = () => {
                 activeWorkspaceRoot={activeWorkspace?.path || ""}
                 models={models}
                 onSelectThread={selectScheduledThread}
+                onSelectHistoryThread={selectThread}
                 onRunRead={refreshActivitySchedule}
               />
             </div>

@@ -22,6 +22,9 @@ assert.equal(status({ entries: [{ id: "task", lastThreadId: "   " }] }).entries[
 assert.equal(status({ entries: [{ id: "task" }] }).entries[0].lastThreadId, null);
 assert.equal(status({ entries: [{ id: "task", lastRunUnread: true }] }).entries[0].lastRunUnread, true);
 assert.equal(status({ entries: [{ id: "task", lastRunUnread: "true" }] }).entries[0].lastRunUnread, false);
+const persistedFailure = { automationId: "task", startedAt: 100, finishedAt: 120, status: "failed", threadId: null, error: "start failed" };
+assert.deepEqual(JSON.parse(JSON.stringify(status({ recentRuns: [persistedFailure, { ...persistedFailure, status: "running" },
+  { ...persistedFailure, finishedAt: 99 }] }).recentRuns)), [persistedFailure]);
 assert.equal(status({ entries: [] }).activityThreadIds, null, "older backends cannot attest to the identity set");
 assert.equal(status({ activityThreadIds: ["known", 42] }).activityThreadIds, null, "invalid sets are not treated as authoritative");
 assert.deepEqual(Array.from(status({ activityThreadIds: ["new", "old", "new"] }).activityThreadIds), ["new", "old"]);

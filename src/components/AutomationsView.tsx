@@ -33,6 +33,7 @@ interface AutomationsViewProps {
   activeWorkspaceRoot: string;
   models: ModelInfo[];
   onSelectThread?: (threadId: string) => void;
+  onSelectHistoryThread?: (threadId: string) => void;
   onRunRead?: () => void;
   threadTask?: { id: string; threadId: string; onClose: () => void };
   onNavigationGuardChange?: (guard: ((action: () => void) => boolean) | null) => void;
@@ -146,6 +147,14 @@ interface RunHistoryRecord {
   error?: string;
 }
 
+type RunDisplayRecord = {
+  startedAt: number;
+  finishedAt?: number | null;
+  status: string | null;
+  threadId?: string | null;
+  error?: string | null;
+};
+
 interface Notice {
   kind: NoticeKind;
   text: string;
@@ -257,6 +266,7 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
   activeWorkspaceRoot,
   models,
   onSelectThread,
+  onSelectHistoryThread,
   onRunRead,
   threadTask,
   onNavigationGuardChange,
@@ -681,9 +691,19 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
   const selectedItem = automations.find(item => item.id === selectedAutomationId &&
     (!threadTask || (item.status !== "DELETED" && item.targetThreadId === threadTask.threadId)));
   const selectedEntry = selectedItem ? schedulerEntriesById.get(selectedItem.id) : undefined;
-  const selectedRuns = selectedItem ? runHistory.filter(record => record.automationId === selectedItem.id)
-    .sort((a, b) => b.startedAt - a.startedAt) : [];
   const lastRunThreadId = selectedItem ? runThreads[selectedItem.id] ?? selectedEntry?.lastThreadId : null;
+  const runsByStart = new Map<number, RunDisplayRecord>();
+  if (selectedItem) {
+    for (const run of runHistory) if (run.automationId === selectedItem.id) runsByStart.set(run.startedAt, run);
+    for (const run of scheduler?.recentRuns ?? []) if (run.automationId === selectedItem.id) runsByStart.set(run.startedAt, run);
+  }
+  if (selectedEntry?.lastRunAt != null && !runsByStart.has(selectedEntry.lastRunAt)) {
+    runsByStart.set(selectedEntry.lastRunAt, {
+      startedAt: selectedEntry.lastRunAt, finishedAt: selectedEntry.lastFinishedAt, status: selectedEntry.lastStatus,
+      threadId: selectedEntry.lastThreadId, error: selectedEntry.lastError,
+    });
+  }
+  const selectedRuns = [...runsByStart.values()].sort((a, b) => b.startedAt - a.startedAt);
   const displayedRun = selectedRuns[0];
   const matchesDisplayedRun = displayedRun
     ? displayedRun.status === "completed" && displayedRun.startedAt === selectedEntry?.lastRunAt &&
@@ -753,6 +773,14 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
     setShowCreateForm(true);
     return true;
   };
+  const renderRunResult = (record: RunDisplayRecord, select: typeof onSelectThread) =>
+    <div className="automation-run-result" key={record.startedAt}>
+      <span style={{color:runStatusColor(record.status)}}>{runStatusLabel(record.status)}</span>
+      <time>{formatDateTime(record.finishedAt ?? record.startedAt)}</time>
+      {record.error && <p role="alert">{record.error}</p>}
+      {record.threadId && <button type="button" className="secondary-btn" disabled={!select}
+        onClick={() => select?.(record.threadId!)}>查看会话</button>}
+    </div>;
 
   return (
     <section className="automation-page" aria-label="定时任务" onKeyDown={threadTask ? event => {
@@ -1006,18 +1034,14 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
               <button type="button" className="secondary-btn" onClick={handleRefreshSchedule} disabled={schedulerBusy}>{schedulerBusy ? "刷新中…" : "重试"}</button>
             </div>}
             <section className="automation-run-results" aria-label="上次运行"><h3>上次运行</h3>
-              {selectedRuns.length === 0 ? <p>{selectedEntry?.lastRunAt ? `${formatDateTime(selectedEntry.lastRunAt)} · ${runStatusLabel(selectedEntry.lastStatus)}` : "尚未运行"}</p> :
-                selectedRuns.map(record => <div className="automation-run-result" key={record.key}>
-                  <span style={{color:runStatusColor(record.status)}}>{runStatusLabel(record.status)}</span>
-                  <time>{formatDateTime(record.finishedAt ?? record.startedAt)}</time>
-                  {record.error && <p role="alert">{record.error}</p>}
-                  {record.threadId && <button type="button" className="secondary-btn" disabled={!onSelectThread}
-                    onClick={() => onSelectThread?.(record.threadId!)}>查看会话</button>}
-                </div>)}
+              {displayedRun ? renderRunResult(displayedRun, onSelectThread) : <p>尚未运行</p>}
               {selectedRuns.length === 0 && lastRunThreadId && <button type="button" className="secondary-btn" disabled={!onSelectThread}
                 onClick={() => onSelectThread?.(lastRunThreadId)}>查看会话</button>}
-              {selectedEntry?.lastError && <p role="alert">{selectedEntry.lastError}</p>}
+              {selectedEntry?.lastError && selectedEntry.lastError !== displayedRun?.error && <p role="alert">{selectedEntry.lastError}</p>}
             </section>
+            {selectedRuns.length > 1 && <section className="automation-run-results" aria-label="运行历史记录"><h3>运行历史记录</h3>
+              {selectedRuns.slice(1).map(record => renderRunResult(record, onSelectHistoryThread ?? onSelectThread))}
+            </section>}
           </>}
         </aside>}
       </div>

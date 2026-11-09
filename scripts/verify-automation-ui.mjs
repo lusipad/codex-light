@@ -122,7 +122,7 @@ console.log("PASS 10H02–10H03 read-only detail scope, thread ownership and Esc
 {
   let refreshes = 0, reject;
   const view = surface({ onRunRead: () => { ++refreshes; } });
-  const unread = { id: "active-task", lastRunAt: 100, lastThreadId: "shared", lastRunUnread: true };
+  const unread = { id: "active-task", lastRunAt: 100, lastStatus: "completed", lastThreadId: "shared", lastRunUnread: true };
   view.control.scheduler = { entries: [unread] };
   view.control.markRead = () => new Promise((_, fail) => { reject = fail; });
   const receipts = () => view.calls.filter(call => call.method === "automations_mark_activity_run_read");
@@ -157,6 +157,34 @@ console.log("PASS 10H02–10H03 read-only detail scope, thread ownership and Esc
   view.unmount();
 }
 console.log("PASS 10L detail receipts: exact displayed run, editing, stale responses, error and authoritative refresh");
+
+{
+  const opened = [];
+  const view = surface({ onSelectThread: id => opened.push(["latest", id]), onSelectHistoryThread: id => opened.push(["history", id]) });
+  const saved = (automationId, startedAt, status, threadId, error = null) =>
+    ({ automationId, startedAt, finishedAt: startedAt + 10, status, threadId, error });
+  view.control.scheduler = { entries: [{ id: "active-task", lastRunAt: 300, lastStatus: "completed", lastThreadId: "new" }],
+    recentRuns: [
+      saved("active-task", 100, "completed", "older"),
+      saved("other", 400, "failed", null, "foreign error"),
+      saved("active-task", 300, "completed", "new"),
+      saved("active-task", 200, "failed", null, "no chat created"),
+    ] };
+  view.render(); view.effects(); await view.settle();
+  view.button("Active fixture").props.onClick(); await view.settle();
+  view.control.emit({ kind: "started", id: "active-task", name: "Active fixture", at: 300 });
+  await view.settle();
+  const rows = view.nodes().filter(node => node.props.className === "automation-run-result");
+  assert.equal(rows.length, 3);
+  assert.deepEqual(rows.map(row => row.children[0].children[0]), ["成功", "失败", "成功"]);
+  assert.match(view.text(), /运行历史记录.*no chat created/);
+  assert.doesNotMatch(view.text(), /foreign error/);
+  const links = view.nodes().filter(node => node.type === "button" && node.children.includes("查看会话"));
+  assert.equal(links.length, 2, "failure without a chat has no link");
+  links.forEach(link => link.props.onClick());
+  assert.deepEqual(opened, [["latest", "new"], ["history", "older"]]);
+  view.unmount();
+}
 
 const h = surface(); h.render(); h.effects(); await h.settle();
 assert.ok(h.nodes().some(node => /^h[1-3]$/.test(node.type) && node.children.join("") === "定时任务"), "official local configuration region uses its documented title");

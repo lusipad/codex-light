@@ -39,6 +39,16 @@ export interface SchedulerStatus {
   entries: SchedulerEntry[];
   activityThreadIds: string[] | null;
   activityUnreadThreadIds: string[] | null;
+  recentRuns: SchedulerRun[];
+}
+
+export interface SchedulerRun {
+  automationId: string;
+  startedAt: number;
+  finishedAt: number;
+  status: AutomationRunFinishedEvent["status"];
+  threadId: string | null;
+  error: string | null;
 }
 
 export interface AutomationRunStartedEvent {
@@ -176,6 +186,14 @@ function normalizeSchedulerStatus(raw: unknown): SchedulerStatus {
     entries,
     activityThreadIds: normalizeActivityIds(source.activityThreadIds),
     activityUnreadThreadIds: normalizeActivityIds(source.activityUnreadThreadIds),
+    recentRuns: Array.isArray(source.recentRuns) ? source.recentRuns.flatMap(raw => {
+      if (!raw || typeof raw !== "object" || typeof raw.automationId !== "string") return [];
+      const { automationId, startedAt, finishedAt } = raw;
+      if (!Number.isSafeInteger(startedAt) || startedAt < 0 ||
+          !Number.isSafeInteger(finishedAt) || finishedAt < startedAt) return [];
+      const event = normalizeFinishedEvent({ ...raw, id: automationId });
+      return event ? [{ automationId, startedAt, finishedAt, status: event.status, threadId: event.threadId, error: event.error }] : [];
+    }) : [],
   };
 }
 
