@@ -21,6 +21,23 @@ assert.equal(status({ entries: [] }).activityThreadIds, null, "older backends ca
 assert.equal(status({ activityThreadIds: ["known", 42] }).activityThreadIds, null, "invalid sets are not treated as authoritative");
 assert.deepEqual(Array.from(status({ activityThreadIds: ["new", "old", "new"] }).activityThreadIds), ["new", "old"]);
 assert.deepEqual(Array.from(status({ activityThreadIds: [] }).activityThreadIds), []);
+assert.equal(status({ activityThreadIds: ["old"] }).activityUnreadThreadIds, null);
+assert.deepEqual(Array.from(status({ activityUnreadThreadIds: ["done", "done"] }).activityUnreadThreadIds), ["done"]);
+{
+  const calls = [];
+  const runtime = { exports: {} };
+  let result = 2;
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/automationsClient.ts", "utf8"), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText, { exports: runtime.exports, require: () => ({
+    isTauriRuntime: () => true,
+    tauriInvoke: async (command, args) => { calls.push([command, JSON.parse(JSON.stringify(args))]); return result; },
+  }) });
+  assert.equal(await runtime.exports.markActivityRunsRead(["known"], 101), 2);
+  assert.deepEqual(calls, [["automations_mark_activity_runs_read", { threadIds: ["known"], through: 101 }]]);
+  result = "2";
+  await assert.rejects(runtime.exports.markActivityRunsRead(["known"], 101), /有效的已读结果/);
+}
 
 const source = fs.readFileSync("src/components/AutomationsView.tsx", "utf8");
 const ast = ts.createSourceFile("view.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);

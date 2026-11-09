@@ -2198,6 +2198,11 @@ fn automations_scheduler_status() -> Value {
 }
 
 #[tauri::command]
+fn automations_mark_activity_runs_read(thread_ids: Vec<String>, through: u64) -> Result<usize, String> {
+    automations::mark_activity_runs_read(thread_ids, through)
+}
+
+#[tauri::command]
 fn automations_refresh_schedule() -> Value {
     automations::refresh_schedule()
 }
@@ -2558,6 +2563,7 @@ pub fn run() {
             automation_save,
             automation_delete,
             automations_scheduler_status,
+            automations_mark_activity_runs_read,
             automations_refresh_schedule,
             automations_run_now,
             pets_list_installed,

@@ -36,6 +36,7 @@ export interface SchedulerStatus {
   now: number;
   entries: SchedulerEntry[];
   activityThreadIds: string[] | null;
+  activityUnreadThreadIds: string[] | null;
 }
 
 export interface AutomationRunStartedEvent {
@@ -151,10 +152,14 @@ function normalizeEntry(raw: unknown): SchedulerEntry | null {
   };
 }
 
+function normalizeActivityIds(raw: unknown): string[] | null {
+  if (!Array.isArray(raw) || !raw.every(id => typeof id === "string" && id.trim().length > 0)) return null;
+  return [...new Set<string>(raw)];
+}
+
 function normalizeSchedulerStatus(raw: unknown): SchedulerStatus {
   const source = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   const rawEntries = Array.isArray(source.entries) ? source.entries : [];
-  const rawActivityIds: unknown[] | null = Array.isArray(source.activityThreadIds) ? source.activityThreadIds : null;
   const entries: SchedulerEntry[] = [];
   for (const candidate of rawEntries) {
     const entry = normalizeEntry(candidate);
@@ -164,8 +169,8 @@ function normalizeSchedulerStatus(raw: unknown): SchedulerStatus {
     running: source.running === true || source.isRunning === true,
     now: toFiniteNumber(source.now) ?? Date.now(),
     entries,
-    activityThreadIds: rawActivityIds?.every((id): id is string => typeof id === "string" && id.trim().length > 0)
-      ? [...new Set(rawActivityIds)] : null,
+    activityThreadIds: normalizeActivityIds(source.activityThreadIds),
+    activityUnreadThreadIds: normalizeActivityIds(source.activityUnreadThreadIds),
   };
 }
 
@@ -210,6 +215,15 @@ async function invokeScheduler<T>(
 /** Current scheduler snapshot (running flag, scheduler clock, per-automation entries). */
 export async function getSchedulerStatus(): Promise<SchedulerStatus> {
   return invokeScheduler("automations_scheduler_status", undefined, normalizeSchedulerStatus);
+}
+
+export async function markActivityRunsRead(threadIds: string[], through: number): Promise<number> {
+  return invokeScheduler("automations_mark_activity_runs_read", { threadIds, through }, raw => {
+    if (typeof raw !== "number" || !Number.isSafeInteger(raw) || raw < 0) {
+      throw new Error("调度器未返回有效的已读结果");
+    }
+    return raw;
+  });
 }
 
 /** Ask the scheduler to recompute its plan; returns the fresh status snapshot. */
