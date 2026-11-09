@@ -2870,12 +2870,12 @@ export const App: React.FC = () => {
     }
   }, [showAppToast]);
 
-  const selectThread = useCallback(async (threadId: string, readScheduledActivity = false): Promise<void> => {
-    const scope = readScheduledActivity ? activityScopeRef.current : null;
+  const selectThread = useCallback(async (threadId: string, readScheduledRun = false): Promise<void> => {
+    const scope = readScheduledRun ? activityScopeRef.current : null;
     if (personalizationNavigationGuardRef.current?.(() => {
-      if (scope === null || scope === activityScopeRef.current) void selectThread(threadId, readScheduledActivity);
+      if (scope === null || scope === activityScopeRef.current) void selectThread(threadId, readScheduledRun);
     }) === false) return;
-    if (scope !== null && activityScheduleUnreadRef.current !== null && activityScheduleIdsRef.current?.has(threadId)) {
+    if (scope !== null) {
       void markScheduledActivityRead([threadId], Date.now(), scope);
     }
     for (const controller of worktreeCreationControllersRef.current.keys()) controller.abort();
@@ -3028,6 +3028,9 @@ export const App: React.FC = () => {
       // ignore goal read failures
     }
   }, [handleSelectWorkspace, hydrateThreadModel, beginThreadModelHydration, captureThreadExecutionPolicy, markScheduledActivityRead]);
+  const selectScheduledThread = useCallback((threadId: string) => {
+    void selectThread(threadId, true);
+  }, [selectThread]);
 
   const modelAccountIdentityRef = useRef(modelAccountIdentity);
   useEffect(() => {
@@ -5770,7 +5773,7 @@ export const App: React.FC = () => {
         onRemoveWorkspace={handleRemoveWorkspace}
         onPickNewFolder={handlePickNewFolder}
         onSelectThread={selectThread}
-        onSelectScheduledActivityThread={threadId => { void selectThread(threadId, true); }}
+        onSelectScheduledActivityThread={selectScheduledThread}
         onTogglePinThread={handleTogglePinThread}
         onArchiveThread={handleArchiveThread}
         onDeleteThread={handleDeleteThread}
@@ -6277,7 +6280,7 @@ export const App: React.FC = () => {
               <AutomationsView
                 activeWorkspaceRoot={activeWorkspace?.path || ""}
                 models={models}
-                onSelectThread={selectThread}
+                onSelectThread={selectScheduledThread}
               />
             </div>
           </div>

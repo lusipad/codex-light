@@ -56,8 +56,6 @@ for (const outcome of ['success','error','account-changed']) {
 {
   const {context:ctx}=mount(), receipts=[];
   let resume;
-  ctx.activityScheduleIdsRef.current=new Set(['run']);
-  ctx.activityScheduleUnreadRef.current=new Set(['run']);
   ctx.markScheduledActivityRead=(...args)=>receipts.push(args);
   ctx.personalizationNavigationGuardRef.current=action=>{resume=action;return false;};
   ctx.worktreeCreationControllersRef={current:{keys:()=>{throw Error('navigation continued');}}};
@@ -68,7 +66,7 @@ for (const outcome of ['success','error','account-changed']) {
   assert.deepEqual(receipts,[],'stale guard does not write');
   ctx.personalizationNavigationGuardRef.current=null;
   await assert.rejects(select('run',true),/navigation continued/);
-  assert.deepEqual(Array.from(receipts[0][0]),['run']);
+  assert.deepEqual(Array.from(receipts[0][0]),['run'],'the task entry does not wait for the Activity catalog');
   assert.equal(receipts[0][2],'other');
 }
 {

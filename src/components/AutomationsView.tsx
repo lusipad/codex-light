@@ -678,6 +678,7 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
     (!threadTask || (item.status !== "DELETED" && item.targetThreadId === threadTask.threadId)));
   const selectedEntry = selectedItem ? schedulerEntriesById.get(selectedItem.id) : undefined;
   const selectedRuns = selectedItem ? runHistory.filter(record => record.automationId === selectedItem.id) : [];
+  const lastRunThreadId = selectedItem ? runThreads[selectedItem.id] ?? selectedEntry?.lastThreadId : null;
   const stateOptions = [["ALL", "全部"], ["ACTIVE", "已开启"], ["PAUSED", "已暂停"], ["COMPLETED", "已完成"]] as const;
   const sortOptions = [["automatic", "自动"], ["next_run_asc", "下次运行"], ["updated_at_desc", "最近更新"], ["title_asc", "名称"]] as const;
   const configurationDirty = showCreateForm && JSON.stringify([name, kind, rrule, prompt, execEnv, selectedModel]) !== configurationBaselineRef.current;
@@ -973,8 +974,8 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
                   {record.threadId && <button type="button" className="secondary-btn" disabled={!onSelectThread}
                     onClick={() => onSelectThread?.(record.threadId!)}>查看会话</button>}
                 </div>)}
-              {selectedRuns.length === 0 && runThreads[selectedItem.id] && <button type="button" className="secondary-btn" disabled={!onSelectThread}
-                onClick={() => onSelectThread?.(runThreads[selectedItem.id])}>查看会话</button>}
+              {selectedRuns.length === 0 && lastRunThreadId && <button type="button" className="secondary-btn" disabled={!onSelectThread}
+                onClick={() => onSelectThread?.(lastRunThreadId)}>查看会话</button>}
               {selectedEntry?.lastError && <p role="alert">{selectedEntry.lastError}</p>}
             </section>
           </>}

@@ -17,6 +17,9 @@ for (const status of ["completed", "failed", "interrupted", "unknown"]) {
 assert.equal(client.exports.normalizeFinishedEvent({ id: "task", status: "running" }), null);
 assert.equal(client.exports.normalizeFinishedEvent({ id: "task" }), null);
 const status = client.exports.normalizeSchedulerStatus;
+assert.equal(status({ entries: [{ id: "task", lastThreadId: "persisted-thread" }] }).entries[0].lastThreadId, "persisted-thread");
+assert.equal(status({ entries: [{ id: "task", lastThreadId: "   " }] }).entries[0].lastThreadId, null);
+assert.equal(status({ entries: [{ id: "task" }] }).entries[0].lastThreadId, null);
 assert.equal(status({ entries: [] }).activityThreadIds, null, "older backends cannot attest to the identity set");
 assert.equal(status({ activityThreadIds: ["known", 42] }).activityThreadIds, null, "invalid sets are not treated as authoritative");
 assert.deepEqual(Array.from(status({ activityThreadIds: ["new", "old", "new"] }).activityThreadIds), ["new", "old"]);
@@ -41,6 +44,21 @@ assert.deepEqual(Array.from(status({ activityUnreadThreadIds: ["done", "done"] }
 
 const source = fs.readFileSync("src/components/AutomationsView.tsx", "utf8");
 const ast = ts.createSourceFile("view.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+let lastRunThread;
+function visit(node) {
+  if (ts.isVariableDeclaration(node) && node.name.getText(ast) === "lastRunThreadId") {
+    lastRunThread = node.initializer.getText(ast);
+  }
+  ts.forEachChild(node, visit);
+}
+visit(ast);
+const persisted = { lastThreadId: "persisted" };
+const lastRun = (runThreads, selectedEntry = persisted) => vm.runInNewContext(lastRunThread, {
+  selectedItem: { id: "task" }, runThreads, selectedEntry,
+});
+assert.equal(lastRun({}), "persisted", "the latest known chat is available after a remount");
+assert.equal(lastRun({ task: "live" }), "live", "a live run stays ahead of an older scheduler snapshot");
+assert.equal(lastRun({}, { lastThreadId: null }), null, "a missing identity does not invent a destination");
 const context = vm.createContext({ MAX_RUN_HISTORY: 20 });
 for (const node of ast.statements) {
   if (ts.isFunctionDeclaration(node) &&

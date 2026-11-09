@@ -99,12 +99,27 @@ const appSource = fs.readFileSync("src/App.tsx", "utf8");
 const app = ts.createSourceFile("App.tsx", appSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 let selected;
 function appVisit(node) {
-  if (ts.isJsxSelfClosingElement(node) && node.tagName.getText(app) === "AutomationsView") {
+  if (ts.isJsxSelfClosingElement(node) && node.tagName.getText(app) === "AutomationsView" &&
+      !node.attributes.properties.some(attr => ts.isJsxAttribute(attr) && attr.name.getText(app) === "threadTask")) {
     selected = node.attributes.properties.find(attr => ts.isJsxAttribute(attr) && attr.name.getText(app) === "onSelectThread")?.initializer.expression;
   }
   ts.forEachChild(node, appVisit);
 }
 appVisit(app);
-assert.equal(selected.getText(app), "selectThread", "AU06: restore full thread context using the existing selector");
+assert.equal(selected.getText(app), "selectScheduledThread", "AU06: open the run with its read receipt");
+let scheduledSelector;
+function findScheduledSelector(node) {
+  if (ts.isVariableDeclaration(node) && node.name.getText(app) === "selectScheduledThread") {
+    scheduledSelector = node.initializer.arguments[0].getText(app);
+  }
+  ts.forEachChild(node, findScheduledSelector);
+}
+findScheduledSelector(app);
+const opened = [];
+const selectRun = vm.runInNewContext(ts.transpileModule(`(${scheduledSelector})`, {
+  compilerOptions: { target: ts.ScriptTarget.ES2022 },
+}).outputText, { selectThread: (...args) => opened.push(args) });
+selectRun("run-thread");
+assert.deepEqual(opened, [["run-thread", true]], "load full thread and request its persisted run receipt");
 assert.ok(!source.includes("onRunAutomationNow"), "AU05: no implicit alternate execution callback");
 console.log("PASS AU01–AU06 production automation callbacks: shared CRUD lock, drafts, stale reads, run lock, honest unavailable state and full thread loading");

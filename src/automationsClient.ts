@@ -24,6 +24,7 @@ export interface SchedulerEntry {
   status: string;
   lastRunAt: number | null;
   lastFinishedAt: number | null;
+  lastThreadId: string | null;
   nextRunAt: number | null;
   /** outcome of the most recent scheduler execution. */
   lastStatus: SchedulerRunStatus | null;
@@ -139,12 +140,14 @@ function normalizeEntry(raw: unknown): SchedulerEntry | null {
   if (!id) return null;
   const rawLastStatus = source.lastStatus ?? source.last_status;
   const rawLastError = source.lastError ?? source.last_error;
+  const rawLastThreadId = source.lastThreadId ?? source.last_thread_id;
   return {
     id,
     name: typeof source.name === "string" && source.name ? source.name : id,
     status: typeof source.status === "string" ? source.status : "",
     lastRunAt: toFiniteNumber(source.lastRunAt ?? source.last_run_at),
     lastFinishedAt: toFiniteNumber(source.lastFinishedAt ?? source.last_finished_at),
+    lastThreadId: typeof rawLastThreadId === "string" && rawLastThreadId.trim() ? rawLastThreadId : null,
     nextRunAt: toFiniteNumber(source.nextRunAt ?? source.next_run_at),
     lastStatus: typeof rawLastStatus === "string" ? rawLastStatus : null,
     lastError: typeof rawLastError === "string" ? rawLastError : null,
