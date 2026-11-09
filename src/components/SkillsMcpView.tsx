@@ -238,7 +238,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   }, [initialTab]);
   const [searchQuery, setSearchQuery] = useState("");
   const [skillSearchIndex, setSkillSearchIndex] = useState(0);
-  const [recommendedSearchCount, setRecommendedSearchCount] = useState(0);
+  const [recommendedSearch, setRecommendedSearch] = useState<{ query: string; count: number | null }>({ query: "", count: null });
   const pageRef = useRef<HTMLDivElement>(null);
   const [skills, setSkills] = useState<SkillInfoItem[]>([]);
   const [selectedSkill, setSelectedSkill] = useState<SkillInfoItem | null>(null);
@@ -1227,7 +1227,9 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   );
   const visibleSkillRows = filteredSkillRows.filter(row => manageOnly || !recommendedInstalledKeys.includes(row.key));
   const searchingSkills = !manageOnly && subTab === "skills" && search.length > 0;
-  const activeSkillSearchIndex = Math.min(skillSearchIndex, visibleSkillRows.length + recommendedSearchCount - 1);
+  const recommendedSearchCount = recommendedSearch.query === search ? recommendedSearch.count : null;
+  const skillResultCount = visibleSkillRows.length + (recommendedSearchCount ?? 0);
+  const activeSkillSearchIndex = Math.min(skillSearchIndex, skillResultCount - 1);
   const handleSkillSearchKey = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (!searchingSkills || event.nativeEvent.isComposing || event.keyCode === 229) return;
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp" && event.key !== "Enter") return;
@@ -1966,10 +1968,15 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       )}
 
       {/* TAB 2: SKILLS (skills/list + skills/config/write, local fallback) */}
-      {subTab === "skills" && (
+      {subTab === "skills" && <section className={searchingSkills ? "pm-skill-search-results" : "pm-skill-content"}
+        aria-labelledby={searchingSkills && skillResultCount > 0 ? "pm-skill-results-title" : undefined}>
+      {searchingSkills && skillResultCount > 0 && (
+        <h3 id="pm-skill-results-title">技能 <span>{skillResultCount}</span></h3>
+      )}
+      {(!searchingSkills || visibleSkillRows.length > 0 || localSkillsError || remoteSkillsError || selectedSkillKey !== null || creatingSkill) && (
         <div className={`split-panel-layout pm-skills-layout ${!manageOnly && selectedSkillKey === null && !creatingSkill ? "pm-skills-overview" : ""}`}>
           <div className="split-left-list">
-            <div className="list-toolbar">
+            {!searchingSkills && <div className="list-toolbar">
               <span>
                 {skillRows.some(row => row.scope === "seed") ? "技能与本地模版" : "已安装"} ({skillRows.length})
               </span>
@@ -2001,7 +2008,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
                   </button>
                 )}
               </div>
-            </div>
+            </div>}
             {remoteSkillsError && (
               <div className="pm-hint" style={{ padding: "4px 2px" }}>
                 <AlertCircle size={12} /> skills/list 不可用，已回退本地技能读取：
@@ -2016,7 +2023,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
             )}
             <div className="scrollable-items pm-installed-skills-grid">
               {visibleSkillRows.map((row, index) => renderSkillRow(row, searchingSkills ? index === activeSkillSearchIndex : undefined))}
-              {filteredSkillRows.length === 0 && (
+              {!searchingSkills && filteredSkillRows.length === 0 && (
                 <div className="empty-hint">没有匹配的技能。</div>
               )}
             </div>
@@ -2153,7 +2160,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
         workspaceRoot={activeWorkspaceRoot} onInstalled={refreshRecommendedSkills} writeBusy={skillWriteBusy}
         searchQuery={searchQuery} onInstalledCardKeysChange={setRecommendedInstalledKeys}
         activeSearchResultIndex={activeSkillSearchIndex - visibleSkillRows.length}
-        onSearchResultCountChange={setRecommendedSearchCount}
+        onSearchResultCountChange={setRecommendedSearch}
         installedSkills={skillRows.filter(row => row.remote !== null).map(row => ({
           key: row.key, name: row.remote?.name ?? row.local?.name ?? row.name,
           path: row.remote?.path || row.local?.path || "", displayName: row.remote?.interface?.displayName?.trim() || undefined, scope: row.scope,
@@ -2169,6 +2176,10 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
           skillWritePendingRef.current = false;
           if (pluginMountedRef.current) setSkillWriteBusy(false);
         }} />}
+      {searchingSkills && skillResultCount === 0 && recommendedSearchCount === 0 && !localSkillsError && !remoteSkillsError && (
+        remoteSkillsLoading || remoteSkills === null ? <p role="status">正在加载技能…</p> : <p>找不到技能</p>
+      )}
+      </section>}
 
       {/* TAB 3: MCP SERVERS (unchanged behavior) */}
       {subTab === "mcp" && <McpSettings cwd={activeWorkspaceRoot || undefined} connectionIdentity={connectionIdentity}

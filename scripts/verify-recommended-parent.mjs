@@ -36,9 +36,16 @@ for(const failure of ["local","remote"]){
   const input = () => h.nodes(h.tree).find(n => n.props["aria-label"] === "搜索技能");
   const panel = () => h.nodes(h.tree).find(n => n.type === "RecommendedSkillsPanel");
   const installed = () => h.nodes(h.tree).find(n => n.props.className?.includes("skill-list-row"));
+  const resultsRegion = () => h.nodes(h.tree).find(n => n.props["aria-labelledby"] === "pm-skill-results-title");
+  const allText = () => h.text(h.tree);
   input().props.onChange({ target: { value: "demo" } }); h.render();
   assert.equal(installed().props["data-skill-search-result"], "true", "SK01 first installed result starts active");
-  panel().props.onSearchResultCountChange(1); h.render();
+  panel().props.onSearchResultCountChange({ query: "demo", count: 1 }); h.render();
+  assert.ok(resultsRegion(), "SL01 both result sources share one labeled region");
+  assert.match(h.text(resultsRegion()), /技能\s*2/);
+  assert.ok(h.nodes(resultsRegion()).includes(installed()));
+  assert.ok(h.nodes(resultsRegion()).includes(panel()));
+  assert.doesNotMatch(allText(), /本地模版|已安装 \(1\)/, "SL01 browse-only actions are absent from search");
   let recommendedOpens = 0;
   const scrolls = [];
   let results = [
@@ -70,15 +77,22 @@ for(const failure of ["local","remote"]){
   assert.equal(installed().props["data-skill-search-result"], "true", "SK03 query edits reset selection even if matching cards stay");
   press("ArrowDown");
   results = results.slice(0, 1);
-  panel().props.onSearchResultCountChange(0); h.render();
+  panel().props.onSearchResultCountChange({ query: "demo", count: 0 }); h.render();
   assert.equal(installed().props["data-skill-search-result"], "true", "SK03 an asynchronous shrink clamps the active row");
   press("ArrowUp"); press("Enter");
   assert.equal(h.nodes(h.tree).find(n => n.type === "SkillPreviewDialog").props.path, local.path);
   results = [];
   input().props.onChange({ target: { value: "absent" } }); h.render();
+  panel().props.onSearchResultCountChange({ query: "absent", count: null }); h.render();
+  assert.doesNotMatch(allText(), /找不到技能/, "SL02 waiting or failed recommendation is not empty");
+  panel().props.onSearchResultCountChange({ query: "absent", count: 0 }); h.render();
+  assert.equal((allText().match(/找不到技能/g) ?? []).length, 1);
+  assert.doesNotMatch(allText(), /没有匹配的技能/);
   assert.equal(press("Enter"), false, "SK04 empty results do not consume Enter");
   input().props.onChange({ target: { value: " " } }); h.render();
   assert.equal(press("ArrowDown"), false, "SK04 empty query does not consume arrows");
+  assert.equal(resultsRegion(), undefined);
+  assert.match(allText(), /本地模版/);
   h.unmount();
   console.log("PASS skill search default selection, cross-group arrows, scoped activation, IME and shrinking results");
 }

@@ -37,7 +37,8 @@ const installed = { key: "actual-path", name: "demo", path: "C:/home/skills/demo
     searchQuery: "PDF", activeSearchResultIndex: 0, onSearchResultCountChange: count => counts.push(count) };
   const f = await readyRecommendedSkills(options);
   assert.equal(getCard(f).props["data-skill-search-result"], "true");
-  assert.equal(counts.at(-1), 1);
+  assert.equal(counts.at(-1).count, 1);
+  assert.doesNotMatch(f.text(), /刷新推荐目录|推荐目录缓存/, "SL01 results omit browse-only controls and provenance");
   getCard(f).props.onClick();
   const action = getPreview(f).props.footer.children[0].props.onClick;
   action(click); action(click);
@@ -137,3 +138,28 @@ console.log("PASS RP01/RP04-RP09 default-root footer, synchronous write lock, co
   }
 }
 console.log("PASS 13H default curated ranking, full-catalog search and accessible disclosure boundaries");
+
+{
+  const reports = [];
+  const options = { onSearchResultCountChange: report => reports.push(report) };
+  const f = await readyRecommendedSkills(options);
+  f.buttons("刷新推荐目录")[0].props.onClick();
+  options.searchQuery = "other"; f.render();
+  assert.equal(reports.at(-1).query, "other");
+  assert.equal(reports.at(-1).count, null);
+  assert.match(f.text(), /正在加载技能/);
+  f.calls.at(-1).reject(Error("offline")); await flushRecommendedSkills();
+  assert.match(f.text(), /无法加载推荐技能.*offline/);
+  assert.equal(reports.at(-1).count, null, "SL02 failed recommendations do not claim zero results");
+  f.buttons("重试")[0].props.onClick();
+  f.calls.at(-1).resolve({ skills: [], repoRoot: "C:/cache", source: "cache", fetchedAt: null, error: null });
+  await flushRecommendedSkills();
+  assert.equal(reports.at(-1).count, 0);
+  assert.doesNotMatch(f.text(), /无法加载|正在加载|推荐目录没有/);
+  const reads = f.calls.length;
+  options.searchQuery = " "; f.render();
+  assert.equal(f.calls.length, reads, "SL03 browsing and search use the same mounted catalog");
+  assert.match(f.text(), /刷新推荐目录/);
+  f.unmount();
+}
+console.log("PASS 13J search reports loading, failures, retry and confirmed empty separately");

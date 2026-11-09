@@ -945,6 +945,39 @@
   gap: 12px;
 }
 
+.pm-skill-content {
+  display: contents;
+}
+
+.pm-skill-search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.pm-skill-search-results > h3 {
+  margin: 0 0 4px;
+  padding: 0 8px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--text-lg);
+  font-weight: 500;
+  line-height: 24px;
+}
+
+.pm-skill-search-results > h3 span {
+  margin-inline-start: 6px;
+  color: var(--text-tertiary);
+}
+
+.pm-skill-search-results > p {
+  color: var(--text-secondary);
+}
+
+.pm-skill-search-results > .pm-recommended-skills {
+  margin-top: 0;
+}
+
 .pm-recommended-skills-grid > .item-card {
   min-width: 0;
   margin: 0;

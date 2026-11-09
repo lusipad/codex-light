@@ -24,7 +24,7 @@ interface Props {
   onInstalledCardKeysChange: (keys: string[]) => void;
   searchQuery?: string;
   activeSearchResultIndex?: number;
-  onSearchResultCountChange?: (count: number) => void;
+  onSearchResultCountChange?: (result: { query: string; count: number | null }) => void;
 }
 
 export function RecommendedSkillsPanel({ workspaceRoot, onInstalled, writeBusy, beginInstall, finishInstall, installedSkills, renderInstalledSkill, onInstalledCardKeysChange, searchQuery = "", activeSearchResultIndex, onSearchResultCountChange }: Props) {
@@ -59,8 +59,9 @@ export function RecommendedSkillsPanel({ workspaceRoot, onInstalled, writeBusy, 
     .filter(item => matchRecommendedSkill(entry.skill, [item])).map(item => item.key)))]);
   useEffect(() => { onInstalledCardKeysChange(JSON.parse(installedKeys)); }, [installedKeys, onInstalledCardKeysChange]);
   useEffect(() => { if (searching) setExpanded(false); }, [searching]);
-  const searchResultCount = searching ? visibleEntries.length : 0;
-  useEffect(() => { onSearchResultCountChange?.(searchResultCount); }, [searchResultCount, onSearchResultCountChange]);
+  const searchResultCount = !searching ? 0
+    : !visibleEntries.length && (loading || error || !catalog) ? null : visibleEntries.length;
+  useEffect(() => { onSearchResultCountChange?.({ query, count: searchResultCount }); }, [query, searchResultCount, onSearchResultCountChange]);
   const preview = catalog?.skills.find(skill => skill.id === previewId);
   const previewInstalledKey = preview ? matchRecommendedSkill(preview, installedSkills)?.key : undefined;
   useEffect(() => { if (!preview || previewInstalledKey) setPreviewId(null); }, [preview?.id, previewInstalledKey]);
@@ -122,19 +123,23 @@ export function RecommendedSkillsPanel({ workspaceRoot, onInstalled, writeBusy, 
     }
   };
 
-  return <section className="pm-recommended-skills" aria-label="推荐技能">
-    <div className="list-toolbar">
-      <strong>推荐</strong>
+  if (searching && !visibleEntries.length && !error && !preview) {
+    return loading || !catalog ? <p role="status">正在加载技能…</p> : null;
+  }
+
+  return <section className="pm-recommended-skills" aria-label={searching ? undefined : "推荐技能"}>
+    {(!searching || error) && <div className="list-toolbar">
+      {!searching && <strong>推荐</strong>}
       <button type="button" className="secondary-btn-sm" disabled={loading} onClick={() => void load(true)}>
-        {loading ? "正在读取…" : "刷新推荐目录"}
+        {loading ? "正在读取…" : searching ? "重试" : "刷新推荐目录"}
       </button>
-    </div>
-    {error && <p role="alert">{error}{catalog?.skills.length ? "；仍显示已读取的目录。" : ""}</p>}
-    {catalog && <p className="item-card-desc">
+    </div>}
+    {error && <p role="alert">{searching && "无法加载推荐技能。"}{error}{catalog?.skills.length ? "；仍显示已读取的目录。" : ""}</p>}
+    {!searching && catalog && <p className="item-card-desc">
       {catalog.source === "local-source" ? "本地推荐来源" : catalog.source === "cache" ? "推荐目录缓存" : "推荐目录"}
       {catalog.fetchedAt !== null ? ` · ${new Date(catalog.fetchedAt).toLocaleString()}` : ""}
     </p>}
-    {!loading && catalog?.skills.length === 0 && <p className="empty-hint">推荐目录没有可用技能。</p>}
+    {!searching && !loading && catalog?.skills.length === 0 && <p className="empty-hint">推荐目录没有可用技能。</p>}
     <div className="scrollable-items pm-recommended-skills-grid">
       {visibleEntries.map(({ skill, installed }, index) =>
         <div className={installed ? "pm-recommended-installed" : "item-card"} key={skill.id}
