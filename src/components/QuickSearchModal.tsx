@@ -741,6 +741,11 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
       : remote?.threads ?? [];
     const remoteThreadIds = new Set(remoteThreads.map((t) => t.id));
     const threadLimit = mode === "chats" ? chatPaging?.limit ?? REMOTE_CHAT_LIMIT : REMOTE_THREAD_LIMIT;
+    const branchPreview = (thread: ThreadSummary, title: string): string | undefined => {
+      const branch = thread.gitInfo?.branch;
+      return mode === "chats" && q && typeof branch === "string" &&
+        branch.toLowerCase().includes(q) && !title.toLowerCase().includes(q) ? branch : undefined;
+    };
     const chatSource = (thread: RemoteThreadResult) => {
       const loaded = thread.projectId === undefined ? threads.find(candidate => candidate.id === thread.id) : undefined;
       const source = loaded ? { ...thread, projectId: loaded.projectId, cwd: thread.cwd ?? loaded.cwd } : thread;
@@ -748,12 +753,15 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
     };
 
     remoteThreads.slice(0, threadLimit).forEach((t) => {
+      const title = t.name || t.preview || t.id;
+      const loaded = mode === "chats" && !t.snippet ? threads.find(thread => thread.id === t.id) : undefined;
       results.push({
         id: `th-${t.id}`,
         category: "thread",
         section: "聊天",
-        title: t.name || t.preview || t.id,
-        subtitle: mode === "chats" ? t.snippet : `历史会话${t.cwd ? ` · ${t.cwd}` : ""}`,
+        title,
+        subtitle: mode === "chats" ? t.snippet ?? (loaded ? branchPreview(loaded, title) : undefined)
+          : `历史会话${t.cwd ? ` · ${t.cwd}` : ""}`,
         rightLabel: mode === "chats" ? chatSource(t) : t.cwd ? t.cwd.split(/[/\\]/).pop() : "Chat",
         icon: <MessageSquare size={14} />,
         onSelect: () => {
@@ -765,15 +773,10 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
 
     const emptyChatQuery = mode === "chats" && !trimmedQuery;
     const pinnedRanks = emptyChatQuery ? new Map([...new Set(pinnedThreadIds)].map((id, index) => [id, index])) : undefined;
-    const localThreads = threads
-      .filter((t) => {
-        if (mode === "files" || (mode === "root" && q.length < 2) || remoteThreadIds.has(t.id)) return false;
-        return (
-          t.name?.toLowerCase().includes(q) ||
-          t.preview?.toLowerCase().includes(q) ||
-          t.id.toLowerCase().includes(q)
-        );
-      });
+    const localMatches = (t: ThreadSummary) =>
+      t.name?.toLowerCase().includes(q) || t.preview?.toLowerCase().includes(q) || t.id.toLowerCase().includes(q);
+    const localThreads = threads.filter(t => mode !== "files" && (mode !== "root" || q.length >= 2) &&
+      !remoteThreadIds.has(t.id) && (localMatches(t) || branchPreview(t, t.name || t.preview || t.id)));
     if (pinnedRanks) {
       localThreads.sort((a, b) => {
         const aRank = pinnedRanks.get(a.id);
@@ -781,16 +784,19 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
         if (aRank !== undefined || bRank !== undefined) return (aRank ?? pinnedRanks.size) - (bRank ?? pinnedRanks.size);
         return (b.recencyAt ?? b.updatedAt ?? b.createdAt ?? 0) - (a.recencyAt ?? a.updatedAt ?? a.createdAt ?? 0);
       });
+    } else if (mode === "chats") {
+      localThreads.sort((a, b) => Number(localMatches(b)) - Number(localMatches(a)));
     }
     localThreads
       .slice(0, Math.max(0, threadLimit - remoteThreads.length))
       .forEach((t) => {
+        const title = t.name || t.preview || t.id;
         results.push({
           id: `th-${t.id}`,
           category: "thread",
           section: pinnedRanks?.has(t.id) ? "已置顶聊天" : "聊天",
-          title: t.name || t.preview || t.id,
-          subtitle: mode === "chats" ? undefined : `历史会话 · ${t.cwd || ""}`,
+          title,
+          subtitle: mode === "chats" ? branchPreview(t, title) : `历史会话 · ${t.cwd || ""}`,
           rightLabel: mode === "chats" ? chatSource(t) : t.cwd ? t.cwd.split(/[/\\]/).pop() : "Chat",
           icon: <MessageSquare size={14} />,
           onSelect: () => {

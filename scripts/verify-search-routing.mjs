@@ -133,6 +133,32 @@ function mount(overrides = {}) {
   assert.deepEqual(view.calls, [["onSelectThread", "content-match"], ["onClose"]]);
 }
 {
+  const threads = [
+    { id: "branch-only", name: "构建结果", gitInfo: { branch: "feature/修复-UI" } },
+    { id: "title", name: "修复-UI 记录", gitInfo: { branch: "feature/修复-UI" } },
+    { id: "content", name: "日志", gitInfo: { branch: "feature/修复-UI" } },
+    { id: "no-snippet", name: "说明", gitInfo: { branch: "feature/修复-UI" } },
+    { id: "not-matched", name: "设计", gitInfo: null },
+  ];
+  const query = "修复-ui";
+  const view = mount({ mode: "chats", query, threads, remoteResults: {
+    mode: "chats", query, workspacePath: "repo-B",
+    threads: [{ id: "content", name: "日志", snippet: "修复-UI 的正文" }, { id: "no-snippet", name: "说明" }],
+  } });
+  const rows = view.results();
+  assert.deepEqual(Array.from(rows, row => [row.id, row.subtitle]), [
+    ["th-content", "修复-UI 的正文"], ["th-no-snippet", "feature/修复-UI"],
+    ["th-title", undefined], ["th-branch-only", "feature/修复-UI"],
+  ]);
+  rows.at(-1).onSelect();
+  assert.deepEqual(view.calls, [["onSelectThread", "branch-only"], ["onClose"]]);
+  view.context.query = "";
+  assert.ok(view.results().every(row => row.subtitle === undefined), "idle results do not expose branch previews");
+  view.context.query = query;
+  view.context.mode = "root";
+  assert.equal(view.results().some(row => row.id === "th-branch-only"), false);
+}
+{
   const view = mount({ mode: "chats", query: "", chatHistoryReady: false, trimmedQuery: "", items: [], isTauriRuntime: () => true });
   const state = name => execute(chatStates[name], page, view.context);
   assert.equal(state("emptyChat"), false, "the catalog has not loaded");

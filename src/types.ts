@@ -151,6 +151,7 @@ export interface ThreadSummary {
   name?: string | null;
   preview?: string | null;
   cwd?: string | null;
+  gitInfo?: { branch?: string | null } | null;
   createdAt?: number;
   updatedAt?: number;
   recencyAt?: number | null;
