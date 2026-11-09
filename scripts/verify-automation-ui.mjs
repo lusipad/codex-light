@@ -15,6 +15,7 @@ function surface(props = {}) {
   const slots = [], calls = [], timers = new Map(); let timerId = 0, stopped = 0;
   const document = { activeElement: null };
   const control = { list: tasks, confirm: true, confirmations: [], scheduler: null, markRead: async () => true,
+    delete: async id => tasks.filter(task => task.id !== id),
     save: async item => [...tasks.filter(task => task.id !== item.id), { ...item, id: item.id || "created-fixture" }] };
   const descendants = node => [node, ...node.children.filter(child => child && typeof child === "object").flatMap(descendants)];
   const changed = (old, deps) => !old || !deps || deps.length !== old.deps?.length || deps.some((value, i) => !Object.is(value, old.deps[i]));
@@ -55,7 +56,7 @@ function surface(props = {}) {
     calls.push({ method, args });
     if (method === "automations_list") return typeof control.list === "function" ? control.list() : control.list;
     if (method === "automation_save") return control.save(args.item);
-    if (method === "automation_delete") return tasks.filter(task => task.id !== args.id);
+    if (method === "automation_delete") return control.delete(args.id);
     throw Error(`Unexpected command ${method}`);
   } };
   const window = { setInterval: fn => { timers.set(++timerId, fn); return timerId; },
@@ -253,11 +254,55 @@ assert.equal(edits.calls.filter(call => call.method === "automation_save").at(-1
 assert.equal(edits.menu().props.items.find(item => item.id === "status").label, "继续");
 await edits.selectAction("status"); await edits.settle();
 assert.equal(edits.calls.filter(call => call.method === "automation_save").at(-1).args.item.status, "ACTIVE");
-edits.control.confirm = false; const beforeCancel = edits.calls.length;
-await edits.selectAction("delete"); await edits.settle();
-assert.equal(edits.calls.length, beforeCancel, "cancelled confirmation cannot delete");
-edits.control.confirm = true; await edits.selectAction("delete"); await edits.settle();
-assert.equal(edits.calls.filter(call => call.method === "automation_delete").at(-1).args.id, "active-task"); edits.unmount();
+const deleteDialog = () => edits.nodes().find(node => node.type === "dialog");
+const deleteCalls = () => edits.calls.filter(call => call.method === "automation_delete");
+const event = { preventDefault() {}, stopPropagation() {} };
+const submit = () => deleteDialog().querySelector("form").props.onSubmit(event);
+for (const dismiss of [
+  () => edits.button("取消").props.onClick(),
+  () => edits.button("关闭").props.onClick(),
+  () => deleteDialog().props.onCancel(event),
+  () => {
+    const dialog = deleteDialog();
+    dialog.getBoundingClientRect = () => ({ left: 10, right: 100, top: 10, bottom: 100 });
+    dialog.props.onMouseDown({ target: dialog, currentTarget: dialog, clientX: 5, clientY: 20 });
+  },
+]) {
+  edits.selectAction("delete"); await edits.settle();
+  assert.equal(deleteDialog().props.role, "alertdialog");
+  assert.match(edits.text(), /删除\s+Active fixture\s+？/);
+  assert.match(edits.text(), /这将永久删除定时任务，并停止日后的运行/);
+  assert.equal(deleteCalls().length, 0);
+  dismiss(); await edits.settle();
+  assert.equal(deleteDialog(), undefined);
+  assert.equal(deleteCalls().length, 0, "cancelled confirmation cannot delete");
+  assert.ok(edits.button("Active fixture"));
+}
+edits.selectAction("delete"); await edits.settle();
+deleteDialog().props.onCompositionStart();
+deleteDialog().props.onCancel(event);
+submit(); await edits.settle();
+assert.ok(deleteDialog(), "IME cancellation keeps the dialog open");
+assert.equal(deleteCalls().length, 0);
+deleteDialog().props.onCompositionEnd();
+let rejectDelete;
+edits.control.delete = () => new Promise((_, reject) => { rejectDelete = reject; });
+submit(); submit(); deleteDialog().props.onCancel(event);
+await edits.settle();
+assert.equal(deleteCalls().length, 1);
+assert.equal(deleteDialog().props["aria-busy"], true);
+assert.equal(edits.button("取消").props.disabled, true);
+assert.equal(edits.button("关闭"), undefined);
+rejectDelete(Error("fixture denied")); await edits.settle();
+assert.match(edits.text(), /删除任务失败：Error: fixture denied/);
+assert.ok(edits.button("Active fixture"));
+edits.control.delete = async id => tasks.filter(task => task.id !== id);
+submit(); await edits.settle();
+assert.equal(deleteCalls().length, 2);
+assert.equal(deleteCalls().at(-1).args.id, "active-task");
+assert.equal(deleteDialog(), undefined);
+assert.equal(edits.button("Active fixture"), undefined);
+edits.unmount();
 
 const failed = surface(); let resolveList;
 failed.control.list = () => new Promise(resolve => { resolveList = resolve; });

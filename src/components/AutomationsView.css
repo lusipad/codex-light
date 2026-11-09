@@ -374,3 +374,34 @@
     border-left: 1px solid var(--border-subtle);
   }
 }
+.automation-delete-dialog {
+  box-sizing: border-box;
+  width: min(400px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  margin: auto;
+  padding: 20px;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-default);
+  border-radius: 16px;
+  box-shadow: var(--shadow-lg);
+  overflow-wrap: anywhere;
+}
+
+.automation-delete-dialog::backdrop { background: rgb(0 0 0 / 50%); }
+.automation-delete-dialog h2 { margin: 0 28px 8px 0; font-size: 16px; }
+.automation-delete-dialog p { margin: 0; color: var(--text-secondary); }
+.automation-delete-dialog .automation-delete-error { margin-top: 12px; color: #f87171; }
+.automation-delete-close { position: absolute; top: 12px; right: 12px; }
+.automation-delete-dialog footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+.automation-delete-submit {
+  border: 0;
+  border-radius: 8px;
+  padding: 6px 12px;
+  background: #b91c1c;
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+.automation-delete-submit:hover:not(:disabled) { background: #991b1b; }
+.automation-delete-submit:disabled { opacity: .6; cursor: default; }

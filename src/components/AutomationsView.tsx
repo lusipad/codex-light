@@ -281,6 +281,12 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
   const [clock, setClock] = useState(Date.now());
   const rowTriggerRef = useRef<HTMLButtonElement | null>(null);
   const detailCloseRef = useRef<HTMLButtonElement | null>(null);
+  const addTaskRef = useRef<HTMLButtonElement | null>(null);
+  const deleteDialogRef = useRef<HTMLDialogElement | null>(null);
+  const cancelDeleteRef = useRef<HTMLButtonElement | null>(null);
+  const deleteComposingRef = useRef(false);
+  const [deleteTarget, setDeleteTarget] = useState<Pick<AutomationItem, "id" | "name"> | null>(null);
+  const [deleteError, setDeleteError] = useState("");
   const filterMenuRef = useRef<HTMLDivElement | null>(null);
   const filterFocusLastRef = useRef(false);
   const configurationBaselineRef = useRef(JSON.stringify(["", "cron", SCHEDULE_PRESETS[0].rrule, "", "worktree", ""]));
@@ -552,9 +558,9 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
 
   const handleDelete = async (id: string) => {
     if (writePendingRef.current) return;
-    if (!confirm("确定要删除该计划任务 / 目标吗？")) return;
     writePendingRef.current = true;
     setWriteBusy(true);
+    setDeleteError("");
     ++listRequestRef.current;
     try {
       const updated = await tauriInvoke<AutomationItem[]>("automation_delete", { id });
@@ -562,9 +568,10 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
       setAutomations(updated);
       setListLoading(false);
       setListError("");
+      setDeleteTarget(null);
       void syncScheduleAfterConfigChange();
     } catch (error) {
-      setNotice({ kind: "error", text: `删除任务失败：${String(error)}` });
+      setDeleteError(`删除任务失败：${String(error)}`);
     } finally {
       writePendingRef.current = false;
       setWriteBusy(false);
@@ -738,6 +745,23 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
   useEffect(() => {
     if (threadTask) detailCloseRef.current?.focus({ preventScroll: true });
   }, [threadTask?.id, hasThreadTaskDetail]);
+  useEffect(() => {
+    if (!deleteTarget) return;
+    const dialog = deleteDialogRef.current;
+    const trigger = document.activeElement as HTMLElement | null;
+    dialog?.showModal();
+    cancelDeleteRef.current?.focus();
+    return () => {
+      dialog?.close();
+      deleteComposingRef.current = false;
+      const row = rowTriggerRef.current;
+      (trigger?.isConnected ? trigger : row?.isConnected ? row : detailCloseRef.current ?? addTaskRef.current)
+        ?.focus({ preventScroll: true });
+    };
+  }, [deleteTarget]);
+  const dismissDelete = () => {
+    if (!writePendingRef.current) setDeleteTarget(null);
+  };
   const nextRunLabel = (item: AutomationItem) => {
     if (item.status === "PAUSED") return "已暂停";
     const nextRunAt = schedulerEntriesById.get(item.id)?.nextRunAt;
@@ -791,7 +815,7 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
     } : undefined}>
       {!threadTask && <header className="automation-page-header">
         <h1>定时任务</h1>
-        <button type="button" className="automation-add" onClick={event => {
+        <button ref={addTaskRef} type="button" className="automation-add" onClick={event => {
           if (startCreate()) rowTriggerRef.current = event.currentTarget;
         }} disabled={writeBusy}>
           <Plus size={16} /> 添加
@@ -894,7 +918,10 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
                     if (writePendingRef.current) return;
                     if (id === "run") return handleRunNow(selectedItem);
                     if (id === "status") return handleToggleStatus(selectedItem);
-                    if (id === "delete") return handleDelete(selectedItem.id);
+                    if (id === "delete") {
+                      setDeleteError("");
+                      setDeleteTarget({ id: selectedItem.id, name: selectedItem.name });
+                    }
                   }}
                 />
                 <button type="button" className="automation-close" aria-label="编辑任务" title="编辑任务"
@@ -1045,6 +1072,38 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
           </>}
         </aside>}
       </div>
+      {deleteTarget && <dialog ref={deleteDialogRef} className="automation-delete-dialog" role="alertdialog"
+        aria-labelledby="automation-delete-title" aria-describedby="automation-delete-description" aria-busy={writeBusy}
+        onCompositionStart={() => { deleteComposingRef.current = true; }}
+        onCompositionEnd={() => { deleteComposingRef.current = false; }}
+        onKeyDown={event => {
+          if (event.key !== "Escape" && event.key !== "Enter") return;
+          event.stopPropagation();
+          if (deleteComposingRef.current || event.nativeEvent.isComposing || event.keyCode === 229) event.preventDefault();
+        }}
+        onCancel={event => {
+          event.preventDefault();
+          if (!deleteComposingRef.current) dismissDelete();
+        }}
+        onMouseDown={event => {
+          if (event.target !== event.currentTarget) return;
+          const { left, right, top, bottom } = event.currentTarget.getBoundingClientRect();
+          if (event.clientX < left || event.clientX > right || event.clientY < top || event.clientY > bottom) dismissDelete();
+        }}>
+        <form onSubmit={event => {
+          event.preventDefault();
+          if (!deleteComposingRef.current) void handleDelete(deleteTarget.id);
+        }}>
+          {!writeBusy && <button type="button" className="automation-close automation-delete-close" aria-label="关闭" onClick={dismissDelete}><X size={16} /></button>}
+          <h2 id="automation-delete-title">删除 <strong>{deleteTarget.name}</strong>？</h2>
+          <p id="automation-delete-description">这将永久删除定时任务，并停止日后的运行</p>
+          {deleteError && <p className="automation-delete-error" role="alert">{deleteError}</p>}
+          <footer>
+            <button ref={cancelDeleteRef} type="button" className="secondary-btn" disabled={writeBusy} onClick={dismissDelete}>取消</button>
+            <button type="submit" className="automation-delete-submit" disabled={writeBusy}>删除定时任务</button>
+          </footer>
+        </form>
+      </dialog>}
     </section>
   );
 };

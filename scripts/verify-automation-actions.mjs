@@ -30,7 +30,7 @@ function mount() {
     tauriInvoke(method, args) { const pending = deferred(); requests.push({ method, args, ...pending }); return pending.promise; },
     runAutomationNow(id) { return context.tauriInvoke("automations_run_now", { id }); },
   };
-  for (const name of ["Automations", "ListLoading", "ListError", "Name", "Prompt", "EditingItem", "ShowCreateForm", "WriteBusy", "RunBusyId", "RunThreads", "RunHistory", "SchedulerState", "Scheduler", "Kind", "Rrule", "ExecEnv", "SelectedModel"]) {
+  for (const name of ["Automations", "ListLoading", "ListError", "Name", "Prompt", "EditingItem", "ShowCreateForm", "WriteBusy", "RunBusyId", "RunThreads", "RunHistory", "SchedulerState", "Scheduler", "Kind", "Rrule", "ExecEnv", "SelectedModel", "DeleteError", "DeleteTarget"]) {
     const key = name[0].toLowerCase() + name.slice(1);
     context[`set${name}`] = value => { context[key] = typeof value === "function" ? value(context[key] ?? (key === "runHistory" ? [] : {})) : value; };
   }
@@ -59,7 +59,8 @@ for (const operation of ["handleToggleStatus", "handleDelete"]) {
   const view = mount(), pending = view[operation](operation === "handleDelete" ? "one" : automation);
   view.requests[0].reject(Error("write denied")); await pending;
   assert.equal(view.context.writePendingRef.current, false);
-  assert.ok(view.notices[0].text.includes("write denied"), "AU01: status/delete failure is visible and unlocks");
+  assert.match(operation === "handleDelete" ? view.context.deleteError : view.notices[0].text, /write denied/,
+    "AU01: status/delete failure is visible and unlocks");
 }
 {
   const view = mount(), older = view.refresh(), saving = view.handleCreate();

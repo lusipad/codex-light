@@ -2825,3 +2825,8 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 ## 2026-11-09 — 运行历史状态兼容
 
 - 新版启动迁移 10M 混合文件，保留无聊天失败，同时让旧构建可读取任务与回执。728 项 Rust、123 项发布回放和 Windows 打包通过，另用新旧原生 EXE 读回隔离副本。详见[验收记录](antigravity/acceptance/10N-run-history-compatibility.md)。
+
+## 2026-11-09 — 定时任务删除确认
+
+- 按官方文案和操作结构将系统确认框换为带任务名的弹层，复用既有删除与调度刷新。宽窄原生窗口验证取消保留配置、确认移除配置，回放覆盖重复请求和失败重试。
+- 728 项 Rust、123 项发布回放、原生通知适配器及 Windows 打包通过。远端发布仍等对应提交的 Windows CI 成功。详见[验收记录](antigravity/acceptance/10O-task-delete-confirmation.md)。
