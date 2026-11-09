@@ -548,6 +548,7 @@ export const App: React.FC = () => {
   const [activityPinnedVisible, setActivityPinnedVisible] = useState(() => localStorage.getItem(ACTIVITY_PINNED_KEY) === "true");
   const [activityScheduledVisible, setActivityScheduledVisible] = useState(() => localStorage.getItem(ACTIVITY_SCHEDULED_KEY) === "true");
   const [activityScheduleRevision, setActivityScheduleRevision] = useState(0);
+  const refreshActivitySchedule = useCallback(() => setActivityScheduleRevision(value => value + 1), []);
   const [activityScheduleCatalog, setActivityScheduleCatalog] = useState<{
     scope: string; ids: ReadonlySet<string>; unread: ReadonlySet<string> | null;
   } | null>(null);
@@ -6281,6 +6282,7 @@ export const App: React.FC = () => {
                 activeWorkspaceRoot={activeWorkspace?.path || ""}
                 models={models}
                 onSelectThread={selectScheduledThread}
+                onRunRead={refreshActivitySchedule}
               />
             </div>
           </div>

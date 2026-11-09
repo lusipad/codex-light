@@ -18,6 +18,7 @@ import "./AutomationsView.css";
 import {
   getSchedulerStatus,
   isSchedulerUnavailableError,
+  markActivityRunRead,
   refreshSchedule,
   runAutomationNow,
   subscribeAutomationEvents,
@@ -32,6 +33,7 @@ interface AutomationsViewProps {
   activeWorkspaceRoot: string;
   models: ModelInfo[];
   onSelectThread?: (threadId: string) => void;
+  onRunRead?: () => void;
   threadTask?: { id: string; threadId: string; onClose: () => void };
   onNavigationGuardChange?: (guard: ((action: () => void) => boolean) | null) => void;
 }
@@ -255,6 +257,7 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
   activeWorkspaceRoot,
   models,
   onSelectThread,
+  onRunRead,
   threadTask,
   onNavigationGuardChange,
 }) => {
@@ -678,8 +681,30 @@ export const AutomationsView: React.FC<AutomationsViewProps> = ({
   const selectedItem = automations.find(item => item.id === selectedAutomationId &&
     (!threadTask || (item.status !== "DELETED" && item.targetThreadId === threadTask.threadId)));
   const selectedEntry = selectedItem ? schedulerEntriesById.get(selectedItem.id) : undefined;
-  const selectedRuns = selectedItem ? runHistory.filter(record => record.automationId === selectedItem.id) : [];
+  const selectedRuns = selectedItem ? runHistory.filter(record => record.automationId === selectedItem.id)
+    .sort((a, b) => b.startedAt - a.startedAt) : [];
   const lastRunThreadId = selectedItem ? runThreads[selectedItem.id] ?? selectedEntry?.lastThreadId : null;
+  const displayedRun = selectedRuns[0];
+  const matchesDisplayedRun = displayedRun
+    ? displayedRun.status === "completed" && displayedRun.startedAt === selectedEntry?.lastRunAt &&
+      (!displayedRun.threadId || displayedRun.threadId === selectedEntry?.lastThreadId)
+    : lastRunThreadId === selectedEntry?.lastThreadId;
+  const readableRun = !threadTask && !showCreateForm && selectedEntry?.lastRunUnread && matchesDisplayedRun
+    ? selectedEntry : null;
+  const readTaskId = readableRun?.id;
+  const readStartedAt = readableRun?.lastRunAt;
+  const readThreadId = readableRun?.lastThreadId;
+  useEffect(() => {
+    if (!readTaskId || readStartedAt == null || !readThreadId) return;
+    let active = true;
+    void markActivityRunRead(readTaskId, readStartedAt, readThreadId).then(() => {
+      onRunRead?.();
+      if (active) void loadScheduler({ silent: true });
+    }).catch(error => {
+      if (active) setNotice({ kind: "error", text: `更新运行已读状态失败：${String(error)}` });
+    });
+    return () => { active = false; };
+  }, [readTaskId, readStartedAt, readThreadId, loadScheduler, onRunRead]);
   const stateOptions = [["ALL", "全部"], ["ACTIVE", "已开启"], ["PAUSED", "已暂停"], ["COMPLETED", "已完成"]] as const;
   const sortOptions = [["automatic", "自动"], ["next_run_asc", "下次运行"], ["updated_at_desc", "最近更新"], ["title_asc", "名称"]] as const;
   const configurationDirty = showCreateForm && JSON.stringify([name, kind, rrule, prompt, execEnv, selectedModel]) !== configurationBaselineRef.current;

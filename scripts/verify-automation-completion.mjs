@@ -20,6 +20,8 @@ const status = client.exports.normalizeSchedulerStatus;
 assert.equal(status({ entries: [{ id: "task", lastThreadId: "persisted-thread" }] }).entries[0].lastThreadId, "persisted-thread");
 assert.equal(status({ entries: [{ id: "task", lastThreadId: "   " }] }).entries[0].lastThreadId, null);
 assert.equal(status({ entries: [{ id: "task" }] }).entries[0].lastThreadId, null);
+assert.equal(status({ entries: [{ id: "task", lastRunUnread: true }] }).entries[0].lastRunUnread, true);
+assert.equal(status({ entries: [{ id: "task", lastRunUnread: "true" }] }).entries[0].lastRunUnread, false);
 assert.equal(status({ entries: [] }).activityThreadIds, null, "older backends cannot attest to the identity set");
 assert.equal(status({ activityThreadIds: ["known", 42] }).activityThreadIds, null, "invalid sets are not treated as authoritative");
 assert.deepEqual(Array.from(status({ activityThreadIds: ["new", "old", "new"] }).activityThreadIds), ["new", "old"]);
@@ -40,6 +42,11 @@ assert.deepEqual(Array.from(status({ activityUnreadThreadIds: ["done", "done"] }
   assert.deepEqual(calls, [["automations_mark_activity_runs_read", { threadIds: ["known"], through: 101 }]]);
   result = "2";
   await assert.rejects(runtime.exports.markActivityRunsRead(["known"], 101), /有效的已读结果/);
+  result = true;
+  assert.equal(await runtime.exports.markActivityRunRead("task", 101, "known"), true);
+  assert.deepEqual(calls.at(-1), ["automations_mark_activity_run_read", { automationId: "task", startedAt: 101, threadId: "known" }]);
+  result = 1;
+  await assert.rejects(runtime.exports.markActivityRunRead("task", 101, "known"), /有效的单次运行已读结果/);
 }
 
 const source = fs.readFileSync("src/components/AutomationsView.tsx", "utf8");

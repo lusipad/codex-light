@@ -14,7 +14,7 @@ function surface(props = {}) {
   let cursor = 0, tree, pending = [];
   const slots = [], calls = [], timers = new Map(); let timerId = 0, stopped = 0;
   const document = { activeElement: null };
-  const control = { list: tasks, confirm: true, confirmations: [], scheduler: null,
+  const control = { list: tasks, confirm: true, confirmations: [], scheduler: null, markRead: async () => true,
     save: async item => [...tasks.filter(task => task.id !== item.id), { ...item, id: item.id || "created-fixture" }] };
   const descendants = node => [node, ...node.children.filter(child => child && typeof child === "object").flatMap(descendants)];
   const changed = (old, deps) => !old || !deps || deps.length !== old.deps?.length || deps.some((value, i) => !Object.is(value, old.deps[i]));
@@ -45,7 +45,11 @@ function surface(props = {}) {
     isSchedulerUnavailableError: error => error?.unavailable === true,
     refreshSchedule: async () => { throw Error("unexpected refresh"); },
     runAutomationNow: async id => { calls.push({ method: "automations_run_now", args: { id } }); return { threadId: "fixture-thread" }; },
-    subscribeAutomationEvents: () => () => { ++stopped; },
+    markActivityRunRead: async (...args) => {
+      calls.push({ method: "automations_mark_activity_run_read", args });
+      return control.markRead(...args);
+    },
+    subscribeAutomationEvents: listener => { control.emit = listener; return () => { ++stopped; }; },
   };
   const bridge = { tauriInvoke: async (method, args) => {
     calls.push({ method, args });
@@ -114,6 +118,45 @@ for (const owner of ["current-thread", "other-thread"]) {
   drawer.unmount();
 }
 console.log("PASS 10H02–10H03 read-only detail scope, thread ownership and Escape/IME guard");
+
+{
+  let refreshes = 0, reject;
+  const view = surface({ onRunRead: () => { ++refreshes; } });
+  const unread = { id: "active-task", lastRunAt: 100, lastThreadId: "shared", lastRunUnread: true };
+  view.control.scheduler = { entries: [unread] };
+  view.control.markRead = () => new Promise((_, fail) => { reject = fail; });
+  const receipts = () => view.calls.filter(call => call.method === "automations_mark_activity_run_read");
+  view.render(); view.effects(); await view.settle();
+  assert.equal(receipts().length, 0, "a list load is not a detail visit");
+  view.button("Active fixture").props.onClick(); await view.settle();
+  assert.deepEqual(receipts().map(call => Array.from(call.args)), [["active-task", 100, "shared"]]);
+  view.button("编辑任务").props.onClick(); await view.settle();
+  reject(Error("write denied after leaving")); await view.settle();
+  assert.doesNotMatch(view.text(), /write denied/);
+  assert.equal(refreshes, 0);
+  view.control.markRead = async () => { throw Error("write denied in detail"); };
+  view.button("关闭任务详情").props.onClick(); await view.settle(); await view.settle();
+  assert.match(view.text(), /write denied in detail/);
+  assert.equal(receipts().length, 2, "failure is stable until another detail visit");
+  view.button("关闭任务详情").props.onClick(); await view.settle();
+  view.control.emit({ kind: "started", id: "active-task", name: "Active fixture", at: 200 });
+  await view.settle();
+  view.button("Active fixture").props.onClick(); await view.settle();
+  assert.equal(receipts().length, 2, "a newer displayed running record blocks the stale completed snapshot");
+  view.control.scheduler = { entries: [{ ...unread, lastRunAt: 200 }] };
+  view.control.markRead = async () => {
+    view.control.scheduler = { entries: [{ ...unread, lastRunAt: 200, lastRunUnread: false }] };
+    return true;
+  };
+  view.control.emit({ kind: "finished", id: "active-task", name: "Active fixture", startedAt: 200,
+    status: "completed", finishedAt: 210, threadId: "shared" });
+  await view.settle(); await view.settle();
+  assert.deepEqual(Array.from(receipts().at(-1).args), ["active-task", 200, "shared"]);
+  assert.equal(refreshes, 1);
+  assert.equal(receipts().length, 3);
+  view.unmount();
+}
+console.log("PASS 10L detail receipts: exact displayed run, editing, stale responses, error and authoritative refresh");
 
 const h = surface(); h.render(); h.effects(); await h.settle();
 assert.ok(h.nodes().some(node => /^h[1-3]$/.test(node.type) && node.children.join("") === "定时任务"), "official local configuration region uses its documented title");

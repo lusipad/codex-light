@@ -693,6 +693,12 @@ struct ActivityRunIdentity {
     read_at: Option<u64>,
 }
 
+impl ActivityRunIdentity {
+    fn matches(&self, automation_id: &str, started_at: u64, thread_id: &str) -> bool {
+        self.automation_id == automation_id && self.started_at == started_at && self.thread_id == thread_id
+    }
+}
+
 impl Default for SchedulerState {
     fn default() -> Self {
         Self {
@@ -747,8 +753,7 @@ impl SchedulerState {
 
     fn complete_activity_run(&mut self, automation_id: &str, started_at: u64, thread_id: &str, completed_at: u64) {
         self.record_activity_run(automation_id, started_at, thread_id);
-        if let Some(run) = self.activity_runs.iter_mut().find(|run|
-            run.automation_id == automation_id && run.started_at == started_at && run.thread_id == thread_id)
+        if let Some(run) = self.activity_runs.iter_mut().find(|run| run.matches(automation_id, started_at, thread_id))
         {
             run.completed_at.get_or_insert(completed_at);
         }
@@ -764,10 +769,23 @@ impl SchedulerState {
     }
 
     fn mark_activity_runs_read(&mut self, automation_ids: &HashSet<&str>, thread_ids: &HashSet<String>, through: u64) -> usize {
+        self.mark_matching_activity_runs_read(through, |run|
+            automation_ids.contains(run.automation_id.as_str()) && thread_ids.contains(&run.thread_id))
+    }
+
+    fn last_run_unread(&self, automation_id: &str, entry: &AutomationScheduleState) -> bool {
+        let (Some(started_at), Some(thread_id)) = (entry.last_run_at, entry.last_thread_id.as_deref()) else {
+            return false;
+        };
+        self.activity_runs.iter().any(|run| run.matches(automation_id, started_at, thread_id) &&
+            run.completed_at.is_some() && run.read_at.is_none())
+    }
+
+    fn mark_matching_activity_runs_read(&mut self, through: u64, matches: impl Fn(&ActivityRunIdentity) -> bool) -> usize {
         let mut marked = 0;
         for run in &mut self.activity_runs {
             if run.read_at.is_none() && run.completed_at.is_some_and(|at| at <= through)
-                && automation_ids.contains(run.automation_id.as_str()) && thread_ids.contains(&run.thread_id)
+                && matches(run)
             {
                 run.read_at = Some(through);
                 marked += 1;
@@ -1456,7 +1474,7 @@ pub fn scheduler_status() -> Value {
     let now = now_ms();
     let state = read_state();
     let items = config_skills::list_automations();
-    let activity_automation_ids = items.iter().filter(|item| !item.status.eq_ignore_ascii_case("deleted"))
+    let activity_automation_ids: HashSet<_> = items.iter().filter(|item| !item.status.eq_ignore_ascii_case("deleted"))
         .map(|item| item.id.as_str()).collect();
     let entries: Vec<Value> = items
         .iter()
@@ -1479,6 +1497,8 @@ pub fn scheduler_status() -> Value {
                 "nextRunAt": entry.and_then(|entry| entry.next_run_at),
                 "lastStatus": entry.and_then(|entry| entry.last_status.clone()),
                 "lastThreadId": entry.and_then(|entry| entry.last_thread_id.clone()),
+                "lastRunUnread": activity_automation_ids.contains(item.id.as_str()) &&
+                    entry.is_some_and(|entry| state.last_run_unread(&item.id, entry)),
                 "lastError": last_error,
                 "runCount": entry.map(|entry| entry.run_count).unwrap_or(0),
             })
@@ -1505,6 +1525,16 @@ pub fn mark_activity_runs_read(thread_ids: Vec<String>, through: u64) -> Result<
     let thread_ids = thread_ids.into_iter().collect();
     let through = through.min(now_ms());
     try_with_state(|state| state.mark_activity_runs_read(&ids, &thread_ids, through))
+}
+
+pub fn mark_activity_run_read(automation_id: &str, started_at: u64, thread_id: &str) -> Result<bool, String> {
+    if !config_skills::list_automations().iter()
+        .any(|item| item.id == automation_id && !item.status.eq_ignore_ascii_case("deleted"))
+    {
+        return Ok(false);
+    }
+    try_with_state(|state| state.mark_matching_activity_runs_read(now_ms(), |run|
+        run.matches(automation_id, started_at, thread_id)) > 0)
 }
 
 /// Recompute `next_run_at` for every automation (called after an automation was
@@ -1678,6 +1708,28 @@ mod tests {
         assert_eq!(restored.mark_activity_runs_read(&tasks, &selected, 32), 1);
         assert_eq!(restored.unread_activity_thread_ids(&tasks), ["outside"]);
         assert_eq!(restored.activity_thread_ids(&tasks), ["running", "shared", "outside", "legacy"]);
+    }
+
+    #[test]
+    fn detail_receipt_marks_only_the_displayed_run_identity() {
+        let mut state = SchedulerState::default();
+        state.complete_activity_run("task", 10, "shared", 11);
+        state.complete_activity_run("other", 20, "shared", 21);
+        state.complete_activity_run("task", 20, "shared", 21);
+        let entry = AutomationScheduleState {
+            last_run_at: Some(20),
+            last_thread_id: Some("shared".into()),
+            ..Default::default()
+        };
+        assert!(state.last_run_unread("task", &entry));
+        state.complete_activity_run("task", 25, "shared", 26);
+        assert_eq!(state.mark_matching_activity_runs_read(30, |run| run.matches("task", 20, "wrong")), 0);
+        assert_eq!(state.mark_matching_activity_runs_read(30, |run| run.matches("task", 20, "shared")), 1);
+        assert_eq!(state.mark_matching_activity_runs_read(31, |run| run.matches("task", 20, "shared")), 0);
+        assert!(!state.last_run_unread("task", &entry));
+        assert!(state.last_run_unread("other", &entry));
+        assert_eq!(state.activity_runs.iter().filter(|run| run.read_at.is_some()).count(), 1);
+        assert_eq!(state.unread_activity_thread_ids(&HashSet::from(["task"])), ["shared"]);
     }
 
     #[test]

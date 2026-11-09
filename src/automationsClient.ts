@@ -25,6 +25,7 @@ export interface SchedulerEntry {
   lastRunAt: number | null;
   lastFinishedAt: number | null;
   lastThreadId: string | null;
+  lastRunUnread: boolean;
   nextRunAt: number | null;
   /** outcome of the most recent scheduler execution. */
   lastStatus: SchedulerRunStatus | null;
@@ -148,6 +149,7 @@ function normalizeEntry(raw: unknown): SchedulerEntry | null {
     lastRunAt: toFiniteNumber(source.lastRunAt ?? source.last_run_at),
     lastFinishedAt: toFiniteNumber(source.lastFinishedAt ?? source.last_finished_at),
     lastThreadId: typeof rawLastThreadId === "string" && rawLastThreadId.trim() ? rawLastThreadId : null,
+    lastRunUnread: source.lastRunUnread === true,
     nextRunAt: toFiniteNumber(source.nextRunAt ?? source.next_run_at),
     lastStatus: typeof rawLastStatus === "string" ? rawLastStatus : null,
     lastError: typeof rawLastError === "string" ? rawLastError : null,
@@ -225,6 +227,13 @@ export async function markActivityRunsRead(threadIds: string[], through: number)
     if (typeof raw !== "number" || !Number.isSafeInteger(raw) || raw < 0) {
       throw new Error("调度器未返回有效的已读结果");
     }
+    return raw;
+  });
+}
+
+export async function markActivityRunRead(automationId: string, startedAt: number, threadId: string): Promise<boolean> {
+  return invokeScheduler("automations_mark_activity_run_read", { automationId, startedAt, threadId }, raw => {
+    if (typeof raw !== "boolean") throw new Error("调度器未返回有效的单次运行已读结果");
     return raw;
   });
 }
