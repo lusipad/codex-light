@@ -78,6 +78,7 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
   const [shellOptions, setShellOptions] = useState<{ id: string; label: string }[]>([]);
   const [fontSize, setFontSize] = useState<number>(12);
   const [actionsOpen, setActionsOpen] = useState<TerminalDockPosition | false>(false);
+  const [hiddenDocks, setHiddenDocks] = useState<TerminalDockPosition[]>([]);
   const [dockHeight, setDockHeight] = useState<number>(260);
   const [dockWidths, setDockWidths] = useState({ left: 360, right: 360 });
   const [commandError, setCommandError] = useState<string | null>(null);
@@ -96,7 +97,24 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
     setSelection(current => current[0] === id ? current : [id, ...current.filter(previous => previous !== id && tabs.some(tab => tab.id === previous))]);
   };
   const groups = terminalDockGroups(tabs, selection);
-  const bothSides = groups.some(group => group.position === "left") && groups.some(group => group.position === "right");
+  const visibleGroups = groups.filter(group => !hiddenDocks.includes(group.position));
+  const hiddenGroups = groups.filter(group => hiddenDocks.includes(group.position));
+  const bothSides = visibleGroups.some(group => group.position === "left") && visibleGroups.some(group => group.position === "right");
+  const revealDock = (position: TerminalDockPosition) => {
+    setHiddenDocks(current => current.includes(position) ? current.filter(dock => dock !== position) : current);
+  };
+  const hideDock = (position: TerminalDockPosition) => {
+    const remaining = visibleGroups.filter(group => group.position !== position);
+    const fallback = remaining.find(group => group.selected.id === activeTabId) ?? remaining[0];
+    if (!fallback) {
+      onClose();
+      return;
+    }
+    setHiddenDocks(current => current.includes(position) ? current : [...current, position]);
+    if (actionsOpen === position) setActionsOpen(false);
+    setActiveTabId(fallback.selected.id);
+    requestAnimationFrame(() => document.getElementById(`terminal-tab-${fallback.selected.id}`)?.focus());
+  };
   const dockResizeRef = useRef<{ id: number; position: TerminalDockPosition; start: number; size: number; limit: number } | null>(null);
   const tabDragRef = useRef<{ id: number; tabId: string; x: number; y: number; bounds: DOMRect; moving: boolean } | null>(null);
   const suppressTabClickRef = useRef(false);
@@ -243,6 +261,7 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
       id: pendingAction.sessionId, title: pendingAction.title,
       cwd: pendingAction.cwd, shell: selectedShell, action: pendingAction,
     };
+    revealDock(tabs.find(tab => tab.id === next.id)?.dockPosition ?? "bottom");
     setTabs(previous => {
       const existing = previous.findIndex(tab => tab.id === next.id);
       return existing < 0 ? [...previous, next] : previous.map((tab, index) =>
@@ -497,16 +516,16 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
 
   useEffect(() => {
     if (!open) return;
-    const shown = new Set(groups.map(group => group.selected.id));
+    const shown = new Set(visibleGroups.map(group => group.selected.id));
     xtermMapRef.current.forEach((entry, id) => {
       entry.el.style.display = shown.has(id) ? "block" : "none";
     });
-    const cleanups = groups.flatMap(group => {
+    const cleanups = visibleGroups.flatMap(group => {
       const container = dockContainersRef.current.get(group.position);
       return container ? [attachDockTerminal(group.selected, container)] : [];
     });
     return () => cleanups.forEach(cleanup => cleanup());
-  }, [open, selection, tabs, cwd, fontSize, selectedShell]);
+  }, [open, selection, tabs, hiddenDocks, cwd, fontSize, selectedShell]);
 
   useEffect(() => {
     if (!open || !pendingCommand || pendingCommand.id === lastExecutedCmdId.current) return;
@@ -519,8 +538,16 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
     const activeTab = tabs.find((tab) => tab.id === activeTabId);
     if (activeTab?.action || activeTab?.cwd !== (cwd || ".")) {
       const matchingTab = tabs.find((tab) => !tab.action && tab.cwd === (cwd || "."));
-      if (matchingTab) setActiveTabId(matchingTab.id);
+      if (matchingTab) {
+        revealDock(matchingTab.dockPosition ?? "bottom");
+        setActiveTabId(matchingTab.id);
+      }
       else addNewTerminal();
+      return;
+    }
+    const position = activeTab.dockPosition ?? "bottom";
+    if (hiddenDocks.includes(position)) {
+      revealDock(position);
       return;
     }
     const entry = xtermMapRef.current.get(activeTabId);
@@ -547,7 +574,7 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
       }
     })();
     return () => { cancelled = true; };
-  }, [open, pendingCommand, activeTabId, tabs, cwd, commandRetry, onCommandHandled]);
+  }, [open, pendingCommand, activeTabId, tabs, hiddenDocks, cwd, commandRetry, onCommandHandled]);
 
   const addNewTerminal = (dockPosition: TerminalDockPosition = "bottom") => {
     const idx = tabs.length + 1;
@@ -562,6 +589,7 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
       dockPosition,
     };
     setTabs((prev) => [...prev, next]);
+    revealDock(dockPosition);
     setActiveTabId(id);
   };
 
@@ -573,6 +601,7 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
   };
 
   const moveActiveDock = (position: TerminalDockPosition, tabId = activeTabId) => {
+    revealDock(position);
     setTabs(current => current.map(tab => tab.id === tabId ? { ...tab, dockPosition: position } : tab));
     if (tabId !== activeTabId) setActiveTabId(tabId);
   };
@@ -687,17 +716,20 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
     } else {
       setTabs(remaining);
       if (activeTabId === id) {
-        setActiveTabId(remaining[remaining.length - 1].id);
+        const next = remaining.filter(tab => !hiddenDocks.includes(tab.dockPosition ?? "bottom")).at(-1) ?? remaining[remaining.length - 1];
+        revealDock(next.dockPosition ?? "bottom");
+        setActiveTabId(next.id);
       }
     }
   };
 
   const renderDockGroup = ({ position: dockPosition, dockTabs, selected }: ReturnType<typeof terminalDockGroups>[number]) => {
     const sideDock = dockPosition !== "bottom";
-    const actionsVisible = actionsOpen === dockPosition;
-    return <div key={dockPosition} className="terminal-dock terminal-dock-workspace" data-position={dockPosition} data-open={open}
+    const dockOpen = open && !hiddenDocks.includes(dockPosition);
+    const actionsVisible = dockOpen && actionsOpen === dockPosition;
+    return <div key={dockPosition} className="terminal-dock terminal-dock-workspace" data-position={dockPosition} data-open={dockOpen}
         style={{ width: sideDock ? `min(var(--terminal-side-max), ${dockWidths[dockPosition]}px)` : undefined,
-          height: sideDock ? undefined : `min(80cqh, ${dockHeight}px)`, display: open ? undefined : "none" }}>
+          height: sideDock ? undefined : `min(80cqh, ${dockHeight}px)`, display: dockOpen ? undefined : "none" }}>
       <div className="terminal-dock-resizer" onPointerDown={event => handleStartResize(event, dockPosition)} onPointerMove={handleDockResize}
         onLostPointerCapture={() => { dockResizeRef.current = null; }} title={sideDock ? "拖动调整终端宽度" : "拖动调整终端高度"} />
       <div className="terminal-dock-header">
@@ -766,7 +798,8 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
           }} aria-expanded={actionsVisible}
             aria-controls={`terminal-session-actions-${dockPosition}`} aria-label="终端操作" title="终端操作"
             onClick={() => setActionsOpen(value => value === dockPosition ? false : dockPosition)}>···</button>
-          <button className="icon-btn" onClick={onClose} title="隐藏终端面板" aria-label="隐藏终端面板">
+          <button className="icon-btn" onClick={() => hideDock(dockPosition)} title={`隐藏${terminalDockLabels[dockPosition]}`}
+            aria-label={`隐藏${terminalDockLabels[dockPosition]}`}>
             <XIcon size={14} />
           </button>
         </div>
@@ -778,6 +811,14 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
             setActionsOpen(false); actionsTriggersRef.current.get(dockPosition)?.focus();
           }
         }}>
+          {hiddenGroups.map(group => (
+            <button type="button" className="secondary-btn compact" key={group.position} onClick={() => {
+              revealDock(group.position);
+              setActionsOpen(false);
+              setActiveTabId(group.selected.id);
+              requestAnimationFrame(() => document.getElementById(`terminal-tab-${group.selected.id}`)?.focus());
+            }}>显示{terminalDockLabels[group.position]}</button>
+          ))}
           <select className="terminal-shell-select" id={`terminal-placement-${dockPosition}`} value={dockPosition} aria-label="终端停靠位置"
             onChange={event => {
               const position = event.target.value as TerminalDockPosition;

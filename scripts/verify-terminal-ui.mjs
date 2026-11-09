@@ -14,7 +14,7 @@ function visit(node) {
   if (ts.isVariableDeclaration(node) && node.name.getText(ast)==="moveActiveDock") moveDock=node.initializer;
   if (ts.isVariableDeclaration(node) && node.name.getText(ast)==="handleStartResize") startResize=node.initializer;
   if (ts.isVariableDeclaration(node) && node.name.getText(ast)==="handleDockResize") resizeDock=node.initializer;
-  if (ts.isVariableDeclaration(node) && ["startTabDrag", "trackTabDrag", "cancelTabDrag", "finishTabDrag"].includes(node.name.getText(ast))) {
+  if (ts.isVariableDeclaration(node) && ["startTabDrag", "trackTabDrag", "cancelTabDrag", "finishTabDrag", "hideDock", "revealDock"].includes(node.name.getText(ast))) {
     dragHandlers[node.name.getText(ast)] = node.initializer;
   }
   if (ts.isFunctionDeclaration(node) && node.name?.text === "terminalDropPosition") dragHandlers.terminalDropPosition = node;
@@ -67,14 +67,37 @@ escape(event("Escape")); assert.equal(context.actionsOpen,false); assert.equal(f
 const firstTab = { id: "a" }, secondTab = { id: "b", dockPosition: "right" };
 const dock = {
   activeTabId: "a", tabs: [firstTab, secondTab],
+  hiddenDocks: ["left"],
+  setHiddenDocks(update) { dock.hiddenDocks = update(dock.hiddenDocks); },
+  setActiveTabId(id) { dock.activeTabId = id; },
+  setActionsOpen(value) { dock.actionsOpen = value; },
+  onClose() { dock.closed = true; },
+  requestAnimationFrame(callback) { callback(); },
+  document: { getElementById: id => ({ focus() { dock.focused = id; } }) },
   setTabs(update) { dock.tabs = update(dock.tabs); },
   dockResizeRef: { current: null }, captured: [], bothSides:false,
   widths:{left:360,right:360},
   setDockWidths(update) { dock.widths = update(dock.widths); }, setDockHeight(height) { dock.height = height; },
 };
+dock.revealDock = vm.runInNewContext(compile(dragHandlers.revealDock), dock);
 vm.runInNewContext(compile(moveDock), dock)("left");
 assert.equal(dock.tabs[0].dockPosition, "left");
 assert.equal(dock.tabs[1], secondTab, "moving one tab keeps the other tab and its placement");
+assert.equal(dock.hiddenDocks.length, 0, "explicit movement reveals its destination");
+const hideDock = vm.runInNewContext(compile(dragHandlers.hideDock), dock);
+const groups = [{ position: "left", selected: firstTab }, { position: "right", selected: secondTab }];
+dock.visibleGroups = groups;
+dock.actionsOpen = "left";
+hideDock("left");
+assert.deepEqual(Array.from(dock.hiddenDocks), ["left"]);
+assert.equal(dock.actionsOpen, false);
+assert.equal(dock.activeTabId, "b");
+assert.equal(dock.focused, "terminal-tab-b");
+assert.equal(dock.closed, undefined, "the remaining group stays open");
+dock.visibleGroups = groups.slice(1);
+hideDock("right");
+assert.equal(dock.closed, true, "the last visible group uses the app-wide toggle");
+assert.deepEqual(Array.from(dock.hiddenDocks), ["left"], "global reopening retains the last visible group");
 const start = vm.runInNewContext(compile(startResize), dock);
 const resize = vm.runInNewContext(compile(resizeDock), dock);
 const grip = {
@@ -168,6 +191,7 @@ stop();assert.equal(disconnected,true);assert.equal(fontListeners.size,0);
 let released=0,cleared=0;
 const tabContext={
   tabs:[{id:"a"},{id:"b"}],activeTabId:"a",
+  hiddenDocks:[], revealDock(){},
   tabDragRef:{current:null},
   xtermMapRef:{current:new Map([["a",{releaseInput(){released++;},term:{clear(){cleared++;},dispose(){}},output:{dispose(){}},cancelHydration(){},el:{remove(){}}}]])},
   invoke:()=>Promise.resolve(),setTabs:()=>{},setActiveTabId:()=>{},

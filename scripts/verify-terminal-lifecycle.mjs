@@ -43,6 +43,8 @@ function mount() {
     activeTabId: "term-1", cwd: "repo-A", fontSize: 13, selectedShell: "powershell.exe",
     get selection() { return [this.activeTabId, ...(this.otherSelection ?? [])]; },
     get groups() { return this.terminalDockGroups(this.tabs, this.selection); },
+    hiddenDocks: [],
+    get visibleGroups() { return this.groups.filter(group => !this.hiddenDocks.includes(group.position)); },
     terminalDockGroups: vm.runInNewContext(compile(groupFunction), { terminalDockPositions: ["left", "right", "bottom"] }),
     dockContainersRef: { current: new Map(["left", "right", "bottom"].map(position => {
       const host = { position, appendChild(el) { el.parentElement = host; } };
@@ -195,9 +197,29 @@ console.log("PASS TL01–TL04 production terminal effects: late subscriptions, v
   assert.deepEqual(map.get("left").term.writes,["output left"]);
   assert.equal(view.requests.filter(request => request.method === "terminal_create_or_attach").length,4);
   assert.ok(!view.requests.some(request => request.method === "terminal_close"));
-  third(); cleanupSubscriptions();
+  third();
+  const hidden = entries.get("left");
+  hidden.term.parsed.shift()?.();
+  view.context.hiddenDocks = ["right"];
+  const whileHidden = view.creation();
+  assert.equal(hidden.el.style.display, "none");
+  assert.equal(map.get("term-1").el.style.display, "block");
+  const offset = snapshot("output left").endOffset;
+  view.listeners.find(listener => listener.name === "terminal:data").handler({
+    payload: { sessionId: "left", generation: "generation-1", data: "+live", startOffset: offset, endOffset: offset + 5 },
+  });
+  assert.deepEqual(hidden.term.writes, ["output left", "+live"]);
+  assert.equal(hidden.term.disposals, 0);
+  whileHidden();
+  view.context.hiddenDocks = [];
+  const restored = view.creation();
+  assert.equal(map.get("left"), hidden);
+  assert.equal(hidden.el.style.display, "block");
+  assert.equal(view.requests.filter(request => request.method === "terminal_create_or_attach").length, 4);
+  assert.ok(!view.requests.some(request => request.method === "terminal_close"));
+  restored(); cleanupSubscriptions();
 }
-console.log("PASS TG01–TG03: all dock groups render independently, move an existing xterm and preserve background shells");
+console.log("PASS TG01–TG04: dock groups render independently, preserve background output and restore the same terminal");
 {
   const view = mount(), cleanup = view.subscription(), cleanupView = view.creation();
   await flush();

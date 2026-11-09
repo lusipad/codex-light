@@ -43,6 +43,8 @@ function mount() {
     activeTabId: "term-1", cwd: "repo-A", fontSize: 13, selectedShell: "powershell.exe",
     get selection() { return [this.activeTabId, ...(this.otherSelection ?? [])]; },
     get groups() { return this.terminalDockGroups(this.tabs, this.selection); },
+    hiddenDocks: [],
+    get visibleGroups() { return this.groups.filter(group => !this.hiddenDocks.includes(group.position)); },
     terminalDockGroups: vm.runInNewContext(compile(groupFunction), { terminalDockPositions: ["left", "right", "bottom"] }),
     dockContainersRef: { current: new Map(["left", "right", "bottom"].map(position => {
       const host = { position, appendChild(el) { el.parentElement = host; } };
@@ -89,6 +91,7 @@ const request = (id = "request-1") => ({
   const view = mount();
   Object.assign(view.context, {
     pendingAction: request(), handledActionsRef: { current: new Set() },
+    revealDock(position) { view.context.revealed = position; },
     setTabs(update) { view.context.tabs = update(view.context.tabs); },
     setActiveTabId(id) { view.context.activeTabId = id; },
   });
@@ -102,6 +105,7 @@ const request = (id = "request-1") => ({
   assert.equal(view.context.tabs[0].action.id, "request-2", "new request can rerun the same action session");
   assert.equal(view.context.tabs[0].cwd, "environment-definition-root");
   assert.equal(view.context.tabs[0].dockPosition, "right", "rerunning an action retains its panel");
+  assert.equal(view.context.revealed, "right", "rerunning reveals the existing action panel");
 }
 {
   const view = mount(), results = [];

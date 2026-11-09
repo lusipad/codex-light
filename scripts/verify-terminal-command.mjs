@@ -24,6 +24,8 @@ function mount() {
   const context = {
     open: true, pendingCommand: { id: 1, command: "npm test" }, activeTabId: "a", cwd: "repo-A",
     tabs: [{ id: "a", cwd: "repo-A" }], lastExecutedCmdId: { current: null },
+    hiddenDocks: [],
+    revealDock(position) { context.hiddenDocks = context.hiddenDocks.filter(dock => dock !== position); },
     tabDragRef: { current: null },
     cancelTabDrag() { context.tabDragRef.current = null; },
     xtermMapRef: { current: new Map([["a", { ready: ready.promise, term: { dispose() {} }, el: { remove() {} }, output: { dispose() {} }, cancelHydration() {} }]]) },
@@ -134,3 +136,27 @@ console.log("PASS TC01–TC07 production command effects: readiness, cancellatio
   assert.match(view.context.error, /已取消/);
 }
 console.log("PASS TC08: queued environment command workspace identity and cancellation");
+{
+  const view = mount();
+  view.context.tabs[0].dockPosition = "right";
+  view.context.hiddenDocks = ["right"];
+  view.effect();
+  view.ready.resolve(true); await flush();
+  assert.deepEqual(view.context.hiddenDocks, []);
+  assert.equal(view.requests.length, 0, "show the target before dispatching a command");
+  view.effect(); await flush();
+  assert.equal(view.requests.length, 1);
+  assert.equal(view.requests[0].args.sessionId, "a");
+}
+{
+  const view = mount();
+  view.context.hiddenDocks = ["right"];
+  view.context.tabs.push({ id: "b", cwd: "repo-A", dockPosition: "right" });
+  view.close("a");
+  assert.equal(view.context.activeTabId, "b");
+  assert.equal(view.context.open, true);
+  assert.deepEqual(view.context.hiddenDocks, []);
+  assert.equal(view.requests.length, 1);
+  assert.equal(view.requests[0].args.sessionId, "a");
+}
+console.log("PASS TC09: command dispatch and last-visible-tab closure reveal the surviving session");

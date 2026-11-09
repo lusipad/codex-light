@@ -46,8 +46,8 @@ const terminalAst=ts.createSourceFile("TerminalDock.tsx",terminal,ts.ScriptTarge
 let add;
 function findAdd(node){if(ts.isVariableDeclaration(node)&&node.name.getText(terminalAst)==="addNewTerminal")add=node.initializer;ts.forEachChild(node,findAdd);}findAdd(terminalAst);
 const old={id:"running",shell:"powershell",cwd:"D:/fixture",title:"old"};
-const ctx={tabs:[old],selectedShell:"",shellOptions:fixture.shells,cwd:"D:/fixture",crypto:{randomUUID:()=>"new"},setTabs(fn){ctx.tabs=fn(ctx.tabs);},setActiveTabId(id){ctx.activeTabId=id;}};
+const ctx={tabs:[old],selectedShell:"",shellOptions:fixture.shells,cwd:"D:/fixture",crypto:{randomUUID:()=>"new"},setTabs(fn){ctx.tabs=fn(ctx.tabs);},setActiveTabId(id){ctx.activeTabId=id;},revealDock(position){ctx.revealed=position;}};
 const addTab=vm.runInNewContext(ts.transpileModule(`(${add.getText(terminalAst)})`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,ctx);
-addTab();assert.equal(ctx.tabs[0],old);assert.equal(ctx.tabs[1].shell,"");assert.equal(ctx.activeTabId,"new");
+addTab();assert.equal(ctx.tabs[0],old);assert.equal(ctx.tabs[1].shell,"");assert.equal(ctx.activeTabId,"new");assert.equal(ctx.revealed,"bottom");
 ctx.selectedShell="commandPrompt";ctx.crypto.randomUUID=()=>"explicit";addTab();assert.equal(ctx.tabs[2].shell,"commandPrompt");assert.equal(ctx.tabs[0].shell,"powershell");
 console.log("PASS GT05: new default terminal defers global preference to backend; explicit override and running tabs preserved (L2)");
