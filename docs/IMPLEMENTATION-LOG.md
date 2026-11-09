@@ -2856,3 +2856,8 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 
 - 对照固定 asar 匹配导出实现词边界缩写与原文分段高亮。438 组样本的命中与片段一致。宽窄原生窗口验证正反例、正文优先和键盘打开。
 - 125 项发布回放、Store CLI 探针和 Windows 打包通过。官方数值评分与配对像素待验。详见[验收记录](antigravity/acceptance/08T-chat-search-fuzzy.md)。
+
+## 2026-11-09 — 聊天搜索同字段评分
+
+- 用命中片段计算大小写、词边界、路径及跳词权重。去重后的 1,041 组官方样本分数和片段一致。原生宽窄窗口验证大小写改变排序及键盘打开。
+- 125 项发布回放、Store CLI 探针与 Windows 打包通过。样本外全面等价、真实多宿主及官方配对像素待验。详见[验收记录](antigravity/acceptance/08U-chat-search-score.md)。

@@ -223,6 +223,14 @@ function mount(overrides = {}) {
     const hit = matcher.exports.createChatSearchMatcher(query)(text);
     assert.deepEqual(hit ? Array.from(hit.ranges, ({ start, end }) => [start, end]) : null, expected, `${text} / ${query}`);
   }
+  for (const [text, query, score] of [
+    ["repair-ui", "ru", 109911], ["feature/repair-ui", "ru", 9873], ["feature/repair-ui", "f/r", 110013],
+    ["Git Review Panel", "GRP", 111484], ["git review panel", "GRP", 109954], ["GitReviewPanel", "grp", 109776],
+    ["read2file", "r2f", 110031], ["a🚀x", "a🚀x", 110046], ["repair-ui", "folder/ru", 109911],
+    ["a".repeat(105), "a".repeat(103), 109925],
+  ]) assert.equal(matcher.exports.createChatSearchMatcher(query)(text)?.score, score, `${text} / ${query}`);
+  assert.equal(matcher.exports.createChatSearchMatcher("i\u0307".repeat(51))("İ".repeat(51)), null,
+    "case-fold expansion cannot produce a range outside the original title");
   const view = mount({ mode: "chats", query: "ru", threads: [
     { id: "long", name: "构建甲", gitInfo: { branch: "feature/repair-ui" }, updatedAt: 20 },
     { id: "short", name: "构建乙", gitInfo: { branch: "repair-ui" }, updatedAt: 10 },
@@ -234,6 +242,11 @@ function mount(overrides = {}) {
     ["", "r", "epair-", "u", "i"]);
   view.context.mode = "root";
   assert.equal(view.results().some(row => row.id === "th-short"), false);
+  const byCase = mount({ mode: "chats", query: "GRP", threads: [
+    { id: "folded", name: "git review panel", updatedAt: 30 },
+    { id: "exact", name: "Git Review Panel", updatedAt: 10 },
+  ] });
+  assert.deepEqual(Array.from(byCase.results(), row => row.id), ["th-exact", "th-folded"]);
 }
 {
   const view = mount({ mode: "chats", query: "", chatHistoryReady: false, trimmedQuery: "", items: [], isTauriRuntime: () => true });
