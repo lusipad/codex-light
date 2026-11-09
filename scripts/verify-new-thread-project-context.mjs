@@ -44,6 +44,7 @@ export function mountProjectContext({ pending = null, membership = metadata, wor
     executionIdentityRef: { current: "fixture-account" },
     navigationRequestRef: { current: 0 },
     activeRouteRef: { current: "home" },
+    homeCloud: { active: false },
     personalizationNavigationGuardRef: { current: null },
     worktreeCreationControllersRef: { current: new Map() },
     AbortController,
