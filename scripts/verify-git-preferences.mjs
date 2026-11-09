@@ -63,7 +63,7 @@ visit(ast);
 let calls = [], content, loading;
 const context = {
   open: true, activeTab: "changes", cwd: "repo", gitPreferencesReady: true, recordedTurnDiff: "recorded patch",
-  diffMode: "lastTurn", turns: [], selectedFile: null,
+  diffMode: "lastTurn", turns: [], selectedFile: null, showingComparison: false,
   setDiffContent: value => { content = value; }, setLoadingDiff: value => { loading = value; },
   invoke: async (...args) => { calls.push(args); return ""; },
 };

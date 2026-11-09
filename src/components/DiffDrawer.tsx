@@ -777,6 +777,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   );
   const [viewedFiles, setViewedFiles] = useState<Record<string, boolean>>({});
   const [wordWrap, setWordWrap] = useState<boolean>(false);
+  const [hideWhitespace, setHideWhitespace] = useState(false);
   const [scopedDiffContent, setDiffContent] = useState<string>("");
   const [loadingScopedDiff, setLoadingDiff] = useState(false);
 
@@ -883,7 +884,9 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   const [explorerBusy, setExplorerBusy] = useState(false);
   const dirLoadSeqRef = useRef(0);
 
-  const showingComparison = diffMode === "branch" || diffMode === "commits";
+  const whitespaceFiltered = hideWhitespace && diffMode !== "lastTurn";
+  const showingComparison = whitespaceFiltered || diffMode === "branch" || diffMode === "commits";
+  const needsBaseBranch = diffMode === "branch" || diffMode === "commits";
   const historyScope = JSON.stringify([baseBranchScope, baseBranch]);
   const historyRequest = useMemo(() => {
     if (!open || activeTab !== "changes" || diffMode !== "commits" || !cwd || !baseBranch) return null;
@@ -909,14 +912,15 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   }, [historyRequest]);
 
   const comparisonRequest = useMemo(() => {
-    if (!open || activeTab !== "changes" || !cwd || !baseBranch) return null;
+    if (!open || activeTab !== "changes" || !cwd || (needsBaseBranch && !baseBranch)) return null;
     if (diffMode === "commits") return selectedCommitHash
-      ? { command: "git_commit_diff", args: { cwd, commitHash: selectedCommitHash } } : null;
-    if (diffMode !== "branch") return null;
+      ? { command: "git_commit_diff", args: { cwd, commitHash: selectedCommitHash, hideWhitespace } } : null;
+    if (diffMode !== "branch") return whitespaceFiltered
+      ? { command: "git_filtered_worktree_comparison", args: { cwd, staged: diffMode === "staged", unstaged: diffMode === "unstaged" } } : null;
     const reviewBaseCommit = reviewTarget?.cwd === cwd && reviewTarget.baseBranch === baseBranch
       ? reviewTarget.mergeBase : null;
-    return { command: "git_branch_comparison", args: { cwd, baseBranch, reviewBaseCommit } };
-  }, [open, activeTab, diffMode, cwd, baseBranch, reviewTarget, gitStatus, baseBranchScope, selectedCommitHash]);
+    return { command: "git_branch_comparison", args: { cwd, baseBranch, reviewBaseCommit, hideWhitespace } };
+  }, [open, activeTab, diffMode, cwd, baseBranch, reviewTarget, gitStatus, baseBranchScope, selectedCommitHash, needsBaseBranch, hideWhitespace, whitespaceFiltered]);
   const [comparisonResult, setComparisonResult] = useState<{
     request: NonNullable<typeof comparisonRequest>;
     files: { path: string; status: string; patch: string }[];
@@ -944,8 +948,8 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   const displayedEntries = useMemo(() => {
     if (diffMode === "lastTurn") return [];
     const list = gitStatus?.entries || [];
-    if (diffMode === "branch" || diffMode === "commits") {
-      const worktreeEntries = new Map((diffMode === "branch" ? list : []).map(entry => [entry.path, entry]));
+    if (showingComparison) {
+      const worktreeEntries = new Map((diffMode === "commits" ? [] : list).map(entry => [entry.path, entry]));
       return (comparison?.files ?? []).map(({ path, status }) => {
         const local = worktreeEntries.get(path);
         return {
@@ -964,7 +968,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
       return list.filter((e) => e.unstaged || e.untracked);
     }
     return list;
-  }, [gitStatus, diffMode, comparison]);
+  }, [gitStatus, diffMode, comparison, showingComparison]);
   const fsWatchTimerRef = useRef<number | null>(null);
   const lastExternalPreviewRequestRef = useRef<string | null>(null);
   const lastDirectoryRevealRef = useRef<typeof directoryReveal>(null);
@@ -987,7 +991,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
 
   useEffect(() => {
     if (!open || activeTab !== "changes" || !cwd) return;
-    if (diffMode === "branch" || diffMode === "commits") return;
+    if (showingComparison) return;
     if (!gitPreferencesReady) { setDiffContent("Git 设置尚未读取，请在设置中重新读取。"); setLoadingDiff(false); return; }
     let disposed = false;
     if (diffMode === "lastTurn") {
@@ -1034,7 +1038,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
       .catch((err) => { if (!disposed) setDiffContent(`Error loading diff: ${String(err)}`); })
       .finally(() => { if (!disposed) setLoadingDiff(false); });
     return () => { disposed = true; };
-  }, [open, activeTab, cwd, selectedFile, diffMode, gitStatus, turns, gitPreferencesReady, recordedTurnDiff, displayedEntries]);
+  }, [open, activeTab, cwd, selectedFile, diffMode, gitStatus, turns, gitPreferencesReady, recordedTurnDiff, displayedEntries, showingComparison]);
 
   /**
    * List one directory: app-server `fs/readDirectory` first, then the legacy
@@ -1263,6 +1267,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     ? displayedEntries.filter(entry => entry.unstaged || entry.untracked)
     : displayedEntries;
   const handleDiscardAll = async () => {
+    if (whitespaceFiltered) return;
     const count = discardableEntries.length;
     if (count === 0) return;
     if (!confirm(`确定放弃全部 ${count} 个文件的未提交更改吗？此操作无法撤销。`)) return;
@@ -2243,7 +2248,8 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                 type="button"
                 className="seg-btn"
                 onClick={handleCopyGitApply}
-                title="复制 git apply 命令到剪贴板"
+                disabled={whitespaceFiltered}
+                title={whitespaceFiltered ? "显示空白字符后可复制完整 git apply 命令" : "复制 git apply 命令到剪贴板"}
               >
                 git apply
               </button>
@@ -2255,6 +2261,40 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
               >
                 复制 Patch
               </button>
+              {diffMode !== "lastTurn" && <>
+                <button
+                  type="button"
+                  className={`seg-btn ${hideWhitespace ? "active" : ""}`}
+                  aria-label="“变更”选项"
+                  aria-haspopup="menu"
+                  title="“变更”选项"
+                  popoverTarget="diff-display-options"
+                >
+                  <EllipsisIcon size={14} />
+                </button>
+                <div id="diff-display-options" className="diff-display-options" popover="auto" role="menu" aria-label="“变更”选项"
+                  onToggle={event => {
+                    if (event.currentTarget.matches(":popover-open")) event.currentTarget.querySelector("button")?.focus();
+                  }}>
+                  <button
+                    type="button"
+                    role="menuitemcheckbox"
+                    aria-checked={hideWhitespace}
+                    popoverTarget="diff-display-options"
+                    popoverTargetAction="hide"
+                    onClick={() => {
+                      setHideWhitespace(current => !current);
+                      setDiffContent("");
+                      setLoadingDiff(true);
+                      setCommentLineIdx(null);
+                      setCommentText("");
+                    }}
+                  >
+                    <span>隐藏空白字符</span>
+                    {hideWhitespace && <CheckIcon size={13} />}
+                  </button>
+                </div>
+              </>}
               {!lastTurnOnly && (
               <button
                 type="button"
@@ -2271,7 +2311,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
             </div>
           </div>
 
-          {showingComparison && (
+          {needsBaseBranch && (
             <div className="diff-branch-filter-row">
               <span className="muted-text">基准分支:</span>
               <select
@@ -2309,7 +2349,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
           <div className="diff-content-scroll-area workspace-review-body">
             {diffMode === "lastTurn" ? (
               <pre className="diff-code-content" style={{ whiteSpace: wordWrap ? "pre-wrap" : "pre", padding: 16 }}>{loadingDiff ? "读取中…" : diffContent}</pre>
-            ) : showingComparison && !baseBranch ? (
+            ) : needsBaseBranch && !baseBranch ? (
               <div className="empty-hint-small" role="status">请选择基准分支。</div>
             ) : diffMode === "commits" && !selectedCommitHash ? (
               <div className="empty-hint-small" role={history?.error !== undefined ? "alert" : "status"}>
@@ -2327,7 +2367,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                   <CheckIcon size={24} />
                 </div>
                 <div className="diff-empty-title">
-                  {diffMode === "staged"
+                  {whitespaceFiltered ? "隐藏空白字符后没有文件差异" : diffMode === "staged"
                     ? "没有已暂存的更改"
                     : diffMode === "unstaged"
                     ? "无未暂存更改"
@@ -2336,7 +2376,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                     : "当前无文件差异"}
                 </div>
                 <div className="diff-empty-desc">
-                  {diffMode === "staged"
+                  {whitespaceFiltered ? "可在“变更”选项中显示空白字符" : diffMode === "staged"
                     ? "在更改列表中点击暂存按钮，将修改纳入提交范围"
                     : diffMode === "unstaged"
                     ? "代码更改将在此处显示"
@@ -2388,8 +2428,8 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                         type="button"
                         className="mini-link-btn danger"
                         onClick={handleDiscardAll}
-                        disabled={diffMode === "branch" && discardableEntries.length === 0}
-                        title="放弃工作区中全部未提交的修改"
+                        disabled={whitespaceFiltered || (diffMode === "branch" && discardableEntries.length === 0)}
+                        title={whitespaceFiltered ? "显示空白字符后可放弃全部更改" : "放弃工作区中全部未提交的修改"}
                       >
                         全放弃
                       </button>

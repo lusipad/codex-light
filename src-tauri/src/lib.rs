@@ -1537,8 +1537,21 @@ async fn git_diff(
 }
 
 #[tauri::command]
-async fn git_branch_comparison(cwd: String, base_branch: String, review_base_commit: Option<String>) -> Result<Vec<git::GitComparisonFile>, String> {
-    tokio::task::spawn_blocking(move || git::git_branch_comparison(&cwd, &base_branch, review_base_commit.as_deref()))
+async fn git_branch_comparison(cwd: String, base_branch: String, review_base_commit: Option<String>, hide_whitespace: Option<bool>) -> Result<Vec<git::GitComparisonFile>, String> {
+    tokio::task::spawn_blocking(move || git::git_branch_comparison(&cwd, &base_branch, review_base_commit.as_deref(), hide_whitespace.unwrap_or(false)))
+        .await.map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn git_filtered_worktree_comparison(cwd: String, staged: bool, unstaged: bool) -> Result<Vec<git::GitComparisonFile>, String> {
+    let scope = if staged {
+        git::GitDiffScope::Staged
+    } else if unstaged {
+        git::GitDiffScope::Unstaged
+    } else {
+        git::GitDiffScope::Uncommitted
+    };
+    tokio::task::spawn_blocking(move || git::git_filtered_worktree_comparison(&cwd, scope))
         .await.map_err(|error| error.to_string())?
 }
 
@@ -1787,8 +1800,8 @@ async fn git_log_commits(cwd: String, limit: Option<usize>, base_branch: Option<
 }
 
 #[tauri::command]
-async fn git_commit_diff(cwd: String, commit_hash: String) -> Result<Vec<git::GitComparisonFile>, String> {
-    tokio::task::spawn_blocking(move || git::commit_diff(&cwd, &commit_hash))
+async fn git_commit_diff(cwd: String, commit_hash: String, hide_whitespace: Option<bool>) -> Result<Vec<git::GitComparisonFile>, String> {
+    tokio::task::spawn_blocking(move || git::commit_diff(&cwd, &commit_hash, hide_whitespace.unwrap_or(false)))
         .await.map_err(|e| e.to_string())?
 }
 
@@ -2479,6 +2492,7 @@ pub fn run() {
             git_status,
             git_diff,
             git_branch_comparison,
+            git_filtered_worktree_comparison,
             git_merge_base,
             git_stage,
             git_unstage,

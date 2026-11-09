@@ -6,11 +6,12 @@ const source = fs.readFileSync("src/components/DiffDrawer.tsx", "utf8");
 const ast = ts.createSourceFile("DiffDrawer.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const callbacks = {};
 const indexButtons = {};
-let effect, comparisonEffect, comparisonPatch, historyEffect, selectedCommit, keydown;
+let effect, comparisonRequest, comparisonEffect, comparisonPatch, historyEffect, selectedCommit, keydown;
 let projectEntries;
 function visit(node) {
   if (ts.isVariableDeclaration(node) && node.name.getText(ast) === "displayedEntries") projectEntries = node.initializer.arguments[0];
   if (ts.isVariableDeclaration(node) && node.name.getText(ast) === "comparisonPatch") comparisonPatch = node.initializer.arguments[0];
+  if (ts.isVariableDeclaration(node) && node.name.getText(ast) === "comparisonRequest") comparisonRequest = node.initializer.arguments[0];
   if (ts.isVariableDeclaration(node) && node.name.getText(ast) === "selectedCommitHash") selectedCommit = node.initializer;
   if (ts.isVariableDeclaration(node) && ["handleCommit", "handleCommitAndPush", "handlePush", "handleStage", "handleUnstage"].includes(node.name.getText(ast))) callbacks[node.name.getText(ast)] = node.initializer;
   if (ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect" &&
@@ -40,7 +41,8 @@ function mount() {
   const requests = [], events = [];
   const context = {
     cwd: "repo-A", gitPreferencesReady: true, recordedTurnDiff: "", gitPreferences: { "git-always-force-push": false }, open: true, activeTab: "changes", diffMode: "working", selectedFile: "a.ts",
-    baseBranch: "main", selectedCommitHash: null, turns: [],
+    baseBranch: "main", selectedCommitHash: null, turns: [], showingComparison: false,
+    whitespaceFiltered: false, hideWhitespace: false, needsBaseBranch: false, reviewTarget: null,
     gitStatus: { entries: [{ path: "a.ts", staged: false }] }, displayedEntries: [{ path: "a.ts" }],
     commitMessage: "original draft", forceWithLease: false,
     gitWritePendingRef: { current: false }, gitContextRef: { current: { cwd: "repo-A" } },
@@ -54,12 +56,13 @@ function mount() {
     context[`set${name}`] = value => { context[key] = value; events.push([key, value]); };
   }
   const render = node => { assert.ok(node, "production callback must exist"); return vm.runInNewContext(compile(node), context); };
-  return { context, requests, events, commit: render(callbacks.handleCommit), both: render(callbacks.handleCommitAndPush), push: render(callbacks.handlePush), stage: render(callbacks.handleStage), unstage: render(callbacks.handleUnstage), effect: render(effect), projectEntries: render(projectEntries), comparisonEffect: render(comparisonEffect), comparisonPatch: render(comparisonPatch), historyEffect: render(historyEffect), selectedCommit: () => render(selectedCommit) };
+  return { context, requests, events, commit: render(callbacks.handleCommit), both: render(callbacks.handleCommitAndPush), push: render(callbacks.handlePush), stage: render(callbacks.handleStage), unstage: render(callbacks.handleUnstage), effect: render(effect), projectEntries: render(projectEntries), comparisonRequest: render(comparisonRequest), comparisonEffect: render(comparisonEffect), comparisonPatch: render(comparisonPatch), historyEffect: render(historyEffect), selectedCommit: () => render(selectedCommit) };
 }
 async function flush() { for (let i = 0; i < 8; ++i) await Promise.resolve(); }
 {
   const view = mount();
   view.context.diffMode = "branch";
+  view.context.showingComparison = true;
   view.context.gitStatus.entries = [];
   view.context.comparisonRequest = { command: "git_branch_comparison", args: { cwd: "repo-A", baseBranch: "old", reviewBaseCommit: null } };
   view.comparisonEffect()();
@@ -87,6 +90,30 @@ async function flush() { for (let i = 0; i < 8; ++i) await Promise.resolve(); }
   view.effect();
   assert.equal(view.requests.length, 2, "selection reuses the matching branch patch");
   cleanup();
+}
+{
+  const view = mount();
+  view.context.diffMode = "unstaged";
+  assert.equal(view.comparisonRequest(), null);
+  view.context.hideWhitespace = view.context.whitespaceFiltered = view.context.showingComparison = true;
+  const filtered = view.comparisonRequest();
+  assert.equal(filtered.command, "git_filtered_worktree_comparison");
+  assert.equal(filtered.args.staged, false);
+  assert.equal(filtered.args.unstaged, true);
+  view.context.comparisonRequest = filtered;
+  const cleanup = view.comparisonEffect();
+  view.effect();
+  assert.equal(view.requests.length, 1, "filtered view does not read a second, unfiltered patch");
+  cleanup();
+  view.context.hideWhitespace = view.context.whitespaceFiltered = view.context.showingComparison = false;
+  assert.equal(view.comparisonRequest(), null);
+  const clear = view.effect();
+  view.requests[0].resolve([{ path: "old", patch: "late filtered patch" }]);
+  view.requests[1].resolve("restored patch");
+  await flush();
+  assert.equal(view.context.comparisonResult, undefined);
+  assert.equal(view.context.diffContent, "restored patch");
+  clear();
 }
 {
   const view = mount();
@@ -138,7 +165,7 @@ async function flush() { for (let i = 0; i < 8; ++i) await Promise.resolve(); }
   assert.equal(view.context.loadingDiff, true, "GL01: old finally cannot clear the current loading state");
 }
 {
-  const view = mount(); view.context.diffMode = "commits";
+  const view = mount(); view.context.diffMode = "commits"; view.context.showingComparison = true;
   view.context.historyRequest = { cwd: "repo-A", baseBranch: "main", limit: 100 };
   const cleanup = view.historyEffect(); cleanup();
   view.requests[0].resolve([{ hash: "old" }]); await flush();

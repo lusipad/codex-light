@@ -417,6 +417,7 @@ pub fn git_branch_comparison(
     cwd: &str,
     base_branch: &str,
     review_base_commit: Option<&str>,
+    hide_whitespace: bool,
 ) -> Result<Vec<GitComparisonFile>, String> {
     let root = find_git_root(cwd).ok_or("Not a git repository")?;
     let base = if let Some(commit) = review_base_commit {
@@ -425,22 +426,54 @@ pub fn git_branch_comparison(
     } else {
         merge_base(&root, base_branch)?
     };
-    let output = run_git(&root, &[
+    let mut args = vec![
         "diff", "--patch-with-raw", "-z", "--find-renames", "--no-ext-diff", "--no-textconv",
-        "--no-color", "--submodule=short", base.trim(), "--",
-    ])?;
-    let mut files = parse_comparison_files(&output)?;
-    for (path, patch) in read_untracked_patches(&root, None)? {
+        "--no-color", "--submodule=short",
+    ];
+    if hide_whitespace { args.push("--ignore-all-space"); }
+    args.extend([base.trim(), "--"]);
+    let mut files = parse_comparison_files(&run_git(&root, &args)?)?;
+    append_untracked_comparison(&root, &mut files)?;
+    Ok(files)
+}
+
+pub fn git_filtered_worktree_comparison(cwd: &str, scope: GitDiffScope) -> Result<Vec<GitComparisonFile>, String> {
+    let root = find_git_root(cwd).ok_or("Not a git repository")?;
+    let mut args = vec![
+        "diff", "--patch-with-raw", "-z", "--find-renames", "--no-ext-diff", "--no-textconv",
+        "--no-color", "--submodule=short", "--ignore-all-space",
+    ];
+    let base;
+    match scope {
+        GitDiffScope::Staged => args.push("--staged"),
+        GitDiffScope::Uncommitted => {
+            base = uncommitted_base(&root)?;
+            args.push(base.trim());
+        }
+        GitDiffScope::Unstaged => {}
+    }
+    args.push("--");
+    let mut files = parse_comparison_files(&run_git(&root, &args)?)?;
+    if scope != GitDiffScope::Staged { append_untracked_comparison(&root, &mut files)?; }
+    Ok(files)
+}
+
+fn append_untracked_comparison(root: &str, files: &mut Vec<GitComparisonFile>) -> Result<(), String> {
+    for (path, patch) in read_untracked_patches(root, None)? {
         if let Some(file) = files.iter_mut().find(|file| file.path == path) {
             file.patch.push_str(&patch);
         } else {
             files.push(GitComparisonFile { path, status: "??".into(), patch });
         }
     }
-    Ok(files)
+    Ok(())
 }
 
 fn parse_comparison_files(output: &str) -> Result<Vec<GitComparisonFile>, String> {
+    // Git may still emit the raw/patch separator when -w removes every queued change.
+    if output == "\0" {
+        return Ok(Vec::new());
+    }
     let mut files = Vec::new();
     if !output.is_empty() {
         let (raw, patch) = output.split_once("\0\0").ok_or("Invalid Git comparison output")?;
@@ -484,6 +517,12 @@ fn read_untracked_patches(root: &str, selected: Option<&str>) -> Result<Vec<(Str
             Ok((path.to_owned(), patch))
         })
         .collect()
+}
+
+fn uncommitted_base(root: &str) -> Result<String, String> {
+    // An unborn branch compares against an empty tree, using the repository's hash format.
+    run_git(root, &["rev-parse", "--verify", "--quiet", "HEAD"])
+        .or_else(|_| run_git(root, &["hash-object", "-t", "tree", "--stdin"]))
 }
 
 pub fn git_diff_for_path(
@@ -533,9 +572,7 @@ pub fn git_diff_for_path(
     let mut patch = if scope == GitDiffScope::Unstaged {
         read_diff(&[])?
     } else {
-        // An unborn branch compares against an empty tree, using the repository's hash format.
-        let base = run_git(&git_root, &["rev-parse", "--verify", "--quiet", "HEAD"])
-            .or_else(|_| run_git(&git_root, &["hash-object", "-t", "tree", "--stdin"]))?;
+        let base = uncommitted_base(&git_root)?;
         read_diff(&[base.trim()])?
     };
     for (_, untracked) in read_untracked_patches(&git_root, selected)? {
@@ -740,7 +777,7 @@ mod index_action_tests {
         commit("feature branch change");
         assert!(git_status_for_path(&fixture.cwd).entries.is_empty());
 
-        let files = git_branch_comparison(&fixture.cwd, "comparison-base", None).unwrap();
+        let files = git_branch_comparison(&fixture.cwd, "comparison-base", None, false).unwrap();
         assert_eq!(files.len(), 2);
         let committed = files.iter().find(|file| file.path == "committed-only.txt").unwrap();
         assert_eq!(committed.status, "A");
@@ -753,10 +790,10 @@ mod index_action_tests {
 
         fixture.write("committed-only.txt", b"committed branch change\nlatest worktree change\n");
         fixture.write("local [1].txt", b"untracked file\n");
-        let files = git_branch_comparison(&fixture.cwd, "missing-base", Some(&original)).unwrap();
+        let files = git_branch_comparison(&fixture.cwd, "missing-base", Some(&original), false).unwrap();
         assert!(files.iter().any(|file| file.path == "committed-only.txt" && file.patch.contains("+latest worktree change")));
         assert!(files.iter().any(|file| file.path == "local [1].txt" && file.status == "??" && file.patch.contains("+untracked file")));
-        assert!(git_branch_comparison(&fixture.cwd, "missing-base", None).is_err());
+        assert!(git_branch_comparison(&fixture.cwd, "missing-base", None, false).is_err());
     }
 
     #[test]
@@ -768,7 +805,7 @@ mod index_action_tests {
                 "-c", "commit.gpgsign=false", "commit", "-m", message]);
         };
         let root_commit = fixture.git(&["rev-parse", "HEAD"]);
-        let root_files = commit_diff(&fixture.cwd, &root_commit).unwrap();
+        let root_files = commit_diff(&fixture.cwd, &root_commit, false).unwrap();
         assert_eq!(root_files.len(), 1);
         assert!(root_files[0].patch.contains("+original"));
         let feature = fixture.git(&["branch", "--show-current"]);
@@ -788,14 +825,55 @@ mod index_action_tests {
         let commits = list_commits(&fixture.cwd, 100, Some("comparison-base")).unwrap();
         assert_eq!(commits.len(), 3);
         assert_eq!(commits[0].subject, "merge topic");
-        let merged = commit_diff(&fixture.cwd, &commits[0].hash).unwrap();
+        let merged = commit_diff(&fixture.cwd, &commits[0].hash, false).unwrap();
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].path, "topic.txt");
         assert!(merged[0].patch.contains("+topic snapshot"));
         assert!(!merged[0].patch.contains("worktree only"));
         assert!(list_commits(&fixture.cwd, 100, Some(feature.trim())).unwrap().is_empty());
         assert!(list_commits(&fixture.cwd, 100, Some("missing")).is_err());
-        assert!(commit_diff(&fixture.cwd, "--help").is_err());
+        assert!(commit_diff(&fixture.cwd, "--help", false).is_err());
+    }
+
+    #[test]
+    fn whitespace_filter_keeps_file_membership_and_patch_consistent() {
+        let fixture = Fixture::new(true);
+        let commit = |message: &str| {
+            fixture.git(&["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                "-c", "commit.gpgsign=false", "commit", "-m", message]);
+        };
+        fixture.write("mixed.txt", b"a b\nold value\n");
+        fixture.git(&["add", "-A"]);
+        commit("mixed baseline");
+        fixture.git(&["branch", "comparison-base"]);
+        fixture.write("tracked.txt", b"  original\n");
+        assert!(git_filtered_worktree_comparison(&fixture.cwd, GitDiffScope::Uncommitted).unwrap().is_empty());
+        fixture.write("mixed.txt", b"a  b\nnew value\n");
+        fixture.write("untracked.txt", b"  \n");
+        for scope in [GitDiffScope::Uncommitted, GitDiffScope::Unstaged] {
+            let files = git_filtered_worktree_comparison(&fixture.cwd, scope).unwrap();
+            assert_eq!(files.len(), 2);
+            assert!(files.iter().any(|file| file.path == "mixed.txt" && file.patch.contains("+new value") &&
+                !file.patch.contains("+a  b")));
+            assert!(files.iter().any(|file| file.path == "untracked.txt" && file.status == "??"));
+        }
+        fixture.git(&["add", "--", "tracked.txt", "mixed.txt"]);
+        let index_before = fixture.git(&["write-tree"]);
+        let staged = git_filtered_worktree_comparison(&fixture.cwd, GitDiffScope::Staged).unwrap();
+        assert_eq!(staged.len(), 1);
+        assert_eq!(staged[0].path, "mixed.txt");
+        assert_eq!(fixture.git(&["write-tree"]), index_before);
+        let branch = git_branch_comparison(&fixture.cwd, "comparison-base", None, true).unwrap();
+        assert_eq!(branch.len(), 2);
+        assert!(!branch.iter().any(|file| file.path == "tracked.txt"));
+        assert_eq!(git_branch_comparison(&fixture.cwd, "comparison-base", None, false).unwrap().len(), 3);
+        commit("mixed changes");
+        let head = fixture.git(&["rev-parse", "HEAD"]);
+        let committed = commit_diff(&fixture.cwd, &head, true).unwrap();
+        assert_eq!(committed.len(), 1);
+        assert_eq!(committed[0].path, "mixed.txt");
+        assert_eq!(commit_diff(&fixture.cwd, &head, false).unwrap().len(), 2);
+        assert_eq!(fixture.read("tracked.txt"), b"  original\n");
     }
 
     #[test]
@@ -2854,7 +2932,7 @@ pub fn list_commits(target_path: &str, limit: usize, base_branch: Option<&str>) 
     Ok(commits)
 }
 
-pub fn commit_diff(target_path: &str, commit_hash: &str) -> Result<Vec<GitComparisonFile>, String> {
+pub fn commit_diff(target_path: &str, commit_hash: &str, hide_whitespace: bool) -> Result<Vec<GitComparisonFile>, String> {
     let git_root = find_git_root(target_path).ok_or("Not a git repository")?;
     let h = commit_hash.trim();
     if h.is_empty() {
@@ -2865,12 +2943,14 @@ pub fn commit_diff(target_path: &str, commit_hash: &str) -> Result<Vec<GitCompar
     }
     let reference = format!("{h}^{{commit}}");
     let commit = run_git(&git_root, &["rev-parse", "--verify", "--end-of-options", &reference])?;
-    let output = run_git(&git_root, &[
+    let mut args = vec![
         "diff-tree", "--root", "--no-commit-id", "-r", "-m", "--first-parent",
         "--patch-with-raw", "-z", "--find-renames", "--no-ext-diff", "--no-textconv",
-        "--no-color", "--submodule=short", commit.trim(), "--",
-    ])?;
-    parse_comparison_files(&output)
+        "--no-color", "--submodule=short",
+    ];
+    if hide_whitespace { args.push("--ignore-all-space"); }
+    args.extend([commit.trim(), "--"]);
+    parse_comparison_files(&run_git(&git_root, &args)?)
 }
 
 pub fn push_changes(target_path: &str, force_with_lease: bool) -> Result<String, String> {

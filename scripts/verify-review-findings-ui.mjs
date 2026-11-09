@@ -72,6 +72,27 @@ function nodes(tree) {
   if (typeof tree.tag === "function") return nodes(tree.tag(tree.props));
   return [tree, ...tree.children.flatMap(nodes)];
 }
+const text = tree => !tree || typeof tree !== "object" ? String(tree ?? "") : typeof tree.tag === "function" ? text(tree.tag(tree.props)) : tree.children.map(text).join("");
+{
+  const props = { cwd: "D:/repo", gitStatus: { entries: [] }, onClose() {}, onRefreshGit() {} };
+  const view = mount("DiffDrawer", props);
+  const option = () => nodes(view.tree).find(node => node.props.role === "menuitemcheckbox");
+  const apply = () => nodes(view.tree).find(node => node.tag === "button" && text(node) === "git apply");
+  assert.equal(option().props["aria-checked"], false);
+  assert.equal(option().props.popoverTargetAction, "hide");
+  option().props.onClick();
+  view.render();
+  assert.equal(option().props["aria-checked"], true);
+  assert.equal(apply().props.disabled, true, "a filtered preview is not exported as a full apply command");
+  assert.match(text(view.tree), /正在读取差异/);
+  option().props.onClick();
+  view.render();
+  assert.equal(option().props["aria-checked"], false);
+  assert.equal(apply().props.disabled, false);
+  assert.equal(view.calls.length, 0, "the display option does not write Git state");
+  const recorded = mount("DiffDrawer", props, { requestedDiffMode: "lastTurn" });
+  assert.ok(!nodes(recorded.tree).some(node => node.props.role === "menuitemcheckbox"));
+}
 {
   const props = { cwd: "D:/repo", threadId: "chat-a", connectionIdentity: "local",
     gitStatus: { defaultBranch: "main", entries: [] }, branches: ["main", "topic"],
@@ -105,7 +126,6 @@ function nodes(tree) {
   assert.equal(branchSelect().props.value, "");
   assert.deepEqual(branchSelect().children.filter(option => option?.tag === "option").map(option => option.props.value), [""], "an unloaded repository has no fabricated main or master option");
 }
-const text = tree => !tree || typeof tree !== "object" ? String(tree ?? "") : typeof tree.tag === "function" ? text(tree.tag(tree.props)) : tree.children.map(text).join("");
 {
   const props = { cwd: "D:/repo", onClose() {}, onRefreshGit() {},
     gitStatus: { additions: 20, deletions: 12, entries: [{ path: "a.ts", unstaged: true }, { path: "b.ts", staged: true }] } };
