@@ -7,7 +7,7 @@ const compile=file=>ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOpt
 vm.runInNewContext(compile('src/protocol.ts'),{exports:protocol.exports});
 const activity={exports:{}};
 vm.runInNewContext(compile('src/threadActivity.ts'),{exports:activity.exports,require:()=>protocol.exports});
-const {beginActivitySession,mergeActivitySession,clearReadActivityThreads,threadNeedsAttention}=activity.exports;
+const {beginActivitySession,mergeActivitySession,clearReadActivityThreads,restoreActivityThreads,threadNeedsAttention}=activity.exports;
 assert.equal(typeof beginActivitySession,'function','09C: session must have an explicit opening snapshot');
 const at=1793952000500;
 const unread={revision:'r1',firstUnread:{type:'threadStart'}};
@@ -45,4 +45,10 @@ assert.ok(mergeActivitySession(cleared,current.map(t=>t.id==='new-idle'?{...t,st
 assert.equal(clearReadActivityThreads(cleared,current),cleared,'repeated clear is a no-op');
 const mixed=mergeActivitySession(beginActivitySession(data,'local',at),data.map(t=>t.id==='unread'?{...t,readState:read}:t));
 assert.deepEqual(Array.from(clearReadActivityThreads(mixed,data.map(t=>t.id==='unread'?{...t,readState:read}:t)).threadIds),['approval','running']);
+const undoSession={...session,threadIds:['new-unread','running','approval']};
+const originalOrder=['approval','unread','running','old-idle'];
+const restored=restoreActivityThreads(undoSession,originalOrder,['approval','unread','old-idle'],current.filter(t=>t.id!=='old-idle'));
+assert.deepEqual(Array.from(restored.threadIds),['approval','unread','new-unread','running'],'confirmed idle rows return in order without duplicates; missing row stays out');
+assert.equal(restored.visibleCount,undoSession.visibleCount);
+assert.equal(restoreActivityThreads(restored,originalOrder,['approval','unread','old-idle'],current.filter(t=>t.id!=='old-idle')),restored);
 console.log('PASS 09C activity session: source-derived priority, retention, creation seconds, membership, removal and reopening');

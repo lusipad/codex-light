@@ -37,6 +37,26 @@ export function clearReadActivityThreads(session: ActivitySession, threads: Thre
   return threadIds.length === session.threadIds.length ? session : { ...session, threadIds };
 }
 
+export function restoreActivityThreads(session: ActivitySession, originalOrder: string[], restoredIds: string[],
+  threads: ThreadSummary[]): ActivitySession {
+  const restored = new Set(restoredIds);
+  const available = new Set(threads.map(thread => thread.id));
+  const returning = new Set(originalOrder.filter(id => restored.has(id) && available.has(id)));
+  if (!returning.size) return session;
+  const threadIds = session.threadIds.filter(id => !returning.has(id));
+  const retained = new Set(threadIds);
+  let index = 0;
+  for (const id of originalOrder) {
+    if (returning.has(id)) {
+      threadIds.splice(index++, 0, id);
+    } else if (retained.has(id)) {
+      index++;
+    }
+  }
+  return threadIds.every((id, index) => id === session.threadIds[index]) && threadIds.length === session.threadIds.length
+    ? session : { ...session, threadIds };
+}
+
 function activityCandidates(threads: ThreadSummary[]): ThreadSummary[] {
   const priority = (thread: ThreadSummary) => {
     if (threadNeedsAttention({ ...thread, readState: null })) return 0;

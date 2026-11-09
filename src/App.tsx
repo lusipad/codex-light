@@ -2,7 +2,7 @@ import { usePetPreferences } from "./petPreferences";
 import { mergeHookRoots } from "./hooksSettingsModel";
 import { createEnvironmentWorktree, type WorktreeCreationOptions } from "./worktreeCreation";
 import { installWorktreeCleanup } from "./worktreeCleanup";
-import { activityThreadIsRunning, beginActivitySession, clearReadActivityThreads, excludeActivityThreads, mergeActivitySession, threadHasActivity, threadNeedsAttention, type ActivitySession } from "./threadActivity";
+import { activityThreadIsRunning, beginActivitySession, clearReadActivityThreads, excludeActivityThreads, mergeActivitySession, restoreActivityThreads, threadHasActivity, threadNeedsAttention, type ActivitySession } from "./threadActivity";
 import { useExternalImports } from "./externalImport";
 import { useCodeReviewPreferences } from "./reviewPreferences";
 import { buildQuickReviewPrompt, parseReviewFindings, type ModelReviewComment } from "./reviewFindings";
@@ -1369,7 +1369,9 @@ export const App: React.FC = () => {
 
   // 4. Refresh Threads & Models from codex app-server
   const refreshThreadsGenerationRef = useRef(0);
-  const refreshThreads = useCallback(async () => {
+  const threadListRestoreRef = useRef<((threads: ThreadSummary[]) => void) | null>(null);
+  const refreshThreads = useCallback(async (onLoaded?: (threads: ThreadSummary[]) => void) => {
+    if (onLoaded) threadListRestoreRef.current = onLoaded;
     const generation = ++refreshThreadsGenerationRef.current;
     const readPages = async (stateDbOnly: boolean): Promise<ThreadSummary[] | null> => {
       let cursor: string | null = null;
@@ -1413,6 +1415,9 @@ export const App: React.FC = () => {
       const list = await readPages(true);
       if (list !== null && generation === refreshThreadsGenerationRef.current) {
         setThreads(list);
+        const restore = threadListRestoreRef.current;
+        threadListRestoreRef.current = null;
+        restore?.(list);
         setChatHistoryReady(true);
       }
     } catch (error) {
@@ -4069,7 +4074,8 @@ export const App: React.FC = () => {
     return receipt;
   }, []);
 
-  const undoProjectArchive = useCallback(async (archived: ProjectArchiveUndo[], isCurrent?: () => boolean) => {
+  const undoProjectArchive = useCallback(async (archived: ProjectArchiveUndo[], isCurrent?: () => boolean,
+    onRestored?: (ids: string[], threads: ThreadSummary[]) => void) => {
     if (isCurrent && !isCurrent()) return;
     if (archiveMutationPendingRef.current || pinMutationPendingRef.current) {
       showAppToast("聊天操作正在进行，请稍后在设置中恢复。", "error");
@@ -4077,7 +4083,7 @@ export const App: React.FC = () => {
     }
     archiveMutationPendingRef.current = true;
     try {
-      let failed = 0;
+      const restoredIds: string[] = [];
       let localStateError = false;
       // Undo in reverse order so a removed pin's original next neighbour is available.
       for (const { thread, pinPlacement } of [...archived].reverse()) {
@@ -4090,15 +4096,17 @@ export const App: React.FC = () => {
           ++threadPinRevisionRef.current;
           setPinnedThreadIds(receipt.pinnedThreadIds);
           localStateError ||= receipt.localStateError;
+          restoredIds.push(thread.id);
         } catch {
-          failed++;
+          // Only confirmed restores are eligible for the Activity snapshot.
         }
       }
       if (isCurrent && !isCurrent()) return;
-      await refreshThreads();
+      await refreshThreads(onRestored ? list => onRestored(restoredIds, list) : undefined);
       if (isCurrent && !isCurrent()) return;
       setArchiveRefreshTick(value => value + 1);
-      const restored = archived.length - failed;
+      const restored = restoredIds.length;
+      const failed = archived.length - restored;
       if (failed) {
         showAppToast(`已恢复 ${restored} 个聊天，${failed} 个未确认恢复。请在设置中刷新已归档的聊天。`, "error");
       } else {
@@ -4989,6 +4997,7 @@ export const App: React.FC = () => {
   }, [activityThreadIds, threads]);
   useEffect(() => {
     setActivityArchive(null);
+    threadListRestoreRef.current = null;
   }, [activityScope, activityOnly]);
   const openActivityArchive = useCallback(() => {
     const session = activitySessionRef.current;
@@ -5008,6 +5017,7 @@ export const App: React.FC = () => {
     if (archiveMutationPendingRef.current || pinMutationPendingRef.current) throw Error("聊天操作正在进行");
     archiveMutationPendingRef.current = true;
     try {
+      const originalOrder = activitySessionRef.current?.threadIds ?? [];
       const archived: ProjectArchiveUndo[] = [];
       let localStateError = false;
       for (const target of selection.targets) {
@@ -5031,7 +5041,16 @@ export const App: React.FC = () => {
       const message = `已归档 ${archived.length} 个优先聊天${failed ? `；${failed} 个无法归档` : ""}`;
       showAppToast(message + (localStateError ? "。本地状态未能保存。" : ""),
         failed || localStateError ? "error" : "success", archived.length ? {
-          label: "撤销", onClick: () => { void undoProjectArchive(archived, isCurrent); },
+          label: "撤销", onClick: () => {
+            void undoProjectArchive(archived, isCurrent, (ids, list) => {
+              const session = activitySessionRef.current;
+              if (!session || !sameSession()) return;
+              const restored = restoreActivityThreads(session, originalOrder, ids, list);
+              if (restored === session) return;
+              activitySessionRef.current = restored;
+              setActivitySession(restored);
+            });
+          },
         } : undefined);
       if (failed) void refreshThreads();
     } finally {

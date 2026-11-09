@@ -81,6 +81,43 @@ function mount(){
   assert.deepEqual(calls,['t0']);
   assert.equal(view.context.archiveMutationPendingRef.current,false);
 }
+for(const reopen of [false,true]){
+  const view=mount(),readRow={...rows[0],readState:read};
+  let selected=null,undo,restoredCalls=[];
+  const ctx=view.context;
+  ctx.threadsRef.current=rows.slice(0,3);
+  view.toggle();
+  ctx.threadsRef.current=[readRow,...rows.slice(1,3)];
+  Object.assign(ctx,{
+    setActivityArchive:value=>{selected=typeof value==='function'?value(selected):value;},
+    archiveMutationPendingRef:{current:false},pinMutationPendingRef:{current:false},
+    activeThreadIdRef:{current:null},startNewThread:()=>assert.fail('no active chat'),
+    showAppToast:(_message,_kind,action)=>{if(action)undo=action.onClick;},
+    archiveLocalThread:async thread=>{
+      ctx.activitySessionRef.current=activity.exports.excludeActivityThreads(ctx.activitySessionRef.current,[thread.id]);
+      return {pinPlacement:null,localStateError:false};
+    },
+    threadPinRevisionRef:{current:0},setPinnedThreadIds:()=>{},setArchiveRefreshTick:()=>{},
+    tauriInvoke:async (_method,{thread})=>{
+      restoredCalls.push(thread.id);
+      if(thread.id==='t1')throw Error('restore rejected');
+      return {pinnedThreadIds:[],localStateError:false};
+    },
+    refreshThreads:async onLoaded=>onLoaded?.([readRow,...rows.slice(1,3)]),
+  });
+  ctx.undoProjectArchive=run('undoProjectArchive',ctx);
+  run('openActivityArchive',ctx)();
+  await run('confirmActivityArchive',ctx)(selected);
+  if(reopen){
+    view.toggle();
+    ctx.threadsRef.current=[];
+    view.toggle();
+  }
+  undo();await flush();
+  assert.deepEqual(restoredCalls,['t2','t1','t0']);
+  assert.deepEqual(Array.from(ctx.activitySessionRef.current.threadIds),reopen?[]:['t0','t2'],
+    'only confirmed restores return, including an idle read item, and only to the original session');
+}
 {
   const view=mount();view.toggle();
   view.context.threadsRef.current=rows.map(row=>row.id==='t0'?row:{...row,readState:read});
@@ -220,5 +257,21 @@ for(const change of ['close','identity','remove','already-read','notification-be
   vm.runInNewContext(transpile(`(()=>${removal})()`),{...context,params:{threadId:'gone'},activeThreadIdRef:{current:'different'}});
   pending.resolve({data:[{id:'gone'},{id:'keep'}],nextCursor:null});await refresh;
   assert.deepEqual(threads,[{id:'keep'}],'archive/delete notification invalidates older directory read');
+}
+{
+  const old=deferred(), latest=deferred();
+  const context={...activity.exports,...protocol.exports,refreshThreadsGenerationRef:{current:0},threadListRestoreRef:{current:null},
+    callAppServer:()=>context.refreshThreadsGenerationRef.current===1?old.promise:latest.promise,
+    setThreads:()=>{},setChatHistoryReady:()=>{}};
+  const refresh=run('refreshThreads',context);
+  const loaded=[];
+  const undo=refresh(list=>loaded.push(...list.map(thread=>thread.id)));
+  const notification=refresh();
+  old.resolve({data:[{id:'stale'}]});
+  await undo;
+  assert.deepEqual(loaded,[]);
+  latest.resolve({data:[{id:'restored'}]});
+  await notification;
+  assert.deepEqual(loaded,['restored'],'superseding refresh delivers authoritative catalog to pending undo');
 }
 console.log('PASS 09C App production callbacks: guard, pagination, full-session latest-revision receipts, single-flight, late cancellation, archive errors and stale-list exclusion');
