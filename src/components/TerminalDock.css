@@ -4,15 +4,19 @@
 }
 
 .terminal-dock-workspace[data-position="left"] {
-  order: -1;
+  grid-area: 1 / 1;
   border-top: 0;
   border-right: 1px solid var(--border-subtle);
 }
 
 .terminal-dock-workspace[data-position="right"] {
+  grid-area: 1 / 3;
   border-top: 0;
   border-left: 1px solid var(--border-subtle);
 }
+
+.terminal-dock-workspace[data-position="bottom"] { grid-area: 2 / 1 / 3 / 4; }
+.terminal-dock-workspace:not([data-position="bottom"]) { min-height: 0; height: auto; }
 
 .terminal-dock-workspace .terminal-dock-resizer { touch-action: none; }
 
@@ -28,7 +32,8 @@
 .terminal-dock-workspace[data-position="right"] .terminal-dock-resizer { left: -3px; right: auto; }
 
 .terminal-drop-preview {
-  position: fixed;
+  position: absolute;
+  inset: 0;
   z-index: 40;
   pointer-events: none;
   display: grid;

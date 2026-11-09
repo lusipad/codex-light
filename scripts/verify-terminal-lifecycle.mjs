@@ -6,8 +6,11 @@ import ts from "typescript";
 const source = fs.readFileSync(new URL("../src/components/TerminalDock.tsx", import.meta.url), "utf8");
 const ast = ts.createSourceFile("TerminalDock.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const effects = [];
+let groupFunction, attachDockTerminal;
 function visit(node) {
   if (ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect") effects.push(node.arguments[0]);
+  if (ts.isFunctionDeclaration(node) && node.name?.text === "terminalDockGroups") groupFunction = node;
+  if (ts.isVariableDeclaration(node) && node.name.getText(ast) === "attachDockTerminal") attachDockTerminal = node.initializer;
   ts.forEachChild(node, visit);
 }
 visit(ast);
@@ -15,7 +18,7 @@ const compile = node => ts.transpileModule(`(${node.getText(ast)})`, {
   compilerOptions: { target: ts.ScriptTarget.ES2022 },
 }).outputText;
 const subscription = effects.find(node => node.getText(ast).includes('"terminal:data"'));
-const creation = effects.find(node => node.getText(ast).includes('"terminal_create_or_attach"'));
+const creation = effects.find(node => node.getText(ast).includes("attachDockTerminal("));
 assert.ok(subscription && creation, "production effects must exist");
 const deferred = () => {
   let resolve, reject;
@@ -38,7 +41,13 @@ function mount() {
   const context = {
     open: true, tabs: [{ id: "term-1", cwd: "repo-A", shell: "powershell.exe" }],
     activeTabId: "term-1", cwd: "repo-A", fontSize: 13, selectedShell: "powershell.exe",
-    containerRef: { current: { appendChild() {} } }, xtermMapRef: { current: new Map() },
+    get selection() { return [this.activeTabId, ...(this.otherSelection ?? [])]; },
+    get groups() { return this.terminalDockGroups(this.tabs, this.selection); },
+    terminalDockGroups: vm.runInNewContext(compile(groupFunction), { terminalDockPositions: ["left", "right", "bottom"] }),
+    dockContainersRef: { current: new Map(["left", "right", "bottom"].map(position => {
+      const host = { position, appendChild(el) { el.parentElement = host; } };
+      return [position, host];
+    })) }, xtermMapRef: { current: new Map() },
     subscriptionsReadyRef: { current: Promise.resolve(false) },
     createTerminalOutput: outputModule.exports.createTerminalOutput,
     terminalAppearance: () => ({fontFamily: 'Consolas', fontSize: 12, theme: {background: '#111111', foreground: '#eeeeee'}}),
@@ -62,6 +71,7 @@ function mount() {
       dispose() { this.disposals++; }
     },
   };
+  context.attachDockTerminal = vm.runInNewContext(compile(attachDockTerminal), context);
   return {
     context, listeners, terminals, timers, requests, resizeHandlers,
     subscription: vm.runInNewContext(compile(subscription), context),
@@ -143,6 +153,51 @@ for (const outcome of ["resolve", "reject"]) {
   cleanupSubscriptions();
 }
 console.log("PASS TL01–TL04 production terminal effects: late subscriptions, view disposal, late attach/event suppression and timer/observer cleanup");
+{
+  const view = mount(), cleanupSubscriptions = view.subscription();
+  view.listeners.forEach(entry => entry.resolve(() => {}));
+  await flush();
+  view.context.tabs = [
+    { id: "term-1", cwd: "repo-A" },
+    { id: "left", cwd: "repo-A", dockPosition: "left" },
+    { id: "right", cwd: "repo-A", dockPosition: "right" },
+    { id: "right-other", cwd: "repo-A", dockPosition: "right" },
+  ];
+  const first = view.creation();
+  await flush();
+  const map = view.context.xtermMapRef.current;
+  assert.equal(map.size, 3, "each occupied group opens its selected terminal");
+  const entries = new Map(map);
+  for (const [id, position] of [["left","left"],["right","right"],["term-1","bottom"]]) {
+    assert.equal(entries.get(id).el.parentElement.position, position);
+    assert.equal(entries.get(id).el.style.display, undefined, "new visible hosts render their session");
+    const request = view.requests.find(item => item.args.sessionId === id);
+    request.resolve(snapshot(`output ${id}`, id));
+  }
+  await flush();
+  first();
+  view.context.activeTabId = "right-other";
+  const second = view.creation();
+  await flush();
+  assert.equal(entries.get("right").el.style.display, "none");
+  assert.equal(entries.get("left").el.style.display, "block");
+  assert.equal(entries.get("term-1").el.style.display, "block");
+  assert.equal(map.get("right-other").el.parentElement.position,"right");
+  second();
+  view.context.tabs = view.context.tabs.map(tab => tab.id === "left" ? {...tab, dockPosition:"right"} : tab);
+  view.context.activeTabId = "left";
+  const third = view.creation();
+  await flush();
+  assert.equal(map.get("left"), entries.get("left"), "moving an existing terminal reuses its xterm");
+  assert.equal(map.get("left").el.parentElement.position,"right");
+  assert.equal(map.get("right-other").el.style.display,"none");
+  assert.equal(map.get("term-1").el.style.display,"block");
+  assert.deepEqual(map.get("left").term.writes,["output left"]);
+  assert.equal(view.requests.filter(request => request.method === "terminal_create_or_attach").length,4);
+  assert.ok(!view.requests.some(request => request.method === "terminal_close"));
+  third(); cleanupSubscriptions();
+}
+console.log("PASS TG01–TG03: all dock groups render independently, move an existing xterm and preserve background shells");
 {
   const view = mount(), cleanup = view.subscription(), cleanupView = view.creation();
   await flush();

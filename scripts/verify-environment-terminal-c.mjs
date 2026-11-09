@@ -6,8 +6,11 @@ import ts from "typescript";
 const source = fs.readFileSync(new URL("../src/components/TerminalDock.tsx", import.meta.url), "utf8");
 const ast = ts.createSourceFile("TerminalDock.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const effects = [];
+let groupFunction, attachDockTerminal;
 function visit(node) {
   if (ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect") effects.push(node.arguments[0]);
+  if (ts.isFunctionDeclaration(node) && node.name?.text === "terminalDockGroups") groupFunction = node;
+  if (ts.isVariableDeclaration(node) && node.name.getText(ast) === "attachDockTerminal") attachDockTerminal = node.initializer;
   ts.forEachChild(node, visit);
 }
 visit(ast);
@@ -15,7 +18,7 @@ const compile = node => ts.transpileModule(`(${node.getText(ast)})`, {
   compilerOptions: { target: ts.ScriptTarget.ES2022 },
 }).outputText;
 const subscription = effects.find(node => node.getText(ast).includes('"terminal:data"'));
-const creation = effects.find(node => node.getText(ast).includes('"terminal_create_or_attach"'));
+const creation = effects.find(node => node.getText(ast).includes("attachDockTerminal("));
 assert.ok(subscription && creation, "production effects must exist");
 const deferred = () => {
   let resolve, reject;
@@ -38,7 +41,13 @@ function mount() {
   const context = {
     open: true, tabs: [{ id: "term-1", cwd: "repo-A", shell: "powershell.exe" }],
     activeTabId: "term-1", cwd: "repo-A", fontSize: 13, selectedShell: "powershell.exe",
-    containerRef: { current: { appendChild() {} } }, xtermMapRef: { current: new Map() },
+    get selection() { return [this.activeTabId, ...(this.otherSelection ?? [])]; },
+    get groups() { return this.terminalDockGroups(this.tabs, this.selection); },
+    terminalDockGroups: vm.runInNewContext(compile(groupFunction), { terminalDockPositions: ["left", "right", "bottom"] }),
+    dockContainersRef: { current: new Map(["left", "right", "bottom"].map(position => {
+      const host = { position, appendChild(el) { el.parentElement = host; } };
+      return [position, host];
+    })) }, xtermMapRef: { current: new Map() },
     subscriptionsReadyRef: { current: Promise.resolve(false) },
     pendingActionRef: { current: request() },
     createTerminalOutput: outputModule.exports.createTerminalOutput,
@@ -63,6 +72,7 @@ function mount() {
       dispose() { this.disposals++; }
     },
   };
+  context.attachDockTerminal = vm.runInNewContext(compile(attachDockTerminal), context);
   return {
     context, listeners, terminals, timers, requests, resizeHandlers,
     subscription: vm.runInNewContext(compile(subscription), context),
@@ -87,9 +97,11 @@ const request = (id = "request-1") => ({
   assert.equal(view.context.tabs.length, 1, "fixed session is replaced rather than duplicated");
   assert.equal(view.context.tabs[0].action.id, "request-1");
   assert.equal(view.context.handledActionsRef.current.size, 1, "repeated renders claim a request once");
+  view.context.tabs[0].dockPosition = "right";
   view.context.pendingAction = request("request-2"); queue();
   assert.equal(view.context.tabs[0].action.id, "request-2", "new request can rerun the same action session");
   assert.equal(view.context.tabs[0].cwd, "environment-definition-root");
+  assert.equal(view.context.tabs[0].dockPosition, "right", "rerunning an action retains its panel");
 }
 {
   const view = mount(), results = [];

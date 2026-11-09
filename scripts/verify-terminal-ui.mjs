@@ -44,11 +44,11 @@ assert.ok(tabHandler && actionsHandler && appearance);
 const compile = node => ts.transpileModule(`(${node.getText(ast)})`, {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
 const selected = [], closed = [], focused = [];
 const context = {
-  t:{id:"a"}, tabs:[{id:"a"},{id:"b"},{id:"c"}],
+  t:{id:"a"}, dockTabs:[{id:"a"},{id:"b"},{id:"c"}], dockPosition:"bottom",
   tabDragRef:{current:null},
   setActiveTabId:id=>selected.push(id), closeTerminalTab:id=>closed.push(id),
-  tabListRef:{current:{querySelectorAll:()=>[0,1,2].map(index=>({focus:()=>focused.push(index)}))}},
-  setActionsOpen:value=>{context.actionsOpen=value;}, actionsTriggerRef:{current:{focus:()=>focused.push("actions")}},
+  document:{getElementById:id=>({focus:()=>focused.push(["terminal-tab-a","terminal-tab-b","terminal-tab-c"].indexOf(id))})},
+  setActionsOpen:value=>{context.actionsOpen=value;}, actionsTriggersRef:{current:new Map([["bottom",{focus:()=>focused.push("actions")} ]])},
 };
 const key = vm.runInNewContext(compile(tabHandler), context);
 const event = (key, composing=false) => ({key,nativeEvent:{isComposing:composing},preventDefault(){this.prevented=true;},stopPropagation(){}});
@@ -68,8 +68,9 @@ const firstTab = { id: "a" }, secondTab = { id: "b", dockPosition: "right" };
 const dock = {
   activeTabId: "a", tabs: [firstTab, secondTab],
   setTabs(update) { dock.tabs = update(dock.tabs); },
-  dockResizeRef: { current: null }, captured: [],
-  setDockWidth(width) { dock.width = width; }, setDockHeight(height) { dock.height = height; },
+  dockResizeRef: { current: null }, captured: [], bothSides:false,
+  widths:{left:360,right:360},
+  setDockWidths(update) { dock.widths = update(dock.widths); }, setDockHeight(height) { dock.height = height; },
 };
 vm.runInNewContext(compile(moveDock), dock)("left");
 assert.equal(dock.tabs[0].dockPosition, "left");
@@ -87,17 +88,23 @@ for (const [position, event, expected] of [
 ]) {
   dock.dockPosition = position;
   dock.sideDock = position !== "bottom";
-  start({ currentTarget: grip, button: 0, pointerId: 2, clientX: 400, clientY: 500, preventDefault() {} });
+  start({ currentTarget: grip, button: 0, pointerId: 2, clientX: 400, clientY: 500, preventDefault() {} }, position);
   resize({ ...event, pointerId: 2 });
-  assert.equal(dock.sideDock ? dock.width : dock.height, expected, `dragging the ${position} splitter expands it toward the chat`);
+  assert.equal(dock.sideDock ? dock.widths[position] : dock.height, expected, `dragging the ${position} splitter expands it toward the chat`);
   resize({ clientX: position === "left" ? 2000 : 0, clientY: 0, pointerId: 2 });
-  assert.equal(dock.sideDock ? dock.width : dock.height, dock.sideDock ? 450 : 560);
+  assert.equal(dock.sideDock ? dock.widths[position] : dock.height, dock.sideDock ? 450 : 560);
 }
 assert.deepEqual(dock.captured, [2, 2, 2]);
+dock.bothSides = true;
+start({ currentTarget: grip, button: 0, pointerId: 2, clientX: 400, clientY: 500, preventDefault() {} }, "left");
+resize({ clientX: 2000, clientY: 500, pointerId: 2 });
+assert.equal(dock.widths.left, 240, "two side docks reserve space for the chat");
+assert.equal(dock.widths.right, 450, "resizing one side preserves the other side's stored width");
 
 const bounds = {left:100, top:50, right:900, bottom:650, width:800, height:600};
 const drag = {
   ...dock, tabDragRef:{current:null}, suppressTabClickRef:{current:false}, preview:null, moved:[],
+  requestAnimationFrame:callback=>callback(), document:{getElementById:()=>null},
   setDropPreview(value) { drag.preview = typeof value === "function" ? value(drag.preview) : value; },
   moveActiveDock(position, tabId) { drag.moved.push([position, tabId]); },
 };
@@ -143,7 +150,7 @@ assert.equal(result.theme.background,"#ffffff"); assert.equal(result.theme.curso
 const requests=[], fontListeners=new Map(), renderer={term:{options:{},cols:90,rows:25},fit:{fit(){renderer.fits=(renderer.fits||0)+1;}},ready:Promise.resolve(true)};
 let observerCallback, disconnected=false;
 const appearanceContext={
-  containerRef:{current:{}},xtermMapRef:{current:new Map([["same-session",renderer]])},
+  dockContainersRef:{current:new Map([["bottom",{}]])},xtermMapRef:{current:new Map([["same-session",renderer]])},
   terminalAppearance:()=>read({}),setFontSize:size=>{appearanceContext.fontSize=size;},
   invoke:(method,args)=>{requests.push({method,args});return Promise.resolve();},
   MutationObserver:class{constructor(callback){observerCallback=callback;}observe(){}disconnect(){disconnected=true;}},
