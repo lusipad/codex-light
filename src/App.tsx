@@ -5472,7 +5472,8 @@ export const App: React.FC = () => {
       />
 
       {/* ── 3. Main Workspace Area ── */}
-      <main className={`codex-main-area ${showTerminal && !isCloudChatRoute ? "has-terminal-dock" : ""}`}>
+      <div className="workspace-main-with-terminal">
+      <main className="codex-main-area">
         {/* Top Window / Thread Chrome Header */}
         <header
           className="main-top-navbar"
@@ -6877,7 +6878,8 @@ export const App: React.FC = () => {
           </>
         )}
 
-        {/* Bottom Interactive PTY Terminal Dock */}
+      </main>
+        {/* Interactive PTY Terminal Dock */}
         {!isCloudChatRoute && terminalWasOpened.current && (
           <TerminalDock
             open={showTerminal}
@@ -6889,7 +6891,7 @@ export const App: React.FC = () => {
             onCommandHandled={handleTerminalCommandHandled}
           />
         )}
-      </main>
+      </div>
 
       {showThreadSchedule && threadScheduleTask && <div className="automation-thread-outlet">
         <AutomationsView key={threadScheduleTask.id} activeWorkspaceRoot={activeWorkspace?.path || ""} models={models}

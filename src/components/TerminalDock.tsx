@@ -39,9 +39,11 @@ interface SessionTab {
   title: string;
   cwd: string;
   shell: string;
+  dockPosition?: TerminalDockPosition;
   action?: EnvironmentActionRunRequest;
 }
 
+type TerminalDockPosition = "left" | "right" | "bottom";
 
 
 export const TerminalDock: React.FC<TerminalDockProps> = ({
@@ -58,6 +60,7 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
   const [fontSize, setFontSize] = useState<number>(12);
   const [actionsOpen, setActionsOpen] = useState(false);
   const [dockHeight, setDockHeight] = useState<number>(260);
+  const [dockWidth, setDockWidth] = useState<number>(360);
   const [commandError, setCommandError] = useState<string | null>(null);
   const [commandRetry, setCommandRetry] = useState(0);
   const [tabs, setTabs] = useState<SessionTab[]>(() => [
@@ -69,6 +72,9 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
     },
   ]);
   const [activeTabId, setActiveTabId] = useState<string>(tabs[0].id);
+  const dockPosition = tabs.find(tab => tab.id === activeTabId)?.dockPosition ?? "bottom";
+  const sideDock = dockPosition !== "bottom";
+  const dockResizeRef = useRef<{ id: number; start: number; size: number; limit: number } | null>(null);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const actionsTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -526,34 +532,32 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
     }).catch(() => {});
   };
 
-  const handleStartResize = (e: React.MouseEvent) => {
-    e.preventDefault();
-    const startY = e.clientY;
-    const startHeight = dockHeight;
-    const onMouseMove = (moveEvent: MouseEvent) => {
-      const deltaY = startY - moveEvent.clientY;
-      const newHeight = Math.max(140, Math.min(window.innerHeight * 0.8, startHeight + deltaY));
-      setDockHeight(newHeight);
-      const curr = xtermMapRef.current.get(activeTabId);
-      if (curr) {
-        try {
-          curr.fit.fit();
-          invoke("terminal_resize", {
-            sessionId: activeTabId,
-            cols: curr.term.cols,
-            rows: curr.term.rows,
-          }).catch(() => {});
-        } catch {
-          // ignore
-        }
-      }
+  const moveActiveDock = (position: TerminalDockPosition) => {
+    setTabs(current => current.map(tab => tab.id === activeTabId ? { ...tab, dockPosition: position } : tab));
+  };
+
+  const handleStartResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    const dock = event.currentTarget.parentElement;
+    const workspace = dock?.parentElement;
+    if (!dock || !workspace || event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dockResizeRef.current = {
+      id: event.pointerId,
+      start: sideDock ? event.clientX : event.clientY,
+      size: sideDock ? dock.offsetWidth : dock.offsetHeight,
+      limit: sideDock ? workspace.clientWidth * 0.5 : workspace.clientHeight * 0.8,
     };
-    const onMouseUp = () => {
-      window.removeEventListener("mousemove", onMouseMove);
-      window.removeEventListener("mouseup", onMouseUp);
-    };
-    window.addEventListener("mousemove", onMouseMove);
-    window.addEventListener("mouseup", onMouseUp);
+  };
+
+  const handleDockResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    const resize = dockResizeRef.current;
+    if (!resize || resize.id !== event.pointerId) return;
+    const cursor = sideDock ? event.clientX : event.clientY;
+    const delta = dockPosition === "left" ? cursor - resize.start : resize.start - cursor;
+    const size = Math.min(resize.limit, Math.max(sideDock ? 180 : 140, resize.size + delta));
+    if (sideDock) setDockWidth(size);
+    else setDockHeight(size);
   };
 
   const clearActiveTerminal = () => {
@@ -600,8 +604,10 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
   };
 
   return (
-    <div className="terminal-dock terminal-dock-workspace" style={{ height: dockHeight, display: open ? undefined : "none" }}>
-      <div className="terminal-dock-resizer" onMouseDown={handleStartResize} title="拖动调整终端高度" />
+    <div className="terminal-dock terminal-dock-workspace" data-position={dockPosition} data-open={open}
+      style={{ width: sideDock ? `min(50%, ${dockWidth}px)` : undefined, height: sideDock ? "100%" : `min(80%, ${dockHeight}px)`, display: open ? undefined : "none" }}>
+      <div className="terminal-dock-resizer" onPointerDown={handleStartResize} onPointerMove={handleDockResize}
+        onLostPointerCapture={() => { dockResizeRef.current = null; }} title={sideDock ? "拖动调整终端宽度" : "拖动调整终端高度"} />
       <div className="terminal-dock-header">
         <div className="terminal-tabs" role="tablist" aria-label="终端会话" ref={tabListRef}>
           {tabs.map((t) => (
@@ -663,6 +669,12 @@ export const TerminalDock: React.FC<TerminalDockProps> = ({
             setActionsOpen(false); actionsTriggerRef.current?.focus();
           }
         }}>
+          <select className="terminal-shell-select" value={dockPosition} aria-label="终端停靠位置"
+            onChange={event => moveActiveDock(event.target.value as TerminalDockPosition)}>
+            <option value="left">停靠左侧</option>
+            <option value="right">停靠右侧</option>
+            <option value="bottom">停靠底部</option>
+          </select>
           <select
             className="terminal-shell-select"
             value={selectedShell}

@@ -450,9 +450,23 @@ html, body, #root {
 }
 
 /* Center Main Area */
+.workspace-main-with-terminal {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.workspace-main-with-terminal:has(> .terminal-dock-workspace[data-open="true"]:not([data-position="bottom"])) {
+  flex-direction: row;
+}
+
 .codex-main-area {
   flex: 1;
   height: 100%;
+  min-width: 0;
+  min-height: 0;
   background-color: var(--bg-main);
   display: flex;
   flex-direction: column;
@@ -1587,8 +1601,7 @@ button.file-change-name:hover { text-decoration: underline; }
   transition: bottom 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.app-main-content.has-terminal-dock .floating-composer-dock,
-.codex-main-area.has-terminal-dock .floating-composer-dock {
+.app-main-content.has-terminal-dock .floating-composer-dock {
   bottom: 260px;
 }
 
@@ -1597,8 +1610,7 @@ button.file-change-name:hover { text-decoration: underline; }
   transition: padding-bottom 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.app-main-content.has-terminal-dock .timeline-content-wrapper,
-.codex-main-area.has-terminal-dock .timeline-content-wrapper {
+.app-main-content.has-terminal-dock .timeline-content-wrapper {
   padding-bottom: 380px;
 }
 

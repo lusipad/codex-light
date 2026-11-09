@@ -3,6 +3,30 @@
   background: var(--bg-primary);
 }
 
+.terminal-dock-workspace[data-position="left"] {
+  order: -1;
+  border-top: 0;
+  border-right: 1px solid var(--border-subtle);
+}
+
+.terminal-dock-workspace[data-position="right"] {
+  border-top: 0;
+  border-left: 1px solid var(--border-subtle);
+}
+
+.terminal-dock-workspace .terminal-dock-resizer { touch-action: none; }
+
+.terminal-dock-workspace:not([data-position="bottom"]) .terminal-dock-resizer {
+  top: 0;
+  bottom: 0;
+  height: auto;
+  width: 6px;
+  cursor: col-resize;
+}
+
+.terminal-dock-workspace[data-position="left"] .terminal-dock-resizer { left: auto; right: -3px; }
+.terminal-dock-workspace[data-position="right"] .terminal-dock-resizer { left: -3px; right: auto; }
+
 .terminal-dock-workspace .terminal-dock-header {
   flex-shrink: 0;
   padding-inline: 8px;
@@ -44,6 +68,10 @@
 }
 
 .terminal-session-actions .terminal-shell-select { max-width: min(100%, 240px); }
+.terminal-session-actions .terminal-shell-select option {
+  color: var(--text-primary);
+  background: var(--bg-primary);
+}
 .terminal-session-actions .terminal-cwd-badge { flex: 1; min-width: 40px; }
 
 .terminal-dock-workspace .terminal-xterm-wrapper {

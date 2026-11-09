@@ -121,6 +121,27 @@ for (const outcome of ["resolve", "reject"]) {
   cleanupSubscriptions();
   assert.equal(view.timers.size, 0);
 }
+{
+  const view = mount(), cleanupSubscriptions = view.subscription();
+  view.listeners.forEach(entry => entry.resolve(() => {}));
+  await flush();
+  const first = view.creation();
+  await flush();
+  view.requests[0].resolve(snapshot("output survives the move"));
+  await flush();
+  const entry = view.context.xtermMapRef.current.get("term-1");
+  first();
+  view.context.tabs = [{ ...view.context.tabs[0], dockPosition: "right" }];
+  const second = view.creation();
+  await flush();
+  assert.equal(view.terminals.length, 1, "moving a tab does not create another xterm");
+  assert.equal(view.context.xtermMapRef.current.get("term-1"), entry);
+  assert.equal(view.requests.filter(request => request.method === "terminal_create_or_attach").length, 1);
+  assert.ok(!view.requests.some(request => request.method === "terminal_close"));
+  assert.deepEqual(view.terminals[0].writes, ["output survives the move"]);
+  second();
+  cleanupSubscriptions();
+}
 console.log("PASS TL01–TL04 production terminal effects: late subscriptions, view disposal, late attach/event suppression and timer/observer cleanup");
 {
   const view = mount(), cleanup = view.subscription(), cleanupView = view.creation();

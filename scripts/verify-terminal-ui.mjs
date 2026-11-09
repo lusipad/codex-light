@@ -5,11 +5,14 @@ import ts from "typescript";
 
 const source = fs.readFileSync(new URL("../src/components/TerminalDock.tsx", import.meta.url), "utf8");
 const ast = ts.createSourceFile("TerminalDock.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-let tabHandler, actionsHandler, appearance, appearanceEffect, clearTerminal, closeTerminal;
+let tabHandler, actionsHandler, appearance, appearanceEffect, clearTerminal, closeTerminal, moveDock, startResize, resizeDock;
 const fontButtons={};
 function visit(node) {
   if (ts.isVariableDeclaration(node) && node.name.getText(ast)==="clearActiveTerminal") clearTerminal=node.initializer;
   if (ts.isVariableDeclaration(node) && node.name.getText(ast)==="closeTerminalTab") closeTerminal=node.initializer;
+  if (ts.isVariableDeclaration(node) && node.name.getText(ast)==="moveActiveDock") moveDock=node.initializer;
+  if (ts.isVariableDeclaration(node) && node.name.getText(ast)==="handleStartResize") startResize=node.initializer;
+  if (ts.isVariableDeclaration(node) && node.name.getText(ast)==="handleDockResize") resizeDock=node.initializer;
   if (ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect" && node.arguments[0]?.getText(ast).includes("observer.observe(document.documentElement")) appearanceEffect=node.arguments[0];
   if (ts.isFunctionDeclaration(node) && node.name?.text === "terminalAppearance") appearance = node;
   if (ts.isJsxOpeningElement(node)) {
@@ -54,6 +57,37 @@ key(event("Delete")); assert.deepEqual(closed,["a"]);
 const escape=vm.runInNewContext(compile(actionsHandler),context);
 escape(event("Escape",true)); assert.equal(context.actionsOpen,undefined);
 escape(event("Escape")); assert.equal(context.actionsOpen,false); assert.equal(focused.at(-1),"actions");
+
+const firstTab = { id: "a" }, secondTab = { id: "b", dockPosition: "right" };
+const dock = {
+  activeTabId: "a", tabs: [firstTab, secondTab],
+  setTabs(update) { dock.tabs = update(dock.tabs); },
+  dockResizeRef: { current: null }, captured: [],
+  setDockWidth(width) { dock.width = width; }, setDockHeight(height) { dock.height = height; },
+};
+vm.runInNewContext(compile(moveDock), dock)("left");
+assert.equal(dock.tabs[0].dockPosition, "left");
+assert.equal(dock.tabs[1], secondTab, "moving one tab keeps the other tab and its placement");
+const start = vm.runInNewContext(compile(startResize), dock);
+const resize = vm.runInNewContext(compile(resizeDock), dock);
+const grip = {
+  parentElement: { offsetWidth: 360, offsetHeight: 260, parentElement: { clientWidth: 900, clientHeight: 700 } },
+  setPointerCapture(id) { dock.captured.push(id); },
+};
+for (const [position, event, expected] of [
+  ["left", {clientX: 440, clientY: 500}, 400],
+  ["right", {clientX: 360, clientY: 500}, 400],
+  ["bottom", {clientX: 400, clientY: 460}, 300],
+]) {
+  dock.dockPosition = position;
+  dock.sideDock = position !== "bottom";
+  start({ currentTarget: grip, button: 0, pointerId: 2, clientX: 400, clientY: 500, preventDefault() {} });
+  resize({ ...event, pointerId: 2 });
+  assert.equal(dock.sideDock ? dock.width : dock.height, expected, `dragging the ${position} splitter expands it toward the chat`);
+  resize({ clientX: position === "left" ? 2000 : 0, clientY: 0, pointerId: 2 });
+  assert.equal(dock.sideDock ? dock.width : dock.height, dock.sideDock ? 450 : 560);
+}
+assert.deepEqual(dock.captured, [2, 2, 2]);
 
 const values={"--font-mono":'"Custom Mono", monospace',"--font-code-size":"18px","--bg-primary":"#ffffff","--text-primary":"#111111","--selection-bg":"#abcdef"};
 const read=vm.runInNewContext(compile(appearance),{getComputedStyle:()=>({getPropertyValue:key=>values[key]||""})});
