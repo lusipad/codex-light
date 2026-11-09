@@ -17,8 +17,9 @@ const { buildQuickReviewPrompt, isQuickReviewPrompt } = loadModule("reviewFindin
 const { createReviewResults } = loadModule("reviewResults");
 const source = fs.readFileSync("src/App.tsx", "utf8");
 const ast = ts.createSourceFile("App.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-let callback, commitEffect, refreshGit;
+let callback, commitEffect, refreshGit, drawerReviewTarget;
 function visit(node) {
+  if (ts.isJsxAttribute(node) && node.name.getText(ast) === "reviewTarget") drawerReviewTarget = node.initializer.expression.getText(ast);
   if (ts.isVariableDeclaration(node) && node.name.getText(ast) === "handleStartCodeReview") callback = node.initializer.getText(ast);
   if (ts.isVariableDeclaration(node) && node.name.getText(ast) === "refreshGitStatus") refreshGit = node.initializer.getText(ast);
   if (ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect" && node.arguments[0]?.getText(ast).includes('"git_log_commits"')) commitEffect = node.arguments[0].getText(ast);
@@ -263,12 +264,12 @@ for (const request of [{ kind: "commit", sha: "abc" }, { kind: "custom", instruc
   const ast = ts.createSourceFile("DiffDrawer.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   let effect, baseExpression;
   function collect(node) {
-    if (ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect" && node.arguments[0].getText(ast).includes("appliedReviewCwdRef")) effect = node.arguments[0].getText(ast);
-    if (ts.isPropertyAssignment(node) && node.name.getText(ast) === "reviewBaseCommit") baseExpression = node.initializer.getText(ast);
+    if (ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect" && node.arguments[0].getText(ast).includes("appliedReviewScopeRef")) effect = node.arguments[0].getText(ast);
+    if (ts.isVariableDeclaration(node) && node.name.getText(ast) === "reviewBaseCommit") baseExpression = node.initializer.getText(ast);
     ts.forEachChild(node, collect);
   }
   collect(ast);
-  const context = { cwd: "A", reviewTarget: { cwd: "A", baseBranch: "base", mergeBase: "sha" }, appliedReviewCwdRef: { current: null } };
+  const context = { cwd: "A", baseBranchScope: "chat-a/A", reviewTarget: { cwd: "A", baseBranch: "base", mergeBase: "sha" }, appliedReviewScopeRef: { current: null }, appliedReviewTargetRef: { current: null } };
   for (const [setter, key] of [["setDiffMode", "diffMode"], ["setBaseBranch", "baseBranch"], ["setDiffLayout", "diffLayout"], ["setSelectedFile", "selectedFile"]]) context[setter] = value => { context[key] = value; };
   const compile = text => ts.transpileModule(text, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   const apply = vm.runInNewContext(compile(`(${effect})`), context);
@@ -276,9 +277,16 @@ for (const request of [{ kind: "commit", sha: "abc" }, { kind: "custom", instruc
   assert.equal(context.diffMode, "branch");
   assert.equal(context.diffLayout, "split");
   assert.equal(vm.runInNewContext(compile(`(${baseExpression})`), context), "sha", "RA09: review diff uses the same merge base as the model request");
-  context.cwd = "B"; apply();
+  context.cwd = "B"; context.baseBranchScope = "chat-a/B"; context.baseBranch = "other-base"; apply();
   assert.equal(context.diffMode, "working");
-  assert.equal(context.baseBranch, "");
+  assert.equal(context.baseBranch, "other-base", "RA09: leaving a review preserves the new scope's base");
   assert.equal(vm.runInNewContext(compile(`(${baseExpression})`), context), null, "RA09: old review target cannot leak to another repository");
+  context.cwd = "A"; context.baseBranchScope = "chat-a/A"; context.baseBranch = "manual-base"; apply();
+  assert.equal(context.baseBranch, "manual-base", "RA09: revisiting a review does not overwrite a manual selection");
+  const reviewDiffTarget = { threadId: "chat-a", accountIdentity: "account-a", cwd: "A", baseBranch: "base", mergeBase: "sha" };
+  const forChat = (activeThreadId, modelAccountIdentity) => vm.runInNewContext(drawerReviewTarget, { reviewDiffTarget, activeThreadId, modelAccountIdentity });
+  assert.equal(forChat("chat-a", "account-a"), reviewDiffTarget);
+  assert.equal(forChat("chat-b", "account-a"), null, "RA09: the fixed base is owned by the initiating chat");
+  assert.equal(forChat("chat-a", "account-b"), null, "RA09: another account cannot reuse the fixed base");
 }
 console.log("PASS RA01-RA14: production review callbacks/effects, real results controller, early completion, unconfirmed start, targets, permissions, single-flight, stale navigation and diff scope");

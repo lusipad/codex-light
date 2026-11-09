@@ -72,6 +72,39 @@ function nodes(tree) {
   if (typeof tree.tag === "function") return nodes(tree.tag(tree.props));
   return [tree, ...tree.children.flatMap(nodes)];
 }
+{
+  const props = { cwd: "D:/repo", threadId: "chat-a", connectionIdentity: "local",
+    gitStatus: { defaultBranch: "main", entries: [] }, branches: ["main", "topic"],
+    onClose() {}, onRefreshGit() {} };
+  const view = mount("DiffDrawer", props, { requestedDiffMode: "branch" });
+  const branchSelect = () => nodes(view.tree).find(node => node.tag === "select" && node.props.className === "branch-input-mini");
+  assert.equal(branchSelect().props.value, "main", "the active repository supplies the initial selection");
+  branchSelect().props.onChange({ target: { value: "topic" } });
+  view.render();
+  assert.equal(branchSelect().props.value, "topic");
+  props.threadId = "chat-b";
+  view.render();
+  assert.equal(branchSelect().props.value, "main", "a different chat in the same repository starts from its own base");
+  props.gitStatus = { defaultBranch: "develop", entries: [] };
+  view.render();
+  assert.equal(branchSelect().props.value, "develop", "unmodified selections follow a refreshed repository default");
+  props.threadId = "chat-a";
+  view.render();
+  assert.equal(branchSelect().props.value, "topic", "the original chat restores its selection");
+  props.cwd = "D:/another";
+  props.gitStatus = { defaultBranch: "trunk", entries: [] };
+  props.branches = ["topic"];
+  view.render();
+  assert.equal(branchSelect().props.value, "trunk", "another repository does not inherit a branch of the same name");
+  assert.ok(branchSelect().children.some(option => option.props?.value === "trunk"), "a real default remains visible before the branch list catches up");
+  props.cwd = "D:/repo";
+  props.connectionIdentity = "other";
+  props.gitStatus = null;
+  props.branches = [];
+  view.render();
+  assert.equal(branchSelect().props.value, "");
+  assert.deepEqual(branchSelect().children.filter(option => option?.tag === "option").map(option => option.props.value), [""], "an unloaded repository has no fabricated main or master option");
+}
 const text = tree => !tree || typeof tree !== "object" ? String(tree ?? "") : typeof tree.tag === "function" ? text(tree.tag(tree.props)) : tree.children.map(text).join("");
 {
   const props = { cwd: "D:/repo", onClose() {}, onRefreshGit() {},

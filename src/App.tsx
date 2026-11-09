@@ -642,7 +642,7 @@ export const App: React.FC = () => {
   const reviewResultsRef = useRef<ReturnType<typeof createReviewResults> | null>(null);
   if (!reviewResultsRef.current) reviewResultsRef.current = createReviewResults(setReviewRuns);
   const reviewStartPendingRef = useRef(false);
-  const [reviewDiffTarget, setReviewDiffTarget] = useState<{ cwd: string; baseBranch: string | null; mergeBase: string | null } | null>(null);
+  const [reviewDiffTarget, setReviewDiffTarget] = useState<{ threadId: string; accountIdentity: string; cwd: string; baseBranch: string | null; mergeBase: string | null } | null>(null);
   const [archiveRefreshTick, setArchiveRefreshTick] = useState<number>(0);
 
   // Windows sandbox readiness（windowsSandbox/*）
@@ -3184,7 +3184,7 @@ export const App: React.FC = () => {
         }
         if (!isCurrent()) return;
         if (quickReview) {
-          setReviewDiffTarget({ cwd, baseBranch: req.kind === "branch" ? req.branch!.trim() : null, mergeBase: resolvedMergeBase });
+          setReviewDiffTarget({ threadId, accountIdentity: identity, cwd, baseBranch: req.kind === "branch" ? req.branch!.trim() : null, mergeBase: resolvedMergeBase });
           setInitialWorkbenchTab("changes");
           setShowRightDrawer(true);
         }
@@ -6902,6 +6902,7 @@ export const App: React.FC = () => {
       {/* ── 4. Right-Hand Diff & File Review Workbench ── */}
       <DiffDrawer
         workspaceRoots={workbenchWorkspaceRoots}
+        threadId={activeThreadId}
         connectionIdentity={JSON.stringify([modelAccountIdentity, appServerStatus.connected, appServerStatus.binaryPath, appServerStatus.appServerVersion, appServerStatus.userAgent])}
         open={showRightDrawer && !isCloudChatRoute && !showThreadSchedule}
         shortcutRequest={workbenchShortcutRequest ?? undefined}
@@ -6923,7 +6924,7 @@ export const App: React.FC = () => {
         onFileAccess={rememberWorkspaceFile}
         onSelectPreviewFile={setSelectedPreviewFile}
         onSendReviewComment={(comment) => handleSendMessage(comment)}
-        reviewTarget={reviewDiffTarget}
+        reviewTarget={reviewDiffTarget?.threadId === activeThreadId && reviewDiffTarget.accountIdentity === modelAccountIdentity ? reviewDiffTarget : null}
         modelReviewComments={reviewFindings.comments}
         selectedReviewFinding={reviewFindings.comments.find(comment => comment.id === selectedReviewFinding?.id) ?? null}
         initialTab={initialWorkbenchTab}

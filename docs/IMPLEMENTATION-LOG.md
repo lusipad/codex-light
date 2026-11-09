@@ -2685,3 +2685,8 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 
 - 依据固定官方 asar 的合并基点和路径读取，变更面板从同一 Git 结果生成文件列表和补丁。隔离原生应用实测干净工作区中的分支文件、单文件查看及放弃动作保护。
 - Rust 全库 720 项、前端 115 项、通知适配器和 Windows 打包通过。GitHub Actions 作业启动仍受付款或支出上限阻塞，本阶段保留本地提交，官方配对像素和远端发布待验。详见 [06I 分支对比验收](antigravity/acceptance/06I-branch-comparison.md)。
+
+## 2026-11-09 — 按聊天隔离分支对比基准
+
+- 依据官方会话作用域和仓库默认基准，变更面板按连接、聊天和仓库记忆手动基准，固定的审查基点只用于发起审查的聊天和账号。复用当前仓库默认值和实际分支列表，移除空列表里的预设候选。
+- 116 个前端回放入口和 Windows 打包通过。隔离原生客户端实测 A 改用 feature、B 用 main、切回 A 恢复 feature。远端 Windows CI 和官方配对像素待验。详见 [06J 验收](antigravity/acceptance/06J-branch-selection.md)。

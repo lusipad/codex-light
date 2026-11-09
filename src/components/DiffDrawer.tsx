@@ -172,6 +172,7 @@ export interface DiffDrawerProps {
   gitPreferences?: GitPreferences;
   gitPreferencesReady?: boolean;
   connectionIdentity?: string;
+  threadId?: string | null;
   cwd: string;
   workspaceRoots?: string[];
   gitStatus: GitStatusInfo | null;
@@ -541,6 +542,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   gitPreferences = GIT_DEFAULTS,
   gitPreferencesReady = true,
   connectionIdentity = "local",
+  threadId,
   cwd,
   workspaceRoots,
   gitStatus,
@@ -738,24 +740,38 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   const lastTurnOnly = !gitPreferencesReady || gitPreferences["git-review-mode"] === "last-turn-only";
   const diffMode = lastTurnOnly ? "lastTurn" : requestedDiffMode;
   const [diffLayout, setDiffLayout] = useState<"unified" | "split">("unified");
-  const [baseBranch, setBaseBranch] = useState<string>("");
-  const appliedReviewCwdRef = useRef<string | null>(null);
+  const baseBranchScope = JSON.stringify([connectionIdentity, threadId ?? null, cwd]);
+  const [baseBranches, setBaseBranches] = useState(() => new Map<string, string>());
+  const baseBranch = baseBranches.get(baseBranchScope) || gitStatus?.defaultBranch || "";
+  const setBaseBranch = useCallback((branch: string) => {
+    setBaseBranches(current => {
+      if ((current.get(baseBranchScope) ?? "") === branch) return current;
+      const next = new Map(current);
+      if (branch) next.set(baseBranchScope, branch);
+      else next.delete(baseBranchScope);
+      return next;
+    });
+  }, [baseBranchScope]);
+  const appliedReviewScopeRef = useRef<string | null>(null);
+  const appliedReviewTargetRef = useRef<typeof reviewTarget>(null);
   useEffect(() => {
     if (!reviewTarget || reviewTarget.cwd !== cwd) {
-      if (appliedReviewCwdRef.current && appliedReviewCwdRef.current !== cwd) {
-        appliedReviewCwdRef.current = null;
+      if (appliedReviewScopeRef.current && appliedReviewScopeRef.current !== baseBranchScope) {
+        appliedReviewScopeRef.current = null;
         setDiffMode("working");
-        setBaseBranch("");
         setSelectedFile(null);
       }
       return;
     }
-    appliedReviewCwdRef.current = cwd;
+    appliedReviewScopeRef.current = baseBranchScope;
     setDiffMode(reviewTarget.baseBranch ? "branch" : "working");
-    setBaseBranch(reviewTarget.baseBranch || "");
+    if (appliedReviewTargetRef.current !== reviewTarget) {
+      appliedReviewTargetRef.current = reviewTarget;
+      setBaseBranch(reviewTarget.baseBranch || "");
+    }
     setDiffLayout("split");
     setSelectedFile(null);
-  }, [reviewTarget, cwd]);
+  }, [reviewTarget, cwd, baseBranchScope, setBaseBranch]);
   const [selectedFile, setSelectedFile] = useState<string | null>(
     selectedPreviewFile ?? null
   );
@@ -876,7 +892,7 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
     const reviewBaseCommit = reviewTarget?.cwd === cwd && reviewTarget.baseBranch === baseBranch
       ? reviewTarget.mergeBase : null;
     return { cwd, baseBranch, reviewBaseCommit };
-  }, [open, activeTab, diffMode, gitPreferencesReady, cwd, baseBranch, reviewTarget, gitStatus, connectionIdentity]);
+  }, [open, activeTab, diffMode, gitPreferencesReady, cwd, baseBranch, reviewTarget, gitStatus, baseBranchScope]);
   const [branchResult, setBranchResult] = useState<{
     request: NonNullable<typeof branchRequest>;
     files: { path: string; status: string; patch: string }[];
@@ -944,12 +960,6 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
   useEffect(() => {
     if (!fileTreeRoots.includes(currentDir)) setCurrentDir(cwd);
   }, [fileTreeRoots, currentDir, cwd]);
-
-  useEffect(() => {
-    if (gitStatus?.defaultBranch && !baseBranch) {
-      setBaseBranch(gitStatus.defaultBranch);
-    }
-  }, [gitStatus?.defaultBranch, baseBranch]);
 
   useEffect(() => {
     if (!open || activeTab !== "changes" || !cwd) return;
@@ -2265,18 +2275,8 @@ export const DiffDrawer: React.FC<DiffDrawerProps> = ({
                 onChange={(e) => setBaseBranch(e.target.value)}
               >
                 <option value="" disabled>选择基准分支</option>
-                {branches.length > 0 ? (
-                  branches.map((b) => (
-                    <option key={b} value={b}>
-                      {b}
-                    </option>
-                  ))
-                ) : (
-                  <>
-                    <option value="main">main</option>
-                    <option value="master">master</option>
-                  </>
-                )}
+                {baseBranch && !branches.includes(baseBranch) && <option value={baseBranch}>{baseBranch}</option>}
+                {branches.map(branch => <option key={branch} value={branch}>{branch}</option>)}
               </select>
             </div>
           )}
