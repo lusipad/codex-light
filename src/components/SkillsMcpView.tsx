@@ -7,6 +7,7 @@ import {
   Boxes,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Download,
   FolderOpen,
@@ -240,6 +241,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   const [skillSearchIndex, setSkillSearchIndex] = useState(0);
   const [recommendedSearch, setRecommendedSearch] = useState<{ query: string; count: number | null }>({ query: "", count: null });
   const pageRef = useRef<HTMLDivElement>(null);
+  const directorySearchRef = useRef<HTMLInputElement>(null);
   const [skills, setSkills] = useState<SkillInfoItem[]>([]);
   const [selectedSkill, setSelectedSkill] = useState<SkillInfoItem | null>(null);
   const [selectedSkillKey, setSelectedSkillKey] = useState<string | null>(null);
@@ -621,7 +623,8 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     const installedLoad = loadInstalledPlugins({ confirmInstallResult: true });
     await loadLocalSkills();
     if (!isPluginContextCurrent(context)) return;
-    await Promise.allSettled([installedLoad, serviceLoad, loadRemoteSkills(), loadManagement()]);
+    await Promise.allSettled([installedLoad, serviceLoad, loadRemoteSkills(), loadManagement(),
+      !manageOnly && subTab === "plugins" ? loadBrowsePlugins(true) : Promise.resolve()]);
     if (manageOnly || subTab === "apps") {
       await loadApps(true);
     }
@@ -636,21 +639,26 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     const refresh = () => {
       if (disposed) return;
       void Promise.allSettled([loadInstalledPlugins({ silent: true }), loadServicePlugins(), loadManagement(), loadRemoteSkills(true), loadApps(true)]);
+      if (!manageOnly) {
+        void loadBrowsePlugins(true);
+        const context = detailContextRef.current;
+        if (context) void handleToggleDetail(context.plugin, context.marketplace, { reload: true });
+      }
     };
     window.addEventListener("focus", refresh);
     void tauriListen("plugin-management-changed", refresh).then(stop => { if (disposed) stop(); else unlisten = stop; }).catch(() => {});
     return () => { disposed = true; window.removeEventListener("focus", refresh); unlisten?.(); onNavigationGuardChange?.(null); };
-  }, [activeWorkspaceRoot, connectionIdentity]);
+  }, [activeWorkspaceRoot, connectionIdentity, manageOnly]);
 
   useEffect(() => {
     if (subTab === "apps" && !appsLoadedRef.current) {
       loadApps();
     }
-    if (subTab === "plugins" && pluginMode === "browse") {
+    if (subTab === "plugins" && (!manageOnly || pluginMode === "browse")) {
       loadBrowsePlugins();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subTab, pluginMode, activeWorkspaceRoot]);
+  }, [subTab, pluginMode, activeWorkspaceRoot, manageOnly]);
 
   useEffect(() => {
     setBrowseVisibleCount(50);
@@ -1198,13 +1206,12 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     .map((marketplace) => ({
       marketplace,
       plugins: (marketplace.plugins ?? [])
-        .filter((plugin) => !plugin.installed)
         .filter(pluginMatchesSearch),
     }))
     .filter((group) => group.plugins.length > 0);
   const browseCount = (browseData?.marketplaces ?? []).reduce(
     (sum, marketplace) =>
-      sum + (marketplace.plugins ?? []).filter((plugin) => !plugin.installed).length,
+      sum + (marketplace.plugins ?? []).length,
     0
   );
   let remainingBrowseCards = browseVisibleCount;
@@ -1366,7 +1373,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     </div>
   );
 
-  const renderPluginDetail = () => {
+  const renderPluginDetail = (directory = false) => {
     if (detailLoading) return renderLoadingRow("正在读取插件详情…");
     if (detailError) {
       return (
@@ -1400,7 +1407,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
         <p className="pm-detail-desc">
           {detail.description || pluginDescription(summary, 600)}
         </p>
-        <div className="pm-detail-grid">
+        {!directory && <div className="pm-detail-grid">
           <div className="pm-detail-item">
             <span>插件 ID</span>
             <span className="pm-mono">{summary.id}</span>
@@ -1429,7 +1436,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
               {summary.installed ? (summary.enabled ? "已安装 · 已启用" : "已安装 · 已禁用") : "未安装"}
             </span>
           </div>
-        </div>
+        </div>}
         {detail.skills.length > 0 && (
           <div className="pm-detail-section">
             <span className="pm-detail-label">
@@ -1542,6 +1549,23 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       plugin.availability === "DISABLED_BY_ADMIN" ||
       plugin.installPolicy === "NOT_AVAILABLE" ||
       installed || unconfirmedInstalls.has(plugin.id);
+    if (!manageOnly) {
+      const open = () => { void handleToggleDetail(plugin, marketplace); };
+      return <div key={key} className="pm-catalog-card" role="button" tabIndex={0}
+        aria-label={pluginDisplayName(plugin)} onClick={open} onKeyDown={event => {
+          if (event.target !== event.currentTarget || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+          if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); }
+        }}>
+        <span className="pm-catalog-logo" aria-hidden="true"><Boxes size={20} /></span>
+        <div className="pm-catalog-copy"><strong>{pluginDisplayName(plugin)}</strong>
+          <p title={pluginDescription(plugin)}>{pluginDescription(plugin)}</p></div>
+        {installed ? <button type="button" className="pm-catalog-action" aria-label={`管理 ${pluginDisplayName(plugin)}`}
+          onClick={event => { event.stopPropagation(); onManagePlugins ? onManagePlugins() : open(); }}><CheckCircle2 size={18} /></button>
+          : <button type="button" className="pm-catalog-action" aria-label={`安装 ${pluginDisplayName(plugin)}`}
+            disabled={busy || installBlocked} onClick={event => { event.stopPropagation(); void handleInstallPlugin(plugin, marketplace); }}>
+            {busy ? <Loader2 size={18} className="pm-spin" /> : <Download size={18} />}</button>}
+      </div>;
+    }
     return (
       <div className="item-card pm-plugin-card" key={key}>
         <div className="item-card-main">
@@ -1744,10 +1768,22 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
 
   const isBrowseBusy = browseLoading && browseData === null;
   const isInstalledBusy = installedLoading && installedData === null;
+  const catalogSections = new Map<string, { plugin: PluginSummary; marketplace: PluginMarketplaceEntry }[]>();
+  for (const group of visibleBrowseGroups) for (const plugin of group.plugins) {
+    const category = pluginCategory(plugin) || "插件";
+    const entries = catalogSections.get(category) ?? [];
+    entries.push({ plugin, marketplace: group.marketplace });
+    catalogSections.set(category, entries);
+  }
+  const directoryInstalled = mergedMarketplaces.flatMap(marketplace => marketplace.plugins
+    .filter(plugin => plugin.installed).map(plugin => ({ plugin, marketplace })));
+  const directoryDetailPlugin = detail?.summary ?? detailContextRef.current?.plugin;
+  const directoryDetailInstalled = directoryDetailPlugin && (directoryDetailPlugin.installed ||
+    directoryInstalled.some(({ plugin }) => plugin.id === directoryDetailPlugin.id));
 
   return (
     <div ref={pageRef} className={`panel-page pm-extensions-page ${manageOnly ? "pm-management-page" : "pm-directory-page"}`}>
-      <div className="panel-page-header">
+      {(manageOnly || subTab !== "plugins" || detailKey === null) && <div className="panel-page-header">
         <div>
           <h2>{manageOnly ? "插件" : subTab === "skills" ? "技能" : "插件"}</h2>
           <p className="subtitle">
@@ -1756,6 +1792,9 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <input
+            ref={directorySearchRef}
+            id={!manageOnly && subTab === "plugins" ? "plugins-store-page-search" : undefined}
+            autoFocus={!manageOnly && subTab === "plugins"}
             type="text"
             className="hub-search-input"
             aria-label={manageOnly ? "搜索插件、技能或 MCP" : subTab === "skills" ? "搜索技能" : "搜索插件"}
@@ -1783,7 +1822,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
             <RefreshCw size={14} /> 刷新
           </button>
         </div>
-      </div>
+      </div>}
 
       <dialog ref={removalDialog} className="pm-removal-dialog" aria-labelledby="pm-remove-market-title"
         onCancel={event => { event.preventDefault(); closeRemoval(); }}>
@@ -1834,17 +1873,55 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
         部分插件的安装结果尚未确认，请刷新安装状态后再重试。
       </p>}
 
-      <div className="sub-tabs" role="tablist" aria-label="管理扩展程序" style={{ marginBottom: 16 }}>
+      {(manageOnly || subTab !== "plugins" || detailKey === null) && <div className="sub-tabs" role="tablist" aria-label="管理扩展程序" style={{ marginBottom: 16 }}>
         {(manageOnly ? visibleManagementTabs : ["plugins", "skills"] as SubTab[]).map(tab =>
           <button key={tab} type="button" role="tab" aria-selected={subTab === tab}
             className={`sub-tab ${subTab === tab ? "active" : ""}`} onClick={() => selectTab(tab)}>
             <span>{tabLabels[tab]} ({tabCounts[tab]})</span>
           </button>)}
-      </div>
+      </div>}
       {managementError && <p role="alert">管理信息读取失败：{managementError} <button type="button" onClick={loadManagement}>重试</button></p>}
 
       {/* TAB 1: PLUGINS */}
-      {subTab === "plugins" && (
+      {subTab === "plugins" && !manageOnly && (detailKey !== null ? <section className="pm-catalog-detail">
+        <button type="button" className="pm-catalog-back" onClick={() => {
+          ++detailRequestRef.current;
+          detailContextRef.current = null;
+          setDetailKey(null); setDetail(null); setDetailError(null); setDetailLoading(false);
+          requestAnimationFrame(() => directorySearchRef.current?.focus());
+        }}><ChevronLeft size={16} />插件</button>
+        <header className="pm-catalog-detail-header"><h1>{directoryDetailPlugin ? pluginDisplayName(directoryDetailPlugin) : "插件"}</h1>
+          {directoryDetailPlugin && (directoryDetailInstalled
+            ? <button type="button" className="secondary-btn" onClick={onManagePlugins} disabled={!onManagePlugins}>管理</button>
+            : <button type="button" className="primary-btn" disabled={!detail || detailLoading || !!detailError ||
+                busyPluginIds.has(pluginActionKey(directoryDetailPlugin)) || unconfirmedInstalls.has(directoryDetailPlugin.id) ||
+                directoryDetailPlugin.installPolicy === "NOT_AVAILABLE" || directoryDetailPlugin.availability === "DISABLED_BY_ADMIN"}
+              onClick={() => { const context = detailContextRef.current; if (context) void handleInstallPlugin(directoryDetailPlugin, context.marketplace); }}>安装</button>)}
+        </header>
+        {renderPluginDetail(true)}
+        {detail && <section className="pm-catalog-information"><h3>信息</h3>
+          {pluginDeveloper(detail.summary) && <p>{pluginDeveloper(detail.summary)}</p>}
+          {pluginVersion(detail.summary) && <p>版本 {pluginVersion(detail.summary)}</p>}
+        </section>}
+      </section> : <div className="pm-catalog">
+        {directoryInstalled.length > 0 && <section className="pm-installed-section" aria-label="已安装">
+          <header><h3>已安装</h3>{onManagePlugins && <button type="button" className="pm-catalog-action" onClick={onManagePlugins}>管理</button>}</header>
+          <div className="pm-installed-strip">{directoryInstalled.map(({ plugin, marketplace }) =>
+            <button key={pluginKey(plugin, marketplace)} type="button" className="pm-installed-icon"
+              aria-label={`查看 ${pluginDisplayName(plugin)}`} title={pluginDisplayName(plugin)}
+              onClick={() => void handleToggleDetail(plugin, marketplace)}><Boxes size={20} /></button>)}</div>
+        </section>}
+        {isBrowseBusy && renderLoadingRow("正在加载插件目录…")}
+        {browseError && renderLoadError(browseError, "插件目录", () => loadBrowsePlugins(true))}
+        {installedError && renderLoadError(installedError, "已安装插件", () => loadInstalledPlugins({ confirmInstallResult: true }))}
+        {browseData && !browseError && matchingBrowseCount === 0 && <p className="empty-hint">{searchQuery ? "未找到插件" : "没有可用的插件"}</p>}
+        {[...catalogSections].map(([category, entries]) => <section key={category} className="pm-catalog-section">
+          <h3>{category}</h3><div className="pm-catalog-grid">{entries.map(({ plugin, marketplace }) => renderPluginCard(plugin, marketplace, { browse: true }))}</div>
+        </section>)}
+        {browseVisibleCount < matchingBrowseCount && <button type="button" className="secondary-btn"
+          onClick={() => setBrowseVisibleCount(count => count + 50)}>显示更多</button>}
+      </div>)}
+      {subTab === "plugins" && manageOnly && (
         <div className="pm-stack">
           <div className="pm-toolbar">
             <div className="pm-segment">

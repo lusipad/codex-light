@@ -27,7 +27,7 @@ for (const manageOnly of [true, false]) {
       selectTab: tab => changes.push(tab), visibleManagementTabs: ["plugins", "apps", "mcp", "skills", "marketplaces"],
       tabCounts: { plugins: 2, apps: 1, mcp: 0, skills: 1, marketplaces: 1 },
       tabLabels: { plugins: "插件", apps: "应用", mcp: "MCP", skills: "技能", marketplaces: "市场" },
-      pluginMode: "installed", setPluginMode() {},
+      pluginMode: "installed", setPluginMode() {}, directorySearchRef: { current: null },
     };
     for (const name of ["Plus", "RefreshCw", "Boxes", "BookOpen", "Server", "AppWindow", "ShoppingBag", "Package", "Store"]) context[name] = name;
     const render = name => vm.runInNewContext(ts.transpileModule(`(${sections[name]})`, { compilerOptions: { jsx: ts.JsxEmit.React } }).outputText, context);
