@@ -96,3 +96,16 @@ DPI、应用缩放、真实账号产品模式与远端门控、窗口客户区�
 | 首次发送及错误 | 创建、确认ID、发送、失败保留、手动重试及导航隔离 | handleSendMessage/handleCreateGoal；真实回调回归；离线原生只测试显式拒绝执行 |
 
 该表列出当前区域树和证据入口，不代表这些控件均已与官方运行时逐项相同。尤其导航目的地、语音入口、权限文案、所有菜单形态/时序、账号门控及颜色/字体/图标仍需要同条件官方对照，禁止因静态几何或自动回归通过而关闭这些差异。
+
+## 2026-11-16 H15 标题项目弹层及焦点合同（修改前）
+
+固定基准不变。新增取证位于`.ref/parity/01/whole-page/reference/focus/report.md`，原包integrity清单与UTF-16锚点随附。标题实际入口tH→uaLq→Rvqv→ZZgR→qhiJ是combobox/listbox，不是旧WorkspacePopover的纯鼠标工作区列表。
+
+- 打开聚焦“搜索项目”。项目行role=option，不进入Tab顺序；键盘高亮与当前项目check分开。上下键不循环，Home/End首尾，Enter选择，IME不执行导航/选择。
+- 搜索由外部fuzzy过滤，空结果“未找到项目”；无匹配非空查询直接Enter不得误选footer，须先方向键明确移动。细节可有Git根目录/远端host，不常驻完整path；重名用path tooltip区分。
+- footer本地“新建项目”，有当前项目时“不在项目中工作”。远端新建依赖实际能力，不无条件添加。此入口无工作区列表标题、逐行移除或查看AGENTS.md。
+- Tab/Shift+Tab在搜索与footer按钮首尾循环。Escape取消返标题trigger；选项目/不在项目中工作后到Composer。外点或焦点已合法转移时不抢焦点。触发器二次点击应正常关闭，不被mousedown外点处理反向重新打开。
+- 新建项目先关闭popover，再打开HTML创建表单，初始名称空、sources空。提交createLocal成功后选择返回项目，不能用pick_folder+workspace_add替代创建成功。复用当前真实project/create及表单能力，未支持的外观/默认托管目录等必须登记，不能伪造成功。
+- 模型实际为DropdownMenu/Menu。普通menuitem之间Tab/Shift+Tab循环并阻止浏览器默认外移；slider未接管的Tab由底层阻止。不能改成Tab外移后关闭，也不能套项目Popover规则。
+
+当前已复核缺陷为：项目行不可键盘选择、标题按钮二次点击重新打开、模型Tab外移后菜单不关闭且Escape失效。应先补红回归，再按上述合同修复；这份静态合同仍不证明官方当前账号门控、物理IME及像素一致。

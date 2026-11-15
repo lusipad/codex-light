@@ -843,6 +843,19 @@ fn workspace_add(
 }
 
 #[tauri::command]
+async fn workspace_register_created_project(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<Value, String> {
+    state.desktop_state.register_created_project(&project_id, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, &method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
 fn workspace_remove(
     state: State<'_, AppState>,
     path: String,
@@ -2452,6 +2465,7 @@ pub fn run() {
             app_server_pending_requests,
             workspace_list,
             workspace_add,
+            workspace_register_created_project,
             workspace_remove,
             workspace_set_active,
             workspace_select_project,

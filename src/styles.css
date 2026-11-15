@@ -628,14 +628,6 @@ html, body, #root {
   padding-inline: 20px;
 }
 
-.home-project-popover-anchor {
-  position: absolute;
-  top: 100%;
-  left: 50%;
-  z-index: 260;
-  transform: translateX(-50%);
-}
-
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
@@ -1889,93 +1881,6 @@ button.file-change-name:hover { text-decoration: underline; }
   height: 1px;
   background: rgba(255, 255, 255, 0.08);
   margin: 4px 0;
-}
-
-/* ── Workspace Switcher Popover ── */
-.workspace-popover-menu {
-  position: absolute;
-  top: 48px;
-  left: 12px;
-  width: 320px;
-  background: #282828;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 12px;
-  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.6);
-  z-index: 250;
-  padding: 8px;
-  animation: popoverFadeIn 0.12s ease-out;
-}
-
-.workspace-popover-header {
-  padding: 6px 10px 8px;
-  font-size: calc(11px * var(--font-ui-scale, 1));
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--text-tertiary);
-  font-weight: 600;
-}
-
-.workspace-item-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 7px 10px;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background 0.12s ease;
-}
-
-.workspace-item-row:hover {
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.workspace-item-row.active {
-  background: rgba(58, 131, 247, 0.14);
-}
-
-.workspace-item-info {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  gap: 1px;
-}
-
-.workspace-item-name {
-  font-size: var(--text-sm);
-  font-weight: 500;
-  color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workspace-item-path {
-  font-size: calc(11px * var(--font-ui-scale, 1));
-  color: var(--text-tertiary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workspace-action-btn {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: transparent;
-  border: none;
-  color: var(--text-primary);
-  font-size: calc(12.5px * var(--font-ui-scale, 1));
-  font-weight: 500;
-  cursor: pointer;
-  text-align: left;
-  transition: background 0.12s ease;
-}
-
-.workspace-action-btn:hover {
-  background: var(--bg-hover);
 }
 
 /* ── Autocomplete Overlay for @ and / ── */

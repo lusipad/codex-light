@@ -124,7 +124,7 @@ import { KeyboardShortcutsDialog } from "./components/KeyboardShortcutsDialog";
 import { CodexSidebar } from "./components/CodexSidebar";
 import { ComposerBox } from "./components/ComposerBox";
 import { ProjectsIndexView } from "./components/ProjectsIndexView";
-import { ActivityArchiveDialog } from "./components/ProjectEditDialog";
+import { ActivityArchiveDialog, ProjectEditDialog } from "./components/ProjectEditDialog";
 import { InboxView } from "./components/InboxView";
 import { MiniPetWidget } from "./components/MiniPetWidget";
 import { fileDedupeKey, fileSearchRoot, QuickSearchModal } from "./components/QuickSearchModal";
@@ -176,7 +176,7 @@ import {
   goalStatusLabel,
 } from "./threadGoal";
 import { buildSidebarProjectGroups, sidebarThreadProjects, resolveNewThreadProject, threadStartProjectParams } from "./sidebarProjects";
-import { listProjects, type Project } from "./projects";
+import { createIdempotencyKey, createProject, listProjects, type Project, type ProjectPatch } from "./projects";
 
 type ProjectArchiveUndo = { thread: ThreadSummary; pinPlacement: { beforeThreadId: string | null } | null };
 const ACTIVITY_PRIORITY_KEY = "sidebar-priority-show-priority-v1";
@@ -957,6 +957,22 @@ export const App: React.FC = () => {
 
   // Project Picker Popover on Home Title & AGENTS.md Modal
   const [showHomeProjectPopover, setShowHomeProjectPopover] = useState<boolean>(false);
+  const homeProjectTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const workspaceSelectionRef = useRef(0);
+  const [homeProjectCreateKey, setHomeProjectCreateKey] = useState<string | null>(null);
+  const homeProjectCreateKeyRef = useRef(homeProjectCreateKey);
+  const homeProjectCreatedRef = useRef<{ key: string; projectId: string; input: string } | null>(null);
+  const homeProjectCreateScope = JSON.stringify([accountInfo, navigationRequestRef.current]);
+  const homeProjectCreateScopeRef = useRef(homeProjectCreateScope);
+  homeProjectCreateKeyRef.current = homeProjectCreateKey;
+  useEffect(() => {
+    if (activeRoute !== "home" || homeProjectCreateScopeRef.current !== homeProjectCreateScope) {
+      homeProjectCreateKeyRef.current = null;
+      setHomeProjectCreateKey(null);
+      setShowHomeProjectPopover(false);
+    }
+    homeProjectCreateScopeRef.current = homeProjectCreateScope;
+  }, [activeRoute, homeProjectCreateScope]);
   const [agentsMdInfo, setAgentsMdInfo] = useState<{
     found: boolean;
     path: string | null;
@@ -1196,7 +1212,19 @@ export const App: React.FC = () => {
   const activeWorkspace = useMemo(() => {
     return workspaces.find((w) => w.active) || workspaces[0] || null;
   }, [workspaces]);
-  const homeWorkspace = pendingProjectlessRef.current ? null : activeWorkspace;
+  const selectedHomeProject = pendingNewThreadProjectRef.current ?? sidebarProjectMembership.localProjects?.find(
+    project => project.id === sidebarProjectMembership.selectedProjectId);
+  const homeProject = selectedHomeProject && activeWorkspace &&
+    fileDedupeKey(selectedHomeProject.rootPaths[0]) === fileDedupeKey(activeWorkspace.path) ? selectedHomeProject : null;
+  const homeWorkspace = pendingProjectlessRef.current ? null : homeProject && activeWorkspace
+    ? { ...activeWorkspace, label: homeProject.name } : activeWorkspace;
+  const homeProjectGroups = useMemo(() => buildSidebarProjectGroups(workspaces, sidebarProjectMembership, sidebarProjectCatalog),
+    [workspaces, sidebarProjectMembership, sidebarProjectCatalog]);
+  const homePickerWorkspaces = useMemo(() => homeProjectGroups.map(project => ({
+    id: project.id, path: project.path, label: project.label, active: project.id === homeProject?.id,
+    hasAgentsMd: workspaces.find(workspace => workspace.path === project.path)?.hasAgentsMd ?? false,
+    serverProjectId: project.serverProjectId,
+  })), [homeProjectGroups, homeProject?.id, workspaces]);
   const threadComposerWorkspace = activeThreadId ? activeWorkspace : homeWorkspace;
   const modelAccountIdentity = JSON.stringify(accountInfo);
   const homeCloud = useHomeCloudComposer(activeRoute === "home" && appServerStatus.connected &&
@@ -2703,6 +2731,10 @@ export const App: React.FC = () => {
 
   // Workspace Actions
   const handleSelectWorkspace = useCallback(async (path: string) => {
+    const request = ++workspaceSelectionRef.current;
+    const identity = executionIdentityRef.current;
+    const navigation = navigationRequestRef.current;
+    ++refreshWorkspaceGenerationRef.current;
     if (activeRouteRef.current === "home" || (activeRouteRef.current === "thread" && !activeThreadIdRef.current)) {
       pendingProjectlessRef.current = false;
       pendingNewThreadProjectRef.current = null;
@@ -2720,6 +2752,8 @@ export const App: React.FC = () => {
         "workspace_set_active",
         { path }
       );
+      ++refreshWorkspaceGenerationRef.current;
+      if (request !== workspaceSelectionRef.current || identity !== executionIdentityRef.current || navigation !== navigationRequestRef.current) return;
       if (Array.isArray(updated) && updated.length > 0) {
         setWorkspaces(updated);
       }
@@ -2727,6 +2761,37 @@ export const App: React.FC = () => {
       console.warn("workspace_set_active failed:", e);
     }
   }, [isThreadWindow]);
+
+  const handleSelectHomeProject = useCallback(async (path: string, projectId?: string) => {
+    const group = homeProjectGroups.find(project => project.id === projectId);
+    if (!group?.entity) return handleSelectWorkspace(path);
+    if (!group.serverProjectId) {
+      showAppToast("项目身份尚未同步，请刷新后重试。", "error");
+      return;
+    }
+    const request = ++workspaceSelectionRef.current;
+    const identity = executionIdentityRef.current;
+    const navigation = navigationRequestRef.current;
+    ++refreshWorkspaceGenerationRef.current;
+    try {
+      const local = sidebarProjectMembership.localProjects?.some(project => project.id === group.id);
+      const selected = await tauriInvoke<{ workspaces: WorkspaceRootItem[]; projectMembership: SidebarProjectMembership }>(
+        local ? "workspace_select_project" : "workspace_register_created_project",
+        { projectId: local ? group.id : group.serverProjectId });
+      ++refreshWorkspaceGenerationRef.current;
+      if (request !== workspaceSelectionRef.current || identity !== executionIdentityRef.current || navigation !== navigationRequestRef.current || activeRouteRef.current !== "home") return;
+      const project = selected.projectMembership?.localProjects?.find(project =>
+        project.id === selected.projectMembership.selectedProjectId && project.serverProjectId === group.serverProjectId);
+      if (!project?.rootPaths.length || !selected.workspaces?.some(workspace => workspace.active &&
+          fileDedupeKey(workspace.path) === fileDedupeKey(project.rootPaths[0]))) throw new Error("项目选中状态未确认");
+      pendingNewThreadProjectRef.current = project;
+      pendingProjectlessRef.current = false;
+      setWorkspaces(selected.workspaces);
+      setSidebarProjectMembership(selected.projectMembership);
+    } catch (error) {
+      if (request === workspaceSelectionRef.current && identity === executionIdentityRef.current && navigation === navigationRequestRef.current && activeRouteRef.current === "home") showAppToast(`选择项目失败：${String(error)}`, "error");
+    }
+  }, [homeProjectGroups, sidebarProjectMembership, handleSelectWorkspace, showAppToast]);
 
   const handleRemoveWorkspace = useCallback(
     async (path: string, e?: React.MouseEvent) => {
@@ -2764,6 +2829,48 @@ export const App: React.FC = () => {
     } catch (e) {
       console.warn("pick_folder_dialog failed:", e);
     }
+  }, []);
+
+  const handleCreateHomeProject = useCallback(async (patch: ProjectPatch) => {
+    const key = homeProjectCreateKeyRef.current;
+    if (!key) throw new Error("项目创建表单已关闭");
+    const identity = executionIdentityRef.current;
+    const navigation = navigationRequestRef.current;
+    const current = () => homeProjectCreateKeyRef.current === key &&
+      executionIdentityRef.current === identity && navigationRequestRef.current === navigation && activeRouteRef.current === "home";
+    const input = JSON.stringify([patch.name ?? "", patch.roots ?? []]);
+    let receipt = homeProjectCreatedRef.current;
+    if (receipt?.key !== key) {
+      const created = await createProject(patch.name ?? "", patch.roots ?? [], key);
+      if (!created.id) throw new Error("项目创建结果未确认，请重试读取，未选择新项目");
+      if (!current()) return;
+      receipt = { key, projectId: created.id, input };
+      homeProjectCreatedRef.current = receipt;
+    } else if (receipt.input !== input) {
+      throw new Error("项目已创建，请保持名称和文件夹不变后重试确认选中状态");
+    }
+    if (!current()) return;
+    ++refreshWorkspaceGenerationRef.current;
+    const registered = await tauriInvoke<{ workspaces: WorkspaceRootItem[]; projectMembership: SidebarProjectMembership }>(
+      "workspace_register_created_project", { projectId: receipt.projectId });
+    ++refreshWorkspaceGenerationRef.current;
+    if (!current()) return;
+    const selected = registered.projectMembership?.localProjects?.find(project =>
+      project.id === registered.projectMembership.selectedProjectId && project.serverProjectId === receipt.projectId);
+    if (!selected?.rootPaths.length || !registered.workspaces?.some(workspace => workspace.active &&
+        fileDedupeKey(workspace.path) === fileDedupeKey(selected.rootPaths[0]))) {
+      throw new Error("项目已创建，但选中状态未确认，请重试读取");
+    }
+    pendingNewThreadProjectRef.current = selected;
+    pendingProjectlessRef.current = false;
+    setWorkspaces(registered.workspaces);
+    setSidebarProjectMembership(registered.projectMembership);
+    setProjectsRefreshToken(value => value + 1);
+    homeProjectCreateKeyRef.current = null;
+    setHomeProjectCreateKey(null);
+    requestAnimationFrame(() => {
+      if (activeRouteRef.current === "home" && document.hasFocus()) composerTextareaRef.current?.focus();
+    });
   }, []);
 
   // Git Branch Actions from Composer
@@ -6589,22 +6696,13 @@ export const App: React.FC = () => {
                 <CodexHomeIcon />
               </div>
 
-              <div
-                className="home-greeting-wrap"
-                onKeyDown={(event) => {
-                  if (!showHomeProjectPopover || event.key !== "Escape" ||
-                    event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
-                  event.preventDefault();
-                  event.stopPropagation();
-                  setShowHomeProjectPopover(false);
-                  event.currentTarget.querySelector<HTMLButtonElement>(".home-project-inline-btn")?.focus();
-                }}
-              >
+              <div className="home-greeting-wrap">
                 <h1 className="home-greeting-title">
                   {!projectName ? "我们要构建什么？" : (
                     <>
                       {gitStatus?.isGitRepo ? "你想让我们在 " : "我们应该在"}
                       <button
+                        ref={homeProjectTriggerRef}
                         type="button"
                         className="home-project-inline-btn"
                         onClick={() => setShowHomeProjectPopover((v) => !v)}
@@ -6621,18 +6719,17 @@ export const App: React.FC = () => {
                 </h1>
 
                 {projectName && showHomeProjectPopover && (
-                  <div id="home-project-picker" role="dialog" aria-label="选择项目" className="home-project-popover-anchor">
                     <WorkspacePopover
-                      workspaces={workspaces}
+                      workspaces={homePickerWorkspaces}
                       activeWorkspacePath={activeWorkspace?.path || ""}
-                      hasAgentsMd={agentsMdInfo.found}
-                      onSelectWorkspace={handleSelectWorkspace}
-                      onRemoveWorkspace={handleRemoveWorkspace}
-                      onPickNewFolder={handlePickNewFolder}
-                      onOpenAgentsMd={() => setShowAgentsMdModal(true)}
+                      activeProjectId={homeProject?.id}
+                      onSelectWorkspace={handleSelectHomeProject}
+                      onCreateProject={() => setHomeProjectCreateKey(createIdempotencyKey())}
+                      onClearProject={() => { void startNewThread(undefined, undefined, true); }}
+                      triggerRef={homeProjectTriggerRef}
+                      composerRef={composerTextareaRef}
                       onClose={() => setShowHomeProjectPopover(false)}
                     />
-                  </div>
                 )}
               </div>
             </div>
@@ -7386,6 +7483,20 @@ export const App: React.FC = () => {
       />
 
       {/* ── 5. AGENTS.md Modal ── */}
+      {homeProjectCreateKey && activeRoute === "home" && (
+        <ProjectEditDialog
+          key={homeProjectCreateKey}
+          onSave={handleCreateHomeProject}
+          onClose={() => {
+            if (homeProjectCreateKeyRef.current !== homeProjectCreateKey) return;
+            homeProjectCreateKeyRef.current = null;
+            setHomeProjectCreateKey(null);
+            requestAnimationFrame(() => {
+              if (activeRouteRef.current === "home" && document.hasFocus()) homeProjectTriggerRef.current?.focus();
+            });
+          }}
+        />
+      )}
       {showAgentsMdModal && (
         <AgentsMdModal
           cwd={activeWorkspace?.path || ""}

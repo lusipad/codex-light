@@ -1,0 +1,119 @@
+.workspace-popover-menu {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: min(260px, calc(100vw - 12px));
+  max-width: calc(100vw - 12px);
+  max-height: min(350px, calc(100vh - 16px));
+  overflow: hidden;
+  z-index: 260;
+  padding: 4px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  box-shadow: 0 8px 24px #0003;
+  color: var(--text-primary);
+  text-align: left;
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.workspace-popover-search {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 6px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+.workspace-popover-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  line-height: 20px;
+}
+
+.workspace-popover-search input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.workspace-popover-list {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.workspace-popover-results {
+  min-height: 0;
+  max-height: calc((max(1lh, 16px) + 10px) * 5);
+  overflow-y: auto;
+}
+
+.workspace-item-row,
+.workspace-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: 20px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.workspace-item-row[aria-selected="true"],
+.workspace-action-btn[data-highlighted="true"],
+.workspace-action-btn:hover,
+.workspace-action-btn:focus-visible {
+  background: var(--bg-hover);
+}
+
+.workspace-item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-item-row > svg {
+  flex-shrink: 0;
+}
+
+.workspace-popover-footer {
+  flex-shrink: 0;
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.workspace-popover-empty {
+  padding: 16px 8px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+@supports (corner-shape: superellipse(1.5)) {
+  .workspace-popover-menu {
+    border-radius: 20px;
+    corner-shape: superellipse(1.5);
+  }
+  .workspace-item-row,
+  .workspace-action-btn {
+    border-radius: 15px;
+    corner-shape: superellipse(1.5);
+  }
+}

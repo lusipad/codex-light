@@ -154,7 +154,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
     const frame = requestAnimationFrame(() => {
       const controls = menuRef.current?.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled)");
       const index = initialFocusRef.current === "last" ? (controls?.length || 1) - 1 : 0;
-      controls?.[index]?.focus({ preventScroll: true });
+      (controls?.[index] ?? menuRef.current)?.focus({ preventScroll: true });
       initialFocusRef.current = "first";
     });
     const dismiss = (event: PointerEvent) => {
@@ -189,6 +189,19 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
       event.preventDefault();
       event.stopPropagation();
       closeMenu();
+      return;
+    }
+    if (event.key === "Tab" && menuRef.current?.contains(event.target as Node)) {
+      event.preventDefault();
+      event.stopPropagation();
+      const target = event.target as HTMLElement;
+      if (!target.closest('[role^="menuitem"]')) return;
+      const items = Array.from(menuRef.current.querySelectorAll<HTMLElement>('button[role^="menuitem"]:not(:disabled)'));
+      if (!items.length) return;
+      const current = items.indexOf(document.activeElement as HTMLElement);
+      const next = current < 0 ? event.shiftKey ? items.length - 1 : 0
+        : (current + (event.shiftKey ? -1 : 1) + items.length) % items.length;
+      items[next].focus({ preventScroll: true });
       return;
     }
     if ((event.target as HTMLElement).matches('input[type="range"], input[type="search"]') &&
@@ -234,6 +247,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
           id={menuId}
           className={`composer-popover-menu bottom-right model-selector-popover ${view === "models" ? "model-list-view" : ""}`}
           role="menu"
+          tabIndex={-1}
           aria-label={recentOpen ? "最近模型" : view === "models" ? "选择模型" : "模型与推理强度"}
           aria-busy={selectionPending}
           data-model-picker-view={recentOpen ? "recent" : view}
@@ -277,7 +291,10 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                 className="model-compact-current"
                 onClick={() => {
                   setView("models");
-                  requestAnimationFrame(() => menuRef.current?.querySelector<HTMLButtonElement>(".model-choice")?.focus());
+                  requestAnimationFrame(() => {
+                    const first = menuRef.current?.querySelector<HTMLButtonElement>(".model-choice:not(:disabled)");
+                    (first ?? menuRef.current)?.focus({ preventScroll: true });
+                  });
                 }}
               >
                 <span>{formatModelName(activeModel)}{activeEffort ? ` ${EFFORT_LABELS[activeEffort.reasoningEffort] || activeEffort.reasoningEffort}` : ""}</span>

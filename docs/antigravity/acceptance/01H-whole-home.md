@@ -74,3 +74,46 @@
 官方运行时采集受computer-use规则限制，具体来源见规格。需要人工/用户提供同版本、同场景、同尺寸和缩放的官方截图及菜单操作结果。视觉score=null，未伪造相似度。
 
 2026-11-15复查GitHub最新run仍为42644930892，Windows作业steps为空，注释明确账户付款失败或支出上限阻止启动。本阶段不以旧提交绿灯替代，不推送/tag/发布一个未经同提交托管CI验证的新版本。产品开发与本地验证继续；远端发布仍需账户问题解除。
+
+## 2026-11-16 — H15 项目选择、真实创建与键盘阶段
+
+本节是后续源码与构建，前文058dfd及本节初次候选40398b均不作为最终EXE。官方固定版本仍26.1103.4239.0；修改前合同和原始来源见规格H15及`reference/focus/report.md`。证据根为`.ref/parity/01/whole-page/actual/focus/`。
+
+### 改动与复用
+
+- 标题弹层改为搜索combobox/listbox。搜索、空态、高亮、当前项目勾选、上下/Home/End、Enter、IME保护、搜索/footer间Tab循环与Escape分别处理。footer属于同一个listbox，移除该入口无来源的工作区标题、逐行移除和AGENTS动作。二次点击标题正常关闭，外点不强抢焦点。按源设置上方居中、5px偏移、260px最小宽、350px高度上限和6px碰撞边距。
+- 复用项目分组与匹配工具，保留同根项目独立ID；标题和Composer使用确认项目名。选项目和刷新加入账号、草稿导航及请求代次保护，防止晚回覆盖。新建复用ProjectEditDialog的空名称/多目录模式和真实project/create，不使用workspace_add冒充创建。
+- 原生命令先project/read确认服务实体，验证本机绝对目录，再一次原子保存工作区、独立项目、host/CODEX_HOME范围的服务ID映射及选中状态。落盘失败不更新内存；创建ACK后登记失败只重试登记，不重复create。
+- 模型菜单复用当前能力数据，普通menuitem之间Tab双向循环，slider未接管的Tab保持焦点和值；禁用首项不再让视图切换后的焦点落到body，全不可用时聚焦菜单容器。未新增依赖。
+
+### 自动检查与最终构建
+
+6项登记回归由stub失败到通过，覆盖真实目录、scope映射、同根身份、落盘失败及无副作用。全量Rust **734通过、0失败/忽略/过滤**，`rust-full.log/.exit`退出0。完整非Fast标准`standard.log/.exit`退出0，包含脚本内Rust过滤组及32项隔离真实协议探针；没有执行模型turn。
+
+标准运行期间补了模型禁用首项焦点修复，原生候选又发现创建成功后的对话框被动清理覆盖父级下一帧Composer焦点。`create-focus-red.log/.exit`实际断言trigger而非composer；生命周期清理改为layout effect后回归通过。最后这两处前端补丁均在最终 **139项前端回放**及最终TypeScript/Vite/原生构建中验证；没有宣称完整标准曾以最终冻结树再跑一遍，也未重复无关的Rust/协议探针。原始失败及候选日志保留。
+
+`frontend-verified.log/.exit`、`build-final.log/.exit`均为0。最终构建EXE/MSI/NSIS位于`dist-artifacts/home-01H-focus-20261116/`，EXE SHA-256为`bc1caf813542dfee99c724fe681701ca1f39ca670d476968d0fbb73115e49f96`；`artifacts-final.json`记录大小和安装包hash。437个产品输入在`product-inputs.json`冻结，构建及原生后重新hash无变化。构建基于4ee4cc3的未提交内容，阶段提交仅关联同内容，不虚构提交后构建。额外lint未配置。
+
+### 最终原生验证
+
+私有CODEX_HOME/AppData/WebView与本地目录，真实CLI 0.159.2，无账号令牌和模型发送。项目创建使用真实服务；未以离线夹具证明服务成功。最终窗口捕获1435×900和957×679，DPI/App缩放未知，不当作已标定CSS客户区。截图为JPEG。
+
+| 操作 | 实际结果与证据 |
+|---|---|
+| 启动最终EXE | 读回真实Alpha项目名和选中状态，`final-real-restart` |
+| 标题打开/二次点击/Enter重开 | 搜索弹层出现、关闭、重开；`final-picker-open`、`final-trigger-toggle-closed`、`final-keyboard-open` |
+| Tab→Enter新建 | Tab跳过项目options，聚焦新建并打开HTML表单，`final-picker-tab-new`、`final-create-form` |
+| 创建Beta，选择与Alpha相同根目录 | 真实服务创建、读回、原子登记，侧栏保留两个项目；`final-create-source/submitted` |
+| 创建后直接输入 | 文本实际进入Composer，`final-create-composer-focus`；修复前候选未进入，未隐去失败 |
+| Down→Enter选择Alpha | 高亮与Beta勾选独立，选中后标题/侧栏/Composer改为Alpha，草稿保留；`final-same-root-projects/highlight/selected-alpha` |
+| 磁盘独立ID读回 | 两个不同ID共用同一rootPaths，selected为Alpha，`final-native-state.json` |
+| 模型Tab、Shift+Tab、Escape | 焦点环在标准项与模型头之间移动，Escape关闭并返回trigger，`final-model-tab/reverse-tab/escape`；原生未另测全禁用模型目录 |
+| 窄窗项目弹层及Escape | 弹层保持上方、可见且无水平越界，Escape返回标题焦点环，草稿保留；`final-narrow-picker`、`final-picker-escape` |
+
+候选构建40398b另实测了自动搜索、无匹配Enter不误建、真实Alpha创建；它暴露创建后焦点缺陷，最终构建已重复创建并验证直接输入，候选图不冒充最终图。UIA的focused_element多仅暴露文档层，因此焦点结果以可见焦点环和实际后续键盘/输入效果为有限依据，不宣称完整DOM焦点顺序已验收。
+
+### 剩余差异与交付状态
+
+整页仍开发/自验中。新建表单未实现官方外观选项、零源自动托管目录及Git初始化；搜索路径字段门控、全部fuzzy分支与5/7行门控未闭环。物理中文IME选字、全禁用模型原生状态、远端能力、多窗及官方同环境配对图未验证。中文type_text注入不当作物理IME通过。视觉score=null，不能宣称1px或整页1:1验收。
+
+2026-11-16再次读取GitHub run42644930892及job129255526818注释，仍为付款/支出上限阻止启动，steps=[]。本阶段本地提交，不推送/tag/发布；没有同提交托管CI成功证据。

@@ -1,17 +1,17 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { isTauriRuntime, tauriInvoke } from "../bridge";
 import { baseNameFsPath, getMetadata } from "../fsClient";
 import type { Project, ProjectPatch } from "../projects";
 import { CloseIcon, FolderIcon } from "./Icons";
 
 export function ProjectEditDialog({ project, onSave, onRemove, onClose }: {
-  project: Project;
+  project?: Project;
   onSave: (patch: ProjectPatch) => Promise<void>;
-  onRemove: () => void;
+  onRemove?: () => void;
   onClose: () => void;
 }) {
-  const [name, setName] = useState(project.name);
-  const [roots, setRoots] = useState(() => project.roots.map(root => root.path));
+  const [name, setName] = useState(project?.name ?? "");
+  const [roots, setRoots] = useState(() => project?.roots.map(root => root.path) ?? []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -32,7 +32,7 @@ export function ProjectEditDialog({ project, onSave, onRemove, onClose }: {
     });
   }
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const dialog = dialogRef.current;
     const trigger = document.activeElement as HTMLElement | null;
     mounted.current = true;
@@ -97,16 +97,16 @@ export function ProjectEditDialog({ project, onSave, onRemove, onClose }: {
         const trimmed = name.trim();
         if (!trimmed) return;
         const patch: ProjectPatch = {};
-        if (trimmed !== project.name) patch.name = trimmed;
-        if (roots.length !== project.roots.length || roots.some((path, index) => path !== project.roots[index]?.path)) {
+        if (!project || trimmed !== project.name) patch.name = trimmed;
+        if (!project || roots.length !== project.roots.length || roots.some((path, index) => path !== project.roots[index]?.path)) {
           patch.roots = roots.map(path => ({ path }));
         }
         void run(async () => {
           if (patch.name !== undefined || patch.roots !== undefined) await onSave(patch);
           return true;
-        }, "项目保存失败");
+        }, project ? "项目保存失败" : "项目创建失败");
       }}>
-      <h2 id="project-edit-title">编辑项目</h2>
+      <h2 id="project-edit-title">{project ? "编辑项目" : "新建项目"}</h2>
       <fieldset disabled={busy}>
         <label className="form-field">名称
           <input type="text" placeholder="项目名称" autoFocus value={name} onChange={event => setName(event.target.value)} />
@@ -135,11 +135,11 @@ export function ProjectEditDialog({ project, onSave, onRemove, onClose }: {
       </fieldset>
       {error && <p className="project-edit-error" role="alert">{error}</p>}
       <footer>
-        <button type="button" className="secondary-pill-action-btn project-edit-remove" disabled={busy}
-          onClick={onRemove}>移除本地项目</button>
+        {project && <button type="button" className="secondary-pill-action-btn project-edit-remove" disabled={busy}
+          onClick={onRemove}>移除本地项目</button>}
         <div>
           <button type="button" className="secondary-pill-action-btn" disabled={busy} onClick={dismiss}>取消</button>
-          <button type="submit" className="primary-pill-action-btn" disabled={busy || !name.trim()}>保存</button>
+          <button type="submit" className="primary-pill-action-btn" disabled={busy || !name.trim()}>{project ? "保存" : "创建项目"}</button>
         </div>
       </footer>
     </form>

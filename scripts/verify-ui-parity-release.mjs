@@ -25,6 +25,7 @@ const scripts = [
   'verify-settings-ui-correction.mjs', 'verify-appearance-theme-state.mjs', 'verify-appearance-theme-ui.mjs',
   'verify-worktree-inventory-ui.mjs', 'verify-worktree-removal.mjs',
   'verify-home-hero.mjs', 'verify-home-send-transition.mjs', 'verify-sidebar-project-selection.mjs', 'verify-sidebar-size.mjs',
+  'verify-home-project-picker.mjs', 'verify-home-project-create.mjs',
   'verify-unit-01-home-shell.mjs', 'verify-unit-01a-shell.mjs', 'verify-composer-menus.mjs',
   'verify-workflow-ui-d.mjs', 'verify-quick-chat.mjs', 'verify-plugin-settings.mjs',
   'verify-general-open.mjs', 'verify-general-enter.mjs', 'verify-composer-context-usage.mjs', 'verify-notification-settings-ui.mjs',

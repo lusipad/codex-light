@@ -252,6 +252,9 @@ try {
   Invoke-Step "Composer menu keyboard regression" { node scripts/verify-composer-menus.mjs }
   Invoke-Step "Unit 01A Public Shell parity" { node scripts/verify-unit-01a-shell.mjs }
   Invoke-Step "Home Hero state and project entry regression" { node scripts/verify-home-hero.mjs }
+  Invoke-Step "Home project picker actual combobox and focus" { node scripts/verify-home-project-picker.mjs }
+  Invoke-Step "Home real project creation and confirmed selection" { node scripts/verify-home-project-create.mjs }
+  Invoke-Step "Rust created project registration and persistence" { cargo test --locked --manifest-path src-tauri/Cargo.toml --lib created_project_registration }
   Invoke-Step "Unit 01 Home Shell & Composer parity" { node scripts/verify-unit-01-home-shell.mjs }
   Invoke-Step "Unit 02 Thread Basics parity" { node scripts/verify-unit-02-thread-basics.mjs }
   Invoke-Step "User message presentation regression" { node scripts/verify-user-message-presentation.mjs }

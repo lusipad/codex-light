@@ -223,9 +223,13 @@ console.log("PASS production Composer menus: five keyboard entries, focus cyclin
 
 const modelAst = ts.createSourceFile("ModelSelector.tsx", fs.readFileSync("src/components/ModelSelector.tsx", "utf8"),
   ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-let modelKeys;
+let modelKeys, modelListOpen;
 function visitModel(node) {
   if (ts.isVariableDeclaration(node) && node.name.getText(modelAst) === "handleMenuKeys") modelKeys = node.initializer;
+  if (ts.isJsxElement(node) && node.openingElement.attributes.properties.some(attribute =>
+    attribute.name?.getText(modelAst) === "className" && attribute.initializer?.text === "model-compact-current")) {
+    modelListOpen = node.openingElement.attributes.properties.find(attribute => attribute.name?.getText(modelAst) === "onClick").initializer.expression;
+  }
   ts.forEachChild(node, visitModel);
 }
 visitModel(modelAst);
@@ -247,4 +251,42 @@ handleModelKeys({
 assert.equal(modelPrevented, false, "reasoning slider keeps its native arrow keys");
 handleModelKeys({ key: "Escape", nativeEvent: {}, preventDefault() {}, stopPropagation() {} });
 assert.equal(modelClosed, 1);
+{
+  const document = { activeElement: null };
+  const items = [0, 1, 2].map(index => ({ index, focus() { document.activeElement = this; } }));
+  const menuRef = { current: { contains: () => true, querySelectorAll: () => items } };
+  const keys = vm.runInNewContext(ts.transpileModule(`(${modelKeys.getText(modelAst)})`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 },
+  }).outputText, { open: true, closeMenu() { throw Error("Tab must not dismiss the official DropdownMenu"); }, menuRef, document });
+  for (const [start, shiftKey, expected] of [[2, false, 0], [0, true, 2], [0, false, 1]]) {
+    document.activeElement = items[start];
+    const event = { key: "Tab", shiftKey, nativeEvent: {},
+      target: { closest: () => items[start], matches: () => false },
+      preventDefault() { this.prevented = true; }, stopPropagation() { this.stopped = true; } };
+    keys(event);
+    assert.equal(event.prevented, true, "official model DropdownMenu prevents Tab from leaving its content");
+    assert.equal(document.activeElement, items[expected], "Tab/Shift+Tab loop through interactive menuitems");
+  }
+  document.activeElement = "slider";
+  const slider = { key: "Tab", nativeEvent: {}, target: { closest: () => null, matches: () => true },
+    preventDefault() { this.prevented = true; }, stopPropagation() {} };
+  keys(slider);
+  assert.equal(slider.prevented, true);
+  assert.equal(document.activeElement, "slider", "slider Tab is blocked without changing its value or focus");
+  const composing = { ...slider, prevented: false, nativeEvent: { isComposing: true } };
+  keys(composing);
+  assert.equal(composing.prevented, false, "IME Tab remains an input-method key");
+}
 console.log("PASS production model menu: IME Escape guard, ordinary Escape and native reasoning slider keys (CK08, L2)");
+for (const available of [true, false]) {
+  let focused = "current";
+  const enabled = { focus() { focused = "enabled"; } }, disabled = { focus() {} };
+  const menu = { focus() { focused = "menu"; }, querySelector(selector) {
+    return selector.includes(":not(:disabled)") ? available ? enabled : null : disabled;
+  } };
+  const openList = vm.runInNewContext(ts.transpileModule(`(${modelListOpen.getText(modelAst)})`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 },
+  }).outputText, { setView() { focused = "body"; }, requestAnimationFrame: frame => frame(), menuRef: { current: menu } });
+  openList();
+  assert.equal(focused, available ? "enabled" : "menu", "model list skips disabled choices and keeps an empty/loading list keyboard reachable");
+}

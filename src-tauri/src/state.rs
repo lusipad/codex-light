@@ -357,6 +357,145 @@ pub struct DesktopStateManager {
 }
 
 #[cfg(test)]
+mod created_project_registration_tests {
+    use super::*;
+
+    struct Fixture { manager: DesktopStateManager, directory: PathBuf, path: PathBuf, roots: Vec<String> }
+    impl Fixture {
+        fn new() -> Self {
+            let directory = std::env::temp_dir().join(format!("codex-register-project-{}", uuid::Uuid::new_v4()));
+            fs::create_dir_all(directory.join("first")).unwrap(); fs::create_dir_all(directory.join("second")).unwrap();
+            let roots = ["first", "second"].map(|name| normalize_fs_path(&directory.join(name).to_string_lossy())).to_vec();
+            let initial = json!({"unrelated":{"keep":true},"app-server-project-id-by-legacy-project-id-by-host":{
+                "local:other-home":{"existing":"other-server"}},"electron-persisted-atom-state":{
+                "unrelated-atom":{"value":"keep"},"local-projects":{"existing":{"id":"existing","name":"Existing",
+                    "rootPaths":[roots[0]],"createdAt":1,"appearance":{"icon":"keep"}}},"project-order":["existing"]}});
+            Self { manager: DesktopStateManager {state_map:Arc::new(Mutex::new(initial.as_object().unwrap().clone())),
+                workspace_turn_owners:Arc::new(Mutex::new(HashMap::new()))}, path:directory.join("state.json"), directory, roots }
+        }
+        fn project(&self) -> Value {
+            json!({"project":{"id":"new-server","name":"新建多根项目","roots":self.roots.iter().map(|path|json!({"path":path})).collect::<Vec<_>>(),"createdAt":21}})
+        }
+    }
+    impl Drop for Fixture {fn drop(&mut self) {let _ = fs::remove_dir_all(&self.directory);}}
+
+    #[tokio::test]
+    async fn created_project_registration_reads_real_project_and_persists_one_complete_selection() {
+        let fixture = Fixture::new(); let project = fixture.project(); let initial = fixture.manager.state_map.lock().unwrap().clone();
+        let calls = std::sync::Mutex::new(Vec::new());
+        let result = fixture.manager.register_created_project_at_path("new-server", &fixture.path, |method, params| {
+            calls.lock().unwrap().push((method, params)); std::future::ready(Ok(project.clone()))
+        }).await.unwrap();
+        assert_eq!(*calls.lock().unwrap(),vec![("project/read".into(),json!({"projectId":"new-server"}))]);
+        assert_eq!(result["projectMembership"]["selectedProjectId"],"server:new-server");
+        let registered = result["projectMembership"]["localProjects"].as_array().unwrap().iter().find(|item|item["id"]=="server:new-server").unwrap();
+        assert_eq!(registered["serverProjectId"],"new-server"); assert_eq!(registered["name"],"新建多根项目"); assert_eq!(registered["rootPaths"],json!(fixture.roots));
+        let saved: Value = serde_json::from_slice(&fs::read(&fixture.path).unwrap()).unwrap();
+        assert_eq!(saved["unrelated"],initial["unrelated"]);
+        assert_eq!(saved[PERSISTED_ATOM_STATE_KEY]["unrelated-atom"],initial[PERSISTED_ATOM_STATE_KEY]["unrelated-atom"]);
+        assert_eq!(saved[PERSISTED_ATOM_STATE_KEY][LOCAL_PROJECTS_ATOM_KEY]["existing"],initial[PERSISTED_ATOM_STATE_KEY][LOCAL_PROJECTS_ATOM_KEY]["existing"]);
+        let scope = format!("local:{}",codex_home_dir().to_string_lossy());
+        assert_eq!(saved["app-server-project-id-by-legacy-project-id-by-host"][&scope]["server:new-server"],"new-server");
+        assert_eq!(saved["app-server-project-id-by-legacy-project-id-by-host"]["local:other-home"],initial["app-server-project-id-by-legacy-project-id-by-host"]["local:other-home"]);
+        assert_eq!(saved[ACTIVE_WORKSPACE_ROOTS_KEY],json!([fixture.roots[0]]));
+        assert_eq!(saved.as_object().unwrap(),&*fixture.manager.state_map.lock().unwrap());
+    }
+
+    #[tokio::test]
+    async fn created_project_registration_reuses_server_identity_without_duplicate_or_metadata_loss() {
+        let fixture = Fixture::new(); let scope = format!("local:{}",codex_home_dir().to_string_lossy());
+        {
+            let mut state = fixture.manager.state_map.lock().unwrap();
+            state.get_mut("app-server-project-id-by-legacy-project-id-by-host").unwrap()[&scope] = json!({"existing":"new-server"});
+        }
+        let project = fixture.project();
+        for _ in 0..2 {
+            let result = fixture.manager.register_created_project_at_path("new-server", &fixture.path, |_,_|std::future::ready(Ok(project.clone()))).await.unwrap();
+            assert_eq!(result["projectMembership"]["selectedProjectId"],"existing");
+            assert_eq!(result["projectMembership"]["localProjects"].as_array().unwrap().len(),1);
+        }
+        let saved: Value = serde_json::from_slice(&fs::read(&fixture.path).unwrap()).unwrap();
+        assert_eq!(saved[PERSISTED_ATOM_STATE_KEY][LOCAL_PROJECTS_ATOM_KEY]["existing"]["appearance"],json!({"icon":"keep"}));
+        assert_eq!(saved[PERSISTED_ATOM_STATE_KEY][PROJECT_ORDER_ATOM_KEY],json!(["existing"]));
+    }
+
+    #[tokio::test]
+    async fn created_project_registration_rejects_bad_live_fields_and_directories_without_state_changes() {
+        let fixture = Fixture::new(); let initial = fixture.manager.state_map.lock().unwrap().clone();
+        let mut invalid = Vec::new();
+        for (field,value) in [("id",json!("other-server")),("name",json!("  ")),("name",json!(7)),("roots",json!([])),
+            ("roots",json!([{"path":"relative/path"}])),("roots",json!([{"path":fixture.directory.join("missing").to_string_lossy()}])),("roots",json!([{"path":7}]))] {
+            let mut project = fixture.project(); project["project"][field] = value; invalid.push(project);
+        }
+        fs::write(fixture.directory.join("file"),b"not a directory").unwrap();
+        let mut file = fixture.project(); file["project"]["roots"] = json!([{"path":fixture.directory.join("file").to_string_lossy()}]); invalid.push(file);
+        invalid.extend([Value::Null,json!({}),json!({"project":null})]);
+        for project in invalid {
+            assert!(fixture.manager.register_created_project_at_path("new-server", &fixture.path, |_,_|std::future::ready(Ok(project.clone()))).await.is_err());
+            assert_eq!(*fixture.manager.state_map.lock().unwrap(),initial); assert!(!fixture.path.exists());
+        }
+    }
+
+    #[tokio::test]
+    async fn created_project_registration_persist_failure_and_mapping_conflicts_leave_memory_unchanged() {
+        let fixture = Fixture::new(); let project = fixture.project(); let initial = fixture.manager.state_map.lock().unwrap().clone();
+        let blocked = fixture.directory.join("blocked"); fs::create_dir(&blocked).unwrap();
+        assert!(fixture.manager.register_created_project_at_path("new-server", &blocked, |_,_|std::future::ready(Ok(project.clone()))).await.is_err());
+        assert_eq!(*fixture.manager.state_map.lock().unwrap(),initial);
+        let scope = format!("local:{}",codex_home_dir().to_string_lossy());
+        {
+            let mut state = fixture.manager.state_map.lock().unwrap();
+            state.get_mut("app-server-project-id-by-legacy-project-id-by-host").unwrap()[&scope] = json!({"server:new-server":"different-server"});
+        }
+        let conflicting = fixture.manager.state_map.lock().unwrap().clone();
+        assert!(fixture.manager.register_created_project_at_path("new-server", &fixture.path, |_,_|std::future::ready(Ok(project.clone()))).await.is_err());
+        assert_eq!(*fixture.manager.state_map.lock().unwrap(),conflicting); assert!(!fixture.path.exists());
+    }
+
+    #[tokio::test]
+    async fn created_project_registration_repeated_new_identity_and_concurrent_unrelated_changes_are_preserved() {
+        let fixture = Fixture::new(); let project = fixture.project();
+        fixture.manager.register_created_project_at_path("new-server", &fixture.path, |_,_| {
+            fixture.manager.state_map.lock().unwrap().insert("changed-during-read".into(),json!("keep-latest"));
+            std::future::ready(Ok(project.clone()))
+        }).await.unwrap();
+        let first: Value = serde_json::from_slice(&fs::read(&fixture.path).unwrap()).unwrap();
+        fixture.manager.register_created_project_at_path("new-server", &fixture.path, |_,_|std::future::ready(Ok(project.clone()))).await.unwrap();
+        let second: Value = serde_json::from_slice(&fs::read(&fixture.path).unwrap()).unwrap();
+        assert_eq!(second,first); assert_eq!(second["changed-during-read"],"keep-latest");
+        assert_eq!(second[PERSISTED_ATOM_STATE_KEY][LOCAL_PROJECTS_ATOM_KEY].as_object().unwrap().len(),2);
+        assert_eq!(second[PERSISTED_ATOM_STATE_KEY][PROJECT_ORDER_ATOM_KEY],json!(["server:new-server","existing"]));
+    }
+
+    #[tokio::test]
+    async fn created_project_registration_rejects_unmapped_entity_or_corrupt_storage_without_overwrite() {
+        for kind in ["entity-conflict","duplicate-mapping","bad-atoms","bad-projects","bad-mappings"] {
+            let fixture = Fixture::new(); let project = fixture.project(); let scope = format!("local:{}",codex_home_dir().to_string_lossy());
+            {
+                let mut state = fixture.manager.state_map.lock().unwrap();
+                match kind {
+                    "entity-conflict" => state.get_mut(PERSISTED_ATOM_STATE_KEY).unwrap()[LOCAL_PROJECTS_ATOM_KEY]["server:new-server"] = json!({"id":"server:new-server","name":"Unmapped occupant"}),
+                    "duplicate-mapping" => state.get_mut("app-server-project-id-by-legacy-project-id-by-host").unwrap()[&scope] = json!({"first":"new-server","second":"new-server"}),
+                    "bad-atoms" => {state.insert(PERSISTED_ATOM_STATE_KEY.into(),json!([]));},
+                    "bad-projects" => state.get_mut(PERSISTED_ATOM_STATE_KEY).unwrap()[LOCAL_PROJECTS_ATOM_KEY] = json!([]),
+                    _ => {state.insert("app-server-project-id-by-legacy-project-id-by-host".into(),json!([]));},
+                }
+            }
+            let before = fixture.manager.state_map.lock().unwrap().clone();
+            assert!(fixture.manager.register_created_project_at_path("new-server", &fixture.path, |_,_|std::future::ready(Ok(project.clone()))).await.is_err());
+            assert_eq!(*fixture.manager.state_map.lock().unwrap(),before); assert!(!fixture.path.exists());
+        }
+        let fixture = Fixture::new(); let calls = std::sync::atomic::AtomicUsize::new(0);
+        for id in ["","  ","bad\nid"," leading"] {
+            assert!(fixture.manager.register_created_project_at_path(id, &fixture.path, |_,_| {
+                calls.fetch_add(1,std::sync::atomic::Ordering::SeqCst); std::future::ready(Ok(fixture.project()))
+            }).await.is_err());
+        }
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst),0); assert!(!fixture.path.exists());
+    }
+}
+
+#[cfg(test)]
 mod workspace_transition_tests {
     use super::*;
 
@@ -1287,6 +1426,89 @@ impl DesktopStateManager {
         read_sidebar_project_membership(&self.state_map.lock().unwrap())
     }
 
+    pub(crate) async fn register_created_project<F, R>(&self, project_id: &str, read: F) -> Result<Value, String>
+    where F: FnMut(String, Value) -> R, R: std::future::Future<Output = Result<Value, String>> {
+        self.register_created_project_at_path(project_id, &desktop_global_state_path(), read).await
+    }
+
+    async fn register_created_project_at_path<F, R>(&self, project_id: &str, state_path: &Path, mut read: F) -> Result<Value, String>
+    where F: FnMut(String, Value) -> R, R: std::future::Future<Output = Result<Value, String>> {
+        if project_id.trim().is_empty() || project_id.trim() != project_id || project_id.len() > 2048 || project_id.chars().any(char::is_control) {
+            return Err("新建项目 ID 无效，未修改本地项目。".into());
+        }
+        let identity = format!("local:{}", codex_home_dir().to_string_lossy());
+        let response = read("project/read".into(), json!({"projectId":project_id})).await?;
+        let project = response.get("project").and_then(Value::as_object).ok_or("服务未返回新建项目。")?;
+        if project.get("id").and_then(Value::as_str) != Some(project_id) {return Err("服务返回的项目身份不一致。".into());}
+        let name = project.get("name").and_then(Value::as_str)
+            .filter(|name| !name.trim().is_empty() && !name.chars().any(char::is_control)).ok_or("服务返回的项目名称无效。")?;
+        let roots = project.get("roots").and_then(Value::as_array).ok_or("服务未返回项目源目录。")?
+            .iter().map(|root| root.get("path").and_then(Value::as_str).map(str::to_owned))
+            .collect::<Option<Vec<String>>>().ok_or("服务返回的项目源目录无效。")?;
+        crate::thread_workspace::project_target(&roots, None)?;
+        let mut normalized = Vec::<String>::new();
+        for root in &roots {
+            if root.trim() != root || root.chars().any(char::is_control) || !Path::new(root).is_absolute() || !Path::new(root).is_dir() {
+                return Err("项目源目录必须是当前主机已存在的绝对目录。".into());
+            }
+            let path = normalize_fs_path(root);
+            if normalized.iter().any(|existing| existing.eq_ignore_ascii_case(&path)) {return Err("项目源目录重复，未修改本地项目。".into());}
+            normalized.push(path);
+        }
+        if identity != format!("local:{}", codex_home_dir().to_string_lossy()) {return Err("项目注册期间 CODEX_HOME 已变化，请重试。".into());}
+        let object = |value: Option<&Value>, label: &str| -> Result<Map<String, Value>, String> {
+            match value {None | Some(Value::Null) => Ok(Map::new()), Some(Value::Object(value)) => Ok(value.clone()), _ => Err(format!("{label}存储格式无效，未修改项目。"))}
+        };
+        let mut guard = self.state_map.lock().unwrap();
+        let mut next = guard.clone();
+        let mapping_key = "app-server-project-id-by-legacy-project-id-by-host";
+        let mut mappings = object(next.get(mapping_key), "项目身份映射")?;
+        let mut host_mappings = object(mappings.get(&identity), "当前主机项目身份映射")?;
+        let existing_ids = host_mappings.iter().filter(|(_, value)| value.as_str() == Some(project_id)).map(|(id, _)| id.clone()).collect::<Vec<_>>();
+        if existing_ids.len() > 1 {return Err("同一服务项目存在多个本地身份，无法安全选择。".into());}
+        let legacy_id = existing_ids.first().cloned().unwrap_or_else(||format!("server:{project_id}"));
+        if legacy_id.trim().is_empty() || legacy_id.trim() != legacy_id || legacy_id.chars().any(char::is_control) {
+            return Err("已有项目身份无效，未修改本地项目。".into());
+        }
+        if host_mappings.get(&legacy_id).is_some_and(|value| value.as_str() != Some(project_id)) {
+            return Err("新建项目的本地身份已被其他服务项目占用。".into());
+        }
+        let mut atoms = object(next.get(PERSISTED_ATOM_STATE_KEY), "项目原子状态")?;
+        let mut projects = object(atoms.get(LOCAL_PROJECTS_ATOM_KEY), "本地项目")?;
+        let mut registered = match projects.get(&legacy_id) {
+            None => Map::new(),
+            Some(Value::Object(existing)) if !existing_ids.is_empty() && existing.get("id").and_then(Value::as_str) == Some(legacy_id.as_str()) => existing.clone(),
+            _ => return Err("本地项目身份冲突，未覆盖已有项目。".into()),
+        };
+        let created_at = registered.get("createdAt").filter(|value| value.is_number()).cloned()
+            .or_else(||project.get("createdAt").filter(|value| value.is_number()).cloned())
+            .unwrap_or_else(||json!(std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64));
+        registered.insert("id".into(), json!(legacy_id)); registered.insert("name".into(), json!(name));
+        registered.insert("rootPaths".into(), json!(normalized)); registered.insert("createdAt".into(), created_at);
+        projects.insert(legacy_id.clone(), Value::Object(registered));
+        let mut order = match atoms.get(PROJECT_ORDER_ATOM_KEY) {
+            None | Some(Value::Null) => Vec::new(), Some(Value::Array(order)) => order.clone(), _ => return Err("项目顺序存储格式无效。".into()),
+        };
+        if !order.iter().any(|value| value.as_str() == Some(legacy_id.as_str())) {order.insert(0, json!(legacy_id));}
+        atoms.insert(LOCAL_PROJECTS_ATOM_KEY.into(), Value::Object(projects));
+        atoms.insert(PROJECT_ORDER_ATOM_KEY.into(), json!(order));
+        atoms.insert(SELECTED_PROJECT_ATOM_KEY.into(), json!({"type":"local","projectId":legacy_id}));
+        host_mappings.insert(legacy_id, json!(project_id)); mappings.insert(identity, Value::Object(host_mappings));
+        next.insert(mapping_key.into(), Value::Object(mappings)); next.insert(PERSISTED_ATOM_STATE_KEY.into(), Value::Object(atoms));
+        let mut saved_roots = match next.get(DESKTOP_PROJECT_ROOTS_KEY) {
+            None | Some(Value::Null) => Vec::new(), Some(Value::Array(roots)) => roots.clone(), _ => return Err("工作区目录存储格式无效。".into()),
+        };
+        if !saved_roots.iter().any(|value| value.as_str().is_some_and(|path| normalize_fs_path(path).eq_ignore_ascii_case(&normalized[0]))) {
+            saved_roots.insert(0, json!(normalized[0]));
+        }
+        next.insert(DESKTOP_PROJECT_ROOTS_KEY.into(), json!(saved_roots));
+        next.insert(ACTIVE_WORKSPACE_ROOTS_KEY.into(), json!([normalized[0]]));
+        let result = json!({"workspaces":Self::workspace_roots_in_state(&next),"projectMembership":read_sidebar_project_membership(&next)});
+        persist_state_map(&next, state_path)?;
+        *guard = next;
+        Ok(result)
+    }
+
     /// Builds the read-only portion of a project move.
     ///
     /// This deliberately does not write local atoms or call app-server.  A
@@ -1875,6 +2097,10 @@ impl DesktopStateManager {
 
     pub fn list_workspace_roots(&self) -> Vec<WorkspaceRootItem> {
         let guard = self.state_map.lock().unwrap();
+        Self::workspace_roots_in_state(&guard)
+    }
+
+    fn workspace_roots_in_state(guard: &Map<String, Value>) -> Vec<WorkspaceRootItem> {
         let mut roots: Vec<String> = guard
             .get(DESKTOP_PROJECT_ROOTS_KEY)
             .and_then(|v| v.as_array())

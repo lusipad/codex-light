@@ -26,17 +26,22 @@ const fsModule = { exports: {} };
 vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/fsClient.ts", "utf8"), {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
 }).outputText, { exports: fsModule.exports, require: () => ({}) });
-function mount(activeWorkspace, isGitRepo = false, opened = false, projectless = false) {
-  const state = { opened, focused: false }, selected = [];
+function mount(activeWorkspace, isGitRepo = false, opened = false, projectless = false, homeProject = null) {
+  const state = { opened, focused: false, createKey: null, cleared: false }, selected = [];
   const context = {
     React: { createElement: (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat(Infinity) }) },
     activeWorkspace, pendingProjectlessRef: { current: projectless }, gitStatus: { isGitRepo }, showHomeProjectPopover: opened,
     baseNameFsPath: fsModule.exports.baseNameFsPath,
     workspaces: activeWorkspace ? [activeWorkspace] : [],
+    homePickerWorkspaces: activeWorkspace ? [activeWorkspace] : [], homeProject,
     agentsMdInfo: { found: false }, WorkspacePopover: "WorkspacePopover",
     setShowHomeProjectPopover: value => { state.opened = typeof value === "function" ? value(state.opened) : value; },
     handleSelectWorkspace: path => selected.push(path),
+    handleSelectHomeProject: path => selected.push(path),
     handleRemoveWorkspace() {}, handlePickNewFolder() {}, setShowAgentsMdModal() {},
+    homeProjectTriggerRef: { current: null }, composerTextareaRef: { current: null },
+    createIdempotencyKey: () => "creation-key", setHomeProjectCreateKey: key => { state.createKey = key; },
+    startNewThread: (_path, _project, projectless) => { state.cleared = projectless; },
   };
   context.homeWorkspace = homeWorkspace ? vm.runInNewContext(compile(homeWorkspace), context) : activeWorkspace;
   context.projectName = vm.runInNewContext(compile(projectName), context);
@@ -63,6 +68,12 @@ for (const git of [false, true]) {
   button.props.onClick();
   assert.equal(view.state.opened, true);
 }
+{
+  const view = mount({ label: "folder-name", path: "D:/shared" }, false, false, false,
+    { id: "project-two", name: "Named project", rootPaths: ["D:/shared"] });
+  assert.match(text(view.find(n => n.type === "h1")), /Named project/,
+    "confirmed project name takes precedence over its root folder label");
+}
 for (const [path, expected] of [["D:\\Projects\\alpha\\", "alpha"], ["/tmp/beta/", "beta"], ["D:\\", "D:"], ["/", "/"]]) {
   const view = mount({ label: "", path });
   assert.equal(text(view.find(n => n.type === "button")), expected);
@@ -71,29 +82,19 @@ for (const [path, expected] of [["D:\\Projects\\alpha\\", "alpha"], ["/tmp/beta/
   const name = "长项目名".repeat(80);
   const view = mount({ label: name, path: "D:/long" }, true, true);
   assert.equal(text(view.find(n => n.type === "button")), name, "never truncate source text");
-  const dialog = view.find(n => n.props.role === "dialog");
-  assert.equal(dialog.props.id, view.find(n => n.type === "button").props["aria-controls"]);
+  assert.equal(view.find(n => n.type === "button").props["aria-controls"], "home-project-picker");
   const picker = view.find(n => n.type === "WorkspacePopover");
   picker.props.onSelectWorkspace("D:/other");
   assert.deepEqual(view.selected, ["D:/other"], "Hero must reuse the shared workspace callback");
-  for (const nativeEvent of [{ isComposing: true }, { keyCode: 229 }, {}]) {
-    view.state.opened = true;
-    const event = {
-      key: "Escape", nativeEvent,
-      currentTarget: { querySelector: () => ({ focus() { view.state.focused = true; } }) },
-      preventDefault() { this.prevented = true; }, stopPropagation() { this.stopped = true; },
-    };
-    view.tree.props.onKeyDown(event);
-    const composing = nativeEvent.isComposing || nativeEvent.keyCode === 229;
-    assert.equal(view.state.opened, !!composing);
-    if (!composing) {
-      assert.equal(event.prevented, true);
-      assert.equal(event.stopped, true);
-      assert.equal(view.state.focused, true);
-    }
-  }
+  assert.equal(picker.props.triggerRef, view.find(n => n.type === "button").props.ref);
+  picker.props.onCreateProject();
+  assert.equal(view.state.createKey, "creation-key", "new project opens the HTML form with a stable creation key");
+  picker.props.onClearProject();
+  assert.equal(view.state.cleared, true, "work without a project uses the existing real projectless transition");
+  picker.props.onClose();
+  assert.equal(view.state.opened, false);
 }
-console.log("PASS production Home Hero: no project, Git/plain directory, path fallback, full long names, shared picker and IME-safe Escape (HC01-HC07, L2; geometry not tested)");
+console.log("PASS production Home Hero: projectless/Git/plain titles, path fallback, long names, HTML create and clear bindings; picker focus/IME is tested separately (L2)");
 
 // Failed first creation renders the thread surface before any server thread exists.
 let threadComposer;
@@ -160,7 +161,7 @@ findHomeComposer(ast);
 assert.ok(homeComposer);
 const contextProps = ["activeWorkspace", "gitStatus", "gitBranches", "useWorktree", "workspaceFiles", "workspaceFileHits"];
 for (const projectless of [false, true]) {
-  const context = { activeWorkspace: { path: "D:/previous", label: "Previous" }, pendingProjectlessRef: { current: projectless },
+  const context = { activeWorkspace: { path: "D:/previous", label: "Previous" }, pendingProjectlessRef: { current: projectless }, homeProject: null,
     gitStatus: { isGitRepo: true }, gitBranches: ["previous-branch"], useWorktree: true,
     workspaceFiles: ["private-project.txt"], workspaceFileHits: [{ path: "private-project.txt" }] };
   context.homeWorkspace = vm.runInNewContext(compile(homeWorkspace), context);
@@ -185,6 +186,9 @@ findWorkspaceSelection(ast);
 for (const [route, threadId, draft] of [["home", null, true], ["thread", null, true], ["thread", "existing", false]]) {
   const scope = {
     activeRouteRef: { current: route }, pendingProjectlessRef: { current: true },
+    workspaceSelectionRef: { current: 0 }, executionIdentityRef: { current: "account" },
+    navigationRequestRef: { current: 0 },
+    refreshWorkspaceGenerationRef: { current: 0 },
     activeThreadIdRef: { current: threadId },
     pendingNewThreadProjectRef: { current: { id: "previous" } }, isThreadWindow: false,
     setWorkspaces() {}, tauriInvoke: async () => [], console,
