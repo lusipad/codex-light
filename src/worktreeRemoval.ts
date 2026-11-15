@@ -5,6 +5,8 @@ export interface WorktreeConversation {
   id: string;
   cwd: string | null;
   isPinned: boolean;
+  title: string;
+  recency: number;
 }
 
 export interface WorktreeRemovalResult {
@@ -84,6 +86,9 @@ export async function loadWorktreeConversations(signal?: AbortSignal): Promise<W
   return [...rows.values()].map(thread => ({
     id: thread.id, cwd: typeof thread.cwd === "string" ? thread.cwd : null,
     isPinned: pinned.has(thread.id),
+    title: (typeof thread.name === "string" ? thread.name.trim() : "") ||
+      (typeof thread.preview === "string" ? thread.preview.trim() : ""),
+    recency: Number.isFinite(thread.recencyAt) ? thread.recencyAt! : Number.isFinite(thread.updatedAt) ? thread.updatedAt! : 0,
   }));
 }
 

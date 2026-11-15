@@ -24,3 +24,22 @@ dialog.worktree-disable-dialog[open] { display: block; }
 dialog.worktree-disable-dialog > h3 { margin-top: 0; }
 dialog.worktree-disable-dialog > p { margin: 16px 0 24px; color: var(--text-secondary); }
 .worktree-disable-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+
+.worktree-inventory { margin-top: 24px; min-width: 0; }
+.worktree-inventory-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.worktree-inventory-header > h3 { margin: 0; }
+.worktree-inventory-group { border-top: 1px solid var(--border-subtle); }
+.worktree-inventory-group > summary { display: flex; align-items: center; gap: 8px; padding: 12px 0; cursor: pointer; }
+.worktree-inventory-group > summary > strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.worktree-inventory-group > summary > span, .worktree-inventory-row > small { color: var(--text-secondary); }
+.worktree-inventory-group > summary svg { transform: rotate(-90deg); }
+.worktree-inventory-group[open] > summary svg { transform: none; }
+.worktree-inventory-group ul { list-style: none; margin: 0; padding: 0; }
+.worktree-inventory-row { display: grid; gap: 6px; padding: 10px 12px; border-top: 1px solid var(--border-subtle); }
+.worktree-inventory-row > code { overflow-wrap: anywhere; color: var(--text-secondary); }
+.worktree-inventory-chat { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.worktree-inventory-chat summary { cursor: pointer; color: var(--text-secondary); }
+.worktree-inventory-chat small { margin-inline-start: 4px; color: var(--text-secondary); }
+.worktree-chat-link { background: transparent; border: 0; color: inherit; padding: 0; cursor: pointer; text-align: start; overflow-wrap: anywhere; }
+.worktree-chat-link:hover { text-decoration: underline; }
+.worktree-inventory-warnings { color: var(--text-secondary); overflow-wrap: anywhere; }

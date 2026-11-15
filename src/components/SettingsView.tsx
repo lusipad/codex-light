@@ -15,6 +15,7 @@ import type { ExternalImportsState } from "../externalImport";
 import { CodeReviewSettings } from "./CodeReviewSettings";
 import type { CodeReviewPreferencesState } from "../reviewPreferences";
 import { WorktreeSettings } from "./WorktreeSettings";
+import { WorktreeInventory } from "./WorktreeInventory";
 import { LocalEnvironmentSettings } from "./LocalEnvironmentSettings";
 import type { EnvironmentActionRunRequest } from "../environmentActions";
 import { GitSettings } from "./GitSettings";
@@ -454,7 +455,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         {activeSection === "git-settings" && <GitSettings state={gitPreferencesState} />}
 
         {/* ── SECTION 17: WORKTREES (工作树设置) ── */}
-        {activeSection === "worktrees" && <WorktreeSettings />}
+        {activeSection === "worktrees" && <>
+          <WorktreeSettings />
+          <WorktreeInventory key={JSON.stringify([connectionIdentity, accountIdentity])}
+            workspaceRoots={workspaceRoots} onOpenThread={archiveViewProps.onSelectThread} />
+        </>}
 
         {/* ── SECTION 18: VOICE (语音输入) ── */}
         {activeSection === "voice" && <VoiceSettings />}

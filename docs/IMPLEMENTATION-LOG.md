@@ -2881,3 +2881,8 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 
 - 对照官方设置将根目录与清理偏好同组，接入失焦和 Ctrl+S 保存，并更新自动清理确认与恢复快照说明。
 - 专项回归、125 项发布回放、Windows 打包及隔离原生落盘和重启通过。宿主默认位置占位和官方配对像素待验。详见[验收记录](antigravity/acceptance/11C-worktree-preferences.md)。
+
+## 2026-11-15 — 设置中的托管工作树清单
+
+- 将本机真实库存接到工作树设置，按仓库分组，复用聊天读取与原聊天导航，保留局部失败和重试。
+- 127 项发布回归与 Windows 打包通过。隔离真实 Git 工作树验证清单、折叠及关联聊天打开。清单变更动作和官方配对像素待验。详见[验收记录](antigravity/acceptance/11D-managed-worktree-inventory.md)。
