@@ -15,10 +15,12 @@ const react = { Fragment: "fragment", createElement: (type, props, ...children) 
   useRef(value) { const i = cursor++; return hooks[i] ??= { current: value }; },
   useMemo(fn) { cursor++; return fn(); }, useCallback(fn) { cursor++; return fn; }, useEffect() { cursor++; },
 };
+const chatSearchMatch = {};
+vm.runInNewContext(compile(fs.readFileSync("src/chatSearchMatch.ts", "utf8")), { exports: chatSearchMatch });
 vm.runInNewContext(compile(fs.readFileSync("src/components/QuickSearchModal.tsx", "utf8")), {
   exports, console, require: id => id === "react" ? react : id === "lucide-react" ? new Proxy({}, { get: (_, name) => String(name) }) :
     id.endsWith("slashCommands") ? { SLASH_COMMANDS: [] } : id === "../bridge" ? { isTauriRuntime: () => true } :
-    id === "../fsClient" ? { baseNameFsPath: path => path.split(/[\\/]/).at(-1) } : {},
+    id === "../fsClient" ? { baseNameFsPath: path => path.split(/[\\/]/).at(-1) } : id === "../chatSearchMatch" ? chatSearchMatch : {},
 });
 const props = { open: true, mode: "root", initialQuery: { value: "" }, threads: [{ id: "thread-a", name: "Existing conversation" }], skills: [],
   getChatProjectLabel: () => undefined,

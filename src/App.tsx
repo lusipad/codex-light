@@ -1196,6 +1196,8 @@ export const App: React.FC = () => {
   const activeWorkspace = useMemo(() => {
     return workspaces.find((w) => w.active) || workspaces[0] || null;
   }, [workspaces]);
+  const homeWorkspace = pendingProjectlessRef.current ? null : activeWorkspace;
+  const threadComposerWorkspace = activeThreadId ? activeWorkspace : homeWorkspace;
   const modelAccountIdentity = JSON.stringify(accountInfo);
   const homeCloud = useHomeCloudComposer(activeRoute === "home" && appServerStatus.connected &&
     accountInfo?.account?.type === "chatgpt" && !isQuickChatWindow && !isThreadWindow
@@ -1226,7 +1228,7 @@ export const App: React.FC = () => {
     threadExecutionPoliciesRef.current.clear();
     for (const [threadId, revision] of threadExecutionRevisionsRef.current) threadExecutionRevisionsRef.current.set(threadId, revision + 1);
   }
-  const permissionScope = `${modelAccountIdentity}:${activeThreadId ?? `draft:${activeWorkspace?.path ?? ""}`}`;
+  const permissionScope = `${modelAccountIdentity}:${activeThreadId ?? `draft:${homeWorkspace?.path ?? ""}`}`;
   const permissionMode = permissionModes[permissionScope] ?? "custom";
   const setPermissionMode = useCallback((mode: "ask" | "auto" | "full") => {
     setPermissionModes(previous => ({ ...previous, [permissionScope]: mode }));
@@ -1261,7 +1263,7 @@ export const App: React.FC = () => {
   }, [permissionMode, sessionAllowNetwork, captureThreadExecutionPolicy]);
   const modelSelection = useModelSelection({
     models, modelsLoading, connected: appServerStatus.connected,
-    threadId: activeThreadId, cwd: activeWorkspace?.path,
+    threadId: activeThreadId, cwd: activeThreadId ? activeWorkspace?.path : homeWorkspace?.path,
     authMethod: accountInfo?.account?.type ?? null,
     accountIdentity: modelAccountIdentity,
   });
@@ -2701,6 +2703,10 @@ export const App: React.FC = () => {
 
   // Workspace Actions
   const handleSelectWorkspace = useCallback(async (path: string) => {
+    if (activeRouteRef.current === "home" || (activeRouteRef.current === "thread" && !activeThreadIdRef.current)) {
+      pendingProjectlessRef.current = false;
+      pendingNewThreadProjectRef.current = null;
+    }
     // Optimistic active workspace update
     setWorkspaces((prev) =>
       prev.map((w) => ({
@@ -2749,6 +2755,10 @@ export const App: React.FC = () => {
           label,
           setActive: true,
         });
+        if (activeRouteRef.current === "home" || (activeRouteRef.current === "thread" && !activeThreadIdRef.current)) {
+          pendingProjectlessRef.current = false;
+          pendingNewThreadProjectRef.current = null;
+        }
         setWorkspaces(updated);
       }
     } catch (e) {
@@ -5561,8 +5571,8 @@ export const App: React.FC = () => {
   );
 
   const projectName =
-    activeWorkspace?.label?.trim() ||
-    (activeWorkspace?.path ? baseNameFsPath(activeWorkspace.path) || activeWorkspace.path : null);
+    homeWorkspace?.label?.trim() ||
+    (homeWorkspace?.path ? baseNameFsPath(homeWorkspace.path) || homeWorkspace.path : null);
   const threadStatusChip = describeThreadStatus(activeThreadStatus);
   const confirmProjectMove = async () => {
     if (!projectMoveConfirmation || projectMoveBusy) return;
@@ -5611,14 +5621,14 @@ export const App: React.FC = () => {
       onQueueMessage={handleEnqueueFollowup}
       isStreaming={isStreaming}
       workspaces={workspaces}
-      activeWorkspace={activeWorkspace}
+      activeWorkspace={threadComposerWorkspace}
       onSelectWorkspace={handleSelectWorkspace}
       onPickNewFolder={handlePickNewFolder}
-      gitStatus={gitStatus}
-      gitBranches={gitBranches}
+      gitStatus={threadComposerWorkspace ? gitStatus : null}
+      gitBranches={threadComposerWorkspace ? gitBranches : []}
       onSwitchBranch={handleSwitchBranch}
       onCreateBranch={handleCreateBranch}
-      useWorktree={useWorktree}
+      useWorktree={!!threadComposerWorkspace && useWorktree}
       onSetUseWorktree={setUseWorktree}
       permissionMode={permissionMode}
       onSelectPermissionMode={setPermissionMode}
@@ -5651,8 +5661,8 @@ export const App: React.FC = () => {
         setAttachedFiles((prev) => mergeAttachmentItems(prev, newFiles))
       }
       onRemoveAttachedFile={handleRemoveAttachedFile}
-      workspaceFiles={workspaceFiles}
-      workspaceFileHits={workspaceFileHits}
+      workspaceFiles={threadComposerWorkspace ? workspaceFiles : []}
+      workspaceFileHits={threadComposerWorkspace ? workspaceFileHits : []}
       skills={skills}
       onSlashAction={handleSlashAction}
       textareaRef={composerTextareaRef}
@@ -6664,14 +6674,14 @@ export const App: React.FC = () => {
               onQueueMessage={handleEnqueueFollowup}
               isStreaming={!homeCloud.active && isStreaming}
               workspaces={workspaces}
-              activeWorkspace={activeWorkspace}
+              activeWorkspace={homeWorkspace}
               onSelectWorkspace={handleSelectWorkspace}
               onPickNewFolder={handlePickNewFolder}
-              gitStatus={gitStatus}
-              gitBranches={gitBranches}
+              gitStatus={homeWorkspace ? gitStatus : null}
+              gitBranches={homeWorkspace ? gitBranches : []}
               onSwitchBranch={handleSwitchBranch}
               onCreateBranch={handleCreateBranch}
-              useWorktree={useWorktree}
+              useWorktree={!!homeWorkspace && useWorktree}
               onSetUseWorktree={setUseWorktree}
               permissionMode={permissionMode}
               onSelectPermissionMode={setPermissionMode}
@@ -6704,8 +6714,8 @@ export const App: React.FC = () => {
                 setAttachedFiles((prev) => mergeAttachmentItems(prev, newFiles))
               }
               onRemoveAttachedFile={handleRemoveAttachedFile}
-              workspaceFiles={workspaceFiles}
-              workspaceFileHits={workspaceFileHits}
+              workspaceFiles={homeWorkspace ? workspaceFiles : []}
+              workspaceFileHits={homeWorkspace ? workspaceFileHits : []}
               skills={skills}
               onSlashAction={handleSlashAction}
               textareaRef={composerTextareaRef}

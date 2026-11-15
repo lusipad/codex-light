@@ -37,6 +37,7 @@ import {
 import { ThreadActionsMenu, ThreadActionItem } from "./ThreadActionsMenu";
 import { RenameThreadDialog } from "./RenameThreadDialog";
 import { SidebarThreadHoverCard } from "./SidebarThreadHoverCard";
+import { SidebarResizeHandle } from "./SidebarResizeHandle";
 import { applySidebarOrder, mergeSidebarOrder, moveVisibleSidebarThread, prependSidebarThread, sidebarDropTarget } from "../sidebarOrder";
 import { buildSidebarProjectGroups, sidebarThreadProjects, splitPinnedSidebarProjects, type SidebarProjectGroup } from "../sidebarProjects";
 import type { Project } from "../projects";
@@ -1558,6 +1559,7 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
 
   return (
     <aside className={`codex-sidebar ${collapsed ? "collapsed" : ""}`} aria-hidden={collapsed} data-dragging={!!dragVisual || undefined}>
+      <SidebarResizeHandle onError={onShowToast} />
       {/* ── 1. Codex-only header: static mode label on Left, Bell + Search on Right ── */}
       <div className="sidebar-top-bar">
         <div className="codex-brand-static-label" aria-label="Codex">

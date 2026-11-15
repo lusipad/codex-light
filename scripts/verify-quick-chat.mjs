@@ -71,6 +71,8 @@ const context = { React, ComposerBox: "ComposerBox", ApprovalCenter: "ApprovalCe
   keyboardState: { bindings: [{ command: "composer.submit", key: "Ctrl+Enter" }] }, queueBusy: false,
   modelSelection: { selectionPending: false, selectionDisabledReason: "", serviceTier: "swift", recentModelConfigurations: [] },
   sendStartPendingRef: { current: new Set() }, threadRequestRef: { current: "t1" } };
+Object.assign(context, { contextUsageVisible: false, activeThreadId: null, threadComposerWorkspace: null,
+  gitStatus: null, gitBranches: [], useWorktree: false, workspaceFiles: [], workspaceFileHits: [] });
 for (const helper of helpers.values()) for (const match of helper.matchAll(/=\{([a-zA-Z][a-zA-Z0-9]*)\}/g)) context[match[1]] ??= `shared:${match[1]}`;
 const sharedComposer = vm.runInNewContext(compile(`(${helpers.get("renderThreadComposer")})`), context)();
 const sharedApprovals = vm.runInNewContext(compile(`(${helpers.get("renderApprovals")})`), context)();

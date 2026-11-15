@@ -1,0 +1,35 @@
+.codex-sidebar:has(> .sidebar-resize-handle) {
+  position: relative;
+}
+
+.sidebar-resize-handle {
+  position: absolute;
+  inset: 0 -3px 0 auto;
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+  z-index: 2;
+}
+
+.sidebar-resize-handle:hover,
+.sidebar-resize-handle:focus-visible {
+  background: var(--border-subtle);
+}
+
+.sidebar-resize-handle:focus-visible {
+  outline: 1px solid var(--text-primary);
+}
+
+.sidebar-resize-error {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  right: 8px;
+  padding: 6px 8px;
+  background: var(--bg-sidebar);
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  font-size: 12px;
+  z-index: 3;
+}

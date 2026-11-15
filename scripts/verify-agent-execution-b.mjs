@@ -260,8 +260,12 @@ for (const branch of ["first-resume", "history-fallback", "identity-change"]) {
     visit(ast); assert.ok(found);
     return ts.transpileModule(`(${found.getText(ast)})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   }
-  const context = { modelAccountIdentity: "account", activeThreadId: "first", activeWorkspace: { path: "D:/repo" }, permissionModes: {} };
-  const readScope = () => vm.runInNewContext(expression("permissionScope"), context);
+  const context = { modelAccountIdentity: "account", activeThreadId: "first", activeWorkspace: { path: "D:/repo" },
+    pendingProjectlessRef: { current: false }, permissionModes: {} };
+  const readScope = () => {
+    context.homeWorkspace = context.pendingProjectlessRef.current ? null : context.activeWorkspace;
+    return vm.runInNewContext(expression("permissionScope"), context);
+  };
   context.permissionScope = readScope();
   context.setPermissionModes = update => { context.permissionModes = update(context.permissionModes); };
   vm.runInNewContext(callback("setPermissionMode"), context)("full");
@@ -270,6 +274,15 @@ for (const branch of ["first-resume", "history-fallback", "identity-change"]) {
   assert.equal(vm.runInNewContext(expression("permissionMode"), context), "custom", "a new thread cannot inherit another thread's full-access preset");
   context.activeThreadId = null; context.permissionScope = readScope();
   assert.equal(vm.runInNewContext(expression("permissionMode"), context), "custom");
+  const projectScope = context.permissionScope;
+  context.pendingProjectlessRef.current = true; context.permissionScope = readScope();
+  assert.notEqual(context.permissionScope, projectScope, "H01 a projectless draft must not use the previous project's permission slot");
+  vm.runInNewContext(callback("setPermissionMode"), context)("full");
+  context.pendingProjectlessRef.current = false; context.permissionScope = readScope();
+  assert.equal(vm.runInNewContext(expression("permissionMode"), context), "custom", "returning to the project cannot inherit projectless full access");
+  vm.runInNewContext(callback("setPermissionMode"), context)("ask");
+  context.pendingProjectlessRef.current = true; context.permissionScope = readScope();
+  assert.equal(vm.runInNewContext(expression("permissionMode"), context), "full", "the projectless draft retains only its own explicit preset");
   context.activeThreadId = "first"; context.modelAccountIdentity = "another-account"; context.permissionScope = readScope();
   assert.equal(vm.runInNewContext(expression("permissionMode"), context), "custom", "a new account cannot inherit a prior account's permission preset");
 }

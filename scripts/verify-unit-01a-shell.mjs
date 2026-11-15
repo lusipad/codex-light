@@ -16,10 +16,10 @@ const titlebarHeightMatch = stylesCss.match(/--app-titlebar-height:\s*([0-9]+px)
 assert.ok(titlebarHeightMatch, "DIFF-01A-01: styles.css must define --app-titlebar-height");
 assert.strictEqual(
   titlebarHeightMatch[1],
-  "54px",
-  `DIFF-01A-01: --app-titlebar-height must be 54px in CSS token (currently: ${titlebarHeightMatch[1]})`
+  "36px",
+  `DIFF-01A-01: current Windows application menu bar must use 36px (currently: ${titlebarHeightMatch[1]})`
 );
-console.log("PASS DIFF-01A-01: --app-titlebar-height token declared as 54px");
+console.log("PASS DIFF-01A-01: current Windows application menu bar declared as 36px; rendered verification remains separate");
 
 // 2. DIFF-01A-02: Window controls CSS height and alignment rules
 assert.ok(
@@ -45,10 +45,10 @@ const railWidthMatch = stylesCss.match(/--nav-rail-width:\s*([0-9]+px);/);
 assert.ok(railWidthMatch, "DIFF-01A-03: styles.css must define --nav-rail-width");
 assert.strictEqual(
   railWidthMatch[1],
-  "60px",
-  `DIFF-01A-03: --nav-rail-width must be 60px in CSS token (currently: ${railWidthMatch[1]})`
+  "52px",
+  `DIFF-01A-03: current Electron rail is 36px plus two 8px gutters (currently: ${railWidthMatch[1]})`
 );
-console.log("PASS DIFF-01A-03: --nav-rail-width token declared as 60px");
+console.log("PASS DIFF-01A-03: current Electron rail token declared as 52px");
 
 // 4. DIFF-01A-04: Palette tokens declaration
 assert.ok(

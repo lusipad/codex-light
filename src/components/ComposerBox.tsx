@@ -651,7 +651,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
     activeWorkspace?.label?.trim() ||
     (activeWorkspace?.path ? baseNameFsPath(activeWorkspace.path) || activeWorkspace.path : "选择项目");
 
-  const currentBranch = gitStatus?.branch || "main";
+  const currentBranch = gitStatus?.branch;
   const filteredWorkspaces = workspaces.filter(ws =>
     `${ws.label} ${ws.path}`.toLocaleLowerCase().includes(projectQuery.trim().toLocaleLowerCase()));
   const cloudItems = homeCloud?.filterItems(cloudQuery);
@@ -860,7 +860,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
             </div>}
           </div>}
 
-          {variant === "thread" && (
+          {variant === "thread" && activeWorkspace && gitStatus?.isGitRepo && currentBranch && (
           <div className="composer-dropdown-anchor">
             <button
               ref={(node) => { menuTriggersRef.current.branch = node; }}
@@ -973,7 +973,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
         {cloudActive && homeCloud?.error && <div role="alert">{homeCloud.error}</div>}
         {cloudActive && homeCloud?.entry && !homeCloud.entry.threadId && <div role="status">云端聊天的创建结果尚未确认。</div>}
         {cloudActive && homeCloud?.busy && <div role="status">正在启动云端聊天…</div>}
-        {attachedFiles.length > 0 && (
+        {(variant === "home" || attachedFiles.length > 0) && (
           <div className="composer-attachments-row">
             {attachedFiles.map((file) => (
               <ComposerAttachmentChip
@@ -1222,7 +1222,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
               <button
                 type="button"
                 className="send-action-btn"
-                disabled={cloudActive ? !homeCloud?.canSend : !promptInput.trim() && attachedFiles.length === 0}
+                disabled={cloudActive ? !homeCloud?.canSend : submissionDisabled || !promptInput.trim() && attachedFiles.length === 0}
                 onClick={() => onSendMessage()}
                 title={composerEnterBehavior === "cmdAlways" || (composerEnterBehavior === "cmdIfMultiline" && promptInput.includes("\n")) ? "发送 (Ctrl+Enter)" : "发送 (Enter)"}
               >

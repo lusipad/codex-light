@@ -120,6 +120,29 @@ function mount(variant = "thread") {
 }
 console.log("PASS home execution location: coherent picker layout, official labels, local/worktree round-trip and close");
 
+for (const patch of [{ activeWorkspace: null, gitStatus: null }, { gitStatus: { isGitRepo: false, branch: null } }, { gitStatus: { isGitRepo: true, branch: null } }]) {
+  const view = mount();
+  Object.assign(view.props, patch); view.render();
+  assert.equal(view.trigger("切换或新建 Git 分支"), undefined,
+    "failed projectless draft, plain directory and unknown branch must not invent main or offer a branch target");
+}
+{
+  const view = mount();
+  view.props.gitStatus.branch = "HEAD (abc123)"; view.render();
+  assert.match(text(view.trigger("切换或新建 Git 分支")), /HEAD \(abc123\)/, "real detached state retains its reported identity");
+}
+
+for (const variant of ["home", "thread"]) {
+  const view = mount(variant);
+  view.props.promptInput = "preserved draft";
+  view.props.submissionDisabled = true;
+  view.render();
+  assert.equal(view.find(n => n.props.className === "send-action-btn").props.disabled, true,
+    "the send button must reflect the same unavailable state as keyboard submission");
+  view.props.submissionDisabled = false; view.render();
+  assert.equal(view.find(n => n.props.className === "send-action-btn").props.disabled, false);
+}
+
 for (const variant of ["home", "thread"]) {
   const view = mount(variant);
   assert.equal(view.find(n => n.type === "button" && n.props["aria-label"] === "计划"), undefined);

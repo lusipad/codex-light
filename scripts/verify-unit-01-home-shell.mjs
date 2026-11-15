@@ -9,9 +9,9 @@ console.log("=== Unit 01 Home Shell + Composer Parity Verification ===");
 // 1. H01: Surface Color & Title Typography
 const stylesCss = fs.readFileSync("src/styles.css", "utf8");
 assert.ok(stylesCss.includes("--bg-main: #181818;"), "H01: --bg-main must be #181818 aligned with official app-shared CSS");
-assert.ok(/font-size:\s*var\(--text-xl\);\s*font-weight:\s*400;\s*line-height:\s*calc\(34px \* var\(--font-ui-scale, 1\)\);\s*letter-spacing:\s*0\.38px;/.test(stylesCss),
-  "H01: .home-greeting-title must retain 28px/34px at default UI scale while consuming the font preference");
-console.log("PASS H01: Dark surface #181818 and Home Greeting Title typography (28px/34px/0.38px)");
+assert.ok(/font-size:\s*var\(--text-xl\);\s*font-weight:\s*400;\s*line-height:\s*1\.2;\s*letter-spacing:\s*normal;/.test(stylesCss),
+  "H01: current Electron heading-xl uses 28px/1.2 with normal letter spacing");
+console.log("PASS H01: configured dark fallback and current Electron greeting typography; paired pixels remain unverified");
 
 // 2. H02 & H03 & H04 & H05: ModelSelector Keyboard & Focus Management
 const modelSelectorTsx = fs.readFileSync("src/components/ModelSelector.tsx", "utf8");
@@ -62,8 +62,10 @@ assert.ok(titleBarCss.includes("-webkit-app-region: drag;"),
   "H09: AppTitleBar must have -webkit-app-region: drag");
 assert.ok(titleBarCss.includes("-webkit-app-region: no-drag;"),
   "H09: Buttons in title bar must have -webkit-app-region: no-drag");
-assert.ok(/--app-titlebar-height:\s*(?:38px|46px|54px);/.test(stylesCss),
-  "H09: Title bar height must be standardized (aligned with 54px baseline)");
+assert.ok(/--app-titlebar-height:\s*36px;/.test(stylesCss),
+  "H09: current Windows application menu bar uses height-toolbar-sm=36px");
+assert.ok(/--thread-titlebar-height:\s*46px;/.test(stylesCss),
+  "H09: current Electron main toolbar uses the 46px global token; 52px is browser-only");
 console.log("PASS H09: Titlebar height and drag/no-drag regions");
 
 // 7. H10: IME Composition Enter Protection

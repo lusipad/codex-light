@@ -22,7 +22,7 @@ for (const manageOnly of [true, false]) {
   for (const subTab of ["plugins", "skills", "mcp"]) {
     const visits = [], changes = [];
     const context = { React: react, manageOnly, subTab, onManagePlugins: () => visits.push("management"), onBrowseDirectory: tab => visits.push(tab),
-      searchQuery: "", setSearchQuery() {}, setSubTab: tab => changes.push(tab), refreshAll() {},
+      searchQuery: "", setSearchQuery() {}, setSkillSearchIndex() {}, handleSkillSearchKey() {}, setSubTab: tab => changes.push(tab), refreshAll() {},
       installedCount: 2, remoteSkills: [], skills: [], config: null, appsData: [], appsInstalled: [], installedMarketplaces: [],
       selectTab: tab => changes.push(tab), visibleManagementTabs: ["plugins", "apps", "mcp", "skills", "marketplaces"],
       tabCounts: { plugins: 2, apps: 1, mcp: 0, skills: 1, marketplaces: 1 },
