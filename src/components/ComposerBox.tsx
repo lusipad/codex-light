@@ -1,5 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { CircleX, Cloud, Lightbulb } from "lucide-react";
+import type { DraftAppshot } from "../appshotContext";
+import { AppshotAttachment } from "./AppshotAttachment";
 import {
   FolderIcon,
   LaptopIcon,
@@ -94,6 +96,8 @@ export interface ComposerBoxProps {
   onTogglePlanMode: () => void;
   // Attachments & Autocomplete
   attachedFiles: AttachedFileItem[];
+  appshots?: DraftAppshot[];
+  onRemoveAppshot?: (id: string) => void;
   onAttachFiles: () => void;
   onAppshot?: () => void;
   onAddAttachedFiles?: (files: AttachedFileItem[]) => void;
@@ -183,6 +187,8 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
   planMode,
   onTogglePlanMode,
   attachedFiles,
+  appshots = [],
+  onRemoveAppshot,
   onAttachFiles,
   onAppshot,
   onAddAttachedFiles,
@@ -532,7 +538,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
       const submit = (queue: boolean) => {
         const pending = commandPendingRef.current;
         if (submissionDisabled || pending.pending ||
-            (!promptInput.trim() && attachedFiles.length === 0) ||
+            (!promptInput.trim() && attachedFiles.length === 0 && appshots.length === 0) ||
             (autocompleteMode && autocompleteItems.length > 0)) return false;
         pending.pending = true;
         try {
@@ -585,7 +591,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
     };
     window.addEventListener("codex:keyboard-command", handleCommand);
     return () => window.removeEventListener("codex:keyboard-command", handleCommand);
-  }, [cloudActive, models, selectedModelId, reasoningEffort, submissionDisabled, promptInput, attachedFiles,
+  }, [cloudActive, models, selectedModelId, reasoningEffort, submissionDisabled, promptInput, attachedFiles, appshots,
     autocompleteMode, autocompleteItems, isStreaming, followUpMode, onSendMessage, onQueueMessage, onPromptInputChange,
     onAttachFiles, onToggleFastMode, onTogglePlanMode, onSelectReasoningEffort, modelsLoading,
     selectionPending, selectionDisabledReason, modelEligibilityContext, serviceTierAccess, fastMode, serviceTier, onSelectConfiguration]);
@@ -973,7 +979,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
         {cloudActive && homeCloud?.error && <div role="alert">{homeCloud.error}</div>}
         {cloudActive && homeCloud?.entry && !homeCloud.entry.threadId && <div role="status">云端聊天的创建结果尚未确认。</div>}
         {cloudActive && homeCloud?.busy && <div role="status">正在启动云端聊天…</div>}
-        {(variant === "home" || attachedFiles.length > 0) && (
+        {(variant === "home" || attachedFiles.length > 0 || appshots.length > 0) && (
           <div className="composer-attachments-row">
             {attachedFiles.map((file) => (
               <ComposerAttachmentChip
@@ -982,6 +988,8 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
                 onRemove={() => onRemoveAttachedFile(file.id)}
               />
             ))}
+            {!cloudActive && appshots.map(item => <AppshotAttachment key={item.id} id={item.id} context={item.context}
+              onRemove={onRemoveAppshot ? () => onRemoveAppshot(item.id) : undefined} />)}
           </div>
         )}
 
@@ -1222,7 +1230,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
               <button
                 type="button"
                 className="send-action-btn"
-                disabled={cloudActive ? !homeCloud?.canSend : submissionDisabled || !promptInput.trim() && attachedFiles.length === 0}
+                disabled={cloudActive ? !homeCloud?.canSend : submissionDisabled || !promptInput.trim() && attachedFiles.length === 0 && appshots.length === 0}
                 onClick={() => onSendMessage()}
                 title={composerEnterBehavior === "cmdAlways" || (composerEnterBehavior === "cmdIfMultiline" && promptInput.includes("\n")) ? "发送 (Ctrl+Enter)" : "发送 (Enter)"}
               >

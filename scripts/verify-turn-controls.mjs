@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import ts from "typescript";
 
+const appshotJs=ts.transpileModule(fs.readFileSync(new URL("../src/appshotContext.ts",import.meta.url),"utf8"),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText;
+const {buildAppshotPrompt,appshotImageInputs}=await import(`data:text/javascript;base64,${Buffer.from(appshotJs).toString("base64")}`);
+
 const source=fs.readFileSync(new URL("../src/App.tsx",import.meta.url),"utf8");
 const ast=ts.createSourceFile("App.tsx",source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
 let steerBranch;
@@ -10,6 +13,7 @@ find(ast);assert.ok(steerBranch);
 const compile=(env,code)=>new Function(...Object.keys(env),ts.transpileModule(`return (async()=>{${code}; return "normal-flow";});`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText)(...Object.values(env));
 let calls=[];
 const env={isStreaming:true,activeThreadId:"a",activeTurnIdRef:{current:"turn-a"},threadRequestRef:{current:1},activeThreadIdRef:{current:"a"},
+ executionIdentityRef:{current:"account-a"},appshots:[],appshotScope:"account-a:thread:a",clearSentAppshots(){},buildAppshotPrompt,appshotImageInputs,
  isCurrentThreadRequest:(request,current,thread,active)=>request===current&&thread===active,
  steerSendPendingRef:{current:new Set()},
  attachedFiles:[],nativeInputs:[{type:"text",text:"保持原输入"}],overrideText:undefined,promptInput:"保持原输入",
@@ -24,12 +28,12 @@ console.log("PASS actual streaming send never starts a new turn after unconfirme
 const deferred=()=>{let resolve;const promise=new Promise(r=>{resolve=r});return {promise,resolve}};
 const setup=(overrides={})=>{
  let draft="保持原输入", attachments=[];
- const calls=[], notices=[];
- const context={...env,activeTurnIdRef:{current:"turn-a"},threadRequestRef:{current:1},activeThreadIdRef:{current:"a"},steerSendPendingRef:{current:new Set()},
+ const calls=[], notices=[],appshotClears=[];
+ const context={...env,executionIdentityRef:{current:"account-a"},clearSentAppshots:(scope,snapshot)=>appshotClears.push({scope,snapshot}),activeTurnIdRef:{current:"turn-a"},threadRequestRef:{current:1},activeThreadIdRef:{current:"a"},steerSendPendingRef:{current:new Set()},
   attachedFiles:attachments,callAppServer:async(method,params)=>{calls.push({method,params});return {turnId:"turn-a"}},
   setPromptInput:value=>{draft=typeof value==="function"?value(draft):value},setAttachedFiles:value=>{attachments=typeof value==="function"?value(attachments):value},
   showAppToast:(...args)=>notices.push(args),...overrides};
- return {context,calls,notices,run:compile(context,steerBranch),get draft(){return draft},edit:text=>{draft=text}};
+ return {context,calls,notices,appshotClears,run:compile(context,steerBranch),get draft(){return draft},edit:text=>{draft=text}};
 };
 const saved=deferred();const afterSave=setup({persistThreadAttachments:()=>saved.promise});
 const oldSave=afterSave.run();afterSave.context.threadRequestRef.current++;afterSave.context.activeThreadIdRef.current="b";afterSave.edit("B草稿");saved.resolve({errors:[]});await oldSave;
@@ -47,6 +51,15 @@ const success=setup();await success.run();assert.equal(success.draft,"");assert.
 const missingTurn=setup();missingTurn.context.activeTurnIdRef.current=null;await missingTurn.run();assert.equal(missingTurn.calls.length,0);assert.equal(missingTurn.draft,"保持原输入");
 const attachmentFailure=setup({persistThreadAttachments:async()=>({errors:[{message:"fixture persistence failed"}]})});await attachmentFailure.run();assert.equal(attachmentFailure.calls.length,0);assert.equal(attachmentFailure.draft,"保持原输入");
 console.log("PASS successful Steer clears only unchanged input; invalid turn and attachment failure preserve it");
+
+const accountAck=deferred();const accountChange=setup({callAppServer:()=>accountAck.promise});
+const oldAccountSend=accountChange.run();await Promise.resolve();
+accountChange.context.executionIdentityRef.current="account-b";accountChange.context.appshotScope="account-b:thread:a";accountChange.edit("新账号草稿");
+accountAck.resolve({turnId:"turn-a"});await oldAccountSend;
+assert.equal(accountChange.draft,"新账号草稿","old-account Steer acknowledgement cannot clear the new account draft");
+assert.equal(accountChange.appshotClears.length,0,"old-account Steer acknowledgement cannot clear appshots in a new scope");
+assert.equal(accountChange.notices.length,0);
+console.log("PASS old account Steer acknowledgement preserves new account scope");
 
 let interrupt;
 const findInterrupt=node=>{if(ts.isVariableDeclaration(node)&&node.name.getText(ast)==="handleInterruptTurn")interrupt=node.initializer.arguments[0].getText(ast);ts.forEachChild(node,findInterrupt)};findInterrupt(ast);assert.ok(interrupt);

@@ -47,6 +47,25 @@ fn suggested_filename(title: Option<&str>, extension: &str) -> String {
     format!("{prefix}{name}.{extension}")
 }
 
+fn preview_filename(requested: &str, extension: &str) -> String {
+    let stem = requested.rsplit_once('.').filter(|(_, suffix)|
+        ["png", "jpg", "jpeg", "gif", "webp", "avif"].contains(&suffix.to_ascii_lowercase().as_str()))
+        .map(|(stem, _)| stem).unwrap_or(requested);
+    suggested_filename(Some(stem), extension)
+}
+
+#[tauri::command]
+pub async fn preview_image_save(window: tauri::WebviewWindow, data_base64: String, suggested_file_name: String) -> Result<Option<String>, String> {
+    let (bytes, extension) = decode_image(&data_base64)?;
+    let filename = preview_filename(&suggested_file_name, extension);
+    let directory = dirs::download_dir().ok_or("无法定位下载文件夹")?;
+    tokio::task::spawn_blocking(move || {
+        let path = rfd::FileDialog::new().set_parent(&window)
+            .set_directory(directory).set_file_name(filename).save_file();
+        save_to_path(&bytes, path)
+    }).await.map_err(|error| format!("无法打开图片保存对话框：{error}"))?
+}
+
 #[tauri::command]
 pub async fn generated_image_save(window: tauri::WebviewWindow, data_base64: String, suggested_title: Option<String>) -> Result<Option<String>, String> {
     let (bytes, extension) = decode_image(&data_base64)?;
@@ -65,6 +84,13 @@ pub async fn generated_image_save(window: tauri::WebviewWindow, data_base64: Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preview_download_keeps_one_actual_extension_and_sanitizes_the_click_time_name() {
+        assert_eq!(preview_filename("ChatGPT 图像 2026年11月17日 06:15:20.png", "png"), "ChatGPT 图像 2026年11月17日 06_15_20.png");
+        assert_eq!(preview_filename("ChatGPT 图像 2026年11月17日.png", "jpg"), "ChatGPT 图像 2026年11月17日.jpg");
+        assert_eq!(preview_filename("CON.png", "png"), "_CON.png");
+    }
 
     #[test]
     fn generated_image_formats_use_bytes_and_reject_non_images() {

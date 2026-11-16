@@ -19,6 +19,10 @@ vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/sidebarProjects.ts", 
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText, { exports: module.exports });
 const plain = value => JSON.parse(JSON.stringify(value));
+const appshotModule = { exports: {} };
+vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/appshotContext.ts", "utf8"), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText, { exports: appshotModule.exports });
 const root = "D:/projects/shared", second = "D:/projects/second";
 const multi = { id: "multi", name: "Multi", rootPaths: [root, second], serverProjectId: "server-multi", createdAt: 1 };
 const same = { id: "same", name: "Same", rootPaths: [root], serverProjectId: "server-same", createdAt: 2 };
@@ -30,7 +34,10 @@ vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/executionPolicy.ts", 
 export function mountProjectContext({ pending = null, membership = metadata, workspace = root, threadId = null, start, turn, worktree = false, projectless = false, configuration, selectionPending = false } = {}) {
   const calls = [], state = { promptInput: "hello", turns: [] };
   const context = {
-    ...module.exports, ...executionModule.exports, promptInput: "hello", attachedFiles: [], isStreaming: false,
+    ...module.exports, ...executionModule.exports, ...appshotModule.exports, promptInput: "hello", attachedFiles: [], isStreaming: false,
+    appshots: [], appshotScope: `fixture-account:thread:${threadId}`, modelAccountIdentity: "fixture-account",
+    clearSentAppshots() {},
+    moveHomeAppshotsToThread: id => calls.push(["moveHomeAppshotsToThread", id]),
     activeThreadId: threadId, activeThreadIdRef: { current: threadId }, activeTurnIdRef: { current: null },
     pendingNewThreadProjectRef: { current: pending }, pendingProjectlessRef: { current: projectless }, sidebarProjectMembership: membership,
     activeWorkspace: { path: workspace }, handleSaveGoalRef: { current: null },

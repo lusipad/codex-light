@@ -6,6 +6,8 @@ import crypto from "node:crypto";
 
 const timelineJs = ts.transpileModule(fs.readFileSync(new URL("../src/threadTimeline.ts", import.meta.url), "utf8"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }).outputText;
 const { isCurrentThreadRequest } = await import(`data:text/javascript;base64,${Buffer.from(timelineJs).toString("base64")}`);
+const appshotJs = ts.transpileModule(fs.readFileSync(new URL("../src/appshotContext.ts", import.meta.url), "utf8"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }).outputText;
+const { buildAppshotPrompt, appshotImageInputs } = await import(`data:text/javascript;base64,${Buffer.from(appshotJs).toString("base64")}`);
 
 const source = fs.readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const ast = ts.createSourceFile("App.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -20,8 +22,11 @@ const callback = name => {
   return ts.transpileModule(`(${found})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 };
 let queue = [], draft = "hello", toasts = [], calls = [], rpc;
+const appshotClears = [];
 const ctx = vm.createContext({
-  console, Date, Set, Map, crypto, isCurrentThreadRequest,
+  console, Date, Set, Map, crypto, isCurrentThreadRequest, buildAppshotPrompt, appshotImageInputs,
+  executionIdentityRef: { current: "account-a" }, appshots: [], appshotScope: "account-a:thread:a",
+  clearSentAppshots: (scope, snapshot) => appshotClears.push({ scope, snapshot }),
   activeThreadId: "a", activeThreadIdRef: { current: "a" }, activeTurnIdRef: { current: "turn-a" }, threadRequestRef: { current: 1 },
   queueListRequestRef: { current: 0 }, queueMutationThreadsRef: { current: new Set() }, steeredQueueItemsRef: { current: new Map() },
   followupQueue: queue, promptInput: draft, attachedFiles: [], isStreaming: false,
@@ -192,3 +197,20 @@ rpc = async () => ({ data: [] }); release({ queuedSubmission: { id: "old-files" 
 assert.equal(ctx.attachedFiles, newFiles, "late enqueue cannot clear new attachments");
 assert.equal(draft, "new draft");
 console.log("PASS attachment failures, thread switch and new draft preservation");
+
+ctx.attachedFiles = []; ctx.promptInput = "old account draft"; draft = ctx.promptInput; calls = [];
+let enqueueDispatched;
+const enqueueReady = new Promise(resolve => { enqueueDispatched = resolve; });
+rpc = () => new Promise(resolve => { release = resolve; enqueueDispatched(); });
+const oldAccountEnqueue = ctx.handleEnqueueFollowup();
+await enqueueReady;
+assert.equal(calls[0][0], "thread/queue/add");
+const clearsBeforeAccountChange = appshotClears.length;
+ctx.executionIdentityRef.current = "account-b";
+ctx.appshotScope = "account-b:thread:a";
+draft = "new account draft";
+release({ queuedSubmission: { id: "old-account-ack" } }); await oldAccountEnqueue;
+assert.equal(draft, "new account draft", "old-account queue acknowledgement cannot clear the new account draft");
+assert.equal(appshotClears.length, clearsBeforeAccountChange, "old-account queue acknowledgement cannot clear appshots in a new scope");
+assert.equal(calls.length, 1, "old-account queue acknowledgement cannot refresh the new account queue");
+console.log("PASS old account queue acknowledgement preserves new account scope");

@@ -2755,6 +2755,7 @@ pub fn run() {
             quick_chat::quick_chat_hide,
             quick_chat::quick_chat_continue,
             image_save::generated_image_save,
+            image_save::preview_image_save,
             chatgpt_service_identity,
             chatgpt_service_read,
             chatgpt_service_site_pin,

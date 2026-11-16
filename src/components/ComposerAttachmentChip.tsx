@@ -15,6 +15,10 @@ export const ComposerAttachmentChip: React.FC<ComposerAttachmentChipProps> = ({
   const [preview, setPreview] = useState<string | null>(null);
 
   useEffect(() => {
+    if (file.imageDataUrl) {
+      setPreview(file.imageDataUrl);
+      return;
+    }
     if (file.kind !== "image") {
       setPreview(null);
       return;
@@ -35,10 +39,10 @@ export const ComposerAttachmentChip: React.FC<ComposerAttachmentChipProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [file.path, file.kind]);
+  }, [file.path, file.kind, file.imageDataUrl]);
 
   return (
-    <div className={`composer-attachment-chip ${preview ? "has-preview" : ""}`} title={file.path}>
+    <div className={`composer-attachment-chip ${preview ? "has-preview" : ""}`} title={file.imageDataUrl ? file.name : file.path}>
       {preview ? (
         <img className="composer-attachment-thumb" src={preview} alt={`${file.name} 附件预览`} />
       ) : (

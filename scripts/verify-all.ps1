@@ -196,6 +196,12 @@ try {
   Invoke-Step "Home send transition and failure regression" { node scripts/verify-home-send-transition.mjs }
   Invoke-Step "Composer draft identity and persistence regression" { node scripts/verify-composer-drafts.mjs }
   Invoke-Step "Composer attachment draft scope regression" { node scripts/verify-composer-attachment-drafts.mjs }
+  Invoke-Step "Appshot context serialization and image roundtrip" { node scripts/verify-appshot-context.mjs }
+  Invoke-Step "Appshot account and local host qualification" { node scripts/verify-appshots-access.mjs }
+  Invoke-Step "Appshot history image classification" { node scripts/verify-appshot-history.mjs }
+  Invoke-Step "Appshot attachment preview lifecycle" { node scripts/verify-appshot-attachment.mjs }
+  Invoke-Step "Appshot localized download and native dialog contract" { node scripts/verify-appshot-download.mjs }
+  Invoke-Step "Appshot start steer queue and draft scope" { node scripts/verify-appshot-send-integration.mjs }
   Invoke-Step "Composer native file drop regression" { node scripts/verify-composer-drop.mjs }
   Invoke-Step "Appearance preferences and consumers regression" { node scripts/verify-appearance.mjs }
   Invoke-Step "Appearance theme semantics and preset data regression" { node scripts/verify-appearance-theme.mjs }

@@ -19,6 +19,9 @@ import { notificationApprovalActions, notificationApprovalResponse } from "./not
 import { GeneratedImageCard } from "./components/GeneratedImageCard";
 import { McpCallCard } from "./components/McpCallCard";
 import { extractTextFromItem } from "./threadText";
+import { appshotImageInputs, buildAppshotPrompt, type DraftAppshot } from "./appshotContext";
+import { restoreAppshotHistory } from "./appshotHistory";
+import { AppshotAttachment, UserImageAttachments, dispatchImagePreviewZoom } from "./components/AppshotAttachment";
 import { fileChangeApprovalForItem, pendingRequestKey, requestThreadId, requestsForThread, type RequestResponseState } from "./approvalRequests";
 import { copyTextToClipboard } from "./clipboard";
 import { buildSkillTrialPrompt } from "./skillTrialPrompt";
@@ -1465,6 +1468,34 @@ export const App: React.FC = () => {
     for (const [threadId, revision] of threadExecutionRevisionsRef.current) threadExecutionRevisionsRef.current.set(threadId, revision + 1);
   }
   const permissionScope = `${modelAccountIdentity}:${activeThreadId ?? `draft:${homeWorkspace?.path ?? ""}`}`;
+  const [composerAppshotDrafts, setComposerAppshotDrafts] = useState<Record<string, DraftAppshot[]>>({});
+  const appshotScope = `${modelAccountIdentity}:${attachmentScopeRef.current}`;
+  const appshots = composerAppshotDrafts[appshotScope] ?? [];
+  const setScopedAppshots = useCallback((key: string, update: React.SetStateAction<DraftAppshot[]>) => {
+    setComposerAppshotDrafts(previous => {
+      const current = previous[key] ?? [];
+      const items = typeof update === "function" ? update(current) : update;
+      if (items === current) return previous;
+      const next = { ...previous };
+      if (items.length) next[key] = items;
+      else delete next[key];
+      return next;
+    });
+  }, []);
+  const clearSentAppshots = useCallback((scope: string, snapshot: DraftAppshot[]) => {
+    setScopedAppshots(scope, current => current.filter(item => !snapshot.includes(item)));
+  }, [setScopedAppshots]);
+  const moveHomeAppshotsToThread = useCallback((threadId: string) => {
+    setComposerAppshotDrafts(previous => {
+      const homeKey = `${modelAccountIdentity}:home`;
+      const home = previous[homeKey];
+      if (!home?.length) return previous;
+      const key = `${modelAccountIdentity}:thread:${threadId}`;
+      const next = { ...previous, [key]: [...(previous[key] ?? []), ...home] };
+      delete next[homeKey];
+      return next;
+    });
+  }, [modelAccountIdentity]);
   const permissionMode = permissionModes[permissionScope] ?? "custom";
   const setPermissionMode = useCallback((mode: "ask" | "auto" | "full") => {
     setPermissionModes(previous => ({ ...previous, [permissionScope]: mode }));
@@ -2889,7 +2920,12 @@ export const App: React.FC = () => {
       if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
       if (keyboardState.capturing.current) { matcher.reset(); return; }
       focusedElement = e.target as HTMLElement | null;
-      if (document.querySelector('dialog[open], [aria-modal="true"]')) { matcher.reset(); return; }
+      if (document.querySelector('dialog[open], [aria-modal="true"]')) {
+        const zoom = SHORTCUTS.find(shortcut => shortcut.id.startsWith("zoom-") && shortcut.match(e));
+        if (zoom && dispatchImagePreviewZoom(zoom.id === "zoom-reset" ? { type: "reset-zoom" } : { type: "step-zoom", delta: zoom.id === "zoom-in" ? 1 : -1 })) e.preventDefault();
+        matcher.reset();
+        return;
+      }
       localCommandsOnly = !shortcutEventAllowed(e, keyboardBindingsRef.current);
       if (localCommandsOnly && !focusedElement?.closest(".codex-two-tier-composer, [data-keyboard-approval]")) { matcher.reset(); return; }
       const result = matcher(e);
@@ -3827,7 +3863,7 @@ export const App: React.FC = () => {
     if (activeRouteRef.current === "cloud-draft" || activeRouteRef.current === "cloud-new-chat") return;
     if (activeRouteRef.current === "home" && homeCloud.active) return;
     const rawText = (typeof overrideText === "string" ? overrideText : promptInput).trim();
-    if (!rawText && attachedFiles.length === 0) return;
+    if (!rawText && attachedFiles.length === 0 && appshots.length === 0) return;
     if (sendStartPendingRef.current.has(threadRequestRef.current)) return;
     const projectless = !activeThreadIdRef.current && pendingProjectlessRef.current;
     const pendingProject = activeThreadIdRef.current || projectless ? null : resolveNewThreadProject(
@@ -3855,16 +3891,21 @@ export const App: React.FC = () => {
       }
     }
 
-    const nativeInputs: any[] = effectiveRawText
-      ? [{ type: "text", text: effectiveRawText }]
+    const appshotContexts = appshots.map(item => item.context);
+    const inputText = buildAppshotPrompt(effectiveRawText, appshotContexts);
+    const nativeInputs: any[] = inputText
+      ? [{ type: "text", text: inputText }]
       : [];
     for (const file of attachedFiles) {
-      if (file.kind === "image" || /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(file.name)) {
+      if (file.imageDataUrl) {
+        nativeInputs.push({ type: "image", url: file.imageDataUrl });
+      } else if (file.kind === "image" || /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(file.name)) {
         nativeInputs.push({ type: "localImage", path: file.path });
       } else {
         nativeInputs.push({ type: "mention", name: file.name, path: file.path });
       }
     }
+    nativeInputs.push(...appshotImageInputs(appshotContexts));
 
     setActiveRoute("thread");
 
@@ -3873,7 +3914,8 @@ export const App: React.FC = () => {
       const threadId = activeThreadId;
       const turnId = activeTurnIdRef.current;
       const request = threadRequestRef.current;
-      const isCurrent = () => isCurrentThreadRequest(request, threadRequestRef.current, threadId, activeThreadIdRef.current);
+      const identity = executionIdentityRef.current;
+      const isCurrent = () => identity === executionIdentityRef.current && isCurrentThreadRequest(request, threadRequestRef.current, threadId, activeThreadIdRef.current);
       if (!turnId) {
         showAppToast("当前没有可引导的轮次，输入已保留", "info");
         return;
@@ -3888,15 +3930,21 @@ export const App: React.FC = () => {
           showAppToast("当前轮次已变化，输入已保留", "info");
           return;
         }
-        await callAppServer("turn/steer", {
+        const response = await callAppServer<{ turnId: string }>("turn/steer", {
           threadId,
           expectedTurnId: turnId,
           clientUserMessageId: crypto.randomUUID(),
           input: nativeInputs,
         });
-        if (isCurrent() && !overrideText) {
+        if (!isCurrent()) return;
+        if (response?.turnId !== turnId) {
+          showAppToast("引导结果未确认，未自动重发，输入已保留", "error");
+          return;
+        }
+        if (!overrideText) {
           setPromptInput(current => current === promptInput ? "" : current);
           setAttachedFiles(current => current === attachedFiles ? [] : current);
+          clearSentAppshots(appshotScope, appshots);
         }
         return true;
       } catch (error) {
@@ -3920,7 +3968,7 @@ export const App: React.FC = () => {
       id: tempTurnId,
       status: "running",
       startedAt: Date.now(),
-      items: [{ id: `u-${Date.now()}`, type: "userMessage", text: effectiveRawText }],
+      items: [{ id: `u-${Date.now()}`, type: "userMessage", text: inputText, content: nativeInputs }],
     };
     setTurns((prev) => [...prev, userTurn]);
     setIsStreaming(true);
@@ -3975,6 +4023,7 @@ export const App: React.FC = () => {
         setSidebarCreatedThread({ id: createdThreadId, cwd: targetCwd || undefined, projectId: startRes?.thread?.projectId });
         if (sendRequest === threadRequestRef.current) {
           moveHomeAttachmentsToThread(currentThreadId);
+          moveHomeAppshotsToThread(currentThreadId);
           moveHomePromptToThread(currentThreadId);
           activeThreadIdRef.current = currentThreadId;
           attachmentScopeRef.current = `thread:${currentThreadId}`;
@@ -4017,10 +4066,11 @@ export const App: React.FC = () => {
         sandboxPolicy,
         serviceTier: configuration.serviceTier,
       }));
-      if (sendRequest !== threadRequestRef.current) return;
+      if (sendRequest !== threadRequestRef.current || sendIdentity !== executionIdentityRef.current) return;
       const startedTurnId =
         turnRes?.turn?.id || turnRes?.turnId || turnRes?.id || null;
       if (startedTurnId) {
+        if (!overrideText) clearSentAppshots(`${sendIdentity}:thread:${currentThreadId}`, appshots);
         const turnIdStr = String(startedTurnId);
         setActiveTurnId(turnIdStr);
         setTurns((prev) => {
@@ -4049,7 +4099,7 @@ export const App: React.FC = () => {
       return Boolean(startedTurnId);
     } catch (err: any) {
       console.error("Turn start failed:", err);
-      if (sendRequest !== threadRequestRef.current) return;
+      if (sendRequest !== threadRequestRef.current || sendIdentity !== executionIdentityRef.current) return;
       pendingAttachmentSaveRef.current = null;
       setIsStreaming(false);
       setTurns((prev) => prev.map((t) => t.id === tempTurnId ? { ...t, status: "failed", items: [...t.items, { id: `err-item-${Date.now()}`, type: "agentMessage", text: `⚠️ 执行出错: ${err?.message || err}` }] } : t));
@@ -4063,6 +4113,10 @@ export const App: React.FC = () => {
     setThreadPrompt,
     moveHomePromptToThread,
     moveHomeAttachmentsToThread,
+    moveHomeAppshotsToThread,
+    appshots,
+    appshotScope,
+    clearSentAppshots,
     attachedFiles,
     planMode,
     isStreaming,
@@ -4442,34 +4496,41 @@ export const App: React.FC = () => {
     const tid = activeThreadIdRef.current;
     const text = promptInput;
     const files = attachedFiles;
-    if (!tid || (!text.trim() && files.length === 0) || queueMutationThreadsRef.current.has(tid)) return;
+    if (!tid || (!text.trim() && files.length === 0 && appshots.length === 0) || queueMutationThreadsRef.current.has(tid)) return;
     const request = threadRequestRef.current;
+    const identity = executionIdentityRef.current;
+    const isCurrent = () => identity === executionIdentityRef.current && isCurrentThreadRequest(request, threadRequestRef.current, tid, activeThreadIdRef.current);
     queueMutationThreadsRef.current.add(tid);
     setQueueMutationVersion(v => v + 1);
     try {
       const { errors } = await persistThreadAttachments(tid, files);
       if (errors.length > 0) throw new Error(errors[0].message);
-      if (!isCurrentThreadRequest(request, threadRequestRef.current, tid, activeThreadIdRef.current)) return;
-      const input: any[] = text.trim() ? [{ type: "text", text: text.trim() }] : [];
+      if (!isCurrent()) return;
+      const appshotContexts = appshots.map(item => item.context);
+      const inputText = buildAppshotPrompt(text.trim(), appshotContexts);
+      const input: any[] = inputText ? [{ type: "text", text: inputText }] : [];
       for (const file of files) {
-        input.push(file.kind === "image" || /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(file.name)
+        input.push(file.imageDataUrl ? { type: "image", url: file.imageDataUrl }
+          : file.kind === "image" || /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(file.name)
           ? { type: "localImage", path: file.path }
           : { type: "mention", name: file.name, path: file.path });
       }
+      input.push(...appshotImageInputs(appshotContexts));
       const result = await callAppServer<{ queuedSubmission: { id: string } }>("thread/queue/add", { threadId: tid, clientUserMessageId: crypto.randomUUID(), input });
       if (!result.queuedSubmission?.id) throw new Error("服务端未返回队列消息 ID");
-      if (isCurrentThreadRequest(request, threadRequestRef.current, tid, activeThreadIdRef.current)) {
+      if (isCurrent()) {
         setPromptInput(value => value === text ? "" : value);
         setAttachedFiles(current => current === files ? [] : current);
+        clearSentAppshots(appshotScope, appshots);
         await refreshThreadQueue(tid);
       }
     } catch (e) {
-      if (isCurrentThreadRequest(request, threadRequestRef.current, tid, activeThreadIdRef.current)) showAppToast(`加入队列失败，草稿已保留：${String(e)}`, "error");
+      if (isCurrent()) showAppToast(`加入队列失败，草稿已保留：${String(e)}`, "error");
     } finally {
       queueMutationThreadsRef.current.delete(tid);
       setQueueMutationVersion(v => v + 1);
     }
-  }, [promptInput, attachedFiles, refreshThreadQueue, showAppToast, setPromptInput]);
+  }, [promptInput, attachedFiles, appshots, appshotScope, clearSentAppshots, refreshThreadQueue, showAppToast, setPromptInput]);
 
   const handleCancelQueuedFollowup = useCallback(async (item: QueuedFollowupPrompt) => {
     const tid = activeThreadIdRef.current;
@@ -4982,9 +5043,9 @@ export const App: React.FC = () => {
     "toggle-terminal": () => requestTerminalPanel("open-terminal"),
     "toggle-bottom-panel": () => requestTerminalPanel("toggle-bottom"),
     "toggle-changes": () => setShowRightDrawer((v) => !v),
-    "zoom-in": () => applyZoom(zoomRef.current + 0.1),
-    "zoom-out": () => applyZoom(zoomRef.current - 0.1),
-    "zoom-reset": () => applyZoom(1),
+    "zoom-in": () => { if (!dispatchImagePreviewZoom({ type: "step-zoom", delta: 1 })) return applyZoom(zoomRef.current + 0.1); },
+    "zoom-out": () => { if (!dispatchImagePreviewZoom({ type: "step-zoom", delta: -1 })) return applyZoom(zoomRef.current - 0.1); },
+    "zoom-reset": () => { if (!dispatchImagePreviewZoom({ type: "reset-zoom" })) return applyZoom(1); },
     "open-settings": () =>
       setActiveRoute((r) => (r === "settings" ? "home" : "settings")),
     "show-keyboard-shortcuts": () => setShowKeyboardShortcuts((value) => !value),
@@ -5118,6 +5179,7 @@ export const App: React.FC = () => {
       return;
     }
     if (command === "zoom-in" || command === "zoom-out" || command === "zoom-reset") {
+      if (dispatchImagePreviewZoom(command === "zoom-reset" ? { type: "reset-zoom" } : { type: "step-zoom", delta: command === "zoom-in" ? 1 : -1 })) return;
       const next = command === "zoom-reset" ? 1 : zoomRef.current + (command === "zoom-in" ? 0.1 : -0.1);
       await applyZoom(next);
       return;
@@ -5998,6 +6060,8 @@ export const App: React.FC = () => {
       planMode={planMode}
       onTogglePlanMode={handleTogglePlanMode}
       attachedFiles={attachedFiles}
+      appshots={appshots}
+      onRemoveAppshot={id => setScopedAppshots(appshotScope, current => current.filter(item => item.id !== id))}
       onAttachFiles={handleAttachFiles}
       onAppshot={handleAppshot}
       onAddAttachedFiles={(newFiles) =>
@@ -7049,6 +7113,8 @@ export const App: React.FC = () => {
               planMode={planMode}
               onTogglePlanMode={handleTogglePlanMode}
               attachedFiles={homeCloud.active ? [] : attachedFiles}
+              appshots={homeCloud.active ? [] : appshots}
+              onRemoveAppshot={id => setScopedAppshots(appshotScope, current => current.filter(item => item.id !== id))}
               onAttachFiles={handleAttachFiles}
               onAppshot={handleAppshot}
               onAddAttachedFiles={homeCloud.active ? undefined : (newFiles) =>
@@ -7211,7 +7277,10 @@ export const App: React.FC = () => {
                   const effectiveUserItems = userItems.length > 1
                     ? [userItems.find((it) => !it.id?.startsWith("u-") && !it.id?.startsWith("pending-")) || userItems[0]]
                     : userItems;
-                  const userText = effectiveUserItems.map(extractTextFromItem).join("\n\n");
+                  const userContent = effectiveUserItems.map(restoreAppshotHistory);
+                  const userText = userContent.map(item => item.text).join("\n\n");
+                  const userAppshots = userContent.flatMap(item => item.appshots);
+                  const userImages = userContent.flatMap(item => item.nonAppshotImageUrls);
                   const isBookmarked = (activeThreadId && bookmarkedTurnIds[activeThreadId]?.includes(turn.id)) || false;
                   const renderCommand = (cmd: TurnItem, cIdx: number) => (
                         <CommandExecutionCard key={cmd.id || cIdx} item={cmd} turnStatus={turn.status}
@@ -7369,11 +7438,17 @@ export const App: React.FC = () => {
                       {userItems.length > 0 && (
                         <div
                           id={`turn-user-${turn.id}`}
-                          className="user-turn-block"
+                          className={`user-turn-block${userAppshots.length || userImages.length ? " user-turn-appshots" : ""}`}
                         >
-                          <UserMessageBubble text={userText} onOpenFile={(filePath) => {
+                          {(userAppshots.length > 0 || userImages.length > 0) && <div className="appshot-history-strip"><div className="appshot-history-items">
+                            <UserImageAttachments key={`${modelAccountIdentity}:${turn.id}:images`} id={`${turn.id}:images`} sources={userImages} />
+                            {userAppshots.map((context, index) => <AppshotAttachment
+                              key={`${modelAccountIdentity}:${turn.id}:${index}`} id={`${turn.id}:appshot:${index}`}
+                              context={context} variant="thread" />)}
+                          </div></div>}
+                          {(userText.length > 0 || userAppshots.length === 0) && <UserMessageBubble text={userText} onOpenFile={(filePath) => {
                             openPreviewFile(filePath);
-                          }} />
+                          }} />}
                           <div className="turn-action-buttons-row right">
                             <button
                               type="button"
@@ -7400,6 +7475,10 @@ export const App: React.FC = () => {
                               title="重新填入输入框编辑"
                               onClick={() => {
                                 setPromptInput(userText);
+                                setScopedAppshots(appshotScope, userAppshots.map(context => ({ id: crypto.randomUUID(), context })));
+                                setAttachedFiles(userImages.map((source, index) => /^data:image\//i.test(source)
+                                  ? { id: crypto.randomUUID(), path: source, imageDataUrl: source, name: `图片 ${index + 1}`, kind: "image" }
+                                  : createAttachedFileItem(source, undefined, "image")));
                                 composerTextareaRef.current?.focus();
                                 showAppToast("已载入输入框以重新编辑", "info");
                               }}

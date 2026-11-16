@@ -197,6 +197,8 @@ assert.ok(navigation && copy && edit);
     turns: [], extractTextFromItem: item => item.text,
     document: { getElementById: id => { target = id; return { scrollIntoView() {} }; } },
     copyThreadText: async value => { copied = value; }, userText: original,
+    userAppshots: [], userImages: [], appshotScope: "fixture:thread:a",
+    setScopedAppshots() {}, setAttachedFiles() {},
     setPromptInput: value => { edited = value; }, composerTextareaRef: { current: { focus() {} } }, showAppToast() {},
   };
   context.turns = Array.from({ length: 3 }, (_, i) => ({ id: `t${i}`, items: [{ type: "userMessage", text: `prompt${i}` }, { type: "agentMessage", text: "private response preview" }] }));

@@ -112,6 +112,10 @@ export async function persistThreadAttachments(
   const attachments: AttachedFileItem[] = [];
   const errors: AttachmentPersistFailure[] = [];
   for (const file of files) {
+    if (file.imageDataUrl) {
+      attachments.push(file);
+      continue;
+    }
     try {
       const response = await callAppServer<{
         attachment: ThreadAttachmentRecord;

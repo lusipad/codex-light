@@ -30,6 +30,7 @@ function mount(name, initial) {
       require: id => id === "react" ? react : id === "lucide-react" ? new Proxy({}, { get: (_, key) => String(key) }) : id.endsWith(".css") || id.endsWith("Icons") ? {} :
         id.includes("ComposerAutocomplete") ? { getAutocompleteItems: () => [{ id: "model", type: "slash", action: "open_model_picker", insertText: "" }] } :
         id.includes("ModelSelector") || id.includes("AttachmentChip") ? {} :
+        id.includes("AppshotAttachment") ? { AppshotAttachment: () => null } :
         id.endsWith("/bridge") ? { isTauriRuntime: () => false } : id.endsWith("/fsClient") ? { baseNameFsPath: p => p.split("/").at(-1) } :
         load(path.resolve(path.dirname(file), id + ".ts")),
     }, { filename: file });

@@ -27,6 +27,7 @@ function mount(name, initial) {
       window: { addEventListener(type, fn) { if (type === "codex:keyboard-command") listeners.add(fn); }, removeEventListener(type, fn) { listeners.delete(fn); } },
       require: id => id === "react" ? react : id === "lucide-react" || id.endsWith("Icons") ? new Proxy({}, { get: (_, key) => String(key) }) :
         id.includes("ComposerAutocomplete") ? { getAutocompleteItems: () => [] } :
+        id.includes("AppshotAttachment") ? { AppshotAttachment: () => null } :
         id.includes("ModelSelector") || id.includes("AttachmentChip") ? {} :
         id.endsWith("/bridge") ? { isTauriRuntime: () => false } : id.endsWith("/fsClient") ? { baseNameFsPath: p => p.split("/").at(-1) } :
         load(path.resolve(path.dirname(file), id + ".ts")),
@@ -100,6 +101,15 @@ assert.equal(composer.command("composer-clear"), true); assert.equal(changed.at(
 assert.equal(composer.command("composer-add-files"), true); assert.equal(attached, 1);
 assert.equal(composer.command("composer-add-photos"), false, "file picker cannot masquerade as photo-filtered picker");
 composer.setFocused(false); assert.equal(composer.command("composer-submit"), false);
+composer.setFocused(true);
+composer.props.promptInput = ""; composer.props.appshots = [{ id: "private-capture", context: {} }];
+composer.props.isStreaming = false; composer.render(); composer.focus(n => n.type === "textarea");
+assert.equal(composer.find(n => n.props.className?.includes("send-action-btn")).props.disabled, false,
+  "an Appshot-only draft can use the actual send control");
+assert.equal(composer.command("composer-submit"), true, "an Appshot-only draft can use the actual submit command");
+await Promise.resolve();
+composer.props.appshots = []; composer.render(); composer.focus(n => n.type === "textarea");
+assert.equal(composer.command("composer-submit"), false, "removing the final Appshot restores the empty-draft guard");
 console.log("PASS production Composer commands: focus/IME/pending/duplicates; real steer vs queue callbacks; runtime effort/fast capability");
 
 const responses = [];

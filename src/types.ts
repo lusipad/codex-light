@@ -291,6 +291,8 @@ export interface AttachedFileItem {
   id: string;
   name: string;
   path: string;
+  /** Inline history image input; its URI is not registered or read as a file. */
+  imageDataUrl?: string;
   kind: "file" | "image" | "mention";
   attachmentType?: "file" | "image";
   persisted?: boolean;
