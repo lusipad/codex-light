@@ -57,7 +57,7 @@ export function usePluginAppSync(connectionIdentity: string, pluginId: string, a
     current.current.mounted = true; void reload();
     return () => { current.current.mounted = false; ticket.current++; request.current?.abort(); };
   }, [scope]);
-  const disable = async (status: PluginAppSyncStatus): Promise<boolean> => {
+  const disable = async (status: PluginAppSyncStatus, githubEmptySelection = false): Promise<boolean> => {
     const before = current.current.state;
     if (!active() || current.current.locked || before.loading || before.blocked || !before.snapshot || !complete(before.snapshot)) return false;
     current.current.locked = true; request.current?.abort();
@@ -66,7 +66,7 @@ export function usePluginAppSync(connectionIdentity: string, pluginId: string, a
     const valid = () => active() && ticket.current === generation && !controller.signal.aborted;
     publish({ ...before, pending: true, error: null });
     try {
-      const result = await disablePluginAppSync(before.snapshot, status, selectedLinkId, controller.signal);
+      const result = await disablePluginAppSync(before.snapshot, status, selectedLinkId, controller.signal, githubEmptySelection);
       if (!valid()) return false;
       if (result.snapshot && actualScope(before.snapshot) !== actualScope(result.snapshot)) { replaceActualScope(result.snapshot); return false; }
       const confirmed = result.confirmed && result.snapshot !== null && complete(result.snapshot) && result.refreshError === null;

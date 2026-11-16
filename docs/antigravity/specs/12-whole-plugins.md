@@ -1,5 +1,7 @@
 # 12 插件整页合同与R0/R1执行
 
+GitHub同步仓库子单元开发前合同（338eb92之后）：固定参考`app-github-sync-contract.md`/13精确片段、11中文键、4来源hash已复核。严格metadata boolean true、固定Github App、实际所选link和对应github connection共同决定显示；不借用owner/personal门禁。初始配置GET和空查询搜索，输入仅提交后查询；空查询追加已配仓库、搜索优先去重、服务器基准已选优先排序；草稿跨搜索保留，最多5项。非空保存才发固定extension POST，空选择调用父级已证停止确认，取消零写；ACK/未知仅真实GET读回确认。配置可缺optional对象数组，但畸形或不支持ID不能当空。当前安全支持非负safe integer；配置十进制整数串精确转换，搜索字符串ID不猜转，异常已配ID阻止保存并显式报错。这是实施支持边界，不称官方完整wire schema。写前后端fresh核作用域与配置；新增选择附对应搜索query/pageToken，后端重查固定搜索结果证明ID来源，最多5组，不新增跨请求缓存或任意URL。此额外读取与严格读回时序单列为实现差异，真实服务/原生/像素待验。
+
 同步子链开发前合同：固定26.1111参考的`app-sync-contract.md`及`app-sync-anchors.json`（5资源、19精确片段、22简中文案）。先实现Fd8Z账户匹配：当前可见所选link、单账户忽略URL选择、四项管理员映射与受限Gmail/Outlook fallback；DWD只在规定授权/激活状态匹配。摘要优先正在同步，再已同步；最近时间full优先delta，不造时间/百分比。普通入口只在真实匹配状态存在时显示，不能增加通用启动同步按钮。后续接固定GET、带勾选确认的两种停止POST及真实回读；管理员只读，禁用资格不能借用权限页owner/personal规则。当前普通分支已接固定IPC/HTTP实现、独占reader、确认Page及显式App详情入口，具体结果见验收记录；隔离transport/组件通过不表示真实账号HTTP或原生通过。Github仓库配置与隐式canonical根完整App管理面另列子单元。
 
 2026-11-16，开发前记录。整页状态为调研/开发中，未通过官方运行时、像素或用户验收。[总计划](../../FULL-REPLICA-PLAN.md)R0/R1→R2，旧12-13D的26.1027位置不沿用。

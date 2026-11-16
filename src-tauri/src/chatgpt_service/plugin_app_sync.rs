@@ -19,7 +19,7 @@ mod tests {
     fn request()->PluginAppSyncRequest {PluginAppSyncRequest{request_id:"sync-fixture".into(),expected_identity:identity(),
         profile:ServiceProfile{language:"zh-CN".into(),device_id:"fixture-device".into(),user_agent:"Mozilla/5.0 Chrome/140.0.0.0".into(),user_agent_client_hints:"\"Chromium\";v=\"140\"".into(),platform_client_hint:"\"Windows\"".into()},
         plugin_id:"plugin-real".into(),app_id:Some("asdk_app_real".into()),selected_link_id:Some("link-a".into())}}
-    fn disable()->PluginAppSyncDisableRequest {let r=request();PluginAppSyncDisableRequest{request_id:r.request_id,expected_identity:r.expected_identity,profile:r.profile,plugin_id:r.plugin_id,app_id:r.app_id.unwrap(),selected_link_id:r.selected_link_id,connection_instance_id:"connection-a".into(),backing_link_id:Some("link-a".into())}}
+    fn disable()->PluginAppSyncDisableRequest {let r=request();PluginAppSyncDisableRequest{request_id:r.request_id,expected_identity:r.expected_identity,profile:r.profile,plugin_id:r.plugin_id,app_id:r.app_id.unwrap(),selected_link_id:r.selected_link_id,connection_instance_id:"connection-a".into(),backing_link_id:Some("link-a".into()),github_empty_selection:false}}
     fn token()->String {let claims=json!({"exp":4102444800u64,"https://api.openai.com/auth":{"chatgpt_account_id":"sync-account","user_id":"sync-user","chatgpt_account_is_fedramp":false}});format!("fixture.{}.signature",base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap()))}
     async fn rpc(method:&'static str,_:Value)->Result<Value,String>{Ok(match method{
         "getAuthStatus"=>json!({"authMethod":"chatgpt","authToken":token()}),"account/read"=>json!({"account":{"type":"chatgpt","planType":"future-plan"},"workspaceRouting":{"backendOrigin":"https://chatgpt.com","chatgptAccountId":"sync-account","accountRoutingOverride":"NO_CONSTRAINT"}}),
@@ -123,6 +123,60 @@ mod tests {
         let transport=Fixture::new(replies);assert_eq!(ChatgptService::default().plugin_app_sync_disable_with(request,rpc,&transport).await.unwrap().body["delivery"],"accepted");
         let sent=transport.sent.lock().unwrap();assert!(sent[5].url.ends_with("/ca/v2/user/disconnect"));assert_eq!(serde_json::from_slice::<Value>(&sent[5].body).unwrap(),json!({"connection_id":"legacy-connection"}));
     }
+    fn github_empty_request(enabled:bool)->PluginAppSyncDisableRequest {
+        let request=disable();let profile=request.profile;
+        serde_json::from_value(json!({"requestId":request.request_id,"expectedIdentity":request.expected_identity,
+            "profile":{"language":profile.language,"deviceId":profile.device_id,"userAgent":profile.user_agent,"userAgentClientHints":profile.user_agent_client_hints,"platformClientHint":profile.platform_client_hint},
+            "pluginId":request.plugin_id,"appId":"asdk_app_76869538009648d5b282a4bb21c3d157","selectedLinkId":request.selected_link_id,
+            "connectionInstanceId":request.connection_instance_id,"backingLinkId":request.backing_link_id,"githubEmptySelection":enabled})).unwrap()
+    }
+    fn github_empty_replies()->Vec<(u16,Value)> {
+        let app="connector_76869538009648d5b282a4bb21c3d157";let mut replies=write_replies();replies[1].1["release"]["app_ids"]=json!([app]);replies[2].1["id"]=json!(app);
+        replies[2].1["sync_metadata"]=json!({"user_allowed_to_sync":true});
+        for link in replies[3].1["links"].as_array_mut().unwrap() {link["connector_id"]=json!(app);}
+        for status in replies[4].1["connection_statuses"].as_array_mut().unwrap() {
+            status["user_connection_details"]["connector_id"]=json!(app);status["user_connection_details"]["knowledge_connector_type"]=json!("github");status["user_connection_details"]["auth_status"]=json!("admin_connected");
+        }
+        replies
+    }
+    #[test]
+    fn sync_disable_legacy_request_defaults_github_empty_selection_false(){
+        let request:PluginAppSyncDisableRequest=serde_json::from_value(json!({"requestId":"legacy","expectedIdentity":identity(),
+            "profile":{"language":"zh-CN","deviceId":"device","userAgent":"agent","userAgentClientHints":"hints","platformClientHint":"Windows"},
+            "pluginId":"plugin","appId":"app","connectionInstanceId":"connection","backingLinkId":null})).unwrap();
+        assert!(!request.github_empty_selection);
+    }
+    #[tokio::test]
+    async fn sync_github_empty_selection_can_disable_admin_status_through_both_account_routes(){
+        for structure in ["personal","workspace"] {
+            let mut replies=github_empty_replies();replies[0].1["accounts"][0]["structure"]=json!(structure);let transport=Fixture::new(replies);
+            let result=ChatgptService::default().plugin_app_sync_disable_with(github_empty_request(true),rpc,&transport).await.unwrap();
+            assert_eq!(result.body["delivery"],"accepted");assert_eq!(result.verification,"pending");
+            let sent=transport.sent.lock().unwrap();assert_eq!(sent.len(),6);assert!(sent[5].url.ends_with(if structure=="personal" {"/delete_synced"}else{"/disconnect"}));
+            assert_eq!(serde_json::from_slice::<Value>(&sent[5].body).unwrap(),if structure=="personal" {json!({"link_id":"link-a"})}else{json!({"connection_id":"connection-a"})});
+        }
+    }
+    #[tokio::test]
+    async fn sync_github_admin_without_empty_selection_origin_remains_forbidden(){
+        let mut replies=github_empty_replies();replies.truncate(5);let transport=Fixture::new(replies);
+        assert_eq!(ChatgptService::default().plugin_app_sync_disable_with(github_empty_request(false),rpc,&transport).await.err().unwrap().code,"forbidden");assert_eq!(transport.sent.lock().unwrap().len(),5);
+    }
+    #[tokio::test]
+    async fn sync_github_empty_origin_never_replaces_fresh_gate_selected_pair_or_identity(){
+        for case in ["gate","wrongapp","wrongselected","knowledge","duplicate","account"] {
+            let mut replies=github_empty_replies();replies.truncate(5);let mut request=github_empty_request(true);
+            match case {
+                "gate"=>{replies[2].1["sync_metadata"]["user_allowed_to_sync"]=json!(false);replies[4].1["connection_statuses"][0]["user_connection_details"]["auth_status"]=json!("user_connected");},
+                "wrongapp"=>{let app="connector_other";request.app_id=app.into();replies[1].1["release"]["app_ids"]=json!([app]);replies[2].1["id"]=json!(app);
+                    for link in replies[3].1["links"].as_array_mut().unwrap(){link["connector_id"]=json!(app);}for status in replies[4].1["connection_statuses"].as_array_mut().unwrap(){status["user_connection_details"]["connector_id"]=json!(app);}},
+                "wrongselected"=>request.selected_link_id=Some("link-b".into()),
+                "knowledge"=>replies[4].1["connection_statuses"][0]["user_connection_details"]["knowledge_connector_type"]=json!("other"),
+                "duplicate"=>{let duplicate=replies[4].1["connection_statuses"][0].clone();replies[4].1["connection_statuses"].as_array_mut().unwrap().push(duplicate);},
+                "account"=>{replies[0].1["accounts"][0]["id"]=json!("another-account");replies[0].1["account_ordering"]=json!(["another-account"]);},_=>unreachable!(),
+            }
+            let transport=Fixture::new(replies);assert!(ChatgptService::default().plugin_app_sync_disable_with(request,rpc,&transport).await.is_err(),"{case}");assert_eq!(transport.sent.lock().unwrap().len(),5);
+        }
+    }
     #[tokio::test]
     async fn sync_malformed_status_or_unknown_links_are_not_empty_success(){
         for field in ["auth_status","connection_instance_id","connector_id","backing_link_id"] {
@@ -178,6 +232,8 @@ pub struct PluginAppSyncDisableRequest {
     pub selected_link_id:Option<String>,
     pub connection_instance_id:String,
     pub backing_link_id:Option<String>,
+    #[serde(default)]
+    pub github_empty_selection:bool,
 }
 
 fn sync_invalid()->ServiceError {failure("invalid_response","Plugin sync data is incomplete")}
@@ -272,7 +328,7 @@ impl ChatgptService {
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn plugin_sync_snapshot<F,Fut,T>(&self,common:&PluginPermissionsRequest,plugin_id:&str,app_id:Option<&str>,selected:Option<&str>,registration:&Registration<'_>,call:&F,transport:&T)->ServiceResult<Value>
+    pub(super) async fn plugin_sync_snapshot<F,Fut,T>(&self,common:&PluginPermissionsRequest,plugin_id:&str,app_id:Option<&str>,selected:Option<&str>,registration:&Registration<'_>,call:&F,transport:&T)->ServiceResult<Value>
     where F:Fn(&'static str,Value)->Fut,Fut:Future<Output=Result<Value,String>>,T:Transport {
         let accounts=self.permission_http("/backend-api/wham/accounts/check",HttpMethod::Get,common,registration,call,transport).await?;
         let account=sync_account(&accounts,&common.expected_identity)?;
@@ -305,7 +361,16 @@ impl ChatgptService {
         let target=targets.next().ok_or_else(||failure("not_found","Selected sync connection is unavailable"))?;
         if targets.next().is_some() {return Err(sync_invalid());}
         let target=&target["user_connection_details"];
-        if target["auth_status"]!="user_connected" {return Err(failure("forbidden","Administrator-managed sync cannot be disabled here"));}
+        if request.github_empty_selection {
+            let (selected,_)=sync_selected(&before["details"],request.selected_link_id.as_deref())?;
+            let github=plugin_app_link_permissions::link_permission_normalize(&request.app_id)=="connector_76869538009648d5b282a4bb21c3d157"
+                && before["details"]["connector"]["sync_metadata"]["user_allowed_to_sync"]==true
+                && target["knowledge_connector_type"]=="github"
+                && selected.is_some_and(|link|link["id"].as_str().is_some_and(|id|Some(id)==target["backing_link_id"].as_str()));
+            if !github {return Err(failure("forbidden","GitHub empty selection requires its current sync connection"));}
+        } else if target["auth_status"]!="user_connected" {
+            return Err(failure("forbidden","Administrator-managed sync cannot be disabled here"));
+        }
         let personal=before["account"]["structure"]=="personal";
         let (route,body)=if personal && request.backing_link_id.is_some() {
             ("/backend-api/ca/v2/user/delete_synced",json!({"link_id":request.backing_link_id}))
@@ -320,7 +385,7 @@ impl ChatgptService {
         Ok(ProfileMutationResponse{request_id:request.request_id,identity:common.expected_identity,body:json!({"delivery":delivery}),readback:Value::Null,verification:"pending"})
     }
 
-    async fn plugin_sync_http<F,Fut,T>(&self,route:&str,body:Option<&Value>,request:&PluginPermissionsRequest,registration:&Registration<'_>,call:&F,transport:&T)->ServiceResult<Value>
+    pub(super) async fn plugin_sync_http<F,Fut,T>(&self,route:&str,body:Option<&Value>,request:&PluginPermissionsRequest,registration:&Registration<'_>,call:&F,transport:&T)->ServiceResult<Value>
     where F:Fn(&'static str,Value)->Fut,Fut:Future<Output=Result<Value,String>>,T:Transport {
         let identity=&request.expected_identity;
         let result=tokio::select! {

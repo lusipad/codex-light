@@ -28,11 +28,14 @@ function fixture() {
     if (name === "react/jsx-runtime") return { jsx: (type, props, key) => ({ type, props, key }), jsxs: (type, props, key) => ({ type, props, key }) };
     if (name === "./Icons") return { CloseIcon: "CloseIcon" };
     if (name === "lucide-react") return { Loader2: "Loader2" };
+    if (name === "../pluginGithubSync") return { pluginGithubSyncStatuses: parent => parent.githubStatuses ?? [] };
+    if (name === "./PluginGithubSyncSettings") return { PluginGithubSyncSettings: "PluginGithubSyncSettings" };
     if (name === "../pluginAppSyncState") return { usePluginAppSync: (...args) => { assert.deepEqual(args, [props.connectionIdentity, props.pluginId, props.appId, props.selectedLinkId]); return { state, reload: async () => { retry++; }, disable: item => { writes.push(item); return save(item); } }; } };
     if (name === "../pluginAppSync") return {
       pluginAppSyncBadge: value => ({ label: value === "activated" ? "已同步" : value === "activating" || value === "partially_activated" ? "正在同步" : "未同步", variant: value === "activated" ? "success" : "outline" }),
       pluginAppSyncUpdatedAt: item => item.user_connection_details.last_full_sync_completed_at ?? item.user_connection_details.last_delta_sync_completed_at ?? null,
       pluginAppSyncCanDisable: (item, account, id) => item.user_connection_details.auth_status === "user_connected" && account?.id === id && (item.user_connection_details.connection_instance_id.length > 0 || account.structure === "personal" && item.user_connection_details.backing_link_id != null),
+      pluginAppGithubEmptyCanDisable: (parent, item) => parent.account?.id === parent.identity.accountId && parent.githubStatuses?.includes(item),
     };
     if (name.endsWith(".css")) return {}; throw Error(name);
   } });
@@ -48,6 +51,27 @@ function fixture() {
   };
 }
 const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
+{
+  // The production gate is exercised by verify-plugin-github-sync; this checks its Page consumer.
+  const f = fixture(); f.tree; assert.equal(f.find(n => n.type === "PluginGithubSyncSettings"), undefined);
+  const github = status({ knowledge_connector_type: "github" });
+  f.state({ snapshot: { ...f.snapshot, statuses: [github], githubStatuses: [github] } });
+  const child = f.find(n => n.type === "PluginGithubSyncSettings"); assert.ok(child); assert.equal(child.props.parent.githubStatuses[0], github);
+  assert.equal(child.props.onDisable(), true); f.tree; assert.ok(f.dialog); assert.equal(f.writes.length, 0); assert.equal(f.buttons("禁用同步").at(-1).props.disabled, true);
+  f.buttons("取消")[0].props.onClick(); f.tree; assert.equal(f.writes.length, 0);
+  const retired = child.props.onSaved, retiredDisable = child.props.onDisable;
+  f.state({ snapshot: { ...f.snapshot, appId: "B", statuses: [github], githubStatuses: [github] } });
+  retired(); assert.equal(retiredDisable(), false); assert.equal(f.updated, 0); assert.equal(f.dialog, undefined); f.unmount();
+}
+{
+  const f = fixture(), admin = status({ auth_status: "admin_connected", knowledge_connector_type: "github" });
+  f.state({ snapshot: { ...f.snapshot, statuses: [admin], githubStatuses: [admin] } });
+  assert.equal(f.buttons("禁用同步").length, 0, "ordinary admin status remains read-only");
+  const child = f.find(n => n.type === "PluginGithubSyncSettings");
+  assert.equal(child.props.onDisable(), true, "GitHub empty-selection callback has its distinct confirmed path");
+  f.tree; assert.ok(f.dialog); assert.equal(f.writes.length, 0); assert.equal(f.buttons("禁用同步").at(-1).props.disabled, true);
+  f.ack(); f.submit(); await flush(); assert.equal(f.writes.length, 1); f.unmount();
+}
 {
   const f = fixture(); f.tree; assert.equal(f.document.title, "同步"); assert.match(text(f.tree), /插件设置.*真实插件.*同步/); assert.match(text(f.tree), /已同步/);
   assert.match(text(f.tree), /同步的内容可用于回答问题和查找信息/);

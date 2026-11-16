@@ -52,6 +52,7 @@ const scripts = [
   'verify-plugin-app-sync.mjs',
   'verify-plugin-app-sync-client.mjs', 'verify-plugin-app-sync-state.mjs', 'verify-plugin-app-sync-page.mjs',
   'verify-plugin-app-sync-parent.mjs', 'verify-plugin-app-sync-entry.mjs',
+  'verify-plugin-github-sync.mjs', 'verify-plugin-github-sync-state.mjs', 'verify-plugin-github-sync-settings.mjs',
   'verify-plugin-provided-settings.mjs', 'verify-plugin-settings-runtime.mjs',
   'verify-plugin-provided-settings-state.mjs', 'verify-plugin-provided-settings-form.mjs', 'verify-plugin-provided-settings-parent.mjs',
   'verify-plugin-management-surface.mjs',

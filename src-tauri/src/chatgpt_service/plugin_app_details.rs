@@ -88,6 +88,18 @@ fn app_details_connector(app_id: &str, metadata: Value) -> ServiceResult<Value> 
             connector.insert("supported_auth".into(), json!(auth));
         }
     }
+    if let Some(value) = source.get("sync_metadata") {
+        if value.is_null() { connector.insert("sync_metadata".into(), Value::Null); }
+        else {
+            let source = value.as_object().ok_or_else(app_details_invalid)?;
+            let mut selected = serde_json::Map::new();
+            if let Some(value) = source.get("user_allowed_to_sync") {
+                if !value.is_null() && !value.is_boolean() { return Err(app_details_invalid()); }
+                selected.insert("user_allowed_to_sync".into(), value.clone());
+            }
+            connector.insert("sync_metadata".into(), Value::Object(selected));
+        }
+    }
     if let Some(value) = source.get("labels") {
         if value.is_null() { connector.insert("labels".into(), Value::Null); }
         else {
@@ -270,6 +282,19 @@ mod tests {
         source.as_object_mut().unwrap().remove("supported_auth");assert!(app_details_connector("connector_real",source.clone()).unwrap().get("supported_auth").is_none());
         for value in [json!(false),json!([{}]),json!([{"type":null}])] {
             source["supported_auth"]=value;assert!(app_details_connector("connector_real",source.clone()).is_err());
+        }
+    }
+    #[test]
+    fn app_details_sync_metadata_is_optional_strict_boolean_whitelist() {
+        let mut source=metadata();
+        assert!(app_details_connector("connector_real",source.clone()).unwrap().get("sync_metadata").is_none());
+        source["sync_metadata"]=Value::Null;assert!(app_details_connector("connector_real",source.clone()).unwrap()["sync_metadata"].is_null());
+        for allowed in [Value::Null,json!(false),json!(true)] {
+            source["sync_metadata"]=json!({"user_allowed_to_sync":allowed,"secret":"never-return"});
+            let result=app_details_connector("connector_real",source.clone()).unwrap();assert_eq!(result["sync_metadata"],json!({"user_allowed_to_sync":allowed}));
+        }
+        for value in [json!(false),json!({"user_allowed_to_sync":"true"}),json!({"user_allowed_to_sync":1})] {
+            source["sync_metadata"]=value;assert!(app_details_connector("connector_real",source.clone()).is_err());
         }
     }
     #[tokio::test]

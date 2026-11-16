@@ -69,9 +69,23 @@ export function pluginAppSyncCanDisable(status: PluginAppSyncStatus, account: { 
     (details.connection_instance_id.length !== 0 || account.structure === "personal" && details.backing_link_id != null);
 }
 
+export function pluginAppGithubSyncStatuses(parent: PluginAppSyncSnapshot): PluginAppSyncStatus[] {
+  if (canonicalMcpAppId(parent.appId) !== "connector_76869538009648d5b282a4bb21c3d157" || parent.details.connector.sync_metadata?.user_allowed_to_sync !== true || parent.details.links === null) return [];
+  const selection = selectPluginAppSync(parent.details, parent.selectedLinkId, parent.statuses);
+  return selection.selectedLink ? selection.statuses.filter(status => status.user_connection_details.knowledge_connector_type === "github" && status.user_connection_details.backing_link_id === selection.selectedLink!.id) : [];
+}
+
+export function pluginAppGithubEmptyCanDisable(parent: PluginAppSyncSnapshot, status: PluginAppSyncStatus): boolean {
+  const matches = pluginAppGithubSyncStatuses(parent).filter(item => item.user_connection_details.connection_instance_id === status.user_connection_details.connection_instance_id && item.user_connection_details.backing_link_id === status.user_connection_details.backing_link_id);
+  const details = matches[0]?.user_connection_details;
+  return matches.length === 1 && parent.account?.id === parent.identity.accountId && Boolean(details &&
+    (details.connection_instance_id.length !== 0 || parent.account?.structure === "personal" && details.backing_link_id != null));
+}
+
 export interface PluginAppSyncSnapshot {
   identity: ServiceIdentity;
   routeAppId: string | null;
+  selectedLinkId: string | null;
   appId: string;
   details: PluginAppDetails;
   account: { id: string; structure: string } | null;
@@ -105,7 +119,7 @@ export function decodePluginAppSync(raw: unknown, pluginId: string, routeAppId: 
     return { user_connection_details: result };
   });
   if (selectPluginAppSync(details, selectedLinkId, statuses).statuses.length !== statuses.length) throw invalidSync();
-  return { identity, routeAppId, appId: body.appId, details, account: account ? { id: account.id as string, structure: account.structure as string } : null, statuses };
+  return { identity, routeAppId, selectedLinkId, appId: body.appId, details, account: account ? { id: account.id as string, structure: account.structure as string } : null, statuses };
 }
 
 async function verifySyncIdentity(identity: ServiceIdentity, signal: AbortSignal) {
@@ -133,17 +147,17 @@ export async function loadPluginAppSync(pluginId: string, appId: string | null, 
   return readSyncSnapshot(pluginId, appId, selectedLinkId, identity, signal);
 }
 
-export async function disablePluginAppSync(snapshot: PluginAppSyncSnapshot, status: PluginAppSyncStatus, selectedLinkId: string | null, signal: AbortSignal): Promise<{
+export async function disablePluginAppSync(snapshot: PluginAppSyncSnapshot, status: PluginAppSyncStatus, selectedLinkId: string | null, signal: AbortSignal, githubEmptySelection = false): Promise<{
   snapshot: PluginAppSyncSnapshot | null; confirmed: boolean; refreshError: string | null;
 }> {
   const matches = snapshot.statuses.filter(item => pair(item) === pair(status));
-  if (matches.length !== 1 || !pluginAppSyncCanDisable(matches[0], snapshot.account, snapshot.identity.accountId)) throw Object.assign(Error("当前无法禁用同步，请重新读取。"), { code: "invalid_request" });
+  if (matches.length !== 1 || !(githubEmptySelection ? pluginAppGithubEmptyCanDisable({ ...snapshot, selectedLinkId }, matches[0]) : pluginAppSyncCanDisable(matches[0], snapshot.account, snapshot.identity.accountId))) throw Object.assign(Error("当前无法禁用同步，请重新读取。"), { code: "invalid_request" });
   const target = matches[0].user_connection_details;
   const selection = selectPluginAppSync(snapshot.details, selectedLinkId, snapshot.statuses);
   if (!selection.statuses.includes(matches[0])) throw Object.assign(Error("同步账户已改变，请重新读取。"), { code: "invalid_request" });
   await verifySyncIdentity(snapshot.identity, signal);
   try {
-    const result = await disableServicePluginAppSync(snapshot.details.pluginId, snapshot.appId, selectedLinkId, target.connection_instance_id, target.backing_link_id ?? null, snapshot.identity, signal);
+    const result = await disableServicePluginAppSync(snapshot.details.pluginId, snapshot.appId, selectedLinkId, target.connection_instance_id, target.backing_link_id ?? null, snapshot.identity, signal, githubEmptySelection);
     if (!["accepted", "unknown"].includes(String(object(result.body)?.delivery))) throw invalidSync();
   } catch (error) {
     const code = (error as { code?: string } | null)?.code;

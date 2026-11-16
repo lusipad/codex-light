@@ -523,6 +523,39 @@ async fn plugin_app_sync_disable(
 }
 
 #[tauri::command]
+async fn plugin_github_sync_read(
+    app: AppHandle, state: State<'_, AppState>, request: chatgpt_service::PluginGithubSyncRequest,
+) -> Result<chatgpt_service::PluginPermissionsResponse, chatgpt_service::ServiceError> {
+    state.chatgpt_service.plugin_github_sync_read(request, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
+async fn plugin_github_sync_search(
+    app: AppHandle, state: State<'_, AppState>, request: chatgpt_service::PluginGithubSyncSearchRequest,
+) -> Result<chatgpt_service::PluginPermissionsResponse, chatgpt_service::ServiceError> {
+    state.chatgpt_service.plugin_github_sync_search(request, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
+async fn plugin_github_sync_write(
+    app: AppHandle, state: State<'_, AppState>, request: chatgpt_service::PluginGithubSyncWriteRequest,
+) -> Result<chatgpt_service::ProfileMutationResponse, chatgpt_service::ServiceError> {
+    state.chatgpt_service.plugin_github_sync_write(request, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
 async fn plugin_app_link_permission_write(
     app: AppHandle, state: State<'_, AppState>, request: chatgpt_service::PluginAppLinkPermissionWriteRequest,
 ) -> Result<chatgpt_service::ProfileMutationResponse, chatgpt_service::ServiceError> {
@@ -2610,6 +2643,9 @@ pub fn run() {
             plugin_app_link_permission_write,
             plugin_app_sync_read,
             plugin_app_sync_disable,
+            plugin_github_sync_read,
+            plugin_github_sync_search,
+            plugin_github_sync_write,
             plugin_app_resolve,
             plugin_app_standalone_read,
             plugin_permissions_write,

@@ -258,3 +258,37 @@
 可复现入口：插件管理的真实App详情，有匹配状态才显示“同步”→状态行“禁用同步”→勾选前不可提交、取消应无写入。真实停止会移除同步内容，仅在已有授权场景验证，本轮没有执行。确认读回后才刷新runtime/service库存；该刷新失败单独提示，不重发停止请求。库/系统提示等跨页及多窗消费者仍在整页回归范围，不以当前两个库存刷新声称完整复制官方Zi失效集合。
 
 下一仍为第02批：GitHub仓库配置（新typed合同13片段/11中文键已备）、隐式canonical根完整App管理面、reconnect/OAuth和HTML/特殊宿主残项，再第03批整页候选。本阶段本地提交，无推送发布；普通同步候选不是整页G5或1:1验收。
+
+## R2 GitHub同步仓库配置阶段（2026-11-16，338eb92之后，验证中）
+
+开发前核固定26.1111的`app-github-sync-contract.md`与13精确UTF16片段、11简中键及4资源哈希。metadata仅扩sync_metadata.user_allowed_to_sync boolean/null白名单；固定Github App、当前实际所选link及唯一github connection共同决定配置区域，不加owner/personal或user_connected配置门禁。新三个固定IPC分别读配置、提交搜索和保存；配置CA请求generic headers，搜索单独settings/CONNECTOR_SETTING。前后端都核真实scope/identity，写前fresh读配置，新ID通过对应query/pageToken重新搜索证明，最多5组，不建跨请求ledger或任意URL入口。
+
+页面：初始读配置+空查询，手动提交搜索；空query补已配仓库、搜索优先去重、服务器基准已选优先排序；跨query/分页保草稿及来源，最多5项仍可取消已选。dirty取消零写，非空保存才POST extension；ACK/unknown以真实GET精确Set回验，旧值/读取失败保持desired/只读恢复，不重放保存。分页空token保留，重复cursor禁止循环，专门重试重读配置+当前query首页；普通加载更多可重试当前分页。
+
+跨组件P2已复现并修正：GitHub空Save可经父Z进入admin匹配状态的确认，普通行user_connected门禁不适用。Page先false/expectedtrue红后绿；后端新增来源DTO的真实serde红为0通过/3失败（unknown githubEmptySelection），随后新增默认false及fresh GitHub特例：固定App、strict metadata、所选可见link、knowledge及唯一connection/backing、当前wham账号均核定才允许；普通admin行/默认请求仍只读，非Github来源标记不能扩权。空保存没有配置POST，仍需父弹层必勾确认；路由沿现有personal/backing分支。配置操作本身没有新增个人/owner门禁。
+
+支持边界与差异：配置ID接受Rust JSON整数字面量或digits整数串，搜索仅JSON整数字面量，0至MAX_SAFE_INTEGER；float/scientific数值与非整数/溢出/不支持字符串显式拒绝，不将坏已配值变空。此比原Number转换窄，不是官方wire schema。额外fresh来源重查、严格读回与busy锁是项目实现差异；真实服务接受性、当前gate、原生GUI/IME、配对像素、托管CI和用户验收未验。读回未匹配时不会宣称已保存。下一canonical根合同已用5来源/28片段核实RequiresLocal宿主helper常false（import→调用→返回均有证据），pS/Ok自身没有该门禁；当前共享解析的unsupported_host属于待纠偏差异，将在根管理面单元修正，未以本阶段通过消除此缺口。
+
+验证：旧134项plugin_组通过后，GitHub空选择修正后的138项组通过（719 filtered，不能称全库）。生产domain/桥、hook、Panel及普通Page父确认有回归；metadata/普通同步既有回归通过。独立初审遗漏空Save/admin路径后已补正为确定P2并复核修复，不用早期“无P1/P2”掩盖后续发现。随后全库857项通过（0失败/忽略/过滤，129.11秒）、完整206前端回放exit0，512产品输入不变；非Fast标准及新候选结果见本节末。全部证据位于`.ref/parity/12/whole-page/actual/plugin-github-sync-r2-20261116/`。
+
+### GitHub子单元用例索引（隔离回归，不是真实账号/原生验收）
+
+| ID | 同版预期及操作 | 当前证据/结论 |
+|---|---|---|
+| GH01 | metadata严格true+固定App+当前可见link+唯一github connection才出现配置；假门控不开放 | domain、metadata与Rust scope用例通过 |
+| GH02 | 缺optional配置数组为空；畸形/不支持已配ID报错，不能清空；字符串配置ID与搜索ID分开 | Rust配置/ID白名单及domain回归通过；浮点/科学计数支持边界保留 |
+| GH03 | 输入不查询，提交trim值后读取；opaque空cursor可继续，重复cursor不循环 | Panel/hook/domain/transport回归通过；真实服务及物理IME未验 |
+| GH04 | 搜索项优先去重，空query补基准，按服务器已选优先；跨搜索保留草稿和proof | pure/hook回归通过 |
+| GH05 | 满5禁新增但可取消；取消回基准，零写；已配超5可减至5 | Panel/hook/后端数量用例通过 |
+| GH06 | 非空dirty保存：fresh配置/新ID搜索证明→一次POST→真实GET相同Set才确认 | transport/domain/hook回归通过；HTTP接受性未验 |
+| GH07 | 空Save只开父确认，勾选前不写/取消零写；匹配admin GitHub特例可确认，普通admin仍只读 | Page/domain红后绿、后端3项红后绿及默认false回归通过 |
+| GH08 | ACK/未知但读旧值保持desired只读；重新读取命中目标Set才解除；不重放POST | domain/hook/Panel回归通过 |
+| GH09 | 切query/App/account/link/connection、ABA或卸载后旧响应/按钮不能影响新scope | hook/组件/identity回归通过 |
+| GH10 | 相同新源码打包、宽窄/Tab/Escape/焦点/物理IME及官方配对像素 | 新候选构建exit0；原生GUI及视觉未验，不由206前端回放替代 |
+最终验证与候选：当前512项冻结产品输入下，全Rust857项（0失败/忽略/过滤，129.11秒）、206完整前端回放、非Fast标准整轮/34真实隔离协议探针及当前TypeScript/Vite/原生EXE+MSI+NSIS均exit0；没有最终源码补丁绕过验证或使用上一阶段EXE。
+
+候选`dist-artifacts/plugins-r2-github-sync-20261116/CodexNative.exe`，30,173,696字节，SHA256 `d3620c6b06077b868c9c0dce8b4d66ed19b64e50884c727b13d36d20b94a4129`；输入清单SHA256 `d906f102901803772376ddc32a03dde9f356d4e82abacf18bd5f613267a2d4b6`。三产物大小/哈希与准确执行范围见本阶段证据`candidate-artifacts.json`/`verification-summary.json`。构建对应338eb92之后本阶段工作树，提交后补sourceCommit；安装/升级、真实GUI/IME、多窗、真实账号HTTP、官方同环境像素、托管CI与用户验收均未验。
+
+本阶段复用原同步snapshot、HTTP传输、实际账户选择及父确认，不新增依赖或跨请求ledger；新增选择仅在当前写请求内按query/cursor分组重读来源。源码可演示入口是具备真实Github资格的插件App详情→同步→已同步的代码仓库；本轮未执行真实配置写入/停止或OAuth。零选择移除内容仅在已有授权场景确认，不应以toast替代结果。
+
+下一仍在第02批：隐式canonical根App管理面（先纠正已证的常false宿主helper被误用为门禁及generic回退），再独立管理应用/授权/特殊宿主残项和第03批整页候选。阶段本地提交，无推送或发布，不升整页G5；剩余wire支持边界、严格读回/缓存时序和原生像素待验继续保留。

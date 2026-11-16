@@ -23,7 +23,8 @@ export interface PluginAppDetails {
   appId: string;
   connector: { id: string; name: string; description?: string | null; status?: string | null; enable_multi_links?: boolean | null;
     supported_auth?: { type: string }[] | null;
-    labels?: { apps_privacy_control_available?: string | null } | null };
+    labels?: { apps_privacy_control_available?: string | null } | null;
+    sync_metadata?: { user_allowed_to_sync?: boolean | null } | null };
   links: PluginAppLink[] | null;
   linksError: { code: string; message: string } | null;
 }
@@ -39,6 +40,8 @@ export function decodePluginAppConnector(raw: unknown, appId: string): PluginApp
     connector.enable_multi_links != null && typeof connector.enable_multi_links !== "boolean") throw invalid();
   const labels = connector.labels == null ? connector.labels : object(connector.labels);
   if (connector.labels != null && labels === null || labels?.apps_privacy_control_available != null && typeof labels.apps_privacy_control_available !== "string") throw invalid();
+  const syncMetadata = connector.sync_metadata == null ? connector.sync_metadata : object(connector.sync_metadata);
+  if (connector.sync_metadata != null && syncMetadata === null || syncMetadata?.user_allowed_to_sync != null && typeof syncMetadata.user_allowed_to_sync !== "boolean") throw invalid();
   let supported: { type: string }[] | null | undefined;
   if (connector.supported_auth === null) supported = null;
   else if (connector.supported_auth !== undefined) {
@@ -54,6 +57,7 @@ export function decodePluginAppConnector(raw: unknown, appId: string): PluginApp
     ...(connector.enable_multi_links !== undefined ? { enable_multi_links: connector.enable_multi_links as boolean | null } : {}),
     ...(supported !== undefined ? { supported_auth: supported } : {}),
     ...(connector.labels === null ? { labels: null } : labels ? { labels: labels.apps_privacy_control_available === undefined ? {} : { apps_privacy_control_available: labels.apps_privacy_control_available as string | null } } : {}),
+    ...(connector.sync_metadata === null ? { sync_metadata: null } : syncMetadata ? { sync_metadata: syncMetadata.user_allowed_to_sync === undefined ? {} : { user_allowed_to_sync: syncMetadata.user_allowed_to_sync as boolean | null } } : {}),
   };
 }
 

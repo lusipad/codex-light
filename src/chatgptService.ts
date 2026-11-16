@@ -582,12 +582,42 @@ export async function readPluginAppSync(pluginId: string, appId: string | null, 
   return responseBody(result, requestId, identity);
 }
 
+export interface PluginGithubSyncTarget {
+  pluginId: string; appId: string | null; resolvedAppId: string; selectedLinkId: string | null; connectionInstanceId: string; backingLinkId: string;
+}
+
+export async function readPluginGithubSync(target: PluginGithubSyncTarget, identity: ServiceIdentity, signal: AbortSignal): Promise<unknown> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; body: unknown }>(
+    "plugin_github_sync_read", requestId, { request: { requestId, expectedIdentity: identity, profile: browserProfile(), ...target } }, signal,
+  );
+  return responseBody(result, requestId, identity);
+}
+
+export async function searchPluginGithubRepositories(target: PluginGithubSyncTarget, query: string, pageToken: string | null, identity: ServiceIdentity, signal: AbortSignal): Promise<unknown> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; body: unknown }>(
+    "plugin_github_sync_search", requestId, { request: { requestId, expectedIdentity: identity, profile: browserProfile(), ...target, query, pageToken } }, signal,
+  );
+  return responseBody(result, requestId, identity);
+}
+
+export async function writePluginGithubSync(target: PluginGithubSyncTarget, repositories: { id: number; query?: string; pageToken?: string | null }[], identity: ServiceIdentity, signal: AbortSignal): Promise<ProfileMutationResult> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<ProfileMutationResult & { requestId: string; identity: ServiceIdentity }>(
+    "plugin_github_sync_write", requestId, { request: { requestId, expectedIdentity: identity, profile: browserProfile(), ...target, repositories } }, signal,
+  );
+  responseBody(result, requestId, identity);
+  if (result.verification !== "pending") throw Error("代码仓库同步写入回执无效，请重新读取。");
+  return result;
+}
+
 export async function disableServicePluginAppSync(pluginId: string, appId: string, selectedLinkId: string | null, connectionInstanceId: string,
-  backingLinkId: string | null, identity: ServiceIdentity, signal: AbortSignal): Promise<ProfileMutationResult> {
+  backingLinkId: string | null, identity: ServiceIdentity, signal: AbortSignal, githubEmptySelection = false): Promise<ProfileMutationResult> {
   const requestId = crypto.randomUUID();
   const result = await invokeService<ProfileMutationResult & { requestId: string; identity: ServiceIdentity }>(
     "plugin_app_sync_disable", requestId,
-    { request: { requestId, expectedIdentity: identity, profile: browserProfile(), pluginId, appId, selectedLinkId, connectionInstanceId, backingLinkId } }, signal,
+    { request: { requestId, expectedIdentity: identity, profile: browserProfile(), pluginId, appId, selectedLinkId, connectionInstanceId, backingLinkId, githubEmptySelection } }, signal,
   );
   responseBody(result, requestId, identity);
   if (result.verification !== "pending") throw Error("同步操作回执无效，请重新读取。");

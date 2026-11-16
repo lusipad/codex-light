@@ -1,8 +1,10 @@
 import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { CloseIcon } from "./Icons";
-import { pluginAppSyncBadge, pluginAppSyncUpdatedAt, pluginAppSyncCanDisable, type PluginAppSyncStatus } from "../pluginAppSync";
+import { pluginAppSyncBadge, pluginAppSyncUpdatedAt, pluginAppSyncCanDisable, pluginAppGithubEmptyCanDisable, type PluginAppSyncStatus } from "../pluginAppSync";
 import { usePluginAppSync } from "../pluginAppSyncState";
+import { pluginGithubSyncStatuses } from "../pluginGithubSync";
+import { PluginGithubSyncSettings } from "./PluginGithubSyncSettings";
 import "./PluginManagementDetail.css";
 import "./AddPluginMarketplaceDialog.css";
 import "./PluginAppSyncPage.css";
@@ -22,7 +24,7 @@ export function PluginAppSyncPage({ connectionIdentity, pluginId, appId, selecte
   const generationRef = useRef({ scope }), mounted = useRef(false), sequence = useRef(0), flight = useRef<object | null>(null);
   if (generationRef.current.scope !== scope) generationRef.current = { scope };
   const generation = generationRef.current;
-  const [confirmation, setConfirmation] = useState<{ generation: typeof generation; key: string; token: number } | null>(null);
+  const [confirmation, setConfirmation] = useState<{ generation: typeof generation; key: string; token: number; githubEmptySelection: boolean } | null>(null);
   const [ack, setAck] = useState(false), [localPending, setLocalPending] = useState(false), [localError, setLocalError] = useState<string | null>(null);
   const selection = confirmation?.generation === generation ? confirmation : null;
   const current = useRef({ state, selection }); current.current = { state, selection };
@@ -31,7 +33,7 @@ export function PluginAppSyncPage({ connectionIdentity, pluginId, appId, selecte
   const dialog = useRef<HTMLDialogElement>(null), checkbox = useRef<HTMLInputElement>(null), composing = useRef(false), id = useId();
   const busy = state.pending || localPending, busyNow = () => current.current.state.pending || flight.current !== null;
   const actual = selection ? snapshot?.statuses.find(status => statusKey(status) === selection.key) : undefined;
-  const eligible = actual && snapshot && pluginAppSyncCanDisable(actual, snapshot.account, snapshot.identity.accountId);
+  const eligible = actual && snapshot && (selection?.githubEmptySelection ? pluginAppGithubEmptyCanDisable(snapshot, actual) : pluginAppSyncCanDisable(actual, snapshot.account, snapshot.identity.accountId));
   useLayoutEffect(() => {
     mounted.current = true; flight.current = null; composing.current = false; setConfirmation(null); setAck(false); setLocalPending(false); setLocalError(null);
     return () => { mounted.current = false; flight.current = null; };
@@ -48,23 +50,24 @@ export function PluginAppSyncPage({ connectionIdentity, pluginId, appId, selecte
     if (!modalActive() || busyNow() || composing.current) return;
     current.current.selection = null; setConfirmation(null); setAck(false); setLocalError(null);
   };
-  const open = (status: PluginAppSyncStatus) => {
+  const open = (status: PluginAppSyncStatus, githubEmptySelection = false) => {
     const latest = current.current.state, data = latest.snapshot;
-    if (!active() || latest.loading || latest.blocked || latest.uncertain || busyNow() || current.current.selection || !data) return;
+    if (!active() || latest.loading || latest.blocked || latest.uncertain || busyNow() || current.current.selection || !data) return false;
     const key = statusKey(status), matches = data.statuses.filter(item => statusKey(item) === key);
-    if (matches.length !== 1 || !pluginAppSyncCanDisable(matches[0], data.account, data.identity.accountId)) return;
-    const next = { generation, key, token: ++sequence.current };
+    if (matches.length !== 1 || !(githubEmptySelection ? pluginAppGithubEmptyCanDisable(data, matches[0]) : pluginAppSyncCanDisable(matches[0], data.account, data.identity.accountId))) return false;
+    const next = { generation, key, token: ++sequence.current, githubEmptySelection };
     current.current.selection = next; setAck(false); setLocalError(null); setConfirmation(next);
+    return true;
   };
   const run = async (reading: boolean) => {
     const latest = current.current.state, data = latest.snapshot;
     if (!active() || busyNow() || latest.loading || !reading && (!modalActive() || !ack || composing.current || latest.blocked || latest.uncertain || !data)) return;
     const matches = selection && data ? data.statuses.filter(item => statusKey(item) === selection.key) : [];
-    if (!reading && (matches.length !== 1 || !pluginAppSyncCanDisable(matches[0], data!.account, data!.identity.accountId))) return;
+    if (!reading && (matches.length !== 1 || !(selection?.githubEmptySelection ? pluginAppGithubEmptyCanDisable(data!, matches[0]) : pluginAppSyncCanDisable(matches[0], data!.account, data!.identity.accountId)))) return;
     const request = {}; flight.current = request; setLocalPending(true); setLocalError(null);
     try {
       if (reading) await reload();
-      else if (await disable(matches[0]) && modalActive()) { current.current.selection = null; setConfirmation(null); setAck(false); onUpdated?.(); }
+      else if (await disable(matches[0], selection?.githubEmptySelection ?? false) && modalActive()) { current.current.selection = null; setConfirmation(null); setAck(false); onUpdated?.(); }
     } catch { if (active()) setLocalError(reading ? "无法加载插件设置" : "无法禁用同步。请重试"); }
     finally { if (active() && flight.current === request) { flight.current = null; setLocalPending(false); } }
   };
@@ -85,6 +88,12 @@ export function PluginAppSyncPage({ connectionIdentity, pluginId, appId, selecte
         {details.auth_status === "user_connected" ? <button type="button" className="pas-disable" disabled={state.loading || busy || state.blocked || !pluginAppSyncCanDisable(status, snapshot.account, snapshot.identity.accountId)} onClick={() => open(status)}>禁用同步</button>
           : <span className="pas-admin">由管理员管理</span>}</div>;
     })}</section>}
+    {snapshot && pluginGithubSyncStatuses(snapshot).map(status => <PluginGithubSyncSettings key={status.user_connection_details.connection_instance_id}
+      connectionIdentity={connectionIdentity} parent={snapshot} status={status} disabled={state.loading || busy || state.blocked || selection !== null}
+      onDisable={() => open(status, true)} onSaved={() => {
+        if (!active() || busyNow() || current.current.selection) return;
+        onUpdated?.(); void reload();
+      }} />)}
     {recovery && !selection && <div role="alert"><p>{state.uncertain ? recovery : "无法加载插件设置"}</p><button type="button" className="secondary-btn-sm" disabled={state.loading || busy} onClick={() => { void run(true); }}>{state.uncertain ? "重新读取" : "重试"}</button></div>}
     {selection && <dialog key={`${scope}:${selection.token}`} ref={dialog} className="apm-dialog pas-dialog" aria-labelledby={`${id}-title`} aria-describedby={`${id}-description`}
       onCompositionStart={() => { if (modalActive()) composing.current = true; }} onCompositionEnd={() => { if (modalActive()) composing.current = false; }}
