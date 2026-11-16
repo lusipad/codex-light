@@ -41,6 +41,22 @@
 
 ## 下一步与未完成
 
+### R2-C 完整详情集成中（晚于68afa2a）
+
+同版补证后新增`PluginDirectoryDetail`、`PluginDirectoryIncluded`、`PluginDirectoryLegal`与共享`PluginLogo`，复用Markdown、技能预览、真实fs协议及原生链接命令；没有新依赖。父层与App接真实安装/启用读回、准确plugin mention及首页草稿，不发送模型。新增生产专项覆盖字段优先级、15/3显示行测量、身份隔离、技能匹配/只读、法律原文、资产及父/App接线。
+
+独立复审和主线程补回归分别复现并修复：本机CLI远端来源被误分流HTTP；真实service启用成功但未返回确认实体导致首轮试用仍失败。两项均先红后绿，pending与runtime刷新失败仍禁止起草。详情外链也补先红回归后接真实`review_link_open`，不让空点击冒充打开。
+
+私有CLI0.159.2探针已返回真实interface（中文标题、两条提示词、28段长说明、信息字段及绝对logo路径）、一个技能，并独立确认安装与skills/list；证据`.ref/parity/12/whole-page/actual/detail-r2c-20261116/fixture.json/.log/.exit`，0模型turn。154前端总入口退出0，新EXE/MSI/NSIS首轮构建退出0。该首轮447输入之后，官方补证改变ON_USE前置条件并确认搜索须替换普通首页区域，只有SkillsMcpView一个产品输入变化，两项回归先红后绿。补丁后154完整前端、末次TypeScript、新原生重建均退出0（`frontend-final`、`typescript-final`、`native-build-final`）；`product-inputs-final.json`在最终构建/原生后0变化。
+
+非Fast标准退出0，实际包含32个原有真实协议探针；标准进程启动后才登记的`verify-plugin-detail.mjs`另行执行退出0，新增真实fs图标字节与已装技能内容检查。共33种探针有本轮结果，不把新探针写成已包含于该次旧脚本执行。84个Rust产品输入与前轮745全库测试对应输入一致，未重复跑新一轮全库，证据`rust-input-equivalence.json`；本轮标准中的Rust过滤组不能冒充另一次745全量。
+
+首轮原生EXE `8865ff9932b29eca44a7ec21ad081155ffa6ba5ccc0981adfbb83a7ac11f6a3e`验证：真实logo、标题/提示词/说明；展开至第28段再收起；技能预览真实内容与Escape关闭可见焦点回原技能；信息dl；已安装prompt真实预填完整plugin mention且不发送；未装技能只读无启禁/试用；窄窗957×679（窗口捕获）标题与提示词可见。证据`native-*.jpg/.txt`。UIA输入/焦点字段不足以证明物理IME，JPEG和缺官方配对图不能证明像素一致；首轮EXE不代表后续ON_USE补丁。
+
+最终[CodexNative.exe](../../../dist-artifacts/plugins-r2-detail-20261116/CodexNative.exe) SHA-256 `407d6e83cbd9f59a9d235159f5faa150895e039646b767b7fdd7296e65e50300`（同目录MSI/NSIS）。新窗口另验：重启保留上一草稿；搜索detail-只显示真实结果，没有普通首页图标条/登录提示；打开对应完整详情；点击第二条prompt得到准确的第二条原文和完整plugin mention。`native-final-*.jpg/.txt`、`native-launch-first.json`与`native-launch.json`分别标识两轮；最终窗口已关闭，未GUI安装/卸载或发送模型。`candidate-result.json`记录447输入、三产物hash及各检查退出码。
+
+仍有明确限制：ON_INSTALL/显式setup完成后的提示词恢复、账户/模板/调度/依赖服务、来源tabs/图标条溢出与完整管理、官方配对图和物理IME。ON_USE普通提示词已允许先起草，不永久禁用。logo本地支持PNG/JPEG/GIF/WebP，其他格式未支持；HTTPS远端由浏览器加载，未核远端字节/MIME。rem候选/标题cascade及背景资产许可未核，score保持null。后续来源/图标条合同已补27原始锚点，继续R2而不转页。
+
 ### R2在途集成更新（晚于上述候选构建）
 
 以下是晚于首批候选的集成改动，已使用下节新构建验证本地链路，不能沿用上述首批候选hash作为这些改动的证据：

@@ -211,7 +211,11 @@ const failedMetadata = harness({ directory: { loadPluginDirectorySource: async (
 failedMetadata.props.manageOnly = false; failedMetadata.props.initialTab = "plugins"; failedMetadata.render(); await failedMetadata.tick();
 failedMetadata.nodes(failedMetadata.tree).find(node => node.props.className === "pm-catalog-card").props.onClick(); await failedMetadata.tick();
 assert.match(failedMetadata.text(failedMetadata.tree), /metadata denied/);
-failedMetadata.button("重试").props.onClick(); await failedMetadata.tick(); assert.equal(detailAttempts, 2);
+assert.equal(failedMetadata.nodes(failedMetadata.tree).some(node => node.type === "button" && failedMetadata.text(node) === "重试"), false,
+  "official detail error does not invent an extra retry action");
+failedMetadata.button("插件").props.onClick(); await failedMetadata.tick();
+failedMetadata.nodes(failedMetadata.tree).find(node => node.props.className === "pm-catalog-card").props.onClick();
+await failedMetadata.tick(); assert.equal(detailAttempts, 2);
 assert.doesNotMatch(failedMetadata.text(failedMetadata.tree), /metadata denied/); failedMetadata.unmount();
 let explicitKinds;
 const localSourceView = harness({ directory: { loadPluginDirectorySource: async () => ({ kind: "local" }) },

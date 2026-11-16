@@ -40,7 +40,7 @@ await check("deep-link response identity accepts local and raw remote identities
   ]) {
     const view = await openDetail(id, plugin);
     try {
-      assert.ok(view.nodes(view.tree).some(node => node.type === "h1" && view.text(node) === summary.name),
+      assert.ok(view.nodes(view.tree).some(node => node.type === "PluginDirectoryDetail" && node.props.detail.summary.name === summary.name),
         `valid identity ${id} must render its confirmed metadata`);
       assert.ok(view.nodes(view.tree).some(node => node.type === "button" && view.text(node) === "安装" && !node.props.disabled),
         `valid identity ${id} retains its available installation action`);
@@ -51,11 +51,11 @@ await check("deep-link response identity accepts local and raw remote identities
 await check("deep-link rejects metadata belonging to a different plugin", async () => {
   const view = await openDetail("expected@local", summary);
   try {
-    assert.equal(view.nodes(view.tree).some(node => node.type === "h1" && view.text(node) === summary.name), false,
+    assert.equal(view.nodes(view.tree).some(node => node.type === "PluginDirectoryDetail" && node.props.detail.summary.name === summary.name), false,
       "a mismatching response must not replace the requested plugin identity");
     assert.equal(view.nodes(view.tree).some(node => node.type === "button" && view.text(node) === "安装" && !node.props.disabled), false,
       "a mismatching response must not expose an enabled installation action");
-    assert.match(view.text(view.tree), /读取详情失败/,
+    assert.match(view.text(view.tree), /无法加载插件/,
       "identity rejection remains visible and retryable rather than becoming a blank detail page");
   } finally { view.unmount(); }
 });
@@ -76,6 +76,21 @@ await check("explicit directory refresh retries the current search query", async
     assert.equal(retries, beforeRetries + 1, "refresh must request a new result for the unchanged current query");
     assert.equal(view.nodes(view.tree).find(node => node.props.id === "plugins-store-page-search")?.props.value,
       "retained-query", "refresh retains the search input");
+  } finally { view.unmount(); }
+});
+
+await check("search replaces the normal home strip and home-only login message", async () => {
+  const view = harness({ window: routeWindow("/plugins?search=current-query"),
+    directory: { loadPluginDirectorySource: async () => ({ kind: "requires-chatgpt" }) },
+    directorySearch: () => ({ ...emptySearch, retry() {} }),
+  });
+  view.props.manageOnly = false; view.props.initialTab = "plugins";
+  view.render(); await view.tick();
+  try {
+    assert.equal(view.nodes(view.tree).some(node => node.props.className === "pm-installed-strip"), false,
+      "normal home strip must not remain above search results");
+    assert.doesNotMatch(view.text(view.tree), /插件目录需要登录 ChatGPT/,
+      "an independently successful local-host search must not inherit the remote-home login gate");
   } finally { view.unmount(); }
 });
 

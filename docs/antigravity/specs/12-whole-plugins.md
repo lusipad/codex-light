@@ -56,4 +56,19 @@ R1三桌面能力同版资料在`.ref/parity/16/whole-page/reference/host-r1-202
 
 `verify-plugin-management-b.mjs`与`verify-plugin-preparation.mjs`在私有CODEX_HOME/目录分别退出0，安装/独立详情及installed读回、启禁CAS/冲突、卸载与市场移除读回均有结果，0模型turn。证据`.ref/parity/12/whole-page/actual/r0-20261116/`。本地夹具验证协议消费者，不等于远端账号或官方页面通过。
 
-页面整体剩余：远端首页/分类/来源tabs、完整独立详情及深链、官方资产与精确呈现、原生正常链路、同条件图/物理IME和用户验收。后续结果在整页验收记录续写。
+首批合同发布时的剩余：远端首页/分类/来源tabs、完整独立详情及深链、官方资产与精确呈现、原生正常链路、同条件图/物理IME和用户验收。后续已执行结果在整页验收记录续写，不把此历史清单当当前全部未实现项。
+
+## R2-C 详情、技能预览与草稿的开发合同
+
+在首批目录集成之后补证，不沿用首批候选的界面判断。固定包定向追加3个shared布局/token资源，manifest共146项；新增`detail-contract.md`（PD01–PD24）、`detail-composer-contract.md`、`detail-style-contract.md`、`legal-contract.md`及原始锚点。原始中文来自同版1561语言包，不能把英文defaultMessage直接翻成自定文案。
+
+- **显示顺序**：header → 真实starter prompts/非重复长说明 → included → Information → legal；没有内容tabs。长说明优先interface.longDescription、detail.description、shortDescription；tagline优先shortDescription、description、longDescription。相同内容不重复。
+- **展开**：说明按真实渲染高度折叠到15显示行，能力文本3行；aria-controls/expanded对应正文。尺寸/字体变化重测，切实体及卸载清理观察器；未知动画曲线不自定180ms当官方时序。
+- **提示词**：完整summary.id生成`[@displayName](plugin://summary.id) prompt`，只到真实首页草稿，保留项目与导航守卫，不自动调用模型。未安装先安装并确认，已禁用先启用并确认。远端目录来源不是HTTP执行宿主，只有真实service实体走其变更链；读回/运行时失败、身份或详情变化不得起草。
+- **技能**：先真实path、再限定协议名、最后唯一标准化候选匹配。详情技能列表不等于已安装；无匹配只读预览，已装且非admin才开放真实metadata开关，试用另要求实际enabled与路径。内容按已装路径/详情真实路径读取；无路径仅真实remotePluginId与真实market名称读取，不拆猜插件ID。
+- **included**：当前可接Apps、MCP、Skills、Hooks，保持此相对顺序；不以MCP字符串造开关、不以hooks数量造信任状态。复用真实设置导航及既有安装响应驱动的连接准备；账户、模板管理、调度和依赖服务仍须独立补齐。
+- **信息与法律**：Information要求interface存在且至少有真实信息，使用有序dl；网站缺失显示不可用，其他空字段隐藏。legal按实际apps及严格验证的未配置模板计数，使用同版中文和真实帮助URL；Google仅精确应用ID或对应应用真实branding.developer。不从名称或插件开发者推断。
+- **资产与布局**：header图标框硬值60px、信息标签列120px已核；共享图标从HTTPS或真实本地路径读取，不能用路径直接当img URL。字体/间距/容器的rem静态来源没有固定根字号，当前局部R=16换算为候选（内容768px、容器384px等），标题18px亦待最终cascade实测，不能称1px通过。背景PNG路径已找到，许可未知，未复制或自造渐变冒充。
+- **错误状态**：loading优先；真实error显示“无法加载插件”，独立详情EmptyState没有额外Retry；missing显示“未找到插件”。`missing_plugin_path`只是遥测分类，不把网络或权限错误改判不存在。保留返回后重新进入读取，管理面旧重试单独处理。
+
+ON_USE且无显式app setup的普通提示词可先起草，不把有apps本身当授权前置。ON_INSTALL/显式要求setup的分支，当前没有足够真实授权完成证据，不能因catalog可访问或runtime callable就宣称OAuth完成并自动跳转；必须保留待准备状态，后续按`connection-completion-contract.md`接真实callback交换与最终link验证。模板字段无法验证时不当作未配置模板；因此部分legal计数仍可能受缺数据限制。上述均是整页残项，不降低最终复刻要求。

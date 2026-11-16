@@ -321,6 +321,12 @@ try {
   Invoke-Step "Plugin directory URL identity and encoding regression" { node scripts/verify-plugin-directory-location.mjs }
   Invoke-Step "Plugin directory App history integration regression" { node scripts/verify-plugin-directory-host.mjs }
   Invoke-Step "Plugin directory deep-link identity and search refresh regression" { node scripts/verify-plugin-directory-review.mjs }
+  Invoke-Step "Plugin detail source fields, expansion and external links regression" { node scripts/verify-plugin-detail-surface.mjs }
+  Invoke-Step "Plugin detail included resources and skill ownership regression" { node scripts/verify-plugin-detail-included.mjs }
+  Invoke-Step "Plugin detail installation, enable and preview integration regression" { node scripts/verify-plugin-detail-parent.mjs }
+  Invoke-Step "Plugin prompt real draft navigation regression" { node scripts/verify-plugin-prompt-host.mjs }
+  Invoke-Step "Plugin shared logo real assets and lifetime regression" { node scripts/verify-plugin-logo.mjs }
+  Invoke-Step "Plugin detail legal copy, count and data-source regression" { node scripts/verify-plugin-detail-legal.mjs }
   Invoke-Step "Skills management & editor parity" { node scripts/verify-skills.mjs }
   Invoke-Step "Skill content, identity and mutation regression" { node scripts/verify-skill-actions.mjs }
   Invoke-Step "Installed skill preview and raw content actions" { node scripts/verify-skill-preview-ui.mjs }
@@ -400,6 +406,7 @@ Invoke-Step "TypeScript typecheck (tsc --noEmit)" { npx tsc --noEmit }
       "scripts/protocol-verify/verify-archive-actions.mjs"
       "scripts/protocol-verify/verify-archive-deletion.mjs"
       "scripts/protocol-verify/verify-plugin-preparation.mjs"
+      "scripts/protocol-verify/verify-plugin-detail.mjs"
       "scripts/protocol-verify/verify-plugin-management-b.mjs"
       "scripts/protocol-verify/verify-recommended-skills.mjs"
       "scripts/protocol-verify/verify-model-catalog.mjs"

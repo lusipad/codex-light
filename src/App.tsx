@@ -148,6 +148,7 @@ import { GptsView } from "./components/GptsView";
 import { SitesView } from "./components/SitesView";
 import { parseSitesLocation, type SitesNavigation } from "./sitesNavigation";
 import { parsePluginDirectoryLocation } from "./pluginDirectoryLocation";
+import { pluginDisplayName, type PluginSummary } from "./plugins";
 import { LibraryFileRoute, LibraryView, type LibraryNavigation } from "./components/LibraryView";
 import { libraryLocationUrl, parseLibraryFileLocation, parseLibraryLocation } from "./libraryBrowse";
 import { LibraryCleanupView } from "./components/LibraryCleanupView";
@@ -3066,6 +3067,34 @@ export const App: React.FC = () => {
     const originNavigation = navigationRequestRef.current;
     const originRoute = deepLinkRouteRef.current;
     const prompt = buildSkillTrialPrompt(skill);
+    const isCurrent = () => request === skillTrialRequestRef.current && context === skillTrialContextRef.current
+      && identity === executionIdentityRef.current && revision === homePromptRevisionRef.current;
+    let consumed = false;
+    const apply = async (): Promise<boolean> => {
+      if (consumed || !isCurrent() || originNavigation !== navigationRequestRef.current || originRoute !== deepLinkRouteRef.current) return false;
+      consumed = true;
+      const navigation = await commitNewThreadNavigation();
+      if (navigation === null || navigation !== navigationRequestRef.current || !isCurrent()
+        || activeThreadIdRef.current !== null || activeRouteRef.current !== "home") return false;
+      setThreadPrompt(null, prompt);
+      setComposerFocusRequest(value => value + 1);
+      return true;
+    };
+    if (personalizationNavigationGuardRef.current?.(() => { void apply(); }) === false) return false;
+    return apply();
+  }, [commitNewThreadNavigation, setThreadPrompt]);
+
+  const handleTryPlugin = useCallback(async (plugin: PluginSummary, defaultPrompt: string): Promise<boolean> => {
+    if (!plugin.id?.trim() || !plugin.name?.trim() || !defaultPrompt.trim()) return false;
+    const request = ++skillTrialRequestRef.current;
+    const context = skillTrialContextRef.current;
+    const identity = executionIdentityRef.current;
+    const revision = homePromptRevisionRef.current;
+    const originNavigation = navigationRequestRef.current;
+    const originRoute = deepLinkRouteRef.current;
+    const label = pluginDisplayName(plugin).replaceAll("\\", "\\\\").replaceAll("[", "\\[").replaceAll("]", "\\]");
+    const reference = `plugin://${plugin.id.trim()}`.replaceAll("\\", "\\\\").replaceAll(")", "\\)");
+    const prompt = `[@${label}](${reference}) ${defaultPrompt.trim()}`;
     const isCurrent = () => request === skillTrialRequestRef.current && context === skillTrialContextRef.current
       && identity === executionIdentityRef.current && revision === homePromptRevisionRef.current;
     let consumed = false;
@@ -6528,6 +6557,11 @@ export const App: React.FC = () => {
                 initialTab={activeRoute === "skills" ? "skills" : "plugins"}
                 onOpenSkillFile={handleOpenSkillFile}
                 onTrySkill={handleTrySkill}
+                onTryPlugin={handleTryPlugin}
+                onOpenPluginSettings={section => {
+                  setSettingsInitialSection(section);
+                  setActiveRoute("settings");
+                }}
                 initialPluginMode={pluginDirectoryMode}
                 onManagePlugins={() => {
                   setSettingsInitialSection("plugins-settings");

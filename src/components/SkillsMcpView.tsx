@@ -45,6 +45,9 @@ import { PluginPreparationPanel } from "./PluginPreparationPanel";
 import { RecommendedSkillsPanel } from "./RecommendedSkillsPanel";
 import { recommendedSkillDisplayName } from "../recommendedSkills";
 import { SkillPreviewDialog } from "./SkillPreviewDialog";
+import { PluginDirectoryDetail } from "./PluginDirectoryDetail";
+import { PluginDirectoryIncluded } from "./PluginDirectoryIncluded";
+import { PluginLogo } from "./PluginLogo";
 import {
   AppInfo,
   InstalledApp,
@@ -107,6 +110,8 @@ interface SkillsMcpViewProps {
   onStartSkillCreatorSession?: (prompt: string) => void;
   onOpenSkillFile?: (path: string) => boolean | Promise<boolean>;
   onTrySkill?: (skill: { name: string; path: string; defaultPrompt?: string | null }) => boolean | Promise<boolean>;
+  onTryPlugin?: (plugin: PluginSummary, prompt: string) => boolean | Promise<boolean>;
+  onOpenPluginSettings?: (section: "connections" | "hooks-settings") => void;
 }
 
 type SubTab = "plugins" | "skills" | "mcp" | "apps" | "marketplaces";
@@ -120,7 +125,7 @@ const remoteIntentListeners = new Set<(intent: RemoteIntent) => void>();
 const saveRemoteIntent = (key: string, intent: RemoteIntent) => { remoteIntents.set(key, intent); remoteIntentListeners.forEach(listener => listener(intent)); };
 const remoteId = (plugin: PluginSummary) => plugin.remotePluginId ?? (plugin.shareContext && typeof plugin.shareContext === "object" && "remotePluginId" in plugin.shareContext && typeof plugin.shareContext.remotePluginId === "string" ? plugin.shareContext.remotePluginId : null);
 const remoteIntentKey = (identity: ServiceIdentity, plugin: PluginSummary) => JSON.stringify([identity.accountId, identity.userId, remoteId(plugin)]);
-const isServicePlugin = (plugin: PluginSummary) => plugin.source?.type === "remote" || !!plugin.remoteServicePlugin;
+const isServicePlugin = (plugin: PluginSummary) => !!plugin.remoteServicePlugin;
 const pluginActionKey = (plugin: PluginSummary) => isServicePlugin(plugin) ? `remote:${remoteId(plugin) ?? plugin.id}` : plugin.id;
 
 interface ViewError {
@@ -242,6 +247,8 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   onStartSkillCreatorSession,
   onOpenSkillFile,
   onTrySkill,
+  onTryPlugin,
+  onOpenPluginSettings,
 }) => {
   const [subTab, setSubTab] = useState<SubTab>(initialTab || "plugins");
 
@@ -670,6 +677,9 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       if (isCurrent()) { appsLoadingRef.current = false; setAppsLoading(false); }
     }
   };
+  useEffect(() => {
+    if (!manageOnly && detail?.apps.length) void loadApps();
+  }, [detail?.summary.id, activeWorkspaceRoot, connectionIdentity, manageOnly]);
 
   const loadManagement = async () => {
     const context = pluginContextRef.current, request = ++managementRequest.current;
@@ -921,7 +931,11 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       } else {
         notify(`已安装 ${name}，但安装列表刷新未确认结果；请刷新安装状态后再重试`, "error");
       }
-      await loadRemoteSkills(true);
+      const skillRefreshError = await loadRemoteSkills(true);
+      if (isPluginContextCurrent(context) && confirmed &&
+          (!res.appsNeedingAuth.length || res.authPolicy === "ON_USE") && !skillRefreshError) {
+        return inventory!.marketplaces.flatMap(market => market.plugins).find(item => item.id === plugin.id && item.installed);
+      }
     } catch (err) {
       if (isPluginContextCurrent(context)) {
         const uncertain = err instanceof PluginProtocolError;
@@ -978,7 +992,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   };
 
   const handleTogglePlugin = async (plugin: PluginSummary) => {
-    if (isServicePlugin(plugin)) { await handleRemotePlugin(plugin, plugin.enabled ? "disable" : "enable"); return; }
+    if (isServicePlugin(plugin)) return handleRemotePlugin(plugin, plugin.enabled ? "disable" : "enable");
     if (pluginActionRef.current.has(plugin.id) || pluginUpdates[plugin.id]?.pending || plugin.availability === "DISABLED_BY_ADMIN") return;
     const context = pluginContextRef.current, enabled = !plugin.enabled;
     pluginActionRef.current.add(plugin.id); setBusyPluginIds(new Set(pluginActionRef.current));
@@ -988,7 +1002,8 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       setPluginUpdates(current => ({ ...current, [plugin.id]: { pending: result.verification === "pending", enabled, configFilePath: result.configFilePath, error: result.error, refreshError: result.refreshError } }));
       if (result.verification === "confirmed") {
         notify(`${pluginDisplayName(plugin)} 插件已${enabled ? "启用" : "禁用"}`);
-        await Promise.all([loadInstalledPlugins({ silent: true }), loadRemoteSkills(true)]);
+        const [, skillRefreshError] = await Promise.all([loadInstalledPlugins({ silent: true }), loadRemoteSkills(true)]);
+        if (isPluginContextCurrent(context) && !result.refreshError && !skillRefreshError) return result.plugin;
       }
     } catch (error) {
       if (isPluginContextCurrent(context)) setPluginUpdates(current => ({ ...current, [plugin.id]: { pending: false, enabled, configFilePath: null, error: String(error), refreshError: null } }));
@@ -1030,6 +1045,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     const errors = results.filter(result => result.status === "rejected").map(result => String((result as PromiseRejectedResult).reason));
     if (skillsResult.status === "fulfilled" && skillsResult.value.data.some(entry => entry.errors.length)) errors.push("技能目录包含加载错误");
     setRuntimeWarning(errors.length ? `插件变更已确认，但运行时刷新失败：${errors.join("；")}` : null);
+    return errors.length === 0;
   };
   const handleRemotePlugin = async (plugin: PluginSummary, operation: RemoteOperation, verifyOnly = false) => {
     const identity = servicePlugins?.identity;
@@ -1053,7 +1069,15 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       }
       if (result.verification === "confirmed") {
         notify(intent.operation === "uninstall" ? `已卸载 ${pluginDisplayName(plugin)}` : `${pluginDisplayName(plugin)} 插件已${intent.operation === "enable" ? "启用" : "禁用"}`);
-        try { await refreshRemoteRuntime(); }
+        try {
+          const refreshed = await refreshRemoteRuntime();
+          const snapshot = result.snapshot;
+          if (refreshed && isPluginContextCurrent(context) && !controller.signal.aborted &&
+              snapshot?.identity?.accountId === identity.accountId && snapshot.identity.userId === identity.userId && snapshot.identity.generation === identity.generation) {
+            return snapshot.marketplace?.plugins.find(item => remoteId(item) === remoteId(plugin) && item.installed &&
+              item.enabled === (intent.operation === "enable"));
+          }
+        }
         catch (error) { if (isPluginContextCurrent(context)) setRuntimeWarning(`插件变更已确认，但运行时刷新失败：${String(error)}`); }
       }
     } catch (error) {
@@ -1564,6 +1588,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   const renderPluginDetail = (directory = false) => {
     if (detailLoading) return renderLoadingRow("正在读取插件详情…");
     if (detailError) {
+      if (directory) return <div className="pm-state-body" role="alert"><h2>无法加载插件</h2><p>{errorSummary(detailError.message)}</p></div>;
       return (
         <div className="pm-state-body">
           <span className="pm-state-desc">
@@ -1588,7 +1613,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
         </div>
       );
     }
-    if (!detail) return null;
+    if (!detail) return directory ? <div className="pm-state-body"><h2>未找到插件</h2><p>无法从插件市场详情页加载此插件。</p></div> : null;
     const summary = detail.summary;
     return (
       <>
@@ -1744,7 +1769,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
           if (event.target !== event.currentTarget || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
           if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); }
         }}>
-        <span className="pm-catalog-logo" aria-hidden="true"><Boxes size={20} /></span>
+        <PluginLogo plugin={plugin} className="pm-catalog-logo" />
         <div className="pm-catalog-copy"><strong>{pluginDisplayName(plugin)}</strong>
           <p title={pluginDescription(plugin)}>{pluginDescription(plugin)}</p></div>
         {installed ? <button type="button" className="pm-catalog-action" aria-label={`管理 ${pluginDisplayName(plugin)}`}
@@ -1963,7 +1988,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
         if (event.target !== event.currentTarget || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
         if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); }
       }}>
-      <span className="pm-catalog-logo" aria-hidden="true">{listing.iconUrl ? <img src={listing.iconUrl} alt="" /> : <Boxes size={20} />}</span>
+      <PluginLogo plugin={{ id: listing.id, interface: { logoUrl: listing.iconUrl, logoUrlDark: listing.iconUrlDark } }} className="pm-catalog-logo" />
       <div className="pm-catalog-copy"><strong>{listing.displayName}</strong><p title={listing.description ?? ""}>{listing.description}</p></div>
       {state.installed === undefined ? <span role="status" aria-label="正在读取安装状态"><Loader2 size={18} className="pm-spin" /></span>
         : state.installed ? <button type="button" className="pm-catalog-action" aria-label={`管理 ${listing.displayName}`}
@@ -1993,6 +2018,34 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   const directoryDetailPlugin = detail?.summary ?? detailContextRef.current?.plugin;
   const directoryDetailInstalled = directoryDetailPlugin && (directoryDetailPlugin.installed ||
     directoryInstalled.some(({ plugin }) => plugin.id === directoryDetailPlugin.id));
+  const activateDirectoryPrompt = async (text: string): Promise<boolean> => {
+    if (!detail || detailLoading || detailError || !onTryPlugin || unsupportedDirectoryHost()) return false;
+    const context = pluginContextRef.current, request = detailRequestRef.current;
+    const isCurrent = () => isPluginContextCurrent(context) && request === detailRequestRef.current;
+    if (!detail.summary.interface?.defaultPrompt?.some(prompt => prompt.trim() === text)) return false;
+    let plugin = directoryInstalled.find(item => item.plugin.id === detail.summary.id)?.plugin ?? detail.summary;
+    if (plugin.availability === "DISABLED_BY_ADMIN" || plugin.installPolicy === "NOT_AVAILABLE" ||
+        installUncertaintyRef.current.get(installScope)?.has(plugin.id)) return false;
+    if (!plugin.installed) {
+      const marketplace = detailContextRef.current?.marketplace;
+      if (!marketplace) return false;
+      const installed = await handleInstallPlugin(plugin, marketplace);
+      if (!isCurrent()) return false;
+      if (!installed) throw new Error("安装或应用连接尚未确认，请先完成连接准备并刷新状态。");
+      plugin = installed;
+    }
+    const preparation = pluginPreparations[plugin.id]?.result;
+    if (preparation?.authPolicy === "ON_INSTALL" && preparation.appsNeedingAuth.length) {
+      throw new Error("应用授权尚未确认，请先完成连接准备。");
+    }
+    if (!plugin.enabled) {
+      const enabled = await handleTogglePlugin(plugin);
+      if (!isCurrent()) return false;
+      if (!enabled?.enabled) throw new Error("插件启用尚未确认，请刷新状态后重试。");
+      plugin = enabled;
+    }
+    return isCurrent() ? onTryPlugin(plugin, text) : false;
+  };
 
   return (
     <div ref={pageRef} className={`panel-page pm-extensions-page ${manageOnly ? "pm-management-page" : "pm-directory-page"}`}>
@@ -2107,31 +2160,54 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
           setDetailKey(null); setDetail(null); setDetailError(null); setDetailLoading(false);
           requestAnimationFrame(() => directorySearchRef.current?.focus());
         }}><ChevronLeft size={16} />插件</button>
-        <header className="pm-catalog-detail-header"><h1>{directoryDetailPlugin ? pluginDisplayName(directoryDetailPlugin) : "插件"}</h1>
-          {directoryDetailPlugin && (directoryDetailInstalled
+        {detail && !detailLoading && !detailError ? <PluginDirectoryDetail
+          key={JSON.stringify([activeWorkspaceRoot, connectionIdentity, detailKey])}
+          detail={detail}
+          apps={appsData ?? undefined}
+          onActivatePrompt={onTryPlugin ? activateDirectoryPrompt : undefined}
+          promptDisabledReason={detail.summary.availability === "DISABLED_BY_ADMIN" ? "管理员已禁用此插件" :
+            detail.summary.installPolicy === "NOT_AVAILABLE" ? "此插件当前不可用" :
+              busyPluginIds.has(pluginActionKey(detail.summary)) || unconfirmedInstalls.has(detail.summary.id) ? "请先确认插件状态" : undefined}
+          actions={directoryDetailPlugin && (directoryDetailInstalled
             ? <button type="button" className="secondary-btn" onClick={onManagePlugins} disabled={!onManagePlugins}>管理</button>
             : <button type="button" className="primary-btn" disabled={!detail || detailLoading || !!detailError ||
                 busyPluginIds.has(pluginActionKey(directoryDetailPlugin)) || unconfirmedInstalls.has(directoryDetailPlugin.id) ||
                 directoryDetailPlugin.installPolicy === "NOT_AVAILABLE" || directoryDetailPlugin.availability === "DISABLED_BY_ADMIN"}
               onClick={() => { const context = detailContextRef.current; if (context) void handleInstallPlugin(directoryDetailPlugin, context.marketplace); }}>安装</button>)}
-        </header>
-        {renderPluginDetail(true)}
-        {detail && <section className="pm-catalog-information"><h3>信息</h3>
-          {pluginDeveloper(detail.summary) && <p>{pluginDeveloper(detail.summary)}</p>}
-          {pluginVersion(detail.summary) && <p>版本 {pluginVersion(detail.summary)}</p>}
-        </section>}
+          included={<PluginDirectoryIncluded detail={detail} installedSkills={remoteSkills}
+            connectionIdentity={connectionIdentity} workspaceRoot={activeWorkspaceRoot}
+            skillBusy={skillWriteBusy || !!skillToggleBusy}
+            onOpenMcpSettings={onOpenPluginSettings ? () => onOpenPluginSettings("connections") : undefined}
+            onOpenHooksSettings={onOpenPluginSettings ? () => onOpenPluginSettings("hooks-settings") : undefined}
+            onOpenSkillFile={onOpenSkillFile}
+            onTrySkill={onTrySkill ? skill => onTrySkill({ name: skill.name, path: skill.path, defaultPrompt: skill.interface?.defaultPrompt }) : undefined}
+            onToggleSkill={skill => { void handleToggleSkill({ key: skill.path, name: skill.name,
+              description: skill.description, scope: skill.scope, enabled: skill.enabled,
+              pluginId: skill.pluginId, local: null, remote: skill }); }}
+            loadSkillContents={async (skill, installed) => {
+              const path = installed?.path || skill.path;
+              if (path) return readFileText(path);
+              const id = remoteId(detail.summary);
+              if (!id || !detail.marketplaceName) throw new Error("此技能没有可确认的读取来源");
+              const result = await callAppServer<{ contents: string }>("plugin/skill/read", {
+                remotePluginId: id, remoteMarketplaceName: detail.marketplaceName, skillName: skill.name,
+              });
+              if (typeof result.contents !== "string") throw new Error("服务未返回技能内容");
+              return result.contents;
+            }} />}
+        /> : renderPluginDetail(true)}
       </section> : <div className="pm-catalog">
-        {directoryInstalled.length > 0 && <section className="pm-installed-section" aria-label="已安装">
+        {!searchQuery.trim() && !directoryCategory && directoryInstalled.length > 0 && <section className="pm-installed-section" aria-label="已安装">
           <header><h3>已安装</h3>{onManagePlugins && <button type="button" className="pm-catalog-action" onClick={onManagePlugins}>管理</button>}</header>
           <div className="pm-installed-strip">{directoryInstalled.map(({ plugin, marketplace }) =>
             <button key={pluginKey(plugin, marketplace)} type="button" className="pm-installed-icon"
               aria-label={`查看 ${pluginDisplayName(plugin)}`} title={pluginDisplayName(plugin)}
-              onClick={() => void handleToggleDetail(plugin, marketplace)}><Boxes size={20} /></button>)}</div>
+              onClick={() => void handleToggleDetail(plugin, marketplace)}><PluginLogo plugin={plugin} className="pm-installed-logo" /></button>)}</div>
         </section>}
         {isBrowseBusy && renderLoadingRow("正在加载插件目录…")}
         {browseError && renderLoadError(browseError, "插件目录", () => loadBrowsePlugins(true))}
         {installedError && renderLoadError(installedError, "已安装插件", () => loadInstalledPlugins({ confirmInstallResult: true }))}
-        {directorySource?.kind === "requires-chatgpt" && <p role="status">插件目录需要登录 ChatGPT。</p>}
+        {!searchQuery.trim() && !directoryCategory && directorySource?.kind === "requires-chatgpt" && <p role="status">插件目录需要登录 ChatGPT。</p>}
         {directoryCategory && directorySource?.kind === "remote" ? <section className="pm-catalog-section">
           <button type="button" className="pm-catalog-back" onClick={() => { setDirectoryCategory(null); updateDirectoryUrl(pluginDirectoryBrowseUrl(directoryBase(), { category: null })); }}>全部插件</button>
           <h3>{directorySource.sections.find(section => section.slug === directoryCategory)?.title ?? directoryCategory}</h3>

@@ -68,8 +68,11 @@ export function harness(options = {}) {
   const { SkillsMcpView } = load("src/components/SkillsMcpView.tsx", { "lucide-react": new Proxy({}, { get: (_, name) => String(name) }), "../bridge": bridge, "../fsClient": options.fs ?? {},
     "../config": { experimentalFeatureListAll: () => featureRead() }, "../mcpSettings": { readMcpSettings: async () => ({ entries: [{ name: "MCP" }] }) },
     "../pluginManagement": client, "../pluginManagementState": { ...core, useMarketplaceRemoval: (...args) => (removal = core.useMarketplaceRemoval(...args)) },
-    "../plugins": plugins, "../pluginDirectory": directory, "../pluginDirectoryClient": directoryClient, "../pluginDirectorySearch": directorySearch, "../pluginDirectoryLocation": location, "../recommendedSkills": recommended, "../remotePlugins": remote, "./McpSettings": { McpSettings }, "./PluginPreparationPanel": {}, "./RecommendedSkillsPanel": {}, "./SkillPreviewDialog": { SkillPreviewDialog: "SkillPreviewDialog" } });
-  const nodes = node => node && typeof node === "object" ? [node, ...(node.children || []).flatMap(nodes)] : [];
+    "../plugins": plugins, "../pluginDirectory": directory, "../pluginDirectoryClient": directoryClient, "../pluginDirectorySearch": directorySearch, "../pluginDirectoryLocation": location, "../recommendedSkills": recommended, "../remotePlugins": remote, "./McpSettings": { McpSettings }, "./PluginPreparationPanel": {}, "./RecommendedSkillsPanel": {}, "./SkillPreviewDialog": { SkillPreviewDialog: "SkillPreviewDialog" },
+    "./PluginDirectoryDetail": { PluginDirectoryDetail: "PluginDirectoryDetail" }, "./PluginDirectoryIncluded": { PluginDirectoryIncluded: "PluginDirectoryIncluded" },
+    "./PluginLogo": { PluginLogo: "PluginLogo" } });
+  const nodes = node => node && typeof node === "object" ? [node, ...(node.children || []).flatMap(nodes),
+    ...nodes(node.props?.actions), ...nodes(node.props?.included)] : [];
   const text = node => typeof node === "string" || typeof node === "number" ? String(node) : (node?.children || []).map(text).join("");
   const modal = { open: false, showModal() { this.open = true; }, close() { this.open = false; } };
   const render = () => {
