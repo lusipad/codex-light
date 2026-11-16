@@ -26,7 +26,7 @@ pub struct PluginPermissionsResponse {
     pub body: Value,
 }
 
-fn permission_value(body: &Value) -> ServiceResult<&str> {
+pub(super) fn permission_value(body: &Value) -> ServiceResult<&str> {
     let settings = body.get("settings").and_then(Value::as_object)
         .ok_or_else(|| failure("invalid_response", "Plugin permission settings unavailable"))?;
     match settings.get("apps_privacy_control") {
@@ -36,7 +36,7 @@ fn permission_value(body: &Value) -> ServiceResult<&str> {
     }
 }
 
-fn permission_personal(body: &Value, identity: &ServiceIdentity) -> ServiceResult<bool> {
+pub(super) fn permission_personal(body: &Value, identity: &ServiceIdentity) -> ServiceResult<bool> {
     let invalid = || failure("invalid_response", "Plugin permission account eligibility unavailable");
     // Desktop M7.readAccounts GETs /wham/accounts/check and M8 parses normalized
     // accounts[].id. CLax's raw map adapter belongs to another producer.
@@ -177,7 +177,7 @@ impl ChatgptService {
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn permission_http<F, Fut, T>(&self, route: &str, method: HttpMethod, request: &PluginPermissionsRequest,
+    pub(super) async fn permission_http<F, Fut, T>(&self, route: &str, method: HttpMethod, request: &PluginPermissionsRequest,
         registration: &Registration<'_>, call: &F, transport: &T) -> ServiceResult<Value>
     where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>>, T: Transport {
         let identity = &request.expected_identity;

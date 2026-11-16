@@ -384,6 +384,10 @@ try {
   Invoke-Step "Plugin account rename dialog" { node scripts/verify-plugin-account-rename-dialog.mjs }
   Invoke-Step "Plugin app disconnect client" { node scripts/verify-plugin-app-disconnect.mjs }
   Invoke-Step "Plugin account action menu" { node scripts/verify-plugin-account-menu.mjs }
+  Invoke-Step "Plugin app link permission client" { node scripts/verify-plugin-app-link-permissions.mjs }
+  Invoke-Step "Plugin app link permission state" { node scripts/verify-plugin-app-link-permissions-state.mjs }
+  Invoke-Step "Plugin app link permission page" { node scripts/verify-plugin-app-link-permissions-page.mjs }
+  Invoke-Step "Plugin app link permission parent" { node scripts/verify-plugin-app-link-permissions-parent.mjs }
   Invoke-Step "Plugin permissions state" { node scripts/verify-plugin-permissions-state.mjs }
   Invoke-Step "Plugin permissions presentation" { node scripts/verify-plugin-permissions-ui.mjs }
   Invoke-Step "Plugin-provided settings data" { node scripts/verify-plugin-provided-settings.mjs }

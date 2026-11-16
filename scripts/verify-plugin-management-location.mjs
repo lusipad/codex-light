@@ -9,6 +9,7 @@ vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/pluginManagementLocat
 }).outputText, { exports: module.exports, URL, URLSearchParams });
 const { parsePluginManagementLocation: parse, pluginManagementDetailUrl: detail, pluginManagementRootUrl: root } = module.exports;
 const { pluginManagementAppUrl: app, pluginManagementAppSelectionUrl: selection } = module.exports;
+const { pluginManagementPermissionSelectionUrl: permissionSelection } = module.exports;
 const base = "/settings/plugins-settings?hostId=stale&tab=mcps&marketplacePath=old&unrelated=discard#old";
 assert.equal(parse(base).kind, "root");
 assert.equal(parse(base).hostId, "stale");
@@ -79,4 +80,10 @@ assert.equal(picked.searchParams.get("keep"), "literal/value"); assert.equal(pic
 assert.equal(picked.hash, "#section"); assert.equal(new URL(selection(appBase, null), "https://test.invalid").searchParams.has("linkId"), false);
 for (const url of [base, "/settings/plugins-settings/apps/app", "/settings/plugins-settings/plugin/apps/app/permissions", "/settings/plugins-settings/plugin/apps/app?hostId=ssh"]) assert.throws(() => selection(url, "link"), /Invalid/);
 for (const appId of ["", ".", "..", "\0"]) assert.throws(() => app(base, { pluginId: "plugin", appId }), /Invalid/);
+for (const route of ["/settings/plugins-settings/plugin/permissions", "/settings/plugins-settings/plugin/apps/app/permissions"]) {
+  const selected = new URL(permissionSelection(`${route}?keep=literal%2Fvalue&linkId=old#anchor`, "link/?%中文"), "https://test.invalid");
+  assert.equal(selected.pathname, route); assert.equal(selected.searchParams.get("linkId"), "link/?%中文"); assert.equal(selected.searchParams.get("keep"), "literal/value");
+  const cleared = new URL(permissionSelection(selected, null), "https://test.invalid"); assert.equal(cleared.searchParams.has("linkId"), false); assert.equal(cleared.pathname, route); assert.equal(cleared.hash, "#anchor");
+}
+for (const route of [base, "/settings/plugins-settings/permissions", "/settings/plugins-settings/plugin/apps/app", "/settings/plugins-settings/plugin/permissions?hostId=ssh"]) assert.throws(() => permissionSelection(route, "link"), /Invalid/);
 console.log("Plugin management locations: proven route tree, raw remote IDs, encoded identities, real source/host and malformed routes passed.");

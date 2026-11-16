@@ -79,6 +79,7 @@ export function harness(options = {}) {
     "./PluginManagementDetail": { PluginManagementDetail: "PluginManagementDetail" },
     "./PluginPermissionsSettings": { PluginPermissionsSettings: "PluginPermissionsSettings" },
     "./PluginAppDetailsPage": { PluginAppDetailsPage: "PluginAppDetailsPage" },
+    "./PluginAppLinkPermissionsPage": { PluginAppLinkPermissionsPage: "PluginAppLinkPermissionsPage" },
     "./PluginAppEntryPage": { PluginAppEntryPage: "PluginAppEntryPage" },
     "./PluginManagementActions": { PluginManagementActions: "PluginManagementActions" },
     "../pluginManagementSkills": load("src/pluginManagementSkills.ts", { "./recommendedSkills": recommended }),

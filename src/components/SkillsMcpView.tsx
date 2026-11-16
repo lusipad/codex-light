@@ -45,7 +45,7 @@ import { PluginPreparationPanel } from "./PluginPreparationPanel";
 import { RecommendedSkillsPanel } from "./RecommendedSkillsPanel";
 import { recommendedSkillDisplayName, readRecommendedSkills, type RecommendedSkill } from "../recommendedSkills";
 import { filterManagedSkills } from "../pluginManagementSkills";
-import { parsePluginManagementLocation, pluginManagementAppSelectionUrl, pluginManagementAppUrl, pluginManagementDetailUrl, pluginManagementRootUrl } from "../pluginManagementLocation";
+import { parsePluginManagementLocation, pluginManagementAppSelectionUrl, pluginManagementAppUrl, pluginManagementDetailUrl, pluginManagementPermissionSelectionUrl, pluginManagementRootUrl } from "../pluginManagementLocation";
 import { SkillPreviewDialog } from "./SkillPreviewDialog";
 import { PluginDirectoryDetail } from "./PluginDirectoryDetail";
 import { PluginDirectoryIncluded } from "./PluginDirectoryIncluded";
@@ -58,6 +58,7 @@ import { PluginManagementActions } from "./PluginManagementActions";
 import { AddPluginMarketplaceDialog, type AddPluginMarketplaceInput } from "./AddPluginMarketplaceDialog";
 import { PluginPermissionsSettings } from "./PluginPermissionsSettings";
 import { PluginAppDetailsPage } from "./PluginAppDetailsPage";
+import { PluginAppLinkPermissionsPage } from "./PluginAppLinkPermissionsPage";
 import { PluginAppEntryPage } from "./PluginAppEntryPage";
 import {
   AppInfo,
@@ -1000,6 +1001,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       if (route.hostId && route.hostId !== "local") { setDetailError(toViewError(new Error("当前管理入口尚不支持此主机。"))); return; }
       if (route.kind === "app" && route.appId && route.hostId === null) return;
       if (route.kind === "plugin" && route.section === "detail" && route.appId && route.hostId === null) return;
+      if (route.kind === "plugin" && route.section === "permissions" && route.hostId === null) return;
       if (route.kind !== "plugin" || route.section !== "detail" || route.skillName || route.appId) {
         setDetailError(toViewError(new Error("此插件管理子页面尚未接入。"))); return;
       }
@@ -2038,6 +2040,26 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   }
   const managementAppRoute = manageOnly && window.location ? parsePluginManagementLocation(window.location.href) : null;
   const managementAppContext = pluginContextRef.current;
+  if (managementAppRoute?.kind === "plugin" && managementAppRoute.section === "permissions" && managementAppRoute.hostId === null) {
+    const isCurrent = () => {
+      const current = parsePluginManagementLocation(window.location.href);
+      return isPluginContextCurrent(managementAppContext) && current?.kind === "plugin" && current.section === "permissions" && current.hostId === null &&
+        current.pluginId === managementAppRoute.pluginId && current.appId === managementAppRoute.appId;
+    };
+    const openDetail = (kind: "plugin" | "detail", replace = false) => {
+      if (!isCurrent()) return;
+      const next = kind === "detail" && managementAppRoute.appId !== null ? pluginManagementAppUrl(managementBase(), { pluginId: managementAppRoute.pluginId, appId: managementAppRoute.appId }) :
+        pluginManagementDetailUrl(managementBase(), { pluginId: managementAppRoute.pluginId!, hostId: "local", sourceType: "remote", remotePluginId: managementAppRoute.pluginId });
+      updateDirectoryUrl(next, replace); directoryDetailRetry.current?.();
+    };
+    return <PluginAppLinkPermissionsPage key={JSON.stringify([connectionIdentity, managementAppRoute.pluginId, managementAppRoute.appId])}
+      connectionIdentity={connectionIdentity} pluginId={managementAppRoute.pluginId!} appId={managementAppRoute.appId}
+      selectedLinkId={new URL(window.location.href).searchParams.get("linkId")} onSelectLink={linkId => {
+        if (!isCurrent()) return false;
+        updateDirectoryUrl(pluginManagementPermissionSelectionUrl(window.location.href, linkId), true); return true;
+      }} onRoot={() => { if (isCurrent()) closeManagedDetail(); }} onPlugin={() => openDetail("plugin")}
+      onUnavailable={kind => openDetail(kind, true)} />;
+  }
   if (managementAppRoute?.kind === "app" && managementAppRoute.appId && managementAppRoute.hostId === null) {
     const appId = managementAppRoute.appId;
     return <PluginAppEntryPage key={JSON.stringify([connectionIdentity, appId])} connectionIdentity={connectionIdentity} appId={appId}

@@ -3013,3 +3013,13 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 页面先选目标再发一次删除，实际完整列表缺目标才成功，随后健康首项/首项/null回退；父级expectedLinkId核实时URL，保较新选择。unknown只读恢复，partial list不能解锁；rename/disconnect共用写锁。生产More菜单复用既有样式和图标，准确xs/glyph与reconnect仍缺；没有假确认或卸载动作。新增父级回归先红复现成功后未刷新，再接真实runtime/service库存读取和独立刷新错误；旧App不提示。独立复审包含增量未发现确定新P1/P2。
 
 完整193前端回放及全Rust809项已exit0，0失败/忽略/过滤；随后错误文案按真实中文修正，不拼原始服务诊断，hook专项先红后绿。末次重叠刷新误报先红后绿，以runtime/service代次保护状态和toast，6受影响流程及TypeScript再验0。非Fast整轮exit0、34隔离协议探针通过；其前端步骤早于末补丁，不冒称末补丁后整套重跑。最终当前TS/Vite与EXE/MSI/NSIS构建0，496产品输入稳定。候选`dist-artifacts/plugins-r2-disconnect-20261116/CodexNative.exe` SHA256 `78f40f74c19a4d93c8f7243c90c52f67716bb1f82b84db94093331ff2e1be587`。真实账号DELETE、原生IME/GUI/portal Tab、官方配对像素、当前提交CI和用户验收未验；ACK/成功时序候选比官方更严格读回，仍是已知呈现差异。无新依赖、无真实账户操作、不推送发布。下一关联权限深链补证发现父摘要组件实际return null，纠正旧ref推断，不造入口；22片段/26中文键仅为下一包输入。证据根`.ref/parity/12/whole-page/actual/plugin-account-disconnect-r2-20261116/`。
+## 2026-11-16 — R2关联账户权限普通service深链
+
+90b045d后继续第02批，先补7资源/30锚点/26中文的权限合同。纠正父摘要return null与detailTo缺失，不造入口/查看详情。新增真实单App读、四值/null逐link写和批次统一读回；implicit app按pS/Ok完整库存与反向关联，非首项猜测。复用现有wham个人账户/default GET/metadata/links/认证传输与pmd/pps布局，无新依赖；更严格unknown/默认错误禁写明确单列。
+
+真实client/hook/Page/parent覆盖mixed/uniform、精确linkId、继承checked显式覆盖、null reset、失败-only重试、unknown只读、scope/ABA及旧finally。独立审查修正release字段层级与视图切换残留失败重试意图，两项闭环；另修unknown恢复入口、头像src变化保留hidden样式和资格未知时多余控件。全Rust827项exit0、0失败/忽略/过滤，含最终18新用例；197前端exit0，末两处UI补丁定向再验0。标准/候选结果待验收记录追加，不以旧EXE或正在运行的检查冒充当前通过。
+
+真实账号HTTP、原生GUI/radio键盘/IME、配对像素、当前托管CI及用户验收未验；requires-local隐式资格与native Meetings宿主、非string labels wire仍有明确边界。仍在R2，不推送发布。证据根`.ref/parity/12/whole-page/actual/plugin-app-link-permissions-r2-20261116/`。
+最终收口：隐式canonical App发生A→B→A时，按实际App身份重置状态、废弃旧回调并重建article控件子树，避免旧手势沿用新App输入DOM；同App刷新保持模式。该风险有源码及回归证据，未做物理鼠标复现。完整197前端及非Fast标准/34隔离探针在最后前端补丁之前通过；最后9个受影响流程再验exit0，随后当前TypeScript/Vite、EXE/MSI/NSIS构建exit0。全Rust827项exit0后未改Rust。501项产品输入构建前后稳定。
+
+候选：`dist-artifacts/plugins-r2-link-permissions-20261116/CodexNative.exe`，28,771,840字节，SHA256 `38651579b5adc081e00723a2f326991c4a1bcff97d8370a0881fcab311822feb`。输入清单SHA256 `a1bdec7cb11774a8fcb23947408a70dce0896e85e90f346d1607d77a0fdae972`；三产物哈希与准确执行时序见本阶段证据的`candidate-artifacts.json`及`verification-summary.json`。此为普通插件权限深链阶段候选；无新增可见父入口，真实账户HTTP、原生GUI/IME、官方配对像素、托管CI及用户验收均未验。下一接同步、App管理及授权残项，不升整页G5。

@@ -564,6 +564,26 @@ export async function disconnectServicePluginAppAccount(pluginId: string, appId:
   return result;
 }
 
+export async function readPluginAppLinkPermissions(pluginId: string, appId: string | null, identity: ServiceIdentity, signal: AbortSignal): Promise<unknown> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; body: unknown }>(
+    "plugin_app_link_permissions_read", requestId,
+    { request: { requestId, expectedIdentity: identity, profile: browserProfile(), pluginId, appId } }, signal,
+  );
+  return responseBody(result, requestId, identity);
+}
+
+export async function writePluginAppLinkPermission(pluginId: string, appId: string, linkId: string, value: string | null, identity: ServiceIdentity, signal: AbortSignal): Promise<ProfileMutationResult> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<ProfileMutationResult & { requestId: string; identity: ServiceIdentity }>(
+    "plugin_app_link_permission_write", requestId,
+    { request: { requestId, expectedIdentity: identity, profile: browserProfile(), pluginId, appId, linkId, value } }, signal,
+  );
+  responseBody(result, requestId, identity);
+  if (result.verification !== "pending") throw Error("关联账户权限写入回执无效，请重新读取。");
+  return result;
+}
+
 export async function writePluginPermission(value: string, identity: ServiceIdentity, signal: AbortSignal): Promise<ProfileMutationResult> {
   if (!["always_ask", "ask_before_writes", "review_important_actions"].includes(value)) throw Error("无效的默认权限。");
   const requestId = crypto.randomUUID();

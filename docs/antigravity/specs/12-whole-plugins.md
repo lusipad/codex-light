@@ -189,3 +189,5 @@ PAD07–PAD12新增验收：association的string/null/missing/error；原始ID�
 断开包开工：仅接EF5T共享账户区，菜单rename/断开与现有真实重命名共用账户身份；reconnect尚无完整自有授权消费者，继续明确缺控件，不造不可执行的成功路径。DELETE前先接受受保护的URL选择；backend fresh归属/唯一link确认，不按multi或owner限制断开最后账户。完整真实links中目标消失才返回confirmed；隐藏目标不算消失，partial读取不解锁未知写入。确认后同App按首个非reauth/首项/null回退，last空列表只刷新本App数据，不导航、不卸载。DC-T01–10对应后端transport、实际client/hook、生产菜单/页面/父级回归；真实账号、原生和像素分别保留未验。阶段先定向回归，集成稳定后统一检查/构建，不逐菜单项反复跑全套。
 
 关联权限下一包补证纠正：`app-link-permissions-contract.md`的22片段/26简中文案/6资源已核，337381的e$权限摘要组件实际`return null`；父条件分支和onClick存在不能证明有可见入口，旧app-detail文字中的可见摘要推断以此纠正，禁止造按钮。深链eq仍完整可开发：四radio含full_access、继承默认可写显式override、reset写null、mixed多账户列表与uniform统一模式、URL未知linkId空targets禁写不fallback。返回清linkId是否留当前页由实际K决定。此为下一包输入，不表示权限消费者或真实服务已实现。
+
+关联权限包开工：补证现为7资源/30精确片段，隐式App严格按pS唯一候选→CV1W.Ok完整库存归属→必要canonical-app反向核验，不能取首app。显式路由仍fresh成员核验。新typed读保personal/可见账户/默认值独立错误；逐link PATCH仅四值或显式null，backend ACK不当保存，client整批settled后统一fresh读取确认。明确拒绝只重试失败ID，未知交付先只读恢复，成功项不重写。页面按LP-T01–13完成mixed列表/统一radio/指定linkId及同有效值的显式override动作；父summary与查看详情实际都未传递可见结果，不造入口/按钮。requires-local隐式宿主资格尚缺真实消费者，返回专门未支持错误而不猜支持；labels缺boolean wire证据不擅自放宽。真实账号、原生、像素及用户验收分别保留未验。

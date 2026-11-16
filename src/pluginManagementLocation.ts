@@ -97,6 +97,15 @@ export function pluginManagementAppSelectionUrl(base: string | URL, linkId: stri
   return `${url.pathname}${url.search}${url.hash}`;
 }
 
+export function pluginManagementPermissionSelectionUrl(base: string | URL, linkId: string | null): string {
+  const location = checkedBase(base);
+  if (location.kind !== "plugin" || location.section !== "permissions" || location.hostId !== null) throw new Error("Invalid plugin permission selection location");
+  const url = managementUrl(base)!;
+  if (linkId === null) url.searchParams.delete("linkId");
+  else { encodedSegment(linkId); url.searchParams.set("linkId", linkId); }
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
 /** jEyg.$W: remote service IDs are direct only on local/durable; SSH retains CLI identity. */
 export function pluginManagementDetailUrl(base: string | URL, params: {
   pluginId: string;

@@ -220,3 +220,18 @@
 最终候选：`dist-artifacts/plugins-r2-disconnect-20261116/CodexNative.exe`，28,337,152字节，SHA256 `78f40f74c19a4d93c8f7243c90c52f67716bb1f82b84db94093331ff2e1be587`。MSI/NSIS实际路径、大小与哈希见`candidate-artifacts.json`，496产品输入构建前后稳定，输入清单SHA256 `e37eb1422baf58dedbc71a6116b97b7a0ca45d6d359ae3cdfdfb14ba1c07ef4e`。验证时序与末补丁范围另存`verification-summary.json`；候选构建不是原生GUI或安装升级通过。
 
 操作入口：具备真实归属和可见账户的插件App详情→账户右侧More→rename或断开。经授权的真实账号验证应确认目标先选中、服务实际删除、兄弟回退/最后一项null、错误和只读恢复；不能只看toast。浏览器回归仅操作隔离桥/transport夹具，未替代这组真实账号或物理输入操作。
+## R2关联账户权限深链阶段（2026-11-16，90b045d之后）
+
+范围为普通service插件的显式App与隐式canonical权限深链。先核当前同版`app-link-permissions-contract.md`/30片段、26条简中文案、7来源哈希与大小；父权限摘要函数实际null、权限页detailTo实际undefined，未添加父入口或查看详情按钮。隐式解析不是首app，而是pS唯一候选、完整service库存canonical归属与必要反向association；显式也fresh核真实成员。
+
+- 后端：新的固定read与逐link write；复用wham首账号personal校验、真实插件/App/links投影及默认GET。权限editable要求USER owner等于实际认证user、非REAUTH_REQUIRED；不借rename资格，也不把全局三值规则套本页。四值含full_access，reset必须显式null，缺value拒绝。只对raw override相同不PATCH，继承默认时点击checked仍写显式override。ACK保持pending，整批客户端重新读取确认；不是服务回空响应就标已保存。
+- 页面/状态：uniform默认四radio，mixed默认账户列表；统一switch仅本地模式，不写配置。精确URL linkId，未知ID为空目标禁写，返回只replace清linkId并保持权限页列表模式。失败ID-only重试，已成功项不重写；unknown/default或links部分读取仅重新读取，未确认结果明确提示。切目标/模式清旧失败重试意图，未知写锁不被清掉。默认读取失败仅同identity保留旧值显示，仍禁写，属于更严格安全边界。
+- 导航：权限reader独占该service深链，未启动竞争CLI详情；根/插件面包屑、无资格回对应详情、成员失效回插件，replace避免坏深链循环。父scope/host及ABA保护，任意独立App或SSH不能获得通用权限编辑器。
+- 验证：实际domain/bridge、hook、生产Page及parent/URL回归通过，旧全局权限三值写入等回归保留。全Rust827项通过，0失败/忽略/过滤，123.13秒，包含最终18项新模块用例；旧15专项仅历史日志。197完整前端回放exit0后，头像新URL重建和access未知不渲染编辑区两处末补丁专项再验0。非Fast标准与最终候选结果见本节末收口记录。
+- 复审：两项P2已修——release.requires_local_executor字段层级，以及clearErrors未清旧failed/retry导致切B后重试A。后者真实hook先红后绿，前者源级用例后由全827验证。未知结果UI两种组合、头像失败恢复及资格不完整均有生产组件回归；独立修后复核未发现确定新增P1/P2。
+- 未验/差异：真实账户HTTP接受性、原生GUI/radio方向键/焦点/IME、多窗、官方配对像素、托管CI和用户验收。头像32px、lucide箭头与CSS为候选，不宣称官方矢量/token物理尺寸一致。unknown提示与严格读回/默认错禁写是项目保障，不称官方原文/时序。隐式requires-local返回专门unsupported_host，native Meetings专用宿主仍缺；labels非string wire未证，不放宽后开放权限。
+
+本阶段无新依赖、无真实账户写入、无推送/发布，不升整页G5。统一证据根`.ref/parity/12/whole-page/actual/plugin-app-link-permissions-r2-20261116/`，不能用上一阶段EXE验收新权限页。下一仍在第02批同步及App管理/授权残项。
+最终收口：隐式canonical App发生A→B→A时，按实际App身份重置状态、废弃旧回调并重建article控件子树，避免旧手势沿用新App输入DOM；同App刷新保持模式。该风险有源码及回归证据，未做物理鼠标复现。完整197前端及非Fast标准/34隔离探针在最后前端补丁之前通过；最后9个受影响流程再验exit0，随后当前TypeScript/Vite、EXE/MSI/NSIS构建exit0。全Rust827项exit0后未改Rust。501项产品输入构建前后稳定。
+
+候选：`dist-artifacts/plugins-r2-link-permissions-20261116/CodexNative.exe`，28,771,840字节，SHA256 `38651579b5adc081e00723a2f326991c4a1bcff97d8370a0881fcab311822feb`。输入清单SHA256 `a1bdec7cb11774a8fcb23947408a70dce0896e85e90f346d1607d77a0fdae972`；三产物哈希与准确执行时序见本阶段证据的`candidate-artifacts.json`及`verification-summary.json`。此为普通插件权限深链阶段候选；无新增可见父入口，真实账户HTTP、原生GUI/IME、官方配对像素、托管CI及用户验收均未验。下一接同步、App管理及授权残项，不升整页G5。
