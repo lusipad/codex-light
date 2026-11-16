@@ -25,4 +25,9 @@ state={...state,pending:'actual.key'};assert.equal(nodes(render()).find(node=>no
 state={...state,pending:null,uncertain:true,error:'Readback failed'};tree=render();assert.ok(nodes(tree).find(node=>node.props.role==='alert'));assert.equal(nodes(tree).find(node=>node.props.role==='switch').props.disabled,true);
 nodes(tree).find(node=>node.type==='button'&&node.children.includes('重试')).props.onClick();assert.equal(opened,11);
 state={...state,uncertain:false,error:null};props.detail={...props.detail,summary:{availability:'DISABLED_BY_ADMIN'}};assert.equal(nodes(render()).find(node=>node.props.role==='switch').props.disabled,true);
+const appIds=[];props.onOpenApp=id=>appIds.push(id);props.detail={...props.detail,summary:{availability:'AVAILABLE'}};
+tree=render();const appButton=nodes(tree).find(node=>node.type==='button'&&nodes(node).some(child=>child.children.includes('Actual app')));
+assert.ok(appButton);appButton.props.onClick();assert.deepEqual(appIds,['connector_a']);assert.equal(opened,11,'App navigation never calls generic MCP settings');
+props.detail={...props.detail,summary:{availability:'DISABLED_BY_ADMIN'}};
+assert.equal(nodes(render()).find(node=>node.type==='button'&&nodes(node).some(child=>child.children.includes('Actual app'))).props.disabled,true);
 console.log('Plugin management MCP UI: actual source/cwd, loading/error/retry, exact row switch, admin/pending/uncertain disable and app/config separation passed.');

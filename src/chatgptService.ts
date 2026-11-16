@@ -515,6 +515,33 @@ export async function readPluginPermissions(identity: ServiceIdentity, signal: A
   return responseBody(result, requestId, identity);
 }
 
+export async function readPluginAppDetails(pluginId: string, appId: string, identity: ServiceIdentity, signal: AbortSignal): Promise<unknown> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; body: unknown }>(
+    "plugin_app_details_read", requestId,
+    { request: { requestId, expectedIdentity: identity, profile: browserProfile(), pluginId, appId } }, signal,
+  );
+  return responseBody(result, requestId, identity);
+}
+
+export async function resolvePluginAppEntry(appId: string, identity: ServiceIdentity, signal: AbortSignal): Promise<unknown> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; body: unknown }>(
+    "plugin_app_resolve", requestId,
+    { request: { requestId, expectedIdentity: identity, profile: browserProfile(), appId } }, signal,
+  );
+  return responseBody(result, requestId, identity);
+}
+
+export async function readStandalonePluginApp(appId: string, identity: ServiceIdentity, signal: AbortSignal): Promise<unknown> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; body: unknown }>(
+    "plugin_app_standalone_read", requestId,
+    { request: { requestId, expectedIdentity: identity, profile: browserProfile(), appId } }, signal,
+  );
+  return responseBody(result, requestId, identity);
+}
+
 export async function writePluginPermission(value: string, identity: ServiceIdentity, signal: AbortSignal): Promise<ProfileMutationResult> {
   if (!["always_ask", "ask_before_writes", "review_important_actions"].includes(value)) throw Error("无效的默认权限。");
   const requestId = crypto.randomUUID();

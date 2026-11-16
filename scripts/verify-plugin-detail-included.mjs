@@ -19,7 +19,7 @@ vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/recommendedSkills.ts"
 }).outputText, { exports: displayExports, require: () => ({}) });
 vm.runInNewContext(output, { exports, require(name) {
   if (name === "react") return react;
-  if (name === "lucide-react") return { BookOpen: "BookOpen", Plug: "Plug", Workflow: "Workflow", Boxes: "Boxes" };
+  if (name === "lucide-react") return { BookOpen: "BookOpen", Plug: "Plug", Workflow: "Workflow", Boxes: "Boxes", ChevronRight: "ChevronRight" };
   if (name.endsWith("SkillPreviewDialog")) return { SkillPreviewDialog: "SkillPreviewDialog" };
   if (name.endsWith("PluginManagementMcp")) return { PluginManagementMcp: "PluginManagementMcp" };
   if (name.endsWith("PluginProvidedSettings")) return { PluginProvidedSettings: "PluginProvidedSettings" };
@@ -104,6 +104,14 @@ assert.ok(preview.props.onToggle, "settings preserves genuine installed-skill to
 assert.equal(preview.props.onTry, undefined, "settings content preview does not acquire directory prompt actions");
 assert.equal(preview.props.showMoreActions, false, "plugin-owned skills cannot be individually uninstalled from management preview");
 assert.equal(preview.props.footer, null, "management suppresses the actual shared preview action footer");
+const openedApps = []; props = { ...props, onOpenApp: id => openedApps.push(id) }; render();
+let appRow = find(node => node.type === "button" && nodes(node).some(child => child.children.includes("Real App")));
+assert.ok(appRow); appRow.props.onClick(); assert.deepEqual(openedApps, ["app"]);
+assert.equal(find(node => node.type === "PluginManagementMcp").props.onOpenApp, props.onOpenApp, "mapped MCP Apps share the actual standalone entry callback");
+props = { ...props, detail: { ...props.detail, summary: { ...props.detail.summary, availability: "DISABLED_BY_ADMIN" } } }; render();
+assert.equal(find(node => node.type === "button" && nodes(node).some(child => child.children.includes("Real App"))).props.disabled, true);
+props = { ...props, presentation: "directory" }; render();
+assert.equal(find(node => node.type === "button" && nodes(node).some(child => child.children.includes("Real App"))), undefined, "directory inclusion remains descriptive rather than borrowing management navigation");
 props = { ...props, detail: { ...detail, apps: [], skills: [], hooks: [], mcpServers: [] } }; render();
 assert.equal(all().filter(node => node.type === "h2").length, 0, "empty sections stay hidden");
 console.log("PASS plugin included source order, exact skill ownership, ambiguity, readonly preview, admin restriction and identity reset");

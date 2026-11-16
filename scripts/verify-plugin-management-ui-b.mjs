@@ -78,6 +78,8 @@ export function harness(options = {}) {
     "./AddPluginMarketplaceDialog": { AddPluginMarketplaceDialog: "AddPluginMarketplaceDialog" },
     "./PluginManagementDetail": { PluginManagementDetail: "PluginManagementDetail" },
     "./PluginPermissionsSettings": { PluginPermissionsSettings: "PluginPermissionsSettings" },
+    "./PluginAppDetailsPage": { PluginAppDetailsPage: "PluginAppDetailsPage" },
+    "./PluginAppEntryPage": { PluginAppEntryPage: "PluginAppEntryPage" },
     "./PluginManagementActions": { PluginManagementActions: "PluginManagementActions" },
     "../pluginManagementSkills": load("src/pluginManagementSkills.ts", { "./recommendedSkills": recommended }),
     "../pluginManagementLocation": load("src/pluginManagementLocation.ts", {}),

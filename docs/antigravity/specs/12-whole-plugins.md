@@ -147,3 +147,27 @@ ON_USE且无显式app setup的普通提示词可先起草，不把有apps本身�
 结构化设置已接普通本机MCP分支：完整状态分页发现→真实归属/能力/工具→共享ephemeral工具上下文→严格标量表单→单字段set→成功或失败后读取；菜单、IME保护Enter、原生输入约束和无参action已接线。带UI资源的action、codex_apps/hosted、MCP App宿主、设备权限、自动Transport closed恢复仍未接完。工具关闭后不冒称已取消服务器执行，在途请求结束后才释放临时线程；桥当前没有单请求30秒timeout，不冒称实现了官方timeout。
 
 全局权限已接独立管理URL及typed本机宿主读写，保留四值读取/三值写入和真实读回；完整账号/link权限未接。`permission-entry-contract.md`未找到root可见权限入口的正证据，因此未添加自造header按钮；这不是完整UI入口闭环或真实账号通过。
+
+### 第02批应用详情只读链开工合同（9661cf0之后）
+
+固定同版来源继续使用，不新增猜测页面。337381的B→z→K分支先为独立`/apps/:appId`查真实关联插件，有归属才replace到`/:pluginId/apps/:appId`；无归属走独立Manage app，不套完整连接详情。完整连接/权限/sync属于tB分支，先接有真实service插件归属的只读数据，独立管理、连接及权限写入另行收口。
+
+- 宿主按当前身份读取真实service插件详情，以精确plugin.id及release.app_ids/模板materialized_app_ids核应用归属；不以installed库存限制可读详情，不对未安装插件自造拒绝条件。只对精确`asdk_app_`前缀规范化，不接受renderer提供的归属结论或任意URL。
+- metadata固定GET `/aip/connectors/{id}?include_actions=true`，返回裸connector；234277的查询select才包装`{connector,isTemplateInstance}`，不能要求服务返回`.connector`。metadata用settings surface，应用links固定BLOCKING POST、other surface及CODEX SKU。
+- 返回仅保留详情/权限消费者已证实需要的字段及当前应用links，不把其他应用账户、凭据、原始actions搬入renderer。身份变化、取消、无归属、格式错误和读取失败不能变为空列表成功。
+- CV1W.fD先按canonical connector_id匹配，再去HIDDEN/implicit_link；指定linkId命中优先，否则首个非REAUTH_REQUIRED，再否则首项。多账户资格由connector.enable_multi_links严格true决定，不按账户数量猜。
+- 读取可编辑账户不代表已经授权写入。后续权限仍须当前personal账户、USER owner与真实userId、非REAUTH_REQUIRED及label资格；本包不开放任意link PATCH。
+
+只读链回归PAD01–PAD06分别覆盖：真实插件/应用归属与未安装可读分支；canonical前缀及同名不同ID；裸metadata与固定请求上下文；只返回当前应用必要字段；账号切换/取消/错误；可见账户筛选和指定/健康/首项选中顺序。PAD用例与原始AD来源锚点分别编号，避免将取证片段当测试执行。真实账号HTTP、完整App UI、sync/OAuth、原生及官方配对像素均保持未验，不以只读宿主通过升级整页状态。
+
+### 独立应用入口、账户身份与导航补证
+
+新增同版`app-account-contract.md`、`app-association-contract.md`、`app-entry-fallback-contract.md`。自定义昵称来自`link.name`，provider身份依次取profile.email/name/nickname；多账户整行点击是rename而非选择radio。普通fallback和共享账户组件的最后账户断开限制、中文文案不同，不混为通用动作。
+
+独立`apps/:appId`只将明确`plugin_id:null`视为无关联；缺字段、读取错误不走fallback。有真实pluginId使用replace进入所属详情，由详情再次验证materialized app归属。hczB.Fw仅作nullish分支，不证明归属。详情面包屑为管理根/真实插件名/当前App；detailTo仅是额外“查看详情”入口。
+
+补证纠正早期资料中的“本机目录”称谓：**DBCl.iwv是durable**。明确无关联后BQbE.KA走hosted `POST /ps/apps/batch`，原请求ID单项数组、include_tools=false、SKU=CONNECTOR_SETTING、账号及locale；该调用未显式surface，不能套元数据settings值或用CLI app/list替代。snake_case apps按canonical ID精确匹配后保原请求ID；缺目标进入读取错误，额外应用不返回。随后metadata以原请求ID查询、CODEX/settings。此分支仅管理应用，不渲染完整插件连接/权限/sync树。
+
+PAD07–PAD12新增验收：association的string/null/missing/error；原始ID编码和请求上下文；durable内容投影与图标fallback/其他应用隔离；元数据失败保header；replace导航及账号/路由ABA；包含项与MCP映射App行走独立入口且管理员禁用。完整Manage app写控件、账户重命名/关联、当前用户身份fallback、hosted主详情数据及区域资格仍须后续同页收口，不能以只读首包算完整App详情。
+
+独立复审补正PAD01：materialized归属失效使用专用`app_not_in_plugin`结果，客户端先后验当前账户/用户/generation，状态层清旧快照，仅当前plugin/app/detail及无host路由才replace回对应插件详情；真实HTTP403、网络错误不能触发该跳转。手动点击插件祖先仍push。hosted重复canonical ID按BQbE.w的Map语义保留最后项，不能自造“歧义”拒绝；原始metadata请求ID与canonical身份比较分别处理。

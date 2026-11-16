@@ -45,7 +45,7 @@ import { PluginPreparationPanel } from "./PluginPreparationPanel";
 import { RecommendedSkillsPanel } from "./RecommendedSkillsPanel";
 import { recommendedSkillDisplayName, readRecommendedSkills, type RecommendedSkill } from "../recommendedSkills";
 import { filterManagedSkills } from "../pluginManagementSkills";
-import { parsePluginManagementLocation, pluginManagementDetailUrl, pluginManagementRootUrl } from "../pluginManagementLocation";
+import { parsePluginManagementLocation, pluginManagementAppUrl, pluginManagementDetailUrl, pluginManagementRootUrl } from "../pluginManagementLocation";
 import { SkillPreviewDialog } from "./SkillPreviewDialog";
 import { PluginDirectoryDetail } from "./PluginDirectoryDetail";
 import { PluginDirectoryIncluded } from "./PluginDirectoryIncluded";
@@ -57,6 +57,8 @@ import { PluginManagementDetail } from "./PluginManagementDetail";
 import { PluginManagementActions } from "./PluginManagementActions";
 import { AddPluginMarketplaceDialog, type AddPluginMarketplaceInput } from "./AddPluginMarketplaceDialog";
 import { PluginPermissionsSettings } from "./PluginPermissionsSettings";
+import { PluginAppDetailsPage } from "./PluginAppDetailsPage";
+import { PluginAppEntryPage } from "./PluginAppEntryPage";
 import {
   AppInfo,
   InstalledApp,
@@ -993,6 +995,8 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       setDetailKey(route.pluginId ?? "management-subpage"); setSubTab("plugins");
       directoryDetailRetry.current = restore;
       if (route.hostId && route.hostId !== "local") { setDetailError(toViewError(new Error("当前管理入口尚不支持此主机。"))); return; }
+      if (route.kind === "app" && route.appId && route.hostId === null) return;
+      if (route.kind === "plugin" && route.section === "detail" && route.appId && route.hostId === null) return;
       if (route.kind !== "plugin" || route.section !== "detail" || route.skillName || route.appId) {
         setDetailError(toViewError(new Error("此插件管理子页面尚未接入。"))); return;
       }
@@ -1992,8 +1996,15 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     return isCurrent() ? onTryPlugin(plugin, text) : false;
   };
 
+  const includedPluginContext = pluginContextRef.current;
   const renderIncludedPluginContents = (presentation: "directory" | "settings") => detail ? <PluginDirectoryIncluded presentation={presentation} detail={detail} installedSkills={remoteSkills}
             connectionIdentity={connectionIdentity} workspaceRoot={activeWorkspaceRoot}
+            onOpenApp={presentation === "settings" ? appId => {
+              if (!isPluginContextCurrent(includedPluginContext)) return;
+              ++detailRequestRef.current; detailContextRef.current = null;
+              setDetailKey("management-app"); setDetail(null); setDetailError(null); setDetailLoading(false);
+              updateDirectoryUrl(pluginManagementAppUrl(managementBase(), { appId }));
+            } : undefined}
             mcpCwd={(workspaceRoots ? workspaceRoots[0] : activeWorkspaceRoot) || undefined} onConfigUpdated={onConfigUpdated}
             skillBusy={skillWriteBusy || !!skillToggleBusy}
             onOpenMcpSettings={onOpenPluginSettings ? () => onOpenPluginSettings("connections") : undefined}
@@ -2021,6 +2032,31 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   if (manageOnly && directoryHostUnsupported) return <div className="pm-state-body" role="alert">当前管理入口尚不支持此主机。</div>;
   if (manageOnly && window.location && parsePluginManagementLocation(window.location.href)?.kind === "permissions") {
     return <PluginPermissionsSettings identity={connectionIdentity} onUnavailable={() => closeManagedDetail(true)} />;
+  }
+  const managementAppRoute = manageOnly && window.location ? parsePluginManagementLocation(window.location.href) : null;
+  const managementAppContext = pluginContextRef.current;
+  if (managementAppRoute?.kind === "app" && managementAppRoute.appId && managementAppRoute.hostId === null) {
+    const appId = managementAppRoute.appId;
+    return <PluginAppEntryPage key={JSON.stringify([connectionIdentity, appId])} connectionIdentity={connectionIdentity} appId={appId}
+      onRoot={() => closeManagedDetail()} onResolvePlugin={pluginId => {
+        const current = parsePluginManagementLocation(window.location.href);
+        if (!isPluginContextCurrent(managementAppContext) || current?.kind !== "app" || current.appId !== appId || current.hostId !== null) return;
+        updateDirectoryUrl(pluginManagementAppUrl(managementBase(), { pluginId, appId }), true);
+        directoryDetailRetry.current?.();
+      }} />;
+  }
+  if (managementAppRoute?.kind === "plugin" && managementAppRoute.section === "detail" && managementAppRoute.appId && managementAppRoute.hostId === null) {
+    const openPlugin = (replace = false) => {
+      const current = parsePluginManagementLocation(window.location.href);
+      if (!isPluginContextCurrent(managementAppContext) || current?.kind !== "plugin" || current.section !== "detail" || current.hostId !== null ||
+        current.pluginId !== managementAppRoute.pluginId || current.appId !== managementAppRoute.appId) return;
+      updateDirectoryUrl(pluginManagementDetailUrl(managementBase(), { pluginId: managementAppRoute.pluginId!, hostId: "local",
+        sourceType: "remote", remotePluginId: managementAppRoute.pluginId! }), replace);
+      directoryDetailRetry.current?.();
+    };
+    return <PluginAppDetailsPage key={JSON.stringify([connectionIdentity, managementAppRoute.pluginId, managementAppRoute.appId])}
+      connectionIdentity={connectionIdentity} pluginId={managementAppRoute.pluginId!} appId={managementAppRoute.appId}
+      onBack={() => closeManagedDetail()} onOpenPlugin={() => openPlugin()} onUnavailable={() => openPlugin(true)} />;
   }
 
   return (

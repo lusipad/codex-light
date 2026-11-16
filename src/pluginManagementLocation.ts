@@ -81,6 +81,22 @@ export function pluginManagementRootUrl(base: string | URL, params: { hostId?: s
   return hostId == null ? managementRoot : `${managementRoot}?${new URLSearchParams({ hostId }).toString()}`;
 }
 
+/** CV1W.i4: app routes use real IDs and do not inherit a host/market query. */
+export function pluginManagementAppUrl(base: string | URL, params: { pluginId?: string | null; appId: string }): string {
+  checkedBase(base);
+  return `${managementRoot}/${params.pluginId == null ? "" : `${encodedSegment(params.pluginId)}/`}apps/${encodedSegment(params.appId)}`;
+}
+
+/** Account selection replaces only linkId; it never creates a host-app route. */
+export function pluginManagementAppSelectionUrl(base: string | URL, linkId: string | null): string {
+  const location = checkedBase(base);
+  if (location.kind !== "plugin" || location.appId === null || location.section !== "detail" || location.hostId !== null) throw new Error("Invalid plugin app selection location");
+  const url = managementUrl(base)!;
+  if (linkId === null) url.searchParams.delete("linkId");
+  else { encodedSegment(linkId); url.searchParams.set("linkId", linkId); }
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
 /** jEyg.$W: remote service IDs are direct only on local/durable; SSH retains CLI identity. */
 export function pluginManagementDetailUrl(base: string | URL, params: {
   pluginId: string;

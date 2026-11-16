@@ -169,3 +169,24 @@
 最终产物：`dist-artifacts/plugins-r2-settings-20261116/CodexNative.exe`，27,525,120字节，SHA-256 `8c90efd9c1a53ceef20aae97702e8a55b551e22dbab13cff771fb8e06cabc31c`；MSI与NSIS见candidate-artifacts.json。证据根`.ref/parity/12/whole-page/actual/plugin-settings-r2-20261116/`。首轮11个相关进程已退出；最终原始12项统计含一个早于父进程创建的vctip PID重用关联，按创建时序剔除后11个真实进程均退出，未终止该无关编译器进程。
 
 未推送/发布，无当前阶段托管CI结果。仍缺：Apps详情/连接/同步与关联账户权限、全局权限可见入口的官方正证据、codex_apps/hosted及HTML/MCP App设置宿主、设备访问、自有OAuth回调资格、Transport closed自动恢复及官方30秒创建超时、跨窗失效同步与完整原生/配对视觉验收。下一包继续这些同页消费者，不把本阶段候选算作插件整页完成。
+## R2应用详情只读链开发检查点（9661cf0之后）
+
+本检查点是第02批的继续开发，未完成App页面或用户验收。`9661cf0`为此前权限/普通MCP设置阶段的本地提交，没有推送。本包来源为同版`app-detail-contract.md`及20精确锚点，6资源hash/大小主线程复核通过。
+
+- 新增固定`plugin_app_details_read`及生产IPC/客户端。service插件详情严格核ID及materialized app归属；不把installed库存作为可读详情前提。metadata裸对象、CODEX SKU及settings/other surface按来源区分。
+- 宿主白名单和前端严格解码；其他应用links与原始actions/token不返回。metadata失败不当空；links读取失败保留metadata并返回独立错误。前端选中遵循真实multi资格、hidden/implicit及指定/健康/首项顺序。
+- 新专项先红后绿，TypeScript exit0；Rust新增专项9通过、0失败/忽略、763过滤，exit0（不是全量772）。完整前端184项exit0，null字段对齐专项另重验0；证据见`.ref/parity/12/whole-page/actual/plugin-app-details-r2-20261116/frontend-all.{log,exit}`。未重跑非Fast标准、全Rust或新原生打包。
+- **未验及下一步**：尚未将客户端挂到完整App路由/UI；继续接页状态、区域、账户选择，然后补权限/sync消费者。无新原生产物、无真实账号HTTP/OAuth、无官方配对像素/物理IME/用户验收，不用此前EXE覆盖本包；本包尚未阶段提交或推送，无托管CI结果。
+## R2应用独立入口与只读详情接线（2026-11-16，开发检查点）
+
+在`9661cf0`之后继续第02批，没有转页。本包已接管理包含项及MCP映射App行→独立入口→真实canonical关联；有pluginId则replace所属详情并再次核归属，明确null才走durable hosted内容与独立metadata。三段插件/App面包屑、真实身份/昵称的只读行、加载/错误/重试及scope/ABA隔离已接。独立无插件页不借完整连接/权限树，也没有假管理写控件。
+
+| 检查 | 实际结果及限制 |
+|---|---|
+| 来源 | 36个manifest资源；本包AD/AC/AS/FB共50个源码锚点已核精确片段，新增hczB资源从snapshot校header integrity后登记。DBCl.iwv=durable，batch用CONNECTOR_SETTING，metadata用CODEX/settings；没有用CLI目录冒充hosted结果 |
+| 前端 | 189项完整回放exit0；随后复审归属跳转补丁的10项相关回归及最终TypeScript/Vite构建均exit0。完整回放与最终补丁执行范围分开，不称原生/像素通过 |
+| Rust | 最终22个plugin_app_details专项通过，0失败/忽略、763过滤，exit0；没有宣称全量785已跑。保留早期alias误比21过1失败、Map行为先红后绿及归属状态红回归；最终以rust-entry-reviewed.log/exit为准 |
+| 复审 | P2归属失效错停403页已闭环：专用结果→身份后验→清旧snapshot→当前路由replace；真实403仍显示错误。独立只读复核未发现新增确定P1/P2 |
+| 未验 | 未重跑非Fast标准/协议探针、全Rust或新原生打包；无真实账号服务/OAuth、物理IME、官方配对像素及用户验收。上轮GUI工具因无法确认浏览器URL停止，无截图；隔离预览服务已关闭，创建的浏览器窗口未用其他方式绕过限制清理 |
+
+证据根仍为`.ref/parity/12/whole-page/actual/plugin-app-details-r2-20261116/`，最终检查与构建日志包含`reviewed-*.log`、`frontend-entry-reviewed-build.log`、`entry-code-review.md`。本包是只读开发检查点，不提供旧EXE当作新源码候选；完整Manage app、账户选择/持久化与重命名/关联、权限/sync及hosted主详情字段/认证资格继续同页开发。未推送，无本包托管CI结果。

@@ -8,6 +8,7 @@ vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/pluginManagementLocat
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText, { exports: module.exports, URL, URLSearchParams });
 const { parsePluginManagementLocation: parse, pluginManagementDetailUrl: detail, pluginManagementRootUrl: root } = module.exports;
+const { pluginManagementAppUrl: app, pluginManagementAppSelectionUrl: selection } = module.exports;
 const base = "/settings/plugins-settings?hostId=stale&tab=mcps&marketplacePath=old&unrelated=discard#old";
 assert.equal(parse(base).kind, "root");
 assert.equal(parse(base).hostId, "stale");
@@ -65,4 +66,17 @@ assert.throws(() => detail(base, { pluginId: "a", sourceType: "local", hostId: "
 assert.throws(() => detail("/plugins", { pluginId: "a", sourceType: "local", hostId: "local" }), /Invalid/);
 assert.throws(() => detail(base, { pluginId: "a", sourceType: "local", hostId: "local", marketplacePath: "path", remoteMarketplaceName: "remote" }), /Invalid/);
 assert.throws(() => root("/plugins"), /Invalid/);
+for (const appId of ["connector_A", "asdk_app_中文", "literal/id?hash#%2F"]) {
+  const standalone = app(base, { appId });
+  assert.equal(parse(standalone).kind, "app"); assert.equal(parse(standalone).appId, appId);
+  const owned = app(base, { pluginId: "remote/plugin", appId });
+  assert.equal(parse(owned).pluginId, "remote/plugin"); assert.equal(parse(owned).appId, appId);
+  assert.equal(owned.includes("hostId"), false); assert.equal(owned.includes("marketplacePath"), false);
+}
+const appBase = "/settings/plugins-settings/plugin/apps/connector_A?keep=literal%2Fvalue&linkId=old#section";
+const picked = new URL(selection(appBase, "account/?%中文"), "https://test.invalid");
+assert.equal(picked.searchParams.get("keep"), "literal/value"); assert.equal(picked.searchParams.get("linkId"), "account/?%中文");
+assert.equal(picked.hash, "#section"); assert.equal(new URL(selection(appBase, null), "https://test.invalid").searchParams.has("linkId"), false);
+for (const url of [base, "/settings/plugins-settings/apps/app", "/settings/plugins-settings/plugin/apps/app/permissions", "/settings/plugins-settings/plugin/apps/app?hostId=ssh"]) assert.throws(() => selection(url, "link"), /Invalid/);
+for (const appId of ["", ".", "..", "\0"]) assert.throws(() => app(base, { pluginId: "plugin", appId }), /Invalid/);
 console.log("Plugin management locations: proven route tree, raw remote IDs, encoded identities, real source/host and malformed routes passed.");

@@ -3,9 +3,10 @@ import { ChevronRight, Plug } from "lucide-react";
 import type { PluginDetail } from "../plugins";
 import { usePluginManagementMcp } from "../pluginManagementMcpState";
 
-export function PluginManagementMcp({ detail, identity, cwd, onOpenSettings, onConfigUpdated }: {
+export function PluginManagementMcp({ detail, identity, cwd, onOpenSettings, onOpenApp, onConfigUpdated }: {
   detail: PluginDetail; identity: string; cwd?: string;
   onOpenSettings?: () => void; onConfigUpdated?: () => void | Promise<void>;
+  onOpenApp?: (appId: string) => void;
 }) {
   const { snapshot, retry, toggle } = usePluginManagementMcp(detail, identity, cwd, onConfigUpdated);
   const disabled = detail.summary.availability === "DISABLED_BY_ADMIN";
@@ -15,7 +16,11 @@ export function PluginManagementMcp({ detail, identity, cwd, onOpenSettings, onC
     {snapshot?.error && <div role="alert"><p>{snapshot.error}</p><button type="button" className="pm-detail-included-settings"
       disabled={snapshot.pending !== null || snapshot.loading} onClick={() => void retry()}>重试</button></div>}
     <div className="pm-detail-included-list">{snapshot?.rows.map((row, index) => <div className="pm-detail-included-skill" key={`${row.name}:${index}`}>
-      {row.kind === "app" ? <div className="pm-detail-included-row">
+      {row.kind === "app" ? onOpenApp ? <button type="button" className="pm-detail-included-row pm-detail-included-preview"
+        disabled={disabled} onClick={() => onOpenApp(row.app.id)}>
+        <span className="pm-detail-included-icon"><Plug size={24} aria-hidden="true" /></span>
+        <span className="pm-detail-included-copy">{row.app.name}</span><ChevronRight size={16} aria-hidden="true" />
+      </button> : <div className="pm-detail-included-row">
         <span className="pm-detail-included-icon"><Plug size={24} aria-hidden="true" /></span>
         <span className="pm-detail-included-copy">{row.app.name}</span>
       </div> : <button type="button" className="pm-detail-included-row pm-detail-included-preview" disabled={!onOpenSettings}

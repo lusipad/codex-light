@@ -27,5 +27,9 @@ try {
   assert.equal(view.calls.filter(call => ["toggle", "run"].includes(call[0])).length, 0, "reading management content never mutates its installation");
   detail.props.onBack(); await view.tick();
   assert.equal(view.nodes(view.tree).some(node => node.type === "PluginManagementDetail"), false);
+  const openAgain = view.nodes(view.tree).find(node => node.props.className === "pm-managed-plugin-open");
+  openAgain.props.onClick(); await view.tick();
+  const actualIncluded = view.nodes(view.tree).find(node => node.type === "PluginDirectoryIncluded");
+  assert.equal(typeof actualIncluded.props.onOpenApp, "function", "the management included App consumer receives real standalone navigation");
 } finally { view.unmount(); }
 console.log("Management detail parent: dedicated presentation, actual included metadata, file reads, settings navigation and safe return passed.");

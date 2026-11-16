@@ -14,6 +14,8 @@ mod account_notifications;
 pub use account_notifications::{AccountNotificationsRequest, AccountNotificationsResponse, AccountNotificationsWriteRequest};
 mod plugin_permissions;
 pub use plugin_permissions::{PluginPermissionsRequest, PluginPermissionsResponse, PluginPermissionsWriteRequest};
+mod plugin_app_details;
+pub use plugin_app_details::{PluginAppDetailsRequest, PluginAppEntryRequest};
 mod archive_conversations;
 pub use archive_conversations::{ArchiveConversationsRequest, ArchiveConversationsResponse};
 mod archive_unarchive;

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { BookOpen, Boxes, Plug, Workflow } from "lucide-react";
+import { BookOpen, Boxes, ChevronRight, Plug, Workflow } from "lucide-react";
 import type { PluginDetail, SkillMetadata, SkillSummary } from "../plugins";
 import { recommendedSkillDisplayName } from "../recommendedSkills";
 import { SkillPreviewDialog } from "./SkillPreviewDialog";
@@ -15,6 +15,7 @@ interface PluginDirectoryIncludedProps {
   workspaceRoot: string;
   loadSkillContents?: (skill: SkillSummary, installed: SkillMetadata | null) => Promise<string>;
   onOpenMcpSettings?: () => void;
+  onOpenApp?: (appId: string) => void;
   onOpenHooksSettings?: () => void;
   onOpenSkillFile?: (path: string) => boolean | Promise<boolean>;
   onTrySkill?: (skill: SkillMetadata) => boolean | Promise<boolean>;
@@ -47,7 +48,7 @@ const skillTitle = (skill: SkillSummary | SkillMetadata) => skill.interface?.dis
 const skillDescription = (skill: SkillSummary | SkillMetadata) => skill.interface?.shortDescription?.trim() || skill.shortDescription?.trim() || skill.description;
 
 export function PluginDirectoryIncluded({ presentation = "directory", detail, installedSkills, connectionIdentity, workspaceRoot, loadSkillContents,
-  onOpenMcpSettings, onOpenHooksSettings, onOpenSkillFile, onTrySkill, onToggleSkill, skillBusy = false, mcpCwd, onConfigUpdated }: PluginDirectoryIncludedProps) {
+  onOpenMcpSettings, onOpenApp, onOpenHooksSettings, onOpenSkillFile, onTrySkill, onToggleSkill, skillBusy = false, mcpCwd, onConfigUpdated }: PluginDirectoryIncludedProps) {
   const identity = JSON.stringify([connectionIdentity, workspaceRoot, detail.marketplaceName, detail.marketplacePath, detail.summary.id]);
   const [selection, setSelection] = useState<{ identity: string; index: number } | null>(null);
   useEffect(() => { setSelection(null); }, [identity]);
@@ -65,13 +66,17 @@ export function PluginDirectoryIncluded({ presentation = "directory", detail, in
   return <div className={`pm-detail-included${presentation === "settings" ? " pm-detail-included-settings-view" : ""}`}>
     {detail.apps.length > 0 && <section aria-label={presentation === "settings" ? "使用的应用" : "应用"}>
       {sectionHeading(presentation === "settings" ? "使用的应用" : "应用", detail.apps.length)}
-      <div className="pm-detail-included-list">{detail.apps.map(app => <div className="pm-detail-included-row" key={app.id}>
+      <div className="pm-detail-included-list">{detail.apps.map(app => presentation === "settings" && onOpenApp ? <button type="button"
+        className="pm-detail-included-row pm-detail-included-preview" key={app.id} disabled={blocked} onClick={() => onOpenApp(app.id)}>
+        <span className="pm-detail-included-icon"><Boxes size={24} aria-hidden="true" /></span>
+        <span className="pm-detail-included-copy"><span>{app.name}</span>{app.description && <span className="pm-detail-included-description">{app.description}</span>}</span><ChevronRight size={16} aria-hidden="true" />
+      </button> : <div className="pm-detail-included-row" key={app.id}>
         <span className="pm-detail-included-icon"><Boxes size={24} aria-hidden="true" /></span>
         <div className="pm-detail-included-copy"><span>{app.name}</span>{app.description && <p>{app.description}</p>}</div>
       </div>)}</div>
     </section>}
     {detail.mcpServers.length > 0 && (presentation === "settings" ? <PluginManagementMcp key={identity} identity={identity} detail={detail}
-      cwd={mcpCwd} onOpenSettings={onOpenMcpSettings} onConfigUpdated={onConfigUpdated} /> : <section aria-label="MCP 服务器">
+      cwd={mcpCwd} onOpenSettings={onOpenMcpSettings} onOpenApp={onOpenApp} onConfigUpdated={onConfigUpdated} /> : <section aria-label="MCP 服务器">
       <div className="pm-detail-included-heading">{sectionHeading("MCP 服务器", detail.mcpServers.length)}
         {onOpenMcpSettings && <button type="button" className="pm-detail-included-settings" onClick={onOpenMcpSettings}>设置</button>}</div>
       <div className="pm-detail-included-list">{detail.mcpServers.map(name => <div className="pm-detail-included-row" key={name}>
