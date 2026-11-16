@@ -6,6 +6,7 @@ import { SkillPreviewDialog } from "./SkillPreviewDialog";
 import "./PluginDirectoryIncluded.css";
 
 interface PluginDirectoryIncludedProps {
+  presentation?: "directory" | "settings";
   detail: PluginDetail;
   installedSkills: SkillMetadata[] | null;
   connectionIdentity: string;
@@ -41,7 +42,7 @@ export function resolveIncludedSkill(skill: SkillSummary, pluginName: string, in
 const skillTitle = (skill: SkillSummary | SkillMetadata) => skill.interface?.displayName?.trim() || recommendedSkillDisplayName(skill.name.split(":").at(-1) || skill.name);
 const skillDescription = (skill: SkillSummary | SkillMetadata) => skill.interface?.shortDescription?.trim() || skill.shortDescription?.trim() || skill.description;
 
-export function PluginDirectoryIncluded({ detail, installedSkills, connectionIdentity, workspaceRoot, loadSkillContents,
+export function PluginDirectoryIncluded({ presentation = "directory", detail, installedSkills, connectionIdentity, workspaceRoot, loadSkillContents,
   onOpenMcpSettings, onOpenHooksSettings, onOpenSkillFile, onTrySkill, onToggleSkill, skillBusy = false }: PluginDirectoryIncludedProps) {
   const identity = JSON.stringify([connectionIdentity, workspaceRoot, detail.marketplaceName, detail.marketplacePath, detail.summary.id]);
   const [selection, setSelection] = useState<{ identity: string; index: number } | null>(null);
@@ -57,9 +58,9 @@ export function PluginDirectoryIncluded({ detail, installedSkills, connectionIde
   const canWrite = !blocked && selectedInstalled !== null && selectedInstalled.scope !== "admin";
   const skills = detail.skills.map((skill, index) => ({ skill, index, actual: resolveIncludedSkill(skill, detail.summary.name, installedSkills) }));
   const sectionHeading = (label: string, count: number) => <h2>{label}<span className="pm-detail-included-count">{count}</span></h2>;
-  return <div className="pm-detail-included">
-    {detail.apps.length > 0 && <section aria-label="应用">
-      {sectionHeading("应用", detail.apps.length)}
+  return <div className={`pm-detail-included${presentation === "settings" ? " pm-detail-included-settings-view" : ""}`}>
+    {detail.apps.length > 0 && <section aria-label={presentation === "settings" ? "使用的应用" : "应用"}>
+      {sectionHeading(presentation === "settings" ? "使用的应用" : "应用", detail.apps.length)}
       <div className="pm-detail-included-list">{detail.apps.map(app => <div className="pm-detail-included-row" key={app.id}>
         <span className="pm-detail-included-icon"><Boxes size={24} aria-hidden="true" /></span>
         <div className="pm-detail-included-copy"><span>{app.name}</span>{app.description && <p>{app.description}</p>}</div>
@@ -92,7 +93,7 @@ export function PluginDirectoryIncluded({ detail, installedSkills, connectionIde
     </section>}
     {detail.hooks.length > 0 && <section aria-label="钩子">
       <div className="pm-detail-included-heading">{sectionHeading("钩子", detail.hooks.length)}
-        {onOpenHooksSettings && <button type="button" className="pm-detail-included-settings" onClick={onOpenHooksSettings}>设置</button>}</div>
+        {onOpenHooksSettings && <button type="button" className="pm-detail-included-settings" onClick={onOpenHooksSettings}>{presentation === "settings" ? "在设置中管理" : "设置"}</button>}</div>
       <div className="pm-detail-included-list">{detail.hooks.map(hook => <div className="pm-detail-included-row" key={hook.key}>
         <span className="pm-detail-included-icon"><Workflow size={24} aria-hidden="true" /></span><span className="pm-detail-included-copy">{hook.eventName}</span>
       </div>)}</div>
@@ -105,9 +106,9 @@ export function PluginDirectoryIncluded({ detail, installedSkills, connectionIde
       onClose={() => setSelection(null)}
       onToggle={canWrite && onToggleSkill ? () => onToggleSkill(selectedInstalled!) : undefined}
       onOpen={path && onOpenSkillFile ? () => onOpenSkillFile(path) : undefined}
-      onTry={selectedInstalled?.enabled && detail.summary.enabled && path && onTrySkill ? () => onTrySkill(selectedInstalled) : undefined}
-      showMoreActions={!!selectedInstalled}
-      footer={!selectedInstalled ? <button type="button" className="primary-btn-sm" onClick={() => setSelection(null)}>关闭</button> : undefined}
+      onTry={presentation === "directory" && selectedInstalled?.enabled && detail.summary.enabled && path && onTrySkill ? () => onTrySkill(selectedInstalled) : undefined}
+      showMoreActions={presentation === "directory" && !!selectedInstalled}
+      footer={presentation === "settings" ? null : !selectedInstalled ? <button type="button" className="primary-btn-sm" onClick={() => setSelection(null)}>关闭</button> : undefined}
     />}
   </div>;
 }

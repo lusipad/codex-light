@@ -215,6 +215,39 @@ async function verify() {
   assert.equal(pendingRemove.calls.filter(([name]) => name === "write-config").length, 1);
   pendingRemove.unmount();
   console.log("PASS MCP-B05: unknown uninstall verifies actual user-layer key absence, never an effective-source overlay, while retaining a real lower/project entry and never replaying the mutation");
+
+  const embedded = createMcpSettingsHarness({ snapshot: mcpFixture([mcpEntry("alpha"), mcpEntry("beta")]) });
+  Object.assign(embedded.props, { embedded: true, externalQuery: "alpha", createRequest: 0 });
+  embedded.render(); await embedded.tick();
+  assert.equal(embedded.state.editor, null, "initial zero does not open an editor");
+  assert.ok(embedded.text(embedded.tree).includes("alpha")); assert.ok(!embedded.text(embedded.tree).includes("beta"));
+  assert.ok(!embedded.nodes(embedded.tree).some(node => node.props.type === "search"));
+  assert.ok(!embedded.nodes(embedded.tree).some(node => node.type === "h3" && embedded.text(node) === "服务器"));
+  embedded.props.createRequest++; embedded.render(); assert.ok(embedded.state.editor);
+  embedded.state.change({ ...embedded.state.editor.draft, label: "preserved", command: "node" }); embedded.render();
+  embedded.props.createRequest++; embedded.render(); assert.equal(embedded.modal.open, true); assert.equal(embedded.state.editor.draft.label, "preserved");
+  embedded.button("继续编辑").props.onClick(); embedded.render(); assert.equal(embedded.state.editor.draft.label, "preserved");
+  embedded.props.createRequest++; embedded.render(); embedded.button("放弃更改").props.onClick(); embedded.render();
+  assert.equal(embedded.state.editor.draft.label, "", "confirmed discard runs the same guarded add action");
+  embedded.state.change({ ...embedded.state.editor.draft, label: "old-scope", command: "node" }); embedded.render();
+  embedded.props.createRequest++; embedded.render(); assert.equal(embedded.modal.open, true);
+  const staleConfirm = embedded.button("放弃更改").props.onClick;
+  embedded.props.cwd = "C:/new-scope"; embedded.render(); await embedded.tick();
+  embedded.props.createRequest++; embedded.render(); embedded.state.change({ ...embedded.state.editor.draft, label: "new-scope", command: "node" }); embedded.render();
+  staleConfirm(); embedded.render();
+  assert.equal(embedded.state.editor.draft.label, "new-scope", "old confirmation cannot discard or open an editor in a new scope");
+  embedded.state.discard(); embedded.render();
+  embedded.setFixture({ ...mcpFixture(), userLayer: null }); await embedded.state.reload(); embedded.render();
+  embedded.props.createRequest++; embedded.render(); assert.equal(embedded.state.editor, null, "external add cannot bypass unavailable user layer");
+  embedded.unmount(); assert.equal(embedded.listenerCount, 0);
+
+  let resolveRead;
+  const loadingCreate = createMcpSettingsHarness({ read: () => new Promise(resolve => { resolveRead = resolve; }) });
+  Object.assign(loadingCreate.props, { embedded: true, createRequest: 0 }); loadingCreate.render();
+  loadingCreate.props.createRequest++; loadingCreate.render(); resolveRead(mcpFixture()); await loadingCreate.tick();
+  assert.equal(loadingCreate.state.editor, null, "unavailable add is consumed, not replayed after late configuration load");
+  loadingCreate.unmount();
+  console.log("PASS MCP-B06: embedded search/header, external create respects dirty confirmation, scope, user-layer availability and late loading without replay");
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await verify();

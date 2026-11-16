@@ -21,7 +21,9 @@ import type { EnvironmentActionRunRequest } from "../environmentActions";
 import { GitSettings } from "./GitSettings";
 import type { GitPreferencesState } from "../gitPreferences";
 import { HooksSettings } from "./HooksSettings";
-import { SkillsMcpView } from "./SkillsMcpView";
+import type { PluginDetail } from "../plugins";
+import { SkillsMcpView, type PluginDirectoryNavigation } from "./SkillsMcpView";
+import { parsePluginManagementLocation } from "../pluginManagementLocation";
 import { McpSettings } from "./McpSettings";
 import { ProfileSettings } from "./ProfileSettings";
 import { PersonalizationSettings } from "./PersonalizationSettings";
@@ -135,12 +137,16 @@ interface SettingsViewProps {
   accountIdentity?: string;
   onAccountChanged?: () => void;
   onNavigationGuardChange?: (guard: ((action: () => void) => boolean) | null) => void;
+  onPluginNavigationChange?: (navigation: PluginDirectoryNavigation | null) => void;
   initialSection?: SettingsSectionSlug;
   petVisible?: boolean;
   onTogglePetVisible: (visible: boolean) => void;
   onRestartAppServer: (customCliPath?: string) => void | Promise<unknown>;
   onConfigUpdated: () => void;
   onNavigateRoute?: (route: MainViewRoute) => void;
+  onNotify?: (message: string, type?: "success" | "error") => void;
+  onOpenPluginDirectoryDetail?: (detail: PluginDetail) => void;
+  onOpenPluginMarketplace?: (marketplaceName: string) => void;
   onOpenLibraryStorage?: (tab: "all" | "images") => void;
   onRunEnvironmentCommand: (cwd: string, command: string) => void;
   environmentTarget?: { id: string; cwd: string; configPath: string | null; edit?: boolean };
@@ -169,12 +175,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   accountIdentity,
   onAccountChanged,
   onNavigationGuardChange,
+  onPluginNavigationChange,
   initialSection = "general-settings",
   petVisible = false,
   onTogglePetVisible,
   onRestartAppServer,
   onConfigUpdated,
   onNavigateRoute,
+  onOpenPluginMarketplace,
+  onOpenPluginDirectoryDetail,
+  onNotify,
   onOpenLibraryStorage,
 }) => {
   const [activeSection, commitActiveSection] =
@@ -210,7 +220,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   }, [publishSettingsGuard]);
   const setActiveSection = useCallback((section: SettingsSectionSlug) => {
     if (section === activeSectionRef.current) return;
-    const apply = () => { activeSectionRef.current = section; commitActiveSection(section); };
+    const apply = () => {
+      if (section !== "plugins-settings" && parsePluginManagementLocation(window.location.href)) {
+        const url = new URL(window.location.href); url.pathname = "/";
+        for (const key of ["hostId", "tab", "pluginName", "marketplacePath", "remoteMarketplaceName", "mode", "breadcrumb"]) url.searchParams.delete(key);
+        window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+      }
+      activeSectionRef.current = section; commitActiveSection(section);
+    };
     if (personalizationNavigationGuardRef.current?.(apply) === false) return;
     apply();
   }, []);
@@ -223,6 +240,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     scope: JSON.stringify([connectionIdentity, accountIdentity]), connected: appServerStatus.connected });
   const [navSearch, setNavSearch] = useState("");
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
+  useEffect(() => {
+    if (activeSection === "plugins-settings" && !parsePluginManagementLocation(window.location.href)) {
+      window.history.replaceState(window.history.state, "", "/settings/plugins-settings");
+    }
+  }, [activeSection]);
   useEffect(() => {
     if (initialSection) {
       setActiveSection(initialSection === "providers-models" ? "agent" : initialSection === "experimental" ? "general-settings" : initialSection);
@@ -311,7 +333,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
       {/* Right Content Pane */}
       <div className="settings-right-content">
-        {activeSection !== "codex-cloud" && <div className="panel-page-header">
+        {activeSection !== "codex-cloud" && activeSection !== "plugins-settings" && <div className="panel-page-header">
           <div>
             <h2>
               {activeSection === "storage" ? "存储空间" : SETTINGS_NAV_GROUPS.flatMap((g) => g.items).find(
@@ -441,7 +463,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               onConfigUpdated={onConfigUpdated}
               onRestartAppServer={() => onRestartAppServer()}
               onNavigationGuardChange={registerPluginNavigationGuard}
-              onBrowseDirectory={(tab) => onNavigateRoute?.(tab === "skills" ? "skills" : "plugins")}
+              onNavigationChange={onPluginNavigationChange}
+              onNotify={onNotify}
+              onOpenPluginDirectoryDetail={onOpenPluginDirectoryDetail}
+              onOpenPluginSettings={setActiveSection}
+              onBrowseDirectory={(tab, marketplaceName) => marketplaceName
+                ? onOpenPluginMarketplace?.(marketplaceName)
+                : onNavigateRoute?.(tab === "skills" ? "skills" : "plugins")}
             />
           </div>
         )}

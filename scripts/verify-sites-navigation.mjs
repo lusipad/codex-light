@@ -24,7 +24,7 @@ const app = fs.readFileSync('src/App.tsx', 'utf8');
 assert.match(app, /parseSitesLocation\(window\.location\.href\)/);
 assert.match(app, /activeRoute === "sites" && sitesNavigation\?\.canGoBack/);
 assert.match(app, /activeRouteRef\.current === "sites"[\s\S]{0,350}sitesNavigationRef\.current/);
-assert.match(app, /const (\w+) = \(\) => \{\s*if \(parseSitesLocation\(window\.location\.href\)\) setActiveRoute\("sites"\);[\s\S]*?addEventListener\("popstate", \1\)/);
+assert.match(app, /const (\w+) = \(\) => \{[\s\S]{0,1000}?if \(parseSitesLocation\(window\.location\.href\)\) setActiveRoute\("sites"\);[\s\S]*?addEventListener\("popstate", \1\)/);
 assert.match(app, /sites-route-view/);
 assert.match(app, /<SitesView onNavigationChange=\{updateSitesNavigation\}/);
 console.log('PASS Sites URL routes, collection search, unrelated query/hash retention, invalid paths and App navigation wiring');

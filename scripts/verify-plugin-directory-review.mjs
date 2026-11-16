@@ -14,8 +14,8 @@ function routeWindow(path) {
   } } };
 }
 
-async function openDetail(id, plugin) {
-  const window = routeWindow(`/plugins/${encodeURIComponent(id)}?pluginName=Actual&marketplacePath=C%3A%2Fisolated%2Fmarket.json`);
+async function openDetail(id, plugin, hostId) {
+  const window = routeWindow(`/plugins/${encodeURIComponent(id)}?pluginName=Actual&marketplacePath=C%3A%2Fisolated%2Fmarket.json${hostId ? `&hostId=${hostId}` : ""}`);
   const view = harness({ window, plugins: {
     listMarketplacePlugins: emptyDirectory,
     readPlugin: async () => ({ summary: plugin, marketplaceName: "private-market",
@@ -31,6 +31,14 @@ async function check(name, run) {
   try { await run(); console.log(`PASS ${name}`); }
   catch (error) { failures.push(name); console.error(`FAIL ${name}: ${error.message}`); }
 }
+
+await check("management handoff with explicit local host renders the same source entity", async () => {
+  const view = await openDetail(summary.id, summary, "local");
+  try {
+    assert.ok(view.nodes(view.tree).some(node => node.type === "PluginDirectoryDetail" && node.props.detail.summary.id === summary.id));
+    assert.doesNotMatch(view.text(view.tree), /当前入口尚不支持该主机/);
+  } finally { view.unmount(); }
+});
 
 await check("deep-link response identity accepts local and raw remote identities", async () => {
   for (const [id, plugin] of [

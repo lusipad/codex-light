@@ -4,13 +4,13 @@
 .pm-detail-included-count { color: var(--text-secondary); font-size: 13px; font-weight: 400; }
 .pm-detail-included-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .pm-detail-included-settings { border: 0; background: transparent; color: var(--text-secondary); cursor: pointer; font: inherit; }
-.pm-detail-included-list { display: grid; gap: 4px; }
+.pm-detail-included-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
 .pm-detail-included-row { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 8px; }
 .pm-detail-included-icon { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; flex-shrink: 0; color: var(--text-secondary); }
 .pm-detail-included-copy { display: block; min-width: 0; font-size: 14px; line-height: 20px; overflow-wrap: anywhere; }
 .pm-detail-included-copy > span:first-child { font-weight: 500; }
 .pm-detail-included-copy p, .pm-detail-included-description { display: block; margin: 0; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
-.pm-detail-included-skill { display: flex; align-items: center; gap: 12px; }
+.pm-detail-included-skill { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .pm-detail-included-preview { flex: 1; border: 0; border-radius: 12px; text-align: left; background: transparent; color: inherit; font: inherit; cursor: pointer; }
 .pm-detail-included-preview:hover:enabled { background: var(--bg-hover); }
 .pm-detail-included-preview:disabled { cursor: default; opacity: .6; }

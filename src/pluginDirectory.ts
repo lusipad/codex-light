@@ -1,5 +1,5 @@
 import type { ExperimentalFeature } from "./config";
-import type { PluginInstalledResponse, PluginListResponse, PluginSummary } from "./plugins";
+import type { PluginDetail, PluginInstalledResponse, PluginListResponse, PluginRef, PluginSummary } from "./plugins";
 
 export interface PluginDirectoryListing {
   id: string;
@@ -81,4 +81,26 @@ export function directoryPluginInstallation(
   const known = installed?.marketplaces.flatMap(market => market.plugins).find(matches) ??
     local?.marketplaces.flatMap(market => market.plugins).find(matches);
   return { installed: known ? known.installed : installed === null ? undefined : false, plugin: known ?? null };
+}
+
+// Lexical aliases only: short names, symlinks and parent traversal require filesystem evidence.
+function marketplacePathIdentity(path: string): string {
+  const slashes = path.replace(/\\/g, "/");
+  const normalized = slashes.replace(/^\/\/\?\/UNC\//i, "//").replace(/^\/\/\?\/(?=[a-z]:\/)/i, "");
+  return /^[a-z]:\//i.test(normalized) || /^\/\/[^/]+\/[^/]+/.test(normalized) ? normalized.toLowerCase() : path;
+}
+
+/** A matching plugin ID alone does not establish the requested marketplace/name provenance. */
+export function pluginDetailMatchesReference(detail: PluginDetail, reference: PluginRef): boolean {
+  const hasPath = reference.marketplacePath != null, hasRemote = reference.remoteMarketplaceName != null;
+  if (hasPath === hasRemote || !reference.pluginName.trim()) return false;
+  if (hasPath) {
+    return !!reference.marketplacePath?.trim() && !!detail.marketplacePath?.trim() &&
+      marketplacePathIdentity(detail.marketplacePath) === marketplacePathIdentity(reference.marketplacePath) &&
+      detail.summary.name === reference.pluginName;
+  }
+  return !!reference.remoteMarketplaceName?.trim() && detail.marketplaceName === reference.remoteMarketplaceName &&
+    (detail.summary.name === reference.pluginName || !!directoryPluginInstallation(reference.pluginName, {
+      marketplaces: [{ name: detail.marketplaceName, plugins: [detail.summary] }],
+    }).plugin);
 }

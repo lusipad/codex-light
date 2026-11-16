@@ -147,8 +147,9 @@ import { ImagesView } from "./components/ImagesView";
 import { GptsView } from "./components/GptsView";
 import { SitesView } from "./components/SitesView";
 import { parseSitesLocation, type SitesNavigation } from "./sitesNavigation";
-import { parsePluginDirectoryLocation } from "./pluginDirectoryLocation";
-import { pluginDisplayName, type PluginSummary } from "./plugins";
+import { parsePluginDirectoryLocation, pluginDirectoryDetailUrl } from "./pluginDirectoryLocation";
+import { parsePluginManagementLocation } from "./pluginManagementLocation";
+import { pluginDisplayName, type PluginDetail, type PluginSummary } from "./plugins";
 import { LibraryFileRoute, LibraryView, type LibraryNavigation } from "./components/LibraryView";
 import { libraryLocationUrl, parseLibraryFileLocation, parseLibraryLocation } from "./libraryBrowse";
 import { LibraryCleanupView } from "./components/LibraryCleanupView";
@@ -370,6 +371,7 @@ export const App: React.FC = () => {
   const [libraryFileId, setLibraryFileId] = useState(() => !isQuickChatWindow && !isThreadWindow
     ? parseLibraryFileLocation(window.location.href) : null);
   const [activeRoute, commitActiveRoute] = useState<MainViewRoute>(() => window.location.pathname === "/code-review" ? "code-review"
+    : !isQuickChatWindow && !isThreadWindow && /^\/settings\/plugins-settings(?:\/|$)/.test(window.location.pathname) ? "settings"
     : !isQuickChatWindow && !isThreadWindow && parsePluginDirectoryLocation(window.location.href) ? "plugins"
     : parseSitesLocation(window.location.href) ? "sites"
       : libraryFileId ? "library-file"
@@ -399,10 +401,18 @@ export const App: React.FC = () => {
     pluginDirectoryNavigationRef.current = navigation;
     setPluginDirectoryNavigation(navigation);
   }, []);
+  const [pluginManagementNavigation, setPluginManagementNavigation] = useState<PluginDirectoryNavigation | null>(null);
+  const pluginManagementNavigationRef = useRef<PluginDirectoryNavigation | null>(null);
+  const pluginManagementLocationRef = useRef(Boolean(parsePluginManagementLocation(window.location.href)));
+  const updatePluginManagementNavigation = useCallback((navigation: PluginDirectoryNavigation | null) => {
+    pluginManagementNavigationRef.current = navigation;
+    setPluginManagementNavigation(navigation);
+  }, []);
   const [remotePullRequestUrl, setRemotePullRequestUrl] = useState(() => window.location.pathname === "/code-review"
     ? new URLSearchParams(window.location.hash.slice(1)).get("pullRequest") ?? "" : "");
   const activeRouteRef = useRef(activeRoute);
   activeRouteRef.current = activeRoute;
+  pluginManagementLocationRef.current = activeRoute === "settings" && Boolean(parsePluginManagementLocation(window.location.href));
   const personalizationNavigationGuardRef = useRef<((action: () => void) => boolean) | null>(null);
   const setPersonalizationNavigationGuard = useCallback((guard: ((action: () => void) => boolean) | null) => {
     personalizationNavigationGuardRef.current = guard;
@@ -411,6 +421,44 @@ export const App: React.FC = () => {
     const route = typeof next === "function" ? next(activeRouteRef.current) : next;
     if (route === activeRouteRef.current) return;
     const apply = () => { activeRouteRef.current = route; commitActiveRoute(route); };
+    if (personalizationNavigationGuardRef.current?.(apply) === false) return;
+    apply();
+  }, []);
+  const handleOpenPluginMarketplace = useCallback((marketplaceName: string) => {
+    if (!marketplaceName.trim() || activeRouteRef.current !== "settings") return;
+    let applied = false;
+    const apply = () => {
+      if (applied || activeRouteRef.current !== "settings") return;
+      applied = true;
+      window.history.pushState({ ...window.history.state, initialHostId: "local", initialMarketplaceName: marketplaceName,
+        initialTab: "plugins", pluginDirectoryEntrypoint: "SETTINGS" }, "", "/plugins?directory=personal");
+      setPluginDirectoryMode("browse");
+      activeRouteRef.current = "plugins";
+      commitActiveRoute("plugins");
+    };
+    if (personalizationNavigationGuardRef.current?.(apply) === false) return;
+    apply();
+  }, []);
+  const handleOpenManagedPluginDirectory = useCallback((detail: PluginDetail) => {
+    const origin = window.location.href;
+    const management = parsePluginManagementLocation(origin);
+    if (activeRouteRef.current !== "settings" || management?.kind !== "plugin" || management.hostId !== "local") return;
+    const { summary, marketplacePath, marketplaceName } = detail;
+    if (!summary.id.trim()) return;
+    const pluginName = marketplacePath ? summary.name : summary.remotePluginId;
+    if (!pluginName?.trim() || (marketplacePath ? !marketplacePath.trim() : !marketplaceName.trim())) return;
+    const target = pluginDirectoryDetailUrl("/plugins", { pluginId: summary.id, pluginName,
+      hostId: management.hostId, marketplacePath: marketplacePath || null,
+      remoteMarketplaceName: marketplacePath ? null : marketplaceName });
+    let applied = false;
+    const apply = () => {
+      if (applied || activeRouteRef.current !== "settings" || window.location.href !== origin) return;
+      applied = true;
+      window.history.pushState(window.history.state, "", target);
+      setPluginDirectoryMode("browse");
+      activeRouteRef.current = "plugins";
+      commitActiveRoute("plugins");
+    };
     if (personalizationNavigationGuardRef.current?.(apply) === false) return;
     apply();
   }, []);
@@ -427,7 +475,14 @@ export const App: React.FC = () => {
   };
   useEffect(() => {
     const restorePageRoute = () => {
-      if (parseSitesLocation(window.location.href)) setActiveRoute("sites");
+      const wasPluginManagement = pluginManagementLocationRef.current;
+      const management = !isQuickChatWindow && !isThreadWindow && /^\/settings\/plugins-settings(?:\/|$)/.test(window.location.pathname);
+      pluginManagementLocationRef.current = Boolean(management);
+      if (management) {
+        if (!parsePluginManagementLocation(window.location.href)) window.history.replaceState(window.history.state, "", "/settings/plugins-settings");
+        setSettingsInitialSection("plugins-settings");
+        setActiveRoute("settings");
+      } else if (parseSitesLocation(window.location.href)) setActiveRoute("sites");
       else if (!isQuickChatWindow && !isThreadWindow && parsePluginDirectoryLocation(window.location.href)) setActiveRoute("plugins");
       else {
         const id = !isQuickChatWindow && !isThreadWindow ? parseLibraryFileLocation(window.location.href) : null;
@@ -437,7 +492,8 @@ export const App: React.FC = () => {
         } else if (!isQuickChatWindow && !isThreadWindow && parseLibraryLocation(window.location.href)) {
           setLibraryCleanupTab(null);
           setActiveRoute("library");
-        } else if (["sites", "library", "library-file", "plugins"].includes(activeRouteRef.current)) setActiveRoute("home");
+        } else if (["sites", "library", "library-file", "plugins"].includes(activeRouteRef.current)
+          || (activeRouteRef.current === "settings" && wasPluginManagement)) setActiveRoute("home");
       }
     };
     window.addEventListener("popstate", restorePageRoute);
@@ -450,6 +506,18 @@ export const App: React.FC = () => {
     }
     const url = new URL(window.location.href);
     if (!isQuickChatWindow && !isThreadWindow) {
+      if (activeRoute === "settings" && /^\/settings\/plugins-settings(?:\/|$)/.test(url.pathname) && !parsePluginManagementLocation(url)) {
+        url.pathname = "/settings/plugins-settings";
+        url.search = "";
+        url.hash = "";
+        window.history.replaceState(window.history.state, "", url.pathname);
+      }
+      if (activeRoute !== "settings" && parsePluginManagementLocation(url)) {
+        url.pathname = "/";
+        for (const key of ["hostId", "pluginName", "marketplacePath", "remoteMarketplaceName", "tab"]) url.searchParams.delete(key);
+        window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+      }
+      pluginManagementLocationRef.current = activeRoute === "settings" && Boolean(parsePluginManagementLocation(url));
       if (activeRoute === "plugins" && !parsePluginDirectoryLocation(url)) {
         url.pathname = "/plugins";
         url.search = "";
@@ -507,11 +575,20 @@ export const App: React.FC = () => {
     if (activeRoute === "library-file") return { canGoBack: true, canGoForward: false };
     const history = routeHistoryRef.current;
     return {
-      canGoBack: (activeRoute === "library" && !libraryCleanupTab && libraryNavigation?.canGoBack) || (activeRoute === "sites" && sitesNavigation?.canGoBack) || (activeRoute === "plugins" && pluginDirectoryNavigation?.canGoBack) || history.index > 0,
-      canGoForward: (activeRoute === "library" && !libraryCleanupTab && libraryNavigation?.canGoForward) || (activeRoute === "sites" && sitesNavigation?.canGoForward) || (activeRoute === "plugins" && pluginDirectoryNavigation?.canGoForward) || history.index < history.entries.length - 1,
+      canGoBack: (activeRoute === "library" && !libraryCleanupTab && libraryNavigation?.canGoBack) || (activeRoute === "sites" && sitesNavigation?.canGoBack) || (activeRoute === "plugins" && pluginDirectoryNavigation?.canGoBack) || (activeRoute === "settings" && parsePluginManagementLocation(window.location.href) && pluginManagementNavigation?.canGoBack) || history.index > 0,
+      canGoForward: (activeRoute === "library" && !libraryCleanupTab && libraryNavigation?.canGoForward) || (activeRoute === "sites" && sitesNavigation?.canGoForward) || (activeRoute === "plugins" && pluginDirectoryNavigation?.canGoForward) || (activeRoute === "settings" && parsePluginManagementLocation(window.location.href) && pluginManagementNavigation?.canGoForward) || history.index < history.entries.length - 1,
     };
-  }, [routeHistoryVersion, activeRoute, libraryCleanupTab, libraryNavigation, sitesNavigation, pluginDirectoryNavigation]);
+  }, [routeHistoryVersion, activeRoute, libraryCleanupTab, libraryNavigation, sitesNavigation, pluginDirectoryNavigation, pluginManagementNavigation]);
   const navigateRouteHistory = useCallback((direction: -1 | 1): void => {
+    if (activeRouteRef.current === "settings" && parsePluginManagementLocation(window.location.href)) {
+      const navigation = pluginManagementNavigationRef.current;
+      if (direction < 0 ? navigation?.canGoBack : navigation?.canGoForward) {
+        const apply = () => { if (direction < 0) navigation!.goBack(); else navigation!.goForward(); };
+        if (personalizationNavigationGuardRef.current?.(apply) === false) return;
+        apply();
+        return;
+      }
+    }
     if (activeRouteRef.current === "library-file") {
       if (direction < 0) closeLibraryFile();
       return;
@@ -1041,7 +1118,8 @@ export const App: React.FC = () => {
   const [sideChatPrompt, setSideChatPrompt] = useState<string>("");
   const [showPopoutModal, setShowPopoutModal] = useState<boolean>(() => window.location.pathname.startsWith("/hotkey-window") || window.location.hash.includes("hotkey-window"));
   const [pinnedSummaryVisible, setPinnedSummaryVisible] = useState<boolean>(false);
-  const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsSectionSlug>("general-settings");
+  const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsSectionSlug>(() =>
+    !isQuickChatWindow && !isThreadWindow && /^\/settings\/plugins-settings(?:\/|$)/.test(window.location.pathname) ? "plugins-settings" : "general-settings");
 
   // Project Script Commands Detection
   const [projectScripts, setProjectScripts] = useState<ProjectScriptCommands>({
@@ -6697,6 +6775,10 @@ export const App: React.FC = () => {
               accountIdentity={modelAccountIdentity}
               onAccountChanged={() => void refreshAccount()}
               onNavigationGuardChange={setPersonalizationNavigationGuard}
+              onPluginNavigationChange={updatePluginManagementNavigation}
+              onOpenPluginMarketplace={handleOpenPluginMarketplace}
+              onOpenPluginDirectoryDetail={handleOpenManagedPluginDirectory}
+              onNotify={showAppToast}
               archiveViewProps={{
                 workspaces,
                 projectMembership: sidebarProjectMembership,

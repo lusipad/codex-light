@@ -23,6 +23,14 @@ function mount(section) {
     useEffect(fn) { const i = cursor++; if (!(i in hooks)) { hooks[i] = true; effects.push(fn); } },
   };
   const module = { exports: {} };
+  const location = { href: 'https://codex.invalid/' };
+  const window = { location, history: { state: null, replaceState(state, _, value) {
+    this.state = state; location.href = new URL(value, location.href).href;
+  } } };
+  const management = { exports: {} };
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/pluginManagementLocation.ts', 'utf8'), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText, { exports: management.exports, URL, URLSearchParams });
   const props = { initialSection: section, appServerStatus: { connected: true, binaryPath: 'codex', userAgent: 'test' }, models: [],
     activeWorkspaceRoot: 'D:/isolated', accountIdentity: 'isolated-account', archiveViewProps: {}, appearanceState: {}, notificationState: {},
     keyboardState: {}, gitPreferencesState: {}, codeReviewPreferencesState: {}, petPreferencesState: {}, externalImportsState: {},
@@ -32,10 +40,11 @@ function mount(section) {
     onSetComposerEnterBehavior: value => calls.push(['enter', value]), onConfigUpdated() {}, onRestartAppServer() {},
     onTogglePetVisible() {}, onRunEnvironmentCommand() {}, onNavigationGuardChange: guard => { props.guard = guard; },
   };
-  vm.runInNewContext(code, { exports: module.exports, console, setTimeout: () => 1, clearTimeout() {},
+  vm.runInNewContext(code, { exports: module.exports, console, window, URL, setTimeout: () => 1, clearTimeout() {},
     navigator: { userAgent: 'Windows' }, document: { documentElement: { style: { removeProperty() {}, setProperty() {} } } },
     require(name) {
       if (name === 'react') return react;
+      if (name === '../pluginManagementLocation') return management.exports;
       if (name.endsWith('/bridge')) return { isTauriRuntime: () => false, tauriInvoke: async (...args) => { calls.push(args); return null; }, tauriListen: async () => () => {} };
       if (name.endsWith('/config')) return { configRead: async () => { calls.push(['config/read']); return { config: {} }; }, getConfigValue: () => null, setConfigKeys: async () => { calls.push(['config/write']); } };
       return new Proxy({}, { get(_, key) { if (!children.has(key)) children.set(key, Object.defineProperty(() => null, 'name', { value: key })); return children.get(key); } });

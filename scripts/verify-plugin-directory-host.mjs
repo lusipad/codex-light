@@ -5,6 +5,7 @@ import ts from "typescript";
 const compile = text => ts.transpileModule(text, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
 const locations = {};
 vm.runInNewContext(compile(fs.readFileSync("src/pluginDirectoryLocation.ts", "utf8")), { exports: locations, URL, URLSearchParams });
+vm.runInNewContext(compile(fs.readFileSync("src/pluginManagementLocation.ts", "utf8")), { exports: locations, URL, URLSearchParams });
 const source = fs.readFileSync("src/App.tsx", "utf8"), ast = ts.createSourceFile("App.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 let initial, restore, synchronize, toolbar;
 function visit(node) {
@@ -27,7 +28,7 @@ function fixture(href, activeRoute = "home", utility = false) {
     isQuickChatWindow: utility, isThreadWindow: false, libraryFileId: null, libraryCleanupTab: null,
     parseSitesLocation: value => new URL(String(value), "https://private.test").pathname.startsWith("/sites") ? {} : null,
     parseLibraryFileLocation: () => null, parseLibraryLocation: () => null,
-    setLibraryFileId() {}, setLibraryCleanupTab() {},
+    setLibraryFileId() {}, setLibraryCleanupTab() {}, setSettingsInitialSection() {}, pluginManagementLocationRef: { current: false },
     setActiveRoute: route => { calls.push(route); context.activeRouteRef.current = route; },
     window: { location, addEventListener: (name, handler) => listeners.set(name, handler), removeEventListener: name => listeners.delete(name),
       history: { state: null, replaceState: (_state, _unused, url) => { writes.push(url); setUrl(url); } } },

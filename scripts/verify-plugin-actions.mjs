@@ -5,7 +5,7 @@ import ts from "typescript";
 
 const source = fs.readFileSync("src/components/SkillsMcpView.tsx", "utf8");
 const ast = ts.createSourceFile("SkillsMcpView.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-const names = ["isPluginContextCurrent", "updateInstallUncertainty", "handleInstallPlugin", "handleUninstallPlugin", "handleToggleDetail", "loadInstalledPlugins", "loadBrowsePlugins", "resetBrowseCache"];
+const names = ["isPluginContextCurrent", "updateInstallUncertainty", "updateUninstallUncertainty", "verifyUninstalledPlugin", "handleInstallPlugin", "handleUninstallPlugin", "handleToggleDetail", "loadInstalledPlugins", "loadBrowsePlugins", "resetBrowseCache"];
 const nodes = {};
 function visit(node) {
   if (ts.isVariableDeclaration(node) && names.includes(node.name.getText(ast))) nodes[node.name.getText(ast)] = node.initializer;
@@ -23,7 +23,10 @@ function mount() {
     pluginActionRef: { current: new Set() }, busyPluginIds: new Set(), pluginMode: "browse",
     unconfirmedInstalls: new Set(), installedData: null, pluginPreparations: {}, pluginUpdates: {},
     installScope: "isolated-account-project", installUncertaintyRef: { current: new Map() }, unsupportedDirectoryHost: () => false,
+    uninstallUncertaintyRef: { current: new Map() }, closeManagedDetail() {},
     manageOnly: true, directoryRead: { current: null }, setDirectorySource() {}, AbortController,
+    managementBase: () => "/settings/plugins-settings", updateDirectoryUrl() {}, remoteId: item => item.remotePluginId ?? null,
+    pluginManagementDetailUrl: (() => { const exports = {}; vm.runInNewContext(compile(fs.readFileSync("src/pluginManagementLocation.ts", "utf8")), { exports, URL, URLSearchParams }); return exports.pluginManagementDetailUrl; })(),
     preparationAttemptRef: { current: 0 }, PluginProtocolError: class extends Error {},
     pluginContextRef: { current: 0 }, pluginMountedRef: { current: true },
     installedRequestRef: { current: 0 }, browseRequestRef: { current: 0 },
@@ -40,7 +43,7 @@ function mount() {
   for (const method of ["installPlugin", "uninstallPlugin", "readPlugin", "listInstalledPlugins", "listMarketplacePlugins"]) {
     context[method] = (...args) => { const pending = deferred(); requests.push({ method, args, ...pending }); return pending.promise; };
   }
-  for (const name of ["PluginPreparations", "UnconfirmedInstalls", "BusyPluginId", "BusyPluginIds", "InstalledData", "InstalledLoading", "InstalledError", "BrowseData", "BrowseLoading", "BrowseError", "BrowseVisibleCount", "DetailKey", "Detail", "DetailError", "DetailLoading"]) {
+  for (const name of ["PluginPreparations", "UnconfirmedInstalls", "UnconfirmedUninstalls", "BusyPluginId", "BusyPluginIds", "InstalledData", "InstalledLoading", "InstalledError", "BrowseData", "BrowseLoading", "BrowseError", "BrowseVisibleCount", "DetailKey", "Detail", "DetailError", "DetailLoading"]) {
     const key = name[0].toLowerCase() + name.slice(1);
     context[`set${name}`] = value => { context[key] = typeof value === "function" ? value(context[key]) : value; };
   }
@@ -114,7 +117,7 @@ for (const action of ["handleInstallPlugin", "handleUninstallPlugin"]) {
   assert.ok(reads.some(request => request.method === "listInstalledPlugins"), "PA05: mutation rereads installed state");
   assert.ok(reads.length >= 3, "PA05: active catalog reread after mutation");
   view.requests[0].resolve({ marketplaces: [{ name: "old" }] }); await oldRead;
-  for (const request of reads.slice(1)) request.resolve({ marketplaces: [{ name: "committed" }] });
+  for (const request of reads.slice(1)) request.resolve({ marketplaces: [{ name: "committed", plugins: [] }] });
   await writing;
   assert.equal(view.context.browseData.marketplaces[0].name, "committed", "PA05: stale catalog cannot undo readback");
 }

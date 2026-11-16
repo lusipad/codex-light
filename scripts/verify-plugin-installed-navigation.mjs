@@ -3,7 +3,7 @@ import { harness } from "./verify-plugin-management-ui-b.mjs";
 
 const plugin = { id: "actual@private", name: "Actual", installed: true, enabled: true };
 const marketplace = { name: "private", path: "C:/isolated/market.json", plugins: [plugin] };
-for (const different of [false, true]) {
+for (const mismatch of ["none", "id", "source"]) {
   const reads = [], navigations = [];
   const view = harness({
     window: { location: { href: "https://codex.invalid/plugins" }, history: {
@@ -13,8 +13,8 @@ for (const different of [false, true]) {
       pluginRefFor: (item, market) => ({ pluginName: item.name, marketplacePath: market.path }),
       listMarketplacePlugins: async () => ({ marketplaces: [] }),
       readPlugin: async ref => { reads.push(ref); return {
-        summary: different ? { ...plugin, id: "different@private" } : plugin,
-        marketplaceName: "confirmed-source", marketplacePath: "C:/confirmed/market.json",
+        summary: mismatch === "id" ? { ...plugin, id: "different@private" } : plugin,
+        marketplaceName: "confirmed-source", marketplacePath: mismatch === "source" ? "C:/other/market.json" : "c:\\ISOLATED\\market.json",
         skills: [], apps: [], hooks: [], mcpServers: [],
       }; },
     },
@@ -36,8 +36,8 @@ for (const different of [false, true]) {
     await view.tick();
     assert.equal(prevented, true); assert.equal(reads.length, 1); assert.equal(navigations.length, 1);
     const detail = view.nodes(view.tree).find(node => node.type === "PluginDirectoryDetail");
-    assert.equal(!!detail, !different, "installed shortcut must reject another entity's metadata");
-    if (!different) assert.equal(detail.props.detail.marketplaceName, "confirmed-source");
+    assert.equal(!!detail, mismatch === "none", "installed shortcut rejects a different entity or marketplace, while accepting lexical Windows aliases");
+    if (mismatch === "none") assert.equal(detail.props.detail.marketplaceName, "confirmed-source");
     else assert.match(view.text(view.tree), /无法加载插件/);
   } finally { view.unmount(); }
 }

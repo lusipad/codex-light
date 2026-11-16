@@ -166,12 +166,12 @@ export function SkillPreviewDialog({ name, rawName, description, path, enabled, 
           : <div className="pm-skill-preview-state">暂无说明</div>}
       </div>
       {(feedback || actionFeedback) && <div className="pm-skill-preview-feedback" role={!feedback && actionFeedback?.kind === "error" ? "alert" : "status"}>{feedback || actionFeedback?.text}</div>}
-      <footer className="pm-skill-preview-footer">
+      {footer !== null && <footer className="pm-skill-preview-footer">
         {footer !== undefined ? footer : <>
           <div>{onUninstall && <button type="button" className="secondary-btn-sm" disabled={busy} onClick={onUninstall}>卸载</button>}</div>
           <button type="button" className="primary-btn-sm" disabled={enabled !== true || busy || hostBusy || !onTry} onClick={() => acceptHostAction(onTry)}>立即试用</button>
         </>}
-      </footer>
+      </footer>}
     </div>
   </dialog>;
 }

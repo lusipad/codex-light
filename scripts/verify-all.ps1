@@ -360,6 +360,18 @@ try {
   Invoke-Step "Plugin settings management" { node scripts/verify-plugin-settings.mjs }
   Invoke-Step "Plugin enablement and marketplace dependency regression" { node scripts/verify-plugin-management-b.mjs }
   Invoke-Step "Plugin management lifecycle and component regression" { node scripts/verify-plugin-management-ui-b.mjs }
+  Invoke-Step "Plugin management-toolbar regression" { node scripts/verify-plugin-management-toolbar.mjs }
+  Invoke-Step "Plugin management-actions regression" { node scripts/verify-plugin-management-actions.mjs }
+  Invoke-Step "Plugin management-location regression" { node scripts/verify-plugin-management-location.mjs }
+  Invoke-Step "Plugin management-host regression" { node scripts/verify-plugin-management-host.mjs }
+  Invoke-Step "Plugin management-skills regression" { node scripts/verify-plugin-management-skills.mjs }
+  Invoke-Step "Plugin management-surface regression" { node scripts/verify-plugin-management-surface.mjs }
+  Invoke-Step "Plugin management-detail regression" { node scripts/verify-plugin-management-detail.mjs }
+  Invoke-Step "Plugin detail source reference validation" { node scripts/verify-plugin-detail-reference.mjs }
+  Invoke-Step "Plugin management detail presentation" { node scripts/verify-plugin-management-detail-surface.mjs }
+  Invoke-Step "Plugin management detail integration" { node scripts/verify-plugin-management-detail-parent.mjs }
+  Invoke-Step "Plugin marketplace-dialog regression" { node scripts/verify-plugin-marketplace-dialog.mjs }
+  Invoke-Step "Plugin marketplace-parent regression" { node scripts/verify-plugin-marketplace-parent.mjs }
   Invoke-Step "Rust shared plugin operation regression" { cargo test --locked --manifest-path src-tauri/Cargo.toml plugin_operations }
 
 Invoke-Step "TypeScript typecheck (tsc --noEmit)" { npx tsc --noEmit }

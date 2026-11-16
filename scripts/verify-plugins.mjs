@@ -28,10 +28,9 @@ const hasPluginMethods =
   pluginsSource.includes('"marketplace/remove"') &&
   pluginsSource.includes('"marketplace/upgrade"');
 
-// P03: 检查 SkillsMcpView 是否支持打开本地插件所在目录 (reveal_path_in_explorer)
-const hasRevealPluginPath =
-  viewSource.includes("reveal_path_in_explorer") &&
-  viewSource.includes("pluginSourceDetail");
+// P03: 当前官方管理详情将真实来源放在 About；不要求旧列表额外的“目录”按钮。
+// 执行真实展示组件回归，核对 local/git/npm/remote 来源、缺失字段及链接边界。
+await import("./verify-plugin-management-detail-surface.mjs");
 
 assert.ok(
   supportsServerCatalog,
@@ -42,8 +41,8 @@ assert.ok(
   "plugins.ts: Must export complete plugin and marketplace protocol RPCs"
 );
 assert.ok(
-  hasRevealPluginPath,
-  "SkillsMcpView.tsx: Must provide reveal_path_in_explorer for local plugins"
+  viewSource.includes("<PluginManagementDetail"),
+  "SkillsMcpView.tsx: management must use the source-backed detail surface"
 );
 
 console.log("ALL PLUGINS VERIFICATIONS PASSED!");

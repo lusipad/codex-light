@@ -33,19 +33,32 @@ function setup(options = {}) {
     listSkills: async () => { calls.push(["skills"]); if (runtimeFail) throw Error("runtime offline"); return { data: [] }; },
     listApps: async () => { calls.push(["apps"]); return { data: [] }; },
     uninstallPlugin: async () => { calls.push(["LOCAL_UNINSTALL"]); throw Error("remote cannot use local uninstall"); },
+    pluginRefFor: (plugin, marketplace) => marketplace.path ? { pluginName: plugin.name, marketplacePath: marketplace.path } : { pluginName: plugin.remotePluginId ?? plugin.name, remoteMarketplaceName: marketplace.name },
+    readPlugin: async reference => {
+      calls.push(["read", reference]);
+      const summary = service.marketplace?.plugins.find(plugin => (plugin.remotePluginId ?? plugin.name) === reference.pluginName);
+      assert.ok(summary, "detail metadata resolves the real remote identity");
+      assert.equal(reference.remoteMarketplaceName, service.marketplace.name, "detail read uses the selected real remote marketplace");
+      return { summary, marketplaceName: service.marketplace.name, marketplacePath: null, description: "Remote plugin metadata", skills: [], apps: [], hooks: [], mcpServers: [] };
+    },
     ...options.plugins,
   };
   const h = harness({ remote, plugins, confirm: options.confirm });
   h.setInstalled({ marketplaces: [] });
   return { h, calls, signals, setSnapshot(value) { service = value; }, setLoad(value) { load = value; }, setMode(value) { mode = value; }, runtimeFailure(value) { runtimeFail = value; } };
 }
-const card = (h, name) => { const node = h.nodes(h.tree).find(node => node.props.className?.includes("pm-plugin-card") && h.text(node).includes(name)); assert.ok(node, `card ${name}`); return node; };
+const card = (h, name) => { const node = h.nodes(h.tree).find(node => node.props.className?.includes("pm-managed-plugin-row") && h.text(node).includes(name)); assert.ok(node, `card ${name}`); return node; };
 const toggle = (h, name) => h.nodes(card(h, name)).find(node => node.props.role === "switch");
-const uninstall = (h, name) => h.nodes(card(h, name)).find(node => node.type === "button" && h.text(node).trim() === "卸载");
+const openDetail = async (h, name) => {
+  h.nodes(card(h, name)).find(node => node.props.className === "pm-managed-plugin-open").props.onClick();
+  await h.tick();
+  assert.ok(h.nodes(h.tree).some(node => node.props.className === "pm-managed-detail"), "actual management detail is open");
+};
+const uninstall = h => h.nodes(h.tree).find(node => node.type === "button" && h.text(node).trim() === "卸载");
 
 {
   const f = setup(); f.h.render(); await f.h.tick();
-  assert.ok(f.h.tabs().some(node => f.h.text(node) === "插件 (1)")); assert.equal(toggle(f.h, "remote-tool").props.disabled, false);
+  assert.ok(f.h.tabs().some(node => f.h.text(node) === "插件1")); assert.equal(toggle(f.h, "remote-tool").props.disabled, false);
   f.setLoad(async () => ({ identity: null, marketplace: null, error: "service unavailable", unsupported: false })); f.h.focus(); await f.h.tick();
   assert.match(f.h.text(f.h.tree), /service unavailable/); assert.ok(card(f.h, "remote-tool")); assert.equal(toggle(f.h, "remote-tool").props.disabled, true, "failed service refresh retains visible facts but disables stale writes");
   f.h.unmount();
@@ -63,45 +76,51 @@ console.log("PASS RPC-UI01: independent CLI/service loading, partial failures re
     { id: "custom-local", name: "Same", installed: true, enabled: true, source: { type: "local", path: "custom" }, installPolicy: "AVAILABLE" },
   ] }] });
   f.h.render(); await f.h.tick();
-  assert.ok(f.h.tabs().some(node => f.h.text(node) === "插件 (3)"));
-  const cards = f.h.nodes(f.h.tree).filter(node => node.props.className?.includes("pm-plugin-card")); assert.equal(cards.length, 3);
-  const execution = cards.find(node => f.h.text(node).includes("execution-id")); assert.ok(execution);
-  f.h.nodes(execution).find(node => node.props.role === "switch").props.onClick(); await f.h.tick();
+  assert.ok(f.h.tabs().some(node => f.h.text(node) === "插件3"));
+  const cards = f.h.nodes(f.h.tree).filter(node => node.props.className?.includes("pm-managed-plugin-row")); assert.equal(cards.length, 3);
+  const summaries = cards.map(node => f.h.nodes(node).find(child => child.type === "PluginLogo").props.plugin);
+  assert.deepEqual(summaries.map(plugin => plugin.id).sort(), ["execution-id", "custom-local", "Same@openai-curated-remote"].sort());
+  assert.deepEqual(summaries.filter(plugin => plugin.remotePluginId).map(plugin => plugin.remotePluginId).sort(), ["raw-1", "raw-2"], "distinct service raw identities survive same-name merging");
+  const execution = cards.find(node => f.h.nodes(node).some(child => child.type === "PluginLogo" && child.props.plugin.id === "execution-id")); assert.ok(execution);
+  f.h.nodes(execution).find(node => node.props.role === "switch").props.onClick({ stopPropagation() {} }); await f.h.tick();
   assert.equal(f.calls.find(call => call[0] === "mutation")[1], "raw-1", "CLI execution source retained by merge must still dispatch the matched raw id to service");
   assert.equal(f.calls.filter(call => call[0] === "LOCAL_UNINSTALL").length, 0); f.h.unmount();
 }
 console.log("PASS RPC-UI02: actual mapper/merge deduplicates raw ids, retains local same-name entries and dispatches service-backed CLI execution rows using raw identity");
 {
   const f = setup(); f.setMode("pending"); f.h.render(); await f.h.tick();
-  const button = toggle(f.h, "remote-tool"); button.props.onClick(); button.props.onClick(); await f.h.tick();
+  const button = toggle(f.h, "remote-tool"); button.props.onClick({ stopPropagation() {} }); button.props.onClick({ stopPropagation() {} }); await f.h.tick();
   assert.equal(f.calls.filter(call => call[0] === "mutation").length, 1); assert.equal(toggle(f.h, "remote-tool").props.disabled, true);
   f.h.button("核验远程操作结果").props.onClick(); await f.h.tick(); f.h.button("核验远程操作结果").props.onClick(); await f.h.tick();
   assert.equal(f.calls.filter(call => call[0] === "mutation").length, 1); assert.equal(f.calls.filter(call => call[0] === "verify").length, 2);
   f.setSnapshot(snapshot([raw("raw-1", "remote-tool", { enabled: false })])); f.setMode("confirmed");
   f.h.button("核验远程操作结果").props.onClick(); await f.h.tick(); assert.equal(toggle(f.h, "remote-tool").props["aria-checked"], false);
-  f.runtimeFailure(true); toggle(f.h, "remote-tool").props.onClick(); await f.h.tick();
+  f.runtimeFailure(true); toggle(f.h, "remote-tool").props.onClick({ stopPropagation() {} }); await f.h.tick();
   assert.equal(toggle(f.h, "remote-tool").props["aria-checked"], true); assert.match(f.h.text(f.h.tree), /插件变更已确认，但运行时刷新失败/);
   const mutations = f.calls.filter(call => call[0] === "mutation").length; f.runtimeFailure(false); f.h.button("重新刷新运行时").props.onClick(); await f.h.tick();
   assert.equal(f.calls.filter(call => call[0] === "mutation").length, mutations); assert.ok(!f.h.text(f.h.tree).includes("runtime offline"));
-  uninstall(f.h, "remote-tool").props.onClick(); await f.h.tick(); assert.ok(!f.h.nodes(f.h.tree).some(node => node.props.className?.includes("pm-plugin-card") && f.h.text(node).includes("remote-tool")));
+  await openDetail(f.h, "remote-tool"); uninstall(f.h).props.onClick(); await f.h.tick();
+  assert.equal(uninstall(f.h), undefined, "confirmed service removal clears the detail destructive action");
+  f.h.backManagedDetail(); await f.h.tick();
+  assert.ok(!f.h.nodes(f.h.tree).some(node => node.props.className === "pm-managed-plugin-row" && f.h.text(node).includes("remote-tool")));
   assert.equal(f.calls.filter(call => call[0] === "LOCAL_UNINSTALL").length, 0); f.h.unmount();
 }
 console.log("PASS RPC-UI03/04/05: remote toggle/uninstall only use service, pending retries only read, and confirmed service facts survive independent runtime refresh failure");
 {
   for (const extra of [{ installation_policy: "INSTALLED_BY_DEFAULT" }, { status: "DISABLED_BY_ADMIN" }, { authentication_policy: "UNKNOWN" }]) {
     const f = setup({ snapshot: snapshot([raw("raw-1", "restricted", extra)]) }); f.h.render(); await f.h.tick();
-    if (extra.installation_policy) { assert.equal(toggle(f.h, "restricted").props.disabled, false); assert.ok(f.h.nodes(card(f.h, "restricted")).some(node => node.type === "button" && f.h.text(node).trim() === "由管理员安装" && node.props.disabled)); }
+    if (extra.installation_policy) { assert.equal(toggle(f.h, "restricted").props.disabled, false); await openDetail(f.h, "restricted"); assert.equal(uninstall(f.h).props.disabled, true); assert.equal(uninstall(f.h).props.title, "由管理员安装"); }
     else assert.equal(toggle(f.h, "restricted").props.disabled, true);
-    if (extra.authentication_policy) { assert.match(f.h.text(f.h.tree), /无法识别此插件的服务策略/); assert.equal(uninstall(f.h, "restricted").props.disabled, true); }
+    if (extra.authentication_policy) { assert.match(f.h.text(f.h.tree), /无法识别此插件的服务策略/); await openDetail(f.h, "restricted"); assert.equal(uninstall(f.h).props.disabled, true); }
     assert.equal(f.calls.filter(call => call[0] === "mutation").length, 0); f.h.unmount();
   }
-  const cancel = setup({ confirm: () => false }); cancel.h.render(); await cancel.h.tick(); uninstall(cancel.h, "remote-tool").props.onClick(); await cancel.h.tick();
+  const cancel = setup({ confirm: () => false }); cancel.h.render(); await cancel.h.tick(); await openDetail(cancel.h, "remote-tool"); uninstall(cancel.h).props.onClick(); await cancel.h.tick();
   assert.equal(cancel.calls.filter(call => call[0] === "mutation").length, 0); cancel.h.unmount();
 }
 console.log("PASS RPC-UI06: admin toggle and default remote uninstall restrictions remain distinct, unknown policies block writes, and canceled uninstall sends nothing");
 {
   const late = deferred(), f = setup({ remote: { manageRemotePlugin: async () => late.promise } }); f.h.render(); await f.h.tick();
-  toggle(f.h, "remote-tool").props.onClick(); f.h.render();
+  toggle(f.h, "remote-tool").props.onClick({ stopPropagation() {} }); f.h.render();
   f.setSnapshot(snapshot([raw("raw-B", "Account B")], { accountId: "B", userId: "B", generation: 2 })); f.h.props.connectionIdentity = "account-B"; f.h.render(); await f.h.tick();
   assert.ok(f.signals.some(signal => signal.aborted)); assert.ok(!f.h.text(f.h.tree).includes("remote-tool"));
   late.resolve({ verification: "pending", snapshot: null, error: "OLD_ACCOUNT" }); await f.h.tick(); assert.ok(!f.h.text(f.h.tree).includes("OLD_ACCOUNT"));
@@ -114,7 +133,7 @@ console.log("PASS RPC-UI07: account switches abort requests and isolate stale wr
 {
   const late = deferred(); let mutations = 0;
   const f = setup({ remote: { manageRemotePlugin: async () => { mutations++; return late.promise; } } });
-  f.h.render(); await f.h.tick(); toggle(f.h, "remote-tool").props.onClick(); f.h.render();
+  f.h.render(); await f.h.tick(); toggle(f.h, "remote-tool").props.onClick({ stopPropagation() {} }); f.h.render();
   f.setSnapshot(snapshot([raw()], { ...identity, generation: 2 })); f.h.props.connectionIdentity = "same-account-reconnected"; f.h.render(); await f.h.tick();
   assert.equal(f.h.button("核验远程操作结果").props.disabled, true, "original transport is still in flight");
   late.resolve({ verification: "pending", snapshot: null, error: "delivery unknown" }); await f.h.tick();
@@ -127,7 +146,7 @@ console.log("PASS RPC-UI08: same-account reconnect projects late transport settl
   const first = deferred(), second = deferred(); let writes = 0;
   const f = setup({ snapshot: snapshot([raw("one", "Remote One"), raw("two", "Remote Two")]), remote: { manageRemotePlugin: async () => (++writes === 1 ? first.promise : second.promise) } });
   f.h.render(); await f.h.tick();
-  toggle(f.h, "Remote One").props.onClick(); toggle(f.h, "Remote Two").props.onClick(); f.h.render();
+  toggle(f.h, "Remote One").props.onClick({ stopPropagation() {} }); toggle(f.h, "Remote Two").props.onClick({ stopPropagation() {} }); f.h.render();
   assert.equal(writes, 2, "different remote plugins remain independent while both transports are pending");
   f.h.unmount(); const updates = f.h.updates;
   first.resolve({ verification: "pending", snapshot: null, error: "late one" }); second.resolve({ verification: "pending", snapshot: null, error: "late two" }); await f.h.tick();

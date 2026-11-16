@@ -6,9 +6,11 @@ import "./McpSettings.css";
 
 type Guard = (action: () => void) => boolean;
 const DOCS = "https://developers.openai.com/codex/mcp/";
-export function McpSettings({ cwd, connectionIdentity, onConfigUpdated, onRestartAppServer, onNavigationGuardChange }: {
+export function McpSettings({ cwd, connectionIdentity, onConfigUpdated, onRestartAppServer, onNavigationGuardChange,
+  embedded = false, externalQuery, createRequest = 0 }: {
   cwd?: string; connectionIdentity: string; onConfigUpdated: () => void | Promise<void>;
   onRestartAppServer: () => void | Promise<unknown>; onNavigationGuardChange?: (guard: Guard | null) => void;
+  embedded?: boolean; externalQuery?: string; createRequest?: number;
 }) {
   const state = useMcpSettingsState({ cwd, connectionIdentity, onConfigUpdated, onRestartAppServer });
   const [query, setQuery] = useState(""), [confirmation, setConfirmation] = useState<"discard" | "reload" | null>(null);
@@ -19,6 +21,8 @@ export function McpSettings({ cwd, connectionIdentity, onConfigUpdated, onRestar
   const entryButtons = useRef(new Map<string, HTMLButtonElement>());
   const previousEditor = useRef<{ context: string; name: string | null } | null>(null);
   const context = JSON.stringify([cwd, connectionIdentity]);
+  const currentContext = useRef(context); currentContext.current = context;
+  const previousCreate = useRef({ context, request: createRequest });
   const restoreFocus = (detail = false) => {
     const version = epoch.current;
     requestAnimationFrame(() => {
@@ -40,6 +44,20 @@ export function McpSettings({ cwd, connectionIdentity, onConfigUpdated, onRestar
     onNavigationGuardChange?.(guard);
     return () => onNavigationGuardChange?.(null);
   }, [context, onNavigationGuardChange]);
+  useEffect(() => {
+    const previous = previousCreate.current;
+    previousCreate.current = { context, request: createRequest };
+    if (previous.context !== context || previous.request === createRequest || createRequest === 0) return;
+    const version = epoch.current;
+    const action = () => {
+      const current = latest.current;
+      if (epoch.current !== version || !current.canNavigate() || !current.data?.userLayer || current.busy || current.pending || current.restarting) return;
+      current.open();
+    };
+    const current = latest.current;
+    if (!current.data?.userLayer || current.busy || current.pending || current.restarting) return;
+    if (guard(action)) action();
+  }, [context, createRequest]);
   useEffect(() => {
     if (confirmation) dialog.current?.showModal(); else dialog.current?.close();
   }, [confirmation]);
@@ -91,7 +109,7 @@ export function McpSettings({ cwd, connectionIdentity, onConfigUpdated, onRestar
     const action = () => { latest.current.discard(); void latest.current.restart(); };
     if (guard(action)) action();
   }}>重启</button>;
-  const filtered = state.entries.filter(entry => entry.name.toLowerCase().includes(query.trim().toLowerCase()));
+  const filtered = state.entries.filter(entry => entry.name.toLowerCase().includes((externalQuery ?? query).trim().toLowerCase()));
   const rows = (plugin: boolean) => filtered.filter(entry => (entry.source === "plugin") === plugin).map(entry => <div className="mcp-settings-row" key={entry.name}>
     <div className="mcp-server-name"><span>{entry.name}</span>
       {entry.readOnlyReason && entry.source !== "plugin" && <span className="mcp-settings-description">{entry.readOnlyReason}</span>}
@@ -110,14 +128,14 @@ export function McpSettings({ cwd, connectionIdentity, onConfigUpdated, onRestar
     {state.pending && <p role="status">操作已提交，等待配置核验。<button type="button" className="secondary-btn" disabled={state.loading} onClick={() => void state.reload()}>重新读取</button></p>}
     {state.loading && !state.data && <p role="status">正在加载…</p>}
     {!state.editor ? <>
-      <div className="mcp-settings-toolbar"><h3>服务器</h3><div>{restart}<button type="button" className="secondary-btn" ref={addButton}
-        disabled={!state.data?.userLayer || disabled} onClick={() => state.open()}>添加服务器</button></div></div>
+      {(!embedded || restart) && <div className="mcp-settings-toolbar">{!embedded && <h3>服务器</h3>}<div>{restart}{!embedded && <button type="button" className="secondary-btn" ref={addButton}
+        disabled={!state.data?.userLayer || disabled} onClick={() => state.open()}>添加服务器</button>}</div></div>}
       {state.statusError && <p role="alert" className="mcp-settings-description">{state.statusError}</p>}
-      {state.entries.length > 0 && <input className="mcp-settings-search" type="search" aria-label="搜索 MCP 服务器" placeholder="搜索 MCP 服务器" value={query} onChange={event => setQuery(event.target.value)} />}
+      {!embedded && state.entries.length > 0 && <input className="mcp-settings-search" type="search" aria-label="搜索 MCP 服务器" placeholder="搜索 MCP 服务器" value={query} onChange={event => setQuery(event.target.value)} />}
       {rows(false)}
       {filtered.some(entry => entry.source === "plugin") && <section><h3>来自插件</h3>{rows(true)}</section>}
       {!state.loading && state.data && state.entries.length === 0 && <div className="mcp-settings-empty"><p>未连接 MCP 服务器</p>
-        <button type="button" className="secondary-btn" disabled={!state.data.userLayer || disabled} onClick={() => state.open()}>添加服务器</button></div>}
+        {!embedded && <button type="button" className="secondary-btn" disabled={!state.data.userLayer || disabled} onClick={() => state.open()}>添加服务器</button>}</div>}
       {state.entries.length > 0 && !filtered.length && <p>未找到 MCP 服务器</p>}
       {state.data && !state.data.userLayer && <p role="status">MCP 服务器设置不可用</p>}
     </> : draft && <section className="mcp-settings-detail">
@@ -147,7 +165,7 @@ export function McpSettings({ cwd, connectionIdentity, onConfigUpdated, onRestar
       <h3>放弃未保存的更改？</h3><p>{confirmation === "reload" ? "重新读取将替换当前 MCP 草稿。" : "离开将放弃当前 MCP 草稿。"}</p>
       <div className="mcp-detail-save"><button type="button" className="secondary-btn" autoFocus onClick={() => { setConfirmation(null); pendingAction.current = null; restoreFocus(true); }}>继续编辑</button>
         <button type="button" className="primary-btn" onClick={() => {
-          if (!state.canNavigate()) return;
+          if (currentContext.current !== context || !state.canNavigate()) return;
           const action = pendingAction.current, replace = confirmation === "reload"; pendingAction.current = null; setConfirmation(null);
           if (replace) { void state.reload(true).then(() => restoreFocus(true)); return; }
           state.discard(); action?.();

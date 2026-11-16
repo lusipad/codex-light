@@ -18,9 +18,17 @@ function code(ast,name) {
   return ts.transpileModule(`(${found.getText(ast)})`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
 }
 const routeCommits=[], sectionCommits=[], forwarded=[];
+const management = {};
+vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/pluginManagementLocation.ts','utf8'), {
+  compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS},
+}).outputText,{exports:management,URL,URLSearchParams});
 let pending, dirty=true, guards=0;
 const guard = action => {guards++; if(!dirty)return true; pending=action;return false};
 const context = {
+  parsePluginManagementLocation:management.parsePluginManagementLocation,
+  pluginManagementNavigationRef:{current:null},
+  window:{location:{href:'https://codex.invalid/'},history:{state:null,replaceState(){}}},
+  URL,
   activeRouteRef:{current:'settings'},personalizationNavigationGuardRef:{current:guard},
   commitActiveRoute:route=>routeCommits.push(route),
   activeSectionRef:{current:'personalization'},commitActiveSection:section=>sectionCommits.push(section),

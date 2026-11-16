@@ -9,7 +9,7 @@ export function managementTabs(counts: Record<ManagementTab, number>, showNonMcp
 }
 export function managementFallback(current: ManagementTab, counts: Record<ManagementTab, number>, loading: boolean, showNonMcpTabs: boolean): ManagementTab {
   if (!showNonMcpTabs) return "mcp";
-  if (loading || counts[current] > 0) return current;
+  if (current === "mcp" || loading || counts[current] > 0) return current;
   return managementTabOrder.find(tab => counts[tab] > 0) ?? "mcp";
 }
 

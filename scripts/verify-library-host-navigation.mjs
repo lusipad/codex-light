@@ -13,6 +13,7 @@ function walk(node) {
 walk(ast); assert.ok(callback);
 const calls = [];
 const context = {
+  parsePluginManagementLocation: () => null, window: { location: { href: "https://private.test/" } },
   closeLibraryFile: () => calls.push("close-file"),
   activeRouteRef: { current: "library" },
   libraryNavigationRef: { current: { canGoBack: true, canGoForward: true, back: () => calls.push("back"), forward: () => calls.push("forward") } },

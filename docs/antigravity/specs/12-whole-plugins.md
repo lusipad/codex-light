@@ -89,3 +89,35 @@ ON_USE且无显式app setup的普通提示词可先起草，不把有apps本身�
 同名本地市场使用精确label分组，标题为`label · subLabel`，其中subLabel采用全重名组可唯一识别的最短路径后缀；显示路径保留大小写，不能复用home匹配的lowercase。来源身份仍用原始path。官方别名及排序有同版锚点，不能从任意包含OpenAI的名字推断官方身份或权限。
 
 后续授权补证将同版参考manifest扩至152项，另有AppxManifest记录。`oauth-initiation-contract.md`和`native-callback-host-contract.md`确认begin请求、服务返回state、窗口归属与官方`codex://connector/oauth_callback`链；该协议归官方Store应用。本软件自有callback/client资格尚无服务证据，不能注册/占用官方scheme或以installUrl、账号登录事件冒充授权完成。管理面下一包使用新`management-contract.md`及其同版锚点，不能把目录tablist语义套到设置管理segmented控件。
+
+## R2 管理工作面本批开工合同
+
+依据`management-contract.md`、25段原始锚点与241条同版中文，先修一次页头、管理分段分类/计数、1024px搜索断点、紧凑行及管理详情返回；保留真实启禁、未知结果核验、市场移除和MCP草稿保护。其余Apps/Skills/市场表单与宿主分支按合同继续补，不以此批布局修正代表整页完成。
+
+- 只保留一个可见“插件”页头，副标题“管理插件、技能和 MCP”，动作是浏览目录/按能力添加。嵌入管理体不再绘第二个可见标题或固定窄内容列。
+- 分类为group/aria-pressed普通按钮，计数在搜索前取得；MCP永远可选，当前MCP不能因数量为0自动跳走；插件feature显式false才只留MCP。窄窗直接不渲染搜索，宽窗根据分类显示对应中文。
+- 插件紧凑行36尺寸logo、可收缩文本列、单行描述、独立开关和右箭头；不再默认堆放版本/ID/目录路径和卸载按钮。来源及完整信息留管理详情；toggle不导航，不可用/admin/写入中按真实状态禁用。
+- 管理详情采用独立管理路由与来源读回；不能把目录详情路径直接套用。返回保留host与真实上下文；卸载只有真实确认且仍同一详情时才返回，重复/晚到写不能切走新页面。
+- 修改前用生产函数/组件回归锁定MCP默认保留、分段语义、搜索断点与跨分类草稿、紧凑行开关独立、详情身份/返回和卸载守卫；随后宽窄原生观察。缺官方配对图仍score=null，物理IME另验。
+
+
+### 当前26.1111基准与首市场添加
+
+本批官方已升级为Store `26.1111.2228.0`（package `26.1111.21308`）。独立只读快照与manifest位于`.ref/parity/12/whole-page/reference/r1-20261116-current/`，asar SHA256为`2551cba1057a05cdc5cf5d75b146fac4092bff4ce77a10c43e3286c88d24c82d`。旧26.1103证据保留，不自动升级为当前版验收。管理基础规则逐项对照见`management-behavior-compat.md`，添加弹层见`add-marketplace-contract.md`与原始锚点。
+
+- 添加市场弹层独立于分类和库存数量，初始空值；来源、Git引用、稀疏路径三个字段从打开起可见。来源必填；解析只trim，稀疏路径按逗号/换行拆分去空，保顺序与重复。
+- 普通状态可关闭、取消和外点，提交中隐藏X并禁关闭/重复提交；失败保留值，只有当前解析参数与失败参数相同时呈现该错误。成功reset并关闭；账号/项目/host变化清空，不接旧请求结果。
+- 添加写入ACK后真实刷新库存与管理；刷新失败独立提示“市场已配置，但刷新插件列表失败”，不把已确认添加当写入失败，不重复写。服务返回的marketplaceName交给App受导航草稿guard保护的回调。
+- 官方Add写`directory=personal`与主目录正文读`directoryTab`存在静态不一致，真实落地选中仍待官方实测；不擅自补双query或宣称Personal正文已验证。
+- 此次父子回归验证独立弹层入口、精确请求参数、写失败抛回弹层、ACK后刷新失败和账号晚回隔离；独立弹层专项验证提交/关闭/错误状态。生产浏览器/原生宽窄、官方配对图及物理IME另验，不由回放替代。
+
+
+### 当前版管理详情接线与未接区域
+
+当前合同为r1基准`management-detail-contract.md`（22锚点）与`management-mcp-contract.md`（9锚点），模板原始DTO及消费者另见`template-dto-contract.md`。本轮接独立header/面包屑、复用实测三行展开、真实包含项和末尾About，替换旧原始ID/认证策略信息卡。已有目录技能归属、真实内容读取、启禁与admin保护复用；管理预览不附目录Try和单独卸载所属技能动作。设置内Hooks/MCP入口接已有带草稿保护的分区导航。
+
+本机“查看详情”按当前CL来源生成真实ID、host、marketplacePath或remoteMarketplaceName及读取名称，缺无path远端ID时不猜名字；守卫接受后才一次push，离页/换实体后的晚确认不能抢回导航。service无host路由的完整header跳转另待合同，不以本机路径替代。
+
+卸载按当前执行Host与service分支区分：执行Host不额外弹确认；默认安装保护条件为remote source，不能把所有local默认策略一律解释为管理员安装。service真实库存与管理员策略、确认/取消继续独立处理。已有ACK后完整库存读回、未知结果只读恢复、scope与route ABA隔离保留；新PMD10先失败后修复。
+
+未接区域明确保留：Apps完整管理/权限与sync、自定义插件Settings工具视图、Meetings专用设置、准备状态完整consumer、MCP app/config精确映射与toggle、未实例化模板资格及服务CTA。当前CLI0.165生成schema证实AppTemplateSummary/ScheduledTaskSummary可补类型，但raw没有canSetup/rrule/group；当前包计划group hook为空，不按猜测填模板或造启用动作。没有这些区域的typed消费者不等于官方不存在，也不计本轮完整通过。

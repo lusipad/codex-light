@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
+import { harness } from "./verify-plugin-management-ui-b.mjs";
 const source = fs.readFileSync("src/components/SkillsMcpView.tsx", "utf8");
 const ast = ts.createSourceFile("view.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const sections = {};
@@ -18,7 +19,7 @@ visit(ast);
 const nodes = node => node && typeof node === "object" ? [node, ...node.children.flatMap(nodes)] : [];
 const text = node => node && typeof node === "object" ? node.children.map(text).join(" ") : typeof node === "string" ? node : "";
 const react = { createElement: (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity) }) };
-for (const manageOnly of [true, false]) {
+for (const manageOnly of [false]) {
   for (const subTab of ["plugins", "skills", "mcp"]) {
     const visits = [], changes = [];
     const context = { React: react, manageOnly, subTab, onManagePlugins: () => visits.push("management"), onBrowseDirectory: tab => visits.push(tab),
@@ -39,9 +40,20 @@ for (const manageOnly of [true, false]) {
     assert.equal(tabs.length, manageOnly ? 5 : 2);
     tabs.forEach(node => node.props.onClick());
     assert.deepEqual(changes, manageOnly ? ["plugins", "apps", "mcp", "skills", "marketplaces"] : ["plugins", "skills"]);
-    assert.equal(text(render("pm-segment")).includes("浏览市场"), !manageOnly);
+    assert.equal(sections["pm-segment"], undefined, "the obsolete one-option installed/browse segment is removed");
   }
 }
+const managed = harness();
+managed.props.onBrowseDirectory = tab => visits.push(tab);
+const visits = [];
+managed.render(); await managed.tick();
+try {
+  assert.deepEqual(managed.tabs().map(node => node.props["aria-pressed"]), [true, false, false, false, false]);
+  managed.button("浏览目录").props.onClick(); assert.deepEqual(visits, ["plugins"]);
+  managed.button("MCP1").props.onClick(); managed.render();
+  assert.equal(managed.tabs().find(node => managed.text(node) === "MCP1").props["aria-pressed"], true);
+  assert.equal(managed.nodes(managed.tree).some(node => node.props.role === "tablist"), false);
+} finally { managed.unmount(); }
 console.log("PASS PS02/PS03: production JSX management tabs and directory callbacks, directory and management tabs separated");
 const parent = fs.readFileSync("src/components/SettingsView.tsx", "utf8");
 assert.ok(parent.includes("<SkillsMcpView"));

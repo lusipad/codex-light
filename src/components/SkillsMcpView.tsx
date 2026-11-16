@@ -5,7 +5,6 @@ import {
   AlertTriangle,
   AppWindow,
   BookOpen,
-  Boxes,
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
@@ -21,7 +20,6 @@ import {
   Save,
   ShoppingBag,
   Sparkles,
-  Store,
   Trash2,
   WifiOff,
 } from "lucide-react";
@@ -34,7 +32,7 @@ import { managementTabs, managementFallback, useMarketplaceRemoval } from "../pl
 import { readConfiguredMarketplaces, setPluginEnabled, verifyPluginEnabled, type ConfiguredMarketplace } from "../pluginManagement";
 import { loadRemotePlugins, manageRemotePlugin, verifyRemotePlugin, mergePluginInventories, type RemotePluginSnapshot } from "../remotePlugins";
 import { loadPluginDirectorySource, loadPluginDirectoryCategory, readLocalDirectoryListing, type PluginDirectorySource } from "../pluginDirectoryClient";
-import { directoryPluginInstallation, type PluginDirectoryListing } from "../pluginDirectory";
+import { directoryPluginInstallation, pluginDetailMatchesReference, type PluginDirectoryListing } from "../pluginDirectory";
 import { usePluginDirectorySearch } from "../pluginDirectorySearch";
 import { parsePluginDirectoryLocation, pluginDirectoryBrowseUrl, pluginDirectoryDetailUrl, pluginDirectoryTabUrl, pluginDirectoryCategoryUrl } from "../pluginDirectoryLocation";
 import { groupPluginDirectoryLocal, type PluginDirectoryLocalGroups } from "../pluginDirectoryLocalGroups";
@@ -45,13 +43,19 @@ import {
 import "./PluginsMarket.css";
 import { PluginPreparationPanel } from "./PluginPreparationPanel";
 import { RecommendedSkillsPanel } from "./RecommendedSkillsPanel";
-import { recommendedSkillDisplayName } from "../recommendedSkills";
+import { recommendedSkillDisplayName, readRecommendedSkills, type RecommendedSkill } from "../recommendedSkills";
+import { filterManagedSkills } from "../pluginManagementSkills";
+import { parsePluginManagementLocation, pluginManagementDetailUrl, pluginManagementRootUrl } from "../pluginManagementLocation";
 import { SkillPreviewDialog } from "./SkillPreviewDialog";
 import { PluginDirectoryDetail } from "./PluginDirectoryDetail";
 import { PluginDirectoryIncluded } from "./PluginDirectoryIncluded";
 import { PluginLogo } from "./PluginLogo";
 import { PluginInstalledStrip } from "./PluginInstalledStrip";
 import { PluginDirectoryOriginsView, type PluginDirectoryTab } from "./PluginDirectoryOriginsView";
+import { PluginManagementToolbar } from "./PluginManagementToolbar";
+import { PluginManagementDetail } from "./PluginManagementDetail";
+import { PluginManagementActions } from "./PluginManagementActions";
+import { AddPluginMarketplaceDialog, type AddPluginMarketplaceInput } from "./AddPluginMarketplaceDialog";
 import {
   AppInfo,
   InstalledApp,
@@ -85,7 +89,6 @@ import {
   pluginDisplayName,
   pluginRefFor,
   pluginSourceLabel,
-  pluginVersion,
   readPlugin,
   setSkillEnabled as writeSkillEnabled,
   uninstallPlugin,
@@ -108,13 +111,15 @@ interface SkillsMcpViewProps {
   onConfigUpdated?: () => void | Promise<void>;
   onRestartAppServer?: () => void | Promise<unknown>;
   onNavigationGuardChange?: (guard: ((action: () => void) => boolean) | null) => void;
-  onBrowseDirectory?: (tab: "plugins" | "skills") => void;
+  onNotify?: (message: string, type?: "success" | "error") => void;
+  onBrowseDirectory?: (tab: "plugins" | "skills", marketplaceName?: string) => void;
   onManagePlugins?: () => void;
   onNavigationChange?: (navigation: PluginDirectoryNavigation | null) => void;
   onStartSkillCreatorSession?: (prompt: string) => void;
   onOpenSkillFile?: (path: string) => boolean | Promise<boolean>;
   onTrySkill?: (skill: { name: string; path: string; defaultPrompt?: string | null }) => boolean | Promise<boolean>;
   onTryPlugin?: (plugin: PluginSummary, prompt: string) => boolean | Promise<boolean>;
+  onOpenPluginDirectoryDetail?: (detail: PluginDetail) => void;
   onOpenPluginSettings?: (section: "connections" | "hooks-settings") => void;
 }
 
@@ -125,6 +130,7 @@ interface RemoteIntent {
   pending: boolean; busy: boolean; error: string | null; refreshError: string | null;
 }
 const remoteIntents = new Map<string, RemoteIntent>();
+const uninstallUncertainties = new Map<string, Set<string>>();
 const remoteIntentListeners = new Set<(intent: RemoteIntent) => void>();
 const saveRemoteIntent = (key: string, intent: RemoteIntent) => { remoteIntents.set(key, intent); remoteIntentListeners.forEach(listener => listener(intent)); };
 const remoteId = (plugin: PluginSummary) => plugin.remotePluginId ?? (plugin.shareContext && typeof plugin.shareContext === "object" && "remotePluginId" in plugin.shareContext && typeof plugin.shareContext.remotePluginId === "string" ? plugin.shareContext.remotePluginId : null);
@@ -220,15 +226,6 @@ function skillScopeLabel(scope: string): string {
   }
 }
 
-function pluginSourceDetail(plugin: PluginSummary): string {
-  const source = plugin.source;
-  if (!source) return "";
-  if (source.type === "local") return source.path;
-  if (source.type === "git") return source.url;
-  if (source.type === "npm") return source.package;
-  return "远程市场（无本地路径）";
-}
-
 function pluginKey(
   plugin: PluginSummary,
   marketplace: PluginMarketplaceEntry
@@ -246,6 +243,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   onRestartAppServer,
   onNavigationGuardChange,
   onBrowseDirectory,
+  onNotify,
   onManagePlugins,
   onNavigationChange,
   onStartSkillCreatorSession,
@@ -253,8 +251,9 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   onTrySkill,
   onTryPlugin,
   onOpenPluginSettings,
+  onOpenPluginDirectoryDetail,
 }) => {
-  const [subTab, setSubTab] = useState<SubTab>(initialTab || "plugins");
+  const [subTab, setSubTab] = useState<SubTab>(() => manageOnly && window.location && parsePluginManagementLocation(window.location.href)?.requestedTab === "mcps" ? "mcp" : initialTab || "plugins");
 
   useEffect(() => {
     if (initialTab) {
@@ -262,8 +261,12 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     }
   }, [initialTab]);
   const [searchQuery, setSearchQuery] = useState(() => !manageOnly && window.location ? parsePluginDirectoryLocation(window.location.href)?.search ?? "" : "");
-  const [directoryHostUnsupported, setDirectoryHostUnsupported] = useState(() => !manageOnly && !!(window.location && parsePluginDirectoryLocation(window.location.href)?.hostId?.trim()));
-  const unsupportedDirectoryHost = () => !manageOnly && !!(window.location && parsePluginDirectoryLocation(window.location.href)?.hostId?.trim());
+  const unsupportedDirectoryHost = () => manageOnly
+    ? ((window.location && parsePluginManagementLocation(window.location.href)?.hostId) ?? "local") !== "local"
+    : !!(window.location && parsePluginDirectoryLocation(window.location.href)?.hostId?.trim() &&
+      parsePluginDirectoryLocation(window.location.href)?.hostId !== "local");
+  const [directoryHostUnsupported, setDirectoryHostUnsupported] = useState(unsupportedDirectoryHost);
+  const managementHostId = manageOnly && window.location ? parsePluginManagementLocation(window.location.href)?.hostId ?? "local" : "local";
   const [directoryCategory, setDirectoryCategory] = useState<string | null>(() => !manageOnly && window.location ? parsePluginDirectoryLocation(window.location.href)?.category ?? null : null);
   const readDirectoryTab = (): PluginDirectoryTab => {
     const tab = window.location && parsePluginDirectoryLocation(window.location.href)?.directoryTab;
@@ -290,21 +293,22 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   const directorySearch = usePluginDirectorySearch({ query: searchQuery, cwds: activeWorkspaceRoot ? [activeWorkspaceRoot] : undefined,
     identity: connectionIdentity ?? "", enabled: !manageOnly && subTab === "plugins" && !directoryCategory && !directoryHostUnsupported });
   const directoryHistory = useRef({ session: `${Date.now()}:${Math.random()}`, index: 0, maximum: 0 });
+  const historyMarker = manageOnly ? "pluginManagementNavigation" : "pluginDirectoryNavigation";
   const [directoryHistoryPosition, setDirectoryHistoryPosition] = useState({ index: 0, maximum: 0 });
   const updateDirectoryUrl = (url: string, replace = false) => {
     if (!window.history) return;
     const navigation = directoryHistory.current;
     if (!replace) { navigation.index++; navigation.maximum = navigation.index; }
-    const state = { ...window.history.state, pluginDirectoryNavigation: { session: navigation.session, index: navigation.index } };
+    const state = { ...window.history.state, [historyMarker]: { session: navigation.session, index: navigation.index } };
     if (replace) window.history.replaceState(state, "", url); else window.history.pushState(state, "", url);
     setDirectoryHistoryPosition({ index: navigation.index, maximum: navigation.maximum });
   };
   useEffect(() => {
-    if (manageOnly || !window.history || !window.location) return;
+    if (!window.history || !window.location) return;
     const navigation = directoryHistory.current;
-    window.history.replaceState({ ...window.history.state, pluginDirectoryNavigation: { session: navigation.session, index: 0 } }, "", window.location.href);
+    window.history.replaceState({ ...window.history.state, [historyMarker]: { session: navigation.session, index: 0 } }, "", window.location.href);
     const sync = () => {
-      const marker = window.history.state?.pluginDirectoryNavigation;
+      const marker = window.history.state?.[historyMarker];
       if (marker?.session !== navigation.session) return;
       navigation.index = marker.index;
       setDirectoryHistoryPosition({ index: navigation.index, maximum: navigation.maximum });
@@ -313,13 +317,19 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     return () => window.removeEventListener("popstate", sync);
   }, [manageOnly]);
   useEffect(() => {
-    if (manageOnly || subTab !== "plugins") { onNavigationChange?.(null); return; }
+    if (!manageOnly && subTab !== "plugins") { onNavigationChange?.(null); return; }
     onNavigationChange?.({ canGoBack: directoryHistoryPosition.index > 0,
       canGoForward: directoryHistoryPosition.index < directoryHistoryPosition.maximum,
       goBack: () => window.history?.back(), goForward: () => window.history?.forward() });
     return () => onNavigationChange?.(null);
   }, [manageOnly, subTab, directoryHistoryPosition.index, directoryHistoryPosition.maximum, onNavigationChange]);
   const directoryBase = () => window.location && parsePluginDirectoryLocation(window.location.href) ? window.location.href : "/plugins";
+  const managementBase = () => window.location && parsePluginManagementLocation(window.location.href) ? window.location.href : "/settings/plugins-settings";
+  const closeManagedDetail = (replace = false) => {
+    ++detailRequestRef.current; detailContextRef.current = null;
+    setDetailKey(null); setDetail(null); setDetailError(null); setDetailLoading(false);
+    updateDirectoryUrl(pluginManagementRootUrl(managementBase(), replace ? {} : { hostId: null }), replace);
+  };
   const [skillSearchIndex, setSkillSearchIndex] = useState(0);
   const [recommendedSearch, setRecommendedSearch] = useState<{ query: string; count: number | null }>({ query: "", count: null });
   const pageRef = useRef<HTMLDivElement>(null);
@@ -343,6 +353,9 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   const skillWritePendingRef = useRef(false);
   const [skillWriteBusy, setSkillWriteBusy] = useState(false);
   const [recommendedInstalledKeys, setRecommendedInstalledKeys] = useState<string[]>([]);
+  const [managementRecommended, setManagementRecommended] = useState<RecommendedSkill[] | null>(null);
+  const [managementRecommendedError, setManagementRecommendedError] = useState<string | null>(null);
+  const managementRecommendedRequest = useRef(0);
   const [skillPreview, setSkillPreview] = useState<{ row: SkillRow; identity: string } | null>(null);
   const skillPreviewSequence = useRef(0);
 
@@ -393,8 +406,10 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   const [pluginPreparations, setPluginPreparations] = useState<Record<string, { name: string; result: PluginInstallResponse; attempt: number }>>({});
   const preparationAttemptRef = useRef(0);
   const [unconfirmedInstalls, setUnconfirmedInstalls] = useState<Set<string>>(new Set());
-  const installScope = JSON.stringify([connectionIdentity, activeWorkspaceRoot]);
+  const installScope = JSON.stringify([connectionIdentity, activeWorkspaceRoot, manageOnly ? managementHostId : null]);
   const installUncertaintyRef = useRef(new Map<string, Set<string>>());
+  const uninstallUncertaintyRef = useRef(uninstallUncertainties);
+  const [unconfirmedUninstalls, setUnconfirmedUninstalls] = useState<Set<string>>(new Set());
   const installedRequestRef = useRef(0);
   const browseRequestRef = useRef(0);
   const [detailKey, setDetailKey] = useState<string | null>(null);
@@ -411,9 +426,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   // Marketplaces tab
   const [marketplaceBusy, setMarketplaceBusy] = useState<string | null>(null);
   const [showAddMarketplace, setShowAddMarketplace] = useState(false);
-  const [marketplaceSource, setMarketplaceSource] = useState("");
-  const [marketplaceRefName, setMarketplaceRefName] = useState("");
-  const [marketplaceSparsePaths, setMarketplaceSparsePaths] = useState("");
+  const [mcpCreateRequest, setMcpCreateRequest] = useState(0);
   const [marketplaceActionError, setMarketplaceActionError] = useState<
     string | null
   >(null);
@@ -455,7 +468,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   const workspaceCwds = (): string[] | undefined =>
     activeWorkspaceRoot ? [activeWorkspaceRoot] : undefined;
   const isPluginContextCurrent = (context: number) =>
-    pluginMountedRef.current && context === pluginContextRef.current;
+    pluginMountedRef.current && context === pluginContextRef.current && !unsupportedDirectoryHost();
   const updateInstallUncertainty = (scope: string, id: string, pending: boolean, context: number) => {
     const ids = new Set(installUncertaintyRef.current.get(scope));
     if (pending) ids.add(id); else ids.delete(id);
@@ -479,6 +492,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     setToast(null); if (toastTimer.current !== null) window.clearTimeout(toastTimer.current);
     serviceRead.current?.abort(); remoteWrites.current.forEach(controller => controller.abort());
     serviceRequest.current++; setServicePlugins(null); setServiceLoading(false); setServiceError(null); setRemoteOperations({}); setRuntimeWarning(null);
+    setMarketplaceBusy(null); setShowAddMarketplace(false); setMarketplaceActionError(null); setUpgradeReport(null);
     setConfiguredMarkets([]); setManagementError(null); setManagementLoading(true); setPluginUpdates({});
     appsLoadedRef.current = false; appsLoadingRef.current = false;
     setAppsData(null); setAppsInstalled(null); setAppsLoaded(false); setAppsLoading(false); setAppsError(null);
@@ -493,6 +507,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     setDetailLoading(false);
     setPluginPreparations({});
     setUnconfirmedInstalls(new Set(installUncertaintyRef.current.get(installScope)));
+    setUnconfirmedUninstalls(new Set(uninstallUncertaintyRef.current.get(installScope)));
     ++skillSelectionRequestRef.current;
     ++remoteSkillsRequestRef.current;
     ++localSkillsRequestRef.current;
@@ -501,6 +516,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     remoteSkillsLoadingRef.current = false;
     setSkills([]);
     setRecommendedInstalledKeys([]);
+    setManagementRecommended(null); setManagementRecommendedError(null); ++managementRecommendedRequest.current;
     setRemoteSkills(null);
     setRemoteSkillsError(null);
     setRemoteSkillsLoading(false);
@@ -519,14 +535,14 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       pluginMountedRef.current = false;
       ++pluginContextRef.current;
     };
-  }, [activeWorkspaceRoot, connectionIdentity]);
+  }, [activeWorkspaceRoot, connectionIdentity, managementHostId]);
 
   // ───────────────────────────────────────────────────────────────────────────
   // Data loaders
   // ───────────────────────────────────────────────────────────────────────────
 
   const loadInstalledPlugins = async (options: { silent?: boolean; confirmInstallResult?: boolean } = {}) => {
-    if (!pluginMountedRef.current) return;
+    if (!pluginMountedRef.current || unsupportedDirectoryHost()) return;
     if (!options.silent && installedLoadingRef.current) return;
     const context = pluginContextRef.current;
     const request = ++installedRequestRef.current;
@@ -557,6 +573,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
 
   // The server controls catalog availability; render a bounded set of cards.
   const loadServicePlugins = async () => {
+    if (unsupportedDirectoryHost()) return;
     const context = pluginContextRef.current, request = ++serviceRequest.current;
     serviceRead.current?.abort();
     const controller = new AbortController(); serviceRead.current = controller;
@@ -647,7 +664,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   }, [directorySearch.unsupported, searchQuery, activeWorkspaceRoot, connectionIdentity, manageOnly]);
 
   const loadRemoteSkills = async (forceReload = false) => {
-    if (!pluginMountedRef.current) return;
+    if (!pluginMountedRef.current || unsupportedDirectoryHost()) return;
     if (remoteSkillsLoadingRef.current && !forceReload) return;
     const context = pluginContextRef.current;
     const request = ++remoteSkillsRequestRef.current;
@@ -673,6 +690,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   };
 
   const loadApps = async (force = false) => {
+    if (unsupportedDirectoryHost()) return;
     if (appsLoadingRef.current && !force) return;
     const context = pluginContextRef.current;
     const request = ++appsRequest.current;
@@ -710,6 +728,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   }, [detail?.summary.id, activeWorkspaceRoot, connectionIdentity, manageOnly]);
 
   const loadManagement = async () => {
+    if (unsupportedDirectoryHost()) return;
     const context = pluginContextRef.current, request = ++managementRequest.current;
     setManagementLoading(true); setManagementError(null);
     const results = await Promise.allSettled([
@@ -724,9 +743,25 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     const failures = results.filter(result => result.status === "rejected");
     if (failures.length) setManagementError(failures.map(result => String((result as PromiseRejectedResult).reason)).join("；"));
     setManagementLoading(false);
+    return failures.length === 0;
+  };
+
+  const loadManagementRecommended = async () => {
+    if (!manageOnly || unsupportedDirectoryHost()) return;
+    const context = pluginContextRef.current, request = ++managementRecommendedRequest.current;
+    setManagementRecommended(null); setManagementRecommendedError(null);
+    try {
+      const result = await readRecommendedSkills(false);
+      if (!isPluginContextCurrent(context) || request !== managementRecommendedRequest.current) return;
+      if (result.error) throw new Error(result.error);
+      setManagementRecommended(result.skills);
+    } catch (error) {
+      if (isPluginContextCurrent(context) && request === managementRecommendedRequest.current) setManagementRecommendedError(errorSummary(error));
+    }
   };
 
   const loadLocalSkills = async () => {
+    if (unsupportedDirectoryHost()) return;
     const context = pluginContextRef.current;
     const request = ++localSkillsRequestRef.current;
     try {
@@ -762,7 +797,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     const installedLoad = loadInstalledPlugins({ confirmInstallResult: options.confirmInstallResult !== false });
     await loadLocalSkills();
     if (!isPluginContextCurrent(context)) return;
-    await Promise.allSettled([installedLoad, serviceLoad, loadRemoteSkills(), loadManagement(),
+    await Promise.allSettled([installedLoad, serviceLoad, loadRemoteSkills(), loadManagement(), loadManagementRecommended(),
       !manageOnly && subTab === "plugins" ? loadBrowsePlugins(true) : Promise.resolve()]);
     if (manageOnly || subTab === "apps") {
       await loadApps(true);
@@ -790,6 +825,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   }, [activeWorkspaceRoot, connectionIdentity, manageOnly]);
 
   useEffect(() => {
+    if (unsupportedDirectoryHost()) return;
     if (subTab === "apps" && !appsLoadedRef.current) {
       loadApps();
     }
@@ -812,6 +848,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     marketplace: PluginMarketplaceEntry,
     options: { reload?: boolean } = {}
   ) => {
+    if (unsupportedDirectoryHost()) return;
     const key = pluginKey(plugin, marketplace);
     if (detailKey === key && !options.reload) {
       ++detailRequestRef.current;
@@ -828,16 +865,23 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     if (!manageOnly && !options.reload) updateDirectoryUrl(pluginDirectoryDetailUrl(directoryBase(), { pluginId: plugin.id,
       pluginName: marketplace.path ? plugin.name : plugin.remotePluginId ?? plugin.name,
       marketplacePath: marketplace.path, remoteMarketplaceName: marketplace.path ? null : marketplace.name }));
+    if (manageOnly && !options.reload) updateDirectoryUrl(pluginManagementDetailUrl(managementBase(), {
+      pluginId: plugin.id, hostId: "local", sourceType: plugin.source?.type ?? "local", remotePluginId: remoteId(plugin),
+      pluginName: marketplace.path ? plugin.name : remoteId(plugin) ?? plugin.name,
+      marketplacePath: marketplace.path, remoteMarketplaceName: marketplace.path ? null : marketplace.name,
+    }));
     setDetailKey(key);
     setDetail(null);
     setDetailError(null);
     setDetailLoading(true);
     try {
-      const res = await readPlugin(pluginRefFor(plugin, marketplace));
+      const reference = pluginRefFor(plugin, marketplace);
+      const res = await readPlugin(reference);
       if (!isPluginContextCurrent(context) || detailRequestRef.current !== requestId) return;
       if (!directoryPluginInstallation(plugin.id, { marketplaces: [{ name: res.marketplaceName, plugins: [res.summary] }] }).plugin) {
         throw new Error("插件详情身份与目录不一致，请重新读取。");
       }
+      if (!pluginDetailMatchesReference(res, reference)) throw new Error("插件详情来源与请求不一致，请重新读取。");
       detailContextRef.current = { plugin: res.summary, marketplace: {
         name: res.marketplaceName, path: res.marketplacePath, plugins: [res.summary],
       } };
@@ -907,20 +951,23 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       const route = window.location ? parsePluginDirectoryLocation(window.location.href) : null;
       if (!route) return;
       setSearchQuery(route.search); setDirectoryCategory(route.category); setDirectoryTab(readDirectoryTab());
-      setDirectoryHostUnsupported(!!route.hostId?.trim());
+      const unsupportedHost = !!route.hostId?.trim() && route.hostId !== "local";
+      setDirectoryHostUnsupported(unsupportedHost);
       ++detailRequestRef.current; detailContextRef.current = null; setDetailKey(null); setDetail(null); setDetailError(null); setDetailLoading(false);
-      if (route.hostId?.trim()) return;
+      if (unsupportedHost) return;
       if (route.pluginId) {
         if (route.pluginName && (route.marketplacePath || route.remoteMarketplaceName)) {
           const context = pluginContextRef.current, request = ++detailRequestRef.current;
           directoryDetailRetry.current = restore;
           setDetailKey(route.pluginId); setDetailLoading(true);
-          void readPlugin(route.marketplacePath ? { pluginName: route.pluginName, marketplacePath: route.marketplacePath }
-            : { pluginName: route.pluginName, remoteMarketplaceName: route.remoteMarketplaceName! }).then(result => {
+          const reference = route.marketplacePath ? { pluginName: route.pluginName, marketplacePath: route.marketplacePath }
+            : { pluginName: route.pluginName, remoteMarketplaceName: route.remoteMarketplaceName! };
+          void readPlugin(reference).then(result => {
             if (!isPluginContextCurrent(context) || request !== detailRequestRef.current) return;
             if (!directoryPluginInstallation(route.pluginId!, { marketplaces: [{ name: result.marketplaceName, plugins: [result.summary] }] }).plugin) {
               throw new Error("插件详情身份与目录不一致，请重新读取。");
             }
+            if (!pluginDetailMatchesReference(result, reference)) throw new Error("插件详情来源与请求不一致，请重新读取。");
             setDetail(result); detailContextRef.current = { plugin: result.summary, marketplace: { name: result.marketplaceName, path: result.marketplacePath, plugins: [result.summary] } };
           }).catch(error => { if (isPluginContextCurrent(context) && request === detailRequestRef.current) setDetailError(toViewError(error)); })
             .finally(() => { if (isPluginContextCurrent(context) && request === detailRequestRef.current) setDetailLoading(false); });
@@ -930,6 +977,45 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     restore(); window.addEventListener("popstate", restore);
     return () => window.removeEventListener("popstate", restore);
   }, [manageOnly, activeWorkspaceRoot, connectionIdentity]);
+
+  useEffect(() => {
+    if (!manageOnly) return;
+    const restore = () => {
+      const route = window.location ? parsePluginManagementLocation(window.location.href) : null;
+      if (!route) return;
+      setDirectoryHostUnsupported(unsupportedDirectoryHost());
+      const request = ++detailRequestRef.current, context = pluginContextRef.current;
+      detailContextRef.current = null; setDetail(null); setDetailError(null); setDetailLoading(false);
+      if (route.kind === "root") { setDetailKey(null); if (route.requestedTab === "mcps") setSubTab("mcp"); return; }
+      setDetailKey(route.pluginId ?? "management-subpage"); setSubTab("plugins");
+      directoryDetailRetry.current = restore;
+      if (route.hostId && route.hostId !== "local") { setDetailError(toViewError(new Error("当前管理入口尚不支持此主机。"))); return; }
+      if (route.kind !== "plugin" || route.section !== "detail" || route.skillName || route.appId) {
+        setDetailError(toViewError(new Error("此插件管理子页面尚未接入。"))); return;
+      }
+      const id = route.pluginId!;
+      setDetailLoading(true);
+      void (async () => {
+        if ((route.marketplacePath || route.remoteMarketplaceName) && !route.pluginName?.trim()) throw new Error("无法确认插件来源名称，请从管理列表重新打开。");
+        const reference = route.marketplacePath ? { pluginName: route.pluginName!, marketplacePath: route.marketplacePath }
+          : route.remoteMarketplaceName ? { pluginName: route.pluginName!, remoteMarketplaceName: route.remoteMarketplaceName } : null;
+        const result = reference
+          ? await readPlugin(reference)
+          : route.hostId ? (() => { throw new Error("无法确认插件来源，请从管理列表重新打开。"); })() : await readLocalDirectoryListing(id);
+        if (!isPluginContextCurrent(context) || request !== detailRequestRef.current) return;
+        if (!directoryPluginInstallation(id, { marketplaces: [{ name: result.marketplaceName, plugins: [result.summary] }] }).plugin) {
+          throw new Error("插件详情身份与管理入口不一致，请重新读取。");
+        }
+        if (reference && !pluginDetailMatchesReference(result, reference)) throw new Error("插件详情来源与管理入口不一致，请重新读取。");
+        detailContextRef.current = { plugin: result.summary, marketplace: { name: result.marketplaceName,
+          path: result.marketplacePath, plugins: [result.summary] } };
+        setDetail(result);
+      })().catch(error => { if (isPluginContextCurrent(context) && request === detailRequestRef.current) setDetailError(toViewError(error)); })
+        .finally(() => { if (isPluginContextCurrent(context) && request === detailRequestRef.current) setDetailLoading(false); });
+    };
+    restore(); window.addEventListener("popstate", restore);
+    return () => { window.removeEventListener("popstate", restore); ++detailRequestRef.current; };
+  }, [manageOnly, activeWorkspaceRoot, connectionIdentity, managementHostId]);
 
   const handleInstallPlugin = async (
     plugin: PluginSummary,
@@ -992,17 +1078,41 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     }
   };
 
+  const updateUninstallUncertainty = (scope: string, id: string, pending: boolean, context: number) => {
+    const ids = new Set(uninstallUncertaintyRef.current.get(scope));
+    if (pending) ids.add(id); else ids.delete(id);
+    uninstallUncertaintyRef.current.set(scope, ids);
+    if (isPluginContextCurrent(context)) setUnconfirmedUninstalls(ids);
+  };
+  const verifyUninstalledPlugin = async (plugin: PluginSummary, request = detailRequestRef.current, allowManualRetry = false) => {
+    const context = pluginContextRef.current;
+    const inventory = await loadInstalledPlugins({ silent: true });
+    if (!isPluginContextCurrent(context)) return false;
+    if (!inventory || inventory.marketplaceLoadErrors?.length) {
+      notify("卸载结果尚未确认；请核验状态，不会重复提交卸载。", "error"); return false;
+    }
+    if (inventory.marketplaces.some(market => market.plugins.some(item => item.id === plugin.id && item.installed))) {
+      if (allowManualRetry) {
+        updateUninstallUncertainty(installScope, plugin.id, false, context);
+        notify("插件仍处于已安装状态，可以重新选择卸载。", "error");
+      } else notify("卸载结果尚未确认；请核验状态，不会重复提交卸载。", "error");
+      return false;
+    }
+    updateUninstallUncertainty(installScope, plugin.id, false, context);
+    notify(`已卸载 ${pluginDisplayName(plugin)}`);
+    if (manageOnly && request === detailRequestRef.current && detailContextRef.current?.plugin.id === plugin.id) closeManagedDetail(true);
+    return true;
+  };
   const handleUninstallPlugin = async (
     plugin: PluginSummary
   ) => {
+    if (unsupportedDirectoryHost()) return;
     if (isServicePlugin(plugin)) { await handleRemotePlugin(plugin, "uninstall"); return; }
-    if (pluginActionRef.current.has(plugin.id) || pluginUpdates[plugin.id]?.pending || plugin.source?.type === "remote") return;
-    const name = pluginDisplayName(plugin);
-    const warning = `确定要卸载插件「${name}」吗？`;
-    if (!confirm(warning)) return;
+    if (pluginActionRef.current.has(plugin.id) || uninstallUncertaintyRef.current.get(installScope)?.has(plugin.id) || pluginUpdates[plugin.id]?.pending || plugin.source?.type === "remote" && plugin.installPolicy === "INSTALLED_BY_DEFAULT") return;
     pluginActionRef.current.add(plugin.id);
     setBusyPluginIds(new Set(pluginActionRef.current));
-    const context = pluginContextRef.current;
+    const context = pluginContextRef.current, detailRequest = detailRequestRef.current;
+    updateUninstallUncertainty(installScope, plugin.id, true, context);
     try {
       await uninstallPlugin(plugin.id);
       if (!isPluginContextCurrent(context)) return;
@@ -1011,16 +1121,18 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
         delete next[plugin.id];
         return next;
       });
-      notify(`已卸载 ${name}`);
       resetBrowseCache();
       await Promise.all([
-        loadInstalledPlugins({ silent: true }),
+        verifyUninstalledPlugin(plugin, detailRequest),
         pluginMode === "browse" ? loadBrowsePlugins(true) : Promise.resolve(),
       ]);
       if (!isPluginContextCurrent(context)) return;
       await loadRemoteSkills(true);
     } catch (err) {
-      if (isPluginContextCurrent(context)) notify(`卸载失败：${errorSummary(err)}`, "error");
+      if (isPluginContextCurrent(context)) {
+        if (err instanceof PluginProtocolError) { notify(`卸载结果无法确认：${errorSummary(err)}`, "error"); await verifyUninstalledPlugin(plugin, detailRequest); }
+        else { updateUninstallUncertainty(installScope, plugin.id, false, context); notify(`卸载失败：${errorSummary(err)}`, "error"); }
+      }
     } finally {
       pluginActionRef.current.delete(plugin.id);
       if (pluginMountedRef.current) setBusyPluginIds(new Set(pluginActionRef.current));
@@ -1028,6 +1140,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   };
 
   const handleTogglePlugin = async (plugin: PluginSummary) => {
+    if (unsupportedDirectoryHost()) return;
     if (isServicePlugin(plugin)) return handleRemotePlugin(plugin, plugin.enabled ? "disable" : "enable");
     if (pluginActionRef.current.has(plugin.id) || pluginUpdates[plugin.id]?.pending || plugin.availability === "DISABLED_BY_ADMIN") return;
     const context = pluginContextRef.current, enabled = !plugin.enabled;
@@ -1137,45 +1250,34 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     setBrowseData(null);
   };
 
-  const handleAddMarketplace = async () => {
-    const source = marketplaceSource.trim();
-    if (!source) {
-      setMarketplaceActionError("请输入市场来源（Git URL 或本地路径）");
-      return;
-    }
+  const handleAddMarketplace = async (input: AddPluginMarketplaceInput) => {
+    const context = pluginContextRef.current;
+    if (!isPluginContextCurrent(context)) throw new Error("当前主机不支持添加插件市场");
     setMarketplaceBusy("add");
     setMarketplaceActionError(null);
     setUpgradeReport(null);
     try {
-      const sparsePaths = marketplaceSparsePaths
-        .split(/[,\n;]+/)
-        .map((part) => part.trim())
-        .filter(Boolean);
-      const res = await addMarketplace(source, {
-        refName: marketplaceRefName.trim() || undefined,
-        sparsePaths: sparsePaths.length > 0 ? sparsePaths : undefined,
+      const result = await addMarketplace(input.source, {
+        refName: input.refName ?? undefined,
+        sparsePaths: input.sparsePaths ?? undefined,
       });
-      notify(
-        res.alreadyAdded
-          ? `市场已存在：${res.marketplaceName}`
-          : `✓ 已添加市场 ${res.marketplaceName}`
-      );
-      setMarketplaceSource("");
-      setMarketplaceRefName("");
-      setMarketplaceSparsePaths("");
-      setShowAddMarketplace(false);
+      if (!isPluginContextCurrent(context)) return;
+      (onNotify ?? notify)(result.alreadyAdded ? `${result.marketplaceName} 已添加` : `已添加 ${result.marketplaceName} 市场`, "success");
       resetBrowseCache();
-      await Promise.all([loadInstalledPlugins({ silent: true }), loadManagement()]);
-    } catch (err) {
-      const summary = errorSummary(err, 400);
-      notify(`添加市场失败：${summary}`, "error");
-      setMarketplaceActionError(summary);
+      const [inventory, management] = await Promise.all([
+        loadInstalledPlugins({ silent: true }), loadManagement(),
+      ]);
+      if (!isPluginContextCurrent(context)) return;
+      if (!inventory || inventory.marketplaceLoadErrors?.length || management !== true) {
+        (onNotify ?? notify)(`${result.marketplaceName} 市场已配置，但刷新插件列表失败`, "error");
+      }
+      onBrowseDirectory?.("plugins", result.marketplaceName);
     } finally {
-      setMarketplaceBusy(null);
+      if (isPluginContextCurrent(context)) setMarketplaceBusy(null);
     }
   };
 
-  const removal = useMarketplaceRemoval(JSON.stringify([activeWorkspaceRoot, connectionIdentity]), workspaceCwds(), async () => {
+  const removal = useMarketplaceRemoval(JSON.stringify([activeWorkspaceRoot, connectionIdentity, manageOnly ? managementHostId : null]), workspaceCwds(), async () => {
     resetBrowseCache();
     await Promise.all([loadInstalledPlugins({ silent: true }), loadManagement(), loadRemoteSkills(true)]);
   });
@@ -1470,7 +1572,9 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   }).filter((group) => group.plugins.length > 0);
   const matchingBrowseCount = browseGroups.reduce((sum, group) => sum + group.plugins.length, 0);
 
-  const skillRows = buildSkillRows(manageOnly ? skills.filter(skill => skill.installed) : skills, remoteSkills);
+  const managedSkills = manageOnly ? filterManagedSkills(remoteSkills ?? [], managementRecommended) : null;
+  const managedSkillPaths = new Set(managedSkills?.map(skill => normalizePathKey(skill.path)));
+  const skillRows = buildSkillRows(manageOnly ? skills.filter(skill => skill.installed && managedSkillPaths.has(normalizePathKey(skill.path))) : skills, manageOnly ? managedSkills : remoteSkills);
   const previewRow = skillPreview ? skillRows.find(row => row.key === skillPreview.row.key) ?? skillPreview.row : null;
   const openSkillRow = (row: SkillRow) => {
     if (manageOnly || row.scope === "seed") { void handleSelectSkillRow(row); return; }
@@ -1554,8 +1658,15 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     mcp: mcpCount, skills: skillRows.length, marketplaces: manageableMarkets.length };
   const tabLabels: Record<SubTab, string> = { plugins: "插件", apps: "应用", mcp: "MCP", skills: "技能", marketplaces: "市场" };
   const visibleManagementTabs = managementTabs(tabCounts, showNonMcpTabs);
-  const selectTab = (tab: SubTab) => {
-    const action = () => setSubTab(tab);
+  const selectTab = (tab: SubTab, afterSelect?: () => void) => {
+    const action = () => {
+      setSubTab(tab);
+      if (manageOnly && tab !== "mcp" && window.location && parsePluginManagementLocation(window.location.href)?.requestedTab === "mcps") {
+        const url = new URL(window.location.href); url.searchParams.delete("tab");
+        window.history?.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+      }
+      afterSelect?.();
+    };
     if (subTab === "mcp" && mcpNavigationGuard.current && !mcpNavigationGuard.current(action)) return;
     action();
   };
@@ -1622,11 +1733,12 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   );
 
   const renderPluginDetail = (directory = false) => {
-    if (detailLoading) return renderLoadingRow("正在读取插件详情…");
+    if (detailLoading) return renderLoadingRow(manageOnly ? "正在加载插件设置…" : "正在读取插件详情…");
     if (detailError) {
       if (directory) return <div className="pm-state-body" role="alert"><h2>无法加载插件</h2><p>{errorSummary(detailError.message)}</p></div>;
       return (
-        <div className="pm-state-body">
+        <div className="pm-state-body" role="alert">
+          <h2>无法加载插件设置</h2>
           <span className="pm-state-desc">
             读取详情失败：{errorSummary(detailError.message)}
           </span>
@@ -1640,7 +1752,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
                   handleToggleDetail(context.plugin, context.marketplace, {
                     reload: true,
                   });
-                } else if (directory) directoryDetailRetry.current?.();
+                } else directoryDetailRetry.current?.();
               }}
             >
               <RefreshCw size={13} /> 重试
@@ -1649,135 +1761,8 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
         </div>
       );
     }
-    if (!detail) return directory ? <div className="pm-state-body"><h2>未找到插件</h2><p>无法从插件市场详情页加载此插件。</p></div> : null;
-    const summary = detail.summary;
-    return (
-      <>
-        <p className="pm-detail-desc">
-          {detail.description || pluginDescription(summary, 600)}
-        </p>
-        {!directory && <div className="pm-detail-grid">
-          <div className="pm-detail-item">
-            <span>插件 ID</span>
-            <span className="pm-mono">{summary.id}</span>
-          </div>
-          <div className="pm-detail-item">
-            <span>所属市场</span>
-            <span>{detail.marketplaceName}</span>
-          </div>
-          <div className="pm-detail-item">
-            <span>版本</span>
-            <span>{pluginVersion(summary) || "—"}</span>
-          </div>
-          <div className="pm-detail-item">
-            <span>认证策略</span>
-            <span>
-              {summary.authPolicy === "ON_INSTALL" ? "安装时授权" : "使用时授权"}
-            </span>
-          </div>
-          <div className="pm-detail-item">
-            <span>来源</span>
-            <span className="pm-mono">{pluginSourceDetail(summary)}</span>
-          </div>
-          <div className="pm-detail-item">
-            <span>状态</span>
-            <span>
-              {summary.installed ? (summary.enabled ? "已安装 · 已启用" : "已安装 · 已禁用") : "未安装"}
-            </span>
-          </div>
-        </div>}
-        {detail.skills.length > 0 && (
-          <div className="pm-detail-section">
-            <span className="pm-detail-label">
-              技能（{detail.skills.length}）
-            </span>
-            <ul className="pm-detail-list">
-              {detail.skills.map((skill) => (
-                <li
-                  key={skill.name}
-                  className={skill.enabled ? "" : "pm-skill-disabled"}
-                >
-                  {skill.interface?.displayName?.trim() || skill.name}
-                  {skill.description ? ` — ${skill.description}` : ""}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-        {detail.apps.length > 0 && (
-          <div className="pm-detail-section">
-            <span className="pm-detail-label">
-              应用连接器（{detail.apps.length}）
-            </span>
-            <ul className="pm-detail-list">
-              {detail.apps.map((app) => (
-                <li key={app.id}>
-                  {app.name}
-                  {app.category ? ` · ${app.category}` : ""}
-                </li>
-              ))}
-            </ul>
-            {summary.installed && <button type="button" className="secondary-btn-sm"
-              disabled={busyPluginIds.has(summary.id)}
-              onClick={() => {
-                const attempt = ++preparationAttemptRef.current;
-                setPluginPreparations(current => ({
-                  ...current, [summary.id]: {
-                    name: pluginDisplayName(summary), attempt,
-                    result: { authPolicy: summary.authPolicy, appsNeedingAuth: detail.apps },
-                  },
-                }));
-              }}>
-              查看应用连接
-            </button>}
-          </div>
-        )}
-        {detail.hooks.length > 0 && (
-          <div className="pm-detail-section">
-            <span className="pm-detail-label">钩子（{detail.hooks.length}）</span>
-            <ul className="pm-detail-list">
-              {detail.hooks.map((hook) => (
-                <li key={`${hook.eventName}-${hook.key}`}>
-                  {hook.eventName} · {hook.key}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-        {detail.mcpServers.length > 0 && (
-          <div className="pm-detail-section">
-            <span className="pm-detail-label">
-              MCP 服务器（{detail.mcpServers.length}）
-            </span>
-            <div className="pm-tag-list">
-              {detail.mcpServers.map((server) => (
-                <span className="tag-badge" key={server}>
-                  {server}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-        {(summary.keywords?.length ?? 0) > 0 && (
-          <div className="pm-detail-section">
-            <span className="pm-detail-label">关键词</span>
-            <div className="pm-tag-list">
-              {summary.keywords!.map((keyword) => (
-                <span className="tag-badge" key={keyword}>
-                  {keyword}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-        {detail.shareUrl && (
-          <div className="pm-detail-item">
-            <span>分享链接</span>
-            <span className="pm-mono">{detail.shareUrl}</span>
-          </div>
-        )}
-      </>
-    );
+    if (!detail) return <div className="pm-state-body"><h2>未找到插件</h2>{directory && <p>无法从插件市场详情页加载此插件。</p>}</div>;
+    return null;
   };
 
   const renderPluginCard = (
@@ -1786,12 +1771,8 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     options: { browse?: boolean }
   ) => {
     const key = pluginKey(plugin, marketplace);
-    const isOpen = detailKey === key;
     const busy = busyPluginIds.has(pluginActionKey(plugin));
     const serviceOperation = remoteStatus(plugin);
-    const version = pluginVersion(plugin);
-    const category = pluginCategory(plugin);
-    const developer = pluginDeveloper(plugin);
     const installed = plugin.installed ||
       installedData?.marketplaces.some(market => market.plugins.some(item => item.id === plugin.id && item.installed));
     const installBlocked =
@@ -1815,126 +1796,51 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
             {busy ? <Loader2 size={18} className="pm-spin" /> : <Download size={18} />}</button>}
       </div>;
     }
-    return (
-      <div className="item-card pm-plugin-card" key={key}>
-        <div className="item-card-main">
-          <button
-            type="button"
-            className="item-card-title-row pm-plugin-title"
-            aria-expanded={isOpen}
-            title="查看插件详情"
-            onClick={() => handleToggleDetail(plugin, marketplace)}
-          >
-            <Boxes size={15} className="accent-icon" />
-            <strong>{pluginDisplayName(plugin)}</strong>
-            {version && <span className="tag-badge">{version}</span>}
-            {options.browse ? (
-              <span className="tag-badge">{category || "插件"}</span>
-            ) : plugin.enabled ? (
-              <span className="tag-badge accent">已启用</span>
-            ) : (
-              <span className="tag-badge pm-badge-off">已禁用</span>
-            )}
-            {!options.browse && plugin.disabledReason && (
-              <span className="tag-badge pm-badge-off">{plugin.disabledReason}</span>
-            )}
-            {plugin.availability === "DISABLED_BY_ADMIN" && (
-              <span className="tag-badge pm-badge-off">管理员禁用</span>
-            )}
-          </button>
-          <p className="item-card-desc">{pluginDescription(plugin)}</p>
-          {!options.browse && isServicePlugin(plugin) && plugin.remotePolicyKnown === false && <p role="alert">无法识别此插件的服务策略，暂不能变更。</p>}
-          <div className="item-card-meta">
-            {developer && <span>{developer}</span>}
-            <span className="pm-mono" title={pluginSourceDetail(plugin)}>
-              {pluginSourceLabel(plugin)}
-            </span>
-            {plugin.source?.type === "local" && (
-              <button
-                type="button"
-                className="secondary-btn-sm"
-                style={{ padding: "1px 6px", fontSize: "calc(11px * var(--font-ui-scale, 1))" }}
-                title={`在系统文件管理器中打开目录: ${pluginSourceDetail(plugin)}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  tauriInvoke("reveal_path_in_explorer", { path: (plugin.source as any).path });
-                }}
-              >
-                <FolderOpen size={11} /> 目录
-              </button>
-            )}
-            {!options.browse && <span className="pm-mono">{plugin.id}</span>}
-          </div>
-          {isOpen && <div className="pm-detail-panel">{renderPluginDetail()}</div>}
-          {!options.browse && isServicePlugin(plugin) && serviceOperation && <div role="status">
-            {serviceOperation.pending && <p>远程操作结果待核验</p>}
-            {serviceOperation.error && <p role="alert">{serviceOperation.error}</p>}
-            {serviceOperation.pending && <button type="button" className="secondary-btn-sm" disabled={busy || serviceOperation.busy || serviceLoading} onClick={() => handleRemotePlugin(plugin, serviceOperation.operation, true)}>核验远程操作结果</button>}
-          </div>}
-          {!options.browse && pluginUpdates[plugin.id] && <div role="status">
-            {pluginUpdates[plugin.id].pending && <p>启禁结果待核验；核验只读取状态，不重复提交。</p>}
-            {pluginUpdates[plugin.id].error && <p role="alert">{pluginUpdates[plugin.id].error}</p>}
-            {pluginUpdates[plugin.id].refreshError && <p role="alert">{pluginUpdates[plugin.id].refreshError}</p>}
-            {(pluginUpdates[plugin.id].pending || pluginUpdates[plugin.id].refreshError) && <button type="button" disabled={busy} onClick={() => verifyPluginUpdate(plugin)}>重新核验并刷新技能</button>}
-          </div>}
-        </div>
-        <div className="pm-card-actions">
-          <button
-            type="button"
-            className="secondary-btn-sm"
-            onClick={() => handleToggleDetail(plugin, marketplace)}
-          >
-            {isOpen ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
-            {isOpen ? "收起" : "详情"}
-          </button>
-          {options.browse ? (
-            <button
-              type="button"
-              className="primary-btn-sm"
-              disabled={busy || installBlocked}
-              title={
-                installed ? "插件已安装" : unconfirmedInstalls.has(plugin.id) ? "请先刷新确认安装状态" : installBlocked
-                  ? "该插件当前不可安装（管理员禁用或市场未提供安装）"
-                  : "安装插件"
-              }
-              onClick={() => handleInstallPlugin(plugin, marketplace)}
-            >
-              {busy ? (
-                <Loader2 size={13} className="pm-spin" />
-              ) : (
-                <Download size={13} />
-              )}{" "}
-              {busy ? "安装中…" : installed ? "已安装" : unconfirmedInstalls.has(plugin.id) ? "待确认" : "安装"}
-            </button>
-          ) : (<>
-            <button type="button" className="secondary-btn-sm" role="switch" aria-checked={plugin.enabled}
-              aria-label={`${pluginDisplayName(plugin)} 启用`} disabled={busy || !!pluginUpdates[plugin.id]?.pending || plugin.availability === "DISABLED_BY_ADMIN" || isServicePlugin(plugin) && (!remoteAvailable(plugin) || !!serviceOperation?.pending || !!serviceOperation?.busy)}
-              title={isServicePlugin(plugin) && !remoteAvailable(plugin) ? "尚未取得当前账号的完整插件状态" : plugin.availability === "DISABLED_BY_ADMIN" ? "管理员已禁用" : undefined}
-              onClick={() => handleTogglePlugin(plugin)}>{busy ? "更新中…" : plugin.enabled ? "禁用" : "启用"}</button>
-            <button
-              type="button"
-              className="secondary-btn-sm"
-              disabled={busy || !!pluginUpdates[plugin.id]?.pending || isServicePlugin(plugin) && (!remoteAvailable(plugin) || !!serviceOperation?.pending || !!serviceOperation?.busy || plugin.installed && plugin.installPolicy === "INSTALLED_BY_DEFAULT")}
-              title={isServicePlugin(plugin) && plugin.installed && plugin.installPolicy === "INSTALLED_BY_DEFAULT" ? plugin.installPolicySource || "由管理员安装" : "卸载插件"}
-              onClick={() => handleUninstallPlugin(plugin)}
-            >
-              {busy ? (
-                <Loader2 size={13} className="pm-spin" />
-              ) : (
-                <Trash2 size={13} />
-              )}{" "}
-              {isServicePlugin(plugin) && plugin.installed && plugin.installPolicy === "INSTALLED_BY_DEFAULT" ? "由管理员安装" : "卸载"}
-            </button>
-          </>)}
-        </div>
-      </div>
-    );
+    return <div className="pm-managed-plugin-row" key={key}>
+  <button type="button" className="pm-managed-plugin-open" aria-label={`查看 ${pluginDisplayName(plugin)} 详情`}
+    onClick={() => void handleToggleDetail(plugin, marketplace)}>
+    <PluginLogo plugin={plugin} className="pm-managed-plugin-logo" />
+    <span className="pm-managed-plugin-copy"><strong>{pluginDisplayName(plugin)}</strong>
+      <span className="pm-managed-plugin-description" title={pluginDescription(plugin)}>{pluginDescription(plugin)}</span>
+    </span>
+  </button>
+  <div className="pm-managed-plugin-action">
+    {installed ? <button type="button" className={`pm-skill-toggle ${plugin.enabled ? "on" : ""}`}
+      role="switch" aria-checked={plugin.enabled} aria-label={`${pluginDisplayName(plugin)} 启用`}
+      disabled={busy || !!pluginUpdates[plugin.id]?.pending || plugin.availability === "DISABLED_BY_ADMIN" ||
+        isServicePlugin(plugin) && (!remoteAvailable(plugin) || !!serviceOperation?.pending || !!serviceOperation?.busy)}
+      title={isServicePlugin(plugin) && !remoteAvailable(plugin) ? "尚未取得当前账号的完整插件状态" : plugin.availability === "DISABLED_BY_ADMIN" ? "管理员已禁用" : undefined}
+      onClick={event => { event.stopPropagation(); void handleTogglePlugin(plugin); }} />
+      : <button type="button" className="secondary-btn-sm" disabled={busy || installBlocked}
+        aria-label={`安装 ${pluginDisplayName(plugin)}`} onClick={() => void handleInstallPlugin(plugin, marketplace)}>
+        {busy ? <Loader2 size={14} className="pm-spin" /> : <Download size={14} />}
+      </button>}
+  </div>
+  <button type="button" className="pm-managed-plugin-chevron" aria-label={`打开 ${pluginDisplayName(plugin)} 详情`}
+    onClick={() => void handleToggleDetail(plugin, marketplace)}><ChevronRight size={16} /></button>
+  {isServicePlugin(plugin) && plugin.remotePolicyKnown === false && <p className="pm-managed-plugin-status" role="alert">无法识别此插件的服务策略，暂不能变更。</p>}
+  {isServicePlugin(plugin) && serviceOperation && <div className="pm-managed-plugin-status" role="status">
+    {serviceOperation.pending && <p>远程操作结果待核验</p>}
+    {serviceOperation.error && <p role="alert">{serviceOperation.error}</p>}
+    {serviceOperation.pending && <button type="button" className="secondary-btn-sm" disabled={busy || serviceOperation.busy || serviceLoading}
+      onClick={() => handleRemotePlugin(plugin, serviceOperation.operation, true)}>核验远程操作结果</button>}
+  </div>}
+  {pluginUpdates[plugin.id] && <div className="pm-managed-plugin-status" role="status">
+    {pluginUpdates[plugin.id].pending && <p>启禁结果待核验；核验只读取状态，不重复提交。</p>}
+    {pluginUpdates[plugin.id].error && <p role="alert">{pluginUpdates[plugin.id].error}</p>}
+    {pluginUpdates[plugin.id].refreshError && <p role="alert">{pluginUpdates[plugin.id].refreshError}</p>}
+    {(pluginUpdates[plugin.id].pending || pluginUpdates[plugin.id].refreshError) && <button type="button" disabled={busy}
+      onClick={() => verifyPluginUpdate(plugin)}>重新核验并刷新技能</button>}
+  </div>}
+</div>;
   };
 
   const renderMarketplaceGroups = (
     groups: { marketplace: PluginMarketplaceEntry; plugins: PluginSummary[] }[],
     options: { browse?: boolean } = {}
-  ) => (
+  ) => manageOnly ? <div className="pm-managed-plugin-list">
+    {groups.flatMap(({ marketplace, plugins }) => plugins.map(plugin => renderPluginCard(plugin, marketplace, options)))}
+  </div> : (
     <div className="pm-stack">
       {groups.map(({ marketplace, plugins }) => (
         <section className="pm-market-group" key={marketplace.name}>
@@ -2083,17 +1989,67 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     return isCurrent() ? onTryPlugin(plugin, text) : false;
   };
 
+  const renderIncludedPluginContents = (presentation: "directory" | "settings") => detail ? <PluginDirectoryIncluded presentation={presentation} detail={detail} installedSkills={remoteSkills}
+            connectionIdentity={connectionIdentity} workspaceRoot={activeWorkspaceRoot}
+            skillBusy={skillWriteBusy || !!skillToggleBusy}
+            onOpenMcpSettings={onOpenPluginSettings ? () => onOpenPluginSettings("connections") : undefined}
+            onOpenHooksSettings={onOpenPluginSettings ? () => onOpenPluginSettings("hooks-settings") : undefined}
+            onOpenSkillFile={onOpenSkillFile}
+            onTrySkill={onTrySkill ? skill => onTrySkill({ name: skill.name, path: skill.path, defaultPrompt: skill.interface?.defaultPrompt }) : undefined}
+            onToggleSkill={skill => { void handleToggleSkill({ key: skill.path, name: skill.name,
+              description: skill.description, scope: skill.scope, enabled: skill.enabled,
+              pluginId: skill.pluginId, local: null, remote: skill }); }}
+            loadSkillContents={async (skill, installed) => {
+              const path = installed?.path || skill.path;
+              if (path) return readFileText(path);
+              const id = remoteId(detail.summary);
+              if (!id || !detail.marketplaceName) throw new Error("此技能没有可确认的读取来源");
+              const result = await callAppServer<{ contents: string }>("plugin/skill/read", {
+                remotePluginId: id, remoteMarketplaceName: detail.marketplaceName, skillName: skill.name,
+              });
+              if (typeof result.contents !== "string") throw new Error("服务未返回技能内容");
+              return result.contents;
+            }} /> : null;
+
+  const managementDetailPlugin = detail ? directoryPluginInstallation(remoteId(detail.summary) ?? detail.summary.id, mergedInstalledData).plugin : null;
+  const managementVerificationPlugin = managementDetailPlugin ?? detailContextRef.current?.plugin;
+
+  if (manageOnly && directoryHostUnsupported) return <div className="pm-state-body" role="alert">当前管理入口尚不支持此主机。</div>;
+
   return (
     <div ref={pageRef} className={`panel-page pm-extensions-page ${manageOnly ? "pm-management-page" : "pm-directory-page"}`}>
-      {(manageOnly || subTab !== "plugins" || detailKey === null) && <div className="panel-page-header">
+      {manageOnly && detailKey !== null && <section className="pm-managed-detail" aria-label="插件管理详情">
+        {detail && !detailLoading && !detailError ? <PluginManagementDetail
+          key={JSON.stringify([installScope, detail.marketplaceName, detail.marketplacePath, detail.summary.id])}
+          identity={JSON.stringify([installScope, detail.marketplaceName, detail.marketplacePath, detail.summary.id])}
+          detail={detail} onBack={() => closeManagedDetail()}
+          onViewDetails={onOpenPluginDirectoryDetail && window.location && parsePluginManagementLocation(window.location.href)?.hostId === "local" &&
+            (detail.marketplacePath || detail.summary.remotePluginId) ? () => onOpenPluginDirectoryDetail(detail) : undefined}
+          actions={<>
+          {managementDetailPlugin?.installed && <button type="button" className="secondary-btn-sm"
+            disabled={busyPluginIds.has(pluginActionKey(managementDetailPlugin)) || unconfirmedUninstalls.has(managementDetailPlugin.id) ||
+              managementDetailPlugin.installPolicy === "INSTALLED_BY_DEFAULT" && (managementDetailPlugin.source.type === "remote" || isServicePlugin(managementDetailPlugin)) ||
+              isServicePlugin(managementDetailPlugin) && (!remoteAvailable(managementDetailPlugin) || !!remoteStatus(managementDetailPlugin)?.pending || !!remoteStatus(managementDetailPlugin)?.busy)}
+            title={managementDetailPlugin.installPolicy === "INSTALLED_BY_DEFAULT" && (managementDetailPlugin.source.type === "remote" || isServicePlugin(managementDetailPlugin)) ? "由管理员安装" : undefined}
+            onClick={() => void handleUninstallPlugin(managementDetailPlugin)}>卸载</button>}
+          {managementVerificationPlugin && unconfirmedUninstalls.has(managementVerificationPlugin.id) && <button type="button" className="secondary-btn-sm"
+            disabled={busyPluginIds.has(managementVerificationPlugin.id)} onClick={() => void verifyUninstalledPlugin(managementVerificationPlugin, detailRequestRef.current, true)}>核验卸载结果</button>}
+          </>}>
+          {renderIncludedPluginContents("settings")}
+        </PluginManagementDetail> : <>
+          <button type="button" className="pm-catalog-back" onClick={() => closeManagedDetail()}>插件设置</button>
+          {renderPluginDetail()}
+        </>}
+      </section>}
+      {(!manageOnly && (subTab !== "plugins" || detailKey === null) || manageOnly && detailKey === null) && <div className="panel-page-header">
         <div>
           <h2>{manageOnly ? "插件" : subTab === "skills" ? "技能" : "插件"}</h2>
           <p className="subtitle">
-            {manageOnly ? "管理插件、技能和 MCP。" : subTab === "skills" ? "通过任务专用技能扩展 Codex" : "连接插件，让 Codex 在你的各类工具中协同工作"}
+            {manageOnly ? "管理插件、技能和 MCP" : subTab === "skills" ? "通过任务专用技能扩展 Codex" : "连接插件，让 Codex 在你的各类工具中协同工作"}
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <input
+          {!manageOnly && <input
             ref={directorySearchRef}
             id={!manageOnly && subTab === "plugins" ? "plugins-store-page-search" : undefined}
             autoFocus={!manageOnly && subTab === "plugins"}
@@ -2107,27 +2063,26 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
               setSearchQuery(e.target.value); setSkillSearchIndex(0);
             }}
             onKeyDown={handleSkillSearchKey}
-          />
+          />}
           {!manageOnly && subTab === "plugins" && onManagePlugins && (
             <button type="button" className="secondary-btn" onClick={onManagePlugins}>管理</button>
           )}
           {manageOnly && onBrowseDirectory && (
-            <button type="button" className="secondary-btn" onClick={() => onBrowseDirectory(subTab === "skills" ? "skills" : "plugins")}>
+            <button type="button" className="secondary-btn" onClick={() => onBrowseDirectory("plugins")}>
               浏览目录
             </button>
           )}
-          {manageOnly && <button
-            type="button"
-            className="primary-btn"
-            onClick={() => selectTab("mcp")}
-          >
-            <Plus size={14} /> 连接至自定义 MCP
-          </button>}
-          <button type="button" className="secondary-btn" onClick={() => refreshAll()}>
+          {manageOnly && <PluginManagementActions
+            onAddMarketplace={showNonMcpTabs ? () => setShowAddMarketplace(true) : undefined}
+            onAddMcp={() => selectTab("mcp", () => setMcpCreateRequest(value => value + 1))} />}
+          {!manageOnly && <button type="button" className="secondary-btn" onClick={() => refreshAll()}>
             <RefreshCw size={14} /> 刷新
-          </button>
+          </button>}
         </div>
       </div>}
+
+      <AddPluginMarketplaceDialog open={showAddMarketplace} onOpenChange={setShowAddMarketplace}
+        onAdd={handleAddMarketplace} contextKey={installScope} />
 
       <dialog ref={removalDialog} className="pm-removal-dialog" aria-labelledby="pm-remove-market-title"
         onCancel={event => { event.preventDefault(); closeRemoval(); }}>
@@ -2176,16 +2131,22 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       )}
       {subTab === "plugins" && unconfirmedInstalls.size > 0 && <p role="alert">
         部分插件的安装结果尚未确认，请刷新安装状态后再重试。
+        {manageOnly && <button type="button" onClick={() => refreshAll()}>刷新安装状态</button>}
       </p>}
 
-      {(manageOnly || subTab !== "plugins" || detailKey === null) && <div className="sub-tabs" role="tablist" aria-label="管理扩展程序" style={{ marginBottom: 16 }}>
-        {(manageOnly ? visibleManagementTabs : ["plugins", "skills"] as SubTab[]).map(tab =>
+      {manageOnly ? detailKey === null && <PluginManagementToolbar
+        tabs={visibleManagementTabs.map(id => ({ id, label: tabLabels[id], count: tabCounts[id] }))}
+        selected={subTab} onSelect={selectTab} query={searchQuery}
+        onQueryChange={value => { setSearchQuery(value); setSkillSearchIndex(0); }} />
+      : (subTab !== "plugins" || detailKey === null) && <div className="sub-tabs" role="tablist" aria-label="管理扩展程序" style={{ marginBottom: 16 }}>
+        {(["plugins", "skills"] as SubTab[]).map(tab =>
           <button key={tab} type="button" role="tab" aria-selected={subTab === tab}
             className={`sub-tab ${subTab === tab ? "active" : ""}`} onClick={() => selectTab(tab)}>
             <span>{tabLabels[tab]} ({tabCounts[tab]})</span>
           </button>)}
       </div>}
       {managementError && <p role="alert">管理信息读取失败：{managementError} <button type="button" onClick={loadManagement}>重试</button></p>}
+      {manageOnly && managementRecommendedError && <p role="alert">推荐技能目录读取失败：{managementRecommendedError} <button type="button" onClick={loadManagementRecommended}>重试</button></p>}
 
       {/* TAB 1: PLUGINS */}
       {subTab === "plugins" && !manageOnly && (directoryHostUnsupported ? <p role="alert">当前入口尚不支持该主机。</p> : detailKey !== null ? <section className="pm-catalog-detail">
@@ -2210,27 +2171,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
                 busyPluginIds.has(pluginActionKey(directoryDetailPlugin)) || unconfirmedInstalls.has(directoryDetailPlugin.id) ||
                 directoryDetailPlugin.installPolicy === "NOT_AVAILABLE" || directoryDetailPlugin.availability === "DISABLED_BY_ADMIN"}
               onClick={() => { const context = detailContextRef.current; if (context) void handleInstallPlugin(directoryDetailPlugin, context.marketplace); }}>安装</button>)}
-          included={<PluginDirectoryIncluded detail={detail} installedSkills={remoteSkills}
-            connectionIdentity={connectionIdentity} workspaceRoot={activeWorkspaceRoot}
-            skillBusy={skillWriteBusy || !!skillToggleBusy}
-            onOpenMcpSettings={onOpenPluginSettings ? () => onOpenPluginSettings("connections") : undefined}
-            onOpenHooksSettings={onOpenPluginSettings ? () => onOpenPluginSettings("hooks-settings") : undefined}
-            onOpenSkillFile={onOpenSkillFile}
-            onTrySkill={onTrySkill ? skill => onTrySkill({ name: skill.name, path: skill.path, defaultPrompt: skill.interface?.defaultPrompt }) : undefined}
-            onToggleSkill={skill => { void handleToggleSkill({ key: skill.path, name: skill.name,
-              description: skill.description, scope: skill.scope, enabled: skill.enabled,
-              pluginId: skill.pluginId, local: null, remote: skill }); }}
-            loadSkillContents={async (skill, installed) => {
-              const path = installed?.path || skill.path;
-              if (path) return readFileText(path);
-              const id = remoteId(detail.summary);
-              if (!id || !detail.marketplaceName) throw new Error("此技能没有可确认的读取来源");
-              const result = await callAppServer<{ contents: string }>("plugin/skill/read", {
-                remotePluginId: id, remoteMarketplaceName: detail.marketplaceName, skillName: skill.name,
-              });
-              if (typeof result.contents !== "string") throw new Error("服务未返回技能内容");
-              return result.contents;
-            }} />}
+          included={renderIncludedPluginContents("directory")}
         /> : renderPluginDetail(true)}
       </section> : <div className="pm-catalog">
         {!searchQuery.trim() && !directoryCategory && <PluginInstalledStrip
@@ -2307,50 +2248,9 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
 
         </PluginDirectoryOriginsView>
       </div>)}
-      {subTab === "plugins" && manageOnly && (
+      {subTab === "plugins" && manageOnly && detailKey === null && (
         <div className="pm-stack">
-          <div className="pm-toolbar">
-            <div className="pm-segment">
-              <button
-                type="button"
-                className={`pm-segment-btn ${pluginMode === "installed" ? "active" : ""}`}
-                onClick={() => setPluginMode("installed")}
-              >
-                <Package size={13} /> 已安装 ({installedCount})
-              </button>
-              {!manageOnly && (
-              <button
-                type="button"
-                className={`pm-segment-btn ${pluginMode === "browse" ? "active" : ""}`}
-                onClick={() => setPluginMode("browse")}
-              >
-                <Store size={13} /> 浏览市场
-              </button>
-              )}
-            </div>
-            <div className="pm-toolbar-right">
-              {(
-                <button
-                  type="button"
-                  className="secondary-btn-sm"
-                  onClick={() => pluginMode === "installed"
-                    ? Promise.all([loadInstalledPlugins({ confirmInstallResult: true }), loadServicePlugins()])
-                    : Promise.all([
-                      loadBrowsePlugins(true),
-                      unconfirmedInstalls.size ? loadInstalledPlugins({ silent: true, confirmInstallResult: true }) : Promise.resolve(),
-                    ])}
-                  disabled={pluginMode === "installed" ? installedLoading : browseLoading}
-                >
-                  {(pluginMode === "installed" ? installedLoading : browseLoading) ? (
-                    <Loader2 size={13} className="pm-spin" />
-                  ) : (
-                    <RefreshCw size={13} />
-                  )}{" "}
-                  刷新
-                </button>
-              )}
-            </div>
-          </div>
+
 
           {marketplaceLoadErrors.length > 0 && (
             <div className="pm-result-panel pm-result-warn">
@@ -2645,10 +2545,11 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       </section>}
 
       {/* TAB 3: MCP SERVERS (unchanged behavior) */}
-      {subTab === "mcp" && <McpSettings cwd={activeWorkspaceRoot || undefined} connectionIdentity={connectionIdentity}
+      {(manageOnly || subTab === "mcp") && <div hidden={subTab !== "mcp" || manageOnly && detailKey !== null}><McpSettings cwd={activeWorkspaceRoot || undefined} connectionIdentity={connectionIdentity}
+        embedded={manageOnly} externalQuery={manageOnly ? searchQuery : undefined} createRequest={manageOnly ? mcpCreateRequest : undefined}
         onConfigUpdated={async () => { await onConfigUpdated?.(); await loadManagement(); }}
         onRestartAppServer={onRestartAppServer ?? (async () => { throw new Error("当前入口尚未连接应用服务重启操作"); })}
-        onNavigationGuardChange={guard => { mcpNavigationGuard.current = guard; onNavigationGuardChange?.(guard); }} />}
+        onNavigationGuardChange={guard => { mcpNavigationGuard.current = guard; onNavigationGuardChange?.(guard); }} /></div>}
 
       {/* TAB 4: APP CONNECTORS (app/list + app/installed fallback) */}
       {subTab === "apps" && (
@@ -2802,70 +2703,6 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
             </div>
           </div>
 
-          {showAddMarketplace && (
-            <div className="pm-form-card">
-              <div className="pm-form-title">
-                <FolderOpen size={14} /> 添加插件市场（marketplace/add）
-              </div>
-              <div className="pm-form-grid">
-                <div className="pm-form-field">
-                  <label>市场来源 source（Git URL 或本地路径）</label>
-                  <input
-                    type="text"
-                    value={marketplaceSource}
-                    onChange={(e) => setMarketplaceSource(e.target.value)}
-                    placeholder="https://github.com/org/marketplace-repo 或 C:\path\to\marketplace"
-                  />
-                </div>
-                <div className="pm-form-field">
-                  <label>分支 / 引用 refName（可选）</label>
-                  <input
-                    type="text"
-                    value={marketplaceRefName}
-                    onChange={(e) => setMarketplaceRefName(e.target.value)}
-                    placeholder="main"
-                  />
-                </div>
-                <div className="pm-form-field">
-                  <label>稀疏路径 sparsePaths（可选，逗号分隔）</label>
-                  <input
-                    type="text"
-                    value={marketplaceSparsePaths}
-                    onChange={(e) => setMarketplaceSparsePaths(e.target.value)}
-                    placeholder="plugins/foo, plugins/bar"
-                  />
-                </div>
-              </div>
-              {marketplaceActionError && (
-                <div className="pm-form-error">{marketplaceActionError}</div>
-              )}
-              <div className="pm-form-actions">
-                <button
-                  type="button"
-                  className="primary-btn-sm"
-                  onClick={handleAddMarketplace}
-                  disabled={marketplaceBusy !== null || !marketplaceSource.trim()}
-                >
-                  {marketplaceBusy === "add" ? (
-                    <Loader2 size={13} className="pm-spin" />
-                  ) : (
-                    <Plus size={13} />
-                  )}{" "}
-                  {marketplaceBusy === "add" ? "添加中…" : "添加市场"}
-                </button>
-                <button
-                  type="button"
-                  className="secondary-btn-sm"
-                  onClick={() => {
-                    setShowAddMarketplace(false);
-                    setMarketplaceActionError(null);
-                  }}
-                >
-                  取消
-                </button>
-              </div>
-            </div>
-          )}
 
           {marketplaceLoadErrors.length > 0 && (
             <div className="pm-result-panel pm-result-warn">

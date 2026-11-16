@@ -91,6 +91,15 @@ assert.equal(preview.props.enabled, false, "enabled uses installed readback inst
 assert.equal(preview.props.onTry, undefined, "disabled installed skills cannot be tried");
 props = { ...props, workspaceRoot: "/other-workspace" }; render();
 assert.equal(find(node => node.type === "SkillPreviewDialog"), undefined, "workspace change removes prior preview");
+props = { ...props, presentation: "settings", detail: { ...detail, summary: { ...detail.summary, installed: true, enabled: true } }, installedSkills: [exact] }; render();
+assert.equal(all().find(node => node.type === "h2").children[0], "使用的应用");
+assert.ok(all().some(node => node.type === "button" && node.children.includes("在设置中管理")));
+find(node => node.props["data-skill-preview"] !== undefined).props.onClick(); render();
+preview = find(node => node.type === "SkillPreviewDialog");
+assert.ok(preview.props.onToggle, "settings preserves genuine installed-skill toggle");
+assert.equal(preview.props.onTry, undefined, "settings content preview does not acquire directory prompt actions");
+assert.equal(preview.props.showMoreActions, false, "plugin-owned skills cannot be individually uninstalled from management preview");
+assert.equal(preview.props.footer, null, "management suppresses the actual shared preview action footer");
 props = { ...props, detail: { ...detail, apps: [], skills: [], hooks: [], mcpServers: [] } }; render();
 assert.equal(all().filter(node => node.type === "h2").length, 0, "empty sections stay hidden");
 console.log("PASS plugin included source order, exact skill ownership, ambiguity, readonly preview, admin restriction and identity reset");
