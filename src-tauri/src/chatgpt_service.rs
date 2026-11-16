@@ -224,6 +224,59 @@ pub struct RemotePluginInventoryRequest {
     pub include_extensions: Option<bool>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RemotePluginHomeRequest {
+    pub request_id: String,
+    pub expected_identity: ServiceIdentity,
+    pub profile: ServiceProfile,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemotePluginHomeResponse {
+    pub request_id: String,
+    pub identity: ServiceIdentity,
+    pub sections: Vec<Value>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RemotePluginDetailRequest {
+    pub request_id: String,
+    pub expected_identity: ServiceIdentity,
+    pub profile: ServiceProfile,
+    pub plugin_id: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemotePluginDetailResponse {
+    pub request_id: String,
+    pub identity: ServiceIdentity,
+    pub plugin: Value,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RemotePluginCategoryRequest {
+    pub request_id: String,
+    pub expected_identity: ServiceIdentity,
+    pub profile: ServiceProfile,
+    pub category_slug: String,
+    pub search_term: Option<String>,
+    pub cursor: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemotePluginCategoryResponse {
+    pub request_id: String,
+    pub identity: ServiceIdentity,
+    pub plugins: Vec<Value>,
+    pub next_page_token: Option<String>,
+}
+
 #[derive(Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RemotePluginMutationOperation { Enable, Disable, Uninstall }
@@ -510,6 +563,80 @@ impl Drop for Registration<'_> {
 }
 
 impl ChatgptService {
+    pub async fn remote_plugin_category<F, Fut>(&self, request: RemotePluginCategoryRequest, call: F) -> ServiceResult<RemotePluginCategoryResponse>
+    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>> {
+        self.remote_plugin_category_with(request, call, &CurlTransport).await
+    }
+
+    async fn remote_plugin_category_with<F, Fut, T>(&self, request: RemotePluginCategoryRequest, call: F, transport: &T) -> ServiceResult<RemotePluginCategoryResponse>
+    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>>, T: Transport {
+        let slug = encode_segment(&request.category_slug)?;
+        if request.cursor.as_ref().is_some_and(|value| value.len() > 16 * 1024 || value.chars().any(char::is_control)) {
+            return Err(failure("invalid_request", "Remote plugin category cursor is invalid"));
+        }
+        let mut url = tauri::Url::parse(&format!("https://chatgpt.com/backend-api/ps/plugin-categories/{slug}/plugins")).unwrap();
+        url.query_pairs_mut().append_pair("scope", "GLOBAL");
+        if let Some(term) = request.search_term.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+            url.query_pairs_mut().append_pair("q", term);
+        }
+        url.query_pairs_mut().append_pair("limit", "50");
+        if let Some(cursor) = &request.cursor { url.query_pairs_mut().append_pair("pageToken", cursor); }
+        let route = format!("{}?{}", url.path(), url.query().unwrap());
+        let registration = self.register(&request.request_id)?;
+        let body = self.remote_plugin_http(&route, HttpMethod::Get, true, &request.expected_identity,
+            &request.profile, &registration, &call, transport).await?;
+        let plugins = body.get("plugins").and_then(Value::as_array)
+            .ok_or_else(|| failure("invalid_response", "Remote plugin category plugins are missing or invalid"))?;
+        for row in plugins { validate_remote_plugin_listing(row)?; }
+        let pagination = match body.get("pagination") {
+            None | Some(Value::Null) => None,
+            Some(Value::Object(page)) => Some(page),
+            _ => return Err(failure("invalid_response", "Remote plugin category pagination is invalid")),
+        };
+        let next_page_token = match pagination.and_then(|page| page.get("next_page_token")) {
+            None | Some(Value::Null) => None,
+            Some(Value::String(token)) if token.len() <= 16 * 1024 && !token.chars().any(char::is_control) => Some(token.clone()),
+            _ => return Err(failure("invalid_response", "Remote plugin category pagination cursor is invalid")),
+        };
+        self.check_share_current(&request.expected_identity, &registration)?;
+        Ok(RemotePluginCategoryResponse { request_id: request.request_id, identity: request.expected_identity, plugins: plugins.clone(), next_page_token })
+    }
+
+    pub async fn remote_plugin_detail<F, Fut>(&self, request: RemotePluginDetailRequest, call: F) -> ServiceResult<RemotePluginDetailResponse>
+    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>> {
+        self.remote_plugin_detail_with(request, call, &CurlTransport).await
+    }
+
+    async fn remote_plugin_detail_with<F, Fut, T>(&self, request: RemotePluginDetailRequest, call: F, transport: &T) -> ServiceResult<RemotePluginDetailResponse>
+    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>>, T: Transport {
+        let encoded_id = encode_segment(&request.plugin_id)?;
+        let registration = self.register(&request.request_id)?;
+        let route = format!("/backend-api/ps/plugins/{encoded_id}");
+        let plugin = self.remote_plugin_http(&route, HttpMethod::Get, false, &request.expected_identity,
+            &request.profile, &registration, &call, transport).await?;
+        validate_remote_plugin_row(&plugin)?;
+        if plugin["id"].as_str() != Some(request.plugin_id.as_str()) {
+            return Err(failure("invalid_response", "Remote plugin detail identity does not match the request"));
+        }
+        self.check_share_current(&request.expected_identity, &registration)?;
+        Ok(RemotePluginDetailResponse { request_id: request.request_id, identity: request.expected_identity, plugin })
+    }
+
+    pub async fn remote_plugin_home<F, Fut>(&self, request: RemotePluginHomeRequest, call: F) -> ServiceResult<RemotePluginHomeResponse>
+    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>> {
+        self.remote_plugin_home_with(request, call, &CurlTransport).await
+    }
+
+    async fn remote_plugin_home_with<F, Fut, T>(&self, request: RemotePluginHomeRequest, call: F, transport: &T) -> ServiceResult<RemotePluginHomeResponse>
+    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>>, T: Transport {
+        let registration = self.register(&request.request_id)?;
+        let body = self.remote_plugin_http("/backend-api/ps/plugins/home", HttpMethod::Get, true, &request.expected_identity,
+            &request.profile, &registration, &call, transport).await?;
+        let sections = validate_remote_plugin_home(&body)?;
+        self.check_share_current(&request.expected_identity, &registration)?;
+        Ok(RemotePluginHomeResponse { request_id: request.request_id, identity: request.expected_identity, sections })
+    }
+
     pub async fn remote_plugin_inventory<F, Fut>(&self, request: RemotePluginInventoryRequest, call: F) -> ServiceResult<RemotePluginInventoryResponse>
     where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>> {
         self.remote_plugin_inventory_with(request, call, &CurlTransport).await
@@ -540,7 +667,7 @@ impl ChatgptService {
         self.check_share_current(identity, &registration)?;
         let action = match request.operation { RemotePluginMutationOperation::Enable => "enable", RemotePluginMutationOperation::Disable => "disable", RemotePluginMutationOperation::Uninstall => "uninstall" };
         let route = format!("/backend-api/ps/plugins/{encoded_id}/{action}");
-        let written = self.remote_plugin_http(&route, HttpMethod::Post, identity, &request.profile, &registration, &call, transport).await;
+        let written = self.remote_plugin_http(&route, HttpMethod::Post, false, identity, &request.profile, &registration, &call, transport).await;
         self.check_share_current(identity, &registration)?;
         let (body, delivery, mut warning_code) = match written {
             Ok(body) => (body, "accepted", None),
@@ -580,7 +707,7 @@ impl ChatgptService {
             url.query_pairs_mut().append_pair("limit", "1000").append_pair("includeExtensions", if include_extensions { "true" } else { "false" });
             if let Some(token) = &cursor { url.query_pairs_mut().append_pair("pageToken", token); }
             let route = format!("{}?{}", url.path(), url.query().unwrap());
-            let body = self.remote_plugin_http(&route, HttpMethod::Get, identity, profile, registration, call, transport).await?;
+            let body = self.remote_plugin_http(&route, HttpMethod::Get, false, identity, profile, registration, call, transport).await?;
             total = total.saturating_add(serde_json::to_vec(&body).map_err(|_| failure("invalid_response", "Invalid plugin inventory"))?.len());
             if total as u64 > MAX_RESPONSE { return Err(failure("response_too_large", "Remote plugin inventory exceeded transport limit")); }
             let rows = body.get("plugins").and_then(Value::as_array).ok_or_else(|| failure("invalid_response", "Remote plugin inventory is incomplete"))?;
@@ -608,7 +735,7 @@ impl ChatgptService {
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn remote_plugin_http<F, Fut, T>(&self, route: &str, method: HttpMethod, identity: &ServiceIdentity, profile: &ServiceProfile,
+    async fn remote_plugin_http<F, Fut, T>(&self, route: &str, method: HttpMethod, plugin_directory: bool, identity: &ServiceIdentity, profile: &ServiceProfile,
         registration: &Registration<'_>, call: &F, transport: &T) -> ServiceResult<Value>
     where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>>, T: Transport {
         self.check_share_current(identity, registration)?;
@@ -625,8 +752,8 @@ impl ChatgptService {
                     let integrity = session.integrity.clone();
                     let mut outgoing = build_http_request(route, credentials, integrity.as_deref(), profile)?;
                     outgoing.method = method;
-                    outgoing.headers.insert("OAI-Product-Sku".into(), if method == HttpMethod::Post { "CONNECTOR_SETTING" } else { "CODEX" }.into());
-                    outgoing.headers.insert("X-Codex-Surface".into(), "other".into());
+                    outgoing.headers.insert("OAI-Product-Sku".into(), if method == HttpMethod::Post || plugin_directory { "CONNECTOR_SETTING" } else { "CODEX" }.into());
+                    outgoing.headers.insert("X-Codex-Surface".into(), if plugin_directory { "plugin_directory" } else { "other" }.into());
                     share_network_allowed(call, &outgoing.url).await?;
                     self.check_share_current(identity, registration)?;
                     let response = send_bounded(transport, outgoing, registration.cancelled.clone(), Duration::from_secs(50)).await
@@ -3326,6 +3453,49 @@ fn profile_moderation_error(response: &HttpResponse) -> Option<ServiceError> {
     Some(ServiceError { code, message, status:Some(response.status) })
 }
 
+fn validate_remote_plugin_home(body: &Value) -> ServiceResult<Vec<Value>> {
+    let sections = body.get("sections").and_then(Value::as_array)
+        .ok_or_else(|| failure("invalid_response", "Remote plugin home sections are missing or invalid"))?;
+    for section in sections {
+        let object = section.as_object().ok_or_else(|| failure("invalid_response", "Invalid remote plugin home section"))?;
+        for key in ["id", "title", "url_slug"] {
+            if object.get(key).is_some_and(|value| !value.is_null() && !value.is_string()) {
+                return Err(failure("invalid_response", "Remote plugin home section field is invalid"));
+            }
+        }
+        if !["id", "url_slug"].iter().any(|key| object.get(*key).and_then(Value::as_str).is_some_and(|value| !value.trim().is_empty())) {
+            return Err(failure("invalid_response", "Remote plugin home section identity is missing"));
+        }
+        let plugins = object.get("plugins").and_then(Value::as_array)
+            .ok_or_else(|| failure("invalid_response", "Remote plugin home section plugins are invalid"))?;
+        for row in plugins { validate_remote_plugin_listing(row)?; }
+    }
+    Ok(sections.clone())
+}
+
+fn validate_remote_plugin_listing(row: &Value) -> ServiceResult<()> {
+    let row = row.as_object().ok_or_else(|| failure("invalid_response", "Invalid remote plugin home listing"))?;
+    for key in ["id", "display_name"] {
+        if !row.get(key).and_then(Value::as_str).is_some_and(|value| !value.trim().is_empty()) {
+            return Err(failure("invalid_response", "Remote plugin home listing identity is missing"));
+        }
+    }
+    for key in ["short_description", "icon_url", "icon_url_dark", "installation_policy", "status", "disabled_reason"] {
+        if row.get(key).is_some_and(|value| !value.is_null() && !value.is_string()) {
+            return Err(failure("invalid_response", "Remote plugin home listing field is invalid"));
+        }
+    }
+    for key in ["requires_local_executor", "is_template"] {
+        if row.get(key).is_some_and(|value| !value.is_null() && !value.is_boolean()) {
+            return Err(failure("invalid_response", "Remote plugin home listing flag is invalid"));
+        }
+    }
+    if row.get("keywords").is_some_and(|value| !value.is_null() && !value.as_array().is_some_and(|values| values.iter().all(Value::is_string))) {
+        return Err(failure("invalid_response", "Remote plugin home listing keywords are invalid"));
+    }
+    Ok(())
+}
+
 fn validate_remote_plugin_row(row: &Value) -> ServiceResult<()> {
     let object = row.as_object().ok_or_else(|| failure("invalid_response", "Invalid remote plugin row"))?;
     for key in ["id", "name"] {
@@ -4900,6 +5070,239 @@ mod tests {
 
     fn remote_inventory_request() -> RemotePluginInventoryRequest {
         RemotePluginInventoryRequest { request_id: "remote-inventory-fixture".into(), expected_identity: identity(), profile: request("unused").profile, include_extensions: None }
+    }
+
+    fn remote_home_request() -> RemotePluginHomeRequest {
+        RemotePluginHomeRequest { request_id: "remote-home-fixture".into(), expected_identity: identity(), profile: request("unused").profile }
+    }
+
+    fn remote_home_body() -> Value {
+        json!({"sections":[{"id":"featured","title":"推荐","url_slug":"featured","plugins":[{
+            "id":"flat-plugin","display_name":"扁平目录","short_description":"简介","icon_url":"https://example.test/logo.png",
+            "icon_url_dark":null,"keywords":["tools"],"requires_local_executor":true,"is_template":false,
+            "installation_policy":"FUTURE_POLICY","status":"ENABLED","disabled_reason":null,"unknown":{"preserve":true}
+        }]}]})
+    }
+
+    fn remote_detail_request() -> RemotePluginDetailRequest {
+        RemotePluginDetailRequest { request_id:"remote-detail-fixture".into(), expected_identity:identity(),
+            profile:request("unused").profile, plugin_id:"raw/id?中%2F".into() }
+    }
+
+    fn remote_detail_body() -> Value {
+        json!({"id":"raw/id?中%2F","name":"real-name","status":"ENABLED","installation_policy":"FUTURE_POLICY",
+            "release":{"version":"1.2.3","display_name":"真实详情","interface":{"long_description":"正文"},
+                "skills":[{"name":"skill-name","description":"说明"}]},"unknown":{"preserve":true}})
+    }
+
+    fn remote_category_request() -> RemotePluginCategoryRequest {
+        RemotePluginCategoryRequest { request_id:"remote-category-fixture".into(), expected_identity:identity(),
+            profile:request("unused").profile, category_slug:"tools/中%2F".into(),
+            search_term:Some("  q&中?#  ".into()), cursor:Some("opaque&?#/中%2F".into()) }
+    }
+
+    fn remote_category_body() -> Value {
+        json!({"plugins":remote_home_body()["sections"][0]["plugins"],"pagination":{"next_page_token":"next&中"}})
+    }
+
+    #[tokio::test]
+    async fn remote_plugin_category_encodes_slug_query_cursor_and_preserves_flat_page() {
+        let service=ChatgptService::default(); let body=remote_category_body();
+        let transport=instructions_transport(&[200], &[body.clone()]);
+        let result=service.remote_plugin_category_with(remote_category_request(),share_rpc,&transport).await.unwrap();
+        assert_eq!(result.plugins,body["plugins"].as_array().unwrap().clone()); assert_eq!(result.next_page_token.as_deref(),Some("next&中"));
+        assert_eq!(result.request_id,"remote-category-fixture"); assert_eq!(result.identity,identity());
+        let calls=transport.requests.lock().unwrap(); assert_eq!(calls.len(),1);
+        let call=&calls[0];
+        assert_eq!(call.url,"https://chatgpt.com/backend-api/ps/plugin-categories/tools%2F%E4%B8%AD%252F/plugins?scope=GLOBAL&q=q%26%E4%B8%AD%3F%23&limit=50&pageToken=opaque%26%3F%23%2F%E4%B8%AD%252F");
+        assert_eq!(call.method,HttpMethod::Get); assert!(call.body.is_empty());
+        assert_eq!(call.headers["OAI-Product-Sku"],"CONNECTOR_SETTING"); assert_eq!(call.headers["X-Codex-Surface"],"plugin_directory");
+        assert_eq!(call.headers["ChatGPT-Account-Id"],"account-fixture");
+    }
+
+    #[tokio::test]
+    async fn remote_plugin_category_empty_and_optional_pagination_are_real_success() {
+        for body in [json!({"plugins":[]}),json!({"plugins":[],"pagination":null}),json!({"plugins":[],"pagination":{}}),
+            json!({"plugins":[],"pagination":{"next_page_token":null}})] {
+            let service=ChatgptService::default(); let transport=instructions_transport(&[200], &[body]);
+            let mut req=remote_category_request(); req.category_slug="plain".into(); req.search_term=Some("   ".into()); req.cursor=None;
+            let result=service.remote_plugin_category_with(req,share_rpc,&transport).await.unwrap();
+            assert!(result.plugins.is_empty()); assert!(result.next_page_token.is_none());
+            assert_eq!(transport.requests.lock().unwrap()[0].url,"https://chatgpt.com/backend-api/ps/plugin-categories/plain/plugins?scope=GLOBAL&limit=50");
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_plugin_category_rejects_malformed_pages_and_request_identifiers() {
+        for body in [json!({}),json!({"plugins":null}),json!({"plugins":{}}),json!({"plugins":[{"id":"x","name":"inventory"}]}),
+            json!({"plugins":[],"pagination":[]}),json!({"plugins":[],"pagination":{"next_page_token":3}})] {
+            let service=ChatgptService::default(); let transport=instructions_transport(&[200], &[body]);
+            assert_eq!(service.remote_plugin_category_with(remote_category_request(),share_rpc,&transport).await.err().unwrap().code,"invalid_response");
+        }
+        for id in ["",".","..","invalid\nslug"] {
+            let service=ChatgptService::default(); let transport=instructions_transport(&[200], &[remote_category_body()]);
+            let mut req=remote_category_request(); req.category_slug=id.into();
+            assert_eq!(service.remote_plugin_category_with(req,share_rpc,&transport).await.err().unwrap().code,"invalid_request");
+            assert!(transport.requests.lock().unwrap().is_empty());
+        }
+        for status in [403,404,503] {
+            let service=ChatgptService::default(); let transport=instructions_transport(&[status], &[json!({})]);
+            assert!(service.remote_plugin_category_with(remote_category_request(),share_rpc,&transport).await.is_err());
+        }
+        let service=ChatgptService::default(); let transport=instructions_transport(&[200], &[remote_category_body()]);
+        let mut req=remote_category_request(); req.cursor=Some("invalid\ncursor".into());
+        assert_eq!(service.remote_plugin_category_with(req,share_rpc,&transport).await.err().unwrap().code,"invalid_request");
+        assert!(transport.requests.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn remote_plugin_category_cancel_or_changed_identity_cannot_return_late_page() {
+        for invalidate in [false,true] {
+            let service=ChatgptService::default(); let mut transport=instructions_transport(&[200], &[remote_category_body()]);
+            transport.delay_ms=30; transport.reserve_response_on_send=true;
+            let read=service.remote_plugin_category_with(remote_category_request(),share_rpc,&transport);
+            let change=async {
+                while transport.requests.lock().unwrap().is_empty() {tokio::task::yield_now().await;}
+                if invalidate {service.invalidate();} else {service.cancel("remote-category-fixture");}
+            };
+            let result=tokio::join!(read,change).0;
+            assert_eq!(result.err().unwrap().code,if invalidate {"account_changed"}else{"cancelled"});
+            assert_eq!(transport.requests.lock().unwrap().len(),1); assert!(service.active.lock().unwrap().is_empty());
+        }
+        let service=ChatgptService::default(); let transport=instructions_transport(&[200], &[remote_category_body()]);
+        let mut req=remote_category_request(); req.expected_identity.account_id="other-account".into();
+        assert_eq!(service.remote_plugin_category_with(req,share_rpc,&transport).await.err().unwrap().code,"account_changed");
+        assert!(transport.requests.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn remote_plugin_detail_reads_raw_id_as_one_segment_and_preserves_full_body() {
+        let service=ChatgptService::default(); let body=remote_detail_body();
+        let transport=instructions_transport(&[200], &[body.clone()]);
+        let result=service.remote_plugin_detail_with(remote_detail_request(),share_rpc,&transport).await.unwrap();
+        assert_eq!(result.plugin,body); assert_eq!(result.request_id,"remote-detail-fixture"); assert_eq!(result.identity,identity());
+        let calls=transport.requests.lock().unwrap(); assert_eq!(calls.len(),1);
+        let call=&calls[0]; assert_eq!(call.url,"https://chatgpt.com/backend-api/ps/plugins/raw%2Fid%3F%E4%B8%AD%252F");
+        assert_eq!(call.method,HttpMethod::Get); assert!(call.body.is_empty());
+        assert_eq!(call.headers["OAI-Product-Sku"],"CODEX"); assert_eq!(call.headers["X-Codex-Surface"],"other");
+        assert_eq!(call.headers["ChatGPT-Account-Id"],"account-fixture");
+    }
+
+    #[tokio::test]
+    async fn remote_plugin_detail_reserved_home_id_keeps_detail_headers() {
+        let service=ChatgptService::default(); let mut body=remote_detail_body(); body["id"]=json!("home");
+        let transport=instructions_transport(&[200], &[body]); let mut req=remote_detail_request(); req.plugin_id="home".into();
+        service.remote_plugin_detail_with(req,share_rpc,&transport).await.unwrap();
+        let calls=transport.requests.lock().unwrap(); assert_eq!(calls.len(),1);
+        assert_eq!(calls[0].headers["OAI-Product-Sku"],"CODEX");
+        assert_eq!(calls[0].headers["X-Codex-Surface"],"other");
+    }
+
+    #[tokio::test]
+    async fn remote_plugin_detail_rejects_wrong_identity_wrapped_listing_and_malformed_metadata() {
+        for body in [json!({}),json!({"plugin":remote_detail_body()}),json!({"id":"raw/id?中%2F","display_name":"listing"}),
+            json!({"id":"different","name":"real-name"}),json!({"id":"raw/id?中%2F","name":"real-name","release":[]}),
+            json!({"id":"raw/id?中%2F","name":"real-name","enabled":null})] {
+            let service=ChatgptService::default(); let transport=instructions_transport(&[200], &[body]);
+            assert_eq!(service.remote_plugin_detail_with(remote_detail_request(),share_rpc,&transport).await.err().unwrap().code,"invalid_response");
+        }
+        for id in ["",".","..","invalid\nheader"] {
+            let service=ChatgptService::default(); let transport=instructions_transport(&[200], &[remote_detail_body()]);
+            let mut req=remote_detail_request(); req.plugin_id=id.into();
+            assert_eq!(service.remote_plugin_detail_with(req,share_rpc,&transport).await.err().unwrap().code,"invalid_request");
+            assert!(transport.requests.lock().unwrap().is_empty());
+        }
+        for status in [403,404,503] {
+            let service=ChatgptService::default(); let transport=instructions_transport(&[status], &[json!({})]);
+            assert!(service.remote_plugin_detail_with(remote_detail_request(),share_rpc,&transport).await.is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_plugin_detail_cancel_or_changed_identity_cannot_return_late_metadata() {
+        for invalidate in [false,true] {
+            let service=ChatgptService::default(); let mut transport=instructions_transport(&[200], &[remote_detail_body()]);
+            transport.delay_ms=30; transport.reserve_response_on_send=true;
+            let read=service.remote_plugin_detail_with(remote_detail_request(),share_rpc,&transport);
+            let change=async {
+                while transport.requests.lock().unwrap().is_empty() {tokio::task::yield_now().await;}
+                if invalidate {service.invalidate();} else {service.cancel("remote-detail-fixture");}
+            };
+            let result=tokio::join!(read,change).0;
+            assert_eq!(result.err().unwrap().code,if invalidate {"account_changed"}else{"cancelled"});
+            assert_eq!(transport.requests.lock().unwrap().len(),1); assert!(service.active.lock().unwrap().is_empty());
+        }
+        let service=ChatgptService::default(); let transport=instructions_transport(&[200], &[remote_detail_body()]);
+        let mut req=remote_detail_request(); req.expected_identity.account_id="other-account".into();
+        assert_eq!(service.remote_plugin_detail_with(req,share_rpc,&transport).await.err().unwrap().code,"account_changed");
+        assert!(transport.requests.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn remote_plugin_home_preserves_flat_sections_without_inventory_name_or_release() {
+        let service=ChatgptService::default(); let body=remote_home_body();
+        let transport=instructions_transport(&[200], &[body.clone()]);
+        let result=service.remote_plugin_home_with(remote_home_request(),share_rpc,&transport).await.unwrap();
+        assert_eq!(result.sections,body["sections"].as_array().unwrap().clone());
+        assert_eq!(result.request_id,"remote-home-fixture"); assert_eq!(result.identity,identity());
+        let calls=transport.requests.lock().unwrap(); assert_eq!(calls.len(),1);
+        let call=&calls[0]; assert_eq!(call.url,"https://chatgpt.com/backend-api/ps/plugins/home");
+        assert_eq!(call.method,HttpMethod::Get); assert!(call.body.is_empty());
+        assert_eq!(call.headers["OAI-Product-Sku"],"CONNECTOR_SETTING");
+        assert_eq!(call.headers["X-Codex-Surface"],"plugin_directory");
+        assert_eq!(call.headers["ChatGPT-Account-Id"],"account-fixture");
+        assert_eq!(call.headers["OAI-Language"],"zh-CN");
+        let service=ChatgptService::default(); let transport=instructions_transport(&[200], &[json!({"sections":[]})]);
+        assert!(service.remote_plugin_home_with(remote_home_request(),share_rpc,&transport).await.unwrap().sections.is_empty());
+        for section in [json!({"id":"section-only","title":null,"plugins":[{"id":"minimal","display_name":"Minimal"}]}),
+            json!({"id":null,"url_slug":"slug-only","plugins":[]})] {
+            let service=ChatgptService::default(); let transport=instructions_transport(&[200], &[json!({"sections":[section.clone()]})]);
+            let result=service.remote_plugin_home_with(remote_home_request(),share_rpc,&transport).await.unwrap();
+            assert_eq!(result.sections,vec![section]);
+            assert!(result.sections[0]["plugins"].as_array().unwrap().iter().all(|row| row.get("installation_policy").is_none()));
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_plugin_home_rejects_malformed_sections_and_flat_fields() {
+        let mut bodies=vec![json!({}),json!({"sections":null}),json!({"sections":{}}),json!({"sections":[null]}),
+            json!({"sections":[{"title":"No identity","plugins":[]}]})];
+        for (field,value) in [("title",json!(1)),("plugins",Value::Null),("url_slug",json!(false))] {
+            let mut body=remote_home_body(); body["sections"][0][field]=value; bodies.push(body);
+        }
+        for (field,value) in [("id",json!("")),("display_name",json!(false)),("short_description",json!({})),
+            ("icon_url",json!(2)),("keywords",json!([1])),("requires_local_executor",json!("true")),
+            ("is_template",json!(1)),("installation_policy",json!({})),("status",json!([])),("disabled_reason",json!(3))] {
+            let mut body=remote_home_body(); body["sections"][0]["plugins"][0][field]=value; bodies.push(body);
+        }
+        for body in bodies {
+            let service=ChatgptService::default(); let transport=instructions_transport(&[200], &[body]);
+            assert_eq!(service.remote_plugin_home_with(remote_home_request(),share_rpc,&transport).await.err().unwrap().code,"invalid_response");
+        }
+        for status in [401,403,503] {
+            let service=ChatgptService::default(); let transport=instructions_transport(&[status,status], &[json!({}),json!({})]);
+            assert!(service.remote_plugin_home_with(remote_home_request(),share_rpc,&transport).await.is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_plugin_home_cancel_or_changed_identity_cannot_return_late_sections() {
+        for invalidate in [false,true] {
+            let service=ChatgptService::default(); let mut transport=instructions_transport(&[200], &[remote_home_body()]);
+            transport.delay_ms=30; transport.reserve_response_on_send=true;
+            let read=service.remote_plugin_home_with(remote_home_request(),share_rpc,&transport);
+            let change=async {
+                while transport.requests.lock().unwrap().is_empty() {tokio::task::yield_now().await;}
+                if invalidate {service.invalidate();} else {service.cancel("remote-home-fixture");}
+            };
+            let result=tokio::join!(read,change).0;
+            assert_eq!(result.err().unwrap().code,if invalidate {"account_changed"}else{"cancelled"});
+            assert_eq!(transport.requests.lock().unwrap().len(),1); assert!(service.active.lock().unwrap().is_empty());
+        }
+        let service=ChatgptService::default(); let transport=instructions_transport(&[200], &[remote_home_body()]);
+        let mut req=remote_home_request(); req.expected_identity.account_id="other-account".into();
+        assert_eq!(service.remote_plugin_home_with(req,share_rpc,&transport).await.err().unwrap().code,"account_changed");
+        assert!(transport.requests.lock().unwrap().is_empty());
     }
 
     fn remote_plugin(enabled: bool) -> Value {

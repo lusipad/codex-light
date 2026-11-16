@@ -104,6 +104,11 @@ export interface PluginMarketplaceEntry {
   plugins: PluginSummary[];
 }
 
+export interface PluginSearchResponse {
+  data: { marketplaceName: string; marketplacePath?: string | null; plugin: PluginSummary }[];
+  nextCursor: string | null;
+}
+
 export interface MarketplaceLoadErrorInfo {
   marketplacePath: string;
   message: string;
@@ -466,15 +471,38 @@ export async function listInstalledPlugins(cwds?: string[]): Promise<PluginInsta
  * Browse the server-enabled local and default remote catalog. Do not force
  * marketplace kinds that depend on account capabilities or feature gates.
  */
-export async function listMarketplacePlugins(cwds?: string[], forceRefetch = false): Promise<PluginListResponse> {
+export async function listMarketplacePlugins(cwds?: string[], forceRefetch = false, marketplaceKinds?: MarketplaceKind[]): Promise<PluginListResponse> {
   const raw = await call<PluginListResponse>("plugin/list", {
     ...cwdsParam(cwds),
     forceRefetch,
+    ...(marketplaceKinds ? { marketplaceKinds } : {}),
   });
   return {
     ...normalizeInstalledResponse(raw, "plugin/list"),
     featuredPluginIds: Array.isArray(raw?.featuredPluginIds) ? raw!.featuredPluginIds : [],
   };
+}
+
+/** Main directory search leaves scope unset; an explicit Public/Workspace scope is a different call site. */
+export async function searchPlugins(searchTerm: string, cwds?: string[], cursor: string | null = null): Promise<PluginSearchResponse> {
+  const raw = await call<PluginSearchResponse>("plugin/search", { searchTerm, ...cwdsParam(cwds), cursor, limit: 50 });
+  if (!raw || !Array.isArray(raw.data) || (raw.nextCursor != null && typeof raw.nextCursor !== "string")) {
+    throw new PluginProtocolError("plugin/search", "响应缺少有效的 data 或 nextCursor");
+  }
+  for (const entry of raw.data) {
+    if (!entry || typeof entry.marketplaceName !== "string" || !entry.marketplaceName.trim() ||
+        (entry.marketplacePath != null && typeof entry.marketplacePath !== "string") ||
+        !entry.plugin || typeof entry.plugin.name !== "string" || !entry.plugin.name.trim()) {
+      throw new PluginProtocolError("plugin/search", "响应包含无效的插件来源或名称");
+    }
+    normalizeInstalledResponse({ marketplaces: [{ name: entry.marketplaceName, path: entry.marketplacePath, plugins: [entry.plugin] }] }, "plugin/search");
+  }
+  return { data: raw.data, nextCursor: raw.nextCursor ?? null };
+}
+
+export function isUnsupportedPluginSearch(error: unknown): boolean {
+  return error instanceof PluginProtocolError && error.method === "plugin/search" &&
+    /(?:-32601\b|method not found|unknown (?:method|request)|unsupported (?:method|request)|(?:method|request).*(?:not supported|unsupported))/i.test(error.detail);
 }
 
 export function pluginRefFor(
@@ -484,7 +512,7 @@ export function pluginRefFor(
   if (marketplace.path) {
     return { pluginName: plugin.name, marketplacePath: marketplace.path };
   }
-  return { pluginName: plugin.name, remoteMarketplaceName: marketplace.name };
+  return { pluginName: plugin.remotePluginId ?? plugin.name, remoteMarketplaceName: marketplace.name };
 }
 
 /** `plugin/read` — full plugin detail (skills/apps/hooks/mcpServers). */

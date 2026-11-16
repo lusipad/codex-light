@@ -313,6 +313,14 @@ try {
   Invoke-Step "Plugin policy, lifecycle and readback regression" { node scripts/verify-plugin-actions.mjs }
   Invoke-Step "Plugin catalog capability and bounded rendering regression" { node scripts/verify-plugin-catalog.mjs }
   Invoke-Step "Plugin directory navigation and installed state regression" { node scripts/verify-plugin-directory.mjs }
+  Invoke-Step "Remote plugin directory flat data and identity regression" { node scripts/verify-plugin-directory-data.mjs }
+  Invoke-Step "Remote plugin directory scoped client regression" { node scripts/verify-plugin-directory-client.mjs }
+  Invoke-Step "Remote plugin directory source and auth eligibility regression" { node scripts/verify-plugin-directory-source.mjs }
+  Invoke-Step "Plugin real search protocol regression" { node scripts/verify-plugin-search-client.mjs }
+  Invoke-Step "Plugin directory search lifecycle and pagination regression" { node scripts/verify-plugin-directory-search.mjs }
+  Invoke-Step "Plugin directory URL identity and encoding regression" { node scripts/verify-plugin-directory-location.mjs }
+  Invoke-Step "Plugin directory App history integration regression" { node scripts/verify-plugin-directory-host.mjs }
+  Invoke-Step "Plugin directory deep-link identity and search refresh regression" { node scripts/verify-plugin-directory-review.mjs }
   Invoke-Step "Skills management & editor parity" { node scripts/verify-skills.mjs }
   Invoke-Step "Skill content, identity and mutation regression" { node scripts/verify-skill-actions.mjs }
   Invoke-Step "Installed skill preview and raw content actions" { node scripts/verify-skill-preview-ui.mjs }

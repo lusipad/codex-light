@@ -353,6 +353,45 @@ async fn chatgpt_service_sites_settings(
 }
 
 #[tauri::command]
+async fn remote_plugin_category(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: chatgpt_service::RemotePluginCategoryRequest,
+) -> Result<chatgpt_service::RemotePluginCategoryResponse, chatgpt_service::ServiceError> {
+    state.chatgpt_service.remote_plugin_category(request, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
+async fn remote_plugin_detail(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: chatgpt_service::RemotePluginDetailRequest,
+) -> Result<chatgpt_service::RemotePluginDetailResponse, chatgpt_service::ServiceError> {
+    state.chatgpt_service.remote_plugin_detail(request, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
+async fn remote_plugin_home(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: chatgpt_service::RemotePluginHomeRequest,
+) -> Result<chatgpt_service::RemotePluginHomeResponse, chatgpt_service::ServiceError> {
+    state.chatgpt_service.remote_plugin_home(request, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
 async fn remote_plugin_inventory(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -2422,6 +2461,9 @@ pub fn run() {
             chatgpt_service_site_pin,
             chatgpt_service_sites_settings,
             remote_plugin_inventory,
+            remote_plugin_home,
+            remote_plugin_detail,
+            remote_plugin_category,
             remote_plugin_mutation,
             profile_mutation,
             account_notifications_read,

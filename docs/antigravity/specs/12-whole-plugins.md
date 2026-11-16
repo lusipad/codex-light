@@ -4,7 +4,7 @@
 
 ## 基准与证据
 
-本轮读取Store版本26.1103.4239.0，重新计算app.asar SHA-256为`fb47d6491dc3006b708cb1e14de479b882bf50f88b7daa81818f154c253266aa`。当前固定版目录/管理证据位于`.ref/parity/12/whole-page/reference/r0-20261116/`：report、manifest（136条目integrity/大小/hash）、anchors（13关键UTF-16锚点）、zh-copy。数字不是物理行号。
+本轮读取Store版本26.1103.4239.0，重新计算app.asar SHA-256为`fb47d6491dc3006b708cb1e14de479b882bf50f88b7daa81818f154c253266aa`。当前固定版目录/管理证据位于`.ref/parity/12/whole-page/reference/r0-20261116/`：report、manifest（补证后143条目integrity/大小/hash）、anchors（补证后19关键UTF-16锚点）、zh-copy及home/schema/install/directory-search补充合同。数字不是物理行号。
 
 当前官方文档：[技能与插件](https://learn.chatgpt.com/docs/skills-and-plugins)、[插件开发](https://developers.openai.com/plugins)支持插件可组合技能/MCP及共享目录；具体界面与门控以固定包为准。当前文档不替代旧版运行时证据。
 
@@ -37,7 +37,18 @@
 
 ## 实施边界与依赖
 
-已证实的本地目录/已安装呈现、卡片动作和列表→详情→返回可先开发，复用现有协议/锁/身份保护。远端home schema、分类分页、详情精确URL模板及官方焦点待继续取证，不能因这个局部可开发而放行完整R2。不得将默认混合plugin/list强命名为公开，也不删除已有远端能力来伪装完整。
+已证实的本地目录/已安装呈现、卡片动作和列表→详情→返回可先开发，复用现有协议/锁/身份保护。远端home schema、分类分页及详情精确URL模板已在下节补证，官方焦点仍待取证，不能因局部可开发而放行完整R2。不得将默认混合plugin/list强命名为公开，也不删除已有远端能力来伪装完整。
+
+### 后续取证后的可开发合同
+
+- 首页GET `/ps/plugins/home`无query/body，使用CONNECTOR_SETTING/plugin_directory。flat listing不是完整inventory/release；同id栏目合并，首页仅展示前六，不能以此小集合代替全目录搜索。未就绪库存不默认未安装，未知安装策略不默认AVAILABLE。
+- 主目录搜索trim并200ms debounce；本机`plugin/search {searchTerm,cwds?,cursor,limit:50}`，此调用点省略scope。仅精确缺方法允许完整本地目录回退，权限或网络错误不得降级。真实私有CLI0.159.2探针返回搜索实体，未发送模型turn。
+- 分类GET `/ps/plugin-categories/{slug}/plugins`，scope=GLOBAL、limit=50，可选q/pageToken；解析flat plugin和pagination.next_page_token。分页失败保留已读结果，作用域改变拒绝晚回，不无限追逐循环游标。
+- flat row首次详情ref使用raw ID和`chatgpt-workspace`；完整详情读回后使用其真实marketplaceName/path安装。有path使用本地name，无path使用remotePluginId，不能以display_name替代。
+- 完整HTTP metadata为GET `/ps/plugins/{raw_id}`直接plugin body；hosted安装只适用durable，其他本机走CLI，不能按requiresLocalExecutor猜host。当前入口缺host选择合同，显式非空hostId深链拒绝，不悄悄落本机。
+- 详情URL为`/plugins/{encodeURIComponent(pluginId).replaceAll("%40","@")}`，pluginId与read参数pluginName分别验证；来源/query经过URLSearchParams序列化。保留browse状态与真实前后退，不让旧详情晚回替换新路由。
+
+来源索引：同证据目录的`home-schema.md`、`install-contract.md`、`directory-search-contract.md`及对应锚点。HTTP只读传输的注入测试、CLI私有探针和真实账号请求分开记录；前两者不能证明真实账号远端链成功。
 
 R1三桌面能力同版资料在`.ref/parity/16/whole-page/reference/host-r1-20261116/`。Computer Use Windows使用实际allow-list配置；Appshots需要helper protocolVersion=1/windows_appshots_v2及目标/捕获/文本/热键消费者，双Alt和60秒路由均有源。浏览器需要原生session服务。仅静态可行性，不依赖复制官方binary、未运行helper或修改用户配置。
 

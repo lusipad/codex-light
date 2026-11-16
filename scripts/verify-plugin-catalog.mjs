@@ -30,6 +30,12 @@ for (const force of [false, true]) {
   assert.equal(catalog.featuredPluginIds[0], "remote-id");
 }
 const source = fs.readFileSync("src/components/SkillsMcpView.tsx", "utf8");
+assert.equal(exports.pluginRefFor({ name: "display-slug", remotePluginId: "opaque-remote-id" },
+  { name: "actual-remote-source", path: null }).pluginName, "opaque-remote-id",
+"remote read/install references use the confirmed remote identity, not the metadata name");
+assert.equal(exports.pluginRefFor({ name: "local-name", remotePluginId: "opaque-remote-id" },
+  { name: "local", path: "C:/private/market.json" }).pluginName, "local-name",
+"local references retain the real marketplace plugin name");
 const ast = ts.createSourceFile("SkillsMcpView.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const declarations = {};
 function visit(node) {

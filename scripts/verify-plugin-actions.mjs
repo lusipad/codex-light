@@ -5,7 +5,7 @@ import ts from "typescript";
 
 const source = fs.readFileSync("src/components/SkillsMcpView.tsx", "utf8");
 const ast = ts.createSourceFile("SkillsMcpView.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-const names = ["isPluginContextCurrent", "handleInstallPlugin", "handleUninstallPlugin", "handleToggleDetail", "loadInstalledPlugins", "loadBrowsePlugins", "resetBrowseCache"];
+const names = ["isPluginContextCurrent", "updateInstallUncertainty", "handleInstallPlugin", "handleUninstallPlugin", "handleToggleDetail", "loadInstalledPlugins", "loadBrowsePlugins", "resetBrowseCache"];
 const nodes = {};
 function visit(node) {
   if (ts.isVariableDeclaration(node) && names.includes(node.name.getText(ast))) nodes[node.name.getText(ast)] = node.initializer;
@@ -22,6 +22,8 @@ function mount() {
   const context = {
     pluginActionRef: { current: new Set() }, busyPluginIds: new Set(), pluginMode: "browse",
     unconfirmedInstalls: new Set(), installedData: null, pluginPreparations: {}, pluginUpdates: {},
+    installScope: "isolated-account-project", installUncertaintyRef: { current: new Map() }, unsupportedDirectoryHost: () => false,
+    manageOnly: true, directoryRead: { current: null }, setDirectorySource() {}, AbortController,
     preparationAttemptRef: { current: 0 }, PluginProtocolError: class extends Error {},
     pluginContextRef: { current: 0 }, pluginMountedRef: { current: true },
     installedRequestRef: { current: 0 }, browseRequestRef: { current: 0 },

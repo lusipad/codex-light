@@ -115,7 +115,7 @@ import { EnvironmentActions } from "./components/EnvironmentActions";
 import type { EnvironmentActionRunRequest } from "./environmentActions";
 import { WorktreesView } from "./components/WorktreesView";
 import { AutomationsView } from "./components/AutomationsView";
-import { SkillsMcpView } from "./components/SkillsMcpView";
+import { SkillsMcpView, type PluginDirectoryNavigation } from "./components/SkillsMcpView";
 import { SettingsView } from "./components/SettingsView";
 import { WorkspacePopover } from "./components/WorkspacePopover";
 import { AgentsMdModal } from "./components/AgentsMdModal";
@@ -147,6 +147,7 @@ import { ImagesView } from "./components/ImagesView";
 import { GptsView } from "./components/GptsView";
 import { SitesView } from "./components/SitesView";
 import { parseSitesLocation, type SitesNavigation } from "./sitesNavigation";
+import { parsePluginDirectoryLocation } from "./pluginDirectoryLocation";
 import { LibraryFileRoute, LibraryView, type LibraryNavigation } from "./components/LibraryView";
 import { libraryLocationUrl, parseLibraryFileLocation, parseLibraryLocation } from "./libraryBrowse";
 import { LibraryCleanupView } from "./components/LibraryCleanupView";
@@ -368,6 +369,7 @@ export const App: React.FC = () => {
   const [libraryFileId, setLibraryFileId] = useState(() => !isQuickChatWindow && !isThreadWindow
     ? parseLibraryFileLocation(window.location.href) : null);
   const [activeRoute, commitActiveRoute] = useState<MainViewRoute>(() => window.location.pathname === "/code-review" ? "code-review"
+    : !isQuickChatWindow && !isThreadWindow && parsePluginDirectoryLocation(window.location.href) ? "plugins"
     : parseSitesLocation(window.location.href) ? "sites"
       : libraryFileId ? "library-file"
         : !isQuickChatWindow && !isThreadWindow && parseLibraryLocation(window.location.href) ? "library" : "home");
@@ -389,6 +391,12 @@ export const App: React.FC = () => {
   const updateSitesNavigation = useCallback((navigation: SitesNavigation | null) => {
     sitesNavigationRef.current = navigation;
     setSitesNavigation(navigation);
+  }, []);
+  const [pluginDirectoryNavigation, setPluginDirectoryNavigation] = useState<PluginDirectoryNavigation | null>(null);
+  const pluginDirectoryNavigationRef = useRef<PluginDirectoryNavigation | null>(null);
+  const updatePluginDirectoryNavigation = useCallback((navigation: PluginDirectoryNavigation | null) => {
+    pluginDirectoryNavigationRef.current = navigation;
+    setPluginDirectoryNavigation(navigation);
   }, []);
   const [remotePullRequestUrl, setRemotePullRequestUrl] = useState(() => window.location.pathname === "/code-review"
     ? new URLSearchParams(window.location.hash.slice(1)).get("pullRequest") ?? "" : "");
@@ -419,6 +427,7 @@ export const App: React.FC = () => {
   useEffect(() => {
     const restorePageRoute = () => {
       if (parseSitesLocation(window.location.href)) setActiveRoute("sites");
+      else if (!isQuickChatWindow && !isThreadWindow && parsePluginDirectoryLocation(window.location.href)) setActiveRoute("plugins");
       else {
         const id = !isQuickChatWindow && !isThreadWindow ? parseLibraryFileLocation(window.location.href) : null;
         if (id) {
@@ -427,7 +436,7 @@ export const App: React.FC = () => {
         } else if (!isQuickChatWindow && !isThreadWindow && parseLibraryLocation(window.location.href)) {
           setLibraryCleanupTab(null);
           setActiveRoute("library");
-        } else if (["sites", "library", "library-file"].includes(activeRouteRef.current)) setActiveRoute("home");
+        } else if (["sites", "library", "library-file", "plugins"].includes(activeRouteRef.current)) setActiveRoute("home");
       }
     };
     window.addEventListener("popstate", restorePageRoute);
@@ -439,6 +448,20 @@ export const App: React.FC = () => {
       window.history.replaceState(window.history.state, "", libraryLocationUrl(window.location.href, null));
     }
     const url = new URL(window.location.href);
+    if (!isQuickChatWindow && !isThreadWindow) {
+      if (activeRoute === "plugins" && !parsePluginDirectoryLocation(url)) {
+        url.pathname = "/plugins";
+        url.search = "";
+        url.hash = "";
+        window.history.replaceState(window.history.state, "", url.pathname);
+      } else if (activeRoute !== "plugins" && parsePluginDirectoryLocation(url)) {
+        url.pathname = "/";
+        for (const key of ["directoryTab", "category", "search", "hostId", "pluginName", "marketplacePath", "remoteMarketplaceName", "mode", "breadcrumb"]) {
+          url.searchParams.delete(key);
+        }
+        window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+      }
+    }
     if (activeRoute === "sites" && !parseSitesLocation(url)) {
       url.pathname = "/sites";
       url.searchParams.delete("view");
@@ -448,7 +471,7 @@ export const App: React.FC = () => {
       url.searchParams.delete("view");
       window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
     }
-  }, [activeRoute, libraryCleanupTab]);
+  }, [activeRoute, libraryCleanupTab, isQuickChatWindow, isThreadWindow]);
   useEffect(() => {
     if (activeRoute === "code-review") {
       const hash = remotePullRequestUrl ? `#${new URLSearchParams({ pullRequest: remotePullRequestUrl })}` : "";
@@ -483,14 +506,21 @@ export const App: React.FC = () => {
     if (activeRoute === "library-file") return { canGoBack: true, canGoForward: false };
     const history = routeHistoryRef.current;
     return {
-      canGoBack: (activeRoute === "library" && !libraryCleanupTab && libraryNavigation?.canGoBack) || (activeRoute === "sites" && sitesNavigation?.canGoBack) || history.index > 0,
-      canGoForward: (activeRoute === "library" && !libraryCleanupTab && libraryNavigation?.canGoForward) || (activeRoute === "sites" && sitesNavigation?.canGoForward) || history.index < history.entries.length - 1,
+      canGoBack: (activeRoute === "library" && !libraryCleanupTab && libraryNavigation?.canGoBack) || (activeRoute === "sites" && sitesNavigation?.canGoBack) || (activeRoute === "plugins" && pluginDirectoryNavigation?.canGoBack) || history.index > 0,
+      canGoForward: (activeRoute === "library" && !libraryCleanupTab && libraryNavigation?.canGoForward) || (activeRoute === "sites" && sitesNavigation?.canGoForward) || (activeRoute === "plugins" && pluginDirectoryNavigation?.canGoForward) || history.index < history.entries.length - 1,
     };
-  }, [routeHistoryVersion, activeRoute, libraryCleanupTab, libraryNavigation, sitesNavigation]);
+  }, [routeHistoryVersion, activeRoute, libraryCleanupTab, libraryNavigation, sitesNavigation, pluginDirectoryNavigation]);
   const navigateRouteHistory = useCallback((direction: -1 | 1): void => {
     if (activeRouteRef.current === "library-file") {
       if (direction < 0) closeLibraryFile();
       return;
+    }
+    if (activeRouteRef.current === "plugins") {
+      const navigation = pluginDirectoryNavigationRef.current;
+      if (direction < 0 ? navigation?.canGoBack : navigation?.canGoForward) {
+        if (direction < 0) navigation!.goBack(); else navigation!.goForward();
+        return;
+      }
     }
     if (activeRouteRef.current === "sites") {
       const navigation = sitesNavigationRef.current;
@@ -6490,6 +6520,7 @@ export const App: React.FC = () => {
             <div className="full-route-container">
               <SkillsMcpView
                 activeWorkspaceRoot={activeWorkspace?.path || ""}
+                onNavigationChange={updatePluginDirectoryNavigation}
                 connectionIdentity={JSON.stringify([modelAccountIdentity, appServerStatus.connected, appServerStatus.binaryPath, appServerStatus.appServerVersion, appServerStatus.userAgent])}
                 onConfigUpdated={refreshConfigOverview}
                 onRestartAppServer={() => tauriInvoke("app_server_restart", { customCliPath: null })}

@@ -49,11 +49,11 @@ export function harness(options = {}) {
   Object.assign(plugins, options.plugins);
   const bridge = { tauriInvoke: async method => method === "skills_list_local" ? [] : {}, callAppServer: async () => ({}), tauriListen: async (event, callback) => { events.set(event, callback); return () => events.delete(event); } };
   Object.assign(bridge, options.bridge);
-  const window = { addEventListener: (name, callback) => windows.set(name, callback), removeEventListener: name => windows.delete(name), setTimeout: () => 1, clearTimeout() {} };
+  const window = { addEventListener: (name, callback) => windows.set(name, callback), removeEventListener: name => windows.delete(name), setTimeout: () => 1, clearTimeout() {}, ...options.window };
   const load = (file, imports) => {
     const exports = {};
     vm.runInNewContext(ts.transpileModule(fs.readFileSync(file, "utf8"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React, esModuleInterop: true } }).outputText,
-      { exports, require: name => name === "react" ? react : name.endsWith(".css") ? {} : imports[name], window, AbortController, confirm: options.confirm ?? (() => true), requestAnimationFrame: callback => frames.push(callback), console });
+      { exports, require: name => name === "react" ? react : name.endsWith(".css") ? {} : imports[name], window, AbortController, URL, URLSearchParams, confirm: options.confirm ?? (() => true), requestAnimationFrame: callback => frames.push(callback), console });
     return exports;
   };
   const core = load("src/pluginManagementState.ts", { "./pluginManagement": client });
@@ -61,10 +61,14 @@ export function harness(options = {}) {
     mergePluginInventories: cli => cli ?? { marketplaces: [] }, ...options.remote };
   const McpSettings = () => null;
   const recommended = load("src/recommendedSkills.ts", { "./bridge": bridge, "./plugins": plugins });
+  const directory = load("src/pluginDirectory.ts", {});
+  const location = load("src/pluginDirectoryLocation.ts", {});
+  const directoryClient = { loadPluginDirectorySource: async () => ({ kind: "unresolved" }), ...options.directory };
+  const directorySearch = { usePluginDirectorySearch: options.directorySearch ?? (() => ({ result: null, loading: false, error: null, unsupported: false, paging: false, pageError: null, nextCursor: null, loadMore() {}, retry() {} })) };
   const { SkillsMcpView } = load("src/components/SkillsMcpView.tsx", { "lucide-react": new Proxy({}, { get: (_, name) => String(name) }), "../bridge": bridge, "../fsClient": options.fs ?? {},
     "../config": { experimentalFeatureListAll: () => featureRead() }, "../mcpSettings": { readMcpSettings: async () => ({ entries: [{ name: "MCP" }] }) },
     "../pluginManagement": client, "../pluginManagementState": { ...core, useMarketplaceRemoval: (...args) => (removal = core.useMarketplaceRemoval(...args)) },
-    "../plugins": plugins, "../recommendedSkills": recommended, "../remotePlugins": remote, "./McpSettings": { McpSettings }, "./PluginPreparationPanel": {}, "./RecommendedSkillsPanel": {}, "./SkillPreviewDialog": { SkillPreviewDialog: "SkillPreviewDialog" } });
+    "../plugins": plugins, "../pluginDirectory": directory, "../pluginDirectoryClient": directoryClient, "../pluginDirectorySearch": directorySearch, "../pluginDirectoryLocation": location, "../recommendedSkills": recommended, "../remotePlugins": remote, "./McpSettings": { McpSettings }, "./PluginPreparationPanel": {}, "./RecommendedSkillsPanel": {}, "./SkillPreviewDialog": { SkillPreviewDialog: "SkillPreviewDialog" } });
   const nodes = node => node && typeof node === "object" ? [node, ...(node.children || []).flatMap(nodes)] : [];
   const text = node => typeof node === "string" || typeof node === "number" ? String(node) : (node?.children || []).map(text).join("");
   const modal = { open: false, showModal() { this.open = true; }, close() { this.open = false; } };

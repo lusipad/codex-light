@@ -41,6 +41,31 @@
 
 ## 下一步与未完成
 
-继续R2，不因本节点转页：远端home专用typed数据/资格与账号隔离→分类及目录来源tabs/分页→完整详情/路由/提示词/资产→管理面联合纠偏→统一标准/原生/官方配对与用户验收。本地降级分支须明确选用对应来源，不能把当前默认plugin/list直接当官方HTTP目录。
+### R2在途集成更新（晚于上述候选构建）
 
-尚未完成：真实账号远端HTTP、官方配对像素、物理IME、完整独立详情/深链、分类首6与更多、图标条溢出组合、官方logo/安装轮廓、完整设置管理流程。现有候选不用于发布；CI账单历史阻塞未在本轮重新触发或处理。
+以下是晚于首批候选的集成改动，已使用下节新构建验证本地链路，不能沿用上述首批候选hash作为这些改动的证据：
+
+- 增加typed flat首页/分类解析、资格与身份隔离、只读home/detail/category传输；主目录使用真实CLI搜索及200ms debounce，仅缺方法允许完整本地目录回退。私有CLI搜索探针已取得真实响应，HTTP传输仅注入测试，未实测账号。
+- 接入分类分页、来源读回后的安装引用、独立详情URL与真实前后退。显式非空hostId拒绝，不默认为本机；未知库存状态不提前开放安装。
+- 官方ACK补证区分安装、库存刷新和连接授权。安装ACK后库存失败/缺目标/部分市场加载失败保留待确认，禁止重复写；显式完整刷新可恢复。作用域journal覆盖组件存续中的账号/项目A→B→A，尚非跨组件卸载的持久记录，也未声称完整复制官方异常恢复。
+- 独立复审复现两个P2后补回归修复：完整来源深链拒绝异实体详情；显式刷新重搜当前关键词。搜索循环游标保留已有结果并提示不完整，而非静默当末页；重试重新搜索。
+- 新增搜索/URL/App历史/复审用例接入两个标准入口。初次前端集成在旧技能动作VM缺`unsupportedDirectoryHost`处退出1，补夹具后该专项及148项完整前端重跑退出0（`frontend-recheck.log/.exit`），TypeScript退出0。后端全量745项通过，0失败/忽略/过滤（`rust-full.log/.exit`）；HTTP使用注入transport，不能称745项真实服务验证。证据根`.ref/parity/12/whole-page/actual/remote-home-20261116/`。非Fast标准及32项真实协议探针退出0（`standard.log/.exit`），新EXE/MSI/NSIS构建退出0（`native-build.log/.exit`）；构建/原生后441个产品输入均无变化，`candidate-result.json`记录三产物hash及范围。
+- 最后独立复审重跑目录与深链专项均退出0，另实测安装pending时显式完整空库存刷新再重复触发、ACK后仍缺目标均只发一次install；未发现新的确定重复写/跨身份污染。组件卸载后journal不持久的限制保留。
+
+### 当前源码的新原生观察
+
+产物[CodexNative.exe](../../../dist-artifacts/plugins-r2-directory-20261116/CodexNative.exe)，SHA-256 `7d8e88cda1272b5a6ef2e856350fc8607d7faf3dee3e973b6a35077653029afe`；同目录有MSI/NSIS。私有home沿用两个本地文字插件，AppData/WebView另建`r2-run`，未登录、未发送模型、未在GUI安装或卸载插件，测试后窗口已关闭。
+
+| 操作 | 新构建实际观察/证据 |
+|---|---|
+| 未登录打开目录 | remote gate为真时明确要求ChatGPT登录；真实已安装private-first仍可见，未伪造远端首页 |
+| 搜索private- | 真实CLI搜索返回private-first和private-second，已装/未装动作不同；`native-private-search.jpg/.txt` |
+| 打开private-second | 独立详情读取真实description/version，URL含准确pluginId、pluginName、marketplacePath和search；`native-private-detail` |
+| 标题栏返回/前进 | 返回保留private-和两个结果，前进重新读取正确详情；`native-history-back/forward` |
+| 窄窗及刷新 | 957×679窗口下目录单列、页头换行；刷新保留query和两条结果，详情安装入口可见；`native-search-narrow`、`native-refresh-narrow`、`native-detail-narrow` |
+
+宽窗捕获1435×900，尺寸是窗口而非标定CSS客户区。图片为JPEG。输入由UIA set_value执行，不能算物理键盘或中文IME验收；官方同条件配对图仍缺，视觉score=null。当前只是R2-A/B集成节点，完整详情、管理及整页验收继续进行。
+
+继续R2，不因本节点转页：先完成当前目录/搜索/分类/深链的统一标准与新原生验证，再按已补`detail-contract.md`完成详情/提示词/资产、目录来源tabs和管理面联合纠偏，最后整页官方配对与用户验收。本地降级分支须明确标明来源，不能把默认plugin/list直接当官方HTTP目录。
+
+尚未完成：真实账号远端HTTP、官方配对像素、物理IME、完整独立详情内容、来源tabs、图标条溢出组合、官方logo/安装轮廓、完整设置管理流程。分类首6/更多有生产回归，真实远端分类原生未测；本地搜索与详情历史有上述新原生证据。现有候选不用于发布；本轮重新读取最新远端run42644930892及job129255526818，仍为原来的未启动失败，注解为付款/支出上限；未重跑或更改账单，不能当当前源码CI通过。

@@ -31,6 +31,8 @@ function mount() {
     skillWritePendingRef: { current: false }, selectedSkill: null, selectedSkillKey: null, readOnlyRemoteSkill: null,
     newSkillId: "tool", skillContent: "draft", activeWorkspaceRoot: "A", subTab: "skills", manageOnly: false,
     appsLoadedRef: { current: false }, skillScopeLabel: value => value, recommendedSkillDisplayName: recommended.recommendedSkillDisplayName,
+    unsupportedDirectoryHost: () => false, searchQuery: "", directoryCategory: null,
+    directorySearch: { retry() {} }, loadBrowsePlugins: async () => {},
     notify: (...args) => notices.push(args), confirm: () => true,
     workspaceCwds: () => ["A"], toViewError: error => ({ message: error.message }), errorSummary: error => error.message,
     flattenSkills: result => ({ skills: result.data }), loadInstalledPlugins: async () => {}, loadServicePlugins: async () => {}, loadManagement: async () => {}, loadApps: async () => {},
