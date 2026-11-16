@@ -353,6 +353,19 @@ async fn chatgpt_service_sites_settings(
 }
 
 #[tauri::command]
+async fn remote_plugin_directory_list(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: chatgpt_service::RemotePluginDirectoryListRequest,
+) -> Result<chatgpt_service::RemotePluginDirectoryListResponse, chatgpt_service::ServiceError> {
+    state.chatgpt_service.remote_plugin_directory_list(request, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
 async fn remote_plugin_category(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -2464,6 +2477,7 @@ pub fn run() {
             remote_plugin_home,
             remote_plugin_detail,
             remote_plugin_category,
+            remote_plugin_directory_list,
             remote_plugin_mutation,
             profile_mutation,
             account_notifications_read,

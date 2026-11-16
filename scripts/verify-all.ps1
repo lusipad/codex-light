@@ -319,6 +319,12 @@ try {
   Invoke-Step "Plugin real search protocol regression" { node scripts/verify-plugin-search-client.mjs }
   Invoke-Step "Plugin directory search lifecycle and pagination regression" { node scripts/verify-plugin-directory-search.mjs }
   Invoke-Step "Plugin directory URL identity and encoding regression" { node scripts/verify-plugin-directory-location.mjs }
+  Invoke-Step "Plugin installed strip layout and lifecycle regression" { node scripts/verify-plugin-installed-strip.mjs }
+  Invoke-Step "Plugin installed strip navigation and returned identity regression" { node scripts/verify-plugin-installed-navigation.mjs }
+  Invoke-Step "Plugin directory full release entries regression" { node scripts/verify-plugin-directory-entries.mjs }
+  Invoke-Step "Plugin directory account and origin client regression" { node scripts/verify-plugin-directory-origins.mjs }
+  Invoke-Step "Plugin Personal local marketplace identity regression" { node scripts/verify-plugin-directory-local-groups.mjs }
+  Invoke-Step "Plugin directory source tabs and paging UI regression" { node scripts/verify-plugin-directory-origins-view.mjs }
   Invoke-Step "Plugin directory App history integration regression" { node scripts/verify-plugin-directory-host.mjs }
   Invoke-Step "Plugin directory deep-link identity and search refresh regression" { node scripts/verify-plugin-directory-review.mjs }
   Invoke-Step "Plugin detail source fields, expansion and external links regression" { node scripts/verify-plugin-detail-surface.mjs }

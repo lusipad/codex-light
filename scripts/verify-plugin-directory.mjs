@@ -18,7 +18,7 @@ view.setInstalled({ marketplaces: [{ ...market, plugins: [installed] }] });
 view.render(); await view.tick();
 const cards = () => view.nodes(view.tree).filter(node => node.props.className?.includes("pm-catalog-card"));
 assert.equal(cards().length, 2, "directory includes installed and uninstalled plugins");
-assert.ok(view.nodes(view.tree).some(node => node.props.className === "pm-installed-strip"));
+assert.ok(view.nodes(view.tree).some(node => node.type === "PluginInstalledStrip" && node.props.items.length === 1));
 assert.equal(view.nodes(view.tree).some(node => node.props.className?.includes("pm-segment")), false, "directory is not installed/browse management");
 const search = view.nodes(view.tree).find(node => node.type === "input" && node.props.id === "plugins-store-page-search");
 assert.equal(search.props.autoFocus, true);
@@ -97,14 +97,14 @@ const remoteView = harness({ window: routeWindow, directory: {
   loadPluginDirectorySource: async () => remoteSource,
   readLocalDirectoryListing: async id => { metadataReads++; assert.equal(id, "remote-0"); return metadata; },
 }, directorySearch: options => { searchOptions = options; return options.query.trim() ? { ...emptySearch, result: { data: [{ plugin: available, marketplaceName: "search-source", marketplacePath: "C:/isolated/search-market.json" }], nextCursor: null } } : emptySearch; },
-plugins: { listMarketplacePlugins: async () => { remoteCatalogReads++; throw Error("remote home must not load mixed markets"); },
+plugins: { listMarketplacePlugins: async (_cwds, _force, kinds) => { remoteCatalogReads++; assert.deepEqual(kinds, ["local"], "Personal may read local markets but Public must not load a mixed catalog"); return { marketplaces: [] }; },
   pluginRefFor: (plugin, market) => ({ pluginName: plugin.remotePluginId ?? plugin.name, remoteMarketplaceName: market.name }),
   installPlugin: async ref => { remoteInstalls.push(ref); return { appsNeedingAuth: [], authPolicy: "ON_USE" }; } } });
 remoteView.props.manageOnly = false; remoteView.props.initialTab = "plugins"; remoteView.props.initialPluginMode = "browse";
 remoteView.setInstalled({ marketplaces: [] }); remoteView.render(); await remoteView.tick();
 const remoteCards = () => remoteView.nodes(remoteView.tree).filter(node => node.props.className === "pm-catalog-card");
 assert.equal(remoteCards().length, 6, "remote home displays the actual section first six, not all nine");
-assert.match(remoteView.text(remoteView.tree), /实际栏目/); assert.equal(remoteCatalogReads, 0);
+assert.match(remoteView.text(remoteView.tree), /实际栏目/); assert.ok(remoteCatalogReads > 0, "source tabs determine genuine local Personal availability");
 let preventedNavigation = 0;
 const remoteInstall = remoteView.nodes(remoteCards()[0]).find(node => node.props["aria-label"] === "安装 Remote remote-0");
 remoteInstall.props.onClick({ stopPropagation() { preventedNavigation++; } });
@@ -183,9 +183,10 @@ const fallbackView = harness({ directory: { loadPluginDirectorySource: async () 
   plugins: { listMarketplacePlugins: async (_roots, _force, kinds) => { fallbackCalls++; localKinds = kinds; return { marketplaces: [{ ...market, plugins: [{ ...available, name: "Beyond homepage" }] }] }; } } });
 fallbackView.props.manageOnly = false; fallbackView.props.initialTab = "plugins"; fallbackView.setInstalled({ marketplaces: [] });
 fallbackView.render(); await fallbackView.tick();
+const beforeFallbackSearch = fallbackCalls;
 fallbackView.nodes(fallbackView.tree).find(node => node.props.id === "plugins-store-page-search").props.onChange({ target: { value: "Beyond" } });
 fallbackView.render(); await fallbackView.tick();
-assert.equal(fallbackCalls, 1); assert.deepEqual(Array.from(localKinds), ["local"]);
+assert.equal(fallbackCalls - beforeFallbackSearch, 1); assert.deepEqual(Array.from(localKinds), ["local"]);
 assert.match(fallbackView.text(fallbackView.tree), /Beyond homepage/); assert.doesNotMatch(fallbackView.text(fallbackView.tree), /Remote remote-0/);
 fallbackView.unmount();
 let forbiddenLocalReads = 0, retries = 0;
@@ -193,8 +194,9 @@ const failedSearch = harness({ directory: { loadPluginDirectorySource: async () 
   directorySearch: options => options.query.trim() ? ({ ...emptySearch, error: "403 forbidden", retry() { retries++; } }) : emptySearch,
   plugins: { listMarketplacePlugins: async () => { forbiddenLocalReads++; return { marketplaces: [] }; } } });
 failedSearch.props.manageOnly = false; failedSearch.props.initialTab = "plugins"; failedSearch.render(); await failedSearch.tick();
+const beforeFailedSearch = forbiddenLocalReads;
 failedSearch.nodes(failedSearch.tree).find(node => node.props.id === "plugins-store-page-search").props.onChange({ target: { value: "denied" } }); failedSearch.render();
-assert.match(failedSearch.text(failedSearch.tree), /403 forbidden/); assert.equal(forbiddenLocalReads, 0);
+assert.match(failedSearch.text(failedSearch.tree), /403 forbidden/); assert.equal(forbiddenLocalReads, beforeFailedSearch, "permission failure must not initiate fallback reads");
 failedSearch.button("重试").props.onClick(); assert.equal(retries, 1); failedSearch.unmount();
 let finishInventory;
 const loadingInventory = harness({ directory: { loadPluginDirectorySource: async () => remoteSource },

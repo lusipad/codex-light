@@ -9,6 +9,18 @@ vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/pluginDirectoryLocati
 }).outputText, { exports: module.exports, URL, URLSearchParams });
 const { parsePluginDirectoryLocation: parse, pluginDirectoryBrowseUrl: browse, pluginDirectoryDetailUrl: detail } = module.exports;
 const base = "/plugins?directoryTab=installed&category=development&search=C%2B%2B+%E4%B8%AD%E6%96%87&hostId=old&unrelated=discard#unverified";
+assert.equal(typeof module.exports.pluginDirectoryTabUrl, "function");
+const tabUrl = module.exports.pluginDirectoryTabUrl(base, "personal");
+assert.equal(tabUrl, "/plugins?directoryTab=personal&category=development&search=C%2B%2B+%E4%B8%AD%E6%96%87&hostId=old&unrelated=discard#unverified",
+  "source selection changes only directoryTab, preserving query and hash");
+assert.equal(module.exports.pluginDirectoryTabUrl("/plugins/item?mode=install#focus", "workspace"),
+  "/plugins/item?mode=install&directoryTab=workspace#focus");
+assert.throws(() => module.exports.pluginDirectoryTabUrl("/settings", "personal"), /Invalid/);
+const marketCategory = "plugins-marketplace-" + encodeURIComponent("C:/真实市场/marketplace.json");
+const categoryUrl = module.exports.pluginDirectoryCategoryUrl("/plugins?directoryTab=personal&extra=keep#position", marketCategory);
+assert.equal(parse(categoryUrl).category, marketCategory, "marketplace identity is encoded once by each URL layer");
+assert.equal(new URL(categoryUrl, "https://codex.invalid").hash, "#position");
+assert.equal(module.exports.pluginDirectoryCategoryUrl(categoryUrl, null), "/plugins?directoryTab=personal&extra=keep#position");
 
 assert.equal(parse("/plugins").pluginId, null);
 assert.equal(parse(new URL("tauri://localhost/plugins")).search, "");

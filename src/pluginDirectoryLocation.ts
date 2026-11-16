@@ -65,6 +65,22 @@ function relativeUrl(pathname: string, query: URLSearchParams): string {
   return search ? `${pathname}?${search}` : pathname;
 }
 
+/** Source tabs preserve the current route and every other location parameter. */
+export function pluginDirectoryTabUrl(base: string | URL, tab: "openai" | "workspace" | "personal" | "teams"): string {
+  const url = directoryUrl(base);
+  if (!url || !parsePluginDirectoryLocation(url)) throw new Error("Invalid plugin directory location");
+  url.searchParams.set("directoryTab", tab);
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
+export function pluginDirectoryCategoryUrl(base: string | URL, category: string | null): string {
+  const url = directoryUrl(base);
+  if (!url || !parsePluginDirectoryLocation(url)) throw new Error("Invalid plugin directory location");
+  if (category === null) url.searchParams.delete("category");
+  else url.searchParams.set("category", category);
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
 export function pluginDirectoryBrowseUrl(base: string | URL, patch: {
   search?: string;
   category?: string | null;

@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { homeDir } from "@tauri-apps/api/path";
 import {
   AlertCircle,
   AlertTriangle,
@@ -35,7 +36,8 @@ import { loadRemotePlugins, manageRemotePlugin, verifyRemotePlugin, mergePluginI
 import { loadPluginDirectorySource, loadPluginDirectoryCategory, readLocalDirectoryListing, type PluginDirectorySource } from "../pluginDirectoryClient";
 import { directoryPluginInstallation, type PluginDirectoryListing } from "../pluginDirectory";
 import { usePluginDirectorySearch } from "../pluginDirectorySearch";
-import { parsePluginDirectoryLocation, pluginDirectoryBrowseUrl, pluginDirectoryDetailUrl } from "../pluginDirectoryLocation";
+import { parsePluginDirectoryLocation, pluginDirectoryBrowseUrl, pluginDirectoryDetailUrl, pluginDirectoryTabUrl, pluginDirectoryCategoryUrl } from "../pluginDirectoryLocation";
+import { groupPluginDirectoryLocal, type PluginDirectoryLocalGroups } from "../pluginDirectoryLocalGroups";
 import type { ServiceIdentity } from "../chatgptService";
 import {
   SkillInfoItem,
@@ -48,6 +50,8 @@ import { SkillPreviewDialog } from "./SkillPreviewDialog";
 import { PluginDirectoryDetail } from "./PluginDirectoryDetail";
 import { PluginDirectoryIncluded } from "./PluginDirectoryIncluded";
 import { PluginLogo } from "./PluginLogo";
+import { PluginInstalledStrip } from "./PluginInstalledStrip";
+import { PluginDirectoryOriginsView, type PluginDirectoryTab } from "./PluginDirectoryOriginsView";
 import {
   AppInfo,
   InstalledApp,
@@ -261,6 +265,16 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   const [directoryHostUnsupported, setDirectoryHostUnsupported] = useState(() => !manageOnly && !!(window.location && parsePluginDirectoryLocation(window.location.href)?.hostId?.trim()));
   const unsupportedDirectoryHost = () => !manageOnly && !!(window.location && parsePluginDirectoryLocation(window.location.href)?.hostId?.trim());
   const [directoryCategory, setDirectoryCategory] = useState<string | null>(() => !manageOnly && window.location ? parsePluginDirectoryLocation(window.location.href)?.category ?? null : null);
+  const readDirectoryTab = (): PluginDirectoryTab => {
+    const tab = window.location && parsePluginDirectoryLocation(window.location.href)?.directoryTab;
+    return tab === "workspace" || tab === "personal" || tab === "teams" ? tab : "openai";
+  };
+  const [directoryTab, setDirectoryTab] = useState<PluginDirectoryTab>(readDirectoryTab);
+  const [directoryRefreshRevision, setDirectoryRefreshRevision] = useState(0);
+  const [localDirectoryRevision, setLocalDirectoryRevision] = useState(0);
+  const [localDirectoryGroups, setLocalDirectoryGroups] = useState<PluginDirectoryLocalGroups | null>(null);
+  const [localDirectoryLoading, setLocalDirectoryLoading] = useState(false);
+  const [localDirectoryError, setLocalDirectoryError] = useState<string | null>(null);
   const [directorySource, setDirectorySource] = useState<PluginDirectorySource | null>(null);
   const directoryRead = useRef<AbortController | null>(null);
   const [categoryRows, setCategoryRows] = useState<PluginDirectoryListing[]>([]);
@@ -606,6 +620,20 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   };
 
   const [searchFallback, setSearchFallback] = useState<PluginListResponse | null>(null);
+  useEffect(() => {
+    setLocalDirectoryGroups(null); setLocalDirectoryError(null);
+    if (manageOnly || subTab !== "plugins" || directoryHostUnsupported || searchQuery.trim()) { setLocalDirectoryLoading(false); return; }
+    let live = true;
+    const context = pluginContextRef.current;
+    setLocalDirectoryLoading(true);
+    void Promise.all([homeDir(), listMarketplacePlugins(workspaceCwds(), false, ["local"])]).then(([home, result]) => {
+      if (!live || !isPluginContextCurrent(context)) return;
+      if (result.marketplaceLoadErrors?.length) throw new Error(result.marketplaceLoadErrors.map(error => error.message).join("\n"));
+      setLocalDirectoryGroups(groupPluginDirectoryLocal(result.marketplaces, home));
+    }).catch(error => { if (live && isPluginContextCurrent(context)) setLocalDirectoryError(errorSummary(error)); })
+      .finally(() => { if (live && isPluginContextCurrent(context)) setLocalDirectoryLoading(false); });
+    return () => { live = false; };
+  }, [manageOnly, subTab, directoryHostUnsupported, activeWorkspaceRoot, connectionIdentity, directorySource, localDirectoryRevision, !!searchQuery.trim()]);
   const [searchFallbackError, setSearchFallbackError] = useState<string | null>(null);
   useEffect(() => {
     setSearchFallback(null); setSearchFallbackError(null);
@@ -727,6 +755,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
 
   const refreshAll = async (options: { confirmInstallResult?: boolean } = {}) => {
     if (unsupportedDirectoryHost()) return;
+    if (!manageOnly && subTab === "plugins") setDirectoryRefreshRevision(value => value + 1);
     if (!manageOnly && subTab === "plugins" && searchQuery.trim() && !directoryCategory) directorySearch.retry();
     const context = pluginContextRef.current;
     const serviceLoad = loadServicePlugins();
@@ -806,6 +835,12 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     try {
       const res = await readPlugin(pluginRefFor(plugin, marketplace));
       if (!isPluginContextCurrent(context) || detailRequestRef.current !== requestId) return;
+      if (!directoryPluginInstallation(plugin.id, { marketplaces: [{ name: res.marketplaceName, plugins: [res.summary] }] }).plugin) {
+        throw new Error("插件详情身份与目录不一致，请重新读取。");
+      }
+      detailContextRef.current = { plugin: res.summary, marketplace: {
+        name: res.marketplaceName, path: res.marketplacePath, plugins: [res.summary],
+      } };
       setDetail(res);
     } catch (err) {
       if (!isPluginContextCurrent(context) || detailRequestRef.current !== requestId) return;
@@ -843,6 +878,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   };
 
   const loadCategory = async (cursor: string | null = null) => {
+    if (directoryCategory === "plugins-created-by-you" || directoryCategory === "plugins-shared-with-you" || directoryCategory?.startsWith("plugins-marketplace-")) return;
     if (unsupportedDirectoryHost() || directorySource?.kind !== "remote" || !directoryCategory || categoryPaging.current || cursor && categoryConsumed.current.has(cursor)) return;
     const controller = categoryRead.current ?? new AbortController(); categoryRead.current = controller;
     const context = pluginContextRef.current;
@@ -870,7 +906,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     const restore = () => {
       const route = window.location ? parsePluginDirectoryLocation(window.location.href) : null;
       if (!route) return;
-      setSearchQuery(route.search); setDirectoryCategory(route.category);
+      setSearchQuery(route.search); setDirectoryCategory(route.category); setDirectoryTab(readDirectoryTab());
       setDirectoryHostUnsupported(!!route.hostId?.trim());
       ++detailRequestRef.current; detailContextRef.current = null; setDetailKey(null); setDetail(null); setDetailError(null); setDetailLoading(false);
       if (route.hostId?.trim()) return;
@@ -2197,19 +2233,49 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
             }} />}
         /> : renderPluginDetail(true)}
       </section> : <div className="pm-catalog">
-        {!searchQuery.trim() && !directoryCategory && directoryInstalled.length > 0 && <section className="pm-installed-section" aria-label="已安装">
-          <header><h3>已安装</h3>{onManagePlugins && <button type="button" className="pm-catalog-action" onClick={onManagePlugins}>管理</button>}</header>
-          <div className="pm-installed-strip">{directoryInstalled.map(({ plugin, marketplace }) =>
-            <button key={pluginKey(plugin, marketplace)} type="button" className="pm-installed-icon"
-              aria-label={`查看 ${pluginDisplayName(plugin)}`} title={pluginDisplayName(plugin)}
-              onClick={() => void handleToggleDetail(plugin, marketplace)}><PluginLogo plugin={plugin} className="pm-installed-logo" /></button>)}</div>
-        </section>}
+        {!searchQuery.trim() && !directoryCategory && <PluginInstalledStrip
+          key={JSON.stringify([activeWorkspaceRoot, connectionIdentity])}
+          items={directoryInstalled.map(({ plugin, marketplace }) => ({ key: pluginKey(plugin, marketplace), plugin,
+            href: pluginDirectoryDetailUrl(directoryBase(), { pluginId: plugin.id,
+              pluginName: marketplace.path ? plugin.name : plugin.remotePluginId ?? plugin.name,
+              marketplacePath: marketplace.path, remoteMarketplaceName: marketplace.path ? null : marketplace.name }) }))}
+          loading={installedLoading && installedData === null}
+          error={installedError ? errorSummary(installedError.message) : null}
+          onManage={onManagePlugins}
+          onOpen={(item, event) => {
+            if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+            const actual = directoryInstalled.find(({ plugin, marketplace }) => pluginKey(plugin, marketplace) === item.key);
+            if (!actual) return;
+            event.preventDefault();
+            void handleToggleDetail(actual.plugin, actual.marketplace);
+          }} />}
+        <PluginDirectoryOriginsView tab={directoryTab}
+          enabled={!searchQuery.trim() && !directoryHostUnsupported}
+          contextKey={JSON.stringify([activeWorkspaceRoot, connectionIdentity, directoryRefreshRevision])}
+          category={directoryCategory}
+          onTabChange={tab => { setDirectoryTab(tab); updateDirectoryUrl(pluginDirectoryTabUrl(directoryBase(), tab)); }}
+          onCategory={category => { setDirectoryCategory(category); updateDirectoryUrl(pluginDirectoryCategoryUrl(directoryBase(), category)); }}
+          renderListing={renderDirectoryListing}
+          localLoading={localDirectoryLoading}
+          localError={localDirectoryError}
+          onRetryLocal={() => setLocalDirectoryRevision(value => value + 1)}
+          localGroups={[
+            ...(localDirectoryGroups?.created.length ? [{ id: "plugins-created-by-you", title: "由你创建",
+              count: localDirectoryGroups.created.length,
+              content: localDirectoryGroups.created.map(({ plugin, marketplace }) => renderPluginCard(plugin, marketplace, { browse: true })),
+              summaryContent: localDirectoryGroups.created.slice(0, 6).map(({ plugin, marketplace }) => renderPluginCard(plugin, marketplace, { browse: true })),
+            }] : []),
+            ...(localDirectoryGroups?.marketplaces.map(group => ({ id: group.id, title: group.title, count: group.items.length,
+              content: group.items.map(({ plugin, marketplace }) => renderPluginCard(plugin, marketplace, { browse: true })),
+              summaryContent: group.items.slice(0, 6).map(({ plugin, marketplace }) => renderPluginCard(plugin, marketplace, { browse: true })),
+            })) ?? []),
+          ]}>
         {isBrowseBusy && renderLoadingRow("正在加载插件目录…")}
         {browseError && renderLoadError(browseError, "插件目录", () => loadBrowsePlugins(true))}
-        {installedError && renderLoadError(installedError, "已安装插件", () => loadInstalledPlugins({ confirmInstallResult: true }))}
+        {(searchQuery.trim() || directoryCategory) && installedError && renderLoadError(installedError, "已安装插件", () => loadInstalledPlugins({ confirmInstallResult: true }))}
         {!searchQuery.trim() && !directoryCategory && directorySource?.kind === "requires-chatgpt" && <p role="status">插件目录需要登录 ChatGPT。</p>}
         {directoryCategory && directorySource?.kind === "remote" ? <section className="pm-catalog-section">
-          <button type="button" className="pm-catalog-back" onClick={() => { setDirectoryCategory(null); updateDirectoryUrl(pluginDirectoryBrowseUrl(directoryBase(), { category: null })); }}>全部插件</button>
+          <button type="button" className="pm-catalog-back" onClick={() => { setDirectoryCategory(null); updateDirectoryUrl(pluginDirectoryCategoryUrl(directoryBase(), null)); }}>全部插件</button>
           <h3>{directorySource.sections.find(section => section.slug === directoryCategory)?.title ?? directoryCategory}</h3>
           <div className="pm-catalog-grid">{categoryRows.map(renderDirectoryListing)}</div>
           {categoryLoading && renderLoadingRow("正在加载插件…")}
@@ -2229,7 +2295,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
           {directorySearch.nextCursor && <button type="button" className="secondary-btn" disabled={directorySearch.paging} onClick={directorySearch.loadMore}>显示更多</button>}
         </section> : directorySource?.kind === "remote" ? directorySource.sections.map((section, index) => <section key={section.id ?? section.slug ?? index} className="pm-catalog-section">
           <header><h3>{section.title}</h3>{section.slug && <button type="button" className="pm-catalog-action" onClick={() => {
-            setDirectoryCategory(section.slug); updateDirectoryUrl(pluginDirectoryBrowseUrl(directoryBase(), { category: section.slug }));
+            setDirectoryCategory(section.slug); updateDirectoryUrl(pluginDirectoryCategoryUrl(directoryBase(), section.slug));
           }}>查看更多</button>}</header><div className="pm-catalog-grid">{section.plugins.slice(0, 6).map(renderDirectoryListing)}</div>
         </section>) : <>
           {browseData && !browseError && matchingBrowseCount === 0 && <p className="empty-hint">没有可用的插件</p>}
@@ -2239,6 +2305,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
           {browseVisibleCount < matchingBrowseCount && <button type="button" className="secondary-btn" onClick={() => setBrowseVisibleCount(count => count + 50)}>显示更多</button>}
         </>}
 
+        </PluginDirectoryOriginsView>
       </div>)}
       {subTab === "plugins" && manageOnly && (
         <div className="pm-stack">

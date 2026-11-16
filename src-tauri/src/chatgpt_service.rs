@@ -277,6 +277,30 @@ pub struct RemotePluginCategoryResponse {
     pub next_page_token: Option<String>,
 }
 
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RemotePluginDirectoryKind { Workspace, Personal, Created, Shared }
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RemotePluginDirectoryListRequest {
+    pub request_id: String,
+    pub expected_identity: ServiceIdentity,
+    pub profile: ServiceProfile,
+    pub kind: RemotePluginDirectoryKind,
+    pub limit: u16,
+    pub cursor: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemotePluginDirectoryListResponse {
+    pub request_id: String,
+    pub identity: ServiceIdentity,
+    pub plugins: Vec<Value>,
+    pub next_page_token: Option<String>,
+}
+
 #[derive(Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RemotePluginMutationOperation { Enable, Disable, Uninstall }
@@ -563,6 +587,52 @@ impl Drop for Registration<'_> {
 }
 
 impl ChatgptService {
+    pub async fn remote_plugin_directory_list<F, Fut>(&self, request: RemotePluginDirectoryListRequest, call: F) -> ServiceResult<RemotePluginDirectoryListResponse>
+    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>> {
+        self.remote_plugin_directory_list_with(request, call, &CurlTransport).await
+    }
+
+    async fn remote_plugin_directory_list_with<F, Fut, T>(&self, request: RemotePluginDirectoryListRequest, call: F, transport: &T) -> ServiceResult<RemotePluginDirectoryListResponse>
+    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>>, T: Transport {
+        if !matches!(request.limit, 9 | 50) ||
+            (request.limit == 9 && request.cursor.is_some()) ||
+            (matches!(request.kind, RemotePluginDirectoryKind::Workspace | RemotePluginDirectoryKind::Shared) && request.limit != 50) ||
+            request.cursor.as_ref().is_some_and(|value| value.len() > 16 * 1024 || value.chars().any(char::is_control)) {
+            return Err(failure("invalid_request", "Remote plugin directory request is invalid"));
+        }
+        let (path, scope) = match request.kind {
+            RemotePluginDirectoryKind::Workspace => ("list", Some("WORKSPACE")),
+            RemotePluginDirectoryKind::Personal => ("list", Some("USER")),
+            RemotePluginDirectoryKind::Created => ("workspace/created", None),
+            RemotePluginDirectoryKind::Shared => ("workspace/shared", None),
+        };
+        let mut url = tauri::Url::parse(&format!("https://chatgpt.com/backend-api/ps/plugins/{path}")).unwrap();
+        if let Some(scope) = scope { url.query_pairs_mut().append_pair("scope", scope); }
+        url.query_pairs_mut().append_pair("limit", &request.limit.to_string());
+        if let Some(cursor) = &request.cursor { url.query_pairs_mut().append_pair("pageToken", cursor); }
+        let route = format!("{}?{}", url.path(), url.query().unwrap());
+        let registration = self.register(&request.request_id)?;
+        let body = self.remote_plugin_http(&route, HttpMethod::Get, true, &request.expected_identity,
+            &request.profile, &registration, &call, transport).await?;
+        let plugins = body.get("plugins").and_then(Value::as_array)
+            .ok_or_else(|| failure("invalid_response", "Remote plugin directory plugins are missing or invalid"))?;
+        for row in plugins {
+            validate_remote_plugin_row(row)?;
+            if !row.get("release").is_some_and(Value::is_object) || !row["release"].get("interface").is_some_and(Value::is_object) {
+                return Err(failure("invalid_response", "Remote plugin directory release is missing or invalid"));
+            }
+        }
+        let pagination = body.get("pagination").and_then(Value::as_object)
+            .ok_or_else(|| failure("invalid_response", "Remote plugin directory pagination is missing or invalid"))?;
+        let next_page_token = match pagination.get("next_page_token") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(token)) if token.len() <= 16 * 1024 && !token.chars().any(char::is_control) => Some(token.clone()),
+            _ => return Err(failure("invalid_response", "Remote plugin directory pagination cursor is invalid")),
+        };
+        self.check_share_current(&request.expected_identity, &registration)?;
+        Ok(RemotePluginDirectoryListResponse { request_id:request.request_id, identity:request.expected_identity, plugins:plugins.clone(), next_page_token })
+    }
+
     pub async fn remote_plugin_category<F, Fut>(&self, request: RemotePluginCategoryRequest, call: F) -> ServiceResult<RemotePluginCategoryResponse>
     where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>> {
         self.remote_plugin_category_with(request, call, &CurlTransport).await
@@ -5103,6 +5173,102 @@ mod tests {
 
     fn remote_category_body() -> Value {
         json!({"plugins":remote_home_body()["sections"][0]["plugins"],"pagination":{"next_page_token":"next&中"}})
+    }
+
+    fn remote_directory_request(kind: &str, limit: u16) -> RemotePluginDirectoryListRequest {
+        RemotePluginDirectoryListRequest { request_id:"remote-directory-fixture".into(), expected_identity:identity(),
+            profile:request("unused").profile,kind:serde_json::from_value(json!(kind)).unwrap(),limit,cursor:Some("opaque&?#/中%2F".into()) }
+    }
+
+    fn remote_directory_body() -> Value {
+        json!({"plugins":[remote_detail_body()],"pagination":{"limit":50,"next_page_token":"next&中"}})
+    }
+
+    #[tokio::test]
+    async fn remote_plugin_directory_routes_limits_headers_and_full_rows_are_preserved() {
+        for (kind,limit,path) in [("workspace",50,"list?scope=WORKSPACE&limit=50"),
+            ("personal",9,"list?scope=USER&limit=9"),("personal",50,"list?scope=USER&limit=50"),
+            ("created",9,"workspace/created?limit=9"),("created",50,"workspace/created?limit=50"),
+            ("shared",50,"workspace/shared?limit=50")] {
+            let service=ChatgptService::default(); let body=remote_directory_body();
+            let transport=instructions_transport(&[200], &[body.clone()]);
+            let mut req=remote_directory_request(kind,limit); if limit==9 {req.cursor=None;}
+            let result=service.remote_plugin_directory_list_with(req,share_rpc,&transport).await.unwrap();
+            assert_eq!(result.plugins,body["plugins"].as_array().unwrap().clone());
+            assert_eq!(result.next_page_token.as_deref(),Some("next&中"));
+            assert_eq!(result.identity,identity()); assert_eq!(result.request_id,"remote-directory-fixture");
+            let calls=transport.requests.lock().unwrap(); assert_eq!(calls.len(),1); let call=&calls[0];
+            let suffix=if limit==9 {""} else {"&pageToken=opaque%26%3F%23%2F%E4%B8%AD%252F"};
+            assert_eq!(call.url,format!("https://chatgpt.com/backend-api/ps/plugins/{path}{suffix}"));
+            assert_eq!(call.method,HttpMethod::Get); assert!(call.body.is_empty());
+            assert_eq!(call.headers["OAI-Product-Sku"],"CONNECTOR_SETTING");
+            assert_eq!(call.headers["X-Codex-Surface"],"plugin_directory");
+            assert_eq!(call.headers["ChatGPT-Account-Id"],"account-fixture");
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_plugin_directory_empty_page_requires_real_pagination() {
+        for pagination in [json!({}),json!({"next_page_token":null})] {
+            let service=ChatgptService::default();
+            let transport=instructions_transport(&[200], &[json!({"plugins":[],"pagination":pagination})]);
+            let mut req=remote_directory_request("personal",9); req.cursor=None;
+            let result=service.remote_plugin_directory_list_with(req,share_rpc,&transport).await.unwrap();
+            assert!(result.plugins.is_empty()); assert!(result.next_page_token.is_none());
+            assert_eq!(transport.requests.lock().unwrap()[0].url,"https://chatgpt.com/backend-api/ps/plugins/list?scope=USER&limit=9");
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_plugin_directory_rejects_malformed_rows_pages_and_requests() {
+        for body in [json!({}),json!({"plugins":null,"pagination":{}}),json!({"plugins":[],"pagination":null}),
+            json!({"plugins":[]}),json!({"plugins":[],"pagination":{"next_page_token":3}}),
+            json!({"plugins":[],"pagination":{"next_page_token":"bad\ncursor"}}),
+            json!({"plugins":[],"pagination":{"next_page_token":"x".repeat(16*1024+1)}}),
+            json!({"plugins":[{"id":"flat","display_name":"Flat"}],"pagination":{}}),
+            json!({"plugins":[{"id":"full","name":"Full","release":[]}],"pagination":{}}),
+            json!({"plugins":[{"id":"full","name":"Full"}],"pagination":{}}),
+            json!({"plugins":[{"id":"full","name":"Full","release":{"interface":null}}],"pagination":{}})] {
+            let service=ChatgptService::default(); let transport=instructions_transport(&[200], &[body]);
+            assert_eq!(service.remote_plugin_directory_list_with(remote_directory_request("workspace",50),share_rpc,&transport).await.err().unwrap().code,"invalid_response");
+        }
+        for (kind,limit) in [("workspace",9),("shared",9),("personal",10),("created",0),("personal",9),("created",9)] {
+            let service=ChatgptService::default(); let transport=instructions_transport(&[200], &[remote_directory_body()]);
+            assert_eq!(service.remote_plugin_directory_list_with(remote_directory_request(kind,limit),share_rpc,&transport).await.err().unwrap().code,"invalid_request");
+            assert!(transport.requests.lock().unwrap().is_empty());
+        }
+        assert!(serde_json::from_value::<RemotePluginDirectoryKind>(json!("arbitrary")).is_err());
+        for cursor in ["invalid\ncursor".to_string(),"x".repeat(16*1024+1)] {
+            let service=ChatgptService::default(); let transport=instructions_transport(&[200], &[remote_directory_body()]);
+            let mut req=remote_directory_request("workspace",50); req.cursor=Some(cursor);
+            assert_eq!(service.remote_plugin_directory_list_with(req,share_rpc,&transport).await.err().unwrap().code,"invalid_request");
+            assert!(transport.requests.lock().unwrap().is_empty());
+        }
+        for status in [403,404,503] {
+            let service=ChatgptService::default(); let transport=instructions_transport(&[status], &[json!({})]);
+            let error=service.remote_plugin_directory_list_with(remote_directory_request("workspace",50),share_rpc,&transport).await.err().unwrap();
+            assert_eq!(error.status,Some(status));
+            assert_eq!(transport.requests.lock().unwrap().len(),1);
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_plugin_directory_cancel_or_changed_identity_cannot_return_late_page() {
+        for invalidate in [false,true] {
+            let service=ChatgptService::default(); let mut transport=instructions_transport(&[200], &[remote_directory_body()]);
+            transport.delay_ms=30; transport.reserve_response_on_send=true;
+            let read=service.remote_plugin_directory_list_with(remote_directory_request("workspace",50),share_rpc,&transport);
+            let change=async {
+                while transport.requests.lock().unwrap().is_empty() {tokio::task::yield_now().await;}
+                if invalidate {service.invalidate();} else {service.cancel("remote-directory-fixture");}
+            };
+            assert_eq!(tokio::join!(read,change).0.err().unwrap().code,if invalidate {"account_changed"}else{"cancelled"});
+            assert_eq!(transport.requests.lock().unwrap().len(),1); assert!(service.active.lock().unwrap().is_empty());
+        }
+        let service=ChatgptService::default(); let transport=instructions_transport(&[200], &[remote_directory_body()]);
+        let mut req=remote_directory_request("workspace",50); req.expected_identity.account_id="other-account".into();
+        assert_eq!(service.remote_plugin_directory_list_with(req,share_rpc,&transport).await.err().unwrap().code,"account_changed");
+        assert!(transport.requests.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

@@ -71,7 +71,10 @@ await check("explicit directory refresh retries the current search query", async
   view.render(); await view.tick();
   try {
     const beforeRetries = retries, beforeSources = sourceReads;
+    const beforeOriginContext = view.nodes(view.tree).find(node => node.type === "PluginDirectoryOriginsView").props.contextKey;
     await view.button("刷新").props.onClick(); await view.tick();
+    assert.notEqual(view.nodes(view.tree).find(node => node.type === "PluginDirectoryOriginsView").props.contextKey,
+      beforeOriginContext, "explicit refresh invalidates source summaries and pages as well as Public content");
     assert.ok(sourceReads > beforeSources, "refresh still reloads the directory source");
     assert.equal(retries, beforeRetries + 1, "refresh must request a new result for the unchanged current query");
     assert.equal(view.nodes(view.tree).find(node => node.props.id === "plugins-store-page-search")?.props.value,
@@ -87,10 +90,35 @@ await check("search replaces the normal home strip and home-only login message",
   view.props.manageOnly = false; view.props.initialTab = "plugins";
   view.render(); await view.tick();
   try {
-    assert.equal(view.nodes(view.tree).some(node => node.props.className === "pm-installed-strip"), false,
+    assert.equal(view.nodes(view.tree).some(node => node.type === "PluginInstalledStrip"), false,
       "normal home strip must not remain above search results");
     assert.doesNotMatch(view.text(view.tree), /插件目录需要登录 ChatGPT/,
       "an independently successful local-host search must not inherit the remote-home login gate");
+  } finally { view.unmount(); }
+});
+
+await check("Personal local retry re-reads the actual home marketplace", async () => {
+  let fail = true, reads = 0;
+  const view = harness({ window: routeWindow("/plugins?directoryTab=personal"),
+    directory: { loadPluginDirectorySource: async () => ({ kind: "remote", sections: [] }) },
+    plugins: { listMarketplacePlugins: async (_roots, _force, kinds) => {
+      reads++; assert.deepEqual(Array.from(kinds), ["local"]);
+      if (fail) throw Error("local market unavailable");
+      return { marketplaces: [{ name: "home-market", path: "C:/isolated/home/.agents/plugins/marketplace.json", plugins: [summary] }] };
+    } },
+  });
+  view.props.manageOnly = false; view.props.initialTab = "plugins";
+  view.render(); await view.tick();
+  const origins = () => view.nodes(view.tree).find(node => node.type === "PluginDirectoryOriginsView");
+  await view.tick();
+  try {
+    assert.match(origins().props.localError, /local market unavailable/);
+    const before = reads; fail = false;
+    origins().props.onRetryLocal(); view.render(); await view.tick();
+    assert.equal(reads, before + 1, "local retry triggers home/list again rather than only remote account reads");
+    assert.equal(origins().props.localError, null);
+    assert.equal(origins().props.localGroups[0].id, "plugins-created-by-you");
+    assert.equal(origins().props.localGroups[0].count, 1);
   } finally { view.unmount(); }
 });
 

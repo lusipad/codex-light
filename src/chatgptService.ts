@@ -574,6 +574,23 @@ export async function readRemotePluginDirectoryCategory(
   return { plugins: result.plugins, nextCursor: result.nextPageToken };
 }
 
+export type PluginDirectoryListKind = "workspace" | "personal" | "created" | "shared";
+
+export async function readRemotePluginDirectoryList(
+  identity: ServiceIdentity, kind: PluginDirectoryListKind, limit: 9 | 50, cursor: string | null, signal: AbortSignal,
+): Promise<{ plugins: unknown[]; nextCursor: string | null }> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; plugins: unknown[]; nextPageToken: string | null }>(
+    "remote_plugin_directory_list", requestId,
+    { request: { requestId, expectedIdentity: identity, profile: browserProfile(), kind, limit, cursor } }, signal,
+  );
+  responseBody({ ...result, body: null }, requestId, identity);
+  if (!Array.isArray(result.plugins) || (result.nextPageToken !== null && typeof result.nextPageToken !== "string")) {
+    throw Error("无法确认插件来源目录及分页，请重新读取。");
+  }
+  return { plugins: result.plugins, nextCursor: result.nextPageToken };
+}
+
 export async function mutateRemotePlugin(
   pluginId: string, operation: RemotePluginOperation, identity: ServiceIdentity, signal: AbortSignal,
 ): Promise<RemotePluginMutationResult> {

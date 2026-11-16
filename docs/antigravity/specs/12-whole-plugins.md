@@ -72,3 +72,20 @@ R1三桌面能力同版资料在`.ref/parity/16/whole-page/reference/host-r1-202
 - **错误状态**：loading优先；真实error显示“无法加载插件”，独立详情EmptyState没有额外Retry；missing显示“未找到插件”。`missing_plugin_path`只是遥测分类，不把网络或权限错误改判不存在。保留返回后重新进入读取，管理面旧重试单独处理。
 
 ON_USE且无显式app setup的普通提示词可先起草，不把有apps本身当授权前置。ON_INSTALL/显式要求setup的分支，当前没有足够真实授权完成证据，不能因catalog可访问或runtime callable就宣称OAuth完成并自动跳转；必须保留待准备状态，后续按`connection-completion-contract.md`接真实callback交换与最终link验证。模板字段无法验证时不当作未配置模板；因此部分legal计数仍可能受缺数据限制。上述均是整页残项，不降低最终复刻要求。
+
+## R2-C 来源标签、Personal与已安装图标条合同
+
+仍使用同版146项资源，原始补证为`directory-tabs-strip-contract.md`、`directory-origin-contract.md`、`personal-groups-tabs-contract.md`及其锚点。以下是开发输入，不代表真实账号或像素验收通过。
+
+- **来源资格**：公开始终存在；工作空间由真实选中账号structure决定，使用真实名称。Personal在分组确定为空且未显式选择时隐藏；加载/错误不是空。Teams必须另有真实gate及团队分组证据，目前不强开。
+- **导航**：`directoryTab=openai|workspace|teams|personal`；切换只改此query，保留pathname、其余query和hash，push历史。分类使用`plugins-created-by-you`、`plugins-shared-with-you`或`plugins-marketplace-${encodeURIComponent(realMarketplaceIdentity)}`；标签role/selected/roving焦点、方向键环绕、RTL、Home/End按同版合同。
+- **数据**：Public首页flat结构与来源完整release结构分开。Workspace50分页，跨已载页收集template引用再过滤；Personal首页USER9、workspace-created9、workspace-shared50，完整Created以USER和workspace-created双游标独立推进，已结束流不得重读。身份变化、离页取消与晚回不能覆盖新来源；失败不伪装空页或回退到另一个账号。
+- **本地分组**：真实OS home下`.agents/plugins/marketplace.json`对应市场归Created，不用CODEX_HOME或当前项目替代。路径比较只做官方扩展路径前缀、slash与lowercase处理；分组身份仍保留原始path或`remote:<name>`，同名异path不合并。其他市场各组显示；首页每组最多6项，分类展示完整结果。
+- **已安装条**：44px槽、36px图块、溢出槽包含剩余前四缩略图及剩余计数。依实际宽度测量，宽度未知不伪造容量；loading/error/空分别处理。链接使用真实详情来源，普通主键点击在当前窗口打开；修饰键/中键保留a默认处理，不编造原生新窗口IPC。测宽监听及resize观察器卸载清理。
+- **详情读回**：已安装入口与深链同样核返回summary实体，使用读回marketplace更新详情操作上下文；错实体显示读取错误，不开放安装或管理错误实体。目录元数据不赋予安装、启禁或HTTP服务管理权限。
+
+验收至少覆盖来源资格、Personal确定空/加载/失败/显式深链、本地home归属与市场ID、摘要6项、双游标和跨页模板、分页单飞/失败重试/循环标记、账号切换晚回、标签键盘、已装宽窄及溢出、修饰链接和错实体拒绝。真实账号HTTP、官方配对图、原生GUI/物理IME与Teams gate分别记录，不用离线回放代替。
+
+同名本地市场使用精确label分组，标题为`label · subLabel`，其中subLabel采用全重名组可唯一识别的最短路径后缀；显示路径保留大小写，不能复用home匹配的lowercase。来源身份仍用原始path。官方别名及排序有同版锚点，不能从任意包含OpenAI的名字推断官方身份或权限。
+
+后续授权补证将同版参考manifest扩至152项，另有AppxManifest记录。`oauth-initiation-contract.md`和`native-callback-host-contract.md`确认begin请求、服务返回state、窗口归属与官方`codex://connector/oauth_callback`链；该协议归官方Store应用。本软件自有callback/client资格尚无服务证据，不能注册/占用官方scheme或以installUrl、账号登录事件冒充授权完成。管理面下一包使用新`management-contract.md`及其同版锚点，不能把目录tablist语义套到设置管理segmented控件。

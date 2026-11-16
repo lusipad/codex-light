@@ -924,16 +924,13 @@
 .pm-catalog-copy { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
 .pm-catalog-copy strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .pm-catalog-copy p { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
-.pm-catalog-action, .pm-installed-icon, .pm-catalog-back { border: 0; background: transparent; color: var(--text-secondary); cursor: pointer; }
+.pm-catalog-action, .pm-catalog-back { border: 0; background: transparent; color: var(--text-secondary); cursor: pointer; }
 .pm-catalog-action { display: inline-flex; align-items: center; justify-content: center; padding: 6px; flex-shrink: 0; }
 .pm-catalog-action:disabled { opacity: .45; cursor: default; }
-.pm-catalog-card:focus-visible, .pm-catalog-action:focus-visible, .pm-installed-icon:focus-visible, .pm-catalog-back:focus-visible {
+.pm-catalog-card:focus-visible, .pm-catalog-action:focus-visible, .pm-catalog-back:focus-visible {
   outline: 2px solid var(--text-primary); outline-offset: 2px;
 }
-.pm-catalog-section > header, .pm-installed-section header { display: flex; justify-content: space-between; align-items: center; }
-.pm-installed-strip { display: flex; gap: 8px; overflow-x: auto; }
-.pm-installed-icon { display: grid; place-items: center; width: 36px; height: 36px; flex-shrink: 0; }
-.pm-installed-logo { width: 100%; height: 100%; }
+.pm-catalog-section > header { display: flex; justify-content: space-between; align-items: center; }
 .pm-catalog-detail { display: flex; flex-direction: column; gap: 24px; }
 .pm-catalog-back { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; padding: 0; font: inherit; }
 @container (min-width: 581px) { .pm-catalog-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

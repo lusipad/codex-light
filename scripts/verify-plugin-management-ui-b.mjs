@@ -42,6 +42,7 @@ export function harness(options = {}) {
     pluginSourceLabel: () => "本地", pluginVersion: () => "", marketplaceDisplayName: item => item.name, marketplaceSourceLabel: () => "Git",
     countMarketplacePlugins: item => ({ total: item.plugins.length, installed: item.plugins.length, enabled: item.plugins.filter(plugin => plugin.enabled).length }),
     listInstalledPlugins: async () => { calls.push(["installed"]); return installed; },
+    listMarketplacePlugins: async () => ({ marketplaces: [] }),
     listSkills: async () => ({ data: [{ skills: [{ name: "Skill", path: "C:/isolated/skill", scope: "user", enabled: true, description: "skill" }], errors: [] }] }), flattenSkills: result => ({ skills: result.data.flatMap(item => item.skills) }),
     listApps: async () => ({ data: [{ id: "accessible", name: "Connected", isAccessible: true }, { id: "catalog", name: "Catalog", isAccessible: false }] }),
     upgradeMarketplace: async name => { calls.push(["upgrade", name]); return { selectedMarketplaces: [name], upgradedRoots: [], errors: [] }; },
@@ -66,11 +67,14 @@ export function harness(options = {}) {
   const directoryClient = { loadPluginDirectorySource: async () => ({ kind: "unresolved" }), ...options.directory };
   const directorySearch = { usePluginDirectorySearch: options.directorySearch ?? (() => ({ result: null, loading: false, error: null, unsupported: false, paging: false, pageError: null, nextCursor: null, loadMore() {}, retry() {} })) };
   const { SkillsMcpView } = load("src/components/SkillsMcpView.tsx", { "lucide-react": new Proxy({}, { get: (_, name) => String(name) }), "../bridge": bridge, "../fsClient": options.fs ?? {},
+    "@tauri-apps/api/path": { homeDir: async () => "C:/isolated/home" },
+    "../pluginDirectoryLocalGroups": load("src/pluginDirectoryLocalGroups.ts", {}),
+    "./PluginDirectoryOriginsView": { PluginDirectoryOriginsView: "PluginDirectoryOriginsView" },
     "../config": { experimentalFeatureListAll: () => featureRead() }, "../mcpSettings": { readMcpSettings: async () => ({ entries: [{ name: "MCP" }] }) },
     "../pluginManagement": client, "../pluginManagementState": { ...core, useMarketplaceRemoval: (...args) => (removal = core.useMarketplaceRemoval(...args)) },
     "../plugins": plugins, "../pluginDirectory": directory, "../pluginDirectoryClient": directoryClient, "../pluginDirectorySearch": directorySearch, "../pluginDirectoryLocation": location, "../recommendedSkills": recommended, "../remotePlugins": remote, "./McpSettings": { McpSettings }, "./PluginPreparationPanel": {}, "./RecommendedSkillsPanel": {}, "./SkillPreviewDialog": { SkillPreviewDialog: "SkillPreviewDialog" },
     "./PluginDirectoryDetail": { PluginDirectoryDetail: "PluginDirectoryDetail" }, "./PluginDirectoryIncluded": { PluginDirectoryIncluded: "PluginDirectoryIncluded" },
-    "./PluginLogo": { PluginLogo: "PluginLogo" } });
+    "./PluginLogo": { PluginLogo: "PluginLogo" }, "./PluginInstalledStrip": { PluginInstalledStrip: "PluginInstalledStrip" } });
   const nodes = node => node && typeof node === "object" ? [node, ...(node.children || []).flatMap(nodes),
     ...nodes(node.props?.actions), ...nodes(node.props?.included)] : [];
   const text = node => typeof node === "string" || typeof node === "number" ? String(node) : (node?.children || []).map(text).join("");
