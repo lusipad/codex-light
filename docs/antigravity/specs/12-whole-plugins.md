@@ -229,3 +229,21 @@ PAD07–PAD12新增验收：association的string/null/missing/error；原始ID�
 用例按SK-T01–08：原始ID编码及route/modal、string/空串/null/缺失/403/404、旧正文+重试、库存状态与开关、pS/links/reauth/admin资格、POST/读回/unknown、切页/关闭/根refresh/账号ABA、中文/角色/焦点及原生/像素。完整OAuth、DTO未知字段、原生Escape/外点/IME与配对几何未证实项继续独立登记。先落只读内容消费者，再接具有真实资格的写链；两者均属于当前第02批，不因正文可读而标技能整页完成。
 
 技能contents尺寸补证：956370.aff5cce818.js UTF-16 774187的xwideTall为w-[680px]、h/max-h-[min(92vh,800px)]；773012默认居中加max-w-[92vw]，因此宽为min(680px,92vw)，不是现有本机SkillPreviewDialog的600×720。TZ2Y主体来源research-permissions-234277.e2b2e7caf7.js:15282，固定头/错误footer、正文独立滚动；尺寸不属responsiveSheet，不能自行加窄屏sheet分支。Markdown复用MarkdownView的remoteContent模式并保留原始string，不传本机run/open回调，不用会改正文结构的skillPreviewMarkdown。现有本机预览加载effect按path/attempt且identity未参与，不能以service path为空直接复用；新消费者须按真实plugin/skill及identity绑定与取消。
+
+技能正文只读包执行检查点（cd40823之后）：已接typed IPC/bridge、PROMPT_TEXT_AREA/settings固定GET、白名单DTO及取消/身份保护；8项Rust专项先红（未实现）后绿，0失败、885 filtered。客户端与contents弹层、Generic技能行点击、真实skill深链、replace关闭和返回焦点已接；canonical+skills仍按同一root分类优先App页，不强制generic。选择账户仅改search保留skill路径，sync转插件级/sync，已由337381精确片段与父页面生产回归覆盖。
+
+补正来源记录：SK12、SK17原endOffsetUtf16超出EOF，原JS slice截尾使正文匹配，但不是严格范围有效；已在ignored anchors保留旧end修正记录并收敛到实际UTF-16文件尾，35段均重新核实际范围/内容。源码资源未改。追加route/selection/sync短锚点单独保存generic-service-skill-route-anchors.json。
+
+Dialog同scope重试失败保旧正文；权限missing/null与空串分开；旧scope或账号清理不显式夺焦，普通关闭回对应行。Markdown复用remoteContent且无本机run/open回调。当前未接技能启禁写链/header开关，仍需fresh完整库存、disabled_skill_names与pS/link资格和未知结果读回；OAuth/hosted资格未具备分支不假成功。此包尚未统一完整检查/构建/提交，不引用cd40823原生产物验收新代码。
+
+### 下一独立“管理应用”工作包开工合同
+
+固定同版`app-manage-completion-contract.md/anchors.json`，主线程核4资源hash/大小、15代码片段及20中文定位，所有UTF-16范围在EOF内。仅明确null association后的standalone App进入H {app,connector,link:undefined}；不得借插件App的账户More/权限/sync或无link的“刷新工具”填页面。hosted标题/描述、metadata及资格错误分别处理。
+
+资格必须fresh读取当前账户A和真实metadata：personal owner用认证userId，workspace USER owner用A.account_user_id，workspace admin/owner可匹配WORKSPACE owner；所有情况要求A.id===当前accountId。MCP且ONLY_ME或review DEVELOPMENT才name/description；description另排DISABLED_BY_ADMIN并允许当前workspace admin，name没有该额外条件。delete要求MCP+owner并禁止TENANT_CATALOG；publish独立为当前非personal admin、非SERVICE、ONLY_ME的固定external链接。logo另需实际gate3870713715，不默认true。当前DTO须补owners/type/status/review、account角色/account_user_id及distribution_channel，不把字段缺失当拥有权限。
+
+优先实现fresh资格和name/description共用source编辑弹层：名称trim后非空且不同，描述原样允许空/保首尾空白；不套nickname64字符限制。固定CODEX/settings PATCH /aip/connectors/{rawMetadataId}/name {name}或/description {description}，无任意field/url。pending禁输入/取消/关闭；失败保草稿，取消零写。ACK后同身份实际GET验证，未知仅重读，不能以本地编辑值改hosted标题冒成功；header必须真实刷新得到新值。
+
+后续delete独立确认“永久删除 {name} 及其连接？此操作无法撤消”，固定无body DELETE /aip/connectors/{id}；确认、tenant限制、204/未知读回及replace管理根分别验，不操作真实账号危险数据作自动测试。publish只开精确https://chatgpt.com/admin/apps#drafts?publish=<encoded id>，不模拟发布；logo没有独立上传服务，待gate证据后另接PNG<=10KB的FileReader data URL固定PATCH，当前不开发猜测可见入口。
+
+每项覆盖个人/工作区USER owner/WORKSPACE admin owner/非owner/metadata错误/账号ABA、字段原样及取消/pending/known reject/unknown真实读回，弹层焦点/IME与宽窄配对另验。本段是下一工作包输入，不表示已接或已验。

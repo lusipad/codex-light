@@ -141,7 +141,7 @@ pub(super) fn standalone_app(app_id: &str, content: Value) -> ServiceResult<Valu
         "logoUrl":light.or(dark),"logoUrlDark":dark.or(light)}))
 }
 
-fn app_details_links(app_id: &str, accessible: Value) -> ServiceResult<Value> {
+pub(super) fn app_details_links(app_id: &str, accessible: Value) -> ServiceResult<Value> {
     let rows = accessible.get("links").and_then(Value::as_array).ok_or_else(app_details_invalid)?;
     let mut links = Vec::new();
     for value in rows {

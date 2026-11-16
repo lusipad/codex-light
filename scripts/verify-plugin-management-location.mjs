@@ -11,6 +11,15 @@ const { parsePluginManagementLocation: parse, pluginManagementDetailUrl: detail,
 const { pluginManagementAppUrl: app, pluginManagementAppSelectionUrl: selection } = module.exports;
 const { pluginManagementPermissionSelectionUrl: permissionSelection } = module.exports;
 const { pluginManagementAppSyncUrl: syncUrl } = module.exports;
+const { servicePluginManagementDetailId: serviceDetail, pluginManagementSkillCloseUrl: closeSkill } = module.exports;
+assert.equal(serviceDetail("/settings/plugins-settings/raw%2Fid/skills/raw%2Fname"), "raw/id");
+assert.equal(closeSkill("/settings/plugins-settings/raw%2Fid/skills/raw%2Fname?linkId=old#old"), "/settings/plugins-settings/raw%2Fid");
+for (const suffix of ["?hostId=local", "?hostId=ssh", "?pluginName=other", "?marketplacePath=D%3A%2Fmarket", "?remoteMarketplaceName=workspace"]) {
+  const source = `/settings/plugins-settings/raw/skills/name${suffix}`;
+  assert.equal(serviceDetail(source), null);
+  assert.throws(() => closeSkill(source));
+}
+for (const suffix of ["/apps/app", "/permissions", "/sync"]) assert.equal(serviceDetail(`/settings/plugins-settings/raw${suffix}`), null);
 const base = "/settings/plugins-settings?hostId=stale&tab=mcps&marketplacePath=old&unrelated=discard#old";
 assert.equal(parse(base).kind, "root");
 assert.equal(parse(base).hostId, "stale");
@@ -95,8 +104,11 @@ assert.equal(canonicalSelected.pathname, "/settings/plugins-settings/raw%2Fplugi
 assert.equal(canonicalSelected.searchParams.get("linkId"), "link/?中文");
 assert.equal(canonicalSelected.searchParams.get("keep"), "literal/value"); assert.equal(canonicalSelected.hash, "#anchor");
 assert.equal(new URL(canonicalSelection(canonicalSelected, null), "https://test.invalid").searchParams.has("linkId"), false);
-for (const route of [base, "/settings/plugins-settings/p/apps/a", "/settings/plugins-settings/p/permissions", "/settings/plugins-settings/p/sync", "/settings/plugins-settings/p/skills/a", "/settings/plugins-settings/p?hostId=local", "/settings/plugins-settings/p?pluginName=p", "/settings/plugins-settings/p?marketplacePath=x", "/settings/plugins-settings/p?remoteMarketplaceName=x"]) assert.throws(() => canonicalSelection(route, "link"), /Invalid/);
+const canonicalSkillBase = "/settings/plugins-settings/p/skills/a?keep=value#anchor";
+assert.equal(canonicalSelection(canonicalSkillBase, "link"), "/settings/plugins-settings/p/skills/a?keep=value&linkId=link#anchor");
+assert.equal(syncUrl(canonicalSkillBase, "actual/link"), "/settings/plugins-settings/p/sync?linkId=actual%2Flink");
+for (const route of [base, "/settings/plugins-settings/p/apps/a", "/settings/plugins-settings/p/permissions", "/settings/plugins-settings/p/sync", "/settings/plugins-settings/p?hostId=local", "/settings/plugins-settings/p?pluginName=p", "/settings/plugins-settings/p?marketplacePath=x", "/settings/plugins-settings/p?remoteMarketplaceName=x"]) assert.throws(() => canonicalSelection(route, "link"), /Invalid/);
 assert.equal(syncUrl('/settings/plugins-settings/plugin?keep=drop#old', null), '/settings/plugins-settings/plugin/sync');
 const sync = new URL(syncUrl(appBase, 'actual/?中文'), 'https://test.invalid');
 assert.equal(sync.pathname, '/settings/plugins-settings/plugin/apps/connector_A/sync'); assert.equal(sync.searchParams.get('linkId'), 'actual/?中文'); assert.equal(sync.searchParams.size, 1); assert.equal(sync.hash, '');
-for (const route of [base, '/settings/plugins-settings/apps/app', '/settings/plugins-settings/plugin/permissions', '/settings/plugins-settings/plugin/sync', '/settings/plugins-settings/plugin?hostId=ssh', '/settings/plugins-settings/plugin/skills/name']) assert.throws(() => syncUrl(route, 'link'), /Invalid/);
+for (const route of [base, '/settings/plugins-settings/apps/app', '/settings/plugins-settings/plugin/permissions', '/settings/plugins-settings/plugin/sync', '/settings/plugins-settings/plugin?hostId=ssh']) assert.throws(() => syncUrl(route, 'link'), /Invalid/);

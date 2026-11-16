@@ -4,6 +4,7 @@ import { useGenericPluginUsage } from "../genericPluginUsage";
 import { canonicalMcpAppId } from "../pluginManagementMcp";
 import { PluginManagementDetail } from "./PluginManagementDetail";
 import { PluginLogo } from "./PluginLogo";
+import { PluginServiceSkillRow } from "./PluginServiceSkillRow";
 import "./GenericPluginManagementPage.css";
 
 interface GenericPluginManagementPageProps {
@@ -14,9 +15,12 @@ interface GenericPluginManagementPageProps {
   onViewDetails?: () => void;
   onOpenApp: (appId: string) => void;
   isCurrent: () => boolean;
+  selectedSkillName?: string | null;
+  onCloseSkill?: () => void;
+  onRetryRequirements?: () => void;
 }
 
-export function GenericPluginManagementPage({ connectionIdentity, snapshot, actions, onBack, onViewDetails, onOpenApp, isCurrent }: GenericPluginManagementPageProps) {
+export function GenericPluginManagementPage({ connectionIdentity, snapshot, actions, onBack, onViewDetails, onOpenApp, isCurrent, selectedSkillName, onCloseSkill, onRetryRequirements }: GenericPluginManagementPageProps) {
   const mounted = useRef(false);
   const scope = useRef({ snapshot, connectionIdentity, epoch: 0 });
   if (scope.current.snapshot !== snapshot || scope.current.connectionIdentity !== connectionIdentity) {
@@ -65,10 +69,9 @@ export function GenericPluginManagementPage({ connectionIdentity, snapshot, acti
     </section>}
     {detail.skills.length > 0 && <section className="gpm-section" aria-label="技能">
       <h2>技能</h2>
-      <div className="gpm-group">{detail.skills.map(skill => <div className="gpm-row gpm-skill" key={skill.name}>
-        <span className="gpm-label"><span>{skill.interface?.displayName ?? skill.name}</span>
-          {(skill.interface?.shortDescription ?? skill.description) && <span className="gpm-description">{skill.interface?.shortDescription ?? skill.description}</span>}</span>
-      </div>)}</div>
+      <div className="gpm-group">{detail.skills.map(skill => <PluginServiceSkillRow key={skill.name} scope={identity} snapshot={snapshot} skill={skill}
+        links={usage.links} linksError={usage.linksError} selectedSkillName={selectedSkillName} onCloseSkill={onCloseSkill}
+        onRetryRequirements={onRetryRequirements} isCurrent={current} />)}</div>
     </section>}
   </PluginManagementDetail>;
 }

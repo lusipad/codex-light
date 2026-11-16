@@ -1,0 +1,22 @@
+/* TZ2Y xwideTall structure; paired pixels and native behavior remain unverified. */
+.pscd-dialog { width: 680px; max-width: 92vw; height: min(92vh, 800px); max-height: min(92vh, 800px); margin: auto; padding: 0; box-sizing: border-box; overflow: hidden; border: .5px solid var(--border-default); border-radius: 24px; background: var(--bg-primary); color: var(--text-primary); box-shadow: 0 16px 48px #0004; }
+.pscd-dialog::backdrop { background: #0006; }
+.pscd-layout { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.pscd-header { display: flex; flex-shrink: 0; align-items: center; gap: 12px; padding: 20px; }
+.pscd-header h2 { flex: 1; min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: var(--text-lg); line-height: 28px; font-weight: 500; }
+.pscd-icon { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; flex-shrink: 0; border: 1px solid var(--border-default); border-radius: 8px; color: var(--text-secondary); }
+.pscd-close { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 6px; color: var(--text-secondary); background: transparent; cursor: pointer; }
+.pscd-close:hover { background: var(--bg-hover); }
+.pscd-header-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.pscd-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; user-select: text; }
+.pscd-metadata { margin: 0 20px 16px; padding: 16px; }
+.pscd-metadata > div { display: grid; grid-template-columns: minmax(0, 120px) minmax(0, 1fr); gap: 16px; padding: 8px 0; font-size: var(--text-sm); line-height: 20px; }
+.pscd-metadata dt { color: var(--text-secondary); overflow-wrap: anywhere; }
+.pscd-metadata dd { min-width: 0; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.pscd-body { min-width: 0; padding: 0 24px 24px; font-size: var(--text-sm); line-height: 20px; overflow-wrap: anywhere; }
+.pscd-body .markdown-view { min-width: 0; }
+.pscd-loading { display: flex; flex-direction: column; gap: 12px; padding: 8px 0; }
+.pscd-loading span { height: 12px; border-radius: 4px; background: var(--bg-hover); }
+.pscd-loading span:last-child { width: 65%; }
+.pscd-footer { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 16px 24px 24px; font-size: var(--text-sm); }
+.pscd-close:focus-visible, .pscd-footer button:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }

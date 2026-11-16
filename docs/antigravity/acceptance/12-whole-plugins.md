@@ -371,3 +371,29 @@ W/Y域转换复用mapRemotePlugins并局部补齐源字段：真实匹配库存�
 可核路径：服务插件根→真实头/关于与pS使用应用→应用metadata及重新关联提示→同插件App深链；卸载确认→写后读回或未知结果仅读恢复；全局库存失败不掩盖已核验根操作；focus/插件变更刷新退休旧根。共享父壳仍有本机库存/技能/config读取，但该服务详情不恢复本机plugin/read、不挂本机详情/MCP设置消费者。验证基于生产组件/客户端与隔离transport，未执行真实账号HTTP/授权。
 
 视觉score=null；没有当前构建的原生GUI/物理IME或官方同环境配对像素结论，没有托管CI或用户验收。本阶段只本地提交、不推送发布；技能正文/启禁、模板setup、hosted设置/图标及授权残项仍在第02批队列。下一包使用已核6资源/35锚点技能合同，不能把本候选当整页或最终1:1。
+
+### 技能正文与直接启禁阶段：统一检查中（cd40823之后，2026-11-16）
+
+本阶段已接正文固定PROMPT_TEXT_AREA/settings GET、严格白名单和missing/null/空串三态、xwideTall内容弹层、技能行及精确深链；行与弹层共享同一开关、写锁和可见反馈。启禁fresh核真实detail技能唯一归属、完整库存enabled字段存在性、disabled名单、admin及pS/fD关联资格；不按personal/owner/default安装/插件整体enabled真假扩大门禁。启用需关联时本阶段明确不启动未接OAuth；已启用关闭不因links失败锁死。
+
+结果区分accepted/unknown/not_sent/rejected：发送前读失败或资格拒绝明确未写；已知同值仅在fresh目标读回后确认无需写；明确4xx拒绝与408/5xx/传输未知分开，拒绝不自动重试且允许下一新显式动作。ACK/未知仅完整库存读回确认，客户端再次校验安装/名单已知/精确目标，不信单一成功标签；未知只读恢复复用既有根读取，不新增每行库存API。正文关闭不取消同row启禁；root/账号/旧动作票据仍隔离。整row/page真正卸载后pending ref不持久化，重进先读根数据、没有自动重放；不冒称跨组件/跨重启的未知意图恢复。
+
+22项技能Rust专项（8正文+14启禁）、10组定向前端脚本、TypeScript均退出0；not_sent同值、rejected误unknown、缺enabled安装存在性、缺名单不永久锁死、深链关闭写scope稳定与焦点问题均有定向先红后绿。当前529产品输入已冻结，完整前端与全Rust仍运行，尚无本阶段完整标准/原生产物/提交或CI结果。
+
+官方7资源/53锚点已重新核大小/hash和严格UTF-16起止/原文；SK12/SK17历史越EOF终点保留修正记录。source确认技能row没有图标槽，生成glyph仅contents弹层；default开关32×20/thumb16（官方根16px）、主题switch token及RTL偏移有依据。生成glyph/主题预设的全局token消费者仍有差距。CUA浏览器工具初始化两次均失败（kernel assets路径缺失），本轮没有宽窄截图、原生GUI/IME或配对像素；score=null。证据根`.ref/parity/12/whole-page/actual/plugin-skill-contents-r2-20261116/`。
+
+技能包后续完整检查点：907项全Rust、0失败/忽略/过滤（132.96秒）退出0；217项完整前端回放退出0；529项产品输入再次hash稳定。非Fast标准检查已用固定CLI0.165.0启动，当前进程20702仍运行。尚未本包原生构建/提交；不把上一cd40823产物作为新技能代码验收。下一独立管理应用合同已产出，需先核资格/DTO再开发；徽标运行时gate未证实不能默认开启。
+
+### 服务技能正文与直接启禁阶段候选（2026-11-16）
+
+统一检查已结束：907全Rust（0失败/忽略/过滤，132.96秒）、217前端生产回放、非Fast标准/34真实隔离协议探针、EXE/MSI/NSIS原生构建均退出0。529项产品输入从冻结至产物收集hash不变；input manifest SHA-256 `c69058b0112d808c263210048eccac65589b2b7ef7d9cd9ef6173f6b02f473df`。不同于此前22专项通过，本段记录完整检查终态。
+
+候选`dist-artifacts/plugins-r2-service-skills-20261116/`：EXE 31,030,784字节、SHA-256 `4b87362834f320c4c3a518eec213d1b91bca9048328db04702842eceace4ddbb`；MSI 9,977,856字节、`ad60c942e61548d3245063e103f85fa44fb5b5a6cdbb9998fa602256f65b2e1f`；NSIS 6,708,195字节、`633d38611901c769b40b9625cb5b3d19dfea5b8814ca33ee9347601ecbc4ac7d`。三项mtime均晚于本轮冻结；源码绑定见本包candidate-artifacts.json/verification-summary.json的sourceCommit。
+
+可复现范围：generic服务根技能行→原始Markdown内容/权限status/正文失败重试→同一row与modal header开关；正文关闭保同row写入；未装/管理员/缺名单/pS普通、系统、reauth/关联失败的精确资格；直接enable/disable后实际完整库存读回、明确拒绝与未知只读恢复；skill深链关闭replace根，canonical分派保留及账户选择/sync路径分别正确。所有服务写验证为隔离transport，不执行真实账号操作；登录状态只读确认配置CLI为ChatGPT，没有记录原输出/令牌，不能据此宣称私有服务实际授权通过。
+
+CUA缺kernel assets路径，两次初始化失败，本阶段无新浏览器图/原生GUI/物理IME或官方配对像素，visual score=null；OAuth/hosted连接分支、模板setup、生成glyph、完整主题switch token消费者、跨整row/page卸载的pending持久化仍未收口。该候选不是整页、用户验收或1:1完成。
+
+远端已只读刷新：最新可见run42644930892仍为2026-11-09的旧push，check129255526818注释为账单/支出限制导致job未启动；没有更新的run，当前账户限制是否恢复未验证，不将旧失败当当前源码失败或当前账单状态。本阶段仅本地提交，不推送/发布，不报告同提交托管CI通过。下一独立App管理合同的4资源/15代码锚点/20中文定位已核，先接fresh资格与name/description，再按各自gate处理删除/发布；徽标gate未知不能默认放行。
+
+收尾补丁验证范围：完整907 Rust/217前端/非Fast34探针之后，删除本轮迁移产生的未使用servicePluginManagementRootId，仅src/pluginManagementLocation.ts一项产品输入变化，所有Rust输入hash未变。补跑5组路由/父页/根组件回归及TypeScript退出0，重新冻结529输入并重建EXE/MSI/NSISexit0；本节上列hash已更新为最终候选。初版输入/产物元数据保留*-pre-helper-removal.json，补丁范围见post-check-patch.json；不将原217前端报告成补丁后再跑217。没有新增行为或测试绕过。

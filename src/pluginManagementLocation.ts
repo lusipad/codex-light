@@ -70,11 +70,17 @@ function checkedBase(base: string | URL): PluginManagementLocation {
   return location;
 }
 
-/** The unqualified service root is read by its own HTTP-backed root controller. */
-export function servicePluginManagementRootId(input: string | URL): string | null {
+/** Service skill deep links share the real service detail, never local plugin/read. */
+export function servicePluginManagementDetailId(input: string | URL): string | null {
   const location = parsePluginManagementLocation(input);
   return location?.kind === "plugin" && location.section === "detail" && location.hostId === null && location.appId === null &&
-    location.skillName === null && location.pluginName === null && location.marketplacePath === null && location.remoteMarketplaceName === null ? location.pluginId : null;
+    location.pluginName === null && location.marketplacePath === null && location.remoteMarketplaceName === null ? location.pluginId : null;
+}
+
+export function pluginManagementSkillCloseUrl(input: string | URL): string {
+  const location = parsePluginManagementLocation(input), pluginId = servicePluginManagementDetailId(input);
+  if (!pluginId || location?.skillName === null) throw new Error("Invalid service skill location");
+  return `${managementRoot}/${encodeURIComponent(pluginId)}`;
 }
 
 function encodedSegment(value: string): string {
@@ -116,7 +122,7 @@ export function pluginManagementPermissionSelectionUrl(base: string | URL, linkI
 /** Canonical App details keep the service plugin root while selecting an account. */
 export function pluginManagementCanonicalSelectionUrl(base: string | URL, linkId: string | null): string {
   const location = checkedBase(base);
-  if (location.kind !== "plugin" || location.section !== "detail" || location.hostId !== null || location.appId !== null || location.skillName !== null ||
+  if (location.kind !== "plugin" || location.section !== "detail" || location.hostId !== null || location.appId !== null ||
       location.pluginName !== null || location.marketplacePath !== null || location.remoteMarketplaceName !== null) throw new Error("Invalid canonical plugin selection location");
   const url = managementUrl(base)!;
   if (linkId === null) url.searchParams.delete("linkId");
@@ -127,7 +133,7 @@ export function pluginManagementCanonicalSelectionUrl(base: string | URL, linkId
 /** t3('sync') constructs only the current actual linkId, not the old query. */
 export function pluginManagementAppSyncUrl(base: string | URL, linkId: string | null): string {
   const location = checkedBase(base);
-  if (location.kind !== "plugin" || location.section !== "detail" || location.hostId !== null || !location.pluginId || location.skillName) throw new Error("Invalid plugin sync source location");
+  if (location.kind !== "plugin" || location.section !== "detail" || location.hostId !== null || !location.pluginId) throw new Error("Invalid plugin sync source location");
   const app = location.appId === null ? "" : `/apps/${encodedSegment(location.appId)}`;
   if (linkId !== null) encodedSegment(linkId);
   const query = linkId === null ? "" : `?${new URLSearchParams({ linkId })}`;

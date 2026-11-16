@@ -542,6 +542,26 @@ export async function readPluginUsageMetadata(appId: string, identity: ServiceId
   return responseBody(result, requestId, identity);
 }
 
+export async function readPluginSkillContents(pluginId: string, skillName: string, identity: ServiceIdentity, signal: AbortSignal): Promise<unknown> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; body: unknown }>(
+    "plugin_skill_contents_read", requestId,
+    { request: { requestId, expectedIdentity: identity, profile: browserProfile(), pluginId, skillName } }, signal,
+  );
+  return responseBody(result, requestId, identity);
+}
+
+export async function toggleServicePluginSkill(pluginId: string, skillName: string, enabled: boolean, identity: ServiceIdentity, signal: AbortSignal): Promise<ProfileMutationResult> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<ProfileMutationResult & { requestId: string; identity: ServiceIdentity }>(
+    "plugin_skill_toggle", requestId,
+    { request: { requestId, expectedIdentity: identity, profile: browserProfile(), pluginId, skillName, enabled } }, signal,
+  );
+  responseBody(result, requestId, identity);
+  if (!["confirmed", "pending"].includes(result.verification)) throw Error("无法确认技能状态，请重新读取。");
+  return result;
+}
+
 export async function readPluginUsageLinks(appIds: string[], identity: ServiceIdentity, signal: AbortSignal): Promise<unknown> {
   const requestId = crypto.randomUUID();
   const result = await invokeService<{ requestId: string; identity: ServiceIdentity; body: unknown }>(

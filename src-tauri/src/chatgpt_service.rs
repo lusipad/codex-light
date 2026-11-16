@@ -18,6 +18,10 @@ mod plugin_app_details;
 pub use plugin_app_details::{PluginAppDetailsRequest, PluginAppEntryRequest, PluginUsageLinksRequest};
 mod plugin_canonical_root;
 pub use plugin_canonical_root::PluginCanonicalRootRequest;
+mod plugin_skill_contents;
+pub use plugin_skill_contents::PluginSkillContentsRequest;
+mod plugin_skill_toggle;
+pub use plugin_skill_toggle::PluginSkillToggleRequest;
 mod plugin_app_accounts;
 pub use plugin_app_accounts::PluginAppRenameRequest;
 mod plugin_app_disconnect;
@@ -873,6 +877,7 @@ impl ChatgptService {
                     let (sku, surface) = match context {
                         RemotePluginHttpContext::Directory => ("CONNECTOR_SETTING", "plugin_directory"),
                         RemotePluginHttpContext::Catalog => ("CONNECTOR_SETTING", "other"),
+                        RemotePluginHttpContext::SkillContents => ("PROMPT_TEXT_AREA", "settings"),
                         RemotePluginHttpContext::Service => (if method == HttpMethod::Post { "CONNECTOR_SETTING" } else { "CODEX" }, "other"),
                     };
                     outgoing.headers.insert("OAI-Product-Sku".into(), sku.into());
@@ -3190,7 +3195,7 @@ fn build_cloud_http_request(
 enum HttpMethod { Get, Post, Put, Patch, Delete }
 
 #[derive(Clone, Copy)]
-enum RemotePluginHttpContext { Service, Directory, Catalog }
+enum RemotePluginHttpContext { Service, Directory, Catalog, SkillContents }
 
 struct HttpRequest {
     url: String,

@@ -7,11 +7,13 @@ type RootActions = { blocked: boolean; accountCount: number; isCurrent: () => bo
 type Props = Omit<React.ComponentProps<typeof PluginAppDetailsPage>, "appId" | "canonicalRoot" | "onUnavailable" | "onOpenPlugin" | "renderCanonicalActions"> & {
   onOpenApp: (appId: string) => void;
   refreshRevision?: number;
+  selectedSkillName?: string | null;
+  onCloseSkill?: () => void;
   renderCanonicalActions?: (context: RootActions) => React.ReactNode;
 };
 type RootState = { scope: string; version: number; loading: boolean; snapshot: PluginCanonicalRootSnapshot | null; error: boolean };
 
-export function PluginCanonicalRootPage({ onOpenApp, refreshRevision, renderCanonicalActions, ...props }: Props) {
+export function PluginCanonicalRootPage({ onOpenApp, refreshRevision, selectedSkillName, onCloseSkill, renderCanonicalActions, ...props }: Props) {
   const scope = JSON.stringify([props.connectionIdentity, props.pluginId, refreshRevision]);
   const lifetime = useRef({ scope, version: 0, mounted: false });
   if (lifetime.current.scope !== scope) lifetime.current = { scope, version: lifetime.current.version + 1, mounted: false };
@@ -61,6 +63,8 @@ export function PluginCanonicalRootPage({ onOpenApp, refreshRevision, renderCano
       : <p role="status">正在加载…</p>}
   </article>;
   if (snapshot.kind === "generic") return <GenericPluginManagementPage connectionIdentity={props.connectionIdentity} snapshot={snapshot}
+    selectedSkillName={selectedSkillName} onCloseSkill={() => { if (isCurrent()) onCloseSkill?.(); }}
+    onRetryRequirements={() => { if (isCurrent()) reload(); }}
     isCurrent={isCurrent} onBack={() => { if (isCurrent()) props.onBack(); }}
     onViewDetails={props.onViewDetails ? () => { if (isCurrent()) props.onViewDetails?.(); } : undefined}
     onOpenApp={appId => { if (isCurrent() && snapshot.genericUsage.some(entry => entry.id === appId)) onOpenApp(appId); }}

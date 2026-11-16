@@ -3120,3 +3120,13 @@ W/Y域转换复用mapRemotePlugins并局部补齐源字段：真实匹配库存�
 本包完整重验已结束：213前端回放和885全Rust（0失败/忽略/过滤、132.70秒）退出0，521产品输入hash稳定。非Fast标准检查按固定CLI0.165.0开始；原生候选待标准结束后串行构建，当前未提交。下一轮沿同一活跃标准进程继续，不因静默或观察超时另启Cargo。
 
 普通根阶段候选已完成：885全Rust、213前端回放、非Fast标准/34隔离探针、新EXE/MSI/NSIS均退出0，521产品输入稳定。候选dist-artifacts/plugins-r2-generic-root-20261116；EXE SHA-256 3ad7c56441e58c9c4c5df3773a7d704d6a551b01fcd00c6d4fa76462dffebe50。准确产物/输入hash见插件验收记录与本包JSON。准备按Lore本地提交，不推送或发布；没有真实HTTP、原生GUI/IME、配对像素、托管CI或用户验收。下一包技能正文/直接启禁的6资源/35片段与680px/max92vw、min(92vh,800px) contents弹层合同已核，继续第02批。
+
+2026-11-16技能正文只读包继续开发：实际新增固定服务reader/DTO/IPC桥、状态hook、xwideTall contents弹层和Generic技能行/深链接线；8项Rust专项先红后绿、0失败/885 filtered。定向生产UI已覆盖row打开、deep关闭replace、canonical保路径选择及插件级sync、无CLI详情、旧回调/账号/焦点清理。SK12/SK17越EOF的来源终点已保留修正记录，不再将JS slice截尾当严格范围有效。上一候选cd40823保持独立；新包无完整标准/原生构建或提交，技能启禁与授权/宿主残项继续。
+
+2026-11-16技能正文与启禁已集成进入统一检查：22技能Rust专项（8正文+14启禁）、10定向前端与TypeScript退出0；529产品输入冻结。新增真实服务直接启禁、严格读回、明确not_sent/rejected与unknown分类，行/弹层同写锁、可见footer；source边界不要求personal/default/plugin整体启用。修复同值读回被误当失败、明确4xx永久锁定、缺enabled误判已装、缺disabled名单自造禁用、深链关闭误abort同row写等。完整前端/全Rust进行中，尚不计本包标准/构建/提交。7资源/53严格范围锚点已核；CUA两次初始化失败使浏览器/原生/配对像素未验。OAuth/hosted能力、真实HTTP、全局主题switch预设token及生成glyph差距仍列队列；pending意图仅row hook ref，不宣称跨整页卸载/重启持久。
+
+技能包完整前端217、全Rust907（0失败/忽略/过滤，132.96秒）退出0，529产品输入稳定。非Fast标准检查进程20702正在运行，下一轮继续同一handle，之后再串行原生构建/收集/本地提交。独立ManageApp补证合同已产出：fresh资格、name/description可独立，删除与发布各有不同owner/admin/distribution_channel约束，logo另有未证实运行时gate；没有为了填页面借账户/权限/sync分支。
+
+技能正文与直接启禁阶段完成候选验证：907全Rust、217前端、非Fast标准/34隔离探针、新EXE/MSI/NSIS均exit0，529产品输入稳定。dist-artifacts/plugins-r2-service-skills-20261116/CodexNative.exe SHA-256 4b87362834f320c4c3a518eec213d1b91bca9048328db04702842eceace4ddbb；完整hash见验收记录/本包JSON。fresh来源7资源/53锚点、独立ManageApp下一合同4/15/20已核。此处代码与控制器闭环不代表真实HTTP、原生GUI/IME、配对像素或用户验收；pending row卸载持久化/OAuth/hosted/glyph/theme tokens仍缺。本轮只读login status确认配置CLI为ChatGPT且无令牌日志，不声称远端服务授权。远端latest仍11月9日旧run42644930892账单未启动，没有新run可证明当前是否恢复；按阶段仅本地提交，不推送发布或称CI通过。总计划1.7更新当前检查点，继续第02批独立App资格/name/description。
+
+收尾删除本轮路由迁移留下的未使用旧helper；最终比对只src/pluginManagementLocation.ts变化，Rust输入不变。完整907/217/34之后另补5组路由/父级/根组件+TypeScript，再冻结529输入并重新原生打包exit0。最终EXE SHA-256 4b87362834f320c4c3a518eec213d1b91bca9048328db04702842eceace4ddbb；验收/元数据已换最终hash，初版元数据保留，未声称末补丁后重跑217。

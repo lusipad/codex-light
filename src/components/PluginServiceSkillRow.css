@@ -1,0 +1,19 @@
+/* Static tc action placement; native and paired pixel verification remain separate. */
+.pssr-skill { min-width: 0; }
+.pssr-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; min-width: 0; border-radius: 8px; }
+.pssr-row:hover, .pssr-row:focus-within { background: var(--bg-hover); }
+.pssr-main { display: grid; grid-template-columns: subgrid; grid-area: 1 / 1 / 2 / 4; align-items: center; gap: 8px; min-width: 0; width: 100%; padding: 12px 16px; border: 0; border-radius: inherit; background: transparent; color: var(--text-primary); text-align: start; font: inherit; cursor: pointer; }
+.pssr-main:focus-visible { outline: 2px solid var(--border-focus); outline-offset: -2px; }
+.pssr-label { display: flex; grid-column: 1; min-width: 0; flex-direction: column; gap: 2px; overflow-wrap: anywhere; font-size: var(--text-sm); font-weight: 500; }
+.pssr-description { font-size: var(--text-xs); line-height: 16px; font-weight: 400; color: var(--text-secondary); }
+.pssr-chevron { display: inline-flex; grid-column: 3; color: var(--text-secondary); }
+.pssr-switch { position: relative; grid-area: 1 / 2 / 2 / 3; margin-right: 8px; }
+.pssr-toggle { display: inline-block; position: relative; flex-shrink: 0; width: 32px; height: 20px; padding: 0; border: 0; border-radius: 999px; background: color-mix(in oklab, var(--color-text, var(--text-primary)) 10%, transparent); color: var(--text-primary); cursor: pointer; }
+.pssr-toggle::after { content: ""; position: absolute; width: 16px; height: 16px; left: 2px; top: 2px; border-radius: 50%; background: var(--switch-thumb-color, #fff); box-shadow: 0 1px 2px #0003; }
+.pssr-toggle.on { background: var(--switch-track-color-checked, var(--color-background-accent-solid, #0285ff)); }
+.pssr-toggle.on::after { transform: translateX(12px); background: var(--switch-thumb-color-checked, var(--switch-thumb-color, #fff)); }
+.pssr-toggle:disabled { opacity: .6; cursor: not-allowed; }
+.pssr-toggle:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-ring, var(--border-focus)); }
+.pssr-toggle:dir(rtl)::after { left: auto; right: 2px; }
+.pssr-toggle.on:dir(rtl)::after { transform: translateX(-12px); }
+.pssr-feedback { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 4px 16px 12px; font-size: var(--text-sm); color: var(--text-secondary); }

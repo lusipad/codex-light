@@ -95,7 +95,7 @@ vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/chatgptService.ts", "
   navigator: { userAgent: "private-fixture", userAgentData: { brands: [{ brand: "Chromium", version: "140" }], platform: "Windows" } },
   localStorage: { getItem: () => "private-device" }, require: name => name === "./bridge" ? { tauriInvoke: async (command, args) => {
     sent.push({ command, args });
-    return { requestId: args.request.requestId, identity: wrongIdentity ? { ...identity, generation: 9 } : identity, body: response };
+    return { requestId: args.request.requestId, identity: wrongIdentity ? { ...identity, generation: 9 } : identity, body: response, readback: null, verification: "pending" };
   } } : {} });
 assert.equal(await bridgeExports.readPluginAppDetails("plugin", "asdk_app_A", identity, signal), response);
 assert.equal(sent[0].command, "plugin_app_details_read");
@@ -136,4 +136,30 @@ for (const [method, command, target, field] of [
   assert.equal(sent.length, count);
   assert.ok(fs.readFileSync("src-tauri/src/lib.rs", "utf8").includes(`            ${command},`));
 }
+wrongIdentity = false;
+assert.equal(await bridgeExports.readPluginSkillContents("raw/plugin", "raw/skill", identity, signal), response);
+assert.equal(sent.at(-1).command, "plugin_skill_contents_read");
+assert.equal(sent.at(-1).args.request.pluginId, "raw/plugin");
+assert.equal(sent.at(-1).args.request.skillName, "raw/skill");
+assert.equal(sent.at(-1).args.request.expectedIdentity, identity);
+assert.equal("path" in sent.at(-1).args.request, false);
+wrongIdentity = true;
+await assert.rejects(bridgeExports.readPluginSkillContents("raw/plugin", "raw/skill", identity, signal), /账号发生变化/);
+const beforeSkillCancelled = sent.length;
+await assert.rejects(bridgeExports.readPluginSkillContents("raw/plugin", "raw/skill", identity, cancelled.signal), /已取消/);
+assert.equal(sent.length, beforeSkillCancelled);
+assert.ok(fs.readFileSync("src-tauri/src/lib.rs", "utf8").includes("            plugin_skill_contents_read,"));
+wrongIdentity = false;
+const skillMutation = await bridgeExports.toggleServicePluginSkill("raw/plugin", "raw/skill", false, identity, signal);
+assert.equal(skillMutation.body, response); assert.equal(skillMutation.verification, "pending");
+assert.equal(sent.at(-1).command, "plugin_skill_toggle");
+assert.equal(sent.at(-1).args.request.pluginId, "raw/plugin"); assert.equal(sent.at(-1).args.request.skillName, "raw/skill");
+assert.equal(sent.at(-1).args.request.enabled, false); assert.equal(sent.at(-1).args.request.expectedIdentity, identity);
+assert.equal("url" in sent.at(-1).args.request, false); assert.equal("links" in sent.at(-1).args.request, false);
+wrongIdentity = true;
+await assert.rejects(bridgeExports.toggleServicePluginSkill("raw/plugin", "raw/skill", true, identity, signal), /账号发生变化/);
+const beforeToggleCancelled = sent.length;
+await assert.rejects(bridgeExports.toggleServicePluginSkill("raw/plugin", "raw/skill", true, identity, cancelled.signal), /已取消/);
+assert.equal(sent.length, beforeToggleCancelled);
+assert.ok(fs.readFileSync("src-tauri/src/lib.rs", "utf8").includes("            plugin_skill_toggle,"));
 console.log("Plugin app details: strict ownership/shape, field allowlist, visible-link selection and account/generation/cancellation isolation passed.");

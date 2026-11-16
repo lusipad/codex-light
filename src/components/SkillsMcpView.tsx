@@ -46,7 +46,7 @@ import { PluginPreparationPanel } from "./PluginPreparationPanel";
 import { RecommendedSkillsPanel } from "./RecommendedSkillsPanel";
 import { recommendedSkillDisplayName, readRecommendedSkills, type RecommendedSkill } from "../recommendedSkills";
 import { filterManagedSkills } from "../pluginManagementSkills";
-import { parsePluginManagementLocation, servicePluginManagementRootId, pluginManagementAppSelectionUrl, pluginManagementCanonicalSelectionUrl, pluginManagementAppSyncUrl, pluginManagementAppUrl, pluginManagementDetailUrl, pluginManagementPermissionSelectionUrl, pluginManagementRootUrl } from "../pluginManagementLocation";
+import { parsePluginManagementLocation, servicePluginManagementDetailId, pluginManagementSkillCloseUrl, pluginManagementAppSelectionUrl, pluginManagementCanonicalSelectionUrl, pluginManagementAppSyncUrl, pluginManagementAppUrl, pluginManagementDetailUrl, pluginManagementPermissionSelectionUrl, pluginManagementRootUrl } from "../pluginManagementLocation";
 import { PluginCanonicalRootPage } from "./PluginCanonicalRootPage";
 import { PluginCanonicalUninstall } from "./PluginCanonicalUninstall";
 import { SkillPreviewDialog } from "./SkillPreviewDialog";
@@ -827,7 +827,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     let disposed = false, unlisten: (() => void) | undefined;
     const refresh = () => {
       if (disposed || unsupportedDirectoryHost()) return;
-      if (manageOnly && window.location && servicePluginManagementRootId(window.location.href)) setDirectoryRefreshRevision(value => value + 1);
+      if (manageOnly && window.location && servicePluginManagementDetailId(window.location.href)) setDirectoryRefreshRevision(value => value + 1);
       void Promise.allSettled([loadInstalledPlugins({ silent: true }), loadServicePlugins(), loadManagement(), loadRemoteSkills(true), loadApps(true)]);
       if (!manageOnly) {
         void loadBrowsePlugins(true);
@@ -1009,7 +1009,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       if (route.kind === "app" && route.appId && route.hostId === null) return;
       if (route.kind === "plugin" && route.section === "detail" && route.appId && route.hostId === null) return;
       if (route.kind === "plugin" && (route.section === "permissions" || route.section === "sync") && route.hostId === null) return;
-      if (servicePluginManagementRootId(window.location.href) !== null) return;
+      if (servicePluginManagementDetailId(window.location.href) !== null) return;
       if (route.kind !== "plugin" || route.section !== "detail" || route.skillName || route.appId) {
         setDetailError(toViewError(new Error("此插件管理子页面尚未接入。"))); return;
       }
@@ -2182,18 +2182,22 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       </section> : null;
 
   if (managementAppRoute?.kind === "plugin" && managementAppRoute.section === "detail" && managementAppRoute.hostId === null &&
-      managementAppRoute.appId === null && managementAppRoute.skillName === null && managementAppRoute.pluginName === null &&
+      managementAppRoute.appId === null && managementAppRoute.pluginName === null &&
       managementAppRoute.marketplacePath === null && managementAppRoute.remoteMarketplaceName === null) {
     const pluginId = managementAppRoute.pluginId!;
+    const selectedSkillName = managementAppRoute.skillName;
     const selectedLinkId = new URL(window.location.href).searchParams.get("linkId");
     const isCurrentRoot = () => {
       const route = parsePluginManagementLocation(window.location.href);
       return isPluginContextCurrent(managementAppContext) && route?.kind === "plugin" && route.section === "detail" && route.pluginId === pluginId &&
-        route.hostId === null && route.appId === null && route.skillName === null && route.pluginName === null && route.marketplacePath === null && route.remoteMarketplaceName === null;
+        route.hostId === null && route.appId === null && route.skillName === selectedSkillName && route.pluginName === null && route.marketplacePath === null && route.remoteMarketplaceName === null;
     };
     const plugin = directoryPluginInstallation(pluginId, mergedInstalledData).plugin;
     return <PluginCanonicalRootPage key={JSON.stringify([connectionIdentity, pluginId])}
       connectionIdentity={connectionIdentity} pluginId={pluginId} selectedLinkId={selectedLinkId} refreshRevision={directoryRefreshRevision}
+      selectedSkillName={selectedSkillName} onCloseSkill={() => {
+        if (selectedSkillName !== null && isCurrentRoot()) updateDirectoryUrl(pluginManagementSkillCloseUrl(window.location.href), true);
+      }}
       onOpenApp={appId => { if (isCurrentRoot()) updateDirectoryUrl(pluginManagementAppUrl(managementBase(), { pluginId, appId })); }}
       onBack={() => { if (isCurrentRoot()) closeManagedDetail(); }}
       onViewDetails={onOpenPluginDirectoryDetail ? () => { if (isCurrentRoot()) onOpenPluginDirectoryDetail(pluginId); } : undefined}

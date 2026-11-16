@@ -310,3 +310,29 @@ console.log("PASS PMB09: canonical removal passes real account count, skips nati
   assert.equal(h.nodes(h.tree).some(node => node.type === "DurablePluginDirectoryPage"), false); assert.match(h.text(h.tree), /当前入口尚不支持该主机/); assert.equal(reads.length, 0, "missing browse host/gate producer must not fall back to local CLI"); h.unmount();
 }
 console.log("PASS PMB10: exact durable entry delegates to service details while local CLI stays blocked; parent preserves directory layout and host-preserving return URL; browse adapter remains unavailable");
+for (const operation of ["close", "canonical-sync", "retired-close"]) {
+  const location = { href: "https://test.invalid/settings/plugins-settings/raw%2Fplugin/skills/raw%2Fskill?keep=value&linkId=old#anchor" }, reads = [];
+  const history = { state: {}, replaceState(state, _, url) { this.state = state; location.href = new URL(url, location.href).href; },
+    pushState(state, _, url) { this.state = state; location.href = new URL(url, location.href).href; } };
+  const view = harness({ window: { location, history }, plugins: { readPlugin: async () => { reads.push("plugin/read"); throw Error("must not use CLI"); } } });
+  view.render(); await view.tick();
+  let root = view.nodes(view.tree).find(node => node.type === "PluginCanonicalRootPage");
+  assert.ok(root); assert.equal(root.props.pluginId, "raw/plugin"); assert.equal(root.props.selectedSkillName, "raw/skill");
+  assert.deepEqual(reads, []);
+  if (operation === "canonical-sync") {
+    assert.equal(root.props.onSelectLink("actual/link", "old"), true);
+    assert.equal(new URL(location.href).pathname, "/settings/plugins-settings/raw%2Fplugin/skills/raw%2Fskill");
+    assert.equal(new URL(location.href).searchParams.get("keep"), "value");
+    view.render(); root = view.nodes(view.tree).find(node => node.type === "PluginCanonicalRootPage"); root.props.onSync("actual/link");
+    assert.equal(new URL(location.href).pathname, "/settings/plugins-settings/raw%2Fplugin/sync");
+    assert.equal(new URL(location.href).searchParams.get("linkId"), "actual/link");
+  } else if (operation === "retired-close") {
+    const previous = location.href = "https://test.invalid/settings/plugins-settings/other/skills/other";
+    root.props.onCloseSkill(); assert.equal(location.href, previous);
+  } else {
+    root.props.onCloseSkill(); assert.equal(new URL(location.href).pathname, "/settings/plugins-settings/raw%2Fplugin");
+    assert.equal(new URL(location.href).search, ""); assert.equal(new URL(location.href).hash, "");
+  }
+  view.unmount();
+}
+console.log("PASS PMB11: service skill deep links use real root dispatch, no CLI detail, replace-close, retired route protection and canonical account/sync URL semantics");

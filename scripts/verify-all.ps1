@@ -381,6 +381,10 @@ try {
   Invoke-Step "Plugin canonical root production page" { node scripts/verify-plugin-canonical-root-page.mjs }
   Invoke-Step "Generic plugin usage metadata and account reads" { node scripts/verify-generic-plugin-usage.mjs }
   Invoke-Step "Generic plugin service management page" { node scripts/verify-generic-plugin-management-page.mjs }
+  Invoke-Step "Service skill contents identity and lifecycle" { node scripts/verify-plugin-skill-contents.mjs }
+  Invoke-Step "Service skill contents production dialog" { node scripts/verify-plugin-skill-contents-dialog.mjs }
+  Invoke-Step "Service skill toggle readback and recovery" { node scripts/verify-plugin-skill-toggle.mjs }
+  Invoke-Step "Service skill row and shared dialog actions" { node scripts/verify-plugin-service-skill-row.mjs }
   Invoke-Step "Plugin canonical root removal confirmation" { node scripts/verify-plugin-canonical-uninstall.mjs }
   Invoke-Step "Durable plugin directory actual service detail" { node scripts/verify-durable-plugin-detail.mjs }
   Invoke-Step "Durable plugin directory production page" { node scripts/verify-durable-plugin-directory-page.mjs }
