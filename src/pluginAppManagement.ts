@@ -7,6 +7,10 @@ export interface PluginAppManagementData {
   metadata: { id: string; name: string; description?: string | null };
   canEditName: boolean;
   canEditDescription: boolean;
+  canDelete: boolean;
+  deleteDisabled: boolean;
+  deleteRestriction: "tenant_catalog" | "content_unavailable" | null;
+  canPublish: boolean;
 }
 const object = (value: unknown): Record<string, unknown> | null => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 const invalid = () => Error("应用管理响应格式或归属无效，请重新读取。");
@@ -15,11 +19,17 @@ export function decodePluginAppManagement(raw: unknown, appId: string): PluginAp
   const body = object(raw), metadata = object(body?.metadata);
   if (!appId.trim() || !body || typeof body.appId !== "string" || !body.appId.trim() || canonicalMcpAppId(body.appId) !== canonicalMcpAppId(appId) ||
     !metadata || typeof metadata.id !== "string" || !metadata.id.trim() || canonicalMcpAppId(metadata.id) !== canonicalMcpAppId(appId) || typeof metadata.name !== "string" ||
-    typeof body.canEditName !== "boolean" || typeof body.canEditDescription !== "boolean") throw invalid();
+    typeof body.canEditName !== "boolean" || typeof body.canEditDescription !== "boolean" || typeof body.canDelete !== "boolean" || typeof body.deleteDisabled !== "boolean" ||
+    typeof body.canPublish !== "boolean" || body.deleteRestriction !== null && body.deleteRestriction !== "tenant_catalog" && body.deleteRestriction !== "content_unavailable") throw invalid();
   if (Object.hasOwn(metadata, "description") && metadata.description !== null && typeof metadata.description !== "string") throw invalid();
   return { appId: body.appId, metadata: { id: metadata.id, name: metadata.name,
     ...(Object.hasOwn(metadata, "description") ? { description: metadata.description as string | null } : {}) },
-    canEditName: body.canEditName, canEditDescription: body.canEditDescription };
+    canEditName: body.canEditName, canEditDescription: body.canEditDescription, canDelete: body.canDelete, deleteDisabled: body.deleteDisabled,
+    deleteRestriction: body.deleteRestriction as PluginAppManagementData["deleteRestriction"], canPublish: body.canPublish };
+}
+
+export function pluginAppWorkspacePublishUrl(snapshot: PluginAppManagementData): string | null {
+  return snapshot.canPublish === true ? `https://chatgpt.com/admin/apps#drafts?publish=${encodeURIComponent(snapshot.metadata.id)}` : null;
 }
 
 export async function loadPluginAppManagement(appId: string, signal: AbortSignal): Promise<PluginAppManagementData & { identity: ServiceIdentity }> {

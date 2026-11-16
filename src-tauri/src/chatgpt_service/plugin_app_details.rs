@@ -138,7 +138,7 @@ pub(super) fn standalone_app(app_id: &str, content: Value) -> ServiceResult<Valu
     let light = optional("icon_url")?;
     let dark = optional("icon_dark_url")?;
     Ok(json!({"id":app_id,"name":name,"description":optional("description")?.filter(|value| !value.is_empty()),
-        "logoUrl":light.or(dark),"logoUrlDark":dark.or(light)}))
+        "logoUrl":light.or(dark),"logoUrlDark":dark.or(light),"distributionChannel":optional("distribution_channel")?}))
 }
 
 pub(super) fn app_details_links(app_id: &str, accessible: Value) -> ServiceResult<Value> {
@@ -523,6 +523,15 @@ mod tests {
         assert_eq!(duplicate["name"],"Two","BQbE.w Map retains the last normalized ID");
         let replaced=standalone_app("asdk_app_real",json!({"apps":[{"id":"connector_real","name":false},{"id":"asdk_app_real","name":"Current"}]})).unwrap();
         assert_eq!(replaced["name"],"Current","metadata from a replaced row is not projected");
+    }
+
+    #[test]
+    fn standalone_content_distribution_preserves_null_and_unknown_but_rejects_bad_type() {
+        for value in [None,Some(Value::Null),Some(json!("TENANT_CATALOG")),Some(json!("FUTURE_CHANNEL"))] {
+            let mut row=json!({"id":"connector_real","name":"App"});if let Some(value)=&value{row["distribution_channel"]=value.clone();}
+            let app=standalone_app("asdk_app_real",json!({"apps":[row]})).unwrap();assert_eq!(app["distributionChannel"],value.unwrap_or(Value::Null));
+        }
+        assert!(standalone_app("asdk_app_real",json!({"apps":[{"id":"connector_real","name":"App","distribution_channel":false}]})).is_err());
     }
     #[tokio::test]
     async fn standalone_content_missing_malformed_and_http_errors_do_not_read_metadata() {

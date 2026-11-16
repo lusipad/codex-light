@@ -609,6 +609,26 @@ export async function updatePluginAppMetadata(appId: string, metadataId: string,
   return result;
 }
 
+export async function deleteServicePluginApp(appId: string, metadataId: string, identity: ServiceIdentity, signal: AbortSignal): Promise<ProfileMutationResult> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<ProfileMutationResult & { requestId: string; identity: ServiceIdentity }>(
+    "plugin_app_delete", requestId,
+    { request: { requestId, expectedIdentity: identity, profile: browserProfile(), appId, metadataId } }, signal,
+  );
+  responseBody(result, requestId, identity);
+  if (!["confirmed", "pending"].includes(result.verification)) throw Error("无法确认删除结果，请重新读取。");
+  return result;
+}
+
+export async function readServicePluginAppDeleteStatus(appId: string, metadataId: string, identity: ServiceIdentity, signal: AbortSignal): Promise<unknown> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; body: unknown }>(
+    "plugin_app_delete_status_read", requestId,
+    { request: { requestId, expectedIdentity: identity, profile: browserProfile(), appId, metadataId } }, signal,
+  );
+  return responseBody(result, requestId, identity);
+}
+
 export async function renamePluginAppAccount(pluginId: string, appId: string, linkId: string, name: string, identity: ServiceIdentity, signal: AbortSignal): Promise<ProfileMutationResult> {
   const requestId = crypto.randomUUID();
   const result = await invokeService<ProfileMutationResult & { requestId: string; identity: ServiceIdentity }>(

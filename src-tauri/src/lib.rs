@@ -503,6 +503,28 @@ async fn plugin_app_metadata_update(
 }
 
 #[tauri::command]
+async fn plugin_app_delete(
+    app: AppHandle, state: State<'_, AppState>, request: chatgpt_service::PluginAppDeleteRequest,
+) -> Result<chatgpt_service::ProfileMutationResponse, chatgpt_service::ServiceError> {
+    state.chatgpt_service.plugin_app_delete(request, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
+async fn plugin_app_delete_status_read(
+    app: AppHandle, state: State<'_, AppState>, request: chatgpt_service::PluginAppDeleteRequest,
+) -> Result<chatgpt_service::PluginPermissionsResponse, chatgpt_service::ServiceError> {
+    state.chatgpt_service.plugin_app_delete_status_read(request, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
 async fn plugin_app_account_rename(
     app: AppHandle, state: State<'_, AppState>, request: chatgpt_service::PluginAppRenameRequest,
 ) -> Result<chatgpt_service::ProfileMutationResponse, chatgpt_service::ServiceError> {
@@ -2742,6 +2764,8 @@ pub fn run() {
             plugin_app_standalone_read,
             plugin_app_management_read,
             plugin_app_metadata_update,
+            plugin_app_delete,
+            plugin_app_delete_status_read,
             plugin_permissions_write,
             account_notifications_write,
             account_instructions_read,

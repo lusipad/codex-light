@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import { callAppServer, tauriInvoke, tauriListen } from "../bridge";
 import { readFileText } from "../fsClient";
-import { experimentalFeatureListAll } from "../config";
+import { accountRead, experimentalFeatureListAll } from "../config";
 import { readMcpSettings } from "../mcpSettings";
 import { McpSettings } from "./McpSettings";
 import { managementTabs, managementFallback, useMarketplaceRemoval } from "../pluginManagementState";
@@ -37,7 +37,7 @@ import { usePluginDirectorySearch } from "../pluginDirectorySearch";
 import { parsePluginDirectoryLocation, durablePluginDirectoryId, pluginDirectoryBrowseUrl, pluginDirectoryDetailUrl, pluginDirectoryTabUrl, pluginDirectoryCategoryUrl } from "../pluginDirectoryLocation";
 import { DurablePluginDirectoryPage } from "./DurablePluginDirectoryPage";
 import { groupPluginDirectoryLocal, type PluginDirectoryLocalGroups } from "../pluginDirectoryLocalGroups";
-import type { ServiceIdentity } from "../chatgptService";
+import { serviceIdentity, type ServiceIdentity } from "../chatgptService";
 import {
   SkillInfoItem,
 } from "../types";
@@ -2114,7 +2114,26 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       return isPluginContextCurrent(managementAppContext) && current?.kind === "app" && current.appId === appId && current.hostId === null;
     };
     return <PluginAppEntryPage key={JSON.stringify([connectionIdentity, appId])} connectionIdentity={connectionIdentity} appId={appId}
-      isCurrent={isCurrentApp} onRoot={() => { if (isCurrentApp()) closeManagedDetail(); }} onResolvePlugin={pluginId => {
+      isCurrent={isCurrentApp} onRoot={() => { if (isCurrentApp()) closeManagedDetail(); }} onDeleted={async expectedIdentity => {
+        const controller = new AbortController();
+        const sameAccount = async () => {
+          if (!isCurrentApp()) return false;
+          const [account, actual] = await Promise.all([accountRead(), serviceIdentity(controller.signal)]);
+          if (!isCurrentApp()) return false;
+          if (account.account?.type !== "chatgpt" || actual.accountId !== expectedIdentity.accountId || actual.userId !== expectedIdentity.userId ||
+            actual.generation !== expectedIdentity.generation || account.workspaceRouting?.chatgptAccountId && account.workspaceRouting.chatgptAccountId !== expectedIdentity.accountId) {
+            throw Error("读取期间账号发生变化，请重新刷新。");
+          }
+          return true;
+        };
+        if (!await sameAccount()) return;
+        const result = await listApps({ forceRefetch: true });
+        if (!await sameAccount()) return;
+        // Publish the refreshed root consumer only after its account is verified.
+        ++appsRequest.current; appsLoadingRef.current = false; appsLoadedRef.current = true;
+        setAppsData(result.data); setAppsInstalled(null); setAppsError(null); setAppsLoading(false); setAppsLoaded(true);
+        closeManagedDetail(true);
+      }} onResolvePlugin={pluginId => {
         if (!isCurrentApp()) return;
         updateDirectoryUrl(pluginManagementAppUrl(managementBase(), { pluginId, appId }), true);
         directoryDetailRetry.current?.();

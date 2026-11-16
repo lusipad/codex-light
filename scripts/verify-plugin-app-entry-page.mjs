@@ -11,7 +11,7 @@ const text = node => typeof node === 'string' ? node : !node || typeof node !== 
 const button = (tree, label) => nodes(tree).find(node => node.type === 'button' && text(node) === label);
 function harness(read = async () => app()) {
   let slots = [], cursor = 0, effects = [], scheduled = [], output, writes = 0;
-  let redirects = [], roots = 0, props = { connectionIdentity: 'connection-A', appId: 'app-A', isCurrent: () => api.routeCurrent, onResolvePlugin: id => redirects.push(id), onRoot: () => roots++ };
+  let redirects = [], deletions = [], roots = 0, props = { connectionIdentity: 'connection-A', appId: 'app-A', isCurrent: () => api.routeCurrent, onResolvePlugin: id => redirects.push(id), onRoot: () => roots++, onDeleted: async identity => { deletions.push(identity); } };
   const calls = [], api = { read, routeCurrent: true };
   const react = {
     useId: () => 'hosted-description',
@@ -36,7 +36,7 @@ function harness(read = async () => app()) {
   const render = (commit = true) => { cursor = 0; output = exports.PluginAppEntryPage(props); if (commit) flush(); return output; };
   const tick = async () => { for (let i = 0; i < 6; i++) { await Promise.resolve(); render(); } };
   render();
-  return { api, calls, render, flush, tick, get output() { return output; }, get redirects() { return redirects; }, get roots() { return roots; }, get writes() { return writes; },
+  return { api, calls, render, flush, tick, get output() { return output; }, get redirects() { return redirects; }, get deletions() { return deletions; }, get roots() { return roots; }, get writes() { return writes; },
     set props(value) { props = { ...props, ...value }; }, unmount() { for (const entry of effects) entry?.cleanup?.(); } };
 }
 {
@@ -50,6 +50,8 @@ function harness(read = async () => app()) {
   assert.deepEqual(nodes(tree).filter(node => node.type === 'button').map(text), ['插件设置'], 'header does not invent linked account, permissions or sync controls');
   const section = nodes(tree).find(node => node.type === 'AppManagementSection');
   assert.equal(section.props.appId, 'app-A'); assert.equal(section.props.isCurrent(), true);
+  const deletedIdentity = { accountId: 'account-A', userId: 'user-A', generation: 3 };
+  await section.props.onDeleted(deletedIdentity); assert.equal(h.deletions[0], deletedIdentity, 'deletion carries the exact initiating identity to the real root refresh');
   assert.equal(nodes(tree).some(node => ['input', 'select', 'img', 'section'].includes(node.type)), false, 'standalone header has no plugin ancestor, invented asset or management form');
   button(tree, '插件设置').props.onClick(); assert.equal(h.roots, 1); assert.equal(h.redirects.length, 0); h.unmount();
 }

@@ -51,6 +51,7 @@ const scripts = [
   'verify-plugin-app-details-state.mjs', 'verify-plugin-app-details-page.mjs',
   'verify-plugin-app-details-parent.mjs',
   'verify-plugin-app-entry.mjs', 'verify-plugin-app-entry-page.mjs', 'verify-plugin-app-management.mjs', 'verify-plugin-app-management-section.mjs',
+  'verify-plugin-app-deletion.mjs', 'verify-plugin-app-delete-ui.mjs', 'verify-plugin-app-delete-parent.mjs',
   'verify-plugin-app-accounts.mjs', 'verify-plugin-account-rename-dialog.mjs',
   'verify-plugin-app-disconnect.mjs', 'verify-plugin-account-menu.mjs',
   'verify-plugin-app-link-permissions.mjs', 'verify-plugin-app-link-permissions-state.mjs',

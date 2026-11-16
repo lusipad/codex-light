@@ -1,5 +1,5 @@
 import React, { useEffect, useId, useRef, useState } from "react";
-import { serviceErrorMessage } from "../chatgptService";
+import { serviceErrorMessage, type ServiceIdentity } from "../chatgptService";
 import { loadPluginAppEntry, type PluginAppEntry } from "../pluginAppEntry";
 import { PluginAppManagementSection } from "./PluginAppManagementSection";
 import { usePluginDetailExpansion } from "./PluginDirectoryDetail";
@@ -11,15 +11,16 @@ interface PluginAppEntryPageProps {
   isCurrent: () => boolean;
   onResolvePlugin: (pluginId: string) => void;
   onRoot: () => void;
+  onDeleted: (identity: ServiceIdentity) => Promise<void>;
 }
 
 type AppEntry = Extract<PluginAppEntry, { kind: "app" }>;
-export function PluginAppEntryPage({ connectionIdentity, appId, isCurrent, onResolvePlugin, onRoot }: PluginAppEntryPageProps) {
+export function PluginAppEntryPage({ connectionIdentity, appId, isCurrent, onResolvePlugin, onRoot, onDeleted }: PluginAppEntryPageProps) {
   const scope = JSON.stringify([connectionIdentity, appId]);
   const current = useRef({ scope, epoch: 0, mounted: false, data: null as AppEntry | null });
   const ticket = useRef(0), request = useRef<AbortController | null>(null);
-  const callbacks = useRef({ onResolvePlugin, onRoot, isCurrent });
-  callbacks.current = { onResolvePlugin, onRoot, isCurrent };
+  const callbacks = useRef({ onResolvePlugin, onRoot, isCurrent, onDeleted });
+  callbacks.current = { onResolvePlugin, onRoot, isCurrent, onDeleted };
   const [state, setState] = useState<{ scope: string; epoch: number; data: AppEntry | null; loading: boolean; error: string | null } | null>(null);
   if (current.current.scope !== scope) {
     current.current.scope = scope; current.current.epoch++; current.current.data = null;
@@ -70,7 +71,9 @@ export function PluginAppEntryPage({ connectionIdentity, appId, isCurrent, onRes
     {(error || data?.metadataError) && <div role="alert"><p>{error || "无法加载插件设置"}</p>
       <button type="button" className="secondary-btn-sm" disabled={loading} onClick={() => { void reload(); }}>重试</button>
     </div>}
-    {data?.connector && <PluginAppManagementSection scope={scope} appId={appId} isCurrent={active} onUpdated={async () => {
+    {data?.connector && <PluginAppManagementSection scope={scope} appId={appId} isCurrent={active} onDeleted={async identity => {
+      if (active()) await callbacks.current.onDeleted(identity);
+    }} onUpdated={async () => {
       if (!await reload()) throw Error("无法重新加载应用。请重试。");
     }} />}
   </article>;

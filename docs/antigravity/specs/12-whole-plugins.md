@@ -264,3 +264,20 @@ Dialog同scope重试失败保旧正文；权限missing/null与空串分开；旧
 | MA08 刷新 | 实际值确认后真实重读hosted标题/描述；刷新失败只重试刷新，不能再写或用draft改标题 | PluginAppEntryPage.onUpdated及生产父页/editor回归 |
 
 阶段检查：112项相关Rust随后扩大为929全Rust通过，219前端回放通过；非Fast标准/34隔离探针及最终EXE/MSI/NSIS已退出0；219前端之后的cold section/row末补丁另验2个UI及TypeScript，所有Rust输入未变，准确范围见验收记录。新增读取/写入为固定typed Tauri命令，renderer不接收owners、账户原始记录或凭据。删除/发布与Logo门控不属于本名称/描述已实现声明；真实HTTP、GUI/IME、配对像素、托管CI和用户验收均未验。
+
+#### 独立App删除与发布实现合同（2026-11-16）
+
+同版补证5资源/19源码/7中文锚点，严格hash/UTF-16范围通过。删除不是插件卸载或单账户断开：只对明确无所属plugin的MCP真实owner开放，另按workspace真实分发限制；name/description的ONLY_ME/development条件不能限制delete。publish独立为当前非personal admin/owner、非SERVICE、ONLY_ME，不要求App owner。Logo gate未知不露控件。
+
+| 用例 | 官方动作与项目合同 | 实现/实际回归 |
+|---|---|---|
+| MD01 fresh资格 | USER/WORKSPACE所有权按MC02；workspace+canDelete复用真实单App hosted内容读取；TENANT_CATALOG精确禁删 | management.rs、standalone_app分发投影；16项management与分发专项包含在118相关Rust中 |
+| MD02 未知分发 | missing/null为null，未知string保留；坏类型/无目标/请求失败禁删且可见content_unavailable，保留其他资格 | 后台真实分发→4公共flags→renderer；不暴露raw owners/account，无CLI替代资格 |
+| MD03 确认与等待 | default520 CSS px/max92vw；metadata.name警告；取消ghost/删除danger；pending X仍存在但不能关闭/重复提交 | PluginAppDeleteDialog及生产delete-ui回放；仅busy用项目Loader2，精确glyph/部分样式未验 |
+| MD04 固定DELETE | fresh actual metadata.id精确匹配、canDelete且非deleteDisabled，固定CODEX/settings DELETE /aip/connectors/{id}，空body | plugin_app_delete.rs；stub真红后8项绿，再加status归属修复为9项绿 |
+| MD05 读回 | 固定原App GET metadata；status请求先校canonical App/meta同实体，存在时raw metadata.id必须精确匹配；仅同身份明确404为not_found | foreign metadata先错误HTTP的真实红→HTTP前拒绝→9项绿；403/401/错误/坏响应不冒缺失 |
+| MD06 结果恢复 | rejected不因not_found确认成功；unknown只读恢复，不自动重DELETE；退出重开同Section保意图 | pluginAppDeletion.ts及UI真实handler回放；没有整Section卸载/重启的意图持久化 |
+| MD07 返回 | 实际根Apps列表app/list(forceRefetch)刷新前后核account/user/generation和route；成功replace /settings/plugins-settings并去query/hash，失败只重刷 | SkillsMcpView与AppEntryPage接线，实际父handler先红后绿；不刷新无关MCP/skills，也不在此补完根Apps分页 |
+| MD08 发布 | 固定https://chatgpt.com/admin/apps#drafts?publish=encodeURIComponent(raw metadata.id)，只通过review_link_open打开外部，无发布mutation/toast | helper/client与productionUI回放；外部发布与浏览器账号权限仍未验 |
+
+not_found只证明此账户此目标的metadata端点明确404，不是服务端级联连接审计或动作归因证明；真实删除及发布未执行。本包944全Rust（0失败/忽略/过滤）、222前端回放已通过；非Fast标准/34探针及最终EXE/MSI/NSIS已通过；全量后同版Sm6l证据修正2CSS/loading JSX，另验2UI/TSC，再冻结540输入与打包，准确范围见验收记录。标题font:inherit基础链有源，按钮medium/danger/ghost/loading已按2资源24锚点纠偏；模块覆盖/精确shadow/间距/图标动画/原生与配对像素仍未验。

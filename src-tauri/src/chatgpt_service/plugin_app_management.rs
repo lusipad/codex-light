@@ -7,7 +7,10 @@ struct ManagementMetadata {
     owners:Vec<(String,String)>,
     custom_mcp:bool,
     disabled_by_admin:bool,
+    is_mcp:bool,
+    publishable:bool,
 }
+struct ManagementPermissions {can_name:bool,can_description:bool,can_delete:bool,can_publish:bool,workspace:bool}
 
 fn management_metadata(value:Value,app_id:&str)->ServiceResult<ManagementMetadata> {
     let source=value.as_object().ok_or_else(management_invalid)?;
@@ -37,10 +40,10 @@ fn management_metadata(value:Value,app_id:&str)->ServiceResult<ManagementMetadat
             },
         },
     };
-    Ok(ManagementMetadata{public:Value::Object(public),owners,custom_mcp:kind=="MCP" && (status=="ONLY_ME" || development),disabled_by_admin:status=="DISABLED_BY_ADMIN"})
+    Ok(ManagementMetadata{public:Value::Object(public),owners,custom_mcp:kind=="MCP" && (status=="ONLY_ME" || development),disabled_by_admin:status=="DISABLED_BY_ADMIN",is_mcp:kind=="MCP",publishable:kind!="SERVICE" && status=="ONLY_ME"})
 }
 
-fn management_permissions(metadata:&ManagementMetadata,accounts:&Value,identity:&ServiceIdentity)->ServiceResult<(bool,bool)> {
+fn management_permissions(metadata:&ManagementMetadata,accounts:&Value,identity:&ServiceIdentity)->ServiceResult<ManagementPermissions> {
     // P21–23 validate normalized wham arrays and choose the first ordered row.
     plugin_permissions::permission_personal(accounts,identity)?;
     let selected=accounts["account_ordering"].as_array().and_then(|values|values.first()).and_then(Value::as_str).ok_or_else(management_invalid)?;
@@ -54,7 +57,8 @@ fn management_permissions(metadata:&ManagementMetadata,accounts:&Value,identity:
     let admin=current && matches!(account["account_user_role"].as_str(),Some("account-admin"|"account-owner"));
     let owner_id=if structure=="personal" {identity.user_id.as_str()}else{membership};
     let owner=current && metadata.owners.iter().any(|(kind,id)|kind=="USER" && id==owner_id || workspace && admin && kind=="WORKSPACE" && id==&identity.account_id);
-    Ok((metadata.custom_mcp && owner,metadata.custom_mcp && !metadata.disabled_by_admin && (owner || admin)))
+    Ok(ManagementPermissions{can_name:metadata.custom_mcp && owner,can_description:metadata.custom_mcp && !metadata.disabled_by_admin && (owner || admin),
+        can_delete:metadata.is_mcp && owner,can_publish:structure!="personal" && admin && metadata.publishable,workspace})
 }
 
 impl ChatgptService {
@@ -84,9 +88,19 @@ impl ChatgptService {
         let metadata=management_metadata(metadata,&request.app_id)?;
         let account_request=PluginPermissionsRequest{request_id:request.request_id.clone(),expected_identity:identity.clone(),profile:request.profile.clone()};
         let accounts=self.permission_http("/backend-api/wham/accounts/check",HttpMethod::Get,&account_request,&registration,&call,transport).await?;
-        let (can_name,can_description)=management_permissions(&metadata,&accounts,identity)?;
+        let permissions=management_permissions(&metadata,&accounts,identity)?;
+        let restriction=if permissions.workspace && permissions.can_delete {
+            let content=self.plugin_app_content_http(request,registration,call,transport).await
+                .and_then(|content|plugin_app_details::standalone_app(&request.app_id,content));
+            match content {
+                Ok(app)=>if app["distributionChannel"].as_str()==Some("TENANT_CATALOG") {Some("tenant_catalog")}else{None},
+                Err(error) if matches!(error.code,"account_changed"|"cancelled")=>return Err(error),
+                Err(_)=>Some("content_unavailable"),
+            }
+        }else{None};
         self.check_share_current(identity,&registration)?;
-        Ok(json!({"appId":request.app_id,"metadata":metadata.public,"canEditName":can_name,"canEditDescription":can_description}))
+        Ok(json!({"appId":request.app_id,"metadata":metadata.public,"canEditName":permissions.can_name,"canEditDescription":permissions.can_description,
+            "canDelete":permissions.can_delete,"deleteDisabled":restriction.is_some(),"deleteRestriction":restriction,"canPublish":permissions.can_publish}))
     }
 }
 
@@ -104,6 +118,7 @@ mod tests {
         "configRequirements/read"=>json!({"requirements":null}),_=>panic!("unexpected RPC {method}"),})}
     fn accounts()->Value {json!({"accounts":[{"id":"manage-account","account_user_id":"workspace-membership","account_user_role":"standard-user","structure":"personal","plan_type":"future-plan","is_zdr":false,"is_openai_internal":false,"email":"never-return"}],"account_ordering":["manage-account"]})}
     fn metadata()->Value {json!({"id":META,"name":"Actual app","description":" Actual description ","connector_type":"MCP","status":"ONLY_ME","owners":[{"type":"USER","id":"manage-user","secret":"never-return"}],"secret":"never-return","token":"never-return"})}
+    fn hosted()->Value {json!({"apps":[{"id":META,"name":"Hosted app","secret":"never-return"}]})}
     fn replies()->Vec<(u16,Value)> {vec![(200,json!({"plugin_id":null})),(200,metadata()),(200,accounts())]}
     struct Fixture{replies:Mutex<VecDeque<(u16,Value)>>,sent:Mutex<Vec<HttpRequest>>}
     impl Fixture{fn new(values:Vec<(u16,Value)>)->Self{Self{replies:Mutex::new(values.into()),sent:Mutex::new(vec![])}}}
@@ -111,7 +126,7 @@ mod tests {
     #[tokio::test]
     async fn app_management_personal_owner_uses_original_get_id_and_returns_only_public_fields(){
         let transport=Fixture::new(replies());let result=ChatgptService::default().plugin_app_management_with(request(),rpc,&transport).await.unwrap();
-        assert_eq!(result.body,json!({"appId":APP,"metadata":{"id":META,"name":"Actual app","description":" Actual description "},"canEditName":true,"canEditDescription":true}));
+        assert_eq!(result.body,json!({"appId":APP,"metadata":{"id":META,"name":"Actual app","description":" Actual description "},"canEditName":true,"canEditDescription":true,"canDelete":true,"deleteDisabled":false,"deleteRestriction":null,"canPublish":false}));
         let text=serde_json::to_string(&result).unwrap();assert!(!text.contains("never-return")&&!text.contains("workspace-membership")&&!text.contains(&token()));
         let sent=transport.sent.lock().unwrap();assert_eq!(sent.len(),3);assert_eq!(sent[0].url,"https://chatgpt.com/backend-api/ps/plugins/canonical-app/asdk_app_x%2Fy%3Fz%23%25%E4%B8%AD%E6%96%87");
         assert_eq!(sent[0].headers["OAI-Product-Sku"],"CODEX");assert_eq!(sent[0].headers["X-Codex-Surface"],"other");
@@ -126,7 +141,7 @@ mod tests {
     #[tokio::test]
     async fn app_management_user_owner_uses_personal_user_or_workspace_membership_identity(){
         for (structure,owner,name,description) in [("personal","manage-user",true,true),("personal","workspace-membership",false,false),("workspace","workspace-membership",true,true),("workspace","manage-user",false,false)] {
-            let mut values=replies();values[2].1["accounts"][0]["structure"]=json!(structure);values[1].1["owners"][0]["id"]=json!(owner);let transport=Fixture::new(values);
+            let mut values=replies();values[2].1["accounts"][0]["structure"]=json!(structure);values[1].1["owners"][0]["id"]=json!(owner);if structure=="workspace" && name {values.push((200,hosted()));}let transport=Fixture::new(values);
             let result=ChatgptService::default().plugin_app_management_with(request(),rpc,&transport).await.unwrap();assert_eq!(result.body["canEditName"],name);assert_eq!(result.body["canEditDescription"],description);
         }
     }
@@ -134,7 +149,7 @@ mod tests {
     async fn app_management_workspace_owner_requires_current_admin_but_description_has_its_own_admin_branch(){
         for (structure,role,owner,name,description) in [("workspace","account-admin","manage-account",true,true),("workspace","account-owner","manage-account",true,true),("workspace","standard-user","manage-account",false,false),
             ("workspace","account-admin","other-workspace",false,true),("personal","account-owner","manage-account",false,true)] {
-            let mut values=replies();values[2].1["accounts"][0]["structure"]=json!(structure);values[2].1["accounts"][0]["account_user_role"]=json!(role);values[1].1["owners"]=json!([{"type":"WORKSPACE","id":owner}]);
+            let mut values=replies();values[2].1["accounts"][0]["structure"]=json!(structure);values[2].1["accounts"][0]["account_user_role"]=json!(role);values[1].1["owners"]=json!([{"type":"WORKSPACE","id":owner}]);if structure=="workspace" && name {values.push((200,hosted()));}
             let transport=Fixture::new(values);let result=ChatgptService::default().plugin_app_management_with(request(),rpc,&transport).await.unwrap();assert_eq!(result.body["canEditName"],name,"{structure}/{role}/{owner}");assert_eq!(result.body["canEditDescription"],description);
         }
     }
@@ -183,5 +198,64 @@ mod tests {
         let service=ChatgptService::default();let transport=Wait{entered:AtomicBool::new(false)};
         let(result,())=tokio::time::timeout(Duration::from_secs(5),async{tokio::join!(service.plugin_app_management_with(request(),rpc,&transport),async{while !transport.entered.load(Ordering::SeqCst){tokio::task::yield_now().await;}assert!(service.cancel("app-management-fixture"));})}).await.expect("management read must enter and cancel transport");
         assert_eq!(result.err().unwrap().code,"cancelled");assert!(service.active.lock().unwrap().is_empty());
+    }
+    #[tokio::test]
+    async fn app_management_delete_gate_does_not_inherit_name_description_restrictions(){
+        for status in ["ACTIVE","DISABLED_BY_ADMIN","ONLY_ME"] {
+            let mut values=replies();values[1].1["status"]=json!(status);let transport=Fixture::new(values);
+            let result=ChatgptService::default().plugin_app_management_with(request(),rpc,&transport).await.unwrap();
+            assert_eq!(result.body["canDelete"],true,"MCP owner can delete independently of development/private or name-description gates");
+            assert_eq!(result.body["deleteDisabled"],false);assert_eq!(result.body.get("deleteRestriction"),Some(&Value::Null));assert_eq!(result.body["canPublish"],false);
+            assert_eq!(transport.sent.lock().unwrap().len(),3,"personal deletion eligibility does not require workspace distribution data");
+        }
+    }
+    #[tokio::test]
+    async fn app_management_publish_requires_current_nonpersonal_admin_but_not_owner(){
+        for (structure,role,kind,status,publish) in [("workspace","account-admin","MCP","ONLY_ME",true),("workspace","account-owner","OTHER","ONLY_ME",true),
+            ("personal","account-owner","MCP","ONLY_ME",false),("workspace","standard-user","MCP","ONLY_ME",false),("workspace","account-admin","SERVICE","ONLY_ME",false),("workspace","account-admin","MCP","ACTIVE",false)] {
+            let mut values=replies();values[1].1["owners"]=json!([]);values[1].1["connector_type"]=json!(kind);values[1].1["status"]=json!(status);values[2].1["accounts"][0]["structure"]=json!(structure);values[2].1["accounts"][0]["account_user_role"]=json!(role);
+            let transport=Fixture::new(values);let result=ChatgptService::default().plugin_app_management_with(request(),rpc,&transport).await.unwrap();
+            assert_eq!(result.body["canPublish"],publish,"{structure}/{role}/{kind}/{status}");assert_eq!(result.body["canDelete"],false);assert_eq!(transport.sent.lock().unwrap().len(),3);
+        }
+    }
+    fn workspace_owner_replies()->Vec<(u16,Value)> {
+        let mut values=replies();values[2].1["accounts"][0]["structure"]=json!("workspace");values[2].1["accounts"][0]["account_user_role"]=json!("account-admin");values[1].1["owners"][0]["id"]=json!("workspace-membership");values
+    }
+    #[tokio::test]
+    async fn app_management_workspace_delete_distribution_is_exact_nullable_and_last_wins(){
+        for (distribution,restricted) in [(None,false),(Some(Value::Null),false),(Some(json!("TENANT_CATALOG")),true),(Some(json!("tenant_catalog")),false),(Some(json!("FUTURE_CHANNEL")),false)] {
+            let mut content=hosted();if let Some(value)=distribution{content["apps"][0]["distribution_channel"]=value;}
+            content["apps"].as_array_mut().unwrap().insert(0,json!({"id":APP,"name":"Replaced","distribution_channel":"TENANT_CATALOG"}));
+            let mut values=workspace_owner_replies();values.push((200,content));let transport=Fixture::new(values);
+            let result=ChatgptService::default().plugin_app_management_with(request(),rpc,&transport).await.unwrap();
+            assert_eq!(result.body["deleteDisabled"],restricted);assert_eq!(result.body["deleteRestriction"],if restricted{json!("tenant_catalog")}else{Value::Null});
+            assert_eq!(result.body["canDelete"],true);assert_eq!(result.body["canPublish"],true);assert!(!result.body.to_string().contains("distribution"));assert!(!result.body.to_string().contains("never-return"));
+            let sent=transport.sent.lock().unwrap();assert_eq!(sent.len(),4);assert!(sent[3].url.ends_with("/ps/apps/batch"));assert_eq!(sent[3].method,HttpMethod::Post);
+            assert_eq!(sent[3].headers["OAI-Product-Sku"],"CONNECTOR_SETTING");assert_eq!(sent[3].headers["X-OpenAI-Locale"],"zh-CN");assert!(!sent[3].headers.contains_key("X-Codex-Surface"));
+            assert_eq!(serde_json::from_slice::<Value>(&sent[3].body).unwrap(),json!({"app_ids":[APP],"include_tools":false}));
+        }
+    }
+    #[tokio::test]
+    async fn app_management_workspace_content_failure_disables_delete_without_erasing_other_flags(){
+        for (status,content) in [(503,json!({})),(200,json!({"apps":[]})),(200,json!({"apps":[{"id":META,"name":"App","distribution_channel":false}]})),(200,json!({"apps":null}))] {
+            let mut values=workspace_owner_replies();values.push((status,content));let transport=Fixture::new(values);
+            let result=ChatgptService::default().plugin_app_management_with(request(),rpc,&transport).await.unwrap();
+            assert_eq!(result.body["deleteDisabled"],true);assert_eq!(result.body["deleteRestriction"],"content_unavailable");
+            for flag in ["canEditName","canEditDescription","canDelete","canPublish"] {assert_eq!(result.body[flag],true,"{flag}");}
+            assert_eq!(result.body["metadata"]["name"],"Actual app");assert_eq!(result.body["metadata"]["description"]," Actual description ");
+        }
+        let mut values=workspace_owner_replies();values.push((401,json!({})));values.push((200,hosted()));let transport=Fixture::new(values);
+        let result=ChatgptService::default().plugin_app_management_with(request(),rpc,&transport).await.unwrap();assert_eq!(result.body["deleteDisabled"],false);assert_eq!(transport.sent.lock().unwrap().len(),5);
+    }
+    #[tokio::test]
+    async fn app_management_workspace_content_identity_and_cancellation_are_not_restrictions(){
+        struct Interrupt<'a>{service:&'a ChatgptService,fixture:Fixture,cancel:bool}
+        impl Transport for Interrupt<'_>{fn send(&self,request:HttpRequest,cancel:Arc<AtomicBool>)->TransportFuture<'_>{Box::pin(async move{
+            let content=request.url.ends_with("/ps/apps/batch");let result=self.fixture.send(request,cancel).await;
+            if content{if self.cancel{self.service.cancel("app-management-fixture");}else{self.service.invalidate();self.service.invalidate();}}result
+        })}}
+        for cancel in [false,true] {let service=ChatgptService::default();let mut values=workspace_owner_replies();values.push((200,hosted()));let transport=Interrupt{service:&service,fixture:Fixture::new(values),cancel};
+            let error=service.plugin_app_management_with(request(),rpc,&transport).await.err().unwrap();assert_eq!(error.code,if cancel{"cancelled"}else{"account_changed"});assert_eq!(transport.fixture.sent.lock().unwrap().len(),4);
+        }
     }
 }

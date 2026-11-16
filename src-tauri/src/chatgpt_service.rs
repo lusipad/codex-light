@@ -19,6 +19,8 @@ pub use plugin_app_details::{PluginAppDetailsRequest, PluginAppEntryRequest, Plu
 mod plugin_app_management;
 mod plugin_app_metadata_update;
 pub use plugin_app_metadata_update::PluginAppMetadataUpdateRequest;
+mod plugin_app_delete;
+pub use plugin_app_delete::PluginAppDeleteRequest;
 mod plugin_canonical_root;
 pub use plugin_canonical_root::PluginCanonicalRootRequest;
 mod plugin_skill_contents;

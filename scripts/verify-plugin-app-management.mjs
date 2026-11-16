@@ -4,7 +4,7 @@ import vm from "node:vm";
 import ts from "typescript";
 const source = ts.transpileModule(fs.readFileSync("src/pluginAppManagement.ts", "utf8"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
 const normalizer = {}; vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/pluginManagementMcp.ts", "utf8"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText, { exports: normalizer, require: name => { throw Error(name); } });
-const identity = { accountId: "account", userId: "user", generation: 4 }, raw = () => ({ appId: "connector_actual", metadata: { id: "asdk_app_actual", name: "Actual metadata" }, canEditName: true, canEditDescription: false });
+const identity = { accountId: "account", userId: "user", generation: 4 }, raw = () => ({ appId: "connector_actual", metadata: { id: "asdk_app_actual", name: "Actual metadata" }, canEditName: true, canEditDescription: false, canDelete: false, deleteDisabled: false, deleteRestriction: null, canPublish: false });
 let account = { account: { type: "chatgpt" }, workspaceRouting: { chatgptAccountId: "account" } }, actual = identity, response = raw(), reads = 0, accounts = 0, identities = 0;
 let onRead = () => {}, onAccount = () => {}, onIdentity = () => {};
 let onWrite = () => {}, writeResult, writes = [];
@@ -22,6 +22,18 @@ for (const description of [null, "", "  exact unnormalized text\n "]) { const bo
 const empty = raw(); empty.metadata.name = ""; assert.equal(decode(empty, "asdk_app_actual").metadata.name, "");
 const secret = raw(); secret.metadata.owners = [{ id: "private-secret" }]; secret.metadata.token = "private-secret"; secret.secret = "private-secret";
 assert.ok(!JSON.stringify(decode(secret, "asdk_app_actual")).includes("private-secret"));
+for (const field of ["canDelete", "deleteDisabled", "canPublish"]) for (const value of [undefined, null, "true", 1]) {
+  const body = raw(); if (value === undefined) delete body[field]; else body[field] = value; assert.throws(() => decode(body, "asdk_app_actual"), `${field} must be an explicit boolean`);
+}
+for (const value of [undefined, false, "arbitrary", {}]) { const body = raw(); if (value === undefined) delete body.deleteRestriction; else body.deleteRestriction = value; assert.throws(() => decode(body, "asdk_app_actual")); }
+for (const deleteRestriction of [null, "tenant_catalog", "content_unavailable"]) assert.equal(decode({ ...raw(), deleteRestriction }, "asdk_app_actual").deleteRestriction, deleteRestriction);
+const publishUrl = exports.pluginAppWorkspacePublishUrl;
+assert.equal(publishUrl(decode(raw(), "asdk_app_actual")), null);
+for (const id of ["asdk_app_actual", "connector/raw?中%2F #&="]) {
+  const body = { ...raw(), appId: id, metadata: { id, name: "private display name" }, canPublish: true }, snapshot = decode(body, id);
+  assert.equal(publishUrl(snapshot), `https://chatgpt.com/admin/apps#drafts?publish=${encodeURIComponent(id)}`);
+  assert.ok(!publishUrl(snapshot).includes("private display name"));
+}
 for (const change of [body => { body.appId = "foreign"; }, body => { body.metadata.id = "foreign"; }, body => { body.appId = ""; }, body => { body.metadata.id = ""; }, body => { body.metadata.name = null; },
   body => { body.metadata.description = 1; }, body => { body.metadata.description = undefined; }, body => { body.canEditName = "true"; }, body => { delete body.canEditDescription; }, body => { body.canEditDescription = null; }, body => { body.metadata = []; }]) {
   const body = raw(); change(body); assert.throws(() => decode(body, "asdk_app_actual"));

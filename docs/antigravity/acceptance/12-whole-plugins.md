@@ -417,3 +417,25 @@ CUA缺kernel assets路径，两次初始化失败，本阶段无新浏览器图/
 输入manifest SHA-256 `2a0d3a8e06e6d1809d6f6fecd7654892d7b4d4912d674618a4bcc1c36dce6bd1`。证据`.ref/parity/12/whole-page/actual/app-management-r2-20261116/`；本地Lore提交后由candidate-artifacts.json/verification-summary.json绑定准确sourceCommit。没有推送、发布或宣称远端CI通过。
 
 用户验收路径：登录具备服务资格的账户→插件设置→真实无所属plugin的自有App→按实际独立资格打开名称/描述编辑→检查初始保存禁用、取消零写、名称空白/描述空串、等待时关闭保护、失败保稿及刷新后结果。无资格时不显示对应控件；服务不可用或账号条件缺失须记未验，不能当通过。下一工作包是独立App删除/发布（各自资格及tenant catalog限制），再处理授权恢复与特殊宿主；Logo gate尚未知，R2整页和全软件目标均未完成。
+
+### 独立App删除/发布与共享按钮纠偏阶段候选（2026-11-16）
+
+已接MCP owner独立删除资格、workspace目录禁删、读取未知的显式禁用/重试，以及非personal当前admin的独立发布资格。typed DELETE使用fresh真实metadata.id、CODEX/settings和空body；之后同身份只读核验，403/错误不当不存在，unknown不自动重DELETE。新增default520CSSpx确认modal，pending X保留但不能关闭、取消禁用/单飞；确认后根Apps真实app/list(forceRefetch)刷新前后核account/user/generation和route，成功replace固定管理根，失败仅重刷。发布只固定官方外部管理URL，无发布mutation或成功toast。
+
+本包先118相关Rust通过；DELETE与status专项真实stub/缺陷红后绿为9项。新增status HTTP前必须App/meta canonical同实体，防请求错误目标后404误归属；只有同账户精确目标metadata GET明确404为not_found，不把此观察写成服务端连接级联审计或动作归因。独立审查除这项已修问题外无确定P1/P2；没有执行真实账号删除或发布。
+
+完整944 Rust（0失败/忽略/过滤、137.43秒）、222前端回放、非Fast标准/34隔离协议探针退出0。随后定向asar找到两份Sm6l factory并核对应值一致，新增2来源/24锚点、3组原始双factory独立比对通过，主chunk登记manifest；修正此前实心红按钮为danger-soft、medium横16/纵6/透明border1、14默认字号/18行高、条件10/12.5 superellipse圆角、disabled .4、12px loading和reduced-motion。保留真实palette/app主题token覆盖。
+
+上述末补丁仅2 CSS及DeleteDialog的loading JSX；Rust源码/本机构建脚本与业务逻辑未变。补跑2项受影响UI及TypeScript退出0，再重新冻结540输入并最终原生构建退出0。不能报告222前端为按钮末补丁后重新跑222；准确范围见post-check-patch.json及原始冻结快照。shadow/部分spacing、完整主题producer覆盖、精确spinner图形/速率/可见性暂停、原生焦点/IME和配对物理像素仍未验；本轮CUA再次getState因kernel assets缺路径/os error3失败，visual score=null。unknown意图只在同Section生命周期内保留。
+
+候选`dist-artifacts/plugins-r2-app-delete-publish-20261116/`：
+
+| 产物 | 字节数 | SHA-256 |
+|---|---:|---|
+| CodexNative.exe | 31,911,936 | 990c5b3ccdd1fb4aeffe8b4f4699087e523a14e41680d869aebcda843d9b6652 |
+| Codex Native_0.2.0_x64_en-US.msi | 10,190,848 | 91f5d687ab64646b4a6eff4edcf999584173e096ac752487fd7872bc5728dc76 |
+| Codex Native_0.2.0_x64-setup.exe | 6,823,419 | a3ea9189e899168339e38d6b39db6286d5de1f2b69bce5db7b899b65ba52dd28 |
+
+最终输入manifest SHA-256 `ec132d26b0caf4ec2feb5c6a5c4f39ac8a1cc77cccc7073d970bb86325c150a9`，证据`.ref/parity/12/whole-page/actual/app-delete-publish-r2-20261116/`；本地提交后外部candidate/summary元数据绑定准确sourceCommit。未推送/发布，同提交托管CI和用户验收未执行。
+
+用户验收路径：有实际资格的独立App→检查删除row/tenant禁用→打开确认但不提交→核标题、真实metadata.name及取消零写；真实账号删除须由用户自行选择适当对象并确认，不能把fixture误当真实服务成功。非personal当前admin检查外部发布URL与真实浏览器打开，不能仅凭打开即认定发布。下一完整工作包采用当前26.1111授权最终校验合同（4资源18初始锚点，后续producer补证见原始JSON），接原flow一次性草稿恢复；自有原生callback许可、Logo gate、模板及codex_apps/HTML宿主继续返回队列。R2整页及全软件目标没有因此完成。
