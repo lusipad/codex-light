@@ -589,6 +589,26 @@ export async function readStandalonePluginApp(appId: string, identity: ServiceId
   return responseBody(result, requestId, identity);
 }
 
+export async function readPluginAppManagement(appId: string, identity: ServiceIdentity, signal: AbortSignal): Promise<unknown> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; body: unknown }>(
+    "plugin_app_management_read", requestId,
+    { request: { requestId, expectedIdentity: identity, profile: browserProfile(), appId } }, signal,
+  );
+  return responseBody(result, requestId, identity);
+}
+
+export async function updatePluginAppMetadata(appId: string, metadataId: string, operation: "name" | "description", value: string, identity: ServiceIdentity, signal: AbortSignal): Promise<ProfileMutationResult> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<ProfileMutationResult & { requestId: string; identity: ServiceIdentity }>(
+    "plugin_app_metadata_update", requestId,
+    { request: { requestId, expectedIdentity: identity, profile: browserProfile(), appId, metadataId, operation, value } }, signal,
+  );
+  responseBody(result, requestId, identity);
+  if (!["confirmed", "pending"].includes(result.verification)) throw Error("无法确认应用更新结果，请重新读取。");
+  return result;
+}
+
 export async function renamePluginAppAccount(pluginId: string, appId: string, linkId: string, name: string, identity: ServiceIdentity, signal: AbortSignal): Promise<ProfileMutationResult> {
   const requestId = crypto.randomUUID();
   const result = await invokeService<ProfileMutationResult & { requestId: string; identity: ServiceIdentity }>(

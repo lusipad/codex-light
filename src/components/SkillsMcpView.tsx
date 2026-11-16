@@ -2109,10 +2109,13 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   }
   if (managementAppRoute?.kind === "app" && managementAppRoute.appId && managementAppRoute.hostId === null) {
     const appId = managementAppRoute.appId;
+    const isCurrentApp = () => {
+      const current = parsePluginManagementLocation(window.location.href);
+      return isPluginContextCurrent(managementAppContext) && current?.kind === "app" && current.appId === appId && current.hostId === null;
+    };
     return <PluginAppEntryPage key={JSON.stringify([connectionIdentity, appId])} connectionIdentity={connectionIdentity} appId={appId}
-      onRoot={() => closeManagedDetail()} onResolvePlugin={pluginId => {
-        const current = parsePluginManagementLocation(window.location.href);
-        if (!isPluginContextCurrent(managementAppContext) || current?.kind !== "app" || current.appId !== appId || current.hostId !== null) return;
+      isCurrent={isCurrentApp} onRoot={() => { if (isCurrentApp()) closeManagedDetail(); }} onResolvePlugin={pluginId => {
+        if (!isCurrentApp()) return;
         updateDirectoryUrl(pluginManagementAppUrl(managementBase(), { pluginId, appId }), true);
         directoryDetailRetry.current?.();
       }} />;

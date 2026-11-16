@@ -397,3 +397,23 @@ CUA缺kernel assets路径，两次初始化失败，本阶段无新浏览器图/
 远端已只读刷新：最新可见run42644930892仍为2026-11-09的旧push，check129255526818注释为账单/支出限制导致job未启动；没有更新的run，当前账户限制是否恢复未验证，不将旧失败当当前源码失败或当前账单状态。本阶段仅本地提交，不推送/发布，不报告同提交托管CI通过。下一独立App管理合同的4资源/15代码锚点/20中文定位已核，先接fresh资格与name/description，再按各自gate处理删除/发布；徽标gate未知不能默认放行。
 
 收尾补丁验证范围：完整907 Rust/217前端/非Fast34探针之后，删除本轮迁移产生的未使用servicePluginManagementRootId，仅src/pluginManagementLocation.ts一项产品输入变化，所有Rust输入hash未变。补跑5组路由/父页/根组件回归及TypeScript退出0，重新冻结529输入并重建EXE/MSI/NSISexit0；本节上列hash已更新为最终候选。初版输入/产物元数据保留*-pre-helper-removal.json，补丁范围见post-check-patch.json；不将原217前端报告成补丁后再跑217。没有新增行为或测试绕过。
+
+### 独立App名称/描述阶段候选（2026-11-16）
+
+已按v1.8总计划接独立App管理：fresh明确null关联→真实metadata→规范化wham当前账户，分别判断名称/描述；typed PATCH使用fresh实际metadata.id；名称按ECMAScript trim且无昵称64字符限制，描述保持原样（包括空串）。新增管理区与source medium编辑器，pending禁取消/关闭/重复保存，拒绝保草稿，未知仅读核验；值确认后真实重读hosted标题/描述，刷新失败只刷新、不再PATCH。未增加账户菜单、权限、刷新工具或未证实Logo gate入口。
+
+验证：112相关Rust随后扩大929全Rust（0失败/忽略/过滤，133.94秒），219前端回放退出0。完整前端后又按MC02–04修正冷资格读取时不显示额外heading/loading，实际组件先红后绿，补跑2项受影响UI及TypeScript退出0；另补source已有row查询容器，CSS和该section TSX是原始冻结后仅有产品变化，所有Rust输入hash未变。非Fast标准/34隔离协议探针、最终EXE/MSI/NSIS均退出0。最终536输入从重新冻结至打包收集稳定；不将219报告成冷态补丁后再跑219，准确范围见本包post-check-patch.json。
+
+来源复核4资源/15代码/20中文，另8资源/32编辑器锚点均严格hash/范围通过；独立代码复审核所有权、描述三态、写后刷新及退休回调。其后追加source审查发现冷态额外section，已按上述先红后绿修正。浏览器/原生GUI/物理IME、真实HTTP及账号写入、官方同环境配对像素、同提交托管CI和用户验收均未执行；visual score=null。shadow/backdrop/关闭控件及短窗滚动近似仍登记，未知意图只在同section生命周期内保留，不能宣称跨整页卸载/重启恢复。
+
+候选目录`dist-artifacts/plugins-r2-app-management-20261116/`：
+
+| 产物 | 字节数 | SHA-256 |
+|---|---:|---|
+| CodexNative.exe | 31,429,120 | c31422741b2beaed46a8c510c13891dad72cb1bbaa50d3397420661888304230 |
+| Codex Native_0.2.0_x64_en-US.msi | 10,059,776 | 8599e7a256330670af9b46d39eca6ed2cd1774ea0c6120d1cbf153e40dc6f70b |
+| Codex Native_0.2.0_x64-setup.exe | 6,755,729 | 1b4e2feaaab9804dff4885a8b364bf7e4a25dcf1ecd1c70cc4b3f084a88b154a |
+
+输入manifest SHA-256 `2a0d3a8e06e6d1809d6f6fecd7654892d7b4d4912d674618a4bcc1c36dce6bd1`。证据`.ref/parity/12/whole-page/actual/app-management-r2-20261116/`；本地Lore提交后由candidate-artifacts.json/verification-summary.json绑定准确sourceCommit。没有推送、发布或宣称远端CI通过。
+
+用户验收路径：登录具备服务资格的账户→插件设置→真实无所属plugin的自有App→按实际独立资格打开名称/描述编辑→检查初始保存禁用、取消零写、名称空白/描述空串、等待时关闭保护、失败保稿及刷新后结果。无资格时不显示对应控件；服务不可用或账号条件缺失须记未验，不能当通过。下一工作包是独立App删除/发布（各自资格及tenant catalog限制），再处理授权恢复与特殊宿主；Logo gate尚未知，R2整页和全软件目标均未完成。

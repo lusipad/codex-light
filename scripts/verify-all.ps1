@@ -390,6 +390,8 @@ try {
   Invoke-Step "Durable plugin directory production page" { node scripts/verify-durable-plugin-directory-page.mjs }
   Invoke-Step "Plugin app details parent" { node scripts/verify-plugin-app-details-parent.mjs }
   Invoke-Step "Plugin app entry client" { node scripts/verify-plugin-app-entry.mjs }
+  Invoke-Step "Standalone app management reader" { node scripts/verify-plugin-app-management.mjs }
+  Invoke-Step "Standalone app management editors" { node scripts/verify-plugin-app-management-section.mjs }
   Invoke-Step "Plugin app entry page" { node scripts/verify-plugin-app-entry-page.mjs }
   Invoke-Step "Plugin app account actions" { node scripts/verify-plugin-app-accounts.mjs }
   Invoke-Step "Plugin account rename dialog" { node scripts/verify-plugin-account-rename-dialog.mjs }

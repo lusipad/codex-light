@@ -755,7 +755,7 @@ impl ChatgptService {
         Ok(body)
     }
 
-    async fn plugin_app_metadata_http<F, Fut, T>(&self, route: &str, identity: &ServiceIdentity, profile: &ServiceProfile,
+    pub(super) async fn plugin_app_metadata_http<F, Fut, T>(&self, route: &str, identity: &ServiceIdentity, profile: &ServiceProfile,
         registration: &Registration<'_>, call: &F, transport: &T) -> ServiceResult<Value>
     where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>>, T: Transport {
         for attempt in 0..2 {

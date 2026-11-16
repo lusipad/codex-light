@@ -240,10 +240,27 @@ Dialog同scope重试失败保旧正文；权限missing/null与空串分开；旧
 
 固定同版`app-manage-completion-contract.md/anchors.json`，主线程核4资源hash/大小、15代码片段及20中文定位，所有UTF-16范围在EOF内。仅明确null association后的standalone App进入H {app,connector,link:undefined}；不得借插件App的账户More/权限/sync或无link的“刷新工具”填页面。hosted标题/描述、metadata及资格错误分别处理。
 
-资格必须fresh读取当前账户A和真实metadata：personal owner用认证userId，workspace USER owner用A.account_user_id，workspace admin/owner可匹配WORKSPACE owner；所有情况要求A.id===当前accountId。MCP且ONLY_ME或review DEVELOPMENT才name/description；description另排DISABLED_BY_ADMIN并允许当前workspace admin，name没有该额外条件。delete要求MCP+owner并禁止TENANT_CATALOG；publish独立为当前非personal admin、非SERVICE、ONLY_ME的固定external链接。logo另需实际gate3870713715，不默认true。当前DTO须补owners/type/status/review、account角色/account_user_id及distribution_channel，不把字段缺失当拥有权限。
+资格必须fresh读取当前账户A和真实metadata：personal owner用认证userId，workspace USER owner用A.account_user_id，workspace admin/owner可匹配WORKSPACE owner；所有情况要求A.id===当前accountId。MCP且ONLY_ME或review DEVELOPMENT才name/description；description另排DISABLED_BY_ADMIN并允许当前匹配账户的admin/owner角色分支（该分支不额外要求workspace structure），name没有该额外条件。delete要求MCP+owner并禁止TENANT_CATALOG；publish独立为当前非personal admin、非SERVICE、ONLY_ME的固定external链接。logo另需实际gate3870713715，不默认true。资格判断须读取owners/type/status/review、account角色/account_user_id，renderer只接收公共metadata和资格结果，不暴露原始账户或所有者记录。删除前另须补distribution_channel，不把字段缺失当拥有权限。
 
 优先实现fresh资格和name/description共用source编辑弹层：名称trim后非空且不同，描述原样允许空/保首尾空白；不套nickname64字符限制。固定CODEX/settings PATCH /aip/connectors/{rawMetadataId}/name {name}或/description {description}，无任意field/url。pending禁输入/取消/关闭；失败保草稿，取消零写。ACK后同身份实际GET验证，未知仅重读，不能以本地编辑值改hosted标题冒成功；header必须真实刷新得到新值。
 
 后续delete独立确认“永久删除 {name} 及其连接？此操作无法撤消”，固定无body DELETE /aip/connectors/{id}；确认、tenant限制、204/未知读回及replace管理根分别验，不操作真实账号危险数据作自动测试。publish只开精确https://chatgpt.com/admin/apps#drafts?publish=<encoded id>，不模拟发布；logo没有独立上传服务，待gate证据后另接PNG<=10KB的FileReader data URL固定PATCH，当前不开发猜测可见入口。
 
 每项覆盖个人/工作区USER owner/WORKSPACE admin owner/非owner/metadata错误/账号ABA、字段原样及取消/pending/known reject/unknown真实读回，弹层焦点/IME与宽窄配对另验。本段是下一工作包输入，不表示已接或已验。
+
+#### 独立App名称/描述实现合同与检查点（2026-11-16）
+
+同版来源：app-manage-completion-contract及4资源/15代码/20中文定位，编辑器补证8资源/32严格UTF-16锚点。medium静态宽28rem（16px参考根字体对应448 CSS px）、max92vw、form四周20px、字段/footer顶部20px；name settings input、description rounded textarea/min104px；这些是静态布局依据，不是当前物理像素测量。阴影/遮罩/关闭按钮与短窗滚动仍近似，必须通过配对图与原生检查继续修正。
+
+| 用例 | 官方预期及实现约束 | 实现与回归 |
+|---|---|---|
+| MA01 资格 | 明确null关联才独立；当前账号/USER或WORKSPACE所有权分别判断名称、描述；读失败不可伪装无资格 | plugin_app_management.rs；plugin_app_management 11项及verify-plugin-app-management.mjs |
+| MA02 名称 | 输入trim后非空且与原始name不同，无64字符上限；固定PATCH实际metadata.id/name | plugin_app_metadata_update.rs、pluginAppManagement.ts；metadata更新专项及client/bridge回归 |
+| MA03 描述 | 保留原始missing/null/空串；初始不dirty，编辑后可保存空串/首尾空白，固定description字段 | 同上及verify-plugin-app-management-section.mjs空描述回归 |
+| MA04 等待 | 同步写锁、禁字段/取消/关闭，不因IME Enter重复提交，错误不随每次输入清空 | PluginAppMetadataDialog；生产组件回放，物理IME仍未验 |
+| MA05 拒绝 | 明确4xx（除408）为rejected，不因偶然相同读回宣称成功；保留草稿与错误 | PATCH回归及dialog拒绝用例；401不自动重放 |
+| MA06 未知 | accepted/unknown未确认后仅实际GET核验，不能重复PATCH；退出重开同section保留核验意图 | dialog/client回归；实际section卸载及应用重启的意图持久化未实现 |
+| MA07 退休 | 账号/route/metadata身份变化或离页后不更新旧界面、不窃取焦点 | 父页URL退休先红后绿，账户/取消/ABA及组件scope回归 |
+| MA08 刷新 | 实际值确认后真实重读hosted标题/描述；刷新失败只重试刷新，不能再写或用draft改标题 | PluginAppEntryPage.onUpdated及生产父页/editor回归 |
+
+阶段检查：112项相关Rust随后扩大为929全Rust通过，219前端回放通过；非Fast标准/34隔离探针及最终EXE/MSI/NSIS已退出0；219前端之后的cold section/row末补丁另验2个UI及TypeScript，所有Rust输入未变，准确范围见验收记录。新增读取/写入为固定typed Tauri命令，renderer不接收owners、账户原始记录或凭据。删除/发布与Logo门控不属于本名称/描述已实现声明；真实HTTP、GUI/IME、配对像素、托管CI和用户验收均未验。

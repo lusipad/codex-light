@@ -1,0 +1,8 @@
+.pams-section { min-width: 0; }
+.pams-section h2 { margin: 0; padding-bottom: 6px; font-size: var(--text-base); font-weight: 500; line-height: 24px; }
+.pams-group { overflow: hidden; border: 1px solid var(--border-default); border-radius: 16px; }
+.pams-row { container-type: inline-size; container-name: settings-row; display: flex; justify-content: space-between; align-items: center; min-width: 0; gap: 24px; padding: 12px 16px; }
+.pams-row + .pams-row { border-top: 1px solid var(--border-subtle); }
+.pams-row > span { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: var(--text-sm); font-weight: 500; }
+.pams-row > div { display: flex; flex-shrink: 0; justify-content: flex-end; gap: 8px; min-width: min(160px, 40cqw); }
+.pams-error { display: flex; align-items: center; gap: 12px; font-size: var(--text-sm); }
