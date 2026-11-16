@@ -106,6 +106,16 @@ export function pluginManagementPermissionSelectionUrl(base: string | URL, linkI
   return `${url.pathname}${url.search}${url.hash}`;
 }
 
+/** t3('sync') constructs only the current actual linkId, not the old query. */
+export function pluginManagementAppSyncUrl(base: string | URL, linkId: string | null): string {
+  const location = checkedBase(base);
+  if (location.kind !== "plugin" || location.section !== "detail" || location.hostId !== null || !location.pluginId || location.skillName) throw new Error("Invalid plugin sync source location");
+  const app = location.appId === null ? "" : `/apps/${encodedSegment(location.appId)}`;
+  if (linkId !== null) encodedSegment(linkId);
+  const query = linkId === null ? "" : `?${new URLSearchParams({ linkId })}`;
+  return `${managementRoot}/${encodedSegment(location.pluginId)}${app}/sync${query}`;
+}
+
 /** jEyg.$W: remote service IDs are direct only on local/durable; SSH retains CLI identity. */
 export function pluginManagementDetailUrl(base: string | URL, params: {
   pluginId: string;

@@ -29,7 +29,7 @@ fn deserialize_link_permission_value<'de,D:serde::Deserializer<'de>>(deserialize
     Value::deserialize(deserializer)
 }
 
-fn link_permission_normalize(id:&str)->String {
+pub(super) fn link_permission_normalize(id:&str)->String {
     id.strip_prefix("asdk_app_").map(|id|format!("connector_{id}")).unwrap_or_else(||id.to_owned())
 }
 
@@ -88,37 +88,14 @@ impl ChatgptService {
 
     async fn plugin_app_link_permissions_with<F,Fut,T>(&self,request:PluginAppLinkPermissionsRequest,call:F,transport:&T)->ServiceResult<PluginPermissionsResponse>
     where F:Fn(&'static str,Value)->Fut,Fut:Future<Output=Result<Value,String>>,T:Transport {
-        let encoded=encode_segment(&request.plugin_id)?;
+        encode_segment(&request.plugin_id)?;
         if let Some(app_id)=&request.app_id {encode_segment(app_id)?;}
         let registration=self.register(&request.request_id)?;
         let common=PluginPermissionsRequest{request_id:request.request_id.clone(),expected_identity:request.expected_identity,profile:request.profile};
         let identity=&common.expected_identity;
         let accounts=self.permission_http("/backend-api/wham/accounts/check",HttpMethod::Get,&common,&registration,&call,transport).await?;
         let personal=plugin_permissions::permission_personal(&accounts,identity)?;
-        let app_id=if let Some(app_id)=request.app_id {Some(app_id)} else {
-            let plugin=self.remote_plugin_http(&format!("/backend-api/ps/plugins/{encoded}"),HttpMethod::Get,false,identity,&common.profile,&registration,&call,transport).await?;
-            validate_remote_plugin_row(&plugin)?;
-            if plugin["id"].as_str()!=Some(request.plugin_id.as_str()) {return Err(link_permission_invalid());}
-            if plugin["release"].get("requires_local_executor").is_some_and(|value|!value.is_null() && !value.is_boolean()) {return Err(link_permission_invalid());}
-            if plugin["release"]["requires_local_executor"]==true {return Err(failure("unsupported_host","Implicit local-executor app permissions require verified host support"));}
-            let inventory=self.remote_plugin_pages(identity,&common.profile,true,&registration,&call,transport).await?;
-            let candidate=link_permission_canonical(&plugin,&inventory)?;
-            if let Some(candidate)=candidate {
-                if plugin.get("canonical_app_id").is_none_or(Value::is_null) {
-                    let encoded=encode_segment(&candidate)?;
-                    let association=self.remote_plugin_http(&format!("/backend-api/ps/plugins/canonical-app/{encoded}"),HttpMethod::Get,false,identity,&common.profile,&registration,&call,transport).await;
-                    match association {
-                        Ok(value) if value["plugin_id"].as_str()==Some(request.plugin_id.as_str())=>Some(candidate),
-                        Err(error) if matches!(error.code,"account_changed"|"cancelled")=>return Err(error),
-                        _=>None,
-                    }
-                } else {Some(candidate)}
-            } else {None}
-        };
-        let Some(app_id)=app_id else {
-            self.check_share_current(identity,&registration)?;
-            return Err(failure("app_not_in_plugin","Plugin has no resolved canonical app for permissions"));
-        };
+        let app_id=self.resolve_service_plugin_app(&request.plugin_id,request.app_id.as_deref(),&common,&registration,&call,transport).await?;
         let details=PluginAppDetailsRequest{request_id:request.request_id.clone(),expected_identity:identity.clone(),profile:common.profile.clone(),plugin_id:request.plugin_id,app_id:app_id.clone()};
         let details=self.plugin_app_snapshot(&details,&registration,&call,transport).await?;
         let access=match details["links"].as_array() {
@@ -135,6 +112,39 @@ impl ChatgptService {
         };
         self.check_share_current(identity,&registration)?;
         Ok(PluginPermissionsResponse{request_id:request.request_id,identity:identity.clone(),body:json!({"appId":app_id,"details":details,"personal":personal,"access":access,"defaultValue":default_value,"defaultError":default_error})})
+    }
+
+    pub(super) async fn resolve_service_plugin_app<F,Fut,T>(&self,plugin_id:&str,app_id:Option<&str>,common:&PluginPermissionsRequest,
+        registration:&Registration<'_>,call:&F,transport:&T)->ServiceResult<String>
+    where F:Fn(&'static str,Value)->Fut,Fut:Future<Output=Result<Value,String>>,T:Transport {
+        let encoded=encode_segment(plugin_id)?;
+        let identity=&common.expected_identity;
+        let app_id=if let Some(app_id)=app_id {encode_segment(app_id)?;Some(app_id.to_owned())} else {
+            let plugin=self.remote_plugin_http(&format!("/backend-api/ps/plugins/{encoded}"),HttpMethod::Get,false,identity,&common.profile,&registration,&call,transport).await?;
+            validate_remote_plugin_row(&plugin)?;
+            if plugin["id"].as_str()!=Some(plugin_id) {return Err(link_permission_invalid());}
+            if plugin["release"].get("requires_local_executor").is_some_and(|value|!value.is_null() && !value.is_boolean()) {return Err(link_permission_invalid());}
+            if plugin["release"]["requires_local_executor"]==true {return Err(failure("unsupported_host","Implicit local-executor app permissions require verified host support"));}
+            let inventory=self.remote_plugin_pages(identity,&common.profile,true,&registration,&call,transport).await?;
+            let candidate=link_permission_canonical(&plugin,&inventory)?;
+            if let Some(candidate)=candidate {
+                if plugin.get("canonical_app_id").is_none_or(Value::is_null) {
+                    let encoded=encode_segment(&candidate)?;
+                    let association=self.remote_plugin_http(&format!("/backend-api/ps/plugins/canonical-app/{encoded}"),HttpMethod::Get,false,identity,&common.profile,&registration,&call,transport).await;
+                    match association {
+                        Ok(value) if value["plugin_id"].as_str()==Some(plugin_id)=>Some(candidate),
+                        Err(error) if matches!(error.code,"account_changed"|"cancelled")=>return Err(error),
+                        _=>None,
+                    }
+                } else {Some(candidate)}
+            } else {None}
+        };
+        let Some(app_id)=app_id else {
+            self.check_share_current(identity,&registration)?;
+            return Err(failure("app_not_in_plugin","Plugin has no resolved canonical app"));
+        };
+        self.check_share_current(identity,&registration)?;
+        Ok(app_id)
     }
 
     pub async fn plugin_app_link_permission_write<F,Fut>(&self,request:PluginAppLinkPermissionWriteRequest,call:F)->ServiceResult<ProfileMutationResponse>

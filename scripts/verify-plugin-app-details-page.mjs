@@ -33,6 +33,7 @@ const react = { createElement: (type, props, ...children) => ({ type, props: pro
   useLayoutEffect(callback, deps) { react.useEffect(callback, deps); },
 };
 const { PluginAppDetailsPage } = load('src/components/PluginAppDetailsPage.tsx', {
+  './PluginAppSyncEntry': { PluginAppSyncEntry: 'PluginAppSyncEntry' },
   react, '../pluginAppDetails': helpers, '../pluginAppAccounts': accountHelpers, './PluginAccountMenu': { PluginAccountMenu: 'PluginAccountMenu' }, './PluginAccountRenameDialog': { PluginAccountRenameDialog: 'PluginAccountRenameDialog' }, '../pluginAppDetailsState': { usePluginAppDetails: (...args) => {
     assert.deepEqual(args, [props.connectionIdentity, props.pluginId, props.appId]);
     return { state, reload: () => retries++, rename: async (...args) => { writes.push(args); return renameResult; }, disconnect: async id => { disconnects.push([id, props.selectedLinkId]); return typeof disconnectResult === 'function' ? disconnectResult() : disconnectResult; }, clearRenameError: () => {} };

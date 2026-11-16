@@ -22,6 +22,8 @@ mod plugin_app_disconnect;
 pub use plugin_app_disconnect::PluginAppDisconnectRequest;
 mod plugin_app_link_permissions;
 pub use plugin_app_link_permissions::{PluginAppLinkPermissionsRequest, PluginAppLinkPermissionWriteRequest};
+mod plugin_app_sync;
+pub use plugin_app_sync::{PluginAppSyncRequest, PluginAppSyncDisableRequest};
 mod archive_conversations;
 pub use archive_conversations::{ArchiveConversationsRequest, ArchiveConversationsResponse};
 mod archive_unarchive;

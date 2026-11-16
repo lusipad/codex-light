@@ -45,7 +45,7 @@ import { PluginPreparationPanel } from "./PluginPreparationPanel";
 import { RecommendedSkillsPanel } from "./RecommendedSkillsPanel";
 import { recommendedSkillDisplayName, readRecommendedSkills, type RecommendedSkill } from "../recommendedSkills";
 import { filterManagedSkills } from "../pluginManagementSkills";
-import { parsePluginManagementLocation, pluginManagementAppSelectionUrl, pluginManagementAppUrl, pluginManagementDetailUrl, pluginManagementPermissionSelectionUrl, pluginManagementRootUrl } from "../pluginManagementLocation";
+import { parsePluginManagementLocation, pluginManagementAppSelectionUrl, pluginManagementAppSyncUrl, pluginManagementAppUrl, pluginManagementDetailUrl, pluginManagementPermissionSelectionUrl, pluginManagementRootUrl } from "../pluginManagementLocation";
 import { SkillPreviewDialog } from "./SkillPreviewDialog";
 import { PluginDirectoryDetail } from "./PluginDirectoryDetail";
 import { PluginDirectoryIncluded } from "./PluginDirectoryIncluded";
@@ -59,6 +59,7 @@ import { AddPluginMarketplaceDialog, type AddPluginMarketplaceInput } from "./Ad
 import { PluginPermissionsSettings } from "./PluginPermissionsSettings";
 import { PluginAppDetailsPage } from "./PluginAppDetailsPage";
 import { PluginAppLinkPermissionsPage } from "./PluginAppLinkPermissionsPage";
+import { PluginAppSyncPage } from "./PluginAppSyncPage";
 import { PluginAppEntryPage } from "./PluginAppEntryPage";
 import {
   AppInfo,
@@ -1001,7 +1002,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       if (route.hostId && route.hostId !== "local") { setDetailError(toViewError(new Error("当前管理入口尚不支持此主机。"))); return; }
       if (route.kind === "app" && route.appId && route.hostId === null) return;
       if (route.kind === "plugin" && route.section === "detail" && route.appId && route.hostId === null) return;
-      if (route.kind === "plugin" && route.section === "permissions" && route.hostId === null) return;
+      if (route.kind === "plugin" && (route.section === "permissions" || route.section === "sync") && route.hostId === null) return;
       if (route.kind !== "plugin" || route.section !== "detail" || route.skillName || route.appId) {
         setDetailError(toViewError(new Error("此插件管理子页面尚未接入。"))); return;
       }
@@ -2040,6 +2041,32 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   }
   const managementAppRoute = manageOnly && window.location ? parsePluginManagementLocation(window.location.href) : null;
   const managementAppContext = pluginContextRef.current;
+  if (managementAppRoute?.kind === "plugin" && managementAppRoute.section === "sync" && managementAppRoute.hostId === null) {
+    const linkId = new URL(window.location.href).searchParams.get("linkId");
+    const isCurrent = () => {
+      const current = parsePluginManagementLocation(window.location.href);
+      return isPluginContextCurrent(managementAppContext) && current?.kind === "plugin" && current.section === "sync" && current.hostId === null &&
+        current.pluginId === managementAppRoute.pluginId && current.appId === managementAppRoute.appId && new URL(window.location.href).searchParams.get("linkId") === linkId;
+    };
+    const openPlugin = (replace = false) => {
+      if (!isCurrent()) return;
+      updateDirectoryUrl(pluginManagementDetailUrl(managementBase(), { pluginId: managementAppRoute.pluginId!, hostId: "local", sourceType: "remote", remotePluginId: managementAppRoute.pluginId }), replace);
+      directoryDetailRetry.current?.();
+    };
+    return <PluginAppSyncPage key={JSON.stringify([connectionIdentity, managementAppRoute.pluginId, managementAppRoute.appId])}
+      connectionIdentity={connectionIdentity} pluginId={managementAppRoute.pluginId!} appId={managementAppRoute.appId} selectedLinkId={linkId}
+      onUpdated={() => {
+        if (!isCurrent()) return;
+        const refresh = Promise.all([refreshRemoteRuntime(), loadServicePlugins()]);
+        const runtimeGeneration = runtimeRequest.current, serviceGeneration = serviceRequest.current;
+        void refresh.then(results => {
+          if (isCurrent() && runtimeGeneration === runtimeRequest.current && serviceGeneration === serviceRequest.current && results.some(result => !result)) {
+            onNotify?.("同步已更新，但无法刷新应用状态", "error");
+          }
+        });
+      }}
+      onRoot={() => { if (isCurrent()) closeManagedDetail(); }} onPlugin={() => openPlugin()} onUnavailable={() => openPlugin(true)} />;
+  }
   if (managementAppRoute?.kind === "plugin" && managementAppRoute.section === "permissions" && managementAppRoute.hostId === null) {
     const isCurrent = () => {
       const current = parsePluginManagementLocation(window.location.href);
@@ -2071,6 +2098,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       }} />;
   }
   if (managementAppRoute?.kind === "plugin" && managementAppRoute.section === "detail" && managementAppRoute.appId && managementAppRoute.hostId === null) {
+    const appSelectedLinkId = new URL(window.location.href).searchParams.get("linkId");
     const isCurrentApp = () => {
       const current = parsePluginManagementLocation(window.location.href);
       return isPluginContextCurrent(managementAppContext) && current?.kind === "plugin" && current.section === "detail" && current.hostId === null &&
@@ -2084,6 +2112,10 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     };
     return <PluginAppDetailsPage key={JSON.stringify([connectionIdentity, managementAppRoute.pluginId, managementAppRoute.appId])}
       connectionIdentity={connectionIdentity} pluginId={managementAppRoute.pluginId!} appId={managementAppRoute.appId}
+      onSync={linkId => {
+        if (!isCurrentApp() || new URL(window.location.href).searchParams.get("linkId") !== appSelectedLinkId) return;
+        updateDirectoryUrl(pluginManagementAppSyncUrl(window.location.href, linkId)); directoryDetailRetry.current?.();
+      }}
       onRenamed={() => onNotify?.("账户已重命名", "success")}
       onDisconnected={() => {
         if (!isCurrentApp()) return;

@@ -3023,3 +3023,18 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 最终收口：隐式canonical App发生A→B→A时，按实际App身份重置状态、废弃旧回调并重建article控件子树，避免旧手势沿用新App输入DOM；同App刷新保持模式。该风险有源码及回归证据，未做物理鼠标复现。完整197前端及非Fast标准/34隔离探针在最后前端补丁之前通过；最后9个受影响流程再验exit0，随后当前TypeScript/Vite、EXE/MSI/NSIS构建exit0。全Rust827项exit0后未改Rust。501项产品输入构建前后稳定。
 
 候选：`dist-artifacts/plugins-r2-link-permissions-20261116/CodexNative.exe`，28,771,840字节，SHA256 `38651579b5adc081e00723a2f326991c4a1bcff97d8370a0881fcab311822feb`。输入清单SHA256 `a1bdec7cb11774a8fcb23947408a70dce0896e85e90f346d1607d77a0fdae972`；三产物哈希与准确执行时序见本阶段证据的`candidate-artifacts.json`及`verification-summary.json`。此为普通插件权限深链阶段候选；无新增可见父入口，真实账户HTTP、原生GUI/IME、官方配对像素、托管CI及用户验收均未验。下一接同步、App管理及授权残项，不升整页G5。
+
+### R2同步匹配合同落地（2026-11-16）
+
+权限深链阶段已本地提交4c39fdd，无推送。继续同页同步子链，复核5来源/19原始锚点，先红后绿实现`src/pluginAppSync.ts`和`verify-plugin-app-sync.mjs`；复用原账户选择与App规范化，4管理员映射/legacy/DWD/多账户隔离、状态摘要与禁用资格有回归，TypeScript通过。当前只有合同纯函数，GET/POST、UI及Github分支未接，不算同步交付，不用旧EXE验收新源。
+
+### R2普通同步真实链集成（进行中）
+
+在已证同步合同上接fixed GET/两POST、fresh wham/membership/link/status核验、当前账户匹配/管理员只读和未知投递仅读恢复；前端包含真实reader、确认Page、hook及显式App入口，复用既有账户选择、canonical解析、pmd/dialog样式。77项plugin_app组、840全库、203前端及最后8受影响流程通过；标准与候选在途。未接GitHub仓库配置/隐式根完整管理面；无真实账号写入或新依赖，未推送。
+最终验证与候选：840全Rust（0失败/忽略/过滤，126.54秒）、203前端回放、非Fast标准整轮/34真实隔离探针均exit0。完整前端在最后呈现/刷新补丁之前；最后8受影响流程（含真实runtime/service刷新、旧刷新代次隔离及IPC注册）和TypeScript另验exit0，当前原生构建含最终TypeScript/Vite且exit0。507产品输入前后稳定；没有用旧EXE验收新源码。
+
+候选`dist-artifacts/plugins-r2-sync-20261116/CodexNative.exe`，29,210,112字节，SHA256 `b346c249b21e58808e3414ba29c969b7ce66757516adfe6f08b546912abe19ed`。输入清单SHA256 `fa476a900fdff67c26d9f456f12982537922e8c3a95b51c7e55f102a4f106cc3`；MSI/NSIS大小与哈希、准确检查范围在证据`candidate-artifacts.json`与`verification-summary.json`。代码来源为4c39fdd后的本阶段工作树，阶段提交后补sourceCommit。实际Tauri GUI、物理输入/IME、真实账号HTTP、同环境官方像素、托管CI和用户验收仍未验。
+
+可复现入口：插件管理的真实App详情，有匹配状态才显示“同步”→状态行“禁用同步”→勾选前不可提交、取消应无写入。真实停止会移除同步内容，仅在已有授权场景验证，本轮没有执行。确认读回后才刷新runtime/service库存；该刷新失败单独提示，不重发停止请求。库/系统提示等跨页及多窗消费者仍在整页回归范围，不以当前两个库存刷新声称完整复制官方Zi失效集合。
+
+下一仍为第02批：GitHub仓库配置（新typed合同13片段/11中文键已备）、隐式canonical根完整App管理面、reconnect/OAuth和HTML/特殊宿主残项，再第03批整页候选。本阶段本地提交，无推送发布；普通同步候选不是整页G5或1:1验收。

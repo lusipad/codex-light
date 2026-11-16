@@ -235,3 +235,26 @@
 最终收口：隐式canonical App发生A→B→A时，按实际App身份重置状态、废弃旧回调并重建article控件子树，避免旧手势沿用新App输入DOM；同App刷新保持模式。该风险有源码及回归证据，未做物理鼠标复现。完整197前端及非Fast标准/34隔离探针在最后前端补丁之前通过；最后9个受影响流程再验exit0，随后当前TypeScript/Vite、EXE/MSI/NSIS构建exit0。全Rust827项exit0后未改Rust。501项产品输入构建前后稳定。
 
 候选：`dist-artifacts/plugins-r2-link-permissions-20261116/CodexNative.exe`，28,771,840字节，SHA256 `38651579b5adc081e00723a2f326991c4a1bcff97d8370a0881fcab311822feb`。输入清单SHA256 `a1bdec7cb11774a8fcb23947408a70dce0896e85e90f346d1607d77a0fdae972`；三产物哈希与准确执行时序见本阶段证据的`candidate-artifacts.json`及`verification-summary.json`。此为普通插件权限深链阶段候选；无新增可见父入口，真实账户HTTP、原生GUI/IME、官方配对像素、托管CI及用户验收均未验。下一接同步、App管理及授权残项，不升整页G5。
+
+## R2同步子链进行中（2026-11-16，4c39fdd之后）
+
+开发前重核固定参考5资源哈希/大小及19个UTF16原始片段。新增生产纯函数锁定所选账户匹配、单账户URL规则、4项管理员映射、DWD资格、Gmail/Outlook legacy限制、摘要状态优先级及停止按钮资格；复用selectPluginAppLinks及canonicalMcpAppId，没有另造账户选择规则。生产函数回归先因缺实现失败，再通过；额外覆盖multi多账户禁止legacy借用。已接入两处标准回归入口，TypeScript exit0。
+
+本阶段尚未接同步GET/POST、页面/确认弹层和写后读回，Github仓库配置仍为独立子单元；不能演示真实同步或报告同步功能完成。无网络调用、真实账号变更、新候选、原生/像素或托管CI结论。证据位于`.ref/parity/12/whole-page/actual/plugin-app-sync-r2-20261116/`。下一在此合同上接真实读取、确认停止与只读恢复，再整合详情入口和深链。
+
+### 普通同步链集成记录（进行中）
+
+已接两个固定IPC、通用认证headers的真实同步GET与两种停止POST；后端fresh核wham、插件/App归属、所选link和唯一connection/backing pair，管理员仅可读。ACK/unknown返回pending不合成成功，客户端重新读取原canonical路由与当下所选范围；仅同实际App/所选账户且目标不再匹配才确认，读失败或目标仍在只读恢复。取消/账号generation变更不宣称已发POST撤销。共享canonical解析从权限模块提取复用，保持原权限读取顺序及回归。
+
+显式App详情接有真实状态才可见的同步入口，单账户忽略外来URL而使用实际fD选择；同步导航只构造当前linkId，丢弃旧query/hash。显式/隐式同步深链均由独占reader解析，不竞争CLI详情；旧link/账号/ABA回调不能重定向新页。Page仅展示真实状态、full优先delta时间、管理员只读和必须勾选的停止确认；未知交付只读恢复，不补开始同步按钮。App、实际identity及link变更更换控件DOM。
+
+77项plugin_app Rust组通过后，全库840项通过，0失败/忽略/过滤，126.54秒；完整203前端回放exit0。随后说明/locale、Entry实际identity DOM和确认后真实runtime/service刷新末补丁，8受影响流程及TypeScript再验0；旧全套不能冒称全部在最终补丁后重跑。非Fast标准与候选结果待本节末追加。实际App详情旧harness因新增Entry import报错已修正stub并重验，不削旧断言。独立源码复核未发现确定新增P1/P2。
+
+差异/未验：采用严格读回再关闭而非官方ACK即关闭；pending期间锁checkbox，unknown提示与恢复为项目保障；弹层520px、徽章和图标等仍为候选，无官方配对像素。普通sync不包含GitHub仓库配置，隐式canonical插件根完整App管理面及其可见入口仍待整合。真实账号HTTP、原生GUI/物理键鼠/IME、多窗、安装升级、托管CI和用户验收未验。
+最终验证与候选：840全Rust（0失败/忽略/过滤，126.54秒）、203前端回放、非Fast标准整轮/34真实隔离探针均exit0。完整前端在最后呈现/刷新补丁之前；最后8受影响流程（含真实runtime/service刷新、旧刷新代次隔离及IPC注册）和TypeScript另验exit0，当前原生构建含最终TypeScript/Vite且exit0。507产品输入前后稳定；没有用旧EXE验收新源码。
+
+候选`dist-artifacts/plugins-r2-sync-20261116/CodexNative.exe`，29,210,112字节，SHA256 `b346c249b21e58808e3414ba29c969b7ce66757516adfe6f08b546912abe19ed`。输入清单SHA256 `fa476a900fdff67c26d9f456f12982537922e8c3a95b51c7e55f102a4f106cc3`；MSI/NSIS大小与哈希、准确检查范围在证据`candidate-artifacts.json`与`verification-summary.json`。代码来源为4c39fdd后的本阶段工作树，阶段提交后补sourceCommit。实际Tauri GUI、物理输入/IME、真实账号HTTP、同环境官方像素、托管CI和用户验收仍未验。
+
+可复现入口：插件管理的真实App详情，有匹配状态才显示“同步”→状态行“禁用同步”→勾选前不可提交、取消应无写入。真实停止会移除同步内容，仅在已有授权场景验证，本轮没有执行。确认读回后才刷新runtime/service库存；该刷新失败单独提示，不重发停止请求。库/系统提示等跨页及多窗消费者仍在整页回归范围，不以当前两个库存刷新声称完整复制官方Zi失效集合。
+
+下一仍为第02批：GitHub仓库配置（新typed合同13片段/11中文键已备）、隐式canonical根完整App管理面、reconnect/OAuth和HTML/特殊宿主残项，再第03批整页候选。本阶段本地提交，无推送发布；普通同步候选不是整页G5或1:1验收。

@@ -501,6 +501,28 @@ async fn plugin_app_link_permissions_read(
 }
 
 #[tauri::command]
+async fn plugin_app_sync_read(
+    app: AppHandle, state: State<'_, AppState>, request: chatgpt_service::PluginAppSyncRequest,
+) -> Result<chatgpt_service::PluginPermissionsResponse, chatgpt_service::ServiceError> {
+    state.chatgpt_service.plugin_app_sync_read(request, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
+async fn plugin_app_sync_disable(
+    app: AppHandle, state: State<'_, AppState>, request: chatgpt_service::PluginAppSyncDisableRequest,
+) -> Result<chatgpt_service::ProfileMutationResponse, chatgpt_service::ServiceError> {
+    state.chatgpt_service.plugin_app_sync_disable(request, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
 async fn plugin_app_link_permission_write(
     app: AppHandle, state: State<'_, AppState>, request: chatgpt_service::PluginAppLinkPermissionWriteRequest,
 ) -> Result<chatgpt_service::ProfileMutationResponse, chatgpt_service::ServiceError> {
@@ -2586,6 +2608,8 @@ pub fn run() {
             plugin_app_account_disconnect,
             plugin_app_link_permissions_read,
             plugin_app_link_permission_write,
+            plugin_app_sync_read,
+            plugin_app_sync_disable,
             plugin_app_resolve,
             plugin_app_standalone_read,
             plugin_permissions_write,

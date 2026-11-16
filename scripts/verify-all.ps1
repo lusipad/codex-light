@@ -388,6 +388,12 @@ try {
   Invoke-Step "Plugin app link permission state" { node scripts/verify-plugin-app-link-permissions-state.mjs }
   Invoke-Step "Plugin app link permission page" { node scripts/verify-plugin-app-link-permissions-page.mjs }
   Invoke-Step "Plugin app link permission parent" { node scripts/verify-plugin-app-link-permissions-parent.mjs }
+  Invoke-Step "Plugin app sync matching" { node scripts/verify-plugin-app-sync.mjs }
+  Invoke-Step "Plugin app sync client" { node scripts/verify-plugin-app-sync-client.mjs }
+  Invoke-Step "Plugin app sync state" { node scripts/verify-plugin-app-sync-state.mjs }
+  Invoke-Step "Plugin app sync page" { node scripts/verify-plugin-app-sync-page.mjs }
+  Invoke-Step "Plugin app sync parent" { node scripts/verify-plugin-app-sync-parent.mjs }
+  Invoke-Step "Plugin app sync entry" { node scripts/verify-plugin-app-sync-entry.mjs }
   Invoke-Step "Plugin permissions state" { node scripts/verify-plugin-permissions-state.mjs }
   Invoke-Step "Plugin permissions presentation" { node scripts/verify-plugin-permissions-ui.mjs }
   Invoke-Step "Plugin-provided settings data" { node scripts/verify-plugin-provided-settings.mjs }

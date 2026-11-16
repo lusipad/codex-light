@@ -1,0 +1,20 @@
+.pas-statuses { display: flex; flex-direction: column; min-width: 0; }
+.pas-entry { display: flex; align-items: center; gap: 8px; width: 100%; margin-top: 16px; padding: 12px 16px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; text-align: start; }
+.pas-entry > span:first-child { flex: 1; }
+.pas-entry:hover:enabled { background: var(--bg-hover); }
+.pas-entry:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+.pas-status-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; border-radius: 8px; }
+.pas-status-copy { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; }
+.pas-badge { display: inline-flex; border: 1px solid var(--border-default); border-radius: 4px; padding: 1px 6px; font-size: var(--text-sm); }
+.pas-badge-success { color: var(--accent-green); }
+.pas-updated { color: var(--text-secondary); font-size: var(--text-sm); }
+.pas-disable { flex: 0 0 auto; padding: 6px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--text-primary); font: inherit; }
+.pas-disable:hover:enabled { background: var(--bg-hover); }
+.pas-admin { color: var(--text-tertiary); font-size: var(--text-sm); }
+.apm-dialog.pas-dialog { width: 520px; max-width: 92vw; }
+.pas-dialog .pas-ack { display: flex; flex-direction: row; align-items: flex-start; gap: 8px; }
+.pas-dialog .pas-ack input { flex: 0 0 auto; width: 16px; height: 16px; margin: 2px 0 0; padding: 0; accent-color: currentColor; }
+.pas-danger { display: flex; align-items: center; gap: 6px; padding: 6px 12px; border: 1px solid var(--accent-red); border-radius: 6px; background: var(--accent-red); color: var(--bg-primary); font: inherit; }
+.pas-page button:disabled { opacity: .5; }
+.pas-page button:focus-visible, .pas-ack input:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+@media (max-width: 680px) { .pas-status-row { flex-wrap: wrap; padding-inline: 8px; } }

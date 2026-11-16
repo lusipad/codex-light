@@ -10,6 +10,7 @@ vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/pluginManagementLocat
 const { parsePluginManagementLocation: parse, pluginManagementDetailUrl: detail, pluginManagementRootUrl: root } = module.exports;
 const { pluginManagementAppUrl: app, pluginManagementAppSelectionUrl: selection } = module.exports;
 const { pluginManagementPermissionSelectionUrl: permissionSelection } = module.exports;
+const { pluginManagementAppSyncUrl: syncUrl } = module.exports;
 const base = "/settings/plugins-settings?hostId=stale&tab=mcps&marketplacePath=old&unrelated=discard#old";
 assert.equal(parse(base).kind, "root");
 assert.equal(parse(base).hostId, "stale");
@@ -87,3 +88,7 @@ for (const route of ["/settings/plugins-settings/plugin/permissions", "/settings
 }
 for (const route of [base, "/settings/plugins-settings/permissions", "/settings/plugins-settings/plugin/apps/app", "/settings/plugins-settings/plugin/permissions?hostId=ssh"]) assert.throws(() => permissionSelection(route, "link"), /Invalid/);
 console.log("Plugin management locations: proven route tree, raw remote IDs, encoded identities, real source/host and malformed routes passed.");
+assert.equal(syncUrl('/settings/plugins-settings/plugin?keep=drop#old', null), '/settings/plugins-settings/plugin/sync');
+const sync = new URL(syncUrl(appBase, 'actual/?中文'), 'https://test.invalid');
+assert.equal(sync.pathname, '/settings/plugins-settings/plugin/apps/connector_A/sync'); assert.equal(sync.searchParams.get('linkId'), 'actual/?中文'); assert.equal(sync.searchParams.size, 1); assert.equal(sync.hash, '');
+for (const route of [base, '/settings/plugins-settings/apps/app', '/settings/plugins-settings/plugin/permissions', '/settings/plugins-settings/plugin/sync', '/settings/plugins-settings/plugin?hostId=ssh', '/settings/plugins-settings/plugin/skills/name']) assert.throws(() => syncUrl(route, 'link'), /Invalid/);

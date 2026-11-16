@@ -4,6 +4,7 @@ import { persistPluginAppSelection, pluginAppAccountsPresentation } from "../plu
 import { usePluginAppDetails } from "../pluginAppDetailsState";
 import { PluginAccountRenameDialog } from "./PluginAccountRenameDialog";
 import { PluginAccountMenu } from "./PluginAccountMenu";
+import { PluginAppSyncEntry } from "./PluginAppSyncEntry";
 import "./PluginManagementDetail.css";
 import "./PluginAppDetailsPage.css";
 
@@ -18,6 +19,7 @@ interface PluginAppDetailsPageProps {
   onSelectLink: (linkId: string | null, expectedLinkId?: string) => boolean;
   onRenamed?: () => void;
   onDisconnected?: () => void;
+  onSync?: (linkId: string | null) => void;
 }
 
 function accountIdentity(link: PluginAppLink, appName: string): string {
@@ -26,7 +28,7 @@ function accountIdentity(link: PluginAppLink, appName: string): string {
     : "账户");
 }
 
-export function PluginAppDetailsPage({ connectionIdentity, pluginId, appId, onBack, onOpenPlugin, onUnavailable, selectedLinkId, onSelectLink, onRenamed, onDisconnected }: PluginAppDetailsPageProps) {
+export function PluginAppDetailsPage({ connectionIdentity, pluginId, appId, onBack, onOpenPlugin, onUnavailable, selectedLinkId, onSelectLink, onRenamed, onDisconnected, onSync }: PluginAppDetailsPageProps) {
   const { state, reload, rename, disconnect, clearRenameError } = usePluginAppDetails(connectionIdentity, pluginId, appId);
   const unavailable = useRef(onUnavailable); unavailable.current = onUnavailable;
   useEffect(() => { if (state.unavailable) unavailable.current(); }, [state.unavailable]);
@@ -164,6 +166,8 @@ export function PluginAppDetailsPage({ connectionIdentity, pluginId, appId, onBa
         </div>;
       })}</div>
     </section>}
+    {onSync && details?.links && <PluginAppSyncEntry key={JSON.stringify(details.links)} connectionIdentity={connectionIdentity} pluginId={pluginId} appId={appId}
+      selectedLinkId={selectedLinkId} disabled={state.loading || pending || state.blocked || selection !== null} onOpen={linkId => { if (active() && !current.current.state.loading && !current.current.state.blocked && current.current.state.pendingLinkId === null) onSync(linkId); }} />}
     {selection && renameLink && <PluginAccountRenameDialog key={JSON.stringify([scope, selection.linkId, selection.token])}
       identity={JSON.stringify([scope, selection.token])} linkId={renameLink.id} accountIdentity={accountIdentity(renameLink, title.trim())}
       initialNickname={pluginAppAccountNickname(renameLink, title) ?? ""} currentName={renameLink.name ?? ""}

@@ -573,6 +573,27 @@ export async function readPluginAppLinkPermissions(pluginId: string, appId: stri
   return responseBody(result, requestId, identity);
 }
 
+export async function readPluginAppSync(pluginId: string, appId: string | null, selectedLinkId: string | null, identity: ServiceIdentity, signal: AbortSignal): Promise<unknown> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; body: unknown }>(
+    "plugin_app_sync_read", requestId,
+    { request: { requestId, expectedIdentity: identity, profile: browserProfile(), pluginId, appId, selectedLinkId } }, signal,
+  );
+  return responseBody(result, requestId, identity);
+}
+
+export async function disableServicePluginAppSync(pluginId: string, appId: string, selectedLinkId: string | null, connectionInstanceId: string,
+  backingLinkId: string | null, identity: ServiceIdentity, signal: AbortSignal): Promise<ProfileMutationResult> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<ProfileMutationResult & { requestId: string; identity: ServiceIdentity }>(
+    "plugin_app_sync_disable", requestId,
+    { request: { requestId, expectedIdentity: identity, profile: browserProfile(), pluginId, appId, selectedLinkId, connectionInstanceId, backingLinkId } }, signal,
+  );
+  responseBody(result, requestId, identity);
+  if (result.verification !== "pending") throw Error("同步操作回执无效，请重新读取。");
+  return result;
+}
+
 export async function writePluginAppLinkPermission(pluginId: string, appId: string, linkId: string, value: string | null, identity: ServiceIdentity, signal: AbortSignal): Promise<ProfileMutationResult> {
   const requestId = crypto.randomUUID();
   const result = await invokeService<ProfileMutationResult & { requestId: string; identity: ServiceIdentity }>(
