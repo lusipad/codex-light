@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { harness } from "./verify-plugin-management-ui-b.mjs";
 
-const location = {}, listeners = new Map(), reads = [], historyWrites = [];
+const location = {}, listeners = new Map(), reads = [], historyWrites = [], notifications = [];
+let accountAppReads = 0, serviceReads = 0, refreshFails = false, nextServiceRead = null;
 const setUrl = input => {
   const url = new URL(input, "https://private.test");
   Object.assign(location, { href: url.href, pathname: url.pathname, search: url.search, hash: url.hash });
@@ -14,7 +15,10 @@ const view = harness({ window: { location, history: { state: {},
   replaceState(state, _title, url) { this.state = state; historyWrites.push(["replace", url]); setUrl(url); }, pushState(state, _title, url) { this.state = state; historyWrites.push(["push", url]); setUrl(url); } },
   addEventListener(name, callback) { if (!listeners.has(name)) listeners.set(name, new Set()); listeners.get(name).add(callback); },
   removeEventListener(name, callback) { listeners.get(name)?.delete(callback); },
-}, directory: { readLocalDirectoryListing: async id => { reads.push(id); return detail; } } });
+}, directory: { readLocalDirectoryListing: async id => { reads.push(id); return detail; } },
+plugins: { listApps: async () => { accountAppReads++; return { data: [] }; } },
+remote: { loadRemotePlugins: async () => { serviceReads++; const gate = nextServiceRead; nextServiceRead = null; if (gate) await gate; return { identity: null, marketplace: null, unsupported: false, error: refreshFails ? 'Refresh offline' : null }; } } });
+view.props.onNotify = (...args) => notifications.push(args);
 const app = () => view.nodes(view.tree).find(node => node.type === "PluginAppDetailsPage");
 const pop = url => { setUrl(url); for (const listener of listeners.get("popstate") ?? []) listener(); view.render(); };
 try {
@@ -29,9 +33,26 @@ try {
   assert.equal(app().props.onSelectLink("second/?中文"), true); await view.tick();
   assert.equal(new URL(location.href).searchParams.get("keep"), "literal/value");
   assert.equal(app().props.selectedLinkId, "second/?中文"); assert.equal(historyWrites[selectionWrite][0], "replace");
+  const conditionalWrites = historyWrites.length;
+  assert.equal(app().props.onSelectLink(null, "old"), false, "late removal fallback cannot overwrite the live URL's newer account selection");
+  assert.equal(historyWrites.length, conditionalWrites);
+  assert.equal(app().props.onSelectLink("healthy-after-delete", "second/?中文"), true);
+  await view.tick(); assert.equal(app().props.selectedLinkId, "healthy-after-delete");
   assert.equal(app().props.key, initialKey, "selection does not remount the current App reader or discard its dialog draft");
+  const appReadsBeforeDisconnect = accountAppReads, serviceReadsBeforeDisconnect = serviceReads;
+  app().props.onDisconnected(); assert.deepEqual(notifications.at(-1), ['账户已断开连接', 'success']);
+  await view.tick(); assert.ok(accountAppReads > appReadsBeforeDisconnect); assert.ok(serviceReads > serviceReadsBeforeDisconnect, 'confirmed disconnect refreshes real service inventory too');
+  let releaseService; nextServiceRead = new Promise(resolve => { releaseService = resolve; });
+  const errorsBeforeOverlap = notifications.filter(item => item[1] === 'error').length;
+  app().props.onDisconnected(); app().props.onDisconnected(); await view.tick(); releaseService(); await view.tick();
+  assert.equal(notifications.filter(item => item[1] === 'error').length, errorsBeforeOverlap, 'a superseded refresh cannot report failure after its replacement succeeds');
+  refreshFails = true; app().props.onDisconnected(); await view.tick();
+  assert.deepEqual(notifications.at(-1), ['账户已更新，但无法刷新账户列表', 'error'], 'refresh failure is distinct from an unconfirmed DELETE and never replays it');
+  refreshFails = false;
+  const retiredDisconnect = app().props.onDisconnected;
   pop("/settings/plugins-settings/plugin%2Freal/apps/connector_B"); await view.tick();
   assert.equal(app().props.appId, "connector_B"); assert.notEqual(app().props.key, initialKey);
+  const notificationsBeforeStale = notifications.length; retiredDisconnect(); await view.tick(); assert.equal(notifications.length, notificationsBeforeStale);
   assert.equal(retiredSelection("stale selection"), false, "retired parent rejects selection before the child persists it");
   assert.equal(new URL(location.href).searchParams.has("linkId"), false);
   const retiredMembership = app().props.onUnavailable;

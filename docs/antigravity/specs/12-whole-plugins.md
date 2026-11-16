@@ -185,3 +185,7 @@ PAD07–PAD12新增验收：association的string/null/missing/error；原始ID�
 补核同版中文和el行语义：rename可访问名为“重命名 {identity}（{nickname}）”，仅实际不同昵称存在时加括号；选择按钮为“选择 {identity}”，不同昵称通过自引用按钮id和昵称id的aria-labelledby合并。非选择身份区域是group，认证过期说明通过aria-describedby关联；不是仅放一个无归属sr-only文本。PAA09先红复现遗漏昵称，再绿验证真实生产JSX。四个精确来源片段在本包证据`account-accessible-label-anchors.json`，此项不证明屏幕阅读器原生实测或视觉一致。
 
 下一同页工作包输入是`app-account-disconnect-contract.md`与13个源码锚点/10个中文键。共享账户More依次为适用rename、适用reconnect、危险色断开，align=end/contentWidth=xs；断开先选中实际link，再直接调用DELETE `/aip/connectors/links/{link_id}`，无body、settings/CODEX、204允许空响应，无确认层。成功后的选择回退、账户变更成功提示与独立刷新失败分别处理。EF5T共享区允许最后一项断开，tB普通fallback限制最后一项，独立ManageApp没有此link入口；不能混成一个通用last-account规则。本项目仍保留强身份及未知交付仅读恢复。准确图标矢量、真实账号服务和原生/像素尚未证实；该合同是下一包开发输入，不表示断开消费者已实现。
+
+断开包开工：仅接EF5T共享账户区，菜单rename/断开与现有真实重命名共用账户身份；reconnect尚无完整自有授权消费者，继续明确缺控件，不造不可执行的成功路径。DELETE前先接受受保护的URL选择；backend fresh归属/唯一link确认，不按multi或owner限制断开最后账户。完整真实links中目标消失才返回confirmed；隐藏目标不算消失，partial读取不解锁未知写入。确认后同App按首个非reauth/首项/null回退，last空列表只刷新本App数据，不导航、不卸载。DC-T01–10对应后端transport、实际client/hook、生产菜单/页面/父级回归；真实账号、原生和像素分别保留未验。阶段先定向回归，集成稳定后统一检查/构建，不逐菜单项反复跑全套。
+
+关联权限下一包补证纠正：`app-link-permissions-contract.md`的22片段/26简中文案/6资源已核，337381的e$权限摘要组件实际`return null`；父条件分支和onClick存在不能证明有可见入口，旧app-detail文字中的可见摘要推断以此纠正，禁止造按钮。深链eq仍完整可开发：四radio含full_access、继承默认可写显式override、reset写null、mixed多账户列表与uniform统一模式、URL未知linkId空targets禁写不fallback。返回清linkId是否留当前页由实际K决定。此为下一包输入，不表示权限消费者或真实服务已实现。

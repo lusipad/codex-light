@@ -205,3 +205,18 @@
 候选：`dist-artifacts/plugins-r2-accounts-20261116/CodexNative.exe`，28,139,008字节，SHA-256 `d03f44308b237283a40ce3e3c353798d057c76968df093b47e594a892857d12d`。MSI/NSIS路径、大小和哈希见证据`candidate-artifacts.json`。产品输入清单SHA-256 `396c239e13123c74449cda29fc1c643e5e4861527de9bc23e3a8bb60459ad67e`，基于36e222d后的本阶段工作树；构建后重新逐文件核验。构建完成不等于原生GUI、安装/升级、账户服务或像素验收。
 
 复现入口：打开具备真实关联插件的App详情，实际multi资格账户行打开昵称编辑；检查初始昵称、空白和65码点报错、取消/焦点返回；经授权的真实写入须核保存后读取的实际link.name。未知结果仅点读取重试，不重复提交；切账号/离页的晚回不得提示成功。当前没有自动执行这组真实账号操作。下一继续More菜单/断开链，输入合同已补13个源码锚点和10个真实中文键；reconnect/OAuth资格仍按独立合同处理。
+## R2账户菜单与断开阶段（2026-11-16，08e6d9e之后）
+
+继续第02批。依据同版`app-account-disconnect-contract.md`的13个精确锚点及10个中文键，5资源大小与SHA-256已核；只接EF5T共享账户菜单，不把独立ManageApp的connector删除或tB普通fallback最后项限制混入此路径。资料与全部日志位于`.ref/parity/12/whole-page/actual/plugin-account-disconnect-r2-20261116/`。
+
+- 功能：fresh插件/实际App/唯一可见link→先接受URL选择→固定bodyless DELETE、CODEX/settings→完整真实links回验。支持空204，最后一项和非multi账户可断开；不加owner/personal/admin/reauth状态门禁。超时/408/5xx未知交付只读恢复，隐藏仍存在、links:null或目标仍在不当删除成功。真实403保留旧数据。
+- 状态/交互：rename与disconnect共用单飞/账号/路由ABA/取消保护；部分列表读取不能解除未知写保护。确认后按同App首个非reauth、首项、null回退；父级按实时URL的expectedLinkId判断，不覆盖较新显式选择。未知结果显式完整读取可恢复，不再次DELETE；last空列表不卸载、不跳根。更多菜单有rename资格及危险断开，键盘、IME、焦点、外点/滚动定位和旧handler隔离有生产组件回归。
+- 真正后续读取：确认后先提示“账户已断开连接”，再并发刷新真实runtime应用/技能/MCP/安装库存和service插件；刷新失败单独提示“账户已更新，但无法刷新账户列表”，不改成DELETE失败或重发。旧App/账号的晚刷新不提示新页。复用既有读取和菜单样式，没有新依赖。
+- 验证：10项Rust transport专项通过后，全库809项通过，0失败/忽略/过滤，125.02秒。193项完整前端回放exit0；随后断开错误文案按官方中文收敛为“无法断开账户连接”，不拼原始服务诊断，hook专项先红后绿。实际client、hook、菜单、页面及父级回归通过；client缺实现、页面缺菜单、成功后未刷新等红阶段保留。最后发现重叠刷新会误发旧失败toast，runtime/service代次保护先红后绿，6个受影响流程及TypeScript再验0。非Fast标准整轮exit0、34真实隔离探针通过；其前端步骤在末次重叠补丁之前，不能冒称最后补丁后整套重跑。最终原生构建包含当前TypeScript/Vite，exit0。独立复审及两次增量补核未发现确定新增P1/P2。
+- 仍缺：reconnect/新增账户的真实授权消费者，因此当前菜单缺官方适用reconnect项；准确glyph和xs宽度未证，候选复用lucide与既有220px菜单，不计像素一致。官方先ACK/cache成功再独立刷新的时序，与本项目先真实回验再成功的更严格恢复策略有差异，保留待校准。真实账号DELETE、原生GUI/物理IME/Tab跨portal焦点、同环境官方像素、用户验收和托管CI未验。
+
+本包不能升级整页G5，不能用08e6d9e的候选验收新菜单。未执行真实账户写入，无推送/发布。下一仍在本页接关联账户权限/sync及适用App管理、授权残项，保持总计划顺序。
+
+最终候选：`dist-artifacts/plugins-r2-disconnect-20261116/CodexNative.exe`，28,337,152字节，SHA256 `78f40f74c19a4d93c8f7243c90c52f67716bb1f82b84db94093331ff2e1be587`。MSI/NSIS实际路径、大小与哈希见`candidate-artifacts.json`，496产品输入构建前后稳定，输入清单SHA256 `e37eb1422baf58dedbc71a6116b97b7a0ca45d6d359ae3cdfdfb14ba1c07ef4e`。验证时序与末补丁范围另存`verification-summary.json`；候选构建不是原生GUI或安装升级通过。
+
+操作入口：具备真实归属和可见账户的插件App详情→账户右侧More→rename或断开。经授权的真实账号验证应确认目标先选中、服务实际删除、兄弟回退/最后一项null、错误和只读恢复；不能只看toast。浏览器回归仅操作隔离桥/transport夹具，未替代这组真实账号或物理输入操作。

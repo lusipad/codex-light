@@ -3006,3 +3006,10 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 实际回归先红后绿：退休弹层回调/ABA、确认保存与pending旧渲染关闭竞态、同值空白无写、null multi的显式选择、implicit_link::精确前缀及raw connector ID。URL replace保query，父导航接受后才持久化，实际metadata.id+账号/用户分区，null删除、末100次写入。完整191前端回放与TypeScript/Vite通过，最后通知补丁生产页面专项再验0；全Rust799通过且0失败/忽略/过滤。独立有界复审未发现确定新增P1/P2。
 
 最终非Fast标准exit0、34个真实隔离协议探针通过；可访问名称/昵称及认证警告关联补丁先红后绿，最终生产页面、TypeScript/Vite亦在标准中通过。EXE/MSI/NSIS构建exit0，493产品输入前后稳定。候选`dist-artifacts/plugins-r2-accounts-20261116/CodexNative.exe`，SHA256 `d03f44308b237283a40ce3e3c353798d057c76968df093b47e594a892857d12d`；产物详情见证据`candidate-artifacts.json`。旧EXE不覆盖新源码。没有真实账号HTTP/OAuth、原生GUI/物理IME、官方配对像素或托管CI成功结论；More菜单/关联/断开/权限/sync等继续留第02批，不升级整页状态，不推送/发布。下一包More/断开合同已补13源码锚点及10中文键，区分共享允许last、普通fallback限制last和独立管理无此入口。证据根`.ref/parity/12/whole-page/actual/plugin-account-actions-r2-20261116/`。
+## 2026-11-16 — R2共享账户菜单与断开链
+
+08e6d9e后继续第02批，先固定同版More/断开13锚点与10中文键。新typed宿主fresh核真实归属和唯一link，bodyless DELETE允许204，unknown仅readback；保留原始ID/账号/generation/IP/取消保护，不造owner、多账户或last-account资格。新增10项Rust专项通过，799过滤；不把它写成全量809结果。
+
+页面先选目标再发一次删除，实际完整列表缺目标才成功，随后健康首项/首项/null回退；父级expectedLinkId核实时URL，保较新选择。unknown只读恢复，partial list不能解锁；rename/disconnect共用写锁。生产More菜单复用既有样式和图标，准确xs/glyph与reconnect仍缺；没有假确认或卸载动作。新增父级回归先红复现成功后未刷新，再接真实runtime/service库存读取和独立刷新错误；旧App不提示。独立复审包含增量未发现确定新P1/P2。
+
+完整193前端回放及全Rust809项已exit0，0失败/忽略/过滤；随后错误文案按真实中文修正，不拼原始服务诊断，hook专项先红后绿。末次重叠刷新误报先红后绿，以runtime/service代次保护状态和toast，6受影响流程及TypeScript再验0。非Fast整轮exit0、34隔离协议探针通过；其前端步骤早于末补丁，不冒称末补丁后整套重跑。最终当前TS/Vite与EXE/MSI/NSIS构建0，496产品输入稳定。候选`dist-artifacts/plugins-r2-disconnect-20261116/CodexNative.exe` SHA256 `78f40f74c19a4d93c8f7243c90c52f67716bb1f82b84db94093331ff2e1be587`。真实账号DELETE、原生IME/GUI/portal Tab、官方配对像素、当前提交CI和用户验收未验；ACK/成功时序候选比官方更严格读回，仍是已知呈现差异。无新依赖、无真实账户操作、不推送发布。下一关联权限深链补证发现父摘要组件实际return null，纠正旧ref推断，不造入口；22片段/26中文键仅为下一包输入。证据根`.ref/parity/12/whole-page/actual/plugin-account-disconnect-r2-20261116/`。

@@ -6,7 +6,7 @@
 .pap-account-identity, .pap-account-nickname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pap-account-identity { font-size: var(--text-base); }
 .pap-account-nickname { color: var(--text-secondary); font-size: var(--text-sm); }
-.pap-account-open, .pap-account-readonly { display: flex; min-width: 0; width: 100%; text-align: left; }
+.pap-account-open, .pap-account-readonly { display: flex; flex: 1; min-width: 0; text-align: left; }
 .pap-account-open { border: 0; border-radius: 8px; padding: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
 .pap-account-open:hover:enabled { background: var(--bg-hover); }
 .pap-account-open:disabled { cursor: default; opacity: .6; }

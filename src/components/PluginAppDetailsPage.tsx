@@ -3,6 +3,7 @@ import { pluginAppAccountNickname, pluginAppProfileIdentity, selectPluginAppLink
 import { persistPluginAppSelection, pluginAppAccountsPresentation } from "../pluginAppAccounts";
 import { usePluginAppDetails } from "../pluginAppDetailsState";
 import { PluginAccountRenameDialog } from "./PluginAccountRenameDialog";
+import { PluginAccountMenu } from "./PluginAccountMenu";
 import "./PluginManagementDetail.css";
 import "./PluginAppDetailsPage.css";
 
@@ -14,8 +15,9 @@ interface PluginAppDetailsPageProps {
   onOpenPlugin: () => void;
   onUnavailable: () => void;
   selectedLinkId: string | null;
-  onSelectLink: (linkId: string | null) => boolean;
+  onSelectLink: (linkId: string | null, expectedLinkId?: string) => boolean;
   onRenamed?: () => void;
+  onDisconnected?: () => void;
 }
 
 function accountIdentity(link: PluginAppLink, appName: string): string {
@@ -24,8 +26,8 @@ function accountIdentity(link: PluginAppLink, appName: string): string {
     : "账户");
 }
 
-export function PluginAppDetailsPage({ connectionIdentity, pluginId, appId, onBack, onOpenPlugin, onUnavailable, selectedLinkId, onSelectLink, onRenamed }: PluginAppDetailsPageProps) {
-  const { state, reload, rename, clearRenameError } = usePluginAppDetails(connectionIdentity, pluginId, appId);
+export function PluginAppDetailsPage({ connectionIdentity, pluginId, appId, onBack, onOpenPlugin, onUnavailable, selectedLinkId, onSelectLink, onRenamed, onDisconnected }: PluginAppDetailsPageProps) {
+  const { state, reload, rename, disconnect, clearRenameError } = usePluginAppDetails(connectionIdentity, pluginId, appId);
   const unavailable = useRef(onUnavailable); unavailable.current = onUnavailable;
   useEffect(() => { if (state.unavailable) unavailable.current(); }, [state.unavailable]);
   const accountsId = useId(), details = state.snapshot?.details;
@@ -36,6 +38,7 @@ export function PluginAppDetailsPage({ connectionIdentity, pluginId, appId, onBa
   const active = () => current.current.mounted && current.current.scope === scope && current.current.version === version;
   const sequence = useRef(0);
   const [renaming, setRenaming] = useState<{ scope: string; version: number; linkId: string; token: number } | null>(null);
+  const disconnectAttempt = useRef<{ scope: string; version: number; linkId: string; running: boolean } | null>(null);
   useLayoutEffect(() => {
     current.current.mounted = true;
     return () => { current.current.mounted = false; };
@@ -74,6 +77,42 @@ export function PluginAppDetailsPage({ connectionIdentity, pluginId, appId, onBa
   };
   const selection = renaming?.scope === scope && renaming.version === version ? renaming : null;
   const renameLink = selection ? accounts.find(link => link.id === selection.linkId) : undefined;
+  const finishDisconnect = (snapshot: NonNullable<typeof state.snapshot>, linkId: string) => {
+    const remaining = selectPluginAppLinks(snapshot.details, null).accounts;
+    const next = remaining.find(link => link.auth_status !== "REAUTH_REQUIRED")?.id ?? remaining[0]?.id ?? null;
+    // The parent checks the live URL, including changes occurring before React
+    // commits the selection made immediately before DELETE.
+    if (onSelectLink(next, linkId)) {
+      try { persistPluginAppSelection(snapshot.identity, snapshot.details.connector.id, next); }
+      catch (error) { console.warn("无法保存账户选择。", error); }
+    }
+    onDisconnected?.();
+  };
+  const disconnectAccount = async (linkId: string) => {
+    const actual = current.current.state, attempt = disconnectAttempt.current;
+    if (!active() || selection || actual.loading || actual.blocked || actual.pendingLinkId != null ||
+      attempt?.scope === scope && attempt.version === version && attempt.running) return;
+    const operation = { scope, version, linkId, running: true };
+    disconnectAttempt.current = operation;
+    if (!selectLink(linkId)) { disconnectAttempt.current = null; return; }
+    let snapshot;
+    try { snapshot = await disconnect(linkId); }
+    finally { operation.running = false; }
+    if (!active() || disconnectAttempt.current !== operation) return;
+    if (snapshot?.details.links != null && !snapshot.details.links.some(link => link.id === linkId)) {
+      disconnectAttempt.current = null;
+      finishDisconnect(snapshot, linkId);
+    }
+  };
+  useEffect(() => {
+    const attempt = disconnectAttempt.current, snapshot = state.snapshot;
+    if (!active() || !attempt || attempt.scope !== scope || attempt.version !== version) return;
+    if (!state.loading && !pending && !state.blocked && state.writeError) { disconnectAttempt.current = null; return; }
+    if (attempt.running ||
+      state.loading || pending || state.blocked || state.error || state.writeError || snapshot?.details.links == null) return;
+    disconnectAttempt.current = null;
+    if (!snapshot.details.links.some(link => link.id === attempt.linkId)) finishDisconnect(snapshot, attempt.linkId);
+  }, [scope, state.snapshot, state.loading, state.blocked, state.error, state.writeError, pending]);
   const closeRename = () => {
     // The dialog owns pending dismissal. A confirmed save can finish before
     // React commits the render clearing pendingLinkId.
@@ -118,6 +157,10 @@ export function PluginAppDetailsPage({ connectionIdentity, pluginId, appId, onBa
               aria-describedby={warningId} aria-pressed={selectedAccountId === link.id} onClick={() => selectLink(link.id)}>{copy}</button>
             : <div className="pap-account-readonly" role="group" aria-label={identity} aria-describedby={warningId}>{copy}</div>}
           {warningId && <span id={warningId} className="sr-only">需要更新身份验证</span>}
+          <PluginAccountMenu identity={JSON.stringify([scope, version])} linkId={link.id} accountName={identity} nickname={nickname}
+            pending={state.loading || pending || state.blocked || selection !== null}
+            disconnecting={state.pendingAction === "disconnect" && state.pendingLinkId === link.id}
+            onRename={presentation.canRename ? () => openRename(link.id) : null} onDisconnect={() => disconnectAccount(link.id)} />
         </div>;
       })}</div>
     </section>}

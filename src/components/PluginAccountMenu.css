@@ -1,0 +1,8 @@
+.plugin-account-menu { display: flex; flex: 0 0 auto; }
+.plugin-account-menu-trigger { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); }
+.plugin-account-menu-trigger:not(:disabled):hover { background: var(--bg-hover); }
+.plugin-account-menu-trigger:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 1px; }
+.plugin-account-menu-trigger:disabled { opacity: .5; }
+.plugin-account-menu-nickname { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.plugin-account-menu-popup > button { justify-content: flex-start; }
+.plugin-account-menu-popup > .plugin-account-menu-danger { color: var(--accent-red); }

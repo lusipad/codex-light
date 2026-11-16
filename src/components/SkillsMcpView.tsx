@@ -392,6 +392,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   const [remoteOperations, setRemoteOperations] = useState<Record<string, RemoteIntent>>({});
   const [runtimeWarning, setRuntimeWarning] = useState<string | null>(null);
   const serviceRequest = useRef(0), serviceRead = useRef<AbortController | null>(null);
+  const runtimeRequest = useRef(0);
   const remoteWrites = useRef(new Set<AbortController>());
   const [pluginMode, setPluginMode] = useState<"installed" | "browse">(
     manageOnly ? "installed" : initialPluginMode
@@ -578,19 +579,21 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
 
   // The server controls catalog availability; render a bounded set of cards.
   const loadServicePlugins = async () => {
-    if (unsupportedDirectoryHost()) return;
+    if (unsupportedDirectoryHost()) return false;
     const context = pluginContextRef.current, request = ++serviceRequest.current;
     serviceRead.current?.abort();
     const controller = new AbortController(); serviceRead.current = controller;
     setServiceLoading(true); setServiceError(null);
     try {
       const next = await loadRemotePlugins(controller.signal);
-      if (!isPluginContextCurrent(context) || request !== serviceRequest.current) return;
+      if (!isPluginContextCurrent(context) || request !== serviceRequest.current) return false;
       setServiceError(next.error);
       if (!next.error || next.unsupported || next.identity && (servicePlugins?.identity?.accountId !== next.identity.accountId || servicePlugins?.identity?.userId !== next.identity.userId)) setServicePlugins(next);
       if (next.identity) setRemoteOperations(Object.fromEntries([...remoteIntents].filter(([, value]) => value.identity.accountId === next.identity!.accountId && value.identity.userId === next.identity!.userId)));
+      return !next.error && !next.unsupported;
     } catch (error) {
       if (isPluginContextCurrent(context) && request === serviceRequest.current) setServiceError(String(error));
+      return false;
     } finally {
       if (isPluginContextCurrent(context) && request === serviceRequest.current) setServiceLoading(false);
     }
@@ -1190,9 +1193,9 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   const remoteStatus = (plugin: PluginSummary) => servicePlugins?.identity ? remoteOperations[remoteIntentKey(servicePlugins.identity, plugin)] : undefined;
   const remoteAvailable = (plugin: PluginSummary) => Boolean(!serviceError && !serviceLoading && servicePlugins?.identity && !servicePlugins.unsupported && remoteId(plugin) && servicePlugins.marketplace?.plugins.some(row => remoteId(row) === remoteId(plugin) && row.installed && row.remotePolicyKnown === true));
   const refreshRemoteRuntime = async () => {
-    const context = pluginContextRef.current;
+    const context = pluginContextRef.current, request = ++runtimeRequest.current;
     const results = await Promise.allSettled([listSkills(workspaceCwds(), true), listApps({ forceRefetch: true }), readMcpSettings(activeWorkspaceRoot || undefined), listInstalledPlugins(workspaceCwds())]);
-    if (!isPluginContextCurrent(context)) return;
+    if (!isPluginContextCurrent(context) || request !== runtimeRequest.current) return false;
     const [skillsResult, appsResult, mcpResult, installedResult] = results;
     if (skillsResult.status === "fulfilled") setRemoteSkills(flattenSkills(skillsResult.value).skills);
     if (appsResult.status === "fulfilled") setAppsData(appsResult.value.data);
@@ -2046,10 +2049,13 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       }} />;
   }
   if (managementAppRoute?.kind === "plugin" && managementAppRoute.section === "detail" && managementAppRoute.appId && managementAppRoute.hostId === null) {
-    const openPlugin = (replace = false) => {
+    const isCurrentApp = () => {
       const current = parsePluginManagementLocation(window.location.href);
-      if (!isPluginContextCurrent(managementAppContext) || current?.kind !== "plugin" || current.section !== "detail" || current.hostId !== null ||
-        current.pluginId !== managementAppRoute.pluginId || current.appId !== managementAppRoute.appId) return;
+      return isPluginContextCurrent(managementAppContext) && current?.kind === "plugin" && current.section === "detail" && current.hostId === null &&
+        current.pluginId === managementAppRoute.pluginId && current.appId === managementAppRoute.appId;
+    };
+    const openPlugin = (replace = false) => {
+      if (!isCurrentApp()) return;
       updateDirectoryUrl(pluginManagementDetailUrl(managementBase(), { pluginId: managementAppRoute.pluginId!, hostId: "local",
         sourceType: "remote", remotePluginId: managementAppRoute.pluginId! }), replace);
       directoryDetailRetry.current?.();
@@ -2057,11 +2063,21 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     return <PluginAppDetailsPage key={JSON.stringify([connectionIdentity, managementAppRoute.pluginId, managementAppRoute.appId])}
       connectionIdentity={connectionIdentity} pluginId={managementAppRoute.pluginId!} appId={managementAppRoute.appId}
       onRenamed={() => onNotify?.("账户已重命名", "success")}
+      onDisconnected={() => {
+        if (!isCurrentApp()) return;
+        onNotify?.("账户已断开连接", "success");
+        const refresh = Promise.all([refreshRemoteRuntime(), loadServicePlugins()]);
+        const runtimeGeneration = runtimeRequest.current, serviceGeneration = serviceRequest.current;
+        void refresh.then(results => {
+          if (isCurrentApp() && runtimeGeneration === runtimeRequest.current && serviceGeneration === serviceRequest.current && results.some(result => !result)) {
+            onNotify?.("账户已更新，但无法刷新账户列表", "error");
+          }
+        });
+      }}
       selectedLinkId={new URL(window.location.href).searchParams.get("linkId")}
-      onSelectLink={linkId => {
-        const current = parsePluginManagementLocation(window.location.href);
-        if (!isPluginContextCurrent(managementAppContext) || current?.kind !== "plugin" || current.section !== "detail" || current.hostId !== null ||
-          current.pluginId !== managementAppRoute.pluginId || current.appId !== managementAppRoute.appId) return false;
+      onSelectLink={(linkId, expectedLinkId) => {
+        if (!isCurrentApp()) return false;
+        if (expectedLinkId !== undefined && new URL(window.location.href).searchParams.get("linkId") !== expectedLinkId) return false;
         updateDirectoryUrl(pluginManagementAppSelectionUrl(window.location.href, linkId), true);
         return true;
       }} onBack={() => closeManagedDetail()} onOpenPlugin={() => openPlugin()} onUnavailable={() => openPlugin(true)} />;

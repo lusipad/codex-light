@@ -18,6 +18,8 @@ mod plugin_app_details;
 pub use plugin_app_details::{PluginAppDetailsRequest, PluginAppEntryRequest};
 mod plugin_app_accounts;
 pub use plugin_app_accounts::PluginAppRenameRequest;
+mod plugin_app_disconnect;
+pub use plugin_app_disconnect::PluginAppDisconnectRequest;
 mod archive_conversations;
 pub use archive_conversations::{ArchiveConversationsRequest, ArchiveConversationsResponse};
 mod archive_unarchive;

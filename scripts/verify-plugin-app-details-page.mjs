@@ -21,10 +21,11 @@ const persisted = new Map(), selections = [], writes = [];
 const accountHelpers = load('src/pluginAppAccounts.ts', { './config': {}, './chatgptService': {}, './pluginAppDetails': helpers,
   './pluginManagementMcp': { canonicalMcpAppId: value => value.replace(/^asdk_app_/, 'connector_') },
 }, { localStorage: { getItem: key => persisted.get(key) ?? null, setItem: (key, value) => persisted.set(key, value) } });
-let state, retries = 0, backs = 0, plugins = 0, unavailable = 0, cursor = 0, dirty = false, renamed = 0, renameResult = true;
+let state, retries = 0, backs = 0, plugins = 0, unavailable = 0, cursor = 0, dirty = false, renamed = 0, renameResult = true, disconnected = 0, disconnectResult = null;
+const disconnects = [];
 const slots = [], effects = [], queue = [];
 const props = { connectionIdentity: 'connection/account-A', pluginId: 'tool@market', appId: 'connector_tool', selectedLinkId: null,
-  onSelectLink: id => { selections.push(id); props.selectedLinkId = id; return true; }, onRenamed: () => renamed++, onBack: () => backs++, onOpenPlugin: () => plugins++, onUnavailable: () => unavailable++ };
+  onSelectLink: (id, expected) => { if (expected !== undefined && props.selectedLinkId !== expected) return false; selections.push(id); props.selectedLinkId = id; return true; }, onRenamed: () => renamed++, onDisconnected: () => disconnected++, onBack: () => backs++, onOpenPlugin: () => plugins++, onUnavailable: () => unavailable++ };
 const react = { createElement: (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity) }), useId: () => 'accounts-heading', Fragment: 'Fragment',
   useRef(value) { const index = cursor++; return slots[index] ??= { current: value }; },
   useState(value) { const index = cursor++; if (!(index in slots)) slots[index] = value; return [slots[index], next => { slots[index] = typeof next === 'function' ? next(slots[index]) : next; dirty = true; }]; },
@@ -32,9 +33,9 @@ const react = { createElement: (type, props, ...children) => ({ type, props: pro
   useLayoutEffect(callback, deps) { react.useEffect(callback, deps); },
 };
 const { PluginAppDetailsPage } = load('src/components/PluginAppDetailsPage.tsx', {
-  react, '../pluginAppDetails': helpers, '../pluginAppAccounts': accountHelpers, './PluginAccountRenameDialog': { PluginAccountRenameDialog: 'PluginAccountRenameDialog' }, '../pluginAppDetailsState': { usePluginAppDetails: (...args) => {
+  react, '../pluginAppDetails': helpers, '../pluginAppAccounts': accountHelpers, './PluginAccountMenu': { PluginAccountMenu: 'PluginAccountMenu' }, './PluginAccountRenameDialog': { PluginAccountRenameDialog: 'PluginAccountRenameDialog' }, '../pluginAppDetailsState': { usePluginAppDetails: (...args) => {
     assert.deepEqual(args, [props.connectionIdentity, props.pluginId, props.appId]);
-    return { state, reload: () => retries++, rename: async (...args) => { writes.push(args); return renameResult; }, clearRenameError: () => {} };
+    return { state, reload: () => retries++, rename: async (...args) => { writes.push(args); return renameResult; }, disconnect: async id => { disconnects.push([id, props.selectedLinkId]); return typeof disconnectResult === 'function' ? disconnectResult() : disconnectResult; }, clearRenameError: () => {} };
   } },
 });
 const nodes = node => !node || typeof node !== 'object' ? [] : [node, ...node.children.flatMap(nodes)];
@@ -75,7 +76,9 @@ assert.equal(text(rows[1]), 'Provider Name'); assert.equal(text(rows[2]), 'Provi
 assert.equal(text(rows[3]), '真实应用 账户本地昵称', 'missing provider identity uses app-only fallback instead of borrowing current user or alias');
 assert.equal(text(rows[4]), '真实应用（未关联账户）');
 assert.equal(nodes(tree).some(node => ['input', 'select', 'menu'].includes(node.type) || ['radio', 'switch', 'menuitem', 'option'].includes(node.props.role)), false);
-assert.deepEqual(nodes(tree).filter(node => node.type === 'button').map(text), ['插件设置', '真实插件'], 'read-only first package has only actual ancestors and no fake connect, rename, selection, permission or sync controls');
+assert.deepEqual(nodes(tree).filter(node => node.type === 'button').map(text), ['插件设置', '真实插件'], 'missing auth metadata does not invent rename-row eligibility');
+const readonlyMenus = nodes(tree).filter(node => node.type === 'PluginAccountMenu');
+assert.equal(readonlyMenus.length, 5); assert.ok(readonlyMenus.every(node => node.props.onRename === null), 'real account actions remain separate from the read-only identity copy');
 set({ ...details, links: [] }, { loading: true });
 assert.equal(render().props['aria-busy'], true);
 set(details, { error: '刷新失败', loading: false });
@@ -113,4 +116,31 @@ for (const multi of [false, null, undefined]) {
   choices[1].props.onClick(); tree = render(); assert.equal(selections.at(-1), 'two');
   assert.equal(nodes(tree).filter(node => node.type === 'button' && node.props['aria-pressed'] !== undefined)[1].props['aria-pressed'], true);
 }
-console.log('Plugin app details page: actual metadata/profile, independent errors, scoped source rename entry, raw selection persistence, confirmed close ordering and nonmulti explicit selection passed. OAuth/disconnect/sync remain separate work.');
+console.log('Plugin app details page: actual metadata/profile, independent errors, scoped source rename entry, raw selection persistence, confirmed close ordering and nonmulti explicit selection passed. OAuth/full App management/sync remain separate work.');
+
+const menu = (tree, id) => nodes(tree).find(node => node.type === 'PluginAccountMenu' && node.props.linkId === id);
+set({ ...actionDetails, links: [actionDetails.links[0], link({ id: 'reauth', auth_status: 'REAUTH_REQUIRED' }), link({ id: 'healthy' })] });
+tree = render(); assert.ok(menu(tree, 'one'), 'the actual account row must expose its action menu');
+props.selectedLinkId = 'healthy';
+disconnectResult = { identity: state.snapshot.identity, details: { ...state.snapshot.details, links: state.snapshot.details.links.slice(1) } };
+await menu(tree, 'one').props.onDisconnect();
+assert.deepEqual(disconnects.at(-1), ['one', 'one'], 'target selection happens before DELETE');
+assert.equal(props.selectedLinkId, 'healthy', 'confirmed removal chooses the first healthy sibling'); assert.equal(disconnected, 1);
+set(actionDetails); tree = render();
+disconnectResult = { identity: state.snapshot.identity, details: { ...actionDetails, links: [] } };
+await menu(tree, 'one').props.onDisconnect(); assert.equal(props.selectedLinkId, null); assert.equal(disconnected, 2);
+assert.equal(backs, 1, 'last account does not navigate away or uninstall');
+set(actionDetails); tree = render(); disconnectResult = null;
+await menu(tree, 'one').props.onDisconnect(); assert.equal(props.selectedLinkId, 'one'); assert.equal(disconnected, 2, 'unconfirmed outcomes never notify success');
+state = { ...state, blocked: true, writeError: '无法确认账户是否已断开，请重新读取后核对。' }; render();
+state = { ...state, blocked: false, writeError: null, snapshot: { ...state.snapshot, details: { ...actionDetails, links: [] } } }; render();
+assert.equal(props.selectedLinkId, null); assert.equal(disconnected, 3, 'explicit complete read recovery may confirm absence without another DELETE');
+assert.equal(disconnects.length, 3);
+set(actionDetails); tree = render(); let resolveDisconnect;
+disconnectResult = () => new Promise(resolve => { resolveDisconnect = resolve; });
+const pendingDisconnect = menu(tree, 'one').props.onDisconnect();
+const beforeDuplicate = disconnects.length; await menu(tree, 'one').props.onDisconnect(); assert.equal(disconnects.length, beforeDuplicate);
+props.selectedLinkId = 'external';
+resolveDisconnect({ identity: state.snapshot.identity, details: { ...actionDetails, links: [] } }); await pendingDisconnect;
+assert.equal(props.selectedLinkId, 'external', 'post-delete fallback cannot overwrite a newer explicit URL selection');
+console.log('App account menus: target-first selection, confirmed healthy/last fallback, unknown read-only recovery, no duplicate DELETE and no stale selection overwrite passed.');

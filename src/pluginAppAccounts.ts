@@ -1,5 +1,5 @@
 import { accountRead } from "./config";
-import { renamePluginAppAccount, serviceIdentity, type ServiceIdentity } from "./chatgptService";
+import { disconnectServicePluginAppAccount, renamePluginAppAccount, serviceIdentity, type ServiceIdentity } from "./chatgptService";
 import { decodePluginAppDetails, selectPluginAppLinks, type PluginAppDetails, type PluginAppLink } from "./pluginAppDetails";
 import { canonicalMcpAppId } from "./pluginManagementMcp";
 
@@ -64,4 +64,31 @@ export async function savePluginAppAccountName(snapshot: { identity: ServiceIden
   const actual = readback?.links ? selectPluginAppLinks(readback, null).accounts.filter(link => link.id === linkId) : [];
   return { snapshot: readback ? { identity, details: readback } : null,
     confirmed: result.verification === "confirmed" && actual.length === 1 && actual[0].name === name };
+}
+
+export async function disconnectPluginAppAccount(snapshot: { identity: ServiceIdentity; details: PluginAppDetails }, appId: string, linkId: string, signal: AbortSignal) {
+  const { identity, details } = snapshot;
+  const current = () => { if (signal.aborted) throw Error("请求已取消"); };
+  current();
+  if (canonicalMcpAppId(details.appId) !== canonicalMcpAppId(appId) || details.links === null) throw Error("无法确认账户所属应用，请重新读取。");
+  if (selectPluginAppLinks(details, null).accounts.filter(link => link.id === linkId).length !== 1) throw Error("当前无法断开此账户。");
+  const verifyIdentity = async () => {
+    current();
+    const [account, actual] = await Promise.all([accountRead(), serviceIdentity(signal)]); current();
+    if (account.account?.type !== "chatgpt" || actual.accountId !== identity.accountId || actual.userId !== identity.userId || actual.generation !== identity.generation ||
+      account.workspaceRouting?.chatgptAccountId && account.workspaceRouting.chatgptAccountId !== identity.accountId) throw Error("读取期间账号发生变化，请重新刷新。");
+  };
+  await verifyIdentity();
+  let result;
+  try { result = await disconnectServicePluginAppAccount(details.pluginId, appId, linkId, identity, signal); }
+  catch (error) {
+    if ((error as { code?: string } | null)?.code === "app_not_in_plugin") await verifyIdentity();
+    throw error;
+  }
+  current();
+  const readback = result.readback == null ? null : decodePluginAppDetails(result.readback, details.pluginId, appId);
+  await verifyIdentity();
+  // A link becoming hidden is not evidence that the service removed it.
+  return { snapshot: readback ? { identity, details: readback } : null,
+    confirmed: result.verification === "confirmed" && readback?.links != null && !readback.links.some(link => link.id === linkId) };
 }
