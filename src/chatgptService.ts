@@ -598,6 +598,17 @@ export async function readPluginAppManagement(appId: string, identity: ServiceId
   return responseBody(result, requestId, identity);
 }
 
+export async function readServicePluginConnectionFinal(options: { requiresAppSetup?: boolean; requestedConnectorId?: string | null }, identity: ServiceIdentity, signal: AbortSignal): Promise<unknown> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; body: unknown }>(
+    "plugin_connection_final_read", requestId,
+    { request: { requestId, expectedIdentity: identity, profile: browserProfile(),
+      ...(options.requiresAppSetup === undefined ? {} : { requiresAppSetup: options.requiresAppSetup }),
+      ...(options.requestedConnectorId === undefined ? {} : { requestedConnectorId: options.requestedConnectorId }) } }, signal,
+  );
+  return responseBody(result, requestId, identity);
+}
+
 export async function updatePluginAppMetadata(appId: string, metadataId: string, operation: "name" | "description", value: string, identity: ServiceIdentity, signal: AbortSignal): Promise<ProfileMutationResult> {
   const requestId = crypto.randomUUID();
   const result = await invokeService<ProfileMutationResult & { requestId: string; identity: ServiceIdentity }>(

@@ -16,15 +16,18 @@ interface Props {
   name: string;
   result: PluginInstallResponse;
   onRefresh: () => Promise<void>;
+  onVerify?: () => Promise<string>;
+  verificationUnavailableReason?: string;
 }
 
-export function PluginPreparationPanel({ name, result, onRefresh }: Props) {
+export function PluginPreparationPanel({ name, result, onRefresh, onVerify, verificationUnavailableReason }: Props) {
   const [expanded, setExpanded] = useState(true);
   const [snapshot, setSnapshot] = useState<PluginPreparationState | null>(null);
   const [waiting, setWaiting] = useState<string[]>([]);
   const [opening, setOpening] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [verification, setVerification] = useState<string | null>(null);
   const alive = useRef(true);
   const request = useRef(0);
   const checkPending = useRef<Promise<void> | null>(null);
@@ -40,6 +43,7 @@ export function PluginPreparationPanel({ name, result, onRefresh }: Props) {
     const current = () => alive.current && request.current === revision;
     setChecking(true);
     setError(null);
+    setVerification(null);
     // Once refreshing starts, a previous successful read is no longer current.
     setSnapshot(null);
     const operation = (async () => {
@@ -48,6 +52,11 @@ export function PluginPreparationPanel({ name, result, onRefresh }: Props) {
         if (!current()) return;
         setSnapshot(value);
         await onRefresh();
+        if (!current()) return;
+        if (onVerify) {
+          const message = await onVerify();
+          if (current()) setVerification(message);
+        }
       } catch (err) {
         if (current()) setError(`连接状态读取失败：${String(err)}`);
       } finally {
@@ -112,7 +121,9 @@ export function PluginPreparationPanel({ name, result, onRefresh }: Props) {
         <button type="button" className="secondary-btn-sm" disabled={checking || opening !== null} onClick={() => void check()}>
           {checking ? "正在检查…" : "检查连接状态"}
         </button>
-        {snapshot && <p className="item-card-desc">已读取当前可用状态，授权结果仍待确认。</p>}
+        {snapshot && !verification && <p className="item-card-desc">已读取当前可用状态，授权结果仍待确认。</p>}
+        {!!verificationUnavailableReason && <p role="alert">{verificationUnavailableReason}</p>}
+        {verification && <p role="status">{verification}</p>}
         {error && <p role="alert">{error}</p>}
       </>}
     </section>

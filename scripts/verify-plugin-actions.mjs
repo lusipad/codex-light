@@ -15,6 +15,10 @@ visit(ast);
 const compile = text => ts.transpileModule(text, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
 const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
+const waitForRequests = async (view, count) => {
+  for (let i = 0; i < 40 && view.requests.length < count; i++) await Promise.resolve();
+  assert.ok(view.requests.length >= count, `production action must reach request ${count}`);
+};
 const plugin = { id: "tool@market", name: "tool", installPolicy: "AVAILABLE", availability: "AVAILABLE" };
 const marketplace = { name: "market", path: "repo/market.json" };
 function mount() {
@@ -28,6 +32,9 @@ function mount() {
     managementBase: () => "/settings/plugins-settings", updateDirectoryUrl() {}, remoteId: item => item.remotePluginId ?? null,
     pluginManagementDetailUrl: (() => { const exports = {}; vm.runInNewContext(compile(fs.readFileSync("src/pluginManagementLocation.ts", "utf8")), { exports, URL, URLSearchParams }); return exports.pluginManagementDetailUrl; })(),
     preparationAttemptRef: { current: 0 }, PluginProtocolError: class extends Error {},
+    preparationViewRef: { current: { tab: "plugins", detail: null } }, preparationReads: { current: new Set() }, preparationFlows: { current: new Map() },
+    managementHostId: "local", connectionIdentity: "isolated-account", activeWorkspaceRoot: "A",
+    serviceIdentity: async () => { throw Error("Connector identity is not configured in this action replay"); },
     pluginContextRef: { current: 0 }, pluginMountedRef: { current: true },
     installedRequestRef: { current: 0 }, browseRequestRef: { current: 0 },
     installedLoadingRef: { current: false }, browseLoadingRef: { current: false }, browseLoadedRef: { current: false },
@@ -47,6 +54,11 @@ function mount() {
     const key = name[0].toLowerCase() + name.slice(1);
     context[`set${name}`] = value => { context[key] = typeof value === "function" ? value(context[key]) : value; };
   }
+  const flowExports = {};
+  vm.runInNewContext(compile(fs.readFileSync("src/pluginPreparationFlow.ts", "utf8")), {
+    exports: flowExports, require: name => { assert.equal(name, "./plugins"); return context; },
+  });
+  Object.assign(context, flowExports);
   for (const [name, node] of Object.entries(nodes)) context[name] = vm.runInNewContext(compile(`(${node.getText(ast)})`), context);
   return { ...context, context, requests, notices, reads, unmount: () => { context.pluginMountedRef.current = false; ++context.pluginContextRef.current; } };
 }
@@ -63,8 +75,10 @@ function mount() {
 {
   const view = mount(), first = view.handleInstallPlugin(plugin, marketplace);
   await view.handleInstallPlugin(plugin, marketplace); await view.handleUninstallPlugin(plugin, marketplace);
+  await waitForRequests(view, 1);
   assert.equal(view.requests.length, 1, "PA01: same plugin writes are single flight");
   const other = view.handleInstallPlugin({ ...plugin, id: "other@market", name: "other" }, marketplace);
+  await waitForRequests(view, 2);
   assert.equal(view.requests.length, 2, "PA01: different plugins remain independent");
   view.requests[0].reject(Error("denied")); view.requests[1].reject(Error("offline")); await first; await other;
   assert.equal(view.context.pluginActionRef.current.size, 0);
@@ -104,7 +118,9 @@ for (const loader of ["loadInstalledPlugins", "loadBrowsePlugins"]) {
   view.requests[1].resolve({ marketplaces: [{ name: "new A" }] }); await latest;
   view.requests[0].resolve({ marketplaces: [{ name: "old A" }] }); await old;
   assert.equal(view.context.browseData.marketplaces[0].name, "new A", "PA04: A to B to A invalidates original context");
-  const writing = view.handleInstallPlugin(plugin, marketplace), before = view.requests.length;
+  const writing = view.handleInstallPlugin(plugin, marketplace);
+  await waitForRequests(view, 3);
+  const before = view.requests.length;
   ++view.context.pluginContextRef.current;
   view.requests.at(-1).resolve({ appsNeedingAuth: [] }); await writing;
   assert.equal(view.requests.length, before, "PA05: old-context write completion cannot refresh current project");
@@ -112,6 +128,7 @@ for (const loader of ["loadInstalledPlugins", "loadBrowsePlugins"]) {
 }
 for (const action of ["handleInstallPlugin", "handleUninstallPlugin"]) {
   const view = mount(), oldRead = view.loadBrowsePlugins(true), writing = view[action](plugin, marketplace);
+  await waitForRequests(view, 2);
   view.requests[1].resolve({ appsNeedingAuth: [] }); await flush();
   const reads = view.requests.filter(request => request.method.startsWith("list"));
   assert.ok(reads.some(request => request.method === "listInstalledPlugins"), "PA05: mutation rereads installed state");
@@ -124,6 +141,7 @@ for (const action of ["handleInstallPlugin", "handleUninstallPlugin"]) {
 {
   const view = mount();
   const writing = view.handleInstallPlugin(plugin, marketplace);
+  await waitForRequests(view, 1);
   view.requests[0].reject(new view.context.PluginProtocolError("bad install response"));
   await flush();
   assert(view.context.unconfirmedInstalls.has(plugin.id));
@@ -143,6 +161,7 @@ for (const action of ["handleInstallPlugin", "handleUninstallPlugin"]) {
 {
   const view = mount();
   const writing = view.handleInstallPlugin(plugin, marketplace);
+  await waitForRequests(view, 1);
   view.requests[0].resolve({ authPolicy: "ON_INSTALL", appsNeedingAuth: [{ id: "app", name: "App" }] });
   await flush();
   assert.equal(view.context.pluginPreparations[plugin.id].result.authPolicy, "ON_INSTALL");

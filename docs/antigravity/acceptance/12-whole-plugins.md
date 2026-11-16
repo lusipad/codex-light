@@ -439,3 +439,38 @@ CUA缺kernel assets路径，两次初始化失败，本阶段无新浏览器图/
 最终输入manifest SHA-256 `ec132d26b0caf4ec2feb5c6a5c4f39ac8a1cc77cccc7073d970bb86325c150a9`，证据`.ref/parity/12/whole-page/actual/app-delete-publish-r2-20261116/`；本地提交后外部candidate/summary元数据绑定准确sourceCommit。未推送/发布，同提交托管CI和用户验收未执行。
 
 用户验收路径：有实际资格的独立App→检查删除row/tenant禁用→打开确认但不提交→核标题、真实metadata.name及取消零写；真实账号删除须由用户自行选择适当对象并确认，不能把fixture误当真实服务成功。非personal当前admin检查外部发布URL与真实浏览器打开，不能仅凭打开即认定发布。下一完整工作包采用当前26.1111授权最终校验合同（4资源18初始锚点，后续producer补证见原始JSON），接原flow一次性草稿恢复；自有原生callback许可、Logo gate、模板及codex_apps/HTML宿主继续返回队列。R2整页及全软件目标没有因此完成。
+
+### R2 当前版连接最终校验与原草稿接续（2026-11-16）
+
+开工源码`aaba977da436bb760656077b685bd3fe20aa90e1`；固定Store26.1111.2228.0/package26.1111.21308，snapshot SHA256沿总计划。本包6资源/34授权锚点、2资源/8默认header片段均由主线程逐hash/UTF-16核验。完整native OAuth未实现，现有“检查连接状态”是项目手动适配，不宣称该入口外观为官方同名按钮。
+
+| 范围 | 当前可操作与证据 | 状态边界 |
+|---|---|---|
+| 最终只读验证 | 固定typed IPC；原setup/target缺省零目标HTTP；metadata/link真实并发；仅link按原错误分类250ms一次重读；GitHub精确分支与raw detail union | 10项Rust专项通过；FakeTransport证明消费者，不是真实账号HTTP |
+| 原flow绑定 | ACK required apps、精确来源/host/workspace/account/request/attempt、原prompt保留；真实已装启用和身份再次读取后才交付 | flow及实际parent/panel回放通过；未知安装不恢复，普通ON_USE保留 |
+| 交付与取消 | 最多一次接受的原草稿、零turn；导航拒绝使旧handoff失效且可重试；详情/Tab/同key reload取消原signal，账号/上下文/ABA退休 | 实际App/parent callback回归；末补丁6个生命周期用例含5个真实红，修后全绿；原生焦点/IME未验 |
+| 浏览器准备 | 四个精确name/ID前缀的ON_INSTALL分支按fresh同来源installed local判断；目录git→installed local不漏，实际非local不永久拦 | 本软件无真实扩展probe，适用分支仍未完成；不能用空apps跳过 |
+
+两处关键纠偏：固定路径link缺connector_id按官方原auth_status语义接受，显式坏类型/foreign仍拒；new helper局部使用Desktop originator，GitHub不套metadata/link专用SKU/surface，未改全局旧header。metadata.id额外typed校验和本机超时/transport分类是项目边界，不冒称原TZ9K完整逐字段逻辑或全FetchError等价。
+
+验证及准确范围：
+
+- 初始9专项通过后，新增缺connector_id用例真实红→修后10专项通过。原App旧callback取消用例先红后绿。
+- 全量954 Rust（0失败/忽略/过滤，132.86秒）退出0。完整前端首次失败是旧harness缺新真实模块依赖；原失败日志保留，两个测试脚本补接依赖/异步协议边界后完整225通过，未删除原断言。
+- 非Fast标准退出0，含34个隔离协议探针，实际使用环境配置的CLI0.159.2。另以进程级CODEX_CLI_PATH显式指定CLI0.165.0重跑同34探针，全部退出0；未修改用户全局配置，两个运行版本不混写。
+- 全量后末补丁仅src/components/SkillsMcpView.tsx：快路径第三参guard及commit-time退休取消。Rust源码/构建脚本不变，保存前后输入清单与post-check-patch.json；补丁后再次完整225前端退出0，再由同一冻结源码生成最终EXE/MSI/NSIS，均退出0。原生构建含TypeScript/Vite检查。
+- 最终543产品输入稳定；manifest SHA256 d5d2215ceb7711de642325b997a75cc8b3338d5a22734cc80781a829e4aada38。证据根.ref/parity/12/whole-page/actual/auth-final-r2-20261116/。未配置独立lint命令，没有编造lint通过。
+
+候选dist-artifacts/plugins-r2-auth-final-20261116/：
+
+| 产物 | 字节数 | SHA-256 |
+|---|---:|---|
+| CodexNative.exe | 32,009,216 | 6cf9aede15b93c66a9f99aaa8df830628e1df703540b46e6f7f611297d70a5cc |
+| Codex Native_0.2.0_x64_en-US.msi | 10,231,808 | dc5024e5382f33683c8afb48c6ddd58a38d4b07c9fe223037204c08c9c206402 |
+| Codex Native_0.2.0_x64-setup.exe | 6,862,821 | b5ee1c0cd7131a31b4e395f398bc82deeac525fa0effa38480a5bbd42cd4f5b2 |
+
+用户复核场景：使用具有真实required apps的私有插件，从原默认prompt启动安装；未完成连接时保持等待，网页打开不算成功；人工完成实际连接后检查，全部适用依赖满足才恢复原准确插件草稿，不发送。重复检查、取消/换详情/换账号不得再恢复旧草稿；导航拒绝后可重新操作。浏览器专属ON_INSTALL扩展未验保持未完成，普通ON_USE不误锁。真实账号操作未由本轮自动执行，不能把上述操作说明当通过证据。
+
+功能状态为阶段自验候选；视觉、原生GUI/物理IME、真实账号HTTP、完整native OAuth、浏览器扩展、自有callback许可、配对像素、同提交托管CI与用户验收均未验或未完成，score=null。本轮未重新尝试GUI工具，也没有新截图，不沿用旧EXE观察。较大阶段本地提交后candidate元数据绑定sourceCommit；未推送/发布，未升级整页G5。
+
+下一本机模板工作包已取当前版7资源/29锚点并经主线程核验，文案为“管理应用”；本机外部入口与服务创建表单/连接sheet分别处理。该合同目前implemented=false。Logo gate、native OAuth许可、扩展probe与codex_apps/HTML宿主保留具体返回条件，R2整页和全软件目标继续进行。

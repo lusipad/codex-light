@@ -265,6 +265,26 @@ Dialog同scope重试失败保旧正文；权限missing/null与空串分开；旧
 
 阶段检查：112项相关Rust随后扩大为929全Rust通过，219前端回放通过；非Fast标准/34隔离探针及最终EXE/MSI/NSIS已退出0；219前端之后的cold section/row末补丁另验2个UI及TypeScript，所有Rust输入未变，准确范围见验收记录。新增读取/写入为固定typed Tauri命令，renderer不接收owners、账户原始记录或凭据。删除/发布与Logo门控不属于本名称/描述已实现声明；真实HTTP、GUI/IME、配对像素、托管CI和用户验收均未验。
 
+#### 当前授权最终校验与原草稿接续：开发前合同（2026-11-16）
+
+来源为固定26.1111.2228.0的`r2-current-auth-final-verification-contract.md`及34条AF锚点（6资源）；默认header另核2资源/8片段。复用现有连接准备入口，新增固定typed只读校验，不创建OAuth state、不占官方URI、不发送turn。此手动检查入口是项目适配，不宣称其外观或完整原生OAuth已经1:1。
+
+| 用例 | 官方预期及本阶段退出条件 |
+|---|---|
+| AF-C01 | 原options无requiresAppSetup或无requestedConnectorId时ready且零目标HTTP；不从apps长度补默认setup |
+| AF-C02 | 指定目标真实metadata/link读取；管理员禁用为unavailable，缺link或非ACTIVE非null状态为needsAuth；null/missing auth_status不能误判未连 |
+| AF-C03 | 仅link在有效context的网络/408/5xx错误后等250ms重读一次；metadata和GitHub不套此重试；取消/账号退休不得交付旧结果 |
+| AF-C04 | GitHub精确ID/template/service特例；只有原始错误body.detail按同版union解析得到missing_github_connector_link才needsAuth，其它错误unavailable |
+| AF-C05 | 手动逐项校验只针对真实ACK required apps，原plugin/source/host/account/request与prompt在安装时保存，不拿当前页面新数据重绑定旧flow |
+| AF-C06 | 所有适用required ready及真实已装启用后才接续原草稿；重复检查最多成功移交一次，导航guard拒绝保留草稿供重试，零turn |
+| AF-C07 | ON_USE普通路径保留；取消、离页、换源、换账号及ABA使旧flow退休；未知安装不能恢复；未证明的扩展/宿主不当已准备 |
+
+当前实现位于`plugin_connection_final.rs`、`pluginConnectionFinal.ts`、`pluginPreparationFlow.ts`及原父页/准备面板。link缺`connector_id`时按固定请求路径和原auth_status判断；出现该字段但类型坏或归属不符时拒绝。metadata.id保留项目typed归属校验，不能称原helper逐字段检查。GitHub读取没有metadata/link专用SKU/surface，新helper局部对齐Desktop originator，不藉此宣称全局旧服务header均已对齐。
+
+浏览器扩展前提按当前真实producer限定：ON_INSTALL且四个精确名称/ID前缀命中后，必须再读实际已安装的同来源plugin，只有local来源进入扩展准备。目录git→安装后local不能漏，实际非local不能沿旧标记永久拦；本软件尚无此扩展probe，适用项保持未完成。普通ON_USE不因此锁住。手动完成及普通快路径的草稿交付均须防原详情取消/换页后的延迟回调，导航拒绝后保留原prompt供重新操作。
+
+功能回放、真实HTTP、原生/IME、配对像素和用户验收分开记录；实际结果以验收记录最新单元为准，本合同不自动产生通过结论。完整native OAuth、自有callback许可、扩展执行器及postInstallNewConversation不属于本次已实现声明。
+
 #### 独立App删除与发布实现合同（2026-11-16）
 
 同版补证5资源/19源码/7中文锚点，严格hash/UTF-16范围通过。删除不是插件卸载或单账户断开：只对明确无所属plugin的MCP真实owner开放，另按workspace真实分发限制；name/description的ONLY_ME/development条件不能限制delete。publish独立为当前非personal admin/owner、非SERVICE、ONLY_ME，不要求App owner。Logo gate未知不露控件。

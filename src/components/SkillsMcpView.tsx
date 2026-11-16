@@ -38,6 +38,8 @@ import { parsePluginDirectoryLocation, durablePluginDirectoryId, pluginDirectory
 import { DurablePluginDirectoryPage } from "./DurablePluginDirectoryPage";
 import { groupPluginDirectoryLocal, type PluginDirectoryLocalGroups } from "../pluginDirectoryLocalGroups";
 import { serviceIdentity, type ServiceIdentity } from "../chatgptService";
+import { readPluginConnectionFinal } from "../pluginConnectionFinal";
+import { finishPluginPreparation, preparationInstalledPlugin, preparationMatchesReference, isBrowserPreparationCandidate, pluginRequiresBrowserPreparation, type PluginPreparationFlow } from "../pluginPreparationFlow";
 import {
   SkillInfoItem,
 } from "../types";
@@ -128,7 +130,7 @@ interface SkillsMcpViewProps {
   onStartSkillCreatorSession?: (prompt: string) => void;
   onOpenSkillFile?: (path: string) => boolean | Promise<boolean>;
   onTrySkill?: (skill: { name: string; path: string; defaultPrompt?: string | null }) => boolean | Promise<boolean>;
-  onTryPlugin?: (plugin: PluginSummary, prompt: string) => boolean | Promise<boolean>;
+  onTryPlugin?: (plugin: PluginSummary, prompt: string, guard?: { isCurrent: () => boolean }) => boolean | Promise<boolean>;
   onOpenPluginDirectoryDetail?: (detail: PluginDetail | string) => void;
   onOpenPluginSettings?: (section: "connections" | "hooks-settings") => void;
 }
@@ -416,7 +418,9 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   const pluginActionRef = useRef(new Set<string>());
   const pluginContextRef = useRef(0);
   const pluginMountedRef = useRef(true);
-  const [pluginPreparations, setPluginPreparations] = useState<Record<string, { name: string; result: PluginInstallResponse; attempt: number }>>({});
+  const [pluginPreparations, setPluginPreparations] = useState<Record<string, { name: string; result: PluginInstallResponse; attempt: number; flow: PluginPreparationFlow }>>({});
+  const preparationFlows = useRef(new Map<string, PluginPreparationFlow>());
+  const preparationReads = useRef(new Set<AbortController>());
   const preparationAttemptRef = useRef(0);
   const [unconfirmedInstalls, setUnconfirmedInstalls] = useState<Set<string>>(new Set());
   const installScope = JSON.stringify([connectionIdentity, activeWorkspaceRoot, manageOnly ? managementHostId : null]);
@@ -430,6 +434,10 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<ViewError | null>(null);
   const detailRequestRef = useRef(0);
+  const preparationViewRef = useRef({ tab: subTab, detail: detailKey });
+  if (preparationViewRef.current.tab !== subTab || preparationViewRef.current.detail !== detailKey) {
+    preparationViewRef.current = { tab: subTab, detail: detailKey };
+  }
   const directoryDetailRetry = useRef<(() => void) | null>(null);
   const detailContextRef = useRef<{
     plugin: PluginSummary;
@@ -482,6 +490,12 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     activeWorkspaceRoot ? [activeWorkspaceRoot] : undefined;
   const isPluginContextCurrent = (context: number) =>
     pluginMountedRef.current && context === pluginContextRef.current && !unsupportedDirectoryHost();
+  useEffect(() => {
+    preparationFlows.current.forEach(flow => {
+      if (flow.context !== pluginContextRef.current || flow.detailRequest !== detailRequestRef.current ||
+          flow.view !== preparationViewRef.current) flow.controller.abort();
+    });
+  });
   const updateInstallUncertainty = (scope: string, id: string, pending: boolean, context: number) => {
     const ids = new Set(installUncertaintyRef.current.get(scope));
     if (pending) ids.add(id); else ids.delete(id);
@@ -518,6 +532,10 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     setDetail(null);
     setDetailError(null);
     setDetailLoading(false);
+    preparationFlows.current.forEach(flow => flow.controller.abort());
+    preparationFlows.current.clear();
+    preparationReads.current.forEach(controller => controller.abort());
+    preparationReads.current.clear();
     setPluginPreparations({});
     setUnconfirmedInstalls(new Set(installUncertaintyRef.current.get(installScope)));
     setUnconfirmedUninstalls(new Set(uninstallUncertaintyRef.current.get(installScope)));
@@ -544,6 +562,8 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     setSkillContentLoading(false);
     setSkillPreview(null);
     return () => {
+      preparationFlows.current.forEach(flow => flow.controller.abort());
+      preparationReads.current.forEach(controller => controller.abort());
       serviceRead.current?.abort(); directoryRead.current?.abort(); categoryRead.current?.abort(); remoteWrites.current.forEach(controller => controller.abort());
       pluginMountedRef.current = false;
       ++pluginContextRef.current;
@@ -1039,7 +1059,8 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
 
   const handleInstallPlugin = async (
     plugin: PluginSummary,
-    marketplace: PluginMarketplaceEntry
+    marketplace: PluginMarketplaceEntry,
+    originalPrompt: string | null = null
   ) => {
     if (unsupportedDirectoryHost() || pluginActionRef.current.has(plugin.id)) return;
     if (installUncertaintyRef.current.get(installScope)?.has(plugin.id) || plugin.installed ||
@@ -1048,16 +1069,42 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     pluginActionRef.current.add(plugin.id);
     setBusyPluginIds(new Set(pluginActionRef.current));
     const context = pluginContextRef.current;
-    updateInstallUncertainty(installScope, plugin.id, true, context);
+    const detailRequest = detailRequestRef.current;
+    const view = preparationViewRef.current;
+    const reference = pluginRefFor(plugin, marketplace);
+    const installAttemptId = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? `attempt-${crypto.randomUUID()}`
+      : `attempt-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    const controller = new AbortController();
+    preparationReads.current.add(controller);
     try {
-      const res = await installPlugin(pluginRefFor(plugin, marketplace));
+      let identity: ServiceIdentity | null = null;
+      try { identity = await serviceIdentity(controller.signal); }
+      catch { /* Local/API installs remain available without connector service identity. */ }
+      if (!isPluginContextCurrent(context) || controller.signal.aborted) return;
+      updateInstallUncertainty(installScope, plugin.id, true, context);
+      const res = await installPlugin({ ...reference, installAttemptId });
       if (!isPluginContextCurrent(context)) return;
       const name = pluginDisplayName(plugin);
-      if (res.appsNeedingAuth.length > 0) {
+      let flow: PluginPreparationFlow | undefined;
+      let browserPreparationRequired = isBrowserPreparationCandidate(plugin, res.authPolicy);
+      if (res.appsNeedingAuth.length > 0 || browserPreparationRequired || originalPrompt !== null) {
         const attempt = ++preparationAttemptRef.current;
-        setPluginPreparations(current => ({
-          ...current, [plugin.id]: { name, result: res, attempt },
-        }));
+        preparationFlows.current.get(plugin.id)?.controller.abort();
+        flow = {
+          requestId: installAttemptId, reference: { ...reference }, pluginId: plugin.id,
+          hostId: manageOnly ? managementHostId ?? "local" : "local", connectionIdentity,
+          workspace: activeWorkspaceRoot, context, detailRequest, view, identity,
+          result: { authPolicy: res.authPolicy, appsNeedingAuth: res.appsNeedingAuth.map(app => ({ ...app })) },
+          prompt: originalPrompt, confirmed: false, browserPreparationRequired, completed: false, consumed: false,
+          controller: new AbortController(), checking: null,
+        };
+        preparationFlows.current.set(plugin.id, flow);
+        if (res.appsNeedingAuth.length > 0 || browserPreparationRequired) {
+          setPluginPreparations(current => ({
+            ...current, [plugin.id]: { name, result: res, attempt, flow: flow! },
+          }));
+        }
       }
       resetBrowseCache();
       const [inventory] = await Promise.all([
@@ -1065,8 +1112,13 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
         pluginMode === "browse" ? loadBrowsePlugins(true) : Promise.resolve(),
       ]);
       if (!isPluginContextCurrent(context)) return;
-      const confirmed = inventory && !inventory.marketplaceLoadErrors?.length && inventory.marketplaces.some(market =>
-        market.plugins.some(item => item.id === plugin.id && item.installed));
+      const installed = inventory && (flow ? preparationInstalledPlugin(flow, inventory) :
+        inventory.marketplaces.flatMap(market => market.plugins).find(item => item.id === plugin.id && item.installed));
+      const confirmed = !!installed && !inventory?.marketplaceLoadErrors?.length;
+      if (flow) {
+        flow.confirmed = confirmed;
+        if (installed) browserPreparationRequired = flow.browserPreparationRequired = pluginRequiresBrowserPreparation(installed, res.authPolicy);
+      }
       if (confirmed) {
         updateInstallUncertainty(installScope, plugin.id, false, context);
         notify(`✓ 已安装 ${name}${res.appsNeedingAuth.length ? `；${res.appsNeedingAuth.map(app => app.name).join("、")} 需要授权` : ""}`);
@@ -1075,8 +1127,8 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       }
       const skillRefreshError = await loadRemoteSkills(true);
       if (isPluginContextCurrent(context) && confirmed &&
-          (!res.appsNeedingAuth.length || res.authPolicy === "ON_USE") && !skillRefreshError) {
-        return inventory!.marketplaces.flatMap(market => market.plugins).find(item => item.id === plugin.id && item.installed);
+          (!res.appsNeedingAuth.length || res.authPolicy === "ON_USE") && !browserPreparationRequired && !skillRefreshError) {
+        return installed;
       }
     } catch (err) {
       if (isPluginContextCurrent(context)) {
@@ -1093,6 +1145,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
         }
       }
     } finally {
+      preparationReads.current.delete(controller);
       pluginActionRef.current.delete(plugin.id);
       if (pluginMountedRef.current) setBusyPluginIds(new Set(pluginActionRef.current));
     }
@@ -1136,6 +1189,8 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     try {
       await uninstallPlugin(plugin.id);
       if (!isPluginContextCurrent(context)) return;
+      preparationFlows.current.get(plugin.id)?.controller.abort();
+      preparationFlows.current.delete(plugin.id);
       setPluginPreparations(current => {
         const next = { ...current };
         delete next[plugin.id];
@@ -1987,7 +2042,8 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   const activateDirectoryPrompt = async (text: string): Promise<boolean> => {
     if (!detail || detailLoading || detailError || !onTryPlugin || unsupportedDirectoryHost()) return false;
     const context = pluginContextRef.current, request = detailRequestRef.current;
-    const isCurrent = () => isPluginContextCurrent(context) && request === detailRequestRef.current;
+    const view = preparationViewRef.current;
+    const isCurrent = () => isPluginContextCurrent(context) && request === detailRequestRef.current && view === preparationViewRef.current;
     if (!detail.summary.interface?.defaultPrompt?.some(prompt => prompt.trim() === text)) return false;
     let plugin = directoryInstalled.find(item => item.plugin.id === detail.summary.id)?.plugin ?? detail.summary;
     if (plugin.availability === "DISABLED_BY_ADMIN" || plugin.installPolicy === "NOT_AVAILABLE" ||
@@ -1995,13 +2051,19 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     if (!plugin.installed) {
       const marketplace = detailContextRef.current?.marketplace;
       if (!marketplace) return false;
-      const installed = await handleInstallPlugin(plugin, marketplace);
+      const installed = await handleInstallPlugin(plugin, marketplace, text);
       if (!isCurrent()) return false;
       if (!installed) throw new Error("安装或应用连接尚未确认，请先完成连接准备并刷新状态。");
       plugin = installed;
     }
-    const preparation = pluginPreparations[plugin.id]?.result;
-    if (preparation?.authPolicy === "ON_INSTALL" && preparation.appsNeedingAuth.length) {
+    const candidate = preparationFlows.current.get(plugin.id);
+    const marketplace = detailContextRef.current?.marketplace;
+    const flow = candidate && marketplace && preparationMatchesReference(candidate, pluginRefFor(plugin, marketplace)) ? candidate : null;
+    if (pluginRequiresBrowserPreparation(plugin, flow?.result.authPolicy ?? plugin.authPolicy)) {
+      throw new Error("此插件还需要浏览器扩展准备，当前尚未确认。");
+    }
+    if (flow?.result.authPolicy === "ON_INSTALL" && flow.result.appsNeedingAuth.length && !flow.completed) {
+      if (!flow.prompt && !flow.consumed) flow.prompt = text;
       throw new Error("应用授权尚未确认，请先完成连接准备。");
     }
     if (!plugin.enabled) {
@@ -2010,7 +2072,13 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       if (!enabled?.enabled) throw new Error("插件启用尚未确认，请刷新状态后重试。");
       plugin = enabled;
     }
-    return isCurrent() ? onTryPlugin(plugin, text) : false;
+    if (!isCurrent()) return false;
+    let handoffActive = true;
+    let accepted: boolean;
+    try { accepted = await onTryPlugin(plugin, text, { isCurrent: () => handoffActive && isCurrent() }); }
+    finally { handoffActive = false; }
+    if (accepted && flow?.prompt === text) { flow.consumed = true; flow.completed = true; }
+    return accepted;
   };
 
   const includedPluginContext = pluginContextRef.current;
@@ -2350,10 +2418,28 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
           key={`${activeWorkspaceRoot}:${id}:${preparation.attempt}`}
           name={preparation.name}
           result={preparation.result}
+          verificationUnavailableReason={preparation.flow.browserPreparationRequired
+            ? "此插件还需要浏览器扩展准备，当前尚未确认。"
+            : !preparation.flow.identity ? "无法确认安装时的原账号，连接准备仍未完成。" : undefined}
+          onVerify={() => finishPluginPreparation(preparation.flow, {
+            isCurrent: () => isPluginContextCurrent(preparation.flow.context) &&
+              preparationFlows.current.get(id) === preparation.flow && detailRequestRef.current === preparation.flow.detailRequest &&
+              preparationViewRef.current === preparation.flow.view,
+            readRequiredApp: (appId, identity, signal) => readPluginConnectionFinal(
+              { requiresAppSetup: true, requestedConnectorId: appId }, identity, signal),
+            readInventory: () => loadInstalledPlugins({ silent: true }),
+            readIdentity: serviceIdentity,
+            deliver: onTryPlugin,
+          })}
           onRefresh={async () => {
             const context = pluginContextRef.current;
-            await loadInstalledPlugins({ silent: true, confirmInstallResult: true });
+            const inventory = await loadInstalledPlugins({ silent: true, confirmInstallResult: true });
             if (!isPluginContextCurrent(context)) return;
+            if (inventory && preparationFlows.current.get(id) === preparation.flow) {
+              const installed = preparationInstalledPlugin(preparation.flow, inventory);
+              preparation.flow.confirmed = !!installed;
+              if (installed) preparation.flow.browserPreparationRequired = pluginRequiresBrowserPreparation(installed, preparation.result.authPolicy);
+            }
             resetBrowseCache();
             if (pluginMode === "browse") await loadBrowsePlugins(true);
             if (isPluginContextCurrent(context)) await loadRemoteSkills(true);

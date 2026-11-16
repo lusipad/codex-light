@@ -69,6 +69,9 @@ export function harness(options = {}) {
   const location = load("src/pluginDirectoryLocation.ts", {});
   const directoryClient = { loadPluginDirectorySource: async () => ({ kind: "unresolved" }), ...options.directory };
   const directorySearch = { usePluginDirectorySearch: options.directorySearch ?? (() => ({ result: null, loading: false, error: null, unsupported: false, paging: false, pageError: null, nextCursor: null, loadMore() {}, retry() {} })) };
+  const service = { serviceIdentity: async () => { throw Error("Connector identity is not configured in this replay"); }, ...options.service };
+  const preparationFlow = load("src/pluginPreparationFlow.ts", { "./plugins": plugins });
+  const connectionFinal = load("src/pluginConnectionFinal.ts", { "./config": options.config ?? {}, "./chatgptService": service });
   managementToolbar = load("src/components/PluginManagementToolbar.tsx", { "lucide-react": { Search: "Search" } }).PluginManagementToolbar;
   const { SkillsMcpView } = load("src/components/SkillsMcpView.tsx", { "lucide-react": new Proxy({}, { get: (_, name) => String(name) }), "../bridge": bridge, "../fsClient": options.fs ?? {},
     "@tauri-apps/api/path": { homeDir: async () => "C:/isolated/home" },
@@ -89,7 +92,8 @@ export function harness(options = {}) {
     "../pluginManagementSkills": load("src/pluginManagementSkills.ts", { "./recommendedSkills": recommended }),
     "../pluginManagementLocation": load("src/pluginManagementLocation.ts", {}),
     "../config": { experimentalFeatureListAll: () => featureRead(), ...options.config }, "../mcpSettings": { readMcpSettings: async () => ({ entries: [{ name: "MCP" }] }), ...options.mcpSettings },
-    "../chatgptService": options.service ?? {},
+    "../chatgptService": service,
+    "../pluginPreparationFlow": preparationFlow, "../pluginConnectionFinal": connectionFinal,
     "../pluginManagement": client, "../pluginManagementState": { ...core, useMarketplaceRemoval: (...args) => (removal = core.useMarketplaceRemoval(...args)) },
     "../plugins": plugins, "../pluginDirectory": directory, "../pluginDirectoryClient": directoryClient, "../pluginDirectorySearch": directorySearch, "../pluginDirectoryLocation": location, "../recommendedSkills": recommended, "../remotePlugins": remote, "./McpSettings": { McpSettings }, "./PluginPreparationPanel": {}, "./RecommendedSkillsPanel": {}, "./SkillPreviewDialog": { SkillPreviewDialog: "SkillPreviewDialog" },
     "./PluginDirectoryDetail": { PluginDirectoryDetail: "PluginDirectoryDetail" }, "./PluginDirectoryIncluded": { PluginDirectoryIncluded: "PluginDirectoryIncluded" },

@@ -17,6 +17,8 @@ pub use plugin_permissions::{PluginPermissionsRequest, PluginPermissionsResponse
 mod plugin_app_details;
 pub use plugin_app_details::{PluginAppDetailsRequest, PluginAppEntryRequest, PluginUsageLinksRequest};
 mod plugin_app_management;
+mod plugin_connection_final;
+pub use plugin_connection_final::PluginConnectionFinalRequest;
 mod plugin_app_metadata_update;
 pub use plugin_app_metadata_update::PluginAppMetadataUpdateRequest;
 mod plugin_app_delete;

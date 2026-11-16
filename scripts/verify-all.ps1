@@ -395,6 +395,9 @@ try {
   Invoke-Step "Standalone app deletion client" { node scripts/verify-plugin-app-deletion.mjs }
   Invoke-Step "Standalone app delete and publish UI" { node scripts/verify-plugin-app-delete-ui.mjs }
   Invoke-Step "Standalone app deletion parent" { node scripts/verify-plugin-app-delete-parent.mjs }
+  Invoke-Step "Plugin final connection target and account isolation" { node scripts/verify-plugin-connection-final.mjs }
+  Invoke-Step "Original plugin preparation and one-time draft" { node scripts/verify-plugin-preparation-flow.mjs }
+  Invoke-Step "Plugin preparation actual parent and panel" { node scripts/verify-plugin-preparation-host.mjs }
   Invoke-Step "Plugin app entry page" { node scripts/verify-plugin-app-entry-page.mjs }
   Invoke-Step "Plugin app account actions" { node scripts/verify-plugin-app-accounts.mjs }
   Invoke-Step "Plugin account rename dialog" { node scripts/verify-plugin-account-rename-dialog.mjs }

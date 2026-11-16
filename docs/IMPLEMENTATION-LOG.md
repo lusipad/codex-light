@@ -3142,3 +3142,9 @@ W/Y域转换复用mapRemotePlugins并局部补齐源字段：真实匹配库存�
 本轮CUA再次getState立即missing kernel assets/os error3，无截图或原生/IME/配对像素，score=null；近似shadow/spacing/spinner已登记，unknown仅同Section内存。Logo gate、reconnect/OAuth、模板setup与特殊宿主仍留R2返回队列；下一包先复用已有合同区分可实现动作与外部阻塞，不把本候选当整页或全软件完成。
 
 独立App删除/发布候选已收集：944全Rust、222前端、非Fast标准/34探针通过；源新查Sm6l后仅2CSS+loading JSX补丁，2受影响UI/TSC另验，再冻结540输入并最终EXE/MSI/NSIS成功。EXE SHA-256 990c5b3ccdd1fb4aeffe8b4f4699087e523a14e41680d869aebcda843d9b6652；完整scope/产物hash见插件验收记录与post-check-patch.json，不声称222在补丁后重跑。按钮实际是danger-soft而非solid，padding/corner/opacity/12spinner均已按新同版来源纠偏；原shadow/主题producer/精确动画/原生像素仍未验。本地阶段提交，不推送/发布、不升级整页验收。下一授权最终校验合同已从旧26.1103重核当前26.1111，准备接metadata/link真实验证与原flow一次性草稿；native OAuth callback自有许可仍缺，不假网页成功或抢官方scheme。
+
+2026-11-16 R2当前版连接最终校验/原草稿阶段：先核6资源34授权锚点及2资源8header片段，再接fixed CODEX typed metadata/link并行、仅link250ms一次重读、GitHub raw detail特例。原ACK/source/identity/attempt/prompt绑定、fresh已装启用读回、一次性草稿与零turn复用原消费者；普通ON_USE保持，真实installed local浏览器扩展前提未证明时保留未完成。link缺connector_id真实红后纠正为缺省兼容/显式foreign拒绝；Desktop originator局部覆盖，不冒称全局旧服务header已齐。
+
+954全Rust、225前端、非Fast标准34隔离探针通过。标准实际CLI0.159.2，另显式进程级CLI0.165.0的同34探针全部通过；没有更改用户全局配置。首轮前端旧harness缺依赖的失败原样保留，补真实模块和有界协议边界等待，原断言未降级。末审新增5个真实生命周期红：快路径延迟handoff、详情/Tab/同key reload取消；仅父TSX补guard及commit-time abort后6生命周期全绿，再完整225前端和最终原生EXE/MSI/NSIS通过，543产品输入稳定，Rust及构建脚本未变。准确检查范围见post-check-patch.json及插件验收末节。
+
+候选dist-artifacts/plugins-r2-auth-final-20261116/CodexNative.exe，SHA256 6cf9aede15b93c66a9f99aaa8df830628e1df703540b46e6f7f611297d70a5cc；输入manifest SHA256 d5d2215ceb7711de642325b997a75cc8b3338d5a22734cc80781a829e4aada38。未真实HTTP/OAuth/扩展、未GUI/IME/配对像素、未托管CI或用户验收；本地阶段提交，不推送发布、不标整页完成。下一本机模板“管理应用”合同7资源29锚点已核，服务模板创建表单/连接sheet独立缺口不拿外链替代；继续R2队列后整页候选，再桌面宿主和Sites。

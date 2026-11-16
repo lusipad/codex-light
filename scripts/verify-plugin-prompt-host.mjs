@@ -52,10 +52,23 @@ function mount() {
 for (const [value, prompt] of [[{ ...plugin, id: " " }, "valid"], [{ ...plugin, name: "" }, "valid"], [plugin, " \n"]]) {
   const v = mount(); assert.equal(await v.run(value, prompt), false); assert.equal(v.calls.length, 0); assert.equal(v.drafts().home, "old");
 }
-for (const change of ["account", "project", "connection", "context-ABA", "route-ABA", "navigation", "draft", "new-trial"]) {
+{
+  const v = mount();
+  assert.equal(await v.run(plugin, "retired", { isCurrent: () => false }), false);
+  assert.equal(v.calls.length, 0); assert.equal(v.drafts().home, "old");
+}
+{
+  const v = mount(); let current = true;
+  const navigate = v.context.commitNewThreadNavigation;
+  v.context.commitNewThreadNavigation = async () => { const result = await navigate(); current = false; return result; };
+  assert.equal(await v.run(plugin, "expected unmount", { isCurrent: () => current }), true);
+  assert.equal(v.drafts().home.endsWith(" expected unmount"), true, "successful navigation can unmount the original plugin page");
+}
+for (const change of ["account", "project", "connection", "context-ABA", "route-ABA", "navigation", "draft", "new-trial", "install-flow-cancelled"]) {
   const v = mount(); let resume;
+  let flowCurrent = true;
   v.context.personalizationNavigationGuardRef.current = action => { resume = action; return false; };
-  assert.equal(await v.run(plugin, "original"), false);
+  assert.equal(await v.run(plugin, "original", { isCurrent: () => flowCurrent }), false);
   v.context.personalizationNavigationGuardRef.current = null;
   if (change === "account") v.context.executionIdentityRef.current = "account-B";
   if (["project", "connection", "context-ABA"].includes(change)) v.context.skillTrialContextRef.current = { key: "account-project-connection" };
@@ -63,6 +76,7 @@ for (const change of ["account", "project", "connection", "context-ABA", "route-
   if (change === "navigation") v.context.navigationRequestRef.current++;
   if (change === "draft") v.context.setThreadPrompt(null, "new text");
   if (change === "new-trial") v.context.skillTrialRequestRef.current++;
+  if (change === "install-flow-cancelled") flowCurrent = false;
   const token = v.context.navigationRequestRef.current;
   resume(); await settle();
   assert.equal(v.context.navigationRequestRef.current, token, change);

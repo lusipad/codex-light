@@ -3185,8 +3185,8 @@ export const App: React.FC = () => {
     return apply();
   }, [commitNewThreadNavigation, setThreadPrompt]);
 
-  const handleTryPlugin = useCallback(async (plugin: PluginSummary, defaultPrompt: string): Promise<boolean> => {
-    if (!plugin.id?.trim() || !plugin.name?.trim() || !defaultPrompt.trim()) return false;
+  const handleTryPlugin = useCallback(async (plugin: PluginSummary, defaultPrompt: string, origin?: { isCurrent: () => boolean }): Promise<boolean> => {
+    if (!plugin.id?.trim() || !plugin.name?.trim() || !defaultPrompt.trim() || origin?.isCurrent() === false) return false;
     const request = ++skillTrialRequestRef.current;
     const context = skillTrialContextRef.current;
     const identity = executionIdentityRef.current;
@@ -3200,7 +3200,7 @@ export const App: React.FC = () => {
       && identity === executionIdentityRef.current && revision === homePromptRevisionRef.current;
     let consumed = false;
     const apply = async (): Promise<boolean> => {
-      if (consumed || !isCurrent() || originNavigation !== navigationRequestRef.current || originRoute !== deepLinkRouteRef.current) return false;
+      if (consumed || origin?.isCurrent() === false || !isCurrent() || originNavigation !== navigationRequestRef.current || originRoute !== deepLinkRouteRef.current) return false;
       consumed = true;
       const navigation = await commitNewThreadNavigation();
       if (navigation === null || navigation !== navigationRequestRef.current || !isCurrent()
