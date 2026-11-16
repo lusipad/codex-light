@@ -6,6 +6,8 @@ mod automation_tool;
 pub mod schedule_mcp;
 pub mod appshots_worker;
 mod appshots_host;
+mod appshots_entry;
+mod appshots_native_entry;
 pub mod config_skills;
 pub mod recommended_skills;
 pub mod desktop_open;

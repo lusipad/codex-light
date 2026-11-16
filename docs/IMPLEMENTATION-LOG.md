@@ -1,5 +1,17 @@
 # 实施日志（按轮次）
 
+### 2026-11-17 推送交付
+
+用户最新要求“推送一版”，覆盖此前阶段暂不推送的执行选择，不包含发布或将未验项改成通过。推送前fetch确认master与origin/master无分叉，本地此前29个阶段提交待推；入口后端基础作为新阶段提交后一起普通推送，随后核同提交Windows CI。当前本地五组验证命令退出0、1000输入哈希稳定；托管结果须以新run终态为准，不沿用11月9日旧账单故障或11月8日旧成功结论。
+
+## 2026-11-17 — 第04–05批Appshots入口后端基础
+
+- 先复核固定版入口5资源14锚点与Microsoft官方LL/Raw Input/消息泵/目标API合同，再实现Rust资格/注册代次/单flight/origin-account-Composer控制器和自有C++20 passive修饰键listener，复用现有native编译链、CaptureTarget和worker类型；无新依赖，不复制官方helper，不开放renderer裸目标命令。
+- native只识别所需左右Alt/Shift，scanCode/extended规范化，全部CallNext透传；注入过滤为明确的自有策略。前台HWND/PID锁定后，进程创建时间在poll侧校验而不重新查前台。独占Rust包装器定义next与stop不并发，队列有界，独立stop事件、消息线程卸载/join后释放；Installed不等于可永久观测的active。
+- 先红后绿修复注册失败仍supported，以及消息持续排空时停止失效。首次只修内层检查仍忙循环，两个超出预期的自有测试进程在核对路径后终止；最终内外层检查stop，自有消息窗重入洪泛回归通过，3秒测试守卫防CI无限等待，不删断言/跳步骤。首轮SDK另有测试误判结构48字节，按C/Rust真实40字节/偏移核正，保留失败。
+- native SDK/通知既有测试、新modifier/ABI/洪泛回归及独立安装/停止/重注册探针退出0，后者不触发物理键或捕获。完整987 Rust退出0；末尾只格式化新增两个Rust文件，27相关专项及debug产品编译重跑0。证据`.ref/parity/16/appshots-entry-r3-20261117/`；保留37项警告。默认CI native测试不注册系统hook，新增标准Appshots Rust专项。
+- 本轮无renderer/真实资格/配置/intro/路由/worker任务接线，不生成整页新候选，不推送或发布。下一优先处理key-up丢失与桌面/session失效，再接真实端到端；物理左右键/AltGr/IME、hook静默移除、同进程HWND复用、配对像素、原生用户旅程及同提交CI均保留未验。入口代码存在不表示功能已对用户可用。
+
 ## 2026-11-17 — 第04批Appshots消费者限定候选
 
 - 固定同版发送、历史、容器及下载合同后，接入账号/Composer作用域专用草稿、真实turn输入、历史图片配对、编辑恢复与共享预览；复用普通附件和原生保存链，不新增依赖或伪造协议字段。主屏截图入口继续独立命名。

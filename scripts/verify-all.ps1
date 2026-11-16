@@ -37,6 +37,7 @@ try {
   Invoke-Step "Appearance color official HSV samples and slider contracts" { node scripts/verify-appearance-color.mjs }
   Invoke-Step "System font directory and local font selection contracts" { node scripts/verify-system-fonts.mjs }
   Invoke-Step "Rust real system font directory" { cargo test --locked --manifest-path src-tauri/Cargo.toml system_fonts }
+  Invoke-Step "Rust Appshots capture and entry lifecycle" { cargo test --locked --manifest-path src-tauri/Cargo.toml --lib appshots_ }
   Invoke-Step "All-page workflow UI correction" { node scripts/verify-workflow-ui-d.mjs }
   Invoke-Step "Workspace file tree and actual file selection" { node scripts/verify-workspace-file-tree.mjs }
   Invoke-Step "Recursive workspace tree and multi-root lifecycle" { node scripts/verify-workspace-recursive-tree.mjs }
