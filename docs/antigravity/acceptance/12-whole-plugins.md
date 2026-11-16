@@ -474,3 +474,50 @@ CUA缺kernel assets路径，两次初始化失败，本阶段无新浏览器图/
 功能状态为阶段自验候选；视觉、原生GUI/物理IME、真实账号HTTP、完整native OAuth、浏览器扩展、自有callback许可、配对像素、同提交托管CI与用户验收均未验或未完成，score=null。本轮未重新尝试GUI工具，也没有新截图，不沿用旧EXE观察。较大阶段本地提交后candidate元数据绑定sourceCommit；未推送/发布，未升级整页G5。
 
 下一本机模板工作包已取当前版7资源/29锚点并经主线程核验，文案为“管理应用”；本机外部入口与服务创建表单/连接sheet分别处理。该合同目前implemented=false。Logo gate、native OAuth许可、扩展probe与codex_apps/HTML宿主保留具体返回条件，R2整页和全软件目标继续进行。
+### R2 本机App模板资格、管理与读回（2026-11-16，本地阶段候选）
+
+开工提交`424144674ff26c6ef373c475b6581f1a0757c069`，基准仍为Store26.1111.2228.0/package26.1111.21308。原始证据位于`.ref/parity/12/whole-page/actual/template-setup-r2-20261116/`。本单元属于第02批增量，不能据此放行插件整页。
+
+| 范围 | 实现与可验证结果 | 边界 |
+|---|---|---|
+| 真实模板 | `plugins.ts`严格解码实际CLI的必需appTemplates数组；metadata按真实ID完整分批读取，只有明确unsupported才回退完整app/list | 不按名称匹配、不把坏响应变空；内部服务详情的raw边界保留 |
+| 资格与身份 | 新`plugin_template_setup.rs`固定只读GET，解析真实release.app_templates中严格can_setup===true；client核账户、路由与代次 | FakeTransport不是账号HTTP成功；不套相邻version gate、不把缺字段当false |
+| 呈现 | `LocalPluginApps`与`PluginTemplateRows`保原始顺序及真实materialized IDs；generic Header无数字badge；加载、读取错误位于Uses前且保raw行 | “正在加载设置…”、“无法加载插件设置”、“重试”；初始资格未就绪没有可用管理链接 |
+| 管理动作 | 点击前fresh同身份资格；保原remote ID生成固定外部URL，单模板hash按全部模板数判断 | bridge ACK只证明外部打开请求，不能视为已连接、已创建或已materialize |
+| 返回读回 | 外部打开ACK后第一次focus委托原父页同source `plugin/read(reload)`，失败只读重试 | 项目一致性适配，尚无官方专用focus producer证明；不伪造web callback或计时成功 |
+| 生命周期 | 详情、来源、账号、视图、取消/卸载和blocked变化使旧请求退休；false→true→false不得恢复旧管理动作 | 禁用竞态内存真实复现外链1次，纳入scope后原用例与新尝试均通过；未实际打开外链 |
+
+当前已核：主合同11资源45锚点、metadata/ID合同5资源22锚点、行样式16片段及额外3条Header/loading CSS声明。严格文件hash/UTF-16原文核验通过，共15个唯一资源；未重算整包hash。
+
+检查范围与阶段状态：
+
+- 5项模板Rust专项及全量959 Rust通过（0失败/忽略/过滤，138.80秒）。之后只改`LocalPluginApps.tsx`和Included CSS，Rust输入未变。
+- required DTO、原ID边界、标题计数/语义、loading/raw行、禁用状态竞态均保存真实红与绿。早期只检查字符串的计数断言漏掉数字节点，已补实际badge节点断言，原漏检记录保留。
+- 环境配置CLI0.159.2的隔离plugin/read样本经真实生产解码器通过；非Fast标准显式指定进程级CLI0.165.0，34个隔离协议探针及完整标准退出0，未改全局配置。CLI路径、版本和hash单独留证。
+- blocked补丁仅2行TSX scope；标准与一轮229前端开始于补丁前，准确输入差异单独保存。补丁后定向回归、TSC和完整229前端通过；标准后续TSC/生产构建与新EXE/MSI/NSIS均在补丁后完成且退出0。548最终产品输入在原生构建前后稳定，Rust输入未变，不称959 Rust在TSX补丁后重跑。
+
+本阶段候选`dist-artifacts/plugins-r2-template-setup-20261116/`：
+
+| 产物 | 字节 | SHA-256 |
+|---|---:|---|
+| CodexNative.exe | 32,148,480 | `33a6e48e7812fe54bc90c731c52db48108192724dc482b4375d32d4e7140738c` |
+| Codex Native_0.2.0_x64_en-US.msi | 10,268,672 | `568486f66498ab3aeebcbcda8d79fd8546b86df58f5f9b5464516c8391a2a37d` |
+| Codex Native_0.2.0_x64-setup.exe | 6,881,162 | `74f8f760bab249d1cfada4651cbad8aa2b7fb3161490a80c9b57bb44b9124ae8` |
+
+输入清单SHA-256 `6a6ee3e8517ff0119f205156d046be8a180d7acbeca3cb8ac44604af09276702`；源码绑定、检查范围及原始日志见该证据根的candidate-artifacts/verification-summary/post-check-patch。构建含现有dead_code警告，不将其写成零警告。阶段仅本地提交，不推送/发布；没有同提交托管CI结果。
+
+功能回放/协议与真实HTTP、视觉和原生验收分开。没有真实账号模板GET、网页创建/返回传播、native OAuth、官方配对图、物理IME、原生GUI、同提交托管CI或用户验收。score=null。环形loading使用代码几何，动画CSS取同版声明；原生可见性暂停生命周期、精确glyph/ghost/图标/阴影及物理像素仍未验。可选metadata失败提示是恢复适配，不冒称官方页面原文。
+
+通用服务模板的创建表单/连接sheet、callback许可、扩展probe、Logo gate及codex_apps/HTML宿主留R2返回队列；本机管理外链不能替代这些分支。
+
+返回队列的下一步已做有界取证，不继续以解除禁用代替主链：
+
+| 未完成分支 | 缺少条件与恢复入口 |
+|---|---|
+| 通用服务模板/OAuth | 真实typed创建响应、连接sheet消费者、自有callback/client许可和凭据生命周期；按模板合同恢复完整创建→认证→读回，不能只instantiate留下假成功 |
+| 本机codex_apps设置 | 真实mcpServerCapabilities、gate2155714554运行值、精确owner/target；恢复后完成发现→读取→单字段写→finally读回→释放。现CLI schema能表达toolListMeta不等于当前账号具备能力 |
+| hosted结构化设置 | 专用认证MCP transport和view/真实link producer；不能猜HTTP端点或借本机CLI代替 |
+| HTML/设备权限 | 资源、初始化/消息方向、origin/CSP/sandbox与permission持久化及生命周期完整合同/宿主；不能以普通iframe或系统权限flag替代 |
+| 扩展和Logo | 真实扩展probe及Logo门控producer；不能用空apps或默认true强开 |
+
+特殊宿主证据`r2-special-host-next-contract.md/anchors.json`另核4资源15原文片段通过。以上输入未具备时保持未实现/未验并进入第03批集成候选，保留返回队列，不以同一依赖无限拖延后续桌面能力和Sites调研。

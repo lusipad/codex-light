@@ -598,6 +598,15 @@ export async function readPluginAppManagement(appId: string, identity: ServiceId
   return responseBody(result, requestId, identity);
 }
 
+export async function readLocalPluginTemplateSetup(pluginId: string, identity: ServiceIdentity, signal: AbortSignal): Promise<unknown> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; body: unknown }>(
+    "plugin_template_setup_read", requestId,
+    { request: { requestId, expectedIdentity: identity, profile: browserProfile(), pluginId } }, signal,
+  );
+  return responseBody(result, requestId, identity);
+}
+
 export async function readServicePluginConnectionFinal(options: { requiresAppSetup?: boolean; requestedConnectorId?: string | null }, identity: ServiceIdentity, signal: AbortSignal): Promise<unknown> {
   const requestId = crypto.randomUUID();
   const result = await invokeService<{ requestId: string; identity: ServiceIdentity; body: unknown }>(

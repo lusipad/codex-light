@@ -1,0 +1,17 @@
+.ptr-row { display: flex; align-items: center; gap: 12px; min-width: 0; min-height: var(--height-token-row, 0px); padding: var(--padding-row-y, 5px) var(--padding-row-x, 8px); border-radius: var(--radius-token-row, 9999px); color: var(--text-primary); }
+.ptr-unavailable { opacity: .6; }
+.ptr-icon { display: flex; flex-shrink: 0; align-items: center; justify-content: center; width: 36px; height: 36px; border: 1px solid var(--border-subtle); border-radius: var(--radius-lg, calc(10px * var(--corner-radius-scale, 1))); color: var(--text-secondary); background: transparent; }
+.ptr-icon img { width: 24px; height: 24px; object-fit: contain; }
+.ptr-copy { display: flex; flex: 1; flex-direction: column; justify-content: center; gap: 2px; min-width: 0; }
+.ptr-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--detail-row-font-size, var(--text-base, 14px)); }
+.ptr-description { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); line-height: var(--leading-relaxed, 1.625); color: var(--text-secondary); }
+.ptr-manage { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; gap: 4px; height: var(--spacing-token-button-composer, 28px); padding: 0 var(--spacing-button-toolbar-inline, 8px); border: 1px solid transparent; border-radius: var(--radius-button-toolbar, var(--radius-lg, calc(10px * var(--corner-radius-scale, 1)))); background: color-mix(in srgb, currentColor 5%, transparent); color: var(--text-primary); font-size: var(--text-sm); line-height: 18px; text-decoration: none; cursor: pointer; }
+.ptr-manage:hover:not([aria-disabled=true]) { background: color-mix(in srgb, currentColor 10%, transparent); }
+.ptr-manage[aria-disabled=true] { cursor: default; }
+.ptr-manage:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+.ptr-disabled { display: flex; flex-shrink: 0; align-items: center; justify-content: center; width: 28px; height: 28px; color: var(--text-secondary); }
+@supports (corner-shape: superellipse(1.5)) {
+  .ptr-icon { border-radius: var(--radius-lg, calc(10px * var(--corner-radius-scale, 1.25))); }
+  .ptr-manage { border-radius: var(--radius-button-toolbar, var(--radius-lg, calc(10px * var(--corner-radius-scale, 1.25)))); }
+  .ptr-icon, .ptr-manage { corner-shape: var(--codex-corner-shape, superellipse(1.5)); }
+}

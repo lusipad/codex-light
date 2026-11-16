@@ -23,6 +23,7 @@ vm.runInNewContext(output, { exports, require(name) {
   if (name.endsWith("SkillPreviewDialog")) return { SkillPreviewDialog: "SkillPreviewDialog" };
   if (name.endsWith("PluginManagementMcp")) return { PluginManagementMcp: "PluginManagementMcp" };
   if (name.endsWith("PluginProvidedSettings")) return { PluginProvidedSettings: "PluginProvidedSettings" };
+  if (name.endsWith("LocalPluginApps")) return { LocalPluginApps: "LocalPluginApps" };
   if (name.endsWith("recommendedSkills")) return displayExports;
   if (name.endsWith(".css")) return {};
   throw new Error(`Unexpected import ${name}`);

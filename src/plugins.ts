@@ -153,6 +153,48 @@ export interface AppSummary {
   installUrl?: string | null;
 }
 
+export interface AppTemplateSummary {
+  templateId: string;
+  name: string;
+  materializedAppIds: string[];
+  canonicalConnectorId?: string | null;
+  category?: string | null;
+  description?: string | null;
+  logoUrl?: string | null;
+  logoUrlDark?: string | null;
+  reason?: "NOT_CONFIGURED_FOR_WORKSPACE" | "NO_ACTIVE_WORKSPACE" | null;
+}
+
+export interface ConnectorMetadata {
+  id: string;
+  name: string;
+  description?: string | null;
+  iconUrl?: string | null;
+  iconUrlDark?: string | null;
+  toolSummaries?: unknown[] | null;
+}
+
+export function decodeAppTemplates(value: unknown): AppTemplateSummary[] {
+  const invalid = () => new PluginProtocolError("plugin/read", "响应包含缺失或无效的 appTemplates");
+  if (!Array.isArray(value)) throw invalid();
+  return value.map(raw => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw) || typeof raw.templateId !== "string" || typeof raw.name !== "string" ||
+      !Array.isArray(raw.materializedAppIds) || raw.materializedAppIds.some((id: unknown) => typeof id !== "string")) throw invalid();
+    const result: AppTemplateSummary = { templateId: raw.templateId, name: raw.name, materializedAppIds: [...raw.materializedAppIds] };
+    for (const key of ["canonicalConnectorId", "category", "description", "logoUrl", "logoUrlDark"] as const) {
+      if (Object.hasOwn(raw, key)) {
+        if (raw[key] !== null && typeof raw[key] !== "string") throw invalid();
+        result[key] = raw[key];
+      }
+    }
+    if (Object.hasOwn(raw, "reason")) {
+      if (raw.reason !== null && raw.reason !== "NOT_CONFIGURED_FOR_WORKSPACE" && raw.reason !== "NO_ACTIVE_WORKSPACE") throw invalid();
+      result.reason = raw.reason;
+    }
+    return result;
+  });
+}
+
 export interface PluginHookSummary {
   eventName: string;
   key: string;
@@ -516,7 +558,7 @@ export function pluginRefFor(
 }
 
 /** `plugin/read` — full plugin detail (skills/apps/hooks/mcpServers). */
-export async function readPlugin(ref: PluginRef): Promise<PluginDetail> {
+export async function readPlugin(ref: PluginRef): Promise<PluginDetail & { appTemplates: AppTemplateSummary[] }> {
   if (!ref.marketplacePath && !ref.remoteMarketplaceName) {
     throw new Error("plugin/read 需要 marketplacePath 或 remoteMarketplaceName 之一");
   }
@@ -532,7 +574,7 @@ export async function readPlugin(ref: PluginRef): Promise<PluginDetail> {
     skills: Array.isArray(res.plugin.skills) ? res.plugin.skills : [],
     hooks: Array.isArray(res.plugin.hooks) ? res.plugin.hooks : [],
     apps: Array.isArray(res.plugin.apps) ? res.plugin.apps : [],
-    appTemplates: Array.isArray(res.plugin.appTemplates) ? res.plugin.appTemplates : [],
+    appTemplates: decodeAppTemplates(res.plugin.appTemplates),
     mcpServers: Array.isArray(res.plugin.mcpServers) ? res.plugin.mcpServers : [],
   };
 }
@@ -662,12 +704,16 @@ export async function listApps(
 }
 
 /** Traverse the complete remote catalog; repeated IDs retain the first observed facts. */
-export async function listAllApps(options: { forceRefetch?: boolean } = {}): Promise<AppInfo[]> {
+export async function listAllApps(options: { forceRefetch?: boolean; signal?: AbortSignal } = {}): Promise<AppInfo[]> {
+  const current = () => { if (options.signal?.aborted) throw Error("请求已取消"); };
+  current();
   const data: AppInfo[] = [];
   const cursors = new Set<string>();
   let cursor: string | null = null;
   do {
+    current();
     const page: AppsListResponse = await listApps({ ...options, cursor });
+    current();
     data.push(...page.data);
     cursor = page.nextCursor ?? null;
     if (cursor !== null) {
@@ -743,6 +789,49 @@ export async function readPluginPreparationState(
   } catch (error) {
     if (!isUnsupportedAppMethod(error)) throw error;
     return { source: "catalog", catalog: await listAllApps(options), installed };
+  }
+}
+
+/** Read the requested targets, including not-yet-materialized template IDs. */
+export async function readConnectorMetadata(appIds: string[], options: { includeTools?: boolean; signal?: AbortSignal } = {}): Promise<ConnectorMetadata[]> {
+  const current = () => { if (options.signal?.aborted) throw Error("请求已取消"); };
+  const invalid = () => new PluginProtocolError("app/read", "应用元数据响应缺失、格式或归属无效");
+  current();
+  if (!Array.isArray(appIds) || appIds.some(id => typeof id !== "string")) throw invalid();
+  const ids = [...new Set(appIds)], data: ConnectorMetadata[] = [];
+  try {
+    for (let offset = 0; offset < ids.length; offset += 100) {
+      current(); const batch = ids.slice(offset, offset + 100), requested = new Set(batch);
+      const response = await call<{ apps: ConnectorMetadata[]; missingAppIds: string[] }>("app/read", {
+        appIds: batch, ...(options.includeTools === true ? { includeTools: true } : {}),
+      });
+      current();
+      if (!response || !Array.isArray(response.apps) || !Array.isArray(response.missingAppIds)) throw invalid();
+      for (const raw of response.apps) {
+        if (!raw || typeof raw.id !== "string" || !requested.has(raw.id) || typeof raw.name !== "string") throw invalid();
+        const app: ConnectorMetadata = { id: raw.id, name: raw.name };
+        for (const key of ["description", "iconUrl", "iconUrlDark"] as const) {
+          if (Object.hasOwn(raw, key)) {
+            if (raw[key] !== null && typeof raw[key] !== "string") throw invalid();
+            app[key] = raw[key];
+          }
+        }
+        if (Object.hasOwn(raw, "toolSummaries")) {
+          if (raw.toolSummaries !== null && !Array.isArray(raw.toolSummaries)) throw invalid();
+          app.toolSummaries = raw.toolSummaries;
+        }
+        data.push(app);
+      }
+      if (response.missingAppIds.some(id => typeof id !== "string" || !requested.has(id) || response.apps.some(app => app.id === id)) ||
+        batch.some(id => !response.apps.some(app => app.id === id) && !response.missingAppIds.includes(id))) throw invalid();
+    }
+    return uniqueApps(data);
+  } catch (error) {
+    current();
+    if (!isUnsupportedAppMethod(error)) throw error;
+    const directory = await listAllApps({ forceRefetch: true, signal: options.signal }); current();
+    return directory.filter(app => ids.includes(app.id)).map(app => ({ id: app.id, name: app.name, description: app.description,
+      iconUrl: app.logoUrl, iconUrlDark: app.logoUrlDark }));
   }
 }
 

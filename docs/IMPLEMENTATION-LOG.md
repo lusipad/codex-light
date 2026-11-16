@@ -3148,3 +3148,11 @@ W/Y域转换复用mapRemotePlugins并局部补齐源字段：真实匹配库存�
 954全Rust、225前端、非Fast标准34隔离探针通过。标准实际CLI0.159.2，另显式进程级CLI0.165.0的同34探针全部通过；没有更改用户全局配置。首轮前端旧harness缺依赖的失败原样保留，补真实模块和有界协议边界等待，原断言未降级。末审新增5个真实生命周期红：快路径延迟handoff、详情/Tab/同key reload取消；仅父TSX补guard及commit-time abort后6生命周期全绿，再完整225前端和最终原生EXE/MSI/NSIS通过，543产品输入稳定，Rust及构建脚本未变。准确检查范围见post-check-patch.json及插件验收末节。
 
 候选dist-artifacts/plugins-r2-auth-final-20261116/CodexNative.exe，SHA256 6cf9aede15b93c66a9f99aaa8df830628e1df703540b46e6f7f611297d70a5cc；输入manifest SHA256 d5d2215ceb7711de642325b997a75cc8b3338d5a22734cc80781a829e4aada38。未真实HTTP/OAuth/扩展、未GUI/IME/配对像素、未托管CI或用户验收；本地阶段提交，不推送发布、不标整页完成。下一本机模板“管理应用”合同7资源29锚点已核，服务模板创建表单/连接sheet独立缺口不拿外链替代；继续R2队列后整页候选，再桌面宿主和Sites。
+
+2026-11-16 R2本机App模板阶段：用户要求先完整计划，先将唯一总计划整理为v2.0，再按持续指令恢复在途实现。模板主合同最终11资源45锚点、metadata/ID另5资源22锚点、行样式16片段严格hash/UTF-16核验，共15唯一资源。复用真实CLI、既有完整目录/表单模式和原父页同source reload：必需DTO不能假空，精确curated服务ID与原始网页ID分开；fresh can_setup仅严格true；metadata按实际target完整分批，unsupported才完整app/list回退；implicit唯一App仅独立includeTools:true明确空才隐藏。
+
+新增fixed只读template setup IPC、LocalPluginApps与PluginTemplateRows；真实“管理应用”链接按全部模板数生成。外部ACK不materialize，返回仅一次只读刷新，真实CLI实例IDs才更新行。取证再纠正generic Header无h2/数字badge，loading/error在Uses前且保raw模板；文字与顺序有真实红绿。专门复核复现blocked读取期间撤权仍打开外链1次，将blocked纳入scope后禁用/恢复ABA与新当前动作均通过。未造timer、web callback、instantiate/OAuth或模型turn。
+
+5模板Rust专项及959全Rust通过；后续仅TSX/CSS，Rust输入不变。末2行blocked scope补丁后定向/TSC与完整229前端通过；非Fast标准含显式CLI0.165.0的34隔离探针退出0，标准起于补丁前但后续TSC/build在其后，准确差异另存；环境配置CLI0.159.2另有生产decoder真实隔离读样本。标准全部Cargo完成后，独立协议探针与原生打包并行，最终两者均退出0，无两个Cargo并发。548最终产品输入稳定，新EXE/MSI/NSIS已收集；EXE SHA256 33a6e48e7812fe54bc90c731c52db48108192724dc482b4375d32d4e7140738c，输入清单6a6ee3e8517ff0119f205156d046be8a180d7acbeca3cb8ac44604af09276702，完整hash与范围见插件验收记录。现有dead_code警告保留，不声称零警告。
+
+没有真实账号HTTP/网页创建回切/OAuth/扩展/原生GUI/物理IME/配对像素/同提交CI或用户验收。score=null，loader原生可见性及精确图标/ghost仍未验。特殊宿主另核4资源15片段，codex_apps缺真实gate2155714554/owner/target输入、hosted MCP与HTML sandbox另缺专用消费者；阻塞与恢复入口已记返回队列，不强开。阶段本地Lore提交，不推送发布；接第03批整页集成复核，再按总计划桌面宿主与Sites，不把模板候选当插件整页完成。

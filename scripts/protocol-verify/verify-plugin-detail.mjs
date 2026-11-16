@@ -1,5 +1,7 @@
 // Real detail metadata, installed skill ownership and logo bytes in a private CODEX_HOME; zero model turns.
 import assert from "node:assert/strict";
+import vm from "node:vm";
+import ts from "typescript";
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -63,6 +65,12 @@ try {
  assert.equal(read.plugin.summary.interface.defaultPrompt.length,2);
  assert.ok(read.plugin.summary.interface.longDescription.includes('第 28 段'));
  assert.equal(read.plugin.skills.length,1);
+ assert.ok(Array.isArray(read.plugin.appTemplates), 'real plugin/read must supply the required template array');
+ const production={};
+ vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/plugins.ts','utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText,
+   {exports:production,require:()=>({callAppServer:rpc})});
+ const typed=await production.readPlugin({pluginName:names[0],marketplacePath});
+ assert.equal(typed.appTemplates.length,read.plugin.appTemplates.length,'production decoder consumes the actual CLI template field');
  await rpc('plugin/install',{pluginName:names[0],marketplacePath,installAttemptId:'private-detail-fixture'});
  const installed=await rpc('plugin/installed',{cwds:[workspace]});
  const skillRows=await rpc('skills/list',{cwds:[workspace],forceReload:true});

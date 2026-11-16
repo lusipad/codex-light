@@ -265,6 +265,24 @@ Dialog同scope重试失败保旧正文；权限missing/null与空串分开；旧
 
 阶段检查：112项相关Rust随后扩大为929全Rust通过，219前端回放通过；非Fast标准/34隔离探针及最终EXE/MSI/NSIS已退出0；219前端之后的cold section/row末补丁另验2个UI及TypeScript，所有Rust输入未变，准确范围见验收记录。新增读取/写入为固定typed Tauri命令，renderer不接收owners、账户原始记录或凭据。删除/发布与Logo门控不属于本名称/描述已实现声明；真实HTTP、GUI/IME、配对像素、托管CI和用户验收均未验。
 
+#### 本机App模板“管理应用”：开发前合同（2026-11-16）
+
+固定26.1111.2228.0；初始`r2-template-setup-local-contract.md`为7资源29锚点，标题与loading/error补证后为11资源45锚点；元数据/ID另有5资源22锚点，行样式另核16片段。主线程按文件hash和UTF-16原文重新核验，未重算整包hash。后续补证纠正服务ID解析器为tQpF.Bk（原资料误记SqAt），HTTP目标按其curated规则解析，外部WT8y URL仍保原remotePluginId。元数据按真实target IDs批量app/read，不能借仅installed IDs或app/list第一页冒充完整结果。
+
+| 用例 | 修改前确定的预期 |
+|---|---|
+| TL-C01 | 原CLI必需appTemplates数组与required字段严格解码；坏/缺字段不能默认空；内部服务详情的raw类型边界另保留 |
+| TL-C02 | 按canonicalConnectorId优先/templateId fallback取真实metadata和完整directoryApps；raw name不换，按同版truthy/空白规则补category/description/light-dark logo，不按name关联 |
+| TL-C03 | fresh同账号/remote service plugin的release.app_templates仅can_setup===true赋资格；缺字段/错误保unknown，不套邻近version gate、不推断reason=null可设置 |
+| TL-C04 | 未materialize模板保持原序，真实中文“管理应用”；整行不click/tab，只有右侧真实外部入口；无URL为原disabled glyph/tooltip，不伪造可点动作 |
+| TL-C05 | 固定chatgpt.com/plugins/原ID、no_universal_links=1；只有全部模板数为1才附原settings hash，不能按过滤后的剩余数量算 |
+| TL-C06 | 点击fresh复核原身份/来源/ticket，bridge失败可见；外链ACK不叫连接成功；返回仅原CLI plugin/read及同scope资格只读刷新，materialized IDs真实非空才移除概要 |
+| TL-C07 | scope/账号/离页/ABA后旧读回不更新别页、不导航、不抢焦点；取消网页返回未变保持原状态，零instantiate/安装/模型请求 |
+| TL-C08 | loading/error先于Uses区域，均保留原始模板行；资格未就绪无管理链接。状态名为“正在加载设置…”，读取失败为“无法加载插件设置”及ghost“重试”，不显示原RPC详情；真实重读成功后恢复 |
+| TL-C09 | Uses标题为共享Header的generic div，无h2/数字badge；默认14px/46px toolbar，compact条件16px/20px行高。环形loading以代码几何实现，2s steps(60,end)及reduced-motion条件来自CSS；原生可见性暂停生命周期和精确像素仍未验 |
+
+服务generic个人模板创建是独立表单+创建connector+禁止browser fallback的连接sheet，本包不拿本机外链替代。真实HTTP、外部回切/传播、原生焦点/IME和配对像素仍需另验；未实测不写定时成功或官方专用callback。
+
 #### 当前授权最终校验与原草稿接续：开发前合同（2026-11-16）
 
 来源为固定26.1111.2228.0的`r2-current-auth-final-verification-contract.md`及34条AF锚点（6资源）；默认header另核2资源/8片段。复用现有连接准备入口，新增固定typed只读校验，不创建OAuth state、不占官方URI、不发送turn。此手动检查入口是项目适配，不宣称其外观或完整原生OAuth已经1:1。

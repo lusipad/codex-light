@@ -492,6 +492,17 @@ async fn plugin_app_management_read(
 }
 
 #[tauri::command]
+async fn plugin_template_setup_read(
+    app: AppHandle, state: State<'_, AppState>, request: chatgpt_service::PluginTemplateSetupRequest,
+) -> Result<chatgpt_service::PluginPermissionsResponse, chatgpt_service::ServiceError> {
+    state.chatgpt_service.plugin_template_setup_read(request, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
 async fn plugin_connection_final_read(
     app: AppHandle, state: State<'_, AppState>, request: chatgpt_service::PluginConnectionFinalRequest,
 ) -> Result<chatgpt_service::PluginPermissionsResponse, chatgpt_service::ServiceError> {
@@ -2776,6 +2787,7 @@ pub fn run() {
             plugin_app_management_read,
             plugin_app_metadata_update,
             plugin_connection_final_read,
+            plugin_template_setup_read,
             plugin_app_delete,
             plugin_app_delete_status_read,
             plugin_permissions_write,

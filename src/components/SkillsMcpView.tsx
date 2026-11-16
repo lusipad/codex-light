@@ -2082,8 +2082,16 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   };
 
   const includedPluginContext = pluginContextRef.current;
+  const includedDetailRequest = detailRequestRef.current;
+  const includedDetailSource = detailContextRef.current;
+  const includedView = preparationViewRef.current;
   const renderIncludedPluginContents = (presentation: "directory" | "settings") => detail ? <PluginDirectoryIncluded presentation={presentation} detail={detail} installedSkills={remoteSkills}
             connectionIdentity={connectionIdentity} workspaceRoot={activeWorkspaceRoot}
+            onRefreshApps={presentation === "settings" && includedDetailSource && detail.summary.source.type !== "remote" ? async () => {
+              if (!isPluginContextCurrent(includedPluginContext) || includedDetailRequest !== detailRequestRef.current ||
+                  includedDetailSource !== detailContextRef.current || includedView !== preparationViewRef.current) throw Error("插件页面已变化，请从当前页面刷新。");
+              await handleToggleDetail(includedDetailSource.plugin, includedDetailSource.marketplace, { reload: true });
+            } : undefined}
             onOpenApp={presentation === "settings" ? appId => {
               if (!isPluginContextCurrent(includedPluginContext)) return;
               ++detailRequestRef.current; detailContextRef.current = null;

@@ -396,6 +396,10 @@ try {
   Invoke-Step "Standalone app delete and publish UI" { node scripts/verify-plugin-app-delete-ui.mjs }
   Invoke-Step "Standalone app deletion parent" { node scripts/verify-plugin-app-delete-parent.mjs }
   Invoke-Step "Plugin final connection target and account isolation" { node scripts/verify-plugin-connection-final.mjs }
+  Invoke-Step "Plugin template required DTO and target metadata" { node scripts/verify-plugin-template-protocol.mjs }
+  Invoke-Step "Local template identity, eligibility and enrichment" { node scripts/verify-plugin-local-templates.mjs }
+  Invoke-Step "Local template actual rows" { node scripts/verify-plugin-template-rows.mjs }
+  Invoke-Step "Local template actual Apps section and parent" { node scripts/verify-local-plugin-apps.mjs }
   Invoke-Step "Original plugin preparation and one-time draft" { node scripts/verify-plugin-preparation-flow.mjs }
   Invoke-Step "Plugin preparation actual parent and panel" { node scripts/verify-plugin-preparation-host.mjs }
   Invoke-Step "Plugin app entry page" { node scripts/verify-plugin-app-entry-page.mjs }
@@ -417,6 +421,8 @@ try {
   Invoke-Step "Plugin GitHub sync state" { node scripts/verify-plugin-github-sync-state.mjs }
   Invoke-Step "Plugin GitHub sync settings" { node scripts/verify-plugin-github-sync-settings.mjs }
   Invoke-Step "Rust plugin GitHub sync" { cargo test --locked --manifest-path src-tauri/Cargo.toml plugin_github_sync }
+  Invoke-Step "Rust plugin final connection read" { cargo test --locked --manifest-path src-tauri/Cargo.toml plugin_connection_final }
+  Invoke-Step "Rust local plugin template setup qualification" { cargo test --locked --manifest-path src-tauri/Cargo.toml plugin_template_setup }
   Invoke-Step "Plugin permissions state" { node scripts/verify-plugin-permissions-state.mjs }
   Invoke-Step "Plugin permissions presentation" { node scripts/verify-plugin-permissions-ui.mjs }
   Invoke-Step "Plugin-provided settings data" { node scripts/verify-plugin-provided-settings.mjs }

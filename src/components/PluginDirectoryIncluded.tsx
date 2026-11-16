@@ -5,6 +5,7 @@ import { recommendedSkillDisplayName } from "../recommendedSkills";
 import { SkillPreviewDialog } from "./SkillPreviewDialog";
 import { PluginManagementMcp } from "./PluginManagementMcp";
 import { PluginProvidedSettings } from "./PluginProvidedSettings";
+import { LocalPluginApps } from "./LocalPluginApps";
 import "./PluginDirectoryIncluded.css";
 
 interface PluginDirectoryIncludedProps {
@@ -23,6 +24,7 @@ interface PluginDirectoryIncludedProps {
   skillBusy?: boolean;
   mcpCwd?: string;
   onConfigUpdated?: () => void | Promise<void>;
+  onRefreshApps?: () => Promise<void>;
 }
 
 // Fixed-version oszP.r8: paths and protocol names establish ownership, never display names.
@@ -48,7 +50,7 @@ const skillTitle = (skill: SkillSummary | SkillMetadata) => skill.interface?.dis
 const skillDescription = (skill: SkillSummary | SkillMetadata) => skill.interface?.shortDescription?.trim() || skill.shortDescription?.trim() || skill.description;
 
 export function PluginDirectoryIncluded({ presentation = "directory", detail, installedSkills, connectionIdentity, workspaceRoot, loadSkillContents,
-  onOpenMcpSettings, onOpenApp, onOpenHooksSettings, onOpenSkillFile, onTrySkill, onToggleSkill, skillBusy = false, mcpCwd, onConfigUpdated }: PluginDirectoryIncludedProps) {
+  onOpenMcpSettings, onOpenApp, onOpenHooksSettings, onOpenSkillFile, onTrySkill, onToggleSkill, skillBusy = false, mcpCwd, onConfigUpdated, onRefreshApps }: PluginDirectoryIncludedProps) {
   const identity = JSON.stringify([connectionIdentity, workspaceRoot, detail.marketplaceName, detail.marketplacePath, detail.summary.id]);
   const [selection, setSelection] = useState<{ identity: string; index: number } | null>(null);
   useEffect(() => { setSelection(null); }, [identity]);
@@ -63,8 +65,11 @@ export function PluginDirectoryIncluded({ presentation = "directory", detail, in
   const canWrite = !blocked && selectedInstalled !== null && selectedInstalled.scope !== "admin";
   const skills = detail.skills.map((skill, index) => ({ skill, index, actual: resolveIncludedSkill(skill, detail.summary.name, installedSkills) }));
   const sectionHeading = (label: string, count: number) => <h2>{label}<span className="pm-detail-included-count">{count}</span></h2>;
+  const localApps = presentation === "settings" && detail.summary.source.type !== "remote" && !!onRefreshApps &&
+    ((detail.appTemplates?.length ?? 0) > 0 || detail.summary.installPolicySource === "IMPLICIT_CANONICAL_APP" && detail.apps.length === 1);
   return <div className={`pm-detail-included${presentation === "settings" ? " pm-detail-included-settings-view" : ""}`}>
-    {detail.apps.length > 0 && <section aria-label={presentation === "settings" ? "使用的应用" : "应用"}>
+    {localApps && <LocalPluginApps key={identity} detail={detail} identity={identity} blocked={blocked} onOpenApp={onOpenApp} onRefresh={onRefreshApps!} />}
+    {!localApps && detail.apps.length > 0 && <section aria-label={presentation === "settings" ? "使用的应用" : "应用"}>
       {sectionHeading(presentation === "settings" ? "使用的应用" : "应用", detail.apps.length)}
       <div className="pm-detail-included-list">{detail.apps.map(app => presentation === "settings" && onOpenApp ? <button type="button"
         className="pm-detail-included-row pm-detail-included-preview" key={app.id} disabled={blocked} onClick={() => onOpenApp(app.id)}>
