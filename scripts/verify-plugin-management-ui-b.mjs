@@ -66,11 +66,12 @@ export function harness(options = {}) {
   const McpSettings = () => null;
   const recommended = load("src/recommendedSkills.ts", { "./bridge": bridge, "./plugins": plugins });
   const directory = load("src/pluginDirectory.ts", {});
+  plugins.pluginRefFor ??= load("src/plugins.ts", { "./bridge": bridge }).pluginRefFor;
   const location = load("src/pluginDirectoryLocation.ts", {});
   const directoryClient = { loadPluginDirectorySource: async () => ({ kind: "unresolved" }), ...options.directory };
   const directorySearch = { usePluginDirectorySearch: options.directorySearch ?? (() => ({ result: null, loading: false, error: null, unsupported: false, paging: false, pageError: null, nextCursor: null, loadMore() {}, retry() {} })) };
   const service = { serviceIdentity: async () => { throw Error("Connector identity is not configured in this replay"); }, ...options.service };
-  const preparationFlow = load("src/pluginPreparationFlow.ts", { "./plugins": plugins });
+  const preparationFlow = load("src/pluginPreparationFlow.ts", { "./plugins": plugins, "./pluginDirectory": directory });
   const connectionFinal = load("src/pluginConnectionFinal.ts", { "./config": options.config ?? {}, "./chatgptService": service });
   managementToolbar = load("src/components/PluginManagementToolbar.tsx", { "lucide-react": { Search: "Search" } }).PluginManagementToolbar;
   const { SkillsMcpView } = load("src/components/SkillsMcpView.tsx", { "lucide-react": new Proxy({}, { get: (_, name) => String(name) }), "../bridge": bridge, "../fsClient": options.fs ?? {},

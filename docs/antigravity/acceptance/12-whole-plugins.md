@@ -521,3 +521,35 @@ CUA缺kernel assets路径，两次初始化失败，本阶段无新浏览器图/
 | 扩展和Logo | 真实扩展probe及Logo门控producer；不能用空apps或默认true强开 |
 
 特殊宿主证据`r2-special-host-next-contract.md/anchors.json`另核4资源15原文片段通过。以上输入未具备时保持未实现/未验并进入第03批集成候选，保留返回队列，不以同一依赖无限拖延后续桌面能力和Sites调研。
+
+### 第03批插件连续旅程候选（2026-11-16取证，11-17收尾；未整页验收）
+
+开工提交`2a922560a45c83f58dc041321e92f101a0464bd8`。固定官方26.1111.2228.0，新增全局搜索3资源13原文从snapshot逐hash/integrity/UTF-16重核；AF原意图与DD23面包屑合同复用既有当前版来源。实现范围仅App导航、原SkillsMcpView消费者及既有路径身份/准备流程，不改Rust、配置或服务端协议。
+
+| 用例 | 实际修复与证据 | 验收边界 |
+|---|---|---|
+| J12-01 管理往返 | 明确push管理根并保原详情历史；既有子页history优先，guard拒绝零改写；Skills根切插件入口、新child分支截断旧forward；直接native popstate同步coarse index而不重复append | 生产callback/effect组合有真实红绿；新原生EXE另验Alt+Left/Right往返，原市场及search完整恢复。鼠标侧键未验 |
+| J12-02 目录根 | 详情“插件”breadcrumb删除category、保适用search/tab/host；不同于history.back | 生产组件回归；原生目录根仍search=detail-且forward禁用。category/tab组合本轮仅生产回放 |
+| J12-03 授权返回 | 同源回焦保原准备意图，覆盖安装ACK前在途及ACK后flow；真正手动reload/关闭/换页仍取消 | 原先回焦使detailRequest递增并abort，两边界分别真实红→绿，最终只读校验后一次原草稿、零重复install/turn。真实网页OAuth/账号未执行 |
+| J12-04 精确来源 | 同ID异market不能借用安装状态、阻止原来源安装或起草；安装ACK/未知结果确认均核原引用；复用既有Windows词法路径身份 | foreign→原ref安装→真实同源确认→一次草稿；Windows大小写/slash/verbatim别名及原flow均过；不推断8.3/symlink身份 |
+| J12-05 搜索状态 | 活动结果unknown不冒empty，非终止空页保分页，partial市场/库存错误可见并保已知行，初始加载与成功空分开 | 三项真实红→绿及扩展矩阵；常规fallback有结果原本正常，不误记为已复现缺陷；骨架、error布局精确对齐仍待验 |
+
+新增三个专项纳入两标准入口。旧VM fixture补接真实路径/引用依赖，不复制实现；一个retirement effect定位因新focus代码同含flow.detailRequest而误绑，已同时匹配forEach真实退休effect。新增Windows alias用例一度使用非法单前缀，修为真实双前缀；原产品红保留，非法fixture重现明确标注reproduction，不冒称原失败日志未覆盖。
+
+自动检查：最终232前端回放、最终TSC、非Fast标准及显式CLI0.165.0的34隔离协议探针、新EXE/MSI/NSIS均退出0。标准开始后补了App原生popstate及SkillsMcpView ACK前回焦两处末补丁；最终232/TSC/原生均在末补丁后重验。完整前端中间轮因Sites源码距离1000字符断言失败，原退出1保留；改为实际执行Sites popstate及清理回归后专项与最终232通过，没有改Sites产品行为。准确先后见`.ref/parity/12/whole-page/actual/integrated-r3-20261116/post-check-patch.json`。
+
+100个native/Rust及构建输入与`2a92256`的959全Rust结果相同；本轮标准有重新运行过滤组，**不是新跑959全库**。548最终产品输入构建前后稳定；输入清单SHA-256 `4ccbdadf46dce20af0fdda7f73b45d06973a9c7321d1b00db8d8ea985a69dabd`。
+
+| 本阶段产物（`dist-artifacts/plugins-r3-integrated-20261116/`） | 字节 | SHA-256 |
+|---|---:|---|
+| CodexNative.exe | 32,149,504 | `97a96ea0d4603b082e71879787217f6580fe7f05a10c2ab6e5cd4263fa46fcd8` |
+| Codex Native_0.2.0_x64_en-US.msi | 10,268,672 | `58438e6bd8f9197382f10ecd291ea48de8c040cf40ab6b05930caf7584b6d72c` |
+| Codex Native_0.2.0_x64-setup.exe | 6,880,824 | `39827a0ef5640d6314bee02d23a5b7c5c736eaf26255e2e41a753b2ac7364fec` |
+
+本轮已用Computer Use工具验证**上述源码构建的自有Tauri客户端**：私有CODEX_HOME/AppData/WebView及CLI0.165.0，本地两个真实插件，CLI fixture安装/读回0模型turn。原生搜索→同源详情→管理根→Alt+Left恢复精确URL→Alt+Right管理→目录breadcrumb新分支/forward禁用→第二条原prompt填准确plugin mention草稿均已观察；未点击发送、未GUI安装/卸载、未登录或操作用户配置。原生模型请求没有独立计数审计，不能把launcher的0策略字段当测量。
+
+原图与UIA记录位于证据根`native-ui/01`至`08`，均为工具原始JPEG，主捕获1435×900，不是标定CSS客户区或官方配对图。13×13的额外Tauri边缘截图不能误当主区域；UIA focus仅提供文档层，输入经精确控件set_value验证，不证明物理IME。浏览器专用XF86Back工具报unsupported，拖边未改变实际尺寸；两者分别保留未验，07不是窄窗通过图。关闭后首查仍有2个WebView进程，45.65秒后记录的9个进程全不运行；该间隔不证明准确退出时刻或所有关闭组合。
+
+四栏结论：**功能**为上述限定链自验通过；**界面**为结构/状态部分、配对像素未验；**原生**为私有宽窗旅程通过，窄窗/侧键/物理IME及完整弹层未验；**用户验收**未进行。score=null，无同提交托管CI，不推送或发布。其他设置链接的精确历史留R8；服务账号/OAuth、模板创建/连接sheet、扩展、Logo门控、codex_apps/HTML/hosted宿主仍按前述队列返回，R2整页不标完成。
+
+下一独立单元进入第04批自有桌面宿主。已完成的[Windows私有探针](../../research/pages/16-desktop-host-feasibility-20261116.md)证明WGC与RichEdit完整文本可行，但Classic4096限制使探针总体仍失败；不将该分项结果冒充产品Appshots已实现或任意应用可用。

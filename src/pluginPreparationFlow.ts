@@ -1,4 +1,5 @@
 import type { ServiceIdentity } from "./chatgptService";
+import { marketplacePathIdentity } from "./pluginDirectory";
 import { pluginRefFor, type PluginAuthPolicy, type PluginInstallResponse, type PluginInstalledResponse, type PluginRef, type PluginSummary } from "./plugins";
 
 export interface PluginPreparationFlow {
@@ -31,13 +32,15 @@ export function pluginRequiresBrowserPreparation(plugin: PluginSummary, policy: 
   return plugin.source.type === "local" && isBrowserPreparationCandidate(plugin, policy);
 }
 
-export function preparationMatchesReference(flow: PluginPreparationFlow, reference: PluginRef): boolean {
+export function preparationMatchesReference(flow: Pick<PluginPreparationFlow, "reference">, reference: PluginRef): boolean {
   return reference.pluginName === flow.reference.pluginName &&
-    reference.marketplacePath === flow.reference.marketplacePath &&
+    (reference.marketplacePath == null || flow.reference.marketplacePath == null
+      ? reference.marketplacePath === flow.reference.marketplacePath
+      : marketplacePathIdentity(reference.marketplacePath) === marketplacePathIdentity(flow.reference.marketplacePath)) &&
     reference.remoteMarketplaceName === flow.reference.remoteMarketplaceName;
 }
 
-export function preparationInstalledPlugin(flow: PluginPreparationFlow, inventory: PluginInstalledResponse): PluginSummary | null {
+export function preparationInstalledPlugin(flow: Pick<PluginPreparationFlow, "pluginId" | "reference">, inventory: PluginInstalledResponse): PluginSummary | null {
   if (inventory.marketplaceLoadErrors?.length) return null;
   for (const marketplace of inventory.marketplaces) for (const plugin of marketplace.plugins) {
     if (plugin.id !== flow.pluginId || !plugin.installed) continue;

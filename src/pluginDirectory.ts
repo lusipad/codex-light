@@ -84,7 +84,7 @@ export function directoryPluginInstallation(
 }
 
 // Lexical aliases only: short names, symlinks and parent traversal require filesystem evidence.
-function marketplacePathIdentity(path: string): string {
+export function marketplacePathIdentity(path: string): string {
   const slashes = path.replace(/\\/g, "/");
   const normalized = slashes.replace(/^\/\/\?\/UNC\//i, "//").replace(/^\/\/\?\/(?=[a-z]:\/)/i, "");
   return /^[a-z]:\//i.test(normalized) || /^\/\/[^/]+\/[^/]+/.test(normalized) ? normalized.toLowerCase() : path;

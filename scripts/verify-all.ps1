@@ -327,6 +327,7 @@ try {
   Invoke-Step "Plugin directory source tabs and paging UI regression" { node scripts/verify-plugin-directory-origins-view.mjs }
   Invoke-Step "Plugin directory App history integration regression" { node scripts/verify-plugin-directory-host.mjs }
   Invoke-Step "Plugin directory deep-link identity and search refresh regression" { node scripts/verify-plugin-directory-review.mjs }
+  Invoke-Step "Plugin management cross-page history and navigation guard" { node scripts/verify-plugin-management-handoff-history.mjs }
   Invoke-Step "Plugin detail source fields, expansion and external links regression" { node scripts/verify-plugin-detail-surface.mjs }
   Invoke-Step "Plugin detail included resources and skill ownership regression" { node scripts/verify-plugin-detail-included.mjs }
   Invoke-Step "Plugin detail installation, enable and preview integration regression" { node scripts/verify-plugin-detail-parent.mjs }
@@ -402,6 +403,8 @@ try {
   Invoke-Step "Local template actual Apps section and parent" { node scripts/verify-local-plugin-apps.mjs }
   Invoke-Step "Original plugin preparation and one-time draft" { node scripts/verify-plugin-preparation-flow.mjs }
   Invoke-Step "Plugin preparation actual parent and panel" { node scripts/verify-plugin-preparation-host.mjs }
+  Invoke-Step "Plugin preparation return-focus intent lifecycle" { node scripts/verify-plugin-preparation-return-focus.mjs }
+  Invoke-Step "Plugin prompt original marketplace provenance" { node scripts/verify-plugin-prompt-source-scope.mjs }
   Invoke-Step "Plugin app entry page" { node scripts/verify-plugin-app-entry-page.mjs }
   Invoke-Step "Plugin app account actions" { node scripts/verify-plugin-app-accounts.mjs }
   Invoke-Step "Plugin account rename dialog" { node scripts/verify-plugin-account-rename-dialog.mjs }

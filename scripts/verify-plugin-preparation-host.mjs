@@ -12,11 +12,14 @@ vm.runInNewContext(compile(fs.readFileSync("src/plugins.ts", "utf8")), {
   exports: plugins.exports, require: () => ({ callAppServer() { throw Error("Unmocked protocol write"); } }),
 });
 const flows = { exports: {} };
-vm.runInNewContext(compile(fs.readFileSync("src/pluginPreparationFlow.ts", "utf8")), { exports: flows.exports, require: () => plugins.exports });
+const directory = { exports: {} };
+vm.runInNewContext(compile(fs.readFileSync("src/pluginDirectory.ts", "utf8")), { exports: directory.exports, require: () => ({}) });
+vm.runInNewContext(compile(fs.readFileSync("src/pluginPreparationFlow.ts", "utf8")), { exports: flows.exports, require: name => name === "./pluginDirectory" ? directory.exports : plugins.exports });
 const ast = ts.createSourceFile("SkillsMcpView.tsx", fs.readFileSync("src/components/SkillsMcpView.tsx", "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const expressions = new Map(); let verification, retirementEffect;
 function visit(node) {
   if (ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect" &&
+      node.arguments[0]?.getText(ast).includes("preparationFlows.current.forEach") &&
       node.arguments[0]?.getText(ast).includes("flow.detailRequest")) retirementEffect = node.arguments[0];
   if (ts.isVariableDeclaration(node) && ["handleInstallPlugin", "activateDirectoryPrompt"].includes(node.name.getText(ast))) expressions.set(node.name.getText(ast), node.initializer);
   if (ts.isJsxSelfClosingElement(node) && node.tagName.getText(ast) === "PluginPreparationPanel") {

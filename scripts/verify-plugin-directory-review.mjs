@@ -130,4 +130,48 @@ await check("Personal local retry re-reads the actual home marketplace", async (
   } finally { view.unmount(); }
 });
 
+for (const sample of [
+  { name: "unknown results", state: { result: null }, empty: 0 },
+  { name: "nonterminal empty page", state: { result: { data: [], nextCursor: "next-page" }, nextCursor: "next-page" }, empty: 0 },
+  { name: "terminal empty page", state: {}, empty: 1 },
+  { name: "initial loading", state: { loading: true }, empty: 0 },
+  { name: "initial failure", state: { error: "read failed" }, empty: 0 },
+]) await check(`search ${sample.name} follows the active result state`, async () => {
+  const view = harness({ window: routeWindow("/plugins?search=actual"),
+    directorySearch: () => ({ ...emptySearch, ...sample.state, retry() {} }) });
+  view.props.manageOnly = false; view.render(); await view.tick();
+  try {
+    const empty = view.nodes(view.tree).filter(node => node.props.className === "empty-hint" && view.text(node) === "未找到插件");
+    assert.equal(empty.length, sample.empty);
+  } finally { view.unmount(); }
+});
+
+for (const { partial, hasRows } of [{ partial: false, hasRows: true }, { partial: true, hasRows: false }, { partial: true, hasRows: true }]) await check(`fallback ${partial ? "partial failure" : "success"} with rows=${hasRows} is not an inactive primary empty result`, async () => {
+  const view = harness({ window: routeWindow("/plugins?search=actual"),
+    directorySearch: () => ({ ...emptySearch, unsupported: true, error: "Method not found", retry() {} }),
+    plugins: { listMarketplacePlugins: async () => ({ marketplaces: hasRows ? [{ name: "original", path: "C:/original", plugins: [{ ...summary, source: { type: "local", path: "C:/original/actual" } }] }] : [],
+      ...(partial ? { marketplaceLoadErrors: [{ marketplacePath: "C:/original", message: "market read failed" }] } : {}) }) } });
+  view.props.manageOnly = false; view.setInstalled({ marketplaces: [] }); view.render(); await view.tick();
+  try {
+    assert.equal(view.nodes(view.tree).some(node => node.props.className === "empty-hint" && view.text(node) === "未找到插件"), false);
+    if (partial) assert.match(view.text(view.tree), /market read failed/);
+    if (hasRows) assert.match(view.text(view.tree), /Actual/, 'partial errors retain known results');
+  } finally { view.unmount(); }
+});
+
+await check("detail root breadcrumb clears category while keeping browse scope", async () => {
+  const window = routeWindow(`/plugins/${encodeURIComponent(summary.id)}?pluginName=Actual&marketplacePath=C%3A%2Fisolated%2Fmarket.json&hostId=local&directoryTab=personal&search=retained&category=developer-tools`);
+  window.history.pushState = function (state, _title, url) { this.state = state; window.location.href = new URL(url, window.location.href).href; };
+  const view = harness({ window, plugins: { readPlugin: async () => ({ summary,
+    marketplaceName: "private-market", marketplacePath: "C:/isolated/market.json", skills: [], apps: [], hooks: [], mcpServers: [] }) } });
+  view.props.manageOnly = false; view.render(); await view.tick();
+  try {
+    view.button("插件").props.onClick();
+    const result = new URL(window.location.href);
+    assert.equal(result.pathname, "/plugins"); assert.equal(result.searchParams.has("category"), false);
+    assert.equal(result.searchParams.get("search"), "retained"); assert.equal(result.searchParams.get("directoryTab"), "personal");
+    assert.equal(result.searchParams.get("hostId"), "local"); assert.equal(result.searchParams.has("marketplacePath"), false);
+  } finally { view.unmount(); }
+});
+
 assert.equal(failures.length, 0, `plugin directory review regressions failed: ${failures.join("; ")}`);

@@ -55,8 +55,10 @@ function mount() {
     context[`set${name}`] = value => { context[key] = typeof value === "function" ? value(context[key]) : value; };
   }
   const flowExports = {};
+  const directoryExports = {};
+  vm.runInNewContext(compile(fs.readFileSync("src/pluginDirectory.ts", "utf8")), { exports: directoryExports, require: () => ({}) });
   vm.runInNewContext(compile(fs.readFileSync("src/pluginPreparationFlow.ts", "utf8")), {
-    exports: flowExports, require: name => { assert.equal(name, "./plugins"); return context; },
+    exports: flowExports, require: name => { if (name === "./pluginDirectory") return directoryExports; assert.equal(name, "./plugins"); return context; },
   });
   Object.assign(context, flowExports);
   for (const [name, node] of Object.entries(nodes)) context[name] = vm.runInNewContext(compile(`(${node.getText(ast)})`), context);

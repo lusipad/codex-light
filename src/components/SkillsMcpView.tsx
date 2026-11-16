@@ -693,7 +693,9 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     let live = true;
     const context = pluginContextRef.current;
     void listMarketplacePlugins(workspaceCwds(), false, ["local"]).then(result => {
-      if (live && isPluginContextCurrent(context)) setSearchFallback(result);
+      if (!live || !isPluginContextCurrent(context)) return;
+      setSearchFallback(result);
+      if (result.marketplaceLoadErrors?.length) setSearchFallbackError(result.marketplaceLoadErrors.map(error => error.message).join("\n"));
     }).catch(error => { if (live && isPluginContextCurrent(context)) setSearchFallbackError(errorSummary(error)); });
     return () => { live = false; };
   }, [directorySearch.unsupported, searchQuery, activeWorkspaceRoot, connectionIdentity, manageOnly]);
@@ -852,7 +854,11 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       if (!manageOnly) {
         void loadBrowsePlugins(true);
         const context = detailContextRef.current;
-        if (context) void handleToggleDetail(context.plugin, context.marketplace, { reload: true });
+        const preparing = context && (pluginActionRef.current.has(context.plugin.id) || [...preparationFlows.current.values()].some(flow =>
+          !flow.controller.signal.aborted && !flow.completed && !flow.consumed &&
+          flow.context === pluginContextRef.current && flow.detailRequest === detailRequestRef.current &&
+          flow.view === preparationViewRef.current && preparationMatchesReference(flow, pluginRefFor(context.plugin, context.marketplace))));
+        if (context && !preparing) void handleToggleDetail(context.plugin, context.marketplace, { reload: true });
       }
     };
     window.addEventListener("focus", refresh);
@@ -1063,15 +1069,16 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     originalPrompt: string | null = null
   ) => {
     if (unsupportedDirectoryHost() || pluginActionRef.current.has(plugin.id)) return;
+    const reference = pluginRefFor(plugin, marketplace);
     if (installUncertaintyRef.current.get(installScope)?.has(plugin.id) || plugin.installed ||
-        installedData?.marketplaces.some(market => market.plugins.some(item => item.id === plugin.id && item.installed))) return;
+        installedData?.marketplaces.some(market => market.plugins.some(item => item.id === plugin.id && item.installed &&
+          preparationMatchesReference({ reference }, pluginRefFor(item, market))))) return;
     if (plugin.availability === "DISABLED_BY_ADMIN" || plugin.installPolicy === "NOT_AVAILABLE") return;
     pluginActionRef.current.add(plugin.id);
     setBusyPluginIds(new Set(pluginActionRef.current));
     const context = pluginContextRef.current;
     const detailRequest = detailRequestRef.current;
     const view = preparationViewRef.current;
-    const reference = pluginRefFor(plugin, marketplace);
     const installAttemptId = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
       ? `attempt-${crypto.randomUUID()}`
       : `attempt-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -1112,8 +1119,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
         pluginMode === "browse" ? loadBrowsePlugins(true) : Promise.resolve(),
       ]);
       if (!isPluginContextCurrent(context)) return;
-      const installed = inventory && (flow ? preparationInstalledPlugin(flow, inventory) :
-        inventory.marketplaces.flatMap(market => market.plugins).find(item => item.id === plugin.id && item.installed));
+      const installed = inventory && preparationInstalledPlugin(flow ?? { pluginId: plugin.id, reference }, inventory);
       const confirmed = !!installed && !inventory?.marketplaceLoadErrors?.length;
       if (flow) {
         flow.confirmed = confirmed;
@@ -1136,7 +1142,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
         if (uncertain) {
           notify(`安装结果无法确认：${errorSummary(err)}；正在重新读取安装状态`, "error");
           const inventory = await loadInstalledPlugins({ silent: true });
-          if (inventory && !inventory.marketplaceLoadErrors?.length && inventory.marketplaces.some(market => market.plugins.some(item => item.id === plugin.id && item.installed))) {
+          if (inventory && preparationInstalledPlugin({ pluginId: plugin.id, reference }, inventory)) {
             updateInstallUncertainty(installScope, plugin.id, false, context);
           }
         } else {
@@ -2024,6 +2030,14 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   const fallbackSearchRows = directorySearch.unsupported && searchFallback && installedData ?
     [...new Map([...installedData.marketplaces, ...searchFallback.marketplaces].flatMap(marketplace => marketplace.plugins
       .filter(pluginMatchesSearch).map(plugin => [pluginKey(plugin, marketplace), { plugin, marketplace }] as const))).values()] : [];
+  const fallbackSearchError = directorySearch.unsupported ? searchFallbackError || installedError?.message ||
+    installedData?.marketplaceLoadErrors?.map(error => error.message).join("\n") : null;
+  const searchLoading = directorySearch.loading || directorySearch.unsupported &&
+    (!searchFallback || !installedData) && !fallbackSearchError;
+  const searchIsEmpty = directorySearch.unsupported
+    ? !searchLoading && !!searchFallback && !!installedData && !fallbackSearchError && fallbackSearchRows.length === 0
+    : !!directorySearch.result && !directorySearch.loading && !directorySearch.error && searchRows.length === 0 &&
+      (!directorySearch.nextCursor || !!directorySearch.pageError);
 
   const isBrowseBusy = browseLoading && browseData === null;
   const isInstalledBusy = installedLoading && installedData === null;
@@ -2037,15 +2051,22 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   const directoryInstalled = mergedMarketplaces.flatMap(marketplace => marketplace.plugins
     .filter(plugin => plugin.installed).map(plugin => ({ plugin, marketplace })));
   const directoryDetailPlugin = detail?.summary ?? detailContextRef.current?.plugin;
+  const directoryDetailReference = directoryDetailPlugin && detailContextRef.current
+    ? pluginRefFor(directoryDetailPlugin, detailContextRef.current.marketplace) : null;
   const directoryDetailInstalled = directoryDetailPlugin && (directoryDetailPlugin.installed ||
-    directoryInstalled.some(({ plugin }) => plugin.id === directoryDetailPlugin.id));
+    directoryInstalled.some(({ plugin, marketplace }) => plugin.id === directoryDetailPlugin.id && directoryDetailReference &&
+      preparationMatchesReference({ reference: directoryDetailReference }, pluginRefFor(plugin, marketplace))));
   const activateDirectoryPrompt = async (text: string): Promise<boolean> => {
     if (!detail || detailLoading || detailError || !onTryPlugin || unsupportedDirectoryHost()) return false;
     const context = pluginContextRef.current, request = detailRequestRef.current;
     const view = preparationViewRef.current;
     const isCurrent = () => isPluginContextCurrent(context) && request === detailRequestRef.current && view === preparationViewRef.current;
     if (!detail.summary.interface?.defaultPrompt?.some(prompt => prompt.trim() === text)) return false;
-    let plugin = directoryInstalled.find(item => item.plugin.id === detail.summary.id)?.plugin ?? detail.summary;
+    const originalMarketplace = detailContextRef.current?.marketplace;
+    if (!originalMarketplace) return false;
+    const reference = pluginRefFor(detail.summary, originalMarketplace);
+    let plugin = directoryInstalled.find(item => item.plugin.id === detail.summary.id &&
+      preparationMatchesReference({ reference }, pluginRefFor(item.plugin, item.marketplace)))?.plugin ?? detail.summary;
     if (plugin.availability === "DISABLED_BY_ADMIN" || plugin.installPolicy === "NOT_AVAILABLE" ||
         installUncertaintyRef.current.get(installScope)?.has(plugin.id)) return false;
     if (!plugin.installed) {
@@ -2476,7 +2497,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       {/* TAB 1: PLUGINS */}
       {subTab === "plugins" && !manageOnly && (directoryHostUnsupported ? <p role="alert">当前入口尚不支持该主机。</p> : detailKey !== null ? <section className="pm-catalog-detail">
         <button type="button" className="pm-catalog-back" onClick={() => {
-          updateDirectoryUrl(pluginDirectoryBrowseUrl(directoryBase()));
+          updateDirectoryUrl(pluginDirectoryBrowseUrl(directoryBase(), { category: null }));
           ++detailRequestRef.current;
           detailContextRef.current = null;
           setDetailKey(null); setDetail(null); setDetailError(null); setDetailLoading(false);
@@ -2549,14 +2570,12 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
           {!categoryLoading && !categoryError && categoryRows.length === 0 && <p className="empty-hint">未找到插件</p>}
           {categoryCursor && <button type="button" className="secondary-btn" disabled={categoryLoading} onClick={() => void loadCategory(categoryCursor)}>显示更多</button>}
         </section> : searchQuery.trim() ? <section className="pm-catalog-section">
-          {directorySearch.loading && renderLoadingRow("正在搜索插件…")}
+          {searchLoading && renderLoadingRow("正在加载插件…")}
           {directorySearch.error && !directorySearch.unsupported && <p role="alert">{directorySearch.error} <button type="button" onClick={directorySearch.retry}>重试</button></p>}
-          {directorySearch.unsupported && !searchFallback && !searchFallbackError && renderLoadingRow("正在读取本地插件…")}
-          {searchFallbackError && <p role="alert">{searchFallbackError} <button type="button" onClick={directorySearch.retry}>重试</button></p>}
+          {fallbackSearchError && <p role="alert">{fallbackSearchError} <button type="button" onClick={() => { directorySearch.retry(); void loadInstalledPlugins({ confirmInstallResult: true }); }}>重试</button></p>}
           <div className="pm-catalog-grid">{directorySearch.unsupported ? fallbackSearchRows.map(({ plugin, marketplace }) => renderPluginCard(plugin, marketplace, { browse: true }))
             : searchRows.map(row => renderPluginCard(row.plugin, { name: row.marketplaceName, path: row.marketplacePath, plugins: [row.plugin] }, { browse: true }))}</div>
-          {!directorySearch.loading && !directorySearch.error && searchRows.length === 0 && <p className="empty-hint">未找到插件</p>}
-          {directorySearch.unsupported && searchFallback && installedData && !fallbackSearchRows.length && <p className="empty-hint">未找到插件</p>}
+          {searchIsEmpty && <p className="empty-hint">未找到插件</p>}
           {directorySearch.pageError && <p role="alert">{directorySearch.pageError} <button type="button" onClick={directorySearch.nextCursor ? directorySearch.loadMore : directorySearch.retry}>重试</button></p>}
           {directorySearch.nextCursor && <button type="button" className="secondary-btn" disabled={directorySearch.paging} onClick={directorySearch.loadMore}>显示更多</button>}
         </section> : directorySource?.kind === "remote" ? directorySource.sections.map((section, index) => <section key={section.id ?? section.slug ?? index} className="pm-catalog-section">

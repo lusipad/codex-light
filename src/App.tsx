@@ -397,17 +397,56 @@ export const App: React.FC = () => {
   }, []);
   const [pluginDirectoryNavigation, setPluginDirectoryNavigation] = useState<PluginDirectoryNavigation | null>(null);
   const pluginDirectoryNavigationRef = useRef<PluginDirectoryNavigation | null>(null);
-  const updatePluginDirectoryNavigation = useCallback((navigation: PluginDirectoryNavigation | null) => {
-    pluginDirectoryNavigationRef.current = navigation;
-    setPluginDirectoryNavigation(navigation);
+  const pluginManagementHandoffRef = useRef<{ id: number; directoryUrl: string; managementUrl: string; directoryIndex: number; managementIndex: number } | null>(null);
+  const withPluginHandoffNavigation = useCallback((navigation: PluginDirectoryNavigation | null, side: "directory" | "management") => {
+    const handoff = pluginManagementHandoffRef.current;
+    if (handoff && side === "directory" && navigation?.canGoBack &&
+        (activeRouteRef.current === "plugins" || activeRouteRef.current === "skills") &&
+        window.history.state?.pluginManagementHandoff?.id === handoff.id && window.history.state.pluginManagementHandoff.side === "directory") {
+      // A new directory child branch has replaced the old management forward entry.
+      pluginManagementHandoffRef.current = null;
+      const history = routeHistoryRef.current;
+      if (history.entries[history.index + 1] === "settings") {
+        history.entries = history.entries.slice(0, history.index + 1);
+        setRouteHistoryVersion(version => version + 1);
+      }
+      return navigation;
+    }
+    const current = () => handoff !== null && pluginManagementHandoffRef.current === handoff &&
+      window.history.state?.pluginManagementHandoff?.id === handoff.id &&
+      window.history.state.pluginManagementHandoff.side === side &&
+      window.location.href === (side === "directory" ? handoff.directoryUrl : handoff.managementUrl);
+    if (!navigation || !current()) return navigation;
+    // Each child starts a fresh history scope when the other page unmounts it.
+    return {
+      ...navigation,
+      canGoBack: navigation.canGoBack || side === "management",
+      canGoForward: navigation.canGoForward || side === "directory",
+      goBack: () => {
+        if (!current()) return;
+        if (navigation.canGoBack) navigation.goBack();
+        else if (side === "management") window.history.back();
+      },
+      goForward: () => {
+        if (!current()) return;
+        if (navigation.canGoForward) navigation.goForward();
+        else if (side === "directory") window.history.forward();
+      },
+    };
   }, []);
+  const updatePluginDirectoryNavigation = useCallback((navigation: PluginDirectoryNavigation | null) => {
+    const next = withPluginHandoffNavigation(navigation, "directory");
+    pluginDirectoryNavigationRef.current = next;
+    setPluginDirectoryNavigation(next);
+  }, [withPluginHandoffNavigation]);
   const [pluginManagementNavigation, setPluginManagementNavigation] = useState<PluginDirectoryNavigation | null>(null);
   const pluginManagementNavigationRef = useRef<PluginDirectoryNavigation | null>(null);
   const pluginManagementLocationRef = useRef(Boolean(parsePluginManagementLocation(window.location.href)));
   const updatePluginManagementNavigation = useCallback((navigation: PluginDirectoryNavigation | null) => {
-    pluginManagementNavigationRef.current = navigation;
-    setPluginManagementNavigation(navigation);
-  }, []);
+    const next = withPluginHandoffNavigation(navigation, "management");
+    pluginManagementNavigationRef.current = next;
+    setPluginManagementNavigation(next);
+  }, [withPluginHandoffNavigation]);
   const [remotePullRequestUrl, setRemotePullRequestUrl] = useState(() => window.location.pathname === "/code-review"
     ? new URLSearchParams(window.location.hash.slice(1)).get("pullRequest") ?? "" : "");
   const activeRouteRef = useRef(activeRoute);
@@ -435,6 +474,29 @@ export const App: React.FC = () => {
       setPluginDirectoryMode("browse");
       activeRouteRef.current = "plugins";
       commitActiveRoute("plugins");
+    };
+    if (personalizationNavigationGuardRef.current?.(apply) === false) return;
+    apply();
+  }, []);
+  const handleOpenPluginManagement = useCallback(() => {
+    const origin = window.location.href;
+    const originRoute = activeRouteRef.current;
+    const directoryUrl = parsePluginDirectoryLocation(origin) ? origin
+      : originRoute === "skills" && new URL(origin).pathname === "/" ? new URL("/plugins", origin).href : null;
+    if ((originRoute !== "plugins" && originRoute !== "skills") || directoryUrl === null) return;
+    let applied = false;
+    const apply = () => {
+      if (applied || activeRouteRef.current !== originRoute || window.location.href !== origin) return;
+      applied = true;
+      const id = (pluginManagementHandoffRef.current?.id ?? 0) + 1;
+      const directoryIndex = routeHistoryRef.current.index;
+      pluginManagementHandoffRef.current = { id, directoryUrl,
+        managementUrl: new URL("/settings/plugins-settings", origin).href, directoryIndex, managementIndex: directoryIndex + 1 };
+      window.history.replaceState({ ...window.history.state, pluginManagementHandoff: { id, side: "directory" } }, "", directoryUrl);
+      window.history.pushState({ ...window.history.state, pluginManagementHandoff: { id, side: "management" } }, "", "/settings/plugins-settings");
+      setSettingsInitialSection("plugins-settings");
+      activeRouteRef.current = "settings";
+      commitActiveRoute("settings");
     };
     if (personalizationNavigationGuardRef.current?.(apply) === false) return;
     apply();
@@ -498,6 +560,20 @@ export const App: React.FC = () => {
   };
   useEffect(() => {
     const restorePageRoute = () => {
+      const marker = window.history.state?.pluginManagementHandoff;
+      if (marker) {
+        const handoff = pluginManagementHandoffRef.current;
+        const directory = marker.side === "directory";
+        if (handoff && marker.id === handoff.id && (directory || marker.side === "management") &&
+            window.location.href === (directory ? handoff.directoryUrl : handoff.managementUrl)) {
+          const route = directory ? "plugins" : "settings";
+          const history = routeHistoryRef.current;
+          history.index = directory ? handoff.directoryIndex : handoff.managementIndex;
+          history.entries[history.index] = route;
+          navigatingRouteHistoryRef.current = activeRouteRef.current !== route;
+          setRouteHistoryVersion(version => version + 1);
+        }
+      }
       const wasPluginManagement = pluginManagementLocationRef.current;
       const management = !isQuickChatWindow && !isThreadWindow && /^\/settings\/plugins-settings(?:\/|$)/.test(window.location.pathname);
       pluginManagementLocationRef.current = Boolean(management);
@@ -6664,10 +6740,7 @@ export const App: React.FC = () => {
                   setActiveRoute("settings");
                 }}
                 initialPluginMode={pluginDirectoryMode}
-                onManagePlugins={() => {
-                  setSettingsInitialSection("plugins-settings");
-                  setActiveRoute("settings");
-                }}
+                onManagePlugins={handleOpenPluginManagement}
                 onManagePlugin={handleOpenDurablePluginManagement}
                 onStartSkillCreatorSession={(prompt) => {
                   startNewThread();

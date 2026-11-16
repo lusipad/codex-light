@@ -24,19 +24,41 @@ const app = fs.readFileSync('src/App.tsx', 'utf8');
 assert.match(app, /parseSitesLocation\(window\.location\.href\)/);
 assert.match(app, /activeRoute === "sites" && sitesNavigation\?\.canGoBack/);
 assert.match(app, /activeRouteRef\.current === "sites"[\s\S]{0,350}sitesNavigationRef\.current/);
-assert.match(app, /const (\w+) = \(\) => \{[\s\S]{0,1000}?if \(parseSitesLocation\(window\.location\.href\)\) setActiveRoute\("sites"\);[\s\S]*?addEventListener\("popstate", \1\)/);
 assert.match(app, /sites-route-view/);
 assert.match(app, /<SitesView onNavigationChange=\{updateSitesNavigation\}/);
 console.log('PASS Sites URL routes, collection search, unrelated query/hash retention, invalid paths and App navigation wiring');
 // Execute the actual App toolbar callback with isolated state; no React renderer or backend.
 const source = ts.createSourceFile('App.tsx', app, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-let callback;
+let callback, restoreEffect;
 const visit = node => {
   if (ts.isVariableDeclaration(node) && node.name.getText(source) === 'navigateRouteHistory') callback = node.initializer.arguments[0].getText(source);
+  if (ts.isCallExpression(node) && node.expression.getText(source) === 'useEffect' &&
+      node.arguments[0]?.getText(source).includes('const restorePageRoute')) restoreEffect = node.arguments[0].getText(source);
   ts.forEachChild(node, visit);
 };
 visit(source);
 assert.ok(callback);
+assert.ok(restoreEffect, 'Sites native history must register the real App restore callback');
+{
+  const listeners = new Map(), restored = [], location = { href: 'https://private.test/sites?view=pinned', pathname: '/sites', search: '?view=pinned', hash: '' };
+  const state = { current: 'home' };
+  const restoreContext = { exports: {}, URL, activeRouteRef: state, isQuickChatWindow: false, isThreadWindow: false,
+    pluginManagementHandoffRef: { current: null }, pluginManagementLocationRef: { current: false },
+    parseSitesLocation: parse, parsePluginDirectoryLocation: () => null, parsePluginManagementLocation: () => null,
+    parseLibraryFileLocation: () => null, parseLibraryLocation: () => null,
+    setSettingsInitialSection() {}, setLibraryFileId() {}, setLibraryCleanupTab() {},
+    setActiveRoute(value) { state.current = value; restored.push(value); },
+    window: { location, history: { state: null },
+      addEventListener(name, handler) { listeners.set(name, handler); },
+      removeEventListener(name, handler) { if (listeners.get(name) === handler) listeners.delete(name); } },
+  };
+  const restore = vm.runInNewContext(ts.transpileModule(`(${restoreEffect})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, restoreContext);
+  const cleanup = restore(); listeners.get('popstate')();
+  assert.deepEqual(restored, ['sites'], 'native history restores Sites after unrelated preceding restore branches');
+  location.href = 'https://private.test/'; location.pathname = '/'; location.search = '';
+  listeners.get('popstate')(); assert.equal(restored.at(-1), 'home');
+  cleanup(); assert.equal(listeners.size, 0, 'the actual restore effect releases its listener');
+}
 let route = 'sites', siteBack = 0, siteForward = 0, libraryBack = 0, libraryForward = 0, version = 0, applied = [];
 const activeRouteRef = { current: route };
 const sitesNavigationRef = { current: { canGoBack: true, canGoForward: true, back: () => siteBack++, forward: () => siteForward++ } };

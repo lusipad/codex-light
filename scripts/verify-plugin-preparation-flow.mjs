@@ -11,8 +11,10 @@ vm.runInNewContext(compile(fs.readFileSync("src/plugins.ts", "utf8")), {
   exports: plugins.exports, require: () => ({ callAppServer() { throw Error("No protocol writes in this replay"); } }),
 });
 const module = { exports: {} };
+const directory = { exports: {} };
+vm.runInNewContext(compile(fs.readFileSync("src/pluginDirectory.ts", "utf8")), { exports: directory.exports, require: () => ({}) });
 vm.runInNewContext(compile(fs.readFileSync("src/pluginPreparationFlow.ts", "utf8")), {
-  exports: module.exports, require: () => plugins.exports,
+  exports: module.exports, require: name => name === "./pluginDirectory" ? directory.exports : plugins.exports,
 });
 const { finishPluginPreparation, preparationInstalledPlugin, pluginRequiresBrowserPreparation } = module.exports;
 const identity = { accountId: "original-account", userId: "original-user", generation: 4 };

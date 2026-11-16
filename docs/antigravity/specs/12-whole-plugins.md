@@ -1,5 +1,19 @@
 # 12 插件整页合同与R0/R1执行
 
+## 第03批连续旅程纠偏合同（2026-11-16）
+
+开工提交`2a922560a45c83f58dc041321e92f101a0464bd8`。复用固定26.1111.2228.0的AF原安装意图/来源合同与DD23目录面包屑合同，另补当前全局搜索实际presenter/provider/中文3资源13原文片段，见`r3-search-state-contract.md/anchors.json`。只读复核发现跨页断点，本批先补生产回归再实施；以下不是已通过声明。
+
+| 用例 | 操作与官方/项目不变量 | 验收 |
+|---|---|---|
+| J12-01 | 目录来源/搜索/分类→详情→管理根→浏览器/工具栏后退与前进；跨页导航须经过既有草稿guard | 原详情URL及市场身份完整恢复；拒绝零历史改写；保留子页自己的内部history能力 |
+| J12-02 | 详情根“插件”breadcrumb是目录根链接，不是history.back | 删除category，保留适用search/directoryTab/host；不丢入错误宿主 |
+| J12-03 | 原安装ACK需要连接→外部回焦→手动最终检查→原来源fresh已装/启用→原prompt一次交付 | 同源只读回焦刷新不退休原意图；真正切页/取消/手动换详情仍退休；零turn/重复安装 |
+| J12-04 | 同ID库存来源改变后，旧详情不能选中异来源实体试用或确认安装 | 使用既有PluginRef身份规则；Windows词法别名合法，异market路径不借用；不能按ID单独授已安装状态 |
+| J12-05 | 全局主搜索与兼容回退统一按活动结果判loading/error/unknown/empty/rows | 有结果不追加empty；未准备/失败不冒成功空；零行仍有下一页时保分页，市场/库存partial错误可见；只读重试真正重取 |
+
+本批不强开请求插件、Teams、OAuth、catalog或宿主gate。搜索兼容fallback的触发沿现有明确unsupported定义，不将任意403/网络错误变fallback。现有额外错误恢复提示、缺官方骨架/配对图及原生IME分别保留差异，不以状态修复宣称页面像素完成。
+
 返回链补证边界：`durable-directory-contract.md`已扩8来源/23锚点并核真实目录presenter/中文；`durable-directory-browse-contract.md`另有8来源/34锚点。breadcrumb保`hostId=durable`，但列表需真实宿主集合/readiness、gate4218407052与Lq过滤producer，当前均未完整接入，不能为做通返回强开gate、假定空集合或落CLI。该列表依赖保留在R1/后续browse队列；阶段读取基础不计完整往返通过。详情reader已证的raw query规则不自动证明lazy路由外层不会传显式host，运行时可达性仍待核验。
 
 durable目录详情合同（9f6c229之后）：开发依据为上一阶段已准备的`durable-directory-contract.md`及6文件/16个UTF-16片段，本轮重新核对大小/hash/片段一致。只接受官方根“查看详情”实际产出的durable、raw pluginName/raw path ID、chatgpt-workspace且无marketplacePath的来源组合；其它不支持host仍拒绝。详情GET为CONNECTOR_SETTING/other，完整库存为CODEX/other且省includeExtensions；管理/root/settings旧用途不变，任何HTTP或库存失败不得回本机plugin/read。W/Y完整映射以实际匹配库存决定summary/技能禁用，以raw detail决定正文/应用/模板，USER实例与canonical pS规则分开；服务技能path=null，不造文件。当前单元复用目录Detail/Included，只接服务只读概要、实际已装管理和已启用插件填草稿；服务安装、技能正文、模板setup、native/OAuth仍需后续实际消费者，不以禁用动作宣称完成。先验证typed IPC/用途/全分页、严格字段与身份、exact durable路由零CLI降级和返回，之后统一检查与候选；运行时、原生和配对像素各自留证，静态转换不证明真实服务成功。

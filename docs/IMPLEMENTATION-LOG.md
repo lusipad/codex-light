@@ -3156,3 +3156,11 @@ W/Y域转换复用mapRemotePlugins并局部补齐源字段：真实匹配库存�
 5模板Rust专项及959全Rust通过；后续仅TSX/CSS，Rust输入不变。末2行blocked scope补丁后定向/TSC与完整229前端通过；非Fast标准含显式CLI0.165.0的34隔离探针退出0，标准起于补丁前但后续TSC/build在其后，准确差异另存；环境配置CLI0.159.2另有生产decoder真实隔离读样本。标准全部Cargo完成后，独立协议探针与原生打包并行，最终两者均退出0，无两个Cargo并发。548最终产品输入稳定，新EXE/MSI/NSIS已收集；EXE SHA256 33a6e48e7812fe54bc90c731c52db48108192724dc482b4375d32d4e7140738c，输入清单6a6ee3e8517ff0119f205156d046be8a180d7acbeca3cb8ac44604af09276702，完整hash与范围见插件验收记录。现有dead_code警告保留，不声称零警告。
 
 没有真实账号HTTP/网页创建回切/OAuth/扩展/原生GUI/物理IME/配对像素/同提交CI或用户验收。score=null，loader原生可见性及精确图标/ghost仍未验。特殊宿主另核4资源15片段，codex_apps缺真实gate2155714554/owner/target输入、hosted MCP与HTML sandbox另缺专用消费者；阻塞与恢复入口已记返回队列，不强开。阶段本地Lore提交，不推送发布；接第03批整页集成复核，再按总计划桌面宿主与Sites，不把模板候选当插件整页完成。
+
+2026-11-17 第03批收尾（证据根integrated-r3-20261116）：先复用AF/DD23合同并核当前搜索3资源13原文，再对连续旅程补红。修复Manage覆盖原来源历史、直接native popstate重复coarse记录、子页新分支复活旧forward及Skills根切Plugins入口；拒绝导航不写history。原安装前/后ACK回焦不再因只读详情刷新退休，真正关闭/换页/reload仍取消；精确原PluginRef用于安装判断/确认/起草，复用已有Windows词法身份，不以同ID异market借已装状态。搜索unknown、非终止空页、partial错误不再冒empty，保已知行；目录根删category保筛选。普通fallback有行的分支原本正常，测试已纠正问题边界。
+
+最终232前端、TSC、非Fast/显式CLI0.165.0的34隔离探针及EXE/MSI/NSIS均0，548输入稳定。末App/native-history及Skills/ACK前保护后重新完整前端/TSC/原生；Sites原1000字符距离断言中途失败，换执行真实popstate/cleanup后专项及完整绿，不改Sites产品。新非法Windows alias fixture失败和retirement effect选择器误绑均保留真实说明，未降低断言。100 native/Rust输入与2a92256的959全测相同，本阶段过滤组不是新全库声明。EXE SHA256 97a96ea0d4603b082e71879787217f6580fe7f05a10c2ab6e5cd4263fa46fcd8；输入manifest 4ccbdadf46dce20af0fdda7f73b45d06973a9c7321d1b00db8d8ea985a69dabd，完整产物与时序见验收记录。
+
+Computer Use工具已能操作自有隔离Tauri：真实CLI两插件搜索、详情→管理→Alt返回保精确market/search→前进管理→breadcrumb保搜索且禁旧forward→第二原prompt带正确plugin mention到首页草稿；未按发送、未GUI安装/卸载、未登录。原始JPEG/UIA留证，1435×900不是标定客户区；XF86Back工具不支持，drag未产生窄窗，不冒通过；IME/官方配对图/账号/OAuth/完整弹层仍未验。关闭首查2个WebView暂存，45.65秒后9个原进程全退出，不推断准确退出时刻。模型turn计数仅CLI fixture有断言，native只声明未执行发送动作。
+
+并行第04批可行性自有C++20探针：未复制/运行官方helper，只注册自有fixture PID/HWND/nonce，私有环境。首Classic UIA返回4096截断，真实失败；再独立测WGC和系统RichEdit，取得PNG、7738字符/180行/屏外末尾、预取消/关闭晚回拒绝、2 session全close/0清理错误；父fixture退出。但Classic仍失败，整体exit1不抹平，详见新16-desktop-host-feasibility研究。下一独立单元Appshots宿主/消费者，Computer Use动作与浏览器各待探针；R2账号/模板/扩展/特殊宿主及其他跨设置历史仍留返回队列。阶段本地Lore提交，不推送发布，不标整页或全软件完成。
