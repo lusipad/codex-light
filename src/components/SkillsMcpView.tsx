@@ -46,7 +46,7 @@ import { PluginPreparationPanel } from "./PluginPreparationPanel";
 import { RecommendedSkillsPanel } from "./RecommendedSkillsPanel";
 import { recommendedSkillDisplayName, readRecommendedSkills, type RecommendedSkill } from "../recommendedSkills";
 import { filterManagedSkills } from "../pluginManagementSkills";
-import { parsePluginManagementLocation, pluginManagementAppSelectionUrl, pluginManagementCanonicalSelectionUrl, pluginManagementAppSyncUrl, pluginManagementAppUrl, pluginManagementDetailUrl, pluginManagementPermissionSelectionUrl, pluginManagementRootUrl } from "../pluginManagementLocation";
+import { parsePluginManagementLocation, servicePluginManagementRootId, pluginManagementAppSelectionUrl, pluginManagementCanonicalSelectionUrl, pluginManagementAppSyncUrl, pluginManagementAppUrl, pluginManagementDetailUrl, pluginManagementPermissionSelectionUrl, pluginManagementRootUrl } from "../pluginManagementLocation";
 import { PluginCanonicalRootPage } from "./PluginCanonicalRootPage";
 import { PluginCanonicalUninstall } from "./PluginCanonicalUninstall";
 import { SkillPreviewDialog } from "./SkillPreviewDialog";
@@ -827,6 +827,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     let disposed = false, unlisten: (() => void) | undefined;
     const refresh = () => {
       if (disposed || unsupportedDirectoryHost()) return;
+      if (manageOnly && window.location && servicePluginManagementRootId(window.location.href)) setDirectoryRefreshRevision(value => value + 1);
       void Promise.allSettled([loadInstalledPlugins({ silent: true }), loadServicePlugins(), loadManagement(), loadRemoteSkills(true), loadApps(true)]);
       if (!manageOnly) {
         void loadBrowsePlugins(true);
@@ -1008,6 +1009,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       if (route.kind === "app" && route.appId && route.hostId === null) return;
       if (route.kind === "plugin" && route.section === "detail" && route.appId && route.hostId === null) return;
       if (route.kind === "plugin" && (route.section === "permissions" || route.section === "sync") && route.hostId === null) return;
+      if (servicePluginManagementRootId(window.location.href) !== null) return;
       if (route.kind !== "plugin" || route.section !== "detail" || route.skillName || route.appId) {
         setDetailError(toViewError(new Error("此插件管理子页面尚未接入。"))); return;
       }
@@ -1215,13 +1217,14 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     return errors.length === 0;
   };
   const handleRemotePlugin = async (plugin: PluginSummary, operation: RemoteOperation, verifyOnly = false,
-    confirmedRemoval?: { isCurrent: () => boolean; onConfirmed: () => void }) => {
+    confirmedRemoval?: { isCurrent: () => boolean; onConfirmed: () => void; rootIdentity?: ServiceIdentity }) => {
     if (confirmedRemoval && !confirmedRemoval.isCurrent()) return;
-    const identity = servicePlugins?.identity;
+    const identity = confirmedRemoval?.rootIdentity ?? servicePlugins?.identity;
     if (!identity || !remoteId(plugin)) return;
     const key = remoteIntentKey(identity, plugin), actionKey = pluginActionKey(plugin), saved = remoteIntents.get(key);
     if (saved?.busy || pluginActionRef.current.has(actionKey)) return;
-    if (!verifyOnly && (!remoteAvailable(plugin) || saved?.pending || plugin.availability === "DISABLED_BY_ADMIN" && operation !== "uninstall" || operation === "uninstall" && plugin.installed && plugin.installPolicy === "INSTALLED_BY_DEFAULT")) return;
+    const available = confirmedRemoval?.rootIdentity ? plugin.installed && plugin.remotePolicyKnown === true : remoteAvailable(plugin);
+    if (!verifyOnly && (!available || saved?.pending || plugin.availability === "DISABLED_BY_ADMIN" && operation !== "uninstall" || operation === "uninstall" && plugin.installed && plugin.installPolicy === "INSTALLED_BY_DEFAULT")) return;
     if (!verifyOnly && operation === "uninstall" && !confirmedRemoval && !confirm(`确定要卸载插件「${pluginDisplayName(plugin)}」吗？`)) return;
     const context = pluginContextRef.current, controller = new AbortController();
     const intent: RemoteIntent = { plugin: verifyOnly && saved ? saved.plugin : plugin, operation: saved?.pending ? saved.operation : operation, identity, pending: true, busy: true, error: null, refreshError: null };
@@ -2190,7 +2193,8 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     };
     const plugin = directoryPluginInstallation(pluginId, mergedInstalledData).plugin;
     return <PluginCanonicalRootPage key={JSON.stringify([connectionIdentity, pluginId])}
-      connectionIdentity={connectionIdentity} pluginId={pluginId} selectedLinkId={selectedLinkId}
+      connectionIdentity={connectionIdentity} pluginId={pluginId} selectedLinkId={selectedLinkId} refreshRevision={directoryRefreshRevision}
+      onOpenApp={appId => { if (isCurrentRoot()) updateDirectoryUrl(pluginManagementAppUrl(managementBase(), { pluginId, appId })); }}
       onBack={() => { if (isCurrentRoot()) closeManagedDetail(); }}
       onViewDetails={onOpenPluginDirectoryDetail ? () => { if (isCurrentRoot()) onOpenPluginDirectoryDetail(pluginId); } : undefined}
       onSelectLink={(linkId, expectedLinkId) => {
@@ -2211,26 +2215,32 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
           if (isCurrentRoot() && runtimeGeneration === runtimeRequest.current && serviceGeneration === serviceRequest.current && results.some(result => !result)) onNotify?.("账户已更新，但无法刷新账户列表", "error");
         });
       }}
-      renderCanonicalActions={context => plugin ? <>
-        {plugin.installed && <PluginCanonicalUninstall name={pluginDisplayName(plugin)} accountCount={context.accountCount}
-        disabled={context.blocked || busyPluginIds.has(pluginActionKey(plugin)) || unconfirmedUninstalls.has(plugin.id) ||
-          plugin.installPolicy === "INSTALLED_BY_DEFAULT" || !remoteAvailable(plugin) || !!remoteStatus(plugin)?.pending || !!remoteStatus(plugin)?.busy}
+      renderCanonicalActions={context => {
+        const rootPlugin = context.snapshot?.genericDetail?.summary;
+        const target = rootPlugin ?? plugin;
+        if (!target) return null;
+        const rootIdentity = rootPlugin ? context.snapshot.identity : undefined;
+        const status = rootIdentity ? remoteOperations[remoteIntentKey(rootIdentity, target)] : remoteStatus(target);
+        const available = rootIdentity ? target.installed && target.remotePolicyKnown === true : remoteAvailable(target);
+        return <>
+        {target.installed && <PluginCanonicalUninstall name={pluginDisplayName(target)} accountCount={context.accountCount}
+        disabled={context.blocked || busyPluginIds.has(pluginActionKey(target)) || unconfirmedUninstalls.has(target.id) ||
+          target.installPolicy === "INSTALLED_BY_DEFAULT" || !available || !!status?.pending || !!status?.busy}
         isCurrent={() => isCurrentRoot() && context.isCurrent()}
         onConfirm={async () => {
           let confirmed = false;
-          await handleRemotePlugin(plugin, "uninstall", false, {
-            isCurrent: () => isCurrentRoot() && context.isCurrent(), onConfirmed: () => { confirmed = true; closeManagedDetail(true); },
+          await handleRemotePlugin(target, "uninstall", false, {
+            rootIdentity, isCurrent: () => isCurrentRoot() && context.isCurrent(), onConfirmed: () => { confirmed = true; closeManagedDetail(true); },
           });
           if (!confirmed && isCurrentRoot()) throw Object.assign(Error("卸载结果尚未确认，请核验卸载结果。"), { code: "unconfirmed_removal" });
         }} />}
-        {remoteStatus(plugin)?.pending && <button type="button" className="secondary-btn-sm"
-          disabled={context.blocked || !!remoteStatus(plugin)?.busy}
-          onClick={() => { if (isCurrentRoot() && context.isCurrent()) void handleRemotePlugin(plugin, "uninstall", true, {
-            isCurrent: () => isCurrentRoot() && context.isCurrent(), onConfirmed: () => closeManagedDetail(true),
+        {status?.pending && <button type="button" className="secondary-btn-sm"
+          disabled={context.blocked || !!status?.busy}
+          onClick={() => { if (isCurrentRoot() && context.isCurrent()) void handleRemotePlugin(target, "uninstall", true, {
+            rootIdentity, isCurrent: () => isCurrentRoot() && context.isCurrent(), onConfirmed: () => closeManagedDetail(true),
           }); }}>核验卸载结果</button>}
-      </> : null}>
-      {managedDetail}
-    </PluginCanonicalRootPage>;
+      </>;
+      }} />;
   }
 
   return (

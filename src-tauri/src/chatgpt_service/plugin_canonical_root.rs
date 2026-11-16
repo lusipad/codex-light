@@ -116,9 +116,125 @@ mod tests {
         let(result,())=tokio::join!(service.plugin_canonical_root_with(request(),rpc,&transport),async{while !transport.entered.load(Ordering::SeqCst){tokio::task::yield_now().await;}assert!(service.cancel("canonical-root-fixture"));});
         assert_eq!(result.err().unwrap().code,"cancelled");assert_eq!(transport.fixture.sent.lock().unwrap().len(),2);
     }
+    fn generic_projection_plugin()->Value {
+        let mut source=plugin();source["release"]["app_ids"]=json!(["asdk_app_real","connector_second"]);
+        source["share_url"]=json!("https://example.test/share");source["disabled_reason"]=Value::Null;
+        source["release"]["description"]=json!("");source["release"]["interface"]["short_description"]=json!("");
+        source["release"]["skills"]=json!([{"name":"public-skill","description":"Public description","path":"never-return","contents":"never-return","secret":"never-return",
+            "interface":{"display_name":"Public skill","short_description":null,"icon_large_url":"https://example.test/skill.png","credential":"never-return"}}]);
+        source["release"]["mcp_servers"]=json!([{"key":"public-server","env":{"TOKEN":"never-return"},"secret":"never-return"}]);
+        source["release"]["app_templates"]=json!([{"template_id":"public-template","name":"Public template","description":null,"canonical_connector_id":"connector_second","can_setup":true,
+            "materialized_app_ids":["connector_second"],"instances":[{"id":"connector_second","scope":"USER","name":"Public instance","credential":"never-return"}],"secret":"never-return"}]);
+        source["credential"]=json!({"token":"never-return"});source["release"]["secret"]=json!("never-return");source
+    }
+    #[tokio::test]
+    async fn canonical_root_generic_source_projection_matches_exact_installed_id_and_preserves_field_presence(){
+        let source=generic_projection_plugin();let mut installed=source.clone();installed["enabled"]=json!(false);installed["disabled_skill_names"]=json!(["public-skill"]);
+        installed["release"]["version"]=json!("installed-version");installed["release"]["description"]=json!("Installed description");
+        let mut other=installed.clone();other["id"]=json!("same-name-different-id");other["enabled"]=json!(true);
+        let transport=Fixture::new(vec![(200,source),(200,page(vec![other,installed],None))]);
+        let result=ChatgptService::default().plugin_canonical_root_with(request(),rpc,&transport).await.unwrap();
+        assert_eq!(result.body["kind"],"generic");let generic=result.body.get("genericSource").expect("generic source must be returned from this same root read");
+        assert_eq!(generic["plugin"]["id"],"plugin-real");assert!(generic["plugin"].get("enabled").is_none());
+        assert_eq!(generic["plugin"]["release"]["version"],"1.2.3");assert_eq!(generic["plugin"]["release"]["description"],"");
+        assert_eq!(generic["plugin"]["release"]["interface"]["short_description"],"");assert!(generic["plugin"]["disabled_reason"].is_null());
+        assert_eq!(generic["installedPlugin"]["id"],"plugin-real");assert_eq!(generic["installedPlugin"]["enabled"],false);
+        assert_eq!(generic["installedPlugin"]["release"]["version"],"installed-version");assert_eq!(generic["installedPlugin"]["disabled_skill_names"],json!(["public-skill"]));
+        assert_eq!(generic["plugin"]["release"]["mcp_servers"],json!([{"key":"public-server"}]));
+        assert_eq!(generic["plugin"]["release"]["skills"],json!([{"name":"public-skill","description":"Public description","interface":{"display_name":"Public skill","short_description":null,"icon_large_url":"https://example.test/skill.png"}}]));
+        assert_eq!(generic["plugin"]["release"]["app_templates"][0]["instances"],json!([{"id":"connector_second","scope":"USER","name":"Public instance"}]));
+        assert_eq!(generic["plugin"]["share_url"],"https://example.test/share");assert!(!serde_json::to_string(&result).unwrap().contains("never-return"));
+        assert_eq!(transport.sent.lock().unwrap().len(),2,"no second detail/catalog/CLI read is required");
+    }
+    #[tokio::test]
+    async fn canonical_root_generic_source_without_matching_installed_id_is_explicit_null_not_name_match(){
+        let source=generic_projection_plugin();let mut other=source.clone();other["id"]=json!("same-name-different-id");other["enabled"]=json!(false);
+        let transport=Fixture::new(vec![(200,source),(200,page(vec![other],None))]);
+        let result=ChatgptService::default().plugin_canonical_root_with(request(),rpc,&transport).await.unwrap();
+        let generic=result.body.get("genericSource").expect("generic root must carry its actual source");
+        assert_eq!(generic.get("installedPlugin"),Some(&Value::Null));assert!(generic["plugin"].get("enabled").is_none());assert_eq!(transport.sent.lock().unwrap().len(),2);
+    }
+    #[tokio::test]
+    async fn canonical_root_generic_source_is_explicit_null_for_canonical_decision(){
+        let transport=Fixture::new(replies());let result=ChatgptService::default().plugin_canonical_root_with(request(),rpc,&transport).await.unwrap();
+        assert_eq!(result.body["kind"],"canonical");assert_eq!(result.body.get("genericSource"),Some(&Value::Null));
+    }
 }
 
 fn canonical_root_invalid()->ServiceError {failure("invalid_response","Plugin root metadata is incomplete")}
+
+fn generic_texts(source:&serde_json::Map<String,Value>,target:&mut serde_json::Map<String,Value>,keys:&[&str])->ServiceResult<()> {
+    for key in keys {if let Some(value)=source.get(*key) {
+        if !value.is_null() && !value.is_string() {return Err(canonical_root_invalid());}
+        target.insert((*key).into(),value.clone());
+    }}Ok(())
+}
+fn generic_flags(source:&serde_json::Map<String,Value>,target:&mut serde_json::Map<String,Value>,keys:&[&str])->ServiceResult<()> {
+    for key in keys {if let Some(value)=source.get(*key) {
+        if !value.is_null() && !value.is_boolean() {return Err(canonical_root_invalid());}
+        target.insert((*key).into(),value.clone());
+    }}Ok(())
+}
+fn generic_strings(source:&serde_json::Map<String,Value>,target:&mut serde_json::Map<String,Value>,keys:&[&str])->ServiceResult<()> {
+    for key in keys {if let Some(value)=source.get(*key) {
+        if !value.is_null() && !value.as_array().is_some_and(|values|values.iter().all(Value::is_string)) {return Err(canonical_root_invalid());}
+        target.insert((*key).into(),value.clone());
+    }}Ok(())
+}
+fn generic_child(source:&serde_json::Map<String,Value>,target:&mut serde_json::Map<String,Value>,key:&str,project:fn(&Value)->ServiceResult<Value>)->ServiceResult<()> {
+    if let Some(value)=source.get(key) {target.insert(key.into(),if value.is_null(){Value::Null}else{project(value)?});}Ok(())
+}
+fn generic_children(source:&serde_json::Map<String,Value>,target:&mut serde_json::Map<String,Value>,key:&str,project:fn(&Value)->ServiceResult<Value>)->ServiceResult<()> {
+    if let Some(value)=source.get(key) {
+        let selected=if value.is_null(){Value::Null}else{json!(value.as_array().ok_or_else(canonical_root_invalid)?.iter().map(project).collect::<ServiceResult<Vec<_>>>()?)};
+        target.insert(key.into(),selected);
+    }Ok(())
+}
+fn generic_interface(value:&Value)->ServiceResult<Value> {
+    let source=value.as_object().ok_or_else(canonical_root_invalid)?;let mut selected=serde_json::Map::new();
+    generic_texts(source,&mut selected,&["short_description","long_description","developer_name","category","website_url","privacy_policy_url","terms_of_service_url",
+        "default_prompt","logo_url","logo_url_dark","composer_icon_url","brand_color"])?;
+    generic_strings(source,&mut selected,&["capabilities","default_prompts","screenshot_urls"])?;Ok(Value::Object(selected))
+}
+fn generic_skill_interface(value:&Value)->ServiceResult<Value> {
+    let source=value.as_object().ok_or_else(canonical_root_invalid)?;let mut selected=serde_json::Map::new();
+    generic_texts(source,&mut selected,&["display_name","short_description","brand_color","default_prompt","icon_large_url","icon_small_url"])?;Ok(Value::Object(selected))
+}
+fn generic_skill(value:&Value)->ServiceResult<Value> {
+    let source=value.as_object().ok_or_else(canonical_root_invalid)?;let mut selected=serde_json::Map::new();
+    generic_texts(source,&mut selected,&["name","description"])?;generic_child(source,&mut selected,"interface",generic_skill_interface)?;Ok(Value::Object(selected))
+}
+fn generic_mcp(value:&Value)->ServiceResult<Value> {
+    let source=value.as_object().ok_or_else(canonical_root_invalid)?;let mut selected=serde_json::Map::new();
+    generic_texts(source,&mut selected,&["key"])?;Ok(Value::Object(selected))
+}
+fn generic_instance(value:&Value)->ServiceResult<Value> {
+    let source=value.as_object().ok_or_else(canonical_root_invalid)?;let mut selected=serde_json::Map::new();
+    generic_texts(source,&mut selected,&["id","scope","name"])?;Ok(Value::Object(selected))
+}
+fn generic_template(value:&Value)->ServiceResult<Value> {
+    let source=value.as_object().ok_or_else(canonical_root_invalid)?;let mut selected=serde_json::Map::new();
+    generic_texts(source,&mut selected,&["template_id","name","description","canonical_connector_id","logo_url","logo_url_dark","reason"])?;
+    generic_flags(source,&mut selected,&["can_setup"])?;generic_strings(source,&mut selected,&["materialized_app_ids"])?;
+    generic_children(source,&mut selected,"instances",generic_instance)?;Ok(Value::Object(selected))
+}
+fn generic_release(value:&Value)->ServiceResult<Value> {
+    let source=value.as_object().ok_or_else(canonical_root_invalid)?;let mut selected=serde_json::Map::new();
+    generic_texts(source,&mut selected,&["display_name","version","description","onboarding_skill_name"])?;
+    generic_strings(source,&mut selected,&["keywords","app_ids"])?;
+    generic_child(source,&mut selected,"interface",generic_interface)?;
+    generic_children(source,&mut selected,"skills",generic_skill)?;
+    generic_children(source,&mut selected,"mcp_servers",generic_mcp)?;
+    generic_children(source,&mut selected,"app_templates",generic_template)?;Ok(Value::Object(selected))
+}
+fn generic_plugin(value:&Value)->ServiceResult<Value> {
+    let source=value.as_object().ok_or_else(canonical_root_invalid)?;let mut selected=serde_json::Map::new();
+    generic_texts(source,&mut selected,&["id","name","status","installation_policy","authentication_policy","installation_policy_source","disabled_reason","installed_at","share_url",
+        "canonical_app_id","connector_id"])?;
+    generic_flags(source,&mut selected,&["enabled","must_show_installation_interstitial"])?;
+    generic_strings(source,&mut selected,&["eligible_plan_types","disabled_skill_names"])?;
+    generic_child(source,&mut selected,"release",generic_release)?;Ok(Value::Object(selected))
+}
 
 fn canonical_root_header(plugin:&Value)->ServiceResult<Value> {
     let optional=|source:Option<&serde_json::Map<String,Value>>,key:&str|->ServiceResult<Value> {
@@ -154,6 +270,12 @@ impl ChatgptService {
         let header=canonical_root_header(&plugin)?;
         let inventory=plugin_app_link_permissions::canonical_service_inventory(self.remote_plugin_pages(identity,&common.profile,true,&registration,&call,transport).await?)?;
         let app_id=self.resolve_service_plugin_canonical(&plugin,&inventory,&common,&registration,&call,transport).await?;
+        // Only the matching installed row is needed by W/Y. Preserve absent
+        // enabled fields and never expose the account's complete raw inventory.
+        let generic_source=if app_id.is_none() {
+            let installed=inventory.iter().find(|row|row["id"].as_str()==Some(request.plugin_id.as_str())).map(generic_plugin).transpose()?.unwrap_or(Value::Null);
+            json!({"plugin":generic_plugin(&plugin)?,"installedPlugin":installed})
+        }else{Value::Null};
         let mut hosted=Value::Null;let mut hosted_error=Value::Null;
         if let Some(app_id)=&app_id {
             let entry=PluginAppEntryRequest{request_id:request.request_id.clone(),expected_identity:identity.clone(),profile:common.profile.clone(),app_id:app_id.clone()};
@@ -166,6 +288,6 @@ impl ChatgptService {
         }
         self.check_share_current(identity,&registration)?;
         Ok(PluginPermissionsResponse{request_id:request.request_id,identity:identity.clone(),body:json!({"kind":if app_id.is_some(){"canonical"}else{"generic"},
-            "pluginId":request.plugin_id,"appId":app_id,"pluginHeader":header,"hostedApp":hosted,"hostedError":hosted_error,"nativeEligibility":"unverified"})})
+            "pluginId":request.plugin_id,"appId":app_id,"pluginHeader":header,"hostedApp":hosted,"hostedError":hosted_error,"nativeEligibility":"unverified","genericSource":generic_source})})
     }
 }

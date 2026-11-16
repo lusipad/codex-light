@@ -3110,3 +3110,13 @@ W/Y域转换复用mapRemotePlugins并局部补齐源字段：真实匹配库存�
 基础候选`dist-artifacts/plugins-r2-durable-detail-20261116/CodexNative.exe`，30,311,936字节，SHA256 `2a3c9bbb07c4307862757f808420cbd1e95a05349429dcea5ce3023b2bec9568`；输入清单SHA256 `9e4a47ac086a9089c8139b67258cbc019e5e08aa4bf51ae17a2c6d09d70f483c`。MSI/NSIS哈希见candidate-artifacts.json。构建对应9f6c229之后当前阶段工作树，提交后补sourceCommit。没有启动真实GUI、实际账号HTTP或模型调用，没有推送、发布或托管CI成功结论；像素和用户验收仍未完成。
 
 复用现有HTTP会话/网络限制、mapRemotePlugins、App ID规范化、Detail/Included及CSS，没有新增依赖或通用JSON框架。已交付的仅是服务详情读取基础和正确导航身份；返回列表仍因实际宿主/gate producer缺口不可用，不把这个基础候选当完整目录往返。下一独立工作包为generic service根：复用root同次真实数据和纯W/Y，隔离本机MCP、ProvidedSettings与技能文件effect；“使用”另按pS合同，不从目录W.apps反推。
+
+## 2026-11-16 普通服务插件根管理接线（进行中）
+
+按FULL-REPLICA-PLAN第02批继续：根读取白名单genericSource复用纯详情转换，独立pS应用区域与元数据/共享关联读取，不再从服务根恢复本机plugin/read；新组件复用已有纯管理头/About和Logo。根卸载改用同一真实根snapshot的安装策略与身份，解决全局库存失败导致入口消失；保留未知交付仅读核验。新增定向用例先红复现后绿，generic确认/未知/默认安装/旧路由与原canonical均覆盖。复审后接focus/插件变更revision，旧snapshot和usage退休重读。父壳仍有共享本机库存/技能/config读取，不宣称零本机effects。
+
+来源7资源/45原文片段重新核验；定向前端、TypeScript及13项canonical根、32项App details Rust通过。首轮全Rust884通过/1失败系新用例误期望规范化返回ID，按既有源码合同保留原服务ID修正；首轮完整前端暴露旧父页期望本机详情，已改为准确服务根消费者并定向通过。两份失败原始日志保留，完整重验在进行。未形成新阶段提交/原生产物/CI或整页验收。服务技能正文/启禁、个人模板setup、hosted设置/图标、真实HTTP/原生GUI/IME/配对像素仍缺；后续按同页队列继续，不把此包当整页完成。
+
+本包完整重验已结束：213前端回放和885全Rust（0失败/忽略/过滤、132.70秒）退出0，521产品输入hash稳定。非Fast标准检查按固定CLI0.165.0开始；原生候选待标准结束后串行构建，当前未提交。下一轮沿同一活跃标准进程继续，不因静默或观察超时另启Cargo。
+
+普通根阶段候选已完成：885全Rust、213前端回放、非Fast标准/34隔离探针、新EXE/MSI/NSIS均退出0，521产品输入稳定。候选dist-artifacts/plugins-r2-generic-root-20261116；EXE SHA-256 3ad7c56441e58c9c4c5df3773a7d704d6a551b01fcd00c6d4fa76462dffebe50。准确产物/输入hash见插件验收记录与本包JSON。准备按Lore本地提交，不推送或发布；没有真实HTTP、原生GUI/IME、配对像素、托管CI或用户验收。下一包技能正文/直接启禁的6资源/35片段与680px/max92vw、min(92vh,800px) contents弹层合同已核，继续第02批。

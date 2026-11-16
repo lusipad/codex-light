@@ -15,7 +15,7 @@ pub use account_notifications::{AccountNotificationsRequest, AccountNotification
 mod plugin_permissions;
 pub use plugin_permissions::{PluginPermissionsRequest, PluginPermissionsResponse, PluginPermissionsWriteRequest};
 mod plugin_app_details;
-pub use plugin_app_details::{PluginAppDetailsRequest, PluginAppEntryRequest};
+pub use plugin_app_details::{PluginAppDetailsRequest, PluginAppEntryRequest, PluginUsageLinksRequest};
 mod plugin_canonical_root;
 pub use plugin_canonical_root::PluginCanonicalRootRequest;
 mod plugin_app_accounts;

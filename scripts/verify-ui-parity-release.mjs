@@ -43,6 +43,7 @@ const scripts = [
   'verify-plugin-permissions.mjs', 'verify-plugin-permissions-state.mjs', 'verify-plugin-permissions-ui.mjs',
   'verify-plugin-app-details.mjs',
   'verify-plugin-canonical-root.mjs', 'verify-plugin-canonical-root-page.mjs',
+  'verify-generic-plugin-usage.mjs', 'verify-generic-plugin-management-page.mjs',
   'verify-plugin-canonical-uninstall.mjs',
   'verify-durable-plugin-detail.mjs', 'verify-durable-plugin-directory-page.mjs',
   'verify-plugin-app-details-state.mjs', 'verify-plugin-app-details-page.mjs',

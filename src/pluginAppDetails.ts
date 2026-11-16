@@ -21,7 +21,7 @@ export interface PluginAppDetails {
   pluginName: string;
   pluginStatus?: string | null;
   appId: string;
-  connector: { id: string; name: string; description?: string | null; status?: string | null; enable_multi_links?: boolean | null;
+  connector: { id: string; name: string; description?: string | null; status?: string | null; logo_url?: string | null; logo_url_dark?: string | null; enable_multi_links?: boolean | null;
     supported_auth?: { type: string }[] | null;
     labels?: { apps_privacy_control_available?: string | null } | null;
     sync_metadata?: { user_allowed_to_sync?: boolean | null } | null };
@@ -37,6 +37,7 @@ export function decodePluginAppConnector(raw: unknown, appId: string): PluginApp
   const connector = object(raw);
   if (!connector || !requiredString(connector.id) || !sameApp(connector.id, appId) || typeof connector.name !== "string") throw invalid();
   if (connector.description != null && typeof connector.description !== "string" || connector.status != null && typeof connector.status !== "string" ||
+    connector.logo_url != null && typeof connector.logo_url !== "string" || connector.logo_url_dark != null && typeof connector.logo_url_dark !== "string" ||
     connector.enable_multi_links != null && typeof connector.enable_multi_links !== "boolean") throw invalid();
   const labels = connector.labels == null ? connector.labels : object(connector.labels);
   if (connector.labels != null && labels === null || labels?.apps_privacy_control_available != null && typeof labels.apps_privacy_control_available !== "string") throw invalid();
@@ -52,6 +53,8 @@ export function decodePluginAppConnector(raw: unknown, appId: string): PluginApp
     });
   }
   return { id: connector.id, name: connector.name,
+    ...(connector.logo_url !== undefined ? { logo_url: connector.logo_url as string | null } : {}),
+    ...(connector.logo_url_dark !== undefined ? { logo_url_dark: connector.logo_url_dark as string | null } : {}),
     ...(connector.description !== undefined ? { description: connector.description as string | null } : {}),
     ...(connector.status !== undefined ? { status: connector.status as string | null } : {}),
     ...(connector.enable_multi_links !== undefined ? { enable_multi_links: connector.enable_multi_links as boolean | null } : {}),
@@ -61,14 +64,9 @@ export function decodePluginAppConnector(raw: unknown, appId: string): PluginApp
   };
 }
 
-export function decodePluginAppDetails(raw: unknown, pluginId: string, appId: string): PluginAppDetails {
-  const body = object(raw);
-  if (body?.pluginId !== pluginId || typeof body.pluginName !== "string" || !requiredString(body.appId) || !sameApp(body.appId, appId)) throw invalid();
-  if (body.pluginStatus != null && typeof body.pluginStatus !== "string") throw invalid();
-  const connector = decodePluginAppConnector(body.connector, appId);
-  const error = body.linksError === null ? null : object(body.linksError);
-  if (body.links === null ? !error || !requiredString(error.code) || !requiredString(error.message) : !Array.isArray(body.links) || body.linksError !== null) throw invalid();
-  const links = body.links === null ? null : (body.links as unknown[]).map(value => {
+export function decodePluginAppLinks(raw: unknown, appId: string): PluginAppLink[] {
+  if (!Array.isArray(raw)) throw invalid();
+  return raw.map(value => {
     const link = object(value);
     if (!link || !requiredString(link.id) || !requiredString(link.connector_id) || !sameApp(link.connector_id, appId) || !Array.isArray(link.owners)) throw invalid();
     const owners = link.owners.map(value => {
@@ -96,6 +94,16 @@ export function decodePluginAppDetails(raw: unknown, pluginId: string, appId: st
     }
     return result;
   });
+}
+
+export function decodePluginAppDetails(raw: unknown, pluginId: string, appId: string): PluginAppDetails {
+  const body = object(raw);
+  if (body?.pluginId !== pluginId || typeof body.pluginName !== "string" || !requiredString(body.appId) || !sameApp(body.appId, appId)) throw invalid();
+  if (body.pluginStatus != null && typeof body.pluginStatus !== "string") throw invalid();
+  const connector = decodePluginAppConnector(body.connector, appId);
+  const error = body.linksError === null ? null : object(body.linksError);
+  if (body.links === null ? !error || !requiredString(error.code) || !requiredString(error.message) : !Array.isArray(body.links) || body.linksError !== null) throw invalid();
+  const links = body.links === null ? null : decodePluginAppLinks(body.links, appId);
   return { pluginId, pluginName: body.pluginName, ...(body.pluginStatus !== undefined ? { pluginStatus: body.pluginStatus as string | null } : {}), appId: body.appId, connector, links, linksError: error ? { code: error.code as string, message: error.message as string } : null };
 }
 

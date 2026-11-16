@@ -70,6 +70,13 @@ function checkedBase(base: string | URL): PluginManagementLocation {
   return location;
 }
 
+/** The unqualified service root is read by its own HTTP-backed root controller. */
+export function servicePluginManagementRootId(input: string | URL): string | null {
+  const location = parsePluginManagementLocation(input);
+  return location?.kind === "plugin" && location.section === "detail" && location.hostId === null && location.appId === null &&
+    location.skillName === null && location.pluginName === null && location.marketplacePath === null && location.remoteMarketplaceName === null ? location.pluginId : null;
+}
+
 function encodedSegment(value: string): string {
   if (!validSegment(value)) throw new Error("Invalid plugin management path segment");
   return encodeURIComponent(value);

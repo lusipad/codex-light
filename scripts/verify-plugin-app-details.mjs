@@ -18,6 +18,10 @@ vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/pluginAppDetails.ts",
   throw Error(name);
 } });
 const { decodePluginAppDetails: decode, selectPluginAppLinks: select, loadPluginAppDetails: load } = exports;
+const logoSource = raw(); logoSource.connector.logo_url = "https://example.test/app-light.png"; logoSource.connector.logo_url_dark = null;
+assert.equal(decode(logoSource, "plugin", "asdk_app_A").connector.logo_url, logoSource.connector.logo_url);
+assert.equal(decode(logoSource, "plugin", "asdk_app_A").connector.logo_url_dark, null);
+logoSource.connector.logo_url_dark = false; assert.throws(() => decode(logoSource, "plugin", "asdk_app_A"));
 const { pluginAppProfileIdentity: profileIdentity, pluginAppAccountNickname: nickname, pluginAppAccountIdentity: accountIdentity } = exports;
 const identityLink = { ...rawLink("profile"), name: "Work account", connector_name: "Service", owner_profile: { email: " email@test.invalid ", name: "Profile Name", nickname: "Profile Nickname" } };
 assert.equal(profileIdentity(identityLink), "email@test.invalid"); assert.equal(nickname(identityLink, "App"), "Work account");
@@ -114,4 +118,22 @@ const beforeRootCancelled = sent.length;
 await assert.rejects(bridgeExports.readPluginCanonicalRoot("plugin", identity, cancelled.signal), /已取消/);
 assert.equal(sent.length, beforeRootCancelled);
 assert.ok(fs.readFileSync("src-tauri/src/lib.rs", "utf8").includes("            plugin_canonical_root_read,"));
+for (const [method, command, target, field] of [
+  ["readPluginUsageMetadata", "plugin_usage_metadata_read", "asdk_app_A", "appId"],
+  ["readPluginUsageLinks", "plugin_usage_links_read", ["asdk_app_A", "connector_B"], "appIds"],
+]) {
+  wrongIdentity = false;
+  assert.equal(await bridgeExports[method](target, identity, signal), response);
+  assert.equal(sent.at(-1).command, command);
+  assert.equal(sent.at(-1).args.request[field], target);
+  assert.equal(sent.at(-1).args.request.expectedIdentity, identity);
+  assert.equal("pluginId" in sent.at(-1).args.request, false, "usage query does not reread the plugin inventory");
+  assert.equal("url" in sent.at(-1).args.request, false);
+  wrongIdentity = true;
+  await assert.rejects(bridgeExports[method](target, identity, signal), /账号发生变化/);
+  const count = sent.length;
+  await assert.rejects(bridgeExports[method](target, identity, cancelled.signal), /已取消/);
+  assert.equal(sent.length, count);
+  assert.ok(fs.readFileSync("src-tauri/src/lib.rs", "utf8").includes(`            ${command},`));
+}
 console.log("Plugin app details: strict ownership/shape, field allowlist, visible-link selection and account/generation/cancellation isolation passed.");

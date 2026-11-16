@@ -353,3 +353,21 @@ W/Y域转换复用mapRemotePlugins并局部补齐源字段：真实匹配库存�
 基础候选`dist-artifacts/plugins-r2-durable-detail-20261116/CodexNative.exe`，30,311,936字节，SHA256 `2a3c9bbb07c4307862757f808420cbd1e95a05349429dcea5ce3023b2bec9568`；输入清单SHA256 `9e4a47ac086a9089c8139b67258cbc019e5e08aa4bf51ae17a2c6d09d70f483c`。MSI/NSIS哈希见candidate-artifacts.json。构建对应9f6c229之后当前阶段工作树，提交后补sourceCommit。没有启动真实GUI、实际账号HTTP或模型调用，没有推送、发布或托管CI成功结论；像素和用户验收仍未完成。
 
 复用现有HTTP会话/网络限制、mapRemotePlugins、App ID规范化、Detail/Included及CSS，没有新增依赖或通用JSON框架。已交付的仅是服务详情读取基础和正确导航身份；返回列表仍因实际宿主/gate producer缺口不可用，不把这个基础候选当完整目录往返。下一独立工作包为generic service根：复用root同次真实数据和纯W/Y，隔离本机MCP、ProvidedSettings与技能文件effect；“使用”另按pS合同，不从目录W.apps反推。
+
+### 普通服务插件根管理进行中（c1a5b02之后，2026-11-16）
+
+承诺范围为服务根数据/真实使用应用与已有管理动作接线。7资源/45原文锚点重新核验通过；13项canonical根Rust定向用例通过。根生产页、usage hook、通用服务页面、App详情decoder和父管理页定向回归通过，TypeScript检查退出0。父级新增用例先红复现全局库存不可用时卸载入口消失，再绿覆盖generic成功、未知结果只读恢复、默认安装限制和退役路由；恢复路径无本机plugin/read。完整前端和全Rust仍在运行，尚不能作为本阶段通过或提交依据。
+
+证据根`.ref/parity/12/whole-page/actual/plugin-generic-root-r2-20261116/`。技能正文/写链、模板setup、hosted设置与图标等缺口保持；未执行真实服务、原生GUI/IME或官方配对像素验证，尚无同提交托管CI结果。本段是进行中检查点，不是整页或用户验收结论。
+
+本包后续验证检查点：完整前端213项回放退出0；全Rust885通过、0失败/忽略/过滤（132.70秒）退出0；521项产品输入前后hash稳定。上述两个首轮失败未删除，修正后的完整重跑分别保留frontend-release-green、rust-full-green日志及exit。非Fast标准检查现以进程内固定CLI0.165.0启动并在运行（session24633），未完成，不提前报告协议探针或原生构建通过；未提交/未推送、没有本提交CI结论。
+
+### 普通服务插件根管理阶段候选（2026-11-16）
+
+本阶段统一验证已完成：885项全Rust（0失败/忽略/过滤，132.70秒）、213项前端生产回放、非Fast标准检查/34隔离协议探针、EXE/MSI/NSIS构建均退出0；冻结前后521项产品输入hash完全一致。固定CLI0.165.0仅作用于验证子进程。首轮测试失败及修正后的完整重跑日志均保留，不以定向重跑替代最终完整结果。
+
+候选位于`dist-artifacts/plugins-r2-generic-root-20261116/`：CodexNative.exe 30,660,096字节、SHA-256 `3ad7c56441e58c9c4c5df3773a7d704d6a551b01fcd00c6d4fa76462dffebe50`；MSI 9,883,648字节、`db6ea8ba057d336dc37fcad7968970fc695685c6a4edab1c64ad93aa59c104dc`；NSIS 6,649,397字节、`f9a0320d44360262fd5d41ec1a72b1dda1e1e42587dd59dc6fcf2b9d1cc1d391`。输入manifest SHA-256 `73900199a750349b6be95bf2a7ee756f1a56563afe7c6cbf8c1163d9b71c0229`；准确产物/检查与源码提交绑定见本包candidate-artifacts.json、verification-summary.json。
+
+可核路径：服务插件根→真实头/关于与pS使用应用→应用metadata及重新关联提示→同插件App深链；卸载确认→写后读回或未知结果仅读恢复；全局库存失败不掩盖已核验根操作；focus/插件变更刷新退休旧根。共享父壳仍有本机库存/技能/config读取，但该服务详情不恢复本机plugin/read、不挂本机详情/MCP设置消费者。验证基于生产组件/客户端与隔离transport，未执行真实账号HTTP/授权。
+
+视觉score=null；没有当前构建的原生GUI/物理IME或官方同环境配对像素结论，没有托管CI或用户验收。本阶段只本地提交、不推送发布；技能正文/启禁、模板setup、hosted设置/图标及授权残项仍在第02批队列。下一包使用已核6资源/35锚点技能合同，不能把本候选当整页或最终1:1。

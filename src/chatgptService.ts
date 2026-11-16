@@ -533,6 +533,24 @@ export async function readPluginAppDetails(pluginId: string, appId: string, iden
   return responseBody(result, requestId, identity);
 }
 
+export async function readPluginUsageMetadata(appId: string, identity: ServiceIdentity, signal: AbortSignal): Promise<unknown> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; body: unknown }>(
+    "plugin_usage_metadata_read", requestId,
+    { request: { requestId, expectedIdentity: identity, profile: browserProfile(), appId } }, signal,
+  );
+  return responseBody(result, requestId, identity);
+}
+
+export async function readPluginUsageLinks(appIds: string[], identity: ServiceIdentity, signal: AbortSignal): Promise<unknown> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; body: unknown }>(
+    "plugin_usage_links_read", requestId,
+    { request: { requestId, expectedIdentity: identity, profile: browserProfile(), appIds } }, signal,
+  );
+  return responseBody(result, requestId, identity);
+}
+
 export async function resolvePluginAppEntry(appId: string, identity: ServiceIdentity, signal: AbortSignal): Promise<unknown> {
   const requestId = crypto.randomUUID();
   const result = await invokeService<{ requestId: string; identity: ServiceIdentity; body: unknown }>(

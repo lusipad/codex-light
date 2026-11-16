@@ -64,8 +64,9 @@ try {
   assert.equal(app().props.connectionIdentity, "account-B");
   app().props.onOpenPlugin(); await view.tick();
   assert.equal(location.pathname, "/settings/plugins-settings/plugin%2Freal");
-  assert.equal(app(), undefined); assert.equal(reads.at(-1), "plugin/real");
-  assert.ok(view.nodes(view.tree).find(node => node.type === "PluginManagementDetail"));
+  assert.equal(app(), undefined); assert.deepEqual(reads, [], "service root navigation must not restore a local CLI detail");
+  const root = view.nodes(view.tree).find(node => node.type === "PluginCanonicalRootPage");
+  assert.ok(root); assert.equal(root.props.pluginId, "plugin/real");
   pop("/settings/plugins-settings/plugin%2Freal/apps/stale"); await view.tick();
   const previousWrites = historyWrites.length;
   app().props.onUnavailable(); await view.tick();

@@ -5,6 +5,7 @@ import ts from 'typescript';
 
 const slots = [], effects = [], queue = [], requests = [], contexts = [];
 let cursor = 0, dirty = false, backs = 0, selected = 0, renamed = 0, disconnected = 0, sync = 0, directory = 0;
+const openedApps = [];
 const react = {
   Fragment: 'Fragment', createElement: (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity) }),
   useRef(value) { const index = cursor++; return slots[index] ??= { current: value }; },
@@ -18,12 +19,12 @@ vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/components/PluginCano
 } }).outputText, { exports, AbortController, require(name) {
   if (name === 'react') return react;
   if (name === './PluginAppDetailsPage') return { PluginAppDetailsPage: 'PluginAppDetailsPage' };
+  if (name === './GenericPluginManagementPage') return { GenericPluginManagementPage: 'GenericPluginManagementPage' };
   if (name === '../pluginCanonicalRoot') return { loadPluginCanonicalRoot: (id, signal) => new Promise((resolve, reject) => { requests.push({ id, signal, resolve, reject }); }) };
   throw Error(name);
 } });
 const { PluginCanonicalRootPage } = exports;
-const generic = { type: 'ActualGenericPluginDetails', props: {}, children: ['真实技能和使用区域'] };
-const props = { connectionIdentity: 'account-A', pluginId: 'plugin-real', selectedLinkId: 'link-a', children: generic,
+const props = { connectionIdentity: 'account-A', pluginId: 'plugin-real', selectedLinkId: 'link-a', onOpenApp: id => openedApps.push(id),
   onBack: () => backs++, onSelectLink: () => { selected++; return true; }, onRenamed: () => renamed++, onDisconnected: () => disconnected++,
   onSync: () => sync++, onViewDetails: () => directory++, renderCanonicalActions: context => { contexts.push(context); return 'actual-actions'; } };
 const nodes = node => !node || typeof node !== 'object' ? [] : [node, ...node.children.flatMap(nodes)];
@@ -33,14 +34,25 @@ const flush = async () => { await Promise.resolve(); await Promise.resolve(); re
 const snapshot = (kind = 'canonical', extra = {}) => ({ kind, pluginId: props.pluginId, appId: kind === 'canonical' ? 'asdk_app_real' : null,
   pluginHeader: { id: props.pluginId, name: '真实插件', version: '1.2', shortDescription: ' 官方短说明 ', logoUrl: 'https://example.test/plugin.png', logoUrlDark: null },
   hostedApp: { name: '真实Hosted App', description: '真实介绍', logoUrl: null, logoUrlDark: null }, hostedError: null, nativeEligibility: 'unverified',
-  identity: { accountId: 'account', userId: 'user', generation: 1 }, ...extra });
+  identity: { accountId: 'account', userId: 'user', generation: 1 },
+  genericSource: kind === 'generic' ? { plugin: { id: props.pluginId }, installedPlugin: null } : null,
+  genericDetail: kind === 'generic' ? { summary: { id: props.pluginId }, skills: [] } : null,
+  genericUsage: kind === 'generic' ? [{ id: 'actual-app', template: null }] : [], setupEligibleAppTemplateIds: [], ...extra });
 let tree = render(); assert.equal(requests.length, 1); assert.equal(requests[0].id, props.pluginId); assert.equal(tree.props['aria-busy'], true);
 assert.ok(nodes(tree).some(node => node.props.role === 'status')); assert.equal(nodes(tree).some(node => node.type === 'ActualGenericPluginDetails'), false, 'pending cannot assume generic or canonical');
 nodes(tree).find(node => node.type === 'button').props.onClick(); assert.equal(backs, 1);
-requests[0].resolve(snapshot('generic')); tree = await flush(); assert.equal(nodes(tree).filter(node => node.type === 'ActualGenericPluginDetails').length, 1);
-assert.match(text(tree), /真实技能和使用区域/); assert.equal(nodes(tree).some(node => node.type === 'PluginAppDetailsPage'), false, 'generic keeps the actual existing details');
+const genericSnapshot = snapshot('generic');
+requests[0].resolve(genericSnapshot); tree = await flush(); assert.equal(tree.type, 'GenericPluginManagementPage');
+assert.equal(tree.props.snapshot, genericSnapshot); assert.equal(tree.props.isCurrent(), true);
+tree.props.onOpenApp('actual-app'); tree.props.onOpenApp('foreign-app');
+assert.deepEqual(openedApps, ['actual-app'], 'only actual service usage may open an App');
+assert.equal(contexts.at(-1).snapshot, genericSnapshot, 'management actions receive the same trusted root snapshot');
+assert.equal(nodes(tree).some(node => node.type === 'PluginAppDetailsPage'), false);
+const oldGeneric = tree;
 
 props.pluginId = 'canonical-plugin'; render(); assert.equal(requests.length, 2); assert.equal(requests[0].signal.aborted, true);
+oldGeneric.props.onOpenApp('actual-app'); assert.equal(oldGeneric.props.isCurrent(), false);
+assert.deepEqual(openedApps, ['actual-app'], 'retired generic pages cannot navigate');
 const actual = snapshot(); requests[1].resolve(actual); tree = await flush(); assert.equal(tree.type, 'PluginAppDetailsPage');
 assert.equal(tree.props.appId, actual.appId); assert.equal(tree.props.pluginId, props.pluginId); assert.equal(tree.props.selectedLinkId, 'link-a');
 assert.equal(tree.props.canonicalRoot.pluginHeader, actual.pluginHeader); assert.equal(tree.props.canonicalRoot.hostedApp, actual.hostedApp);
@@ -55,7 +67,7 @@ oldPage.props.onUnavailable(); assert.equal(requests.length, 3); assert.equal(ol
 oldPage.props.onUnavailable(); oldPage.props.onOpenPlugin(); oldPage.props.onBack(); oldPage.props.onSync('link-a'); assert.equal(oldPage.props.onSelectLink('link-a'), false);
 assert.equal(requests.length, 3); assert.equal(backs, 2); assert.equal(sync, 1); assert.equal(selected, 1);
 tree = render(); assert.equal(tree.props['aria-busy'], true); assert.equal(nodes(tree).some(node => node.type === 'PluginAppDetailsPage'), false);
-requests[2].resolve(snapshot('generic')); tree = await flush(); assert.equal(nodes(tree).filter(node => node.type === 'ActualGenericPluginDetails').length, 1, 'membership loss rereads and falls back on the same root URL');
+requests[2].resolve(snapshot('generic')); tree = await flush(); assert.equal(tree.type, 'GenericPluginManagementPage', 'membership loss rereads real generic service details on the same root URL');
 
 props.pluginId = 'error-plugin'; render(); const failure = requests.at(-1); failure.reject(new Error('private service details')); tree = await flush();
 assert.match(text(tree), /无法加载插件设置/); assert.equal(text(tree).includes('private service details'), false); assert.ok(nodes(tree).some(node => node.props.role === 'alert'));
@@ -71,10 +83,17 @@ props.connectionIdentity = 'scope-A'; render(); const currentA = requests.at(-1)
 staleA.resolve(snapshot('canonical', { appId: 'asdk_app_stale-A' })); staleB.reject(new Error('stale B'));
 tree = await flush(); assert.equal(tree.type, 'article'); assert.equal(tree.props['aria-busy'], true, 'ABA cannot publish old canonical or error state');
 currentA.resolve(snapshot()); tree = await flush(); assert.equal(tree.type, 'PluginAppDetailsPage'); assert.equal(tree.props.appId, 'asdk_app_real');
+
+const beforeRefresh = tree;
+props.refreshRevision = 1; tree = render();
+assert.equal(tree.props['aria-busy'], true, 'same-URL external refresh retires the old root snapshot');
+beforeRefresh.props.onViewDetails(); assert.equal(directory, 1, 'old root actions cannot survive an external refresh');
+const refreshedRequest = requests.at(-1); assert.equal(currentA.signal.aborted, true);
+refreshedRequest.resolve(snapshot()); tree = await flush(); assert.equal(tree.type, 'PluginAppDetailsPage');
 tree.props.renderCanonicalActions({ blocked: false, accountCount: 1, isCurrent: () => true }); const unmountContext = contexts.at(-1);
 const unmountedPage = tree; unmountedPage.props.onOpenPlugin(); const retryOnUnmount = requests.at(-1); const beforeUnmount = requests.length;
 assert.equal(retryOnUnmount.signal.aborted, false); effects.forEach(effect => effect?.cleanup?.());
 assert.equal(retryOnUnmount.signal.aborted, true, 'unmount must abort the latest same-scope retry, not only the effect initial request');
 assert.equal(currentA.signal.aborted, true); assert.equal(unmountContext.isCurrent(), false); unmountedPage.props.onOpenPlugin(); assert.equal(requests.length, beforeUnmount);
 assert.equal(unmountedPage.props.onSelectLink('link-a'), false);
-console.log('Canonical root page: actual generic children, canonical App/header delegation, retry and same-URL refresh, synchronous stale-action guards, abort, connection/plugin scope, ABA and unmount passed. Official pixels/native UI are unverified.');
+console.log('Canonical root page: trusted generic service snapshot and usage navigation, canonical App/header delegation, retry and same-URL refresh, synchronous stale-action guards, abort, connection/plugin scope, ABA and unmount passed. Official pixels/native UI are unverified.');

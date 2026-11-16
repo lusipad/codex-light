@@ -1,4 +1,4 @@
-//! Read-only, service-plugin-scoped app metadata. No actions or credentials cross IPC.
+//! Read-only app metadata and accessible accounts. No actions or credentials cross IPC.
 use super::*;
 
 #[derive(Deserialize)]
@@ -18,6 +18,15 @@ pub struct PluginAppEntryRequest {
     pub expected_identity: ServiceIdentity,
     pub profile: ServiceProfile,
     pub app_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginUsageLinksRequest {
+    pub request_id: String,
+    pub expected_identity: ServiceIdentity,
+    pub profile: ServiceProfile,
+    pub app_ids: Vec<String>,
 }
 
 fn canonical_app_id(id: &str) -> String {
@@ -72,7 +81,7 @@ fn app_details_connector(app_id: &str, metadata: Value) -> ServiceResult<Value> 
     connector.insert("id".into(), json!(id));
     let name = source.get("name").and_then(Value::as_str).ok_or_else(app_details_invalid)?;
     connector.insert("name".into(), json!(name));
-    for key in ["description", "status"] { copy_optional_string(source, &mut connector, key)?; }
+    for key in ["description", "status", "logo_url", "logo_url_dark"] { copy_optional_string(source, &mut connector, key)?; }
     if let Some(value) = source.get("enable_multi_links") {
         if !value.is_null() && !value.is_boolean() { return Err(app_details_invalid()); }
         connector.insert("enable_multi_links".into(), value.clone());
@@ -268,6 +277,13 @@ mod tests {
         }
     }
     #[test]
+    fn app_details_connector_logo_fields_preserve_nullish_values_without_unknown_fields() {
+        let mut source=metadata();source["logo_url"]=json!("https://example.test/light.png");source["logo_url_dark"]=Value::Null;source["private_logo_token"]=json!("never-return");
+        let result=app_details_connector("connector_real",source.clone()).unwrap();
+        assert_eq!(result["logo_url"],source["logo_url"]);assert!(result["logo_url_dark"].is_null());assert!(result.get("private_logo_token").is_none());
+        source["logo_url_dark"]=json!(false);assert!(app_details_connector("connector_real",source).is_err());
+    }
+    #[test]
     fn app_details_connector_keeps_raw_identity_and_supported_auth_projection() {
         let links=app_details_links("connector_real",json!({"links":[link("raw","asdk_app_real","user")]})).unwrap();
         assert_eq!(links[0]["connector_id"],"asdk_app_real","provider helpers compare raw IDs, not canonical aliases");
@@ -344,6 +360,77 @@ mod tests {
     fn entry_request() -> PluginAppEntryRequest {
         let source=request();PluginAppEntryRequest { request_id:source.request_id, expected_identity:source.expected_identity,
             profile:source.profile,app_id:source.app_id }
+    }
+    fn usage_links_request(ids:Vec<&str>)->PluginUsageLinksRequest {
+        let source=entry_request();PluginUsageLinksRequest{request_id:source.request_id,expected_identity:source.expected_identity,profile:source.profile,app_ids:ids.into_iter().map(str::to_owned).collect()}
+    }
+    #[tokio::test]
+    async fn usage_metadata_is_one_independent_connector_get_with_raw_id_and_public_logos(){
+        let mut source=metadata();source["id"]=json!("asdk_app_real");source["logo_url"]=json!("https://example.test/light.png");source["logo_url_dark"]=Value::Null;
+        let transport=TestTransport::new(vec![(200,source)]);let result=ChatgptService::default().plugin_usage_metadata_with(entry_request(),rpc,&transport).await.unwrap();
+        assert_eq!(result.body["appId"],"asdk_app_real");assert_eq!(result.body["connector"]["id"],"asdk_app_real");assert_eq!(result.body["connector"]["logo_url"],"https://example.test/light.png");
+        assert!(!serde_json::to_string(&result).unwrap().contains("never-return"));let sent=transport.sent.lock().unwrap();assert_eq!(sent.len(),1);
+        assert_eq!(sent[0].url,"https://chatgpt.com/backend-api/aip/connectors/asdk_app_real?include_actions=true");assert_eq!(sent[0].method,HttpMethod::Get);assert!(sent[0].body.is_empty());
+        assert_eq!(sent[0].headers["OAI-Product-Sku"],"CODEX");assert_eq!(sent[0].headers["X-Codex-Surface"],"settings");
+    }
+    #[tokio::test]
+    async fn usage_links_are_one_accessible_post_for_normalized_unique_apps_without_secret_fields(){
+        let mut hidden=link("hidden","connector_real","other-user");hidden["visibility"]=json!("HIDDEN");
+        let transport=TestTransport::new(vec![(200,json!({"links":[link("real","asdk_app_real","app-user"),hidden,link("implicit_link::real","connector_real","app-user"),link("second","connector_second","app-user"),link("foreign","connector_foreign","other-user")]}))]);
+        let result=ChatgptService::default().plugin_usage_links_with(usage_links_request(vec!["asdk_app_real","connector_real","connector_second"]),rpc,&transport).await.unwrap();
+        assert_eq!(result.body["appIds"],json!(["asdk_app_real","connector_real","connector_second"]));let links=result.body["links"].as_array().unwrap();assert_eq!(links.len(),4);
+        assert_eq!(links.iter().map(|link|link["id"].as_str().unwrap()).collect::<Vec<_>>(),vec!["real","hidden","implicit_link::real","second"]);
+        assert_eq!(links[0]["connector_id"],"asdk_app_real","canonical matching must preserve the service's original connector ID");let text=serde_json::to_string(&result).unwrap();assert!(!text.contains("never-return")&&!text.contains("foreign")&&!text.contains(&token()));
+        let sent=transport.sent.lock().unwrap();assert_eq!(sent.len(),1);assert_eq!(sent[0].method,HttpMethod::Post);assert_eq!(sent[0].url,"https://chatgpt.com/backend-api/aip/connectors/links/list_accessible");
+        assert_eq!(sent[0].headers["OAI-Product-Sku"],"CODEX");assert_eq!(sent[0].headers["X-Codex-Surface"],"other");assert_eq!(serde_json::from_slice::<Value>(&sent[0].body).unwrap(),json!({"principals":[],"link_refresh_strategy":"BLOCKING"}));
+    }
+    #[tokio::test]
+    async fn usage_empty_apps_skip_http_and_invalid_ids_fail_before_authentication(){
+        let transport=TestTransport::new(vec![]);let result=ChatgptService::default().plugin_usage_links_with(usage_links_request(vec![]),rpc,&transport).await.unwrap();
+        assert_eq!(result.body,json!({"appIds":[],"links":[]}));assert!(transport.sent.lock().unwrap().is_empty());
+        for bad in ["","..","app\ninvalid"] {
+            let transport=TestTransport::new(vec![]);assert_eq!(ChatgptService::default().plugin_usage_links_with(usage_links_request(vec!["connector_real",bad]),rpc,&transport).await.err().unwrap().code,"invalid_request");assert!(transport.sent.lock().unwrap().is_empty());
+        }
+        let transport=TestTransport::new(vec![]);let mut stale=usage_links_request(vec![]);stale.expected_identity.generation=1;
+        assert_eq!(ChatgptService::default().plugin_usage_links_with(stale,rpc,&transport).await.err().unwrap().code,"account_changed");
+    }
+    #[tokio::test]
+    async fn usage_metadata_and_links_errors_are_independent_not_fake_empty_plugin_success(){
+        for (status,body) in [(503,json!({})),(200,json!({"connector":metadata()})),(200,json!({"id":"connector_other","name":"Other app"}))] {
+            let transport=TestTransport::new(vec![(status,body)]);assert!(ChatgptService::default().plugin_usage_metadata_with(entry_request(),rpc,&transport).await.is_err());assert_eq!(transport.sent.lock().unwrap().len(),1);
+        }
+        for (status,body) in [(503,json!({})),(200,json!({})),(200,json!({"links":false})),(200,json!({"links":[{"id":"bad","connector_id":"connector_real","owners":false}]}))] {
+            let transport=TestTransport::new(vec![(status,body)]);assert!(ChatgptService::default().plugin_usage_links_with(usage_links_request(vec!["connector_real"]),rpc,&transport).await.is_err());assert_eq!(transport.sent.lock().unwrap().len(),1);
+        }
+    }
+    #[tokio::test]
+    async fn usage_reads_refresh_explicit_401_once_and_ip_denial_never_retries(){
+        let transport=TestTransport::new(vec![(401,json!({})),(200,metadata())]);assert!(ChatgptService::default().plugin_usage_metadata_with(entry_request(),rpc,&transport).await.is_ok());
+        {let sent=transport.sent.lock().unwrap();assert_eq!(sent.len(),2);assert_eq!(sent[0].url,sent[1].url);assert_eq!(sent[1].headers["X-Codex-Surface"],"settings");}
+        let transport=TestTransport::new(vec![(401,json!({})),(200,json!({"links":[]}))]);assert!(ChatgptService::default().plugin_usage_links_with(usage_links_request(vec!["connector_real"]),rpc,&transport).await.is_ok());assert_eq!(transport.sent.lock().unwrap().len(),2);
+        let transport=TestTransport::new(vec![(401,json!({"error":{"code":"workspace_ip_not_authorized"}}))]);
+        assert_eq!(ChatgptService::default().plugin_usage_links_with(usage_links_request(vec!["connector_real"]),rpc,&transport).await.err().unwrap().code,"ip_not_authorized");assert_eq!(transport.sent.lock().unwrap().len(),1);
+    }
+    #[tokio::test]
+    async fn usage_identity_changes_stop_metadata_and_accessible_results(){
+        struct Invalidate<'a>{service:&'a ChatgptService,body:Value}
+        impl Transport for Invalidate<'_>{fn send(&self,_:HttpRequest,_:Arc<AtomicBool>)->TransportFuture<'_>{Box::pin(async move{self.service.invalidate();Ok(HttpResponse{status:200,headers:BTreeMap::new(),body:serde_json::to_vec(&self.body).unwrap()})})}}
+        for metadata_read in [true,false] {
+            let service=ChatgptService::default();let transport=Invalidate{service:&service,body:if metadata_read {metadata()}else{json!({"links":[]})}};
+            let result=if metadata_read {service.plugin_usage_metadata_with(entry_request(),rpc,&transport).await}else{service.plugin_usage_links_with(usage_links_request(vec!["connector_real"]),rpc,&transport).await};
+            assert_eq!(result.err().unwrap().code,"account_changed");
+        }
+    }
+    #[tokio::test]
+    async fn usage_cancel_interrupts_each_independent_read(){
+        struct Wait{entered:AtomicBool}
+        impl Transport for Wait{fn send(&self,_:HttpRequest,cancel:Arc<AtomicBool>)->TransportFuture<'_>{Box::pin(async move{self.entered.store(true,Ordering::SeqCst);cancelled(&cancel).await;Err(failure("cancelled","fixture cancellation"))})}}
+        for metadata_read in [true,false] {
+            let service=ChatgptService::default();let transport=Wait{entered:AtomicBool::new(false)};
+            let read=async {if metadata_read {service.plugin_usage_metadata_with(entry_request(),rpc,&transport).await}else{service.plugin_usage_links_with(usage_links_request(vec!["connector_real"]),rpc,&transport).await}};
+            let cancel=async {while !transport.entered.load(Ordering::SeqCst){tokio::task::yield_now().await;}assert!(service.cancel("app-details-fixture"));};
+            assert_eq!(tokio::join!(read,cancel).0.err().unwrap().code,"cancelled");
+        }
     }
     #[tokio::test]
     async fn app_resolve_accepts_only_real_string_or_explicit_null() {
@@ -492,6 +579,43 @@ mod tests {
 }
 
 impl ChatgptService {
+    pub async fn plugin_usage_metadata_read<F, Fut>(&self, request: PluginAppEntryRequest, call: F) -> ServiceResult<PluginPermissionsResponse>
+    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>> {
+        self.plugin_usage_metadata_with(request, call, &CurlTransport).await
+    }
+
+    async fn plugin_usage_metadata_with<F, Fut, T>(&self, request: PluginAppEntryRequest, call: F, transport: &T) -> ServiceResult<PluginPermissionsResponse>
+    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>>, T: Transport {
+        let encoded=encode_segment(&request.app_id)?;
+        let registration=self.register(&request.request_id)?;
+        let metadata=self.plugin_app_metadata_http(&format!("/backend-api/aip/connectors/{encoded}?include_actions=true"),
+            &request.expected_identity,&request.profile,&registration,&call,transport).await?;
+        let connector=app_details_connector(&request.app_id,metadata)?;
+        self.check_share_current(&request.expected_identity,&registration)?;
+        Ok(PluginPermissionsResponse{request_id:request.request_id,identity:request.expected_identity,body:json!({"appId":request.app_id,"connector":connector})})
+    }
+
+    pub async fn plugin_usage_links_read<F, Fut>(&self, request: PluginUsageLinksRequest, call: F) -> ServiceResult<PluginPermissionsResponse>
+    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>> {
+        self.plugin_usage_links_with(request, call, &CurlTransport).await
+    }
+
+    async fn plugin_usage_links_with<F, Fut, T>(&self, request: PluginUsageLinksRequest, call: F, transport: &T) -> ServiceResult<PluginPermissionsResponse>
+    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>>, T: Transport {
+        let mut seen=std::collections::HashSet::new();let mut apps=Vec::new();
+        for id in &request.app_ids {encode_segment(id)?;let id=canonical_app_id(id);if seen.insert(id.clone()){apps.push(id);}}
+        let registration=self.register(&request.request_id)?;
+        self.check_share_current(&request.expected_identity,&registration)?;
+        let mut links=Vec::new();
+        if !apps.is_empty() {
+            let accessible=self.review_gitlab_http("/backend-api/aip/connectors/links/list_accessible",true,
+                &request.expected_identity,&request.profile,&registration,&call,transport).await?;
+            for id in apps {links.extend(app_details_links(&id,accessible.clone())?.as_array().ok_or_else(app_details_invalid)?.iter().cloned());}
+        }
+        self.check_share_current(&request.expected_identity,&registration)?;
+        Ok(PluginPermissionsResponse{request_id:request.request_id,identity:request.expected_identity,body:json!({"appIds":request.app_ids,"links":links})})
+    }
+
     pub async fn plugin_app_standalone_read<F, Fut>(&self, request: PluginAppEntryRequest, call: F) -> ServiceResult<PluginPermissionsResponse>
     where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>> {
         self.plugin_app_standalone_with(request, call, &CurlTransport).await

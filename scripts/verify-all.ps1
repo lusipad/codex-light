@@ -379,6 +379,8 @@ try {
   Invoke-Step "Plugin app details read page" { node scripts/verify-plugin-app-details-page.mjs }
   Invoke-Step "Plugin canonical root identity and dispatch" { node scripts/verify-plugin-canonical-root.mjs }
   Invoke-Step "Plugin canonical root production page" { node scripts/verify-plugin-canonical-root-page.mjs }
+  Invoke-Step "Generic plugin usage metadata and account reads" { node scripts/verify-generic-plugin-usage.mjs }
+  Invoke-Step "Generic plugin service management page" { node scripts/verify-generic-plugin-management-page.mjs }
   Invoke-Step "Plugin canonical root removal confirmation" { node scripts/verify-plugin-canonical-uninstall.mjs }
   Invoke-Step "Durable plugin directory actual service detail" { node scripts/verify-durable-plugin-detail.mjs }
   Invoke-Step "Durable plugin directory production page" { node scripts/verify-durable-plugin-directory-page.mjs }

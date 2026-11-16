@@ -591,6 +591,26 @@ async fn plugin_canonical_root_read(
 }
 
 #[tauri::command]
+async fn plugin_usage_metadata_read(
+    app: AppHandle, state: State<'_, AppState>, request: chatgpt_service::PluginAppEntryRequest,
+) -> Result<chatgpt_service::PluginPermissionsResponse, chatgpt_service::ServiceError> {
+    state.chatgpt_service.plugin_usage_metadata_read(request, |method, params| {
+        let app = &app; let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
+async fn plugin_usage_links_read(
+    app: AppHandle, state: State<'_, AppState>, request: chatgpt_service::PluginUsageLinksRequest,
+) -> Result<chatgpt_service::PluginPermissionsResponse, chatgpt_service::ServiceError> {
+    state.chatgpt_service.plugin_usage_links_read(request, |method, params| {
+        let app = &app; let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
 async fn plugin_app_details_read(
     app: AppHandle, state: State<'_, AppState>, request: chatgpt_service::PluginAppDetailsRequest,
 ) -> Result<chatgpt_service::PluginPermissionsResponse, chatgpt_service::ServiceError> {
@@ -2662,6 +2682,8 @@ pub fn run() {
             account_notifications_read,
             plugin_permissions_read,
             plugin_app_details_read,
+            plugin_usage_metadata_read,
+            plugin_usage_links_read,
             plugin_canonical_root_read,
             plugin_app_account_rename,
             plugin_app_account_disconnect,

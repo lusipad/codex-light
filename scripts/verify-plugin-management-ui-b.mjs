@@ -234,6 +234,10 @@ const rootHistory = { state: {}, replaceState(state, _, url) { this.state = stat
 const roots = harness({ window: { location: rootLocation, history: rootHistory } });
 const viewed = []; roots.props.onOpenPluginDirectoryDetail = value => viewed.push(value);
 roots.render(); await roots.tick();
+const initialRootRevision = roots.nodes(roots.tree).find(node => node.type === "PluginCanonicalRootPage").props.refreshRevision;
+roots.focus(); await roots.tick();
+assert.ok(roots.nodes(roots.tree).find(node => node.type === "PluginCanonicalRootPage").props.refreshRevision > initialRootRevision,
+  "same-URL focus refresh must reread the root service snapshot, not only the global list");
 const rootPage = roots.nodes(roots.tree).find(node => node.type === "PluginCanonicalRootPage");
 assert.ok(rootPage, "unqualified service root must use the canonical decision reader");
 assert.equal(rootPage.props.pluginId, "raw/plugin"); assert.equal(rootPage.props.selectedLinkId, "old");
@@ -254,7 +258,8 @@ assert.equal(rootPage.props.onSelectLink(null), false); rootPage.props.onViewDet
 roots.unmount();
 console.log("PASS PMB08: service roots delegate canonical dispatch; raw directory identity, root-preserving account selection, fresh sync and retired route callbacks are enforced");
 
-for (const mode of ["confirmed", "unknown", "admin", "retired"]) {
+for (const scenario of ["confirmed", "unknown", "admin", "retired", "generic-confirmed", "generic-unknown", "generic-admin", "generic-retired"]) {
+  const generic = scenario.startsWith("generic-"), mode = scenario.replace(/^generic-/, ""), localReads = [];
   const location = { href: "https://test.invalid/settings/plugins-settings/raw-service" }, writes = [];
   const history = { state: {}, replaceState(state, _, url) { this.state = state; location.href = new URL(url, location.href).href; },
     pushState(state, _, url) { this.state = state; location.href = new URL(url, location.href).href; } };
@@ -263,12 +268,15 @@ for (const mode of ["confirmed", "unknown", "admin", "retired"]) {
   const identity = { accountId: "service-account", userId: "service-user", generation: 0 };
   const snapshot = installed => ({ identity, unsupported: false, error: null, marketplace: { name: "service", plugins: [{ ...servicePlugin, installed }] } });
   const h = harness({ window: { location, history }, confirm: () => { throw Error("canonical removal must use its own HTML confirmation"); },
-    remote: { loadRemotePlugins: async () => snapshot(true), mergePluginInventories: (cli, remote) => remote?.marketplace ? { marketplaces: [remote.marketplace] } : cli ?? { marketplaces: [] },
+    plugins: { readPlugin: async () => { localReads.push("plugin/read"); throw Error("service root must never read a local CLI plugin"); } },
+    remote: { loadRemotePlugins: async () => { if (generic) throw Error("global inventory unavailable"); return snapshot(true); }, mergePluginInventories: (cli, remote) => remote?.marketplace ? { marketplaces: [remote.marketplace] } : cli ?? { marketplaces: [] },
       manageRemotePlugin: async () => { writes.push("uninstall"); return { verification: mode === "unknown" ? "unknown" : "confirmed", error: mode === "unknown" ? "delivery unknown" : null, snapshot: snapshot(mode === "unknown") }; },
       verifyRemotePlugin: async () => { writes.push("verify"); return { verification: "confirmed", error: null, snapshot: snapshot(false) }; } } });
   h.render(); await h.tick();
+  assert.deepEqual(localReads, [], "service root restore must not issue local CLI detail reads");
   let root = h.nodes(h.tree).find(node => node.type === "PluginCanonicalRootPage");
-  const context = { blocked: false, accountCount: 2, isCurrent: () => true };
+  const context = { blocked: false, accountCount: 2, isCurrent: () => true,
+    snapshot: generic ? { identity, genericDetail: { summary: servicePlugin } } : undefined };
   let actions = root.props.renderCanonicalActions(context), uninstall = h.nodes(actions).find(node => node.type === "PluginCanonicalUninstall");
   assert.ok(uninstall); assert.equal(uninstall.props.accountCount, 2);
   if (mode === "admin") { assert.equal(uninstall.props.disabled, true); assert.equal(writes.length, 0); h.unmount(); continue; }

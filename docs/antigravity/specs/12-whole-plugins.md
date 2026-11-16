@@ -201,3 +201,31 @@ PAD07–PAD12新增验收：association的string/null/missing/error；原始ID�
 关联权限下一包补证纠正：`app-link-permissions-contract.md`的22片段/26简中文案/6资源已核，337381的e$权限摘要组件实际`return null`；父条件分支和onClick存在不能证明有可见入口，旧app-detail文字中的可见摘要推断以此纠正，禁止造按钮。深链eq仍完整可开发：四radio含full_access、继承默认可写显式override、reset写null、mixed多账户列表与uniform统一模式、URL未知linkId空targets禁写不fallback。返回清linkId是否留当前页由实际K决定。此为下一包输入，不表示权限消费者或真实服务已实现。
 
 关联权限包开工：补证现为7资源/30精确片段，隐式App严格按pS唯一候选→CV1W.Ok完整库存归属→必要canonical-app反向核验，不能取首app。显式路由仍fresh成员核验。新typed读保personal/可见账户/默认值独立错误；逐link PATCH仅四值或显式null，backend ACK不当保存，client整批settled后统一fresh读取确认。明确拒绝只重试失败ID，未知交付先只读恢复，成功项不重写。页面按LP-T01–13完成mixed列表/统一radio/指定linkId及同有效值的显式override动作；父summary与查看详情实际都未传递可见结果，不造入口/按钮。requires-local隐式宿主资格尚缺真实消费者，返回专门未支持错误而不猜支持；labels缺boolean wire证据不擅自放宽。真实账号、原生、像素及用户验收分别保留未验。
+
+### 普通服务插件根管理工作包（c1a5b02之后）
+
+开发依据为固定26.1111.2228.0的`generic-service-root-contract.md`与`generic-service-root-anchors.json`，本轮主线程重新核验7资源大小/SHA-256和45个0-based UTF-16原文片段；未重算整包hash。普通根使用同一次真实详情/完整库存的白名单genericSource，经纯W/Y转换形成详情；禁止退回本机CLI详情或挂载本机MCP/配置消费者。
+
+应用区域独立按CV1W.pS：app_ids与materialized_app_ids规范化去重，保留原始ID和空模板行，不展开USER instances。每应用分别读取真实metadata，共享一次accessible links读取；独立到达和错误只影响对应数据，按官方行回退template/id，不制造行级spinner或授权成功。metadata使用logo_url/logo_url_dark且保留missing/null/空串。账户选择按真实可见非implicit links首个非REAUTH_REQUIRED/首项，行不消费linkId参数。点击进入同插件apps深链，旧scope/账号/代次/ABA/卸载后的回调均不生效。
+
+管理动作必须使用根读取的真实installed summary和身份；全局库存失败不能使已核验的根卸载入口消失。继续保留默认安装策略限制、单飞、未知结果仅读核验及当前路由保护，不放开其他来源写链。根恢复不能额外调用本机plugin/read。
+
+定向用例由verify-plugin-canonical-root/page、verify-generic-plugin-usage、verify-generic-plugin-management-page和verify-plugin-management-ui-b共同覆盖。新增先红后绿用例复现全局库存失败导致根卸载缺失，再验证成功/未知交付仅读/默认安装锁定/旧路由四分支；原canonical回归保留。新的usage读取及页面用例纳入标准脚本和前端统一回归。
+
+尚未收口：服务技能正文/启禁写链、个人账户资格下模板setup、真实rdAJ hosted设置、known-app矢量/hosted图标及像素、完整授权恢复。当前技能仅摘要，空模板禁用并显示工作区未配置；不把这些范围算成完整根管理。真实HTTP、原生GUI/物理IME、官方配对像素和用户验收均未验。
+
+普通根包集成复审补记：共享SkillsMcpView仍为列表/其他分区执行库存、技能和本机配置读取；本次禁止的是服务详情降级到本机plugin/read和挂载本机详情/MCP设置消费者，不宣称父壳零本机effects。focus及plugin-management-changed现通过refreshRevision退休旧根snapshot并重读，同URL的安装/应用状态不会只刷新全局缓存。此行为有父页与根页实际生产回归；本轮未实现官方缓存stale时间的完整等价。
+
+### 下一技能正文/启禁工作包的开工合同
+
+固定基准同上；`generic-service-skills-contract.md`与anchors的6资源/35片段已由主线程重新核验。此段定义下一开发输入，不表示消费者已实现。
+
+- 正文独立GET `/ps/plugins/{plugin_id}/skills/{skill_name}?includeDownloadUrls=false`，settings、PROMPT_TEXT_AREA；只输出实际消费的name/description/interface.display_name/skill_md_contents白名单。字段missing/null与空串分开：前两者显示权限说明status，空串仍为有效Markdown。403/404/网络失败为error+重试，不能读本机文件或CLI兜底。
+- 行点击仅打开contents大型弹层，不push路由；精确skills/:skillName深链能直接打开，关闭replace根URL；metadata“名称/描述”在Markdown前，首标题保留，无编辑/保存正文功能，焦点回原行。正文loading、error重试、保旧正文重试失败与permission status分别验。
+- 根与技能身份必须绑定当前account/user/generation、真实release.skills原始name和root snapshot。切技能/根刷新/关闭/换账号ABA退休旧读取和动作。正文查询可取消，不把已投递写入取消当未执行。
+- 开关来自完整durable安装行disabled_skill_names：不存在安装行无开关，字段缺失不默认开启。admin/pending/connecting锁定；非空pS应用需可信links判断usable，needsConnect分支依赖实际hosted Apps/OAuth，不能用本机app/list代替或跳过。p为空或有usable link可接直接服务启禁，但仍须fresh归属/库存。
+- 启禁固定无body POST enable|disable，other、CONNECTOR_SETTING；ACK后读取同身份完整库存确认，未知结果只能先读，不重复写。正文加载和写入失败呈现独立；页内与弹层同一开关状态。服务正文与安装库存不能混用SKU或从本地技能同名匹配。
+
+用例按SK-T01–08：原始ID编码及route/modal、string/空串/null/缺失/403/404、旧正文+重试、库存状态与开关、pS/links/reauth/admin资格、POST/读回/unknown、切页/关闭/根refresh/账号ABA、中文/角色/焦点及原生/像素。完整OAuth、DTO未知字段、原生Escape/外点/IME与配对几何未证实项继续独立登记。先落只读内容消费者，再接具有真实资格的写链；两者均属于当前第02批，不因正文可读而标技能整页完成。
+
+技能contents尺寸补证：956370.aff5cce818.js UTF-16 774187的xwideTall为w-[680px]、h/max-h-[min(92vh,800px)]；773012默认居中加max-w-[92vw]，因此宽为min(680px,92vw)，不是现有本机SkillPreviewDialog的600×720。TZ2Y主体来源research-permissions-234277.e2b2e7caf7.js:15282，固定头/错误footer、正文独立滚动；尺寸不属responsiveSheet，不能自行加窄屏sheet分支。Markdown复用MarkdownView的remoteContent模式并保留原始string，不传本机run/open回调，不用会改正文结构的skillPreviewMarkdown。现有本机预览加载effect按path/attempt且identity未参与，不能以service path为空直接复用；新消费者须按真实plugin/skill及identity绑定与取消。

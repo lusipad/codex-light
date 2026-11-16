@@ -1,0 +1,15 @@
+/* Static service row structure; paired pixels, app vectors and hosted logos remain unverified. */
+.gpm-section { min-width: 0; }
+.gpm-section h2 { margin: 0; padding-bottom: 6px; font-size: var(--text-base); line-height: 24px; font-weight: 500; }
+.gpm-group { min-width: 0; }
+.gpm-row { display: flex; align-items: center; width: 100%; min-width: 0; gap: 24px; padding: 12px 16px; border: 0; border-radius: 8px; background: transparent; color: var(--text-primary); text-align: start; font: inherit; cursor: pointer; }
+.gpm-row:hover:not(:disabled), .gpm-row:focus-visible { background: var(--bg-hover); }
+.gpm-row:focus-visible { outline: 2px solid var(--border-focus); outline-offset: -2px; }
+.gpm-row:disabled { opacity: .6; cursor: default; }
+.gpm-app-logo { width: 32px; height: 32px; flex-shrink: 0; border-radius: 4px; }
+.gpm-label { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 2px; overflow-wrap: anywhere; font-size: var(--text-sm); font-weight: 500; }
+.gpm-description { font-size: var(--text-xs); line-height: 16px; font-weight: 400; color: var(--text-secondary); }
+.gpm-trailing { display: flex; flex-shrink: 0; align-items: center; gap: 8px; max-width: 45%; overflow-wrap: anywhere; color: var(--text-secondary); font-size: var(--text-sm); }
+.gpm-skill { cursor: default; }
+.gpm-skill:hover { background: transparent; }
+.gpm-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
