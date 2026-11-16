@@ -321,3 +321,35 @@ canonical头部使用实际App名称、服务插件双色图标和官方描述�
 候选：`dist-artifacts/plugins-r2-canonical-root-20261116/CodexNative.exe`，30,257,664字节，SHA256 `4fb2a3b6f3c6ee009f3f45ca3ca4fd2db50c9d2ea98f39dac501c5a26e078ca9`。输入清单SHA256 `9c9b3fc58ffe9f8ec8bb0a2f063afac04d12e21c944edcae29695a8345e39a7f`。MSI/NSIS和详细检查范围见本阶段candidate-artifacts.json及verification-summary.json；源码由4219f89之后本阶段工作树生成，提交后在证据中补sourceCommit。真实HTTP、原生GUI/IME、多窗、配对像素、托管CI及用户验收均未验，visual-verdict保持score=null。
 
 本轮复用现有App账户/同步、真实服务变更及未知结果journal、PluginLogo/展开状态和弹窗样式，未新增依赖或替代执行器。本地阶段提交、不推送发布。下一仍为02.3：按已补durable目录合同接真实目录消费者与service详情转换，继而补普通根完整内容和独立App/授权/宿主；本阶段不是插件整页或全App的1:1完成声明。
+
+## 2026-11-16 R2 durable目录详情读取基础（9f6c229之后）
+
+当前仍为第02批开发/自验阶段，不是目录往返、插件整页或用户验收通过。基准仍是26.1111.2228.0/package26.1111.21308。上一阶段准备的6来源/16锚点合同，本轮扩为8来源/23锚点/7中文键，并另补browse合同8来源/34锚点；两组资源有重叠，不相加为独立文件数。主线程已逐文件核大小/SHA-256及UTF-16精确片段；未重算整包hash、未实测官方当前账号。证据位于`.ref/parity/12/whole-page/actual/plugin-durable-detail-r2-20261116/`。
+
+已接目录专用固定GET：详情CONNECTOR_SETTING/other，完整库存CODEX/other且不发includeExtensions；旧管理/root/settings/home/list用途保持。主线程真实复现2项CODEX与CONNECTOR_SETTING断言失败（exit101），修正后31项remote_plugin_专项通过；完整Rust874项通过（0失败/忽略/过滤，130.46秒）。catalog分页允许next字段缺失/null结束、空token继续，重复/畸形/错误/取消不能返回partial库存。固定IPC不允许renderer覆盖URL、SKU或extensions。原token/总量边界是传输支持限制，不称完整官方wire schema。
+
+W/Y域转换复用mapRemotePlugins并局部补齐源字段：真实匹配库存决定summary/disabled技能，raw详情决定正文/USER实例及模板；onboarding依enabled和技能名，服务技能path=null，App ID规范化去重、名字优先级、can_setup和shareUrl均保来源，不造本地文件或假URL。并发详情/库存前后核账号、用户、代次、routing与取消；库存失败不是未安装成功，也不降本机读取。
+
+精确durable、raw pluginName/path ID与chatgpt-workspace组合进入独立服务详情；其它旧unsupported guard保留，旧CLI loader不会因加durable页面而放行。页面复用现Detail/Included/CSS，真实概要、标题生命周期、读取失败/重试、scope/ABA/晚回和清理有生产回放；已装可管理真实raw根，已装启用且资格可确认时只交现有草稿回调，不发模型。Included不传本机技能、fs、MCP/Hook配置写或技能正文回调。服务安装、技能正文、模板setup、native/OAuth仍未接，禁用按钮不代表这些功能已完成。
+
+返回链新事实：实际目录presenter为t_→Hi2y.eY→PluginDetailEmptyState，目录中文“插件”/“无法加载插件”不是browserPluginSettings.loadError；breadcrumb是真实链接，当前根入口返回`/plugins?hostId=durable`，不能清host变本机目录。该目标的browse依赖NbOT/fHlE实际宿主集合及readiness、远端feature/gate4218407052、IVVU.Lq过滤。项目尚无这些完整producer，不能假定ready=[]、强开gate、恒pending或转CLI。当前保正确URL并显示既有不支持状态；**完整列表→详情→返回没有闭环**。详情reader自身explicitHost/query/local规则已证，但路由lazy外层是否显式覆盖host的完整调用锚点及真实GUI可达性仍待验证。上述实现只证明当前逻辑durable分支可读取，不证明官方当前账号必走它。
+
+| 用例 | 核心结果 | 当前证据/缺口 |
+|---|---|---|
+| DD01 | 正确固定详情/库存headers，保旧用途；401/IP/取消/身份隔离 | header先红后绿、31 Rust transport专项 |
+| DD02 | 全分页含空cursor；畸形/重复/失败不当partial成功 | catalog transport与bridge回归 |
+| DD03 | W/Y完整转换、库存状态与正文来源、USER模板、onboarding/path=null | 生产domain专项 |
+| DD04 | actual Detail/Included委派，错误净化/retry、scope/ABA/取消/卸载/title | 生产Page专项；GUI/像素未验 |
+| DD05 | raw管理身份与导航guard，不按名称猜；prompt索引/文字匹配、single-flight/false | App/父Page及新Page专项；只填草稿 |
+| DD06 | 精确durable delegate，错误host/selector不读CLI | PMB10及旧目录回归更新；保其余原断言 |
+| DD07 | breadcrumb保host，缺browse adapter不转CLI | URL/父Page回归；目标列表仍不可用，不计往返通过 |
+
+完整前端初次回放在旧“所有durable都应unsupported”断言失败，原始日志/exit保留为frontend-obsolete-host-assertion-red.*；已更新为精确受支持详情delegate，并保arbitrary host/错pluginName拒绝、零本机元数据/安装断言。这个失败属于过期测试预期，不能冒充生产错误复现。真正SKU生产红测另有catalog-header-red.*。后续完整检查与候选结果另附，不用当前单项绿替代。
+
+剩余：browse的宿主/gate/隐藏项消费者、详情外层host可达性、未装安装与授权准备、服务技能正文、模板setup、App metadata预取/完整法律内容、native/OAuth、真实HTTP、原生GUI/物理IME/多窗、配对像素、托管CI和用户验收均未完成。视觉score=null。继续独立generic service根DTO/呈现合同，并将browse producer依赖保留至共享宿主工作包，不因本次源代码或fixture宣称整个目录完成。
+
+本阶段最终验证：874项全Rust（0失败/忽略/过滤，130.46秒）、211组完整前端回放、非Fast标准整轮及34个隔离协议探针、最终TypeScript/Vite/原生EXE+MSI+NSIS均exit0；518项最终产品输入在构建后大小/hash一致。初次过期host断言失败日志仍保留，最终未跳过该回归或余下检查。完整结果见本阶段verification-summary.json；标准Rust过滤组不冒充全库。
+
+基础候选`dist-artifacts/plugins-r2-durable-detail-20261116/CodexNative.exe`，30,311,936字节，SHA256 `2a3c9bbb07c4307862757f808420cbd1e95a05349429dcea5ce3023b2bec9568`；输入清单SHA256 `9e4a47ac086a9089c8139b67258cbc019e5e08aa4bf51ae17a2c6d09d70f483c`。MSI/NSIS哈希见candidate-artifacts.json。构建对应9f6c229之后当前阶段工作树，提交后补sourceCommit。没有启动真实GUI、实际账号HTTP或模型调用，没有推送、发布或托管CI成功结论；像素和用户验收仍未完成。
+
+复用现有HTTP会话/网络限制、mapRemotePlugins、App ID规范化、Detail/Included及CSS，没有新增依赖或通用JSON框架。已交付的仅是服务详情读取基础和正确导航身份；返回列表仍因实际宿主/gate producer缺口不可用，不把这个基础候选当完整目录往返。下一独立工作包为generic service根：复用root同次真实数据和纯W/Y，隔离本机MCP、ProvidedSettings与技能文件effect；“使用”另按pS合同，不从目录W.apps反推。

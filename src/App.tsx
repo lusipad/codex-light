@@ -147,8 +147,8 @@ import { ImagesView } from "./components/ImagesView";
 import { GptsView } from "./components/GptsView";
 import { SitesView } from "./components/SitesView";
 import { parseSitesLocation, type SitesNavigation } from "./sitesNavigation";
-import { parsePluginDirectoryLocation, pluginDirectoryDetailUrl } from "./pluginDirectoryLocation";
-import { parsePluginManagementLocation } from "./pluginManagementLocation";
+import { parsePluginDirectoryLocation, durablePluginDirectoryId, pluginDirectoryDetailUrl } from "./pluginDirectoryLocation";
+import { parsePluginManagementLocation, pluginManagementDetailUrl } from "./pluginManagementLocation";
 import { pluginDisplayName, type PluginDetail, type PluginSummary } from "./plugins";
 import { LibraryFileRoute, LibraryView, type LibraryNavigation } from "./components/LibraryView";
 import { libraryLocationUrl, parseLibraryFileLocation, parseLibraryLocation } from "./libraryBrowse";
@@ -435,6 +435,21 @@ export const App: React.FC = () => {
       setPluginDirectoryMode("browse");
       activeRouteRef.current = "plugins";
       commitActiveRoute("plugins");
+    };
+    if (personalizationNavigationGuardRef.current?.(apply) === false) return;
+    apply();
+  }, []);
+  const handleOpenDurablePluginManagement = useCallback((rawPluginId: string) => {
+    const origin = window.location.href;
+    if (activeRouteRef.current !== "plugins" || durablePluginDirectoryId(origin) !== rawPluginId) return;
+    let applied = false;
+    const apply = () => {
+      if (applied || activeRouteRef.current !== "plugins" || window.location.href !== origin) return;
+      applied = true;
+      window.history.pushState(window.history.state, "", pluginManagementDetailUrl("/settings/plugins-settings", {
+        pluginId: rawPluginId, remotePluginId: rawPluginId, hostId: "durable", sourceType: "remote",
+      }));
+      setSettingsInitialSection("plugins-settings"); activeRouteRef.current = "settings"; commitActiveRoute("settings");
     };
     if (personalizationNavigationGuardRef.current?.(apply) === false) return;
     apply();
@@ -6653,6 +6668,7 @@ export const App: React.FC = () => {
                   setSettingsInitialSection("plugins-settings");
                   setActiveRoute("settings");
                 }}
+                onManagePlugin={handleOpenDurablePluginManagement}
                 onStartSkillCreatorSession={(prompt) => {
                   startNewThread();
                   setThreadPrompt(null, prompt);

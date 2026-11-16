@@ -37,6 +37,19 @@ assert.equal(requests.at(-1).command, "remote_plugin_detail");
 assert.equal(requests.at(-1).args.request.pluginId, rawId, "client passes raw identity; the fixed backend encodes its single path segment");
 reply = request => ({ requestId: request.requestId, identity, plugin: { id: "foreign" } });
 await assert.rejects(api.readRemotePluginDirectoryDetail(rawId, identity, signal));
+reply = request => ({ requestId: request.requestId, identity, plugins: [{ id: rawId, name: "Actual installed" }] });
+assert.equal((await api.readRemotePluginCatalogInventory(identity, signal))[0].id, rawId);
+assert.equal(requests.at(-1).command, "remote_plugin_catalog_inventory_read");
+assert.deepEqual(Object.keys(requests.at(-1).args.request).sort(), ["expectedIdentity", "profile", "requestId"], "catalog consumer cannot override extensions, product headers, host or URL");
+for (const invalid of [
+  request => ({ requestId: "wrong", identity, plugins: [] }),
+  request => ({ requestId: request.requestId, identity: { ...identity, userId: "other" }, plugins: [] }),
+  request => ({ requestId: request.requestId, identity: { ...identity, generation: 2 }, plugins: [] }),
+  request => ({ requestId: request.requestId, identity, plugins: null }),
+]) { reply = invalid; await assert.rejects(api.readRemotePluginCatalogInventory(identity, signal)); }
+const beforeCatalogAbort = requests.length;
+await assert.rejects(api.readRemotePluginCatalogInventory(identity, aborted.signal)); assert.equal(requests.length, beforeCatalogAbort);
+assert.ok(fs.readFileSync("src-tauri/src/lib.rs", "utf8").includes("            remote_plugin_catalog_inventory_read,"));
 reply = request => ({ requestId: request.requestId, identity, plugins: [{ id: "flat", display_name: "Category" }], nextPageToken: "next" });
 const category = await api.readRemotePluginDirectoryCategory(identity, "tools/中", "  query  ", "opaque+cursor", signal);
 assert.equal(category.nextCursor, "next");

@@ -697,6 +697,17 @@ export async function readRemotePluginDirectoryHome(identity: ServiceIdentity, s
   return result.sections;
 }
 
+export async function readRemotePluginCatalogInventory(identity: ServiceIdentity, signal: AbortSignal): Promise<unknown[]> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; plugins: unknown[] }>(
+    "remote_plugin_catalog_inventory_read", requestId,
+    { request: { requestId, expectedIdentity: identity, profile: browserProfile() } }, signal,
+  );
+  responseBody({ ...result, body: null }, requestId, identity);
+  if (!Array.isArray(result.plugins)) throw Error("无法确认插件目录完整库存，请重新读取。");
+  return result.plugins;
+}
+
 export async function readRemotePluginDirectoryDetail(pluginId: string, identity: ServiceIdentity, signal: AbortSignal): Promise<unknown> {
   const requestId = crypto.randomUUID();
   const result = await invokeService<{ requestId: string; identity: ServiceIdentity; plugin: unknown }>(

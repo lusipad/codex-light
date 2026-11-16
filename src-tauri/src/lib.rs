@@ -379,6 +379,19 @@ async fn remote_plugin_category(
 }
 
 #[tauri::command]
+async fn remote_plugin_catalog_inventory_read(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: chatgpt_service::RemotePluginHomeRequest,
+) -> Result<chatgpt_service::RemotePluginInventoryResponse, chatgpt_service::ServiceError> {
+    state.chatgpt_service.remote_plugin_catalog_inventory_read(request, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
 async fn remote_plugin_detail(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -2641,6 +2654,7 @@ pub fn run() {
             remote_plugin_inventory,
             remote_plugin_home,
             remote_plugin_detail,
+            remote_plugin_catalog_inventory_read,
             remote_plugin_category,
             remote_plugin_directory_list,
             remote_plugin_mutation,

@@ -60,6 +60,13 @@ function browseQuery(base: string | URL): URLSearchParams {
   return query;
 }
 
+/** Q.l$ produces this exact service-backed detail source. Other hosts stay isolated. */
+export function durablePluginDirectoryId(input: string | URL): string | null {
+  const location = parsePluginDirectoryLocation(input);
+  return location?.hostId === "durable" && location.pluginId !== null && location.pluginName === location.pluginId &&
+    location.marketplacePath === null && location.remoteMarketplaceName === "chatgpt-workspace" ? location.pluginId : null;
+}
+
 function relativeUrl(pathname: string, query: URLSearchParams): string {
   const search = query.toString();
   return search ? `${pathname}?${search}` : pathname;

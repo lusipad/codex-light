@@ -80,6 +80,7 @@ export function harness(options = {}) {
     "./PluginPermissionsSettings": { PluginPermissionsSettings: "PluginPermissionsSettings" },
     "./PluginAppDetailsPage": { PluginAppDetailsPage: "PluginAppDetailsPage" },
     "./PluginCanonicalRootPage": { PluginCanonicalRootPage: "PluginCanonicalRootPage" },
+    "./DurablePluginDirectoryPage": { DurablePluginDirectoryPage: "DurablePluginDirectoryPage" },
     "./PluginCanonicalUninstall": { PluginCanonicalUninstall: "PluginCanonicalUninstall" },
     "./PluginAppLinkPermissionsPage": { PluginAppLinkPermissionsPage: "PluginAppLinkPermissionsPage" },
     "./PluginAppSyncPage": { PluginAppSyncPage: "PluginAppSyncPage" },
@@ -288,3 +289,16 @@ for (const mode of ["confirmed", "unknown", "admin", "retired"]) {
   h.unmount();
 }
 console.log("PASS PMB09: canonical removal passes real account count, skips native confirm, respects admin/fresh route, replaces confirmed detail and recovers unknown delivery without replay");
+{
+  const location = { href: "https://test.invalid/plugins/raw%2Fservice?pluginName=raw%2Fservice&remoteMarketplaceName=chatgpt-workspace&hostId=durable" }, reads = [], manages = [];
+  const history = { state: {}, replaceState(state, _, url) { this.state = state; location.href = new URL(url, location.href).href; },
+    pushState(state, _, url) { this.state = state; location.href = new URL(url, location.href).href; } };
+  const h = harness({ window: { location, history }, plugins: { readPlugin: async () => { reads.push("plugin/read"); throw Error("must not read local CLI for durable"); } } });
+  h.props.manageOnly = false; h.props.onManagePlugin = id => manages.push(id); h.render(); await h.tick();
+  const page = h.nodes(h.tree).find(node => node.type === "DurablePluginDirectoryPage"); assert.ok(page); assert.equal(page.props.pluginId, "raw/service");
+  assert.equal(reads.length, 0); assert.equal(h.tree.props.className, "panel-page pm-extensions-page pm-directory-page");
+  page.props.onManage("raw/service"); assert.deepEqual(manages, ["raw/service"]);
+  page.props.onBack(); await h.tick(); assert.equal(new URL(location.href).pathname, "/plugins"); assert.equal(new URL(location.href).search, "?hostId=durable");
+  assert.equal(h.nodes(h.tree).some(node => node.type === "DurablePluginDirectoryPage"), false); assert.match(h.text(h.tree), /当前入口尚不支持该主机/); assert.equal(reads.length, 0, "missing browse host/gate producer must not fall back to local CLI"); h.unmount();
+}
+console.log("PASS PMB10: exact durable entry delegates to service details while local CLI stays blocked; parent preserves directory layout and host-preserving return URL; browse adapter remains unavailable");

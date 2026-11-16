@@ -14,7 +14,7 @@ const callbacks = {};
 function visit(node) {
   if (ts.isVariableDeclaration(node)) {
     const name = node.name.getText(ast);
-    if (["[activeRoute, commitActiveRoute]", "[settingsInitialSection, setSettingsInitialSection]", "navigateRouteHistory", "handleOpenPluginMarketplace", "handleOpenManagedPluginDirectory"].includes(name)) {
+    if (["[activeRoute, commitActiveRoute]", "[settingsInitialSection, setSettingsInitialSection]", "navigateRouteHistory", "handleOpenPluginMarketplace", "handleOpenManagedPluginDirectory", "handleOpenDurablePluginManagement"].includes(name)) {
       callbacks[name] = node.initializer.arguments[0].getText(ast);
     }
   }
@@ -203,3 +203,22 @@ for (const path of ["/settings/plugins-settings/other", "/settings/plugins-setti
   const h = fixture(path, "settings"); h.evaluate("handleOpenManagedPluginDirectory")("raw"); assert.equal(h.writes.length, 0);
 }
 console.log("PASS actual App management initialization, validated popstate, URL cleanup, internal traversal and settings navigation guards");
+const durableUrl = "/plugins/raw%2Fservice?pluginName=raw%2Fservice&remoteMarketplaceName=chatgpt-workspace&hostId=durable";
+assert.equal(locations.durablePluginDirectoryId(durableUrl), "raw/service");
+for (const url of ["/plugins/raw?hostId=durable", "/plugins/raw?hostId=local&pluginName=raw&remoteMarketplaceName=chatgpt-workspace", "/plugins/raw?hostId=ssh&pluginName=raw&remoteMarketplaceName=chatgpt-workspace", "/plugins/raw?hostId=durable&pluginName=wrong&remoteMarketplaceName=chatgpt-workspace", "/plugins/raw?hostId=durable&pluginName=raw&remoteMarketplaceName=other", "/plugins/raw?hostId=durable&pluginName=raw&remoteMarketplaceName=chatgpt-workspace&marketplacePath=x"]) assert.equal(locations.durablePluginDirectoryId(url), null);
+{
+  const h = fixture(durableUrl, "plugins"), manage = h.evaluate("handleOpenDurablePluginManagement");
+  manage("wrong"); assert.equal(h.writes.length, 0);
+  let pending; h.context.personalizationNavigationGuardRef.current = apply => { pending = apply; return false; };
+  manage("raw/service"); assert.equal(h.writes.length, 0); pending(); pending();
+  assert.equal(h.writes.length, 1); const target = locations.parsePluginManagementLocation(h.context.window.location.href);
+  assert.equal(target.pluginId, "raw/service"); assert.equal(target.hostId, null); assert.equal(target.appId, null);
+  assert.equal(h.context.activeRouteRef.current, "settings"); assert.equal(h.sections.at(-1), "plugins-settings");
+}
+{
+  const h = fixture(durableUrl, "plugins"); let pending;
+  h.context.personalizationNavigationGuardRef.current = apply => { pending = apply; return false; };
+  h.evaluate("handleOpenDurablePluginManagement")("raw/service"); h.setUrl("/plugins/other"); pending(); assert.equal(h.writes.length, 0);
+}
+assert.ok(source.includes("onManagePlugin={handleOpenDurablePluginManagement}"));
+console.log("PASS durable service detail route requires exact source and returns to its actual raw management identity with current navigation guards");

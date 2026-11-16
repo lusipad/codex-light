@@ -225,19 +225,20 @@ const localSourceView = harness({ directory: { loadPluginDirectorySource: async 
 localSourceView.props.manageOnly = false; localSourceView.props.initialTab = "plugins"; localSourceView.render(); await localSourceView.tick();
 assert.deepEqual(Array.from(explicitKinds), ["local"]); assert.doesNotMatch(localSourceView.text(localSourceView.tree), /公开/); localSourceView.unmount();
 console.log("PASS directory metadata read retry and explicit local source scoping");
-for (const hostId of ["durable", "arbitrary-host"]) {
+for (const [hostId, pluginName, supported] of [["durable", "remote-0", true], ["arbitrary-host", "remote-0", false], ["durable", "wrong-id", false]]) {
   let directoryRequests = 0, metadataRequests = 0, writes = 0, localInventoryRequests = 0, hookEnabled;
-  const hostWindow = urlWindow(); hostWindow.location.href = `https://codex.invalid/plugins/remote-0?hostId=${hostId}&pluginName=remote-0&remoteMarketplaceName=chatgpt-workspace`;
+  const hostWindow = urlWindow(); hostWindow.location.href = `https://codex.invalid/plugins/remote-0?hostId=${hostId}&pluginName=${pluginName}&remoteMarketplaceName=chatgpt-workspace`;
   const unsupportedHost = harness({ window: hostWindow,
     directory: { loadPluginDirectorySource: async () => { directoryRequests++; return remoteSource; }, readLocalDirectoryListing: async () => { metadataRequests++; throw Error("unexpected local detail"); } },
     directorySearch: options => { hookEnabled = options.enabled; return emptySearch; },
     plugins: { listInstalledPlugins: async () => { localInventoryRequests++; return { marketplaces: [] }; }, readPlugin: async () => { metadataRequests++; throw Error("unexpected local detail"); }, installPlugin: async () => { writes++; } } });
   unsupportedHost.props.manageOnly = false; unsupportedHost.props.initialTab = "plugins"; unsupportedHost.render(); await unsupportedHost.tick();
-  assert.match(unsupportedHost.text(unsupportedHost.tree), /当前入口尚不支持该主机/);
+  if (supported) assert.equal(unsupportedHost.nodes(unsupportedHost.tree).find(node => node.type === "DurablePluginDirectoryPage")?.props.pluginId, "remote-0");
+  else assert.match(unsupportedHost.text(unsupportedHost.tree), /当前入口尚不支持该主机/);
   assert.equal(directoryRequests + metadataRequests + writes + localInventoryRequests, 0, "explicit unknown host never falls back to local reads or installation");
   assert.equal(hookEnabled, false); unsupportedHost.unmount();
 }
-console.log("PASS explicit hosted/unknown deep links are rejected without falling back to local CLI reads or installation");
+console.log("PASS exact durable detail delegates to service reader; unknown host or mismatched source stays rejected without local CLI reads or installation");
 
 for (const outcome of ["missing", "failed", "partial"]) {
   let writes = 0, reads = 0, inventory = { marketplaces: [] }, finishRead;

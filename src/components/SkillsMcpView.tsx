@@ -34,7 +34,8 @@ import { loadRemotePlugins, manageRemotePlugin, verifyRemotePlugin, mergePluginI
 import { loadPluginDirectorySource, loadPluginDirectoryCategory, readLocalDirectoryListing, type PluginDirectorySource } from "../pluginDirectoryClient";
 import { directoryPluginInstallation, pluginDetailMatchesReference, type PluginDirectoryListing } from "../pluginDirectory";
 import { usePluginDirectorySearch } from "../pluginDirectorySearch";
-import { parsePluginDirectoryLocation, pluginDirectoryBrowseUrl, pluginDirectoryDetailUrl, pluginDirectoryTabUrl, pluginDirectoryCategoryUrl } from "../pluginDirectoryLocation";
+import { parsePluginDirectoryLocation, durablePluginDirectoryId, pluginDirectoryBrowseUrl, pluginDirectoryDetailUrl, pluginDirectoryTabUrl, pluginDirectoryCategoryUrl } from "../pluginDirectoryLocation";
+import { DurablePluginDirectoryPage } from "./DurablePluginDirectoryPage";
 import { groupPluginDirectoryLocal, type PluginDirectoryLocalGroups } from "../pluginDirectoryLocalGroups";
 import type { ServiceIdentity } from "../chatgptService";
 import {
@@ -122,6 +123,7 @@ interface SkillsMcpViewProps {
   onNotify?: (message: string, type?: "success" | "error") => void;
   onBrowseDirectory?: (tab: "plugins" | "skills", marketplaceName?: string) => void;
   onManagePlugins?: () => void;
+  onManagePlugin?: (rawPluginId: string) => void;
   onNavigationChange?: (navigation: PluginDirectoryNavigation | null) => void;
   onStartSkillCreatorSession?: (prompt: string) => void;
   onOpenSkillFile?: (path: string) => boolean | Promise<boolean>;
@@ -254,6 +256,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   onBrowseDirectory,
   onNotify,
   onManagePlugins,
+  onManagePlugin,
   onNavigationChange,
   onStartSkillCreatorSession,
   onOpenSkillFile,
@@ -2040,6 +2043,15 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   const managementDetailPlugin = detail ? directoryPluginInstallation(remoteId(detail.summary) ?? detail.summary.id, mergedInstalledData).plugin : null;
   const managementVerificationPlugin = managementDetailPlugin ?? detailContextRef.current?.plugin;
 
+  const durableDirectoryId = !manageOnly && window.location ? durablePluginDirectoryId(window.location.href) : null;
+  if (durableDirectoryId !== null) return <div ref={pageRef} className="panel-page pm-extensions-page pm-directory-page"><DurablePluginDirectoryPage key={JSON.stringify([connectionIdentity, durableDirectoryId])}
+    connectionIdentity={connectionIdentity} pluginId={durableDirectoryId} onManage={onManagePlugin} onTryPlugin={onTryPlugin}
+    onBack={() => {
+      if (durablePluginDirectoryId(window.location.href) !== durableDirectoryId) return;
+      updateDirectoryUrl("/plugins?hostId=durable"); ++detailRequestRef.current; detailContextRef.current = null;
+      setDetailKey(null); setDetail(null); setDetailError(null); setDetailLoading(false); setDirectoryHostUnsupported(true);
+      setSearchQuery(""); setDirectoryCategory(null); setDirectoryTab("openai");
+    }} /></div>;
   if (manageOnly && directoryHostUnsupported) return <div className="pm-state-body" role="alert">当前管理入口尚不支持此主机。</div>;
   if (manageOnly && window.location && parsePluginManagementLocation(window.location.href)?.kind === "permissions") {
     return <PluginPermissionsSettings identity={connectionIdentity} onUnavailable={() => closeManagedDetail(true)} />;
