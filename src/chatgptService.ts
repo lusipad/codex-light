@@ -506,6 +506,27 @@ export async function readAccountNotifications(identity: ServiceIdentity, signal
   return responseBody(result, requestId, identity);
 }
 
+export async function readPluginPermissions(identity: ServiceIdentity, signal: AbortSignal): Promise<unknown> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; body: unknown }>(
+    "plugin_permissions_read", requestId,
+    { request: { requestId, expectedIdentity: identity, profile: browserProfile() } }, signal,
+  );
+  return responseBody(result, requestId, identity);
+}
+
+export async function writePluginPermission(value: string, identity: ServiceIdentity, signal: AbortSignal): Promise<ProfileMutationResult> {
+  if (!["always_ask", "ask_before_writes", "review_important_actions"].includes(value)) throw Error("无效的默认权限。");
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<ProfileMutationResult & { requestId: string; identity: ServiceIdentity }>(
+    "plugin_permissions_write", requestId,
+    { request: { requestId, expectedIdentity: identity, profile: browserProfile(), value } }, signal,
+  );
+  responseBody(result, requestId, identity);
+  if (!["confirmed", "pending"].includes(result.verification)) throw Error("无法确认权限保存状态，请重新读取。");
+  return result;
+}
+
 export async function writeAccountNotification(category: string, channel: string, enabled: boolean,
   identity: ServiceIdentity, signal: AbortSignal): Promise<ProfileMutationResult> {
   const requestId = crypto.randomUUID();

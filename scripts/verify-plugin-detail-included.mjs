@@ -21,6 +21,8 @@ vm.runInNewContext(output, { exports, require(name) {
   if (name === "react") return react;
   if (name === "lucide-react") return { BookOpen: "BookOpen", Plug: "Plug", Workflow: "Workflow", Boxes: "Boxes" };
   if (name.endsWith("SkillPreviewDialog")) return { SkillPreviewDialog: "SkillPreviewDialog" };
+  if (name.endsWith("PluginManagementMcp")) return { PluginManagementMcp: "PluginManagementMcp" };
+  if (name.endsWith("PluginProvidedSettings")) return { PluginProvidedSettings: "PluginProvidedSettings" };
   if (name.endsWith("recommendedSkills")) return displayExports;
   if (name.endsWith(".css")) return {};
   throw new Error(`Unexpected import ${name}`);
@@ -92,6 +94,8 @@ assert.equal(preview.props.onTry, undefined, "disabled installed skills cannot b
 props = { ...props, workspaceRoot: "/other-workspace" }; render();
 assert.equal(find(node => node.type === "SkillPreviewDialog"), undefined, "workspace change removes prior preview");
 props = { ...props, presentation: "settings", detail: { ...detail, summary: { ...detail.summary, installed: true, enabled: true } }, installedSkills: [exact] }; render();
+assert.equal(find(node => node.type === "PluginManagementMcp").props.detail, props.detail, "management MCP uses the real source detail and config consumer");
+assert.equal(find(node => node.type === "PluginProvidedSettings").props.detail, props.detail, "only settings presentation receives real plugin-provided settings");
 assert.equal(all().find(node => node.type === "h2").children[0], "使用的应用");
 assert.ok(all().some(node => node.type === "button" && node.children.includes("在设置中管理")));
 find(node => node.props["data-skill-preview"] !== undefined).props.onClick(); render();

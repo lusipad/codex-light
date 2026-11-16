@@ -142,3 +142,30 @@
 最新可见远端仍是run42644930892（旧提交）的账单阻止启动注解，不代表本候选CI成功，也不能据此断言账户当前账单状态。本阶段本地提交、不推送/发布。
 
 下一同页工作包：补typed模板/Apps资格、MCP映射与真实开关、插件提供的Settings/Meetings及适用权限/sync；OAuth自有callback资格与Teams门控继续保留具体依赖。当前R3新版宿主研究仅为只读资料，不计能力已实现。
+## MCP接线继续开发（2026-11-16，非新原生候选）
+
+管理阶段已本地提交`fcb4a8a`，未推送。提交前复核839输入与三产物hash无变，记录的11个原生进程均退出。其后开始MCP接线，以下结果不能沿用上一候选EXE。
+
+- 新增同版映射helper、生产状态hook和管理MCP区；真实配置键、完整应用目录优先、manifest版本/空Map、管理员、单飞、乐观状态、写后读回、未知结果只读恢复与scope/ABA隔离均有回归。复用config客户端和现有包含项行/开关，不新增依赖；目录模式未接该管理消费者。
+- `node scripts/verify-ui-parity-release.mjs`：175项、exit0。运行期间有应用目录来源与文案补正；最后对新映射/hook/UI、包含项、管理详情父级、插件设置六项重新验证，均exit0。不能描述为同一冻结输入跑完全部175。
+- `npx tsc --noEmit`与最终`npm run build`均exit0；大chunk为构建警告。真实私有CODEX_HOME的`verify-mcp-settings-b.mjs` exit0，补验默认用户文件的config/value/write、upsert及含点/引号/反斜线literal key读回；零模型turn，MCP服务器保持禁用。
+- 证据：`.ref/parity/12/whole-page/actual/management-mcp-r2-20261116/`。此包未重跑非Fast全标准、全Rust或新原生打包/GUI，也未推送托管CI，不能引用上一包结果覆盖。
+- App映射行尚未接完整App管理/连接/权限导航，明确静态展示，不造MCP开关或跳错分区；Apps、权限/sync、自定义Settings、授权消费者及整页原生/像素/用户验收仍未完成。
+
+## R2权限与普通MCP设置阶段候选（2026-11-16）
+
+这是MCP接线后的新阶段结果，整页仍开发中，未用户验收。来源固定Store26.1111.2228.0；35份资源和本包47个原始锚点已独立核hash/header integrity，完整snapshot包hash亦复核一致。主线继续第02批，没有转入R3或声明全部插件设置完成。
+
+| 层面 | 已执行与边界 |
+|---|---|
+| 功能 | 本机MCP配置首匹配/manifest版本与空Map、实际key启禁/读回；慢应用目录不阻塞本地配置。真实普通MCP声明→工具发现→专用ephemeral上下文→bool/enum/text/number/integer表单→单字段set→成功/失败后readback；无参action使用真实工具与结果。全局权限typed宿主、独立URL及四值读取/三值写入已接，真实账号HTTP未验 |
+| 自动 | 最终183项前端exit0；修正账户生产合同后全Rust763项、0失败/忽略/过滤，exit0。CLI0.165.0非Fast检查34个真实私有协议探针均通过。该标准整轮exit1：执行中草案测试的借用错误曾编译失败；最终完整Rust已覆盖并关闭该失败，不把原exit1改写为整轮0 |
+| 构建 | 最终EXE/MSI/NSIS构建exit0；865产品/验证输入在构建后hash复核无变。提交前仅清四文件EOF空白，三项受影响回归及前端构建再验0，三份前端产物逐字节相同，证据eof-build-equivalence.json；不为无产物变化重复原生打包 |
+| 原生 | 私有无账号新fixture。首候选902ca5…验证开关、中文值失焦保存、枚举键盘、整数1.5被拒且磁盘不变/3读回、真实action计数。最终8c90ef…补验普通菜单项无radio勾选、Escape→Down重开→Return选择首项、模式balanced↔precise真实读回、MCP箭头及enum右对齐、949×654返回图下菜单向上展开/内容可滚动，真实action描述和计数。两候选的结果分开保存，不拿旧图当新源码 |
+| 视觉/用户 | 原始JPEG返回图，宽图1435×900与窄图949×654记录的是工具返回尺寸，非已测CSS客户区或物理像素基准。无官方配对图、DPI/缩放、像素diff、物理IME或用户验收；score=null。action仍为原生title候选，工具提示形态/延迟/键盘呈现待对照，不宣称1:1 |
+
+独立复核修正了P1：旧模块raw map假设不适用于当前`/wham/accounts/check`。当前宿主返回accounts[]，OAko.YL先取account_ordering[0]对应id，页面再核当前账号与personal；缺可选数据无资格，错误DTO为读取失败。当前回归夹具已改真实数组及首项选择，不声称抓取了真实账号响应。旧通知/用量同类假设列入后续分区复核，本包未顺手修改。
+
+最终产物：`dist-artifacts/plugins-r2-settings-20261116/CodexNative.exe`，27,525,120字节，SHA-256 `8c90efd9c1a53ceef20aae97702e8a55b551e22dbab13cff771fb8e06cabc31c`；MSI与NSIS见candidate-artifacts.json。证据根`.ref/parity/12/whole-page/actual/plugin-settings-r2-20261116/`。首轮11个相关进程已退出；最终原始12项统计含一个早于父进程创建的vctip PID重用关联，按创建时序剔除后11个真实进程均退出，未终止该无关编译器进程。
+
+未推送/发布，无当前阶段托管CI结果。仍缺：Apps详情/连接/同步与关联账户权限、全局权限可见入口的官方正证据、codex_apps/hosted及HTML/MCP App设置宿主、设备访问、自有OAuth回调资格、Transport closed自动恢复及官方30秒创建超时、跨窗失效同步与完整原生/配对视觉验收。下一包继续这些同页消费者，不把本阶段候选算作插件整页完成。

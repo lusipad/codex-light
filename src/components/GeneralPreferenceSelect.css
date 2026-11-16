@@ -66,6 +66,8 @@
 .general-preference-menu > button:hover,
 .general-preference-menu > button:focus-visible { background: var(--bg-hover); outline: none; }
 .general-preference-menu > button > svg { flex-shrink: 0; }
+.general-preference-option-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.general-preference-option-description { color: var(--text-secondary); font-size: 12px; line-height: 16px; }
 
 .settings-general-group > .form-field > .general-preference-select {
   grid-column: 2;

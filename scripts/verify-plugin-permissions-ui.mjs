@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';import fs from 'node:fs';import vm from 'node:vm';import ts from 'typescript';
+let state=null,unavailable=0,changed=[],reloaded=0,scope='account-A';const refs=[],effects=[];let cursor=0,scheduled=[];
+const react={createElement:(type,props,...children)=>({type,props:props||{},children:children.flat(Infinity)}),useRef(value){const i=cursor++;return refs[i]??(refs[i]={current:value});},useState(value){const i=cursor++;return[value,()=>{}];},useEffect(callback,deps){const i=cursor++,old=effects[i];if(!old||deps.some((value,j)=>value!==old.deps[j]))scheduled.push(()=>{old?.cleanup?.();effects[i]={deps,cleanup:callback()};});}};
+const exports={};const options=[{value:'always_ask',label:'始终询问',description:'读取或更改前先询问'},{value:'ask_before_writes',label:'允许使用只读工具'},{value:'review_important_actions',label:'允许使用低风险工具'}];
+vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/components/PluginPermissionsSettings.tsx','utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.React,esModuleInterop:true}}).outputText,{exports,require:name=>{
+ if(name==='react')return react;if(name==='../bridge')return {tauriInvoke:async()=>{}};if(name==='../pluginPermissions')return {pluginPermissionOptions:options};if(name==='../pluginPermissionsState')return {usePluginPermissions:identity=>{assert.equal(identity,scope);return {state,reload:()=>reloaded++,change:value=>changed.push(value)};}};if(name==='./GeneralPreferenceSelect')return {GeneralPreferenceSelect:'GeneralPreferenceSelect'};if(name.endsWith('.css'))return {};throw Error(name);
+}});
+const render=()=>{cursor=0;const tree=exports.PluginPermissionsSettings({identity:scope,onUnavailable:()=>unavailable++});for(const run of scheduled.splice(0))run();return tree;};
+const nodes=node=>!node||typeof node!=='object'?[]:[node,...node.children.flatMap(nodes)];
+assert.equal(render().props['aria-busy'],true);
+state={snapshot:{access:'allowed',value:'full_access'},loading:false,pending:false,blocked:false,error:null};let tree=render(),select=nodes(tree).find(node=>node.type==='GeneralPreferenceSelect');
+assert.equal(select.props.options.length,3);assert.equal(select.props.options.some(option=>option.value==='full_access'),false);assert.equal(select.props.placeholder,'允许使用所有工具');select.props.onChange('always_ask');assert.deepEqual(changed,['always_ask']);
+state={...state,pending:true};assert.equal(nodes(render()).find(node=>node.type==='GeneralPreferenceSelect').props.disabled,true);
+state={...state,pending:false,blocked:true,error:'无法确认权限保存结果'};tree=render();assert.equal(nodes(tree).find(node=>node.type==='GeneralPreferenceSelect').props.disabled,true);assert.ok(nodes(tree).find(node=>node.props.role==='alert'));nodes(tree).find(node=>node.type==='button'&&node.children.includes('重试')).props.onClick();assert.equal(reloaded,1);
+state={snapshot:{access:'denied',value:null},loading:false,pending:false,blocked:false,error:null};tree=render();assert.equal(unavailable,1);assert.equal(nodes(tree).some(node=>node.type==='GeneralPreferenceSelect'),false,'denied access never exposes editable fields');
+console.log('Plugin permissions UI: server current full-access display, only three write choices, pending/unknown lock, read retry and denied redirect passed.');

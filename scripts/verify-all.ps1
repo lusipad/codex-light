@@ -370,6 +370,18 @@ try {
   Invoke-Step "Plugin detail source reference validation" { node scripts/verify-plugin-detail-reference.mjs }
   Invoke-Step "Plugin management detail presentation" { node scripts/verify-plugin-management-detail-surface.mjs }
   Invoke-Step "Plugin management detail integration" { node scripts/verify-plugin-management-detail-parent.mjs }
+  Invoke-Step "Plugin management MCP mapping" { node scripts/verify-plugin-management-mcp.mjs }
+  Invoke-Step "Plugin management MCP state" { node scripts/verify-plugin-management-mcp-state.mjs }
+  Invoke-Step "Plugin management MCP presentation" { node scripts/verify-plugin-management-mcp-ui.mjs }
+  Invoke-Step "Plugin permissions client" { node scripts/verify-plugin-permissions.mjs }
+  Invoke-Step "Plugin permissions state" { node scripts/verify-plugin-permissions-state.mjs }
+  Invoke-Step "Plugin permissions presentation" { node scripts/verify-plugin-permissions-ui.mjs }
+  Invoke-Step "Plugin-provided settings data" { node scripts/verify-plugin-provided-settings.mjs }
+  Invoke-Step "Plugin settings runtime" { node scripts/verify-plugin-settings-runtime.mjs }
+  Invoke-Step "Plugin-provided settings state" { node scripts/verify-plugin-provided-settings-state.mjs }
+  Invoke-Step "Plugin-provided settings form" { node scripts/verify-plugin-provided-settings-form.mjs }
+  Invoke-Step "Plugin-provided settings parent" { node scripts/verify-plugin-provided-settings-parent.mjs }
+  Invoke-Step "Rust plugin global permissions" { cargo test --manifest-path src-tauri/Cargo.toml plugin_permissions }
   Invoke-Step "Plugin marketplace-dialog regression" { node scripts/verify-plugin-marketplace-dialog.mjs }
   Invoke-Step "Plugin marketplace-parent regression" { node scripts/verify-plugin-marketplace-parent.mjs }
   Invoke-Step "Rust shared plugin operation regression" { cargo test --locked --manifest-path src-tauri/Cargo.toml plugin_operations }
@@ -440,6 +452,7 @@ Invoke-Step "TypeScript typecheck (tsc --noEmit)" { npx tsc --noEmit }
       "scripts/protocol-verify/verify-service-auth-support.mjs"
       "scripts/protocol-verify/verify-mcp-status.mjs"
       "scripts/protocol-verify/verify-mcp-settings-b.mjs"
+      "scripts/protocol-verify/verify-plugin-settings-structured.mjs"
       "scripts/protocol-verify/verify-hook-state.mjs"
       "scripts/protocol-verify/verify-git-generation-b.mjs"
       "scripts/protocol-verify/verify-external-import.mjs"

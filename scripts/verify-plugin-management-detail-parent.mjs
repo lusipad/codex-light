@@ -7,6 +7,7 @@ const settings = [], files = [];
 const view = harness({ plugins: { pluginRefFor: () => ({ pluginName: "Tool", marketplacePath: metadata.marketplacePath }), readPlugin: async () => metadata },
   fs: { readFileText: async path => { files.push(path); return "real contents"; } } });
 view.props.onOpenPluginSettings = section => settings.push(section);
+view.props.workspaceRoots = ["C:/first-project-root", "C:/second-project-root"];
 view.render(); await view.tick();
 try {
   const open = view.nodes(view.tree).find(node => node.props.className === "pm-managed-plugin-open");
@@ -18,6 +19,7 @@ try {
   const included = view.nodes(detail).find(node => node.type === "PluginDirectoryIncluded");
   assert.equal(included.props.presentation, "settings");
   assert.equal(included.props.detail, metadata, "all declared apps, MCP, skills and hooks reach the real included component");
+  assert.equal(included.props.mcpCwd, "C:/first-project-root", "official config read uses the first host root, not the active editor root");
   included.props.onOpenMcpSettings(); included.props.onOpenHooksSettings();
   assert.deepEqual(settings, ["connections", "hooks-settings"]);
   assert.equal(await included.props.loadSkillContents(metadata.skills[0], null), "real contents");

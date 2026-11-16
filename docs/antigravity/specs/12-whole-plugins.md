@@ -121,3 +121,29 @@ ON_USE且无显式app setup的普通提示词可先起草，不把有apps本身�
 卸载按当前执行Host与service分支区分：执行Host不额外弹确认；默认安装保护条件为remote source，不能把所有local默认策略一律解释为管理员安装。service真实库存与管理员策略、确认/取消继续独立处理。已有ACK后完整库存读回、未知结果只读恢复、scope与route ABA隔离保留；新PMD10先失败后修复。
 
 未接区域明确保留：Apps完整管理/权限与sync、自定义插件Settings工具视图、Meetings专用设置、准备状态完整consumer、MCP app/config精确映射与toggle、未实例化模板资格及服务CTA。当前CLI0.165生成schema证实AppTemplateSummary/ScheduledTaskSummary可补类型，但raw没有canSetup/rrule/group；当前包计划group hook为空，不按猜测填模板或造启用动作。没有这些区域的typed消费者不等于官方不存在，也不计本轮完整通过。
+
+### 管理MCP接线补证与开发中结果
+
+上述MCP残项已开始接线，尚未进入新原生候选验收。开工合同见当前固定基准的`management-mcp-supplement.md`；新增976185资源已核snapshot header integrity，manifest现25项。DBCl.ycq→ZRtB.yc只取host根列表第一项，无根则null；hOO0.$只转换大小写精确的`asdk_app_`前缀。np传给nh的是KtvL的完整`directoryApps`，不是应用包含区的nj投影，也不是detail.apps子集。
+
+- 本机管理详情复用真实config/read与app/list全分页；按同版manifest版本资格、空Map与首匹配顺序生成App或config行。配置首匹配不证明插件ownership，同名碰撞必须保留原对象顺序和实际key。
+- 只有真实configKey才有开关，管理员禁用、pending与结果未知时不能再写。复用config/value/write的默认用户文件、null版本与upsert；含点/引号/反斜线的key沿既有quoted path语义，不能点拆成另一服务器。
+- 点击后显示乐观状态，随后读取真实配置；失败采用实际读回状态，读回失败只读恢复，不重复写。连接、来源、详情变化及A→B→A不接旧回调。
+- 完整应用目录读取失败仍可显示真实config匹配，独立提示目录失败；配置读取失败不是空列表。被识别为App的行不生成generic开关；完整App导航、连接与权限消费者仍待下一包，不能错接MCP设置冒充。
+- 目录模式沿用既有包含项显示，本次只接settings管理模式。设置向下传host根列表，MCP读取第一根而非活动编辑目录。
+
+映射、生产hook、生产组件及父子接线回归和真实隔离协议探针已执行，详细范围见验收记录最新条目。新接线的原生GUI、物理IME、官方配对像素及真实账号仍未验；上一管理阶段EXE不能覆盖这些新源码。
+
+### 全局插件权限与结构化设置的下一包合同
+
+开发前补证文件为当前固定ref目录的`permissions-write-contract-v2.md`（20锚点）和`plugin-provided-settings-contract.md`（18锚点）。全局权限必须真实personal账户且完整service库存有CV1W.D5合格对象；模板instances空数组不等于null。无资格replace管理root，读取失败显示重试，不能以错误冒充无资格。GET settings/user读取默认，nullish使用review_important_actions；全局仅前三种权限可写，full_access仅允许显示已有值。PATCH account_user_setting固定feature/value query无body；同值/pending不写，真实读回后更新，结果未知先只读恢复。关联账户权限有独立链接owner/身份和PATCH body合同，不用全局endpoint替代。
+
+结构化设置只消费真实serverCapabilities声明及工具目录，installed且归属当前插件才显示；普通server与codex_apps/hosted分开。read({})获得严格schema/values/layout，update({set:{单字段}})成功或失败后均readback。用专用ephemeral工具上下文，不借聊天thread、不发turn；官方permissions/threadSource创建参数须先通过私有CLI探针。标量控件/菜单/blur或IME保护Enter按原始合同实现，不做任意JSON编辑器。HTML/MCP App资源设置和设备访问宿主另有依赖，不用普通iframe或假camera/mic开关替代。
+
+两项均须生产client/hook/控件回归、scope/晚回/未知结果保护和私有真实协议/离线HTTP探针。上述是本包开工预期，不表示产品已完成、当前账号服务可用或原生/像素通过。
+
+复核纠正：当前宿主`M8/readAccounts`的`/wham/accounts/check`直接返回标准化`accounts[]`，不能复用旧模块的raw map夹具。OAko.YL先按`account_ordering[0]`查数组中的`id`，页面再要求其id等于当前账号且structure=personal；缺合法可选数组/排序只代表无资格，错误类型才是读取错误。不展开“default”别名，不从其他排序账户借资格。P21–P23原始宿主/消费者锚点已补入合同；当前manifest35资源、47段本包新锚点及header integrity重新核验。旧通知/用量模块的类似假设留R5按各自真实生产链复核，本包不顺手修改。
+
+结构化设置已接普通本机MCP分支：完整状态分页发现→真实归属/能力/工具→共享ephemeral工具上下文→严格标量表单→单字段set→成功或失败后读取；菜单、IME保护Enter、原生输入约束和无参action已接线。带UI资源的action、codex_apps/hosted、MCP App宿主、设备权限、自动Transport closed恢复仍未接完。工具关闭后不冒称已取消服务器执行，在途请求结束后才释放临时线程；桥当前没有单请求30秒timeout，不冒称实现了官方timeout。
+
+全局权限已接独立管理URL及typed本机宿主读写，保留四值读取/三值写入和真实读回；完整账号/link权限未接。`permission-entry-contract.md`未找到root可见权限入口的正证据，因此未添加自造header按钮；这不是完整UI入口闭环或真实账号通过。

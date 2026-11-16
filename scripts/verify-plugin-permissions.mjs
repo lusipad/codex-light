@@ -1,0 +1,28 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+import ts from 'typescript';
+const identity={accountId:'account-A',userId:'user-A',generation:1};
+let current=identity,account={account:{type:'chatgpt'},workspaceRouting:{chatgptAccountId:'account-A'}},body={access:'allowed',value:'review_important_actions'},reads=0,writes=[],mutation,readMutation;
+const exports={};
+vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/pluginPermissions.ts','utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText,{exports,require:name=>{
+ if(name==='./config')return {accountRead:async()=>account};
+ if(name==='./chatgptService')return {serviceIdentity:async()=>current,readPluginPermissions:async()=>{reads++;readMutation?.();return body;},writePluginPermission:async(...args)=>{writes.push(args);return mutation??{verification:'confirmed',readback:{access:'allowed',value:args[0]}};}};
+ throw Error(name);
+}});
+const api=exports,signal=new AbortController().signal;
+for(const value of ['always_ask','ask_before_writes','review_important_actions','full_access'])assert.equal(api.decodePluginPermissions({access:'allowed',value},identity).value,value);
+for(const value of [null,1,{},['always_ask'],'unknown'])assert.throws(()=>api.decodePluginPermissions({access:'allowed',value},identity));
+assert.equal(api.decodePluginPermissions({access:'denied',value:null},identity).access,'denied');
+assert.throws(()=>api.decodePluginPermissions({access:'denied',value:'always_ask'},identity));
+const snapshot=await api.loadPluginPermissions(signal);assert.equal(snapshot.value,'review_important_actions');
+assert.equal((await api.savePluginPermission(snapshot,'always_ask',signal)).confirmed,true);assert.equal(writes[0][1],identity);
+await assert.rejects(api.savePluginPermission(snapshot,'full_access',signal));assert.equal(writes.length,1);
+mutation={verification:'pending',readback:null};assert.equal((await api.savePluginPermission(snapshot,'always_ask',signal)).confirmed,false);assert.equal(writes.length,2);
+mutation={verification:'confirmed',readback:{access:'allowed',value:'ask_before_writes'}};assert.equal((await api.savePluginPermission(snapshot,'always_ask',signal)).confirmed,false,'ACK marker alone cannot override actual readback');
+account={account:{type:'apiKey'}};const count=reads;assert.equal((await api.loadPluginPermissions(signal)).access,'denied');assert.equal(reads,count);
+account={account:{type:'chatgpt'},workspaceRouting:{chatgptAccountId:'wrong'}};await assert.rejects(api.loadPluginPermissions(signal),/账号/);
+account={account:{type:'chatgpt'},workspaceRouting:{chatgptAccountId:'account-A'}};readMutation=()=>{current={...identity,generation:2};};await assert.rejects(api.loadPluginPermissions(signal),/账号/);
+readMutation=undefined;current=identity;const aborted=new AbortController();aborted.abort();await assert.rejects(api.loadPluginPermissions(aborted.signal),/取消/);
+assert.equal(api.pluginPermissionOptions.length,3);assert.ok(api.pluginPermissionOptions.every(option=>option.value!=='full_access'));
+console.log('Plugin global permissions client: strict four-value read, three-value write, actual readback, API-key denial, identity generation, cancellation and no replay passed.');

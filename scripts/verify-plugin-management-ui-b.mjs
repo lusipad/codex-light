@@ -77,6 +77,7 @@ export function harness(options = {}) {
     "./PluginManagementToolbar": { PluginManagementToolbar: managementToolbar },
     "./AddPluginMarketplaceDialog": { AddPluginMarketplaceDialog: "AddPluginMarketplaceDialog" },
     "./PluginManagementDetail": { PluginManagementDetail: "PluginManagementDetail" },
+    "./PluginPermissionsSettings": { PluginPermissionsSettings: "PluginPermissionsSettings" },
     "./PluginManagementActions": { PluginManagementActions: "PluginManagementActions" },
     "../pluginManagementSkills": load("src/pluginManagementSkills.ts", { "./recommendedSkills": recommended }),
     "../pluginManagementLocation": load("src/pluginManagementLocation.ts", {}),

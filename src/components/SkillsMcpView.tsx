@@ -56,6 +56,7 @@ import { PluginManagementToolbar } from "./PluginManagementToolbar";
 import { PluginManagementDetail } from "./PluginManagementDetail";
 import { PluginManagementActions } from "./PluginManagementActions";
 import { AddPluginMarketplaceDialog, type AddPluginMarketplaceInput } from "./AddPluginMarketplaceDialog";
+import { PluginPermissionsSettings } from "./PluginPermissionsSettings";
 import {
   AppInfo,
   InstalledApp,
@@ -104,6 +105,7 @@ export interface PluginDirectoryNavigation {
 
 interface SkillsMcpViewProps {
   activeWorkspaceRoot: string;
+  workspaceRoots?: string[];
   initialTab?: SubTab;
   initialPluginMode?: "installed" | "browse";
   manageOnly?: boolean;
@@ -235,6 +237,7 @@ function pluginKey(
 
 export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   activeWorkspaceRoot,
+  workspaceRoots,
   initialTab,
   initialPluginMode = "installed",
   manageOnly = false,
@@ -1991,6 +1994,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
 
   const renderIncludedPluginContents = (presentation: "directory" | "settings") => detail ? <PluginDirectoryIncluded presentation={presentation} detail={detail} installedSkills={remoteSkills}
             connectionIdentity={connectionIdentity} workspaceRoot={activeWorkspaceRoot}
+            mcpCwd={(workspaceRoots ? workspaceRoots[0] : activeWorkspaceRoot) || undefined} onConfigUpdated={onConfigUpdated}
             skillBusy={skillWriteBusy || !!skillToggleBusy}
             onOpenMcpSettings={onOpenPluginSettings ? () => onOpenPluginSettings("connections") : undefined}
             onOpenHooksSettings={onOpenPluginSettings ? () => onOpenPluginSettings("hooks-settings") : undefined}
@@ -2015,6 +2019,9 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
   const managementVerificationPlugin = managementDetailPlugin ?? detailContextRef.current?.plugin;
 
   if (manageOnly && directoryHostUnsupported) return <div className="pm-state-body" role="alert">当前管理入口尚不支持此主机。</div>;
+  if (manageOnly && window.location && parsePluginManagementLocation(window.location.href)?.kind === "permissions") {
+    return <PluginPermissionsSettings identity={connectionIdentity} onUnavailable={() => closeManagedDetail(true)} />;
+  }
 
   return (
     <div ref={pageRef} className={`panel-page pm-extensions-page ${manageOnly ? "pm-management-page" : "pm-directory-page"}`}>

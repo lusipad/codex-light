@@ -2968,3 +2968,18 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 - 最终完整172前端退出0；非Fast标准一轮退出0、33隔离真实协议探针通过；最终来源校验是在该轮相关步骤之后补入，另跑纯函数/两入口父级回归及完整172，不用旧日志冒充补丁已跑。TypeScript及新EXE/MSI/NSIS构建通过，839最终输入未在构建开始后修改。
 - 原生和独立复审找出并修复7类实际差异，包括多余footer、local host跳转、modal位置/宽度、narrow grid、breadcrumb语义、Tab环绕、来源错配；保留失败证据，最终1435×900/955×678 GUI复验。复用既有展开hook、图标、包含项/预览、目录URL和草稿保护，无新依赖。
 - 最终EXE hash `098f95163ed5998860e2d5a766030d0c3b0206e94f42752f80097aa6f705f9e9`。严格像素、官方配对、物理IME、完整服务权限/OAuth及用户验收未通过；管理全区域残项仍在同页队列，见[最新验收记录](antigravity/acceptance/12-whole-plugins.md)。本阶段不推送/发布；最新可见CI旧run仍为账单未启动记录。
+## 2026-11-16：R2管理候选本地提交后继续MCP接线
+
+管理候选以`fcb4a8a`本地提交；839输入、三产物hash及11个记录进程退出已复核，无推送。随后按总计划同页继续，新增`pluginManagementMcp.ts`、`pluginManagementMcpState.ts`及`PluginManagementMcp.tsx`，settings包含项接真实配置读取与开关，复用现有configValueWrite和行/开关，不加依赖。目录显示路径保留。
+
+新取证消除了两个未知：hOO0.$的asdk前缀转换、DBCl.ycq的第一host根选择。再次追踪np→KtvL→nh纠正初始子集假设：MCP使用完整directoryApps，不是detail.apps或nj应用包含区投影。新增976185资源核snapshot integrity，当前manifest25项。官方首匹配配置不证明ownership；实际key以quoted path写默认用户文件，保留upsert/null版本；App映射行尚待完整管理消费者，不错跳MCP设置。
+
+175前端exit0，期间末补正后六项受影响回归均0；最终TypeScript/前端build0。真实私有配置协议探针补验value/write/upsert及literal key读回0，零turn、服务器禁用。没有本包新原生/像素/IME/真实账号或托管CI结果，未宣称整页完成。证据根为`.ref/parity/12/whole-page/actual/management-mcp-r2-20261116/`；后续继续Apps/权限、插件Settings与授权消费者，再统一新原生候选。
+
+## 2026-11-16：R2权限与普通MCP结构化设置候选
+
+- 先补同版权限与provided Settings合同，35资源/47新锚点及snapshot hash闭环。按真实能力/工具和插件归属生成普通MCP表单，复用已有bridge与菜单；专用ephemeral上下文共享读写，不借聊天thread、不发模型turn。成功/失败均readback，重试只读；无参action按真实工具、必填参数/fileParams/UI资源边界处理，HTML宿主未接时不假执行。
+- 全局权限复用宿主认证、固定URL和typed三值写链，不开放任意feature/URL。独立复核发现旧raw-map账户假设错误，按实际host M8数组及OAko.YL首项选择修正，并补真实形状/缺可选数据/错身份回归；未改旧通知/用量模块。全局可见入口未找到正证据，未造header按钮。关联账户与Apps消费者仍待后续。
+- 最终183前端exit0、全Rust763通过且无忽略/过滤；34个真实私有协议探针通过。非Fast整轮保留exit1（编译时读到开发中测试草案）；当前完整Rust已覆盖修复后的该步骤，不伪称标准整轮0。EXE/MSI/NSIS最终构建0。865输入曾完整闭环；后清四文件EOF并重验相关脚本/前端，3产物字节完全一致，不影响已验EXE。
+- 新私有无账号插件原生验证实际读写、失焦、枚举键盘、非法整数不写、action、窄窗菜单翻转/滚动；再修枚举普通项语义、enum控件宽度误用及MCP箭头对齐，最终新候选复验。初/终候选分开留档，真实后代关闭均0；排除早于父进程的无关vctip PID重用，不做强杀。最终EXE SHA256 `8c90efd9c1a53ceef20aae97702e8a55b551e22dbab13cff771fb8e06cabc31c`，证据`.ref/parity/12/whole-page/actual/plugin-settings-r2-20261116/`。
+- 没有官方配对像素/物理IME/真实账号OAuth/托管CI通过。action title工具提示、codex_apps/HTML/设备宿主、30秒请求预算和自动恢复等仍是明确残项；阶段提交不代表整页验收。未新增依赖，未推送或发布。

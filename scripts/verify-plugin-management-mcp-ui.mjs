@@ -1,0 +1,28 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import vm from "node:vm";
+import ts from "typescript";
+let state,requested,opened=0,toggled=[];
+const react={createElement:(type,props,...children)=>({type,props:props||{},children:children.flat(Infinity)})};
+const exports={};
+vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/components/PluginManagementMcp.tsx','utf8'),{compilerOptions:{jsx:ts.JsxEmit.React,target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS,esModuleInterop:true}}).outputText,{exports,require:name=>{
+  if(name==='react')return react;
+  if(name==='lucide-react')return {ChevronRight:'ChevronRight',Plug:'Plug'};
+  if(name==='../pluginManagementMcpState')return {usePluginManagementMcp:(...args)=>{requested=args;return {snapshot:state,retry:()=>{opened+=10;},toggle:(row,value)=>toggled.push([row,value])};}};
+  throw Error(`Unexpected import ${name}`);
+}});
+const props={detail:{summary:{availability:'AVAILABLE'},mcpServers:['real','missing','app']},identity:'real-source',cwd:'C:/first-root',onOpenSettings:()=>opened++};
+const render=()=>exports.PluginManagementMcp(props);
+const nodes=node=>!node||typeof node!=='object'?[]:[node,...node.children.flatMap(nodes)];
+state=null;let tree=render();assert.equal(tree.props['aria-busy'],true);assert.ok(nodes(tree).find(node=>node.props.role==='status'));
+assert.equal(requested[0],props.detail);assert.equal(requested[1],props.identity);assert.equal(requested[2],props.cwd);
+state={rows:[{kind:'config',name:'real',configKey:'actual.key',enabled:false},{kind:'config',name:'missing',configKey:null,enabled:true},{kind:'app',name:'app',app:{id:'connector_a',name:'Actual app'}}],pending:null,uncertain:false,loading:false,error:null};
+tree=render();let switches=nodes(tree).filter(node=>node.props.role==='switch');assert.equal(switches.length,1);assert.equal(switches[0].props['aria-checked'],false);
+switches[0].props.onClick();assert.equal(toggled[0][0],state.rows[0]);assert.equal(toggled[0][1],true);
+const buttons=nodes(tree).filter(node=>node.type==='button');assert.equal(buttons.length,3,'app mapping does not get a fake config toggle or MCP-settings navigation');
+buttons.find(node=>node.props['aria-label']==='real 设置').props.onClick();assert.equal(opened,1);
+state={...state,pending:'actual.key'};assert.equal(nodes(render()).find(node=>node.props.role==='switch').props.disabled,true);
+state={...state,pending:null,uncertain:true,error:'Readback failed'};tree=render();assert.ok(nodes(tree).find(node=>node.props.role==='alert'));assert.equal(nodes(tree).find(node=>node.props.role==='switch').props.disabled,true);
+nodes(tree).find(node=>node.type==='button'&&node.children.includes('重试')).props.onClick();assert.equal(opened,11);
+state={...state,uncertain:false,error:null};props.detail={...props.detail,summary:{availability:'DISABLED_BY_ADMIN'}};assert.equal(nodes(render()).find(node=>node.props.role==='switch').props.disabled,true);
+console.log('Plugin management MCP UI: actual source/cwd, loading/error/retry, exact row switch, admin/pending/uncertain disable and app/config separation passed.');

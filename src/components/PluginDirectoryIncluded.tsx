@@ -3,6 +3,8 @@ import { BookOpen, Boxes, Plug, Workflow } from "lucide-react";
 import type { PluginDetail, SkillMetadata, SkillSummary } from "../plugins";
 import { recommendedSkillDisplayName } from "../recommendedSkills";
 import { SkillPreviewDialog } from "./SkillPreviewDialog";
+import { PluginManagementMcp } from "./PluginManagementMcp";
+import { PluginProvidedSettings } from "./PluginProvidedSettings";
 import "./PluginDirectoryIncluded.css";
 
 interface PluginDirectoryIncludedProps {
@@ -18,6 +20,8 @@ interface PluginDirectoryIncludedProps {
   onTrySkill?: (skill: SkillMetadata) => boolean | Promise<boolean>;
   onToggleSkill?: (skill: SkillMetadata) => void;
   skillBusy?: boolean;
+  mcpCwd?: string;
+  onConfigUpdated?: () => void | Promise<void>;
 }
 
 // Fixed-version oszP.r8: paths and protocol names establish ownership, never display names.
@@ -43,7 +47,7 @@ const skillTitle = (skill: SkillSummary | SkillMetadata) => skill.interface?.dis
 const skillDescription = (skill: SkillSummary | SkillMetadata) => skill.interface?.shortDescription?.trim() || skill.shortDescription?.trim() || skill.description;
 
 export function PluginDirectoryIncluded({ presentation = "directory", detail, installedSkills, connectionIdentity, workspaceRoot, loadSkillContents,
-  onOpenMcpSettings, onOpenHooksSettings, onOpenSkillFile, onTrySkill, onToggleSkill, skillBusy = false }: PluginDirectoryIncludedProps) {
+  onOpenMcpSettings, onOpenHooksSettings, onOpenSkillFile, onTrySkill, onToggleSkill, skillBusy = false, mcpCwd, onConfigUpdated }: PluginDirectoryIncludedProps) {
   const identity = JSON.stringify([connectionIdentity, workspaceRoot, detail.marketplaceName, detail.marketplacePath, detail.summary.id]);
   const [selection, setSelection] = useState<{ identity: string; index: number } | null>(null);
   useEffect(() => { setSelection(null); }, [identity]);
@@ -66,13 +70,15 @@ export function PluginDirectoryIncluded({ presentation = "directory", detail, in
         <div className="pm-detail-included-copy"><span>{app.name}</span>{app.description && <p>{app.description}</p>}</div>
       </div>)}</div>
     </section>}
-    {detail.mcpServers.length > 0 && <section aria-label="MCP 服务器">
+    {detail.mcpServers.length > 0 && (presentation === "settings" ? <PluginManagementMcp key={identity} identity={identity} detail={detail}
+      cwd={mcpCwd} onOpenSettings={onOpenMcpSettings} onConfigUpdated={onConfigUpdated} /> : <section aria-label="MCP 服务器">
       <div className="pm-detail-included-heading">{sectionHeading("MCP 服务器", detail.mcpServers.length)}
         {onOpenMcpSettings && <button type="button" className="pm-detail-included-settings" onClick={onOpenMcpSettings}>设置</button>}</div>
       <div className="pm-detail-included-list">{detail.mcpServers.map(name => <div className="pm-detail-included-row" key={name}>
         <span className="pm-detail-included-icon"><Plug size={24} aria-hidden="true" /></span><span className="pm-detail-included-copy">{name}</span>
       </div>)}</div>
-    </section>}
+    </section>)}
+    {presentation === "settings" && <PluginProvidedSettings detail={detail} identity={identity} />}
     {detail.skills.length > 0 && <section aria-label="技能">
       {sectionHeading("技能", detail.skills.length)}
       <div className="pm-detail-included-list">{[...skills.filter(item => item.actual), ...skills.filter(item => !item.actual)].map(({ skill, index, actual }) => {

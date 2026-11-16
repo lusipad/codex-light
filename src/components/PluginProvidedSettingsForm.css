@@ -1,0 +1,17 @@
+.plugin-provided-settings-form { display: flex; min-width: 0; flex-direction: column; gap: 24px; }
+.plugin-provided-settings-group { min-width: 0; }
+.plugin-provided-settings-group h3 { margin: 0 0 8px; font-size: 14px; font-weight: 500; color: var(--text-primary); }
+.plugin-provided-settings-rows { display: flex; min-width: 0; flex-direction: column; }
+.plugin-provided-setting-row { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 0; }
+.plugin-provided-setting-row + .plugin-provided-setting-row { border-top: 1px solid var(--border-default); }
+.plugin-provided-setting-label { flex: 1; min-width: 0; font-size: 13px; overflow-wrap: anywhere; color: var(--text-primary); }
+.plugin-provided-setting-label p { margin: 4px 0 0; font-size: 12px; color: var(--text-secondary); }
+/* Official w-40 candidate at the reference root size; physical pixel parity remains unverified. */
+.plugin-provided-setting-input { width: 160px; max-width: 45%; flex: 0 0 auto; }
+.plugin-provided-setting-select { max-width: 45%; flex: 0 0 auto; }
+.plugin-provided-setting-input { box-sizing: border-box; min-width: 0; padding: 5px 8px; border: 1px solid var(--border-default); border-radius: 6px; background: var(--bg-secondary); color: var(--text-primary); font: inherit; }
+.plugin-provided-setting-input:focus-visible { outline: 2px solid var(--text-secondary); outline-offset: 2px; }
+.plugin-provided-setting-input:disabled, .plugin-provided-setting-action:disabled { opacity: .5; }
+.plugin-provided-setting-action, .plugin-provided-settings-error button { flex: 0 0 auto; padding: 5px 8px; border: 1px solid var(--border-default); border-radius: 6px; background: var(--bg-secondary); color: var(--text-primary); font: inherit; cursor: pointer; }
+.plugin-provided-settings-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--text-secondary); font-size: 12px; }
+.plugin-provided-settings-loading { color: var(--text-secondary); font-size: 13px; }

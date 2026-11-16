@@ -1,0 +1,7 @@
+.pm-permissions-page { min-width: 0; }
+.pm-permissions-page > header { margin-bottom: 24px; }
+.pm-permissions-page h1 { margin: 0 0 8px; font-size: 24px; line-height: 32px; font-weight: 500; }
+.pm-permissions-page > header p { margin: 0; color: var(--text-secondary); }
+.pm-permissions-page footer { margin-top: 12px; color: var(--text-secondary); font-size: 13px; }
+.pm-permissions-page footer a { color: inherit; }
+.pm-permissions-page .form-field { min-width: 0; }

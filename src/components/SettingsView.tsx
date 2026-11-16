@@ -458,6 +458,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <SkillsMcpView
               key={activeWorkspaceRoot}
               activeWorkspaceRoot={activeWorkspaceRoot}
+              workspaceRoots={workspaceRoots}
               manageOnly
               connectionIdentity={JSON.stringify([connectionIdentity, accountIdentity])}
               onConfigUpdated={onConfigUpdated}

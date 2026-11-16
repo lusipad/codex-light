@@ -6,6 +6,7 @@
 .pm-detail-included-settings { border: 0; background: transparent; color: var(--text-secondary); cursor: pointer; font: inherit; }
 .pm-detail-included-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
 .pm-detail-included-row { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 8px; }
+.pm-detail-included-row > svg:last-child { margin-left: auto; flex-shrink: 0; }
 .pm-detail-included-icon { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; flex-shrink: 0; color: var(--text-secondary); }
 .pm-detail-included-copy { display: block; min-width: 0; font-size: 14px; line-height: 20px; overflow-wrap: anywhere; }
 .pm-detail-included-copy > span:first-child { font-weight: 500; }

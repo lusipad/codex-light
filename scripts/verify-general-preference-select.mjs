@@ -34,7 +34,7 @@ function mount(overrides = {}) {
     { value: 'a', label: 'Alpha' }, { value: 'b', label: 'Beta' }], onChange: value => calls.push(value), ...overrides };
   const render = () => {
     cursor = 0; tree = module.exports.GeneralPreferenceSelect(props);
-    const all = flatten(tree), items = all.filter(n => n.props.role === 'menuitemradio');
+    const all = flatten(tree), items = all.filter(n => ['menuitemradio', 'menuitem'].includes(n.props.role));
     const buttons = items.map((item, index) => ({ focus: () => { focus = index; } }));
     for (const node of all) {
       if (node.props.ref && typeof node.props.ref === 'object') node.props.ref.current = {
@@ -159,3 +159,15 @@ console.log('PASS portal menu: composing keys ignored, measured viewport positio
   assert.ok(on.some(node => node.props.className === 'terminal-location-options'));
 }
 console.log('PASS general production consumer: service options, confirmed values, loading lock, custom menu replacing native selects');
+{
+  const view = mount({ plainItems: true, value: 'b' });
+  trigger(view).props.onClick(); view.render();
+  const items = view.all().filter(node => node.props.role === 'menuitem');
+  assert.equal(items.length, 2, 'MCP enum uses official plain items, not radio options');
+  assert.equal(view.focus(), 0, 'plain menu opens at the first item rather than selecting a radio value');
+  assert.ok(items.every(node => node.props['aria-checked'] === undefined));
+  assert.equal(flatten(menu(view)).some(node => node.type === 'Check'), false);
+  items[0].props.onClick(); view.render(); assert.deepEqual(view.calls, ['a']);
+  assert.equal(view.focus(), 'trigger');
+}
+console.log('PASS plain enum items preserve shared keyboard/focus behavior without radio selection decoration');

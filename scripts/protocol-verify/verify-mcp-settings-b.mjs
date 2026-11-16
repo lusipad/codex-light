@@ -50,7 +50,7 @@ child.stdout.on("data", data => {
 child.on("error", error => { for (const item of pending.values()) item.reject(error); });
 child.on("exit", () => { for (const item of pending.values()) item.reject(Error("MCP config probe server exited")); });
 async function rpc(method, params, allowError = false) {
-  assert.ok(["initialize", "config/read", "configRequirements/read", "config/batchWrite", "config/mcpServer/reload"].includes(method));
+  assert.ok(["initialize", "config/read", "configRequirements/read", "config/batchWrite", "config/value/write", "config/mcpServer/reload"].includes(method));
   const id = ++nextId; let timer;
   try {
     const response = await new Promise((resolve, reject) => {
@@ -82,6 +82,12 @@ try {
   };
   let servers = await write([{ keyPath: key, value: { command: "fixture-never-launch", args: ["one arg", "中文"], enabled: false, env: { "A.B": "original" } }, mergeStrategy: "replace" }]);
   assert.equal(servers[name].env["A.B"], "original");
+  const direct = await rpc("config/value/write", { keyPath: `mcp_servers.${JSON.stringify(name)}.enabled`, value: false,
+    mergeStrategy: "upsert", filePath: null, expectedVersion: null });
+  assert.equal(path.resolve(direct.filePath), path.resolve(configFile), "management toggle writes the private default user file");
+  snapshot = await read();
+  assert.equal(user(snapshot).config.mcp_servers[name].enabled, false);
+  assert.equal(user(snapshot).config.mcp_servers.fixture, undefined, "literal dotted server name does not create a nested server");
   servers = await write([{ keyPath: `${key}.env.${JSON.stringify(mapKey)}`, value: "literal", mergeStrategy: "replace" }]);
   assert.equal(servers[name].env[mapKey], "literal");
   assert.ok(snapshot.origins[`mcp_servers.${name}.env.${mapKey}`], "origins flatten literal names without quoted path escaping");
@@ -96,7 +102,7 @@ try {
   servers = await write([{ keyPath: key, value: null, mergeStrategy: "replace" }]);
   assert.equal(servers[name], undefined); assert.deepEqual(servers, preserved);
   assert.match(fs.readFileSync(configFile, "utf8"), /# MCP fixture heading/);
-  console.log("PASS isolated MCP config: quoted names/map keys, null removal, hidden/HTTP/unknown siblings, CAS conflict and explicit reload response; zero turns, disabled servers");
+  console.log("PASS isolated MCP config: default-file value/upsert with literal server key, quoted map keys, null removal, hidden/HTTP/unknown siblings, CAS conflict and explicit reload response; zero turns, disabled servers");
 } catch (error) { failure = String(error); process.exitCode = 1; console.error(error); }
 finally {
   if (child.exitCode == null) await new Promise(resolve => {

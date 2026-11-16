@@ -7,17 +7,18 @@ interface GeneralPreferenceSelectProps {
   id: string;
   label: string;
   value: string;
-  options: { value: string; label: string; title?: string }[];
+  options: { value: string; label: string; title?: string; description?: string }[];
   disabled?: boolean;
   placeholder?: string;
   className?: string;
   onChange: (value: string) => void;
   onReselect?: () => void;
+  plainItems?: boolean;
   triggerRef?: React.RefObject<HTMLButtonElement | null>;
 }
 
 export const GeneralPreferenceSelect: React.FC<GeneralPreferenceSelectProps> = ({
-  id, label, value, options, disabled = false, placeholder = "未找到目标", className = "", onChange, onReselect, triggerRef: externalTriggerRef,
+  id, label, value, options, disabled = false, placeholder = "未找到目标", className = "", onChange, onReselect, plainItems = false, triggerRef: externalTriggerRef,
 }) => {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState({ top: 0, left: 0, maxHeight: 320 });
@@ -30,7 +31,7 @@ export const GeneralPreferenceSelect: React.FC<GeneralPreferenceSelectProps> = (
 
   useEffect(() => {
     if (open && unavailable) setOpen(false);
-    else if (open) menuRef.current?.querySelectorAll<HTMLButtonElement>("[role=menuitemradio]")[initialFocus.current]?.focus();
+    else if (open) menuRef.current?.querySelectorAll<HTMLButtonElement>("[role=menuitemradio], [role=menuitem]")[initialFocus.current]?.focus();
   }, [open, unavailable]);
 
   useLayoutEffect(() => {
@@ -85,7 +86,7 @@ export const GeneralPreferenceSelect: React.FC<GeneralPreferenceSelectProps> = (
     }
     if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
     event.preventDefault();
-    const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>("[role=menuitemradio]") ?? []);
+    const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>("[role=menuitemradio], [role=menuitem]") ?? []);
     const index = items.indexOf(event.target as HTMLButtonElement);
     const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1
       : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
@@ -100,7 +101,7 @@ export const GeneralPreferenceSelect: React.FC<GeneralPreferenceSelectProps> = (
     <button type="button" id={id} ref={triggerRef} className="general-preference-trigger"
       aria-label={label} aria-haspopup="menu" aria-expanded={open && !unavailable}
       aria-controls={open && !unavailable ? `${id}-menu` : undefined} disabled={unavailable}
-      onClick={() => open ? close() : show(Math.max(0, options.findIndex(option => option.value === value)))}
+      onClick={() => open ? close() : show(plainItems ? 0 : Math.max(0, options.findIndex(option => option.value === value)))}
       onKeyDown={event => {
         if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
         if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -112,15 +113,16 @@ export const GeneralPreferenceSelect: React.FC<GeneralPreferenceSelectProps> = (
     </button>
     {open && !unavailable && createPortal(<div id={`${id}-menu`} ref={menuRef} role="menu" aria-label={label}
       className={`general-preference-menu ${className}`} style={position} onBlur={handleBlur} onKeyDown={handleMenuKeyDown}>
-      {options.map(option => <button type="button" key={option.value} role="menuitemradio" title={option.title}
-        aria-checked={value === option.value} onClick={() => {
+      {options.map(option => <button type="button" key={option.value} role={plainItems ? "menuitem" : "menuitemradio"} title={option.title}
+        aria-checked={plainItems ? undefined : value === option.value} onClick={() => {
           close();
           if (!unavailable) {
             if (option.value !== value) onChange(option.value);
             else onReselect?.();
           }
         }}>
-        <span>{option.label}</span>{value === option.value && <Check size={14} aria-hidden="true" />}
+        {option.description ? <span className="general-preference-option-copy"><span>{option.label}</span><span className="general-preference-option-description">{option.description}</span></span> : <span>{option.label}</span>}
+        {!plainItems && value === option.value && <Check size={14} aria-hidden="true" />}
       </button>)}
     </div>, document.body)}
   </div>;
