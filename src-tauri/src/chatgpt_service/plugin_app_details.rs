@@ -112,7 +112,7 @@ fn app_details_connector(app_id: &str, metadata: Value) -> ServiceResult<Value> 
     Ok(Value::Object(connector))
 }
 
-fn standalone_app(app_id: &str, content: Value) -> ServiceResult<Value> {
+pub(super) fn standalone_app(app_id: &str, content: Value) -> ServiceResult<Value> {
     let rows = content.get("apps").and_then(Value::as_array).ok_or_else(app_details_invalid)?;
     let mut selected = None;
     for row in rows {
@@ -525,7 +525,7 @@ impl ChatgptService {
             body:json!({"appId":request.app_id,"app":app,"connector":connector,"metadataError":error}) })
     }
 
-    async fn plugin_app_content_http<F, Fut, T>(&self, request: &PluginAppEntryRequest, registration: &Registration<'_>, call: &F, transport: &T) -> ServiceResult<Value>
+    pub(super) async fn plugin_app_content_http<F, Fut, T>(&self, request: &PluginAppEntryRequest, registration: &Registration<'_>, call: &F, transport: &T) -> ServiceResult<Value>
     where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>>, T: Transport {
         let identity = &request.expected_identity;
         for attempt in 0..2 {

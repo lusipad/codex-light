@@ -145,7 +145,7 @@ interface SettingsViewProps {
   onConfigUpdated: () => void;
   onNavigateRoute?: (route: MainViewRoute) => void;
   onNotify?: (message: string, type?: "success" | "error") => void;
-  onOpenPluginDirectoryDetail?: (detail: PluginDetail) => void;
+  onOpenPluginDirectoryDetail?: (detail: PluginDetail | string) => void;
   onOpenPluginMarketplace?: (marketplaceName: string) => void;
   onOpenLibraryStorage?: (tab: "all" | "images") => void;
   onRunEnvironmentCommand: (cwd: string, command: string) => void;

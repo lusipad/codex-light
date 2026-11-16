@@ -88,6 +88,14 @@ for (const route of ["/settings/plugins-settings/plugin/permissions", "/settings
 }
 for (const route of [base, "/settings/plugins-settings/permissions", "/settings/plugins-settings/plugin/apps/app", "/settings/plugins-settings/plugin/permissions?hostId=ssh"]) assert.throws(() => permissionSelection(route, "link"), /Invalid/);
 console.log("Plugin management locations: proven route tree, raw remote IDs, encoded identities, real source/host and malformed routes passed.");
+const canonicalSelection = module.exports.pluginManagementCanonicalSelectionUrl;
+const canonicalBase = "/settings/plugins-settings/raw%2Fplugin?keep=literal%2Fvalue&linkId=old#anchor";
+const canonicalSelected = new URL(canonicalSelection(canonicalBase, "link/?中文"), "https://test.invalid");
+assert.equal(canonicalSelected.pathname, "/settings/plugins-settings/raw%2Fplugin");
+assert.equal(canonicalSelected.searchParams.get("linkId"), "link/?中文");
+assert.equal(canonicalSelected.searchParams.get("keep"), "literal/value"); assert.equal(canonicalSelected.hash, "#anchor");
+assert.equal(new URL(canonicalSelection(canonicalSelected, null), "https://test.invalid").searchParams.has("linkId"), false);
+for (const route of [base, "/settings/plugins-settings/p/apps/a", "/settings/plugins-settings/p/permissions", "/settings/plugins-settings/p/sync", "/settings/plugins-settings/p/skills/a", "/settings/plugins-settings/p?hostId=local", "/settings/plugins-settings/p?pluginName=p", "/settings/plugins-settings/p?marketplacePath=x", "/settings/plugins-settings/p?remoteMarketplaceName=x"]) assert.throws(() => canonicalSelection(route, "link"), /Invalid/);
 assert.equal(syncUrl('/settings/plugins-settings/plugin?keep=drop#old', null), '/settings/plugins-settings/plugin/sync');
 const sync = new URL(syncUrl(appBase, 'actual/?中文'), 'https://test.invalid');
 assert.equal(sync.pathname, '/settings/plugins-settings/plugin/apps/connector_A/sync'); assert.equal(sync.searchParams.get('linkId'), 'actual/?中文'); assert.equal(sync.searchParams.size, 1); assert.equal(sync.hash, '');

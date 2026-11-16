@@ -515,6 +515,15 @@ export async function readPluginPermissions(identity: ServiceIdentity, signal: A
   return responseBody(result, requestId, identity);
 }
 
+export async function readPluginCanonicalRoot(pluginId: string, identity: ServiceIdentity, signal: AbortSignal): Promise<unknown> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; body: unknown }>(
+    "plugin_canonical_root_read", requestId,
+    { request: { requestId, expectedIdentity: identity, profile: browserProfile(), pluginId } }, signal,
+  );
+  return responseBody(result, requestId, identity);
+}
+
 export async function readPluginAppDetails(pluginId: string, appId: string, identity: ServiceIdentity, signal: AbortSignal): Promise<unknown> {
   const requestId = crypto.randomUUID();
   const result = await invokeService<{ requestId: string; identity: ServiceIdentity; body: unknown }>(

@@ -80,6 +80,29 @@ fn link_permission_editable(link:&Value,personal:bool,user_id:&str)->bool {
             owners.iter().any(|owner|owner["type"]=="USER" && owner["id"].as_str()==Some(user_id)))
 }
 
+pub(super) fn canonical_service_inventory(inventory:Vec<Value>)->ServiceResult<Vec<Value>> {
+    let mut ordered=Vec::new();
+    for row in inventory {
+        // The fixed durable Y suffix is openai-curated-remote; IVVU.qk hides
+        // only plan@openai-bundled, so neither qk nor curated-market filtering
+        // removes any row of this HTTP inventory. Do not apply local hide IDs.
+        let installed=if row.get("enabled").is_some() {
+            match row.get("installed_at") {
+                None|Some(Value::Null)=>Some(0),
+                Some(value)=>{
+                    let text=value.as_str().ok_or_else(link_permission_invalid)?;
+                    chrono::DateTime::parse_from_rfc3339(text).or_else(|_|chrono::DateTime::parse_from_rfc2822(text)).map(|date|date.timestamp_millis()).ok()
+                        .or_else(||chrono::NaiveDate::parse_from_str(text,"%Y-%m-%d").ok().and_then(|date|date.and_hms_opt(0,0,0)).map(|date|date.and_utc().timestamp_millis()))
+                },
+            }
+        } else {Some(0)};
+        ordered.push((row,installed));
+    }
+    // Stable order for equal dates, and invalid Date.parse/NaN keys last.
+    ordered.sort_by(|left,right|right.1.cmp(&left.1));
+    Ok(ordered.into_iter().map(|(row,_)|row).collect())
+}
+
 impl ChatgptService {
     pub async fn plugin_app_link_permissions_read<F,Fut>(&self,request:PluginAppLinkPermissionsRequest,call:F)->ServiceResult<PluginPermissionsResponse>
     where F:Fn(&'static str,Value)->Fut,Fut:Future<Output=Result<Value,String>> {
@@ -123,21 +146,8 @@ impl ChatgptService {
             let plugin=self.remote_plugin_http(&format!("/backend-api/ps/plugins/{encoded}"),HttpMethod::Get,false,identity,&common.profile,&registration,&call,transport).await?;
             validate_remote_plugin_row(&plugin)?;
             if plugin["id"].as_str()!=Some(plugin_id) {return Err(link_permission_invalid());}
-            if plugin["release"].get("requires_local_executor").is_some_and(|value|!value.is_null() && !value.is_boolean()) {return Err(link_permission_invalid());}
-            if plugin["release"]["requires_local_executor"]==true {return Err(failure("unsupported_host","Implicit local-executor app permissions require verified host support"));}
-            let inventory=self.remote_plugin_pages(identity,&common.profile,true,&registration,&call,transport).await?;
-            let candidate=link_permission_canonical(&plugin,&inventory)?;
-            if let Some(candidate)=candidate {
-                if plugin.get("canonical_app_id").is_none_or(Value::is_null) {
-                    let encoded=encode_segment(&candidate)?;
-                    let association=self.remote_plugin_http(&format!("/backend-api/ps/plugins/canonical-app/{encoded}"),HttpMethod::Get,false,identity,&common.profile,&registration,&call,transport).await;
-                    match association {
-                        Ok(value) if value["plugin_id"].as_str()==Some(plugin_id)=>Some(candidate),
-                        Err(error) if matches!(error.code,"account_changed"|"cancelled")=>return Err(error),
-                        _=>None,
-                    }
-                } else {Some(candidate)}
-            } else {None}
+            let inventory=canonical_service_inventory(self.remote_plugin_pages(identity,&common.profile,true,&registration,&call,transport).await?)?;
+            self.resolve_service_plugin_canonical(&plugin,&inventory,common,registration,call,transport).await?
         };
         let Some(app_id)=app_id else {
             self.check_share_current(identity,&registration)?;
@@ -145,6 +155,27 @@ impl ChatgptService {
         };
         self.check_share_current(identity,&registration)?;
         Ok(app_id)
+    }
+
+    pub(super) async fn resolve_service_plugin_canonical<F,Fut,T>(&self,plugin:&Value,inventory:&[Value],common:&PluginPermissionsRequest,
+        registration:&Registration<'_>,call:&F,transport:&T)->ServiceResult<Option<String>>
+    where F:Fn(&'static str,Value)->Fut,Fut:Future<Output=Result<Value,String>>,T:Transport {
+        // Fixed R4kT.b ignores requires_local_executor and returns false. This
+        // dispatch rule does not grant local-executor or native-host capability.
+        let candidate=link_permission_canonical(plugin,inventory)?;
+        let candidate=if let Some(candidate)=candidate {
+            if plugin.get("canonical_app_id").is_none_or(Value::is_null) {
+                let encoded=encode_segment(&candidate)?;
+                let association=self.remote_plugin_http(&format!("/backend-api/ps/plugins/canonical-app/{encoded}"),HttpMethod::Get,false,&common.expected_identity,&common.profile,registration,call,transport).await;
+                match association {
+                    Ok(value) if value["plugin_id"]==plugin["id"]=>Some(candidate),
+                    Err(error) if matches!(error.code,"account_changed"|"cancelled")=>return Err(error),
+                    _=>None,
+                }
+            } else {Some(candidate)}
+        } else {None};
+        self.check_share_current(&common.expected_identity,registration)?;
+        Ok(candidate)
     }
 
     pub async fn plugin_app_link_permission_write<F,Fut>(&self,request:PluginAppLinkPermissionWriteRequest,call:F)->ServiceResult<ProfileMutationResponse>
@@ -356,14 +387,18 @@ mod tests {
         assert_eq!(transport.sent.lock().unwrap().len(),3);
     }
     #[tokio::test]
-    async fn link_permissions_explicit_canonical_skips_reverse_and_local_host_is_not_guessed(){
+    async fn link_permissions_explicit_canonical_skips_reverse_and_requires_local_does_not_block_fixed_helper(){
         let mut explicit=plugin();explicit["canonical_app_id"]=json!("connector_real");
         let mut replies=vec![(200,accounts()),(200,explicit.clone()),(200,json!({"plugins":[explicit],"pagination":{"next_page_token":null}}))];replies.extend(snapshot());replies.push((200,json!({"settings":{}})));
         let mut implicit=request();implicit.app_id=None;let transport=Fixture::new(replies);
         assert_eq!(ChatgptService::default().plugin_app_link_permissions_with(implicit,rpc,&transport).await.unwrap().body["access"],"allowed");
         assert!(transport.sent.lock().unwrap().iter().all(|item|!item.url.contains("canonical-app")));
-        let mut local=plugin();local["release"]["requires_local_executor"]=json!(true);let transport=Fixture::new(vec![(200,accounts()),(200,local)]);let mut implicit=request();implicit.app_id=None;
-        assert_eq!(ChatgptService::default().plugin_app_link_permissions_with(implicit,rpc,&transport).await.err().unwrap().code,"unsupported_host");assert_eq!(transport.sent.lock().unwrap().len(),2);
+        for requires_local in [json!(true),json!("ignored-by-fixed-helper")] {
+            let mut local=plugin();local["release"]["requires_local_executor"]=requires_local;local["canonical_app_id"]=json!("connector_real");
+            let mut replies=vec![(200,accounts()),(200,local.clone()),(200,json!({"plugins":[local],"pagination":{"next_page_token":null}}))];
+            replies.extend(snapshot());replies.push((200,json!({"settings":{}})));let transport=Fixture::new(replies);let mut implicit=request();implicit.app_id=None;
+            assert_eq!(ChatgptService::default().plugin_app_link_permissions_with(implicit,rpc,&transport).await.unwrap().body["access"],"allowed");assert_eq!(transport.sent.lock().unwrap().len(),7);
+        }
     }
     #[tokio::test]
     async fn link_permissions_local_executor_flag_uses_release_not_unrelated_root_field(){

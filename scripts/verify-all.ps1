@@ -377,6 +377,9 @@ try {
   Invoke-Step "Plugin app details read client" { node scripts/verify-plugin-app-details.mjs }
   Invoke-Step "Plugin app details read state" { node scripts/verify-plugin-app-details-state.mjs }
   Invoke-Step "Plugin app details read page" { node scripts/verify-plugin-app-details-page.mjs }
+  Invoke-Step "Plugin canonical root identity and dispatch" { node scripts/verify-plugin-canonical-root.mjs }
+  Invoke-Step "Plugin canonical root production page" { node scripts/verify-plugin-canonical-root-page.mjs }
+  Invoke-Step "Plugin canonical root removal confirmation" { node scripts/verify-plugin-canonical-uninstall.mjs }
   Invoke-Step "Plugin app details parent" { node scripts/verify-plugin-app-details-parent.mjs }
   Invoke-Step "Plugin app entry client" { node scripts/verify-plugin-app-entry.mjs }
   Invoke-Step "Plugin app entry page" { node scripts/verify-plugin-app-entry-page.mjs }

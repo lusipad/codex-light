@@ -42,6 +42,8 @@ const scripts = [
   'verify-plugin-management-mcp.mjs', 'verify-plugin-management-mcp-state.mjs', 'verify-plugin-management-mcp-ui.mjs',
   'verify-plugin-permissions.mjs', 'verify-plugin-permissions-state.mjs', 'verify-plugin-permissions-ui.mjs',
   'verify-plugin-app-details.mjs',
+  'verify-plugin-canonical-root.mjs', 'verify-plugin-canonical-root-page.mjs',
+  'verify-plugin-canonical-uninstall.mjs',
   'verify-plugin-app-details-state.mjs', 'verify-plugin-app-details-page.mjs',
   'verify-plugin-app-details-parent.mjs',
   'verify-plugin-app-entry.mjs', 'verify-plugin-app-entry-page.mjs',

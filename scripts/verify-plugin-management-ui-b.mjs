@@ -79,6 +79,8 @@ export function harness(options = {}) {
     "./PluginManagementDetail": { PluginManagementDetail: "PluginManagementDetail" },
     "./PluginPermissionsSettings": { PluginPermissionsSettings: "PluginPermissionsSettings" },
     "./PluginAppDetailsPage": { PluginAppDetailsPage: "PluginAppDetailsPage" },
+    "./PluginCanonicalRootPage": { PluginCanonicalRootPage: "PluginCanonicalRootPage" },
+    "./PluginCanonicalUninstall": { PluginCanonicalUninstall: "PluginCanonicalUninstall" },
     "./PluginAppLinkPermissionsPage": { PluginAppLinkPermissionsPage: "PluginAppLinkPermissionsPage" },
     "./PluginAppSyncPage": { PluginAppSyncPage: "PluginAppSyncPage" },
     "./PluginAppEntryPage": { PluginAppEntryPage: "PluginAppEntryPage" },
@@ -223,3 +225,66 @@ upgrading.button("全部升级").props.onClick(); await upgrading.tick();
 assert.deepEqual(upgrading.calls.filter(call => call[0] === "upgrade"), [["upgrade", "market"]], "upgrade-all cannot bypass configured Git eligibility");
 upgrading.unmount();
 console.log("PASS PMB07: upgrade-all enumerates only configured eligible Git markets, never a broad unqualified backend upgrade");
+
+const rootLocation = { href: "https://test.invalid/settings/plugins-settings/raw%2Fplugin?keep=value&linkId=old#anchor" };
+const navigation = [];
+const rootHistory = { state: {}, replaceState(state, _, url) { this.state = state; rootLocation.href = new URL(url, rootLocation.href).href; navigation.push(["replace", url]); },
+  pushState(state, _, url) { this.state = state; rootLocation.href = new URL(url, rootLocation.href).href; navigation.push(["push", url]); } };
+const roots = harness({ window: { location: rootLocation, history: rootHistory } });
+const viewed = []; roots.props.onOpenPluginDirectoryDetail = value => viewed.push(value);
+roots.render(); await roots.tick();
+const rootPage = roots.nodes(roots.tree).find(node => node.type === "PluginCanonicalRootPage");
+assert.ok(rootPage, "unqualified service root must use the canonical decision reader");
+assert.equal(rootPage.props.pluginId, "raw/plugin"); assert.equal(rootPage.props.selectedLinkId, "old");
+rootPage.props.onViewDetails(); assert.deepEqual(viewed, ["raw/plugin"], "directory action uses the actual raw service identity");
+assert.equal(rootPage.props.onSelectLink("actual/?中文", "wrong"), false);
+assert.equal(rootPage.props.onSelectLink("actual/?中文", "old"), true);
+assert.equal(new URL(rootLocation.href).pathname, "/settings/plugins-settings/raw%2Fplugin");
+assert.equal(new URL(rootLocation.href).searchParams.get("keep"), "value");
+assert.equal(new URL(rootLocation.href).hash, "#anchor");
+rootPage.props.onSync("actual/?中文");
+assert.equal(new URL(rootLocation.href).pathname.endsWith("/sync"), false, "old account callbacks cannot navigate after selection changes");
+roots.render();
+const currentRoot = roots.nodes(roots.tree).find(node => node.type === "PluginCanonicalRootPage");
+currentRoot.props.onSync("actual/?中文");
+assert.equal(new URL(rootLocation.href).pathname, "/settings/plugins-settings/raw%2Fplugin/sync");
+assert.equal(new URL(rootLocation.href).searchParams.get("linkId"), "actual/?中文");
+assert.equal(rootPage.props.onSelectLink(null), false); rootPage.props.onViewDetails(); assert.equal(viewed.length, 1);
+roots.unmount();
+console.log("PASS PMB08: service roots delegate canonical dispatch; raw directory identity, root-preserving account selection, fresh sync and retired route callbacks are enforced");
+
+for (const mode of ["confirmed", "unknown", "admin", "retired"]) {
+  const location = { href: "https://test.invalid/settings/plugins-settings/raw-service" }, writes = [];
+  const history = { state: {}, replaceState(state, _, url) { this.state = state; location.href = new URL(url, location.href).href; },
+    pushState(state, _, url) { this.state = state; location.href = new URL(url, location.href).href; } };
+  const servicePlugin = { ...plugin, id: "service@remote", remotePluginId: "raw-service", remoteServicePlugin: {}, remotePolicyKnown: true,
+    installPolicy: mode === "admin" ? "INSTALLED_BY_DEFAULT" : "AVAILABLE", source: { type: "remote" } };
+  const identity = { accountId: "service-account", userId: "service-user", generation: 0 };
+  const snapshot = installed => ({ identity, unsupported: false, error: null, marketplace: { name: "service", plugins: [{ ...servicePlugin, installed }] } });
+  const h = harness({ window: { location, history }, confirm: () => { throw Error("canonical removal must use its own HTML confirmation"); },
+    remote: { loadRemotePlugins: async () => snapshot(true), mergePluginInventories: (cli, remote) => remote?.marketplace ? { marketplaces: [remote.marketplace] } : cli ?? { marketplaces: [] },
+      manageRemotePlugin: async () => { writes.push("uninstall"); return { verification: mode === "unknown" ? "unknown" : "confirmed", error: mode === "unknown" ? "delivery unknown" : null, snapshot: snapshot(mode === "unknown") }; },
+      verifyRemotePlugin: async () => { writes.push("verify"); return { verification: "confirmed", error: null, snapshot: snapshot(false) }; } } });
+  h.render(); await h.tick();
+  let root = h.nodes(h.tree).find(node => node.type === "PluginCanonicalRootPage");
+  const context = { blocked: false, accountCount: 2, isCurrent: () => true };
+  let actions = root.props.renderCanonicalActions(context), uninstall = h.nodes(actions).find(node => node.type === "PluginCanonicalUninstall");
+  assert.ok(uninstall); assert.equal(uninstall.props.accountCount, 2);
+  if (mode === "admin") { assert.equal(uninstall.props.disabled, true); assert.equal(writes.length, 0); h.unmount(); continue; }
+  assert.equal(uninstall.props.disabled, false);
+  if (mode === "retired") {
+    location.href = "https://test.invalid/settings/plugins-settings/other";
+    assert.equal(uninstall.props.isCurrent(), false); await uninstall.props.onConfirm(); assert.equal(writes.length, 0); h.unmount(); continue;
+  }
+  if (mode === "unknown") {
+    await assert.rejects(uninstall.props.onConfirm(), /尚未确认/); await h.tick();
+    assert.equal(new URL(location.href).pathname, "/settings/plugins-settings/raw-service");
+    root = h.nodes(h.tree).find(node => node.type === "PluginCanonicalRootPage"); actions = root.props.renderCanonicalActions(context);
+    assert.equal(h.nodes(actions).find(node => node.type === "PluginCanonicalUninstall").props.disabled, true);
+    const verify = h.nodes(actions).find(node => node.type === "button" && h.text(node) === "核验卸载结果"); assert.ok(verify);
+    verify.props.onClick(); await h.tick(); assert.deepEqual(writes, ["uninstall", "verify"], "unknown delivery is recovered by read, never a second uninstall");
+  } else { await uninstall.props.onConfirm(); assert.deepEqual(writes, ["uninstall"]); }
+  assert.equal(new URL(location.href).pathname, "/settings/plugins-settings", "confirmed root removal replaces the retired detail");
+  h.unmount();
+}
+console.log("PASS PMB09: canonical removal passes real account count, skips native confirm, respects admin/fresh route, replaces confirmed detail and recovers unknown delivery without replay");

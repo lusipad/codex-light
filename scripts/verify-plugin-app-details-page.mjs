@@ -24,6 +24,7 @@ const accountHelpers = load('src/pluginAppAccounts.ts', { './config': {}, './cha
 let state, retries = 0, backs = 0, plugins = 0, unavailable = 0, cursor = 0, dirty = false, renamed = 0, renameResult = true, disconnected = 0, disconnectResult = null;
 const disconnects = [];
 const slots = [], effects = [], queue = [];
+const document = { title: 'previous title' }, actionContexts = [];
 const props = { connectionIdentity: 'connection/account-A', pluginId: 'tool@market', appId: 'connector_tool', selectedLinkId: null,
   onSelectLink: (id, expected) => { if (expected !== undefined && props.selectedLinkId !== expected) return false; selections.push(id); props.selectedLinkId = id; return true; }, onRenamed: () => renamed++, onDisconnected: () => disconnected++, onBack: () => backs++, onOpenPlugin: () => plugins++, onUnavailable: () => unavailable++ };
 const react = { createElement: (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity) }), useId: () => 'accounts-heading', Fragment: 'Fragment',
@@ -33,12 +34,14 @@ const react = { createElement: (type, props, ...children) => ({ type, props: pro
   useLayoutEffect(callback, deps) { react.useEffect(callback, deps); },
 };
 const { PluginAppDetailsPage } = load('src/components/PluginAppDetailsPage.tsx', {
+  './PluginLogo': { PluginLogo: 'PluginLogo' },
+  './PluginDirectoryDetail': { usePluginDetailExpansion: () => ({ ref: { current: null }, expanded: false, overflowing: false, maxHeight: 48, fullHeight: 64, toggle() {} }) },
   './PluginAppSyncEntry': { PluginAppSyncEntry: 'PluginAppSyncEntry' },
   react, '../pluginAppDetails': helpers, '../pluginAppAccounts': accountHelpers, './PluginAccountMenu': { PluginAccountMenu: 'PluginAccountMenu' }, './PluginAccountRenameDialog': { PluginAccountRenameDialog: 'PluginAccountRenameDialog' }, '../pluginAppDetailsState': { usePluginAppDetails: (...args) => {
     assert.deepEqual(args, [props.connectionIdentity, props.pluginId, props.appId]);
     return { state, reload: () => retries++, rename: async (...args) => { writes.push(args); return renameResult; }, disconnect: async id => { disconnects.push([id, props.selectedLinkId]); return typeof disconnectResult === 'function' ? disconnectResult() : disconnectResult; }, clearRenameError: () => {} };
   } },
-});
+}, { document });
 const nodes = node => !node || typeof node !== 'object' ? [] : [node, ...node.children.flatMap(nodes)];
 const text = node => typeof node === 'string' ? node : !node || typeof node !== 'object' ? '' : node.children.map(text).join('');
 const render = () => { let tree, turn = 0; do { assert.ok(turn++ < 15); dirty = false; cursor = 0; tree = PluginAppDetailsPage(props); queue.splice(0).forEach(run => run()); } while (dirty); return tree; };
@@ -145,3 +148,34 @@ props.selectedLinkId = 'external';
 resolveDisconnect({ identity: state.snapshot.identity, details: { ...actionDetails, links: [] } }); await pendingDisconnect;
 assert.equal(props.selectedLinkId, 'external', 'post-delete fallback cannot overwrite a newer explicit URL selection');
 console.log('App account menus: target-first selection, confirmed healthy/last fallback, unknown read-only recovery, no duplicate DELETE and no stale selection overwrite passed.');
+
+const canonicalRoot = { pluginHeader: { id: 'raw-plugin', name: 'Plugin header name', version: '1.2', shortDescription: '  Canonical description  ', logoUrl: 'https://example.test/light.png', logoUrlDark: 'https://example.test/dark.png' }, hostedApp: { name: 'Hosted App', description: 'Hosted description', logoUrl: null, logoUrlDark: null } };
+let views = 0;
+props.canonicalRoot = canonicalRoot; props.onViewDetails = () => views++; props.renderCanonicalActions = context => { actionContexts.push(context); return react.createElement('button', { disabled: context.blocked }, 'Actual action'); };
+set(actionDetails); tree = render();
+assert.equal(text(nodes(tree).find(node => node.type === 'h1')), 'Hosted App'); assert.equal(document.title, 'Hosted App');
+assert.match(text(tree), /Canonical description/); assert.ok(!text(nodes(tree).find(node => node.type === 'nav')).includes('真实插件'));
+assert.equal(text(nodes(tree).find(node => node.type === 'nav')), '插件设置/Hosted App');
+const logo = nodes(tree).find(node => node.type === 'PluginLogo'); assert.ok(logo); assert.equal(logo.props.plugin.interface.logoUrl, canonicalRoot.pluginHeader.logoUrl); assert.equal(logo.props.plugin.interface.logoUrlDark, canonicalRoot.pluginHeader.logoUrlDark);
+assert.equal('installed' in logo.props.plugin, false); assert.equal('source' in logo.props.plugin, false);
+nodes(tree).find(node => node.type === 'button' && text(node) === '查看详情').props.onClick(); assert.equal(views, 1);
+assert.equal(actionContexts.at(-1).blocked, false); assert.equal(actionContexts.at(-1).accountCount, 1);
+const liveRootContext = actionContexts.at(-1); assert.equal(liveRootContext.isCurrent(), true);
+for (const extra of [{ loading: true }, { blocked: true }, { error: 'read failed' }, { pendingLinkId: 'one' }]) { set(actionDetails, extra); render(); assert.equal(actionContexts.at(-1).blocked, true); }
+for (const links of [null, [link({ visibility: 'HIDDEN' })], [link({ id: 'implicit_link::system' })]]) { set({ ...actionDetails, links }); render(); assert.equal(actionContexts.at(-1).blocked, true); assert.equal(actionContexts.at(-1).accountCount, 0); }
+set({ ...actionDetails, linksError: { code: 'network', message: 'private' } }); render(); assert.equal(actionContexts.at(-1).blocked, true);
+assert.equal(liveRootContext.isCurrent(), false, 'previously enabled action context must reread the current links error');
+set({ ...actionDetails, links: [link({ id: 'implicit_link::system' })] }); render(); assert.equal(liveRootContext.isCurrent(), false);
+set(actionDetails); render(); assert.equal(liveRootContext.isCurrent(), true, 'same-scope complete links may restore the action without borrowing stale blocked state');
+props.canonicalRoot = { ...canonicalRoot, hostedApp: { ...canonicalRoot.hostedApp, name: '' }, pluginHeader: { ...canonicalRoot.pluginHeader, shortDescription: '  ' } };
+set(actionDetails); tree = render(); assert.equal(text(nodes(tree).find(node => node.type === 'h1')), ''); assert.match(text(tree), /Hosted description/);
+props.canonicalRoot = { ...canonicalRoot, hostedApp: null, pluginHeader: { ...canonicalRoot.pluginHeader, shortDescription: null } };
+tree = render(); assert.equal(text(nodes(tree).find(node => node.type === 'h1')), '真实应用'); assert.match(text(tree), /真实说明/);
+const oldRootLink = nodes(tree).find(node => node.type === 'button' && text(node) === '查看详情'), oldRootBack = nodes(tree).find(node => node.type === 'button' && text(node) === '插件设置'), oldRootKey = tree.props.key;
+props.canonicalRoot = undefined; tree = render(); assert.equal(nodes(tree).some(node => node.type === 'PluginLogo'), false); assert.equal(nodes(tree).some(node => node.type === 'button' && text(node) === '查看详情'), false);
+assert.equal(liveRootContext.isCurrent(), false);
+assert.equal(text(nodes(tree).find(node => node.type === 'nav')), '插件设置/真实插件/真实应用'); assert.notEqual(tree.props.key, oldRootKey);
+oldRootLink.props.onClick(); const beforeOldBack = backs; oldRootBack.props.onClick(); assert.equal(views, 1); assert.equal(backs, beforeOldBack);
+props.canonicalRoot = canonicalRoot; render(); oldRootLink.props.onClick(); assert.equal(views, 1, 'returning to canonical mode never revives earlier callbacks');
+state = { snapshot: null, loading: true, blocked: true, pendingLinkId: null, error: null }; tree = render(); assert.equal(nodes(tree).some(node => node.type === 'h1'), false);
+console.log('Canonical App root: actual nullish title, trimmed description precedence, source logo data, root-only breadcrumb/actions, complete links safety locks and mode/ABA retirement passed.');

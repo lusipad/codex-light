@@ -45,7 +45,9 @@ import { PluginPreparationPanel } from "./PluginPreparationPanel";
 import { RecommendedSkillsPanel } from "./RecommendedSkillsPanel";
 import { recommendedSkillDisplayName, readRecommendedSkills, type RecommendedSkill } from "../recommendedSkills";
 import { filterManagedSkills } from "../pluginManagementSkills";
-import { parsePluginManagementLocation, pluginManagementAppSelectionUrl, pluginManagementAppSyncUrl, pluginManagementAppUrl, pluginManagementDetailUrl, pluginManagementPermissionSelectionUrl, pluginManagementRootUrl } from "../pluginManagementLocation";
+import { parsePluginManagementLocation, pluginManagementAppSelectionUrl, pluginManagementCanonicalSelectionUrl, pluginManagementAppSyncUrl, pluginManagementAppUrl, pluginManagementDetailUrl, pluginManagementPermissionSelectionUrl, pluginManagementRootUrl } from "../pluginManagementLocation";
+import { PluginCanonicalRootPage } from "./PluginCanonicalRootPage";
+import { PluginCanonicalUninstall } from "./PluginCanonicalUninstall";
 import { SkillPreviewDialog } from "./SkillPreviewDialog";
 import { PluginDirectoryDetail } from "./PluginDirectoryDetail";
 import { PluginDirectoryIncluded } from "./PluginDirectoryIncluded";
@@ -125,7 +127,7 @@ interface SkillsMcpViewProps {
   onOpenSkillFile?: (path: string) => boolean | Promise<boolean>;
   onTrySkill?: (skill: { name: string; path: string; defaultPrompt?: string | null }) => boolean | Promise<boolean>;
   onTryPlugin?: (plugin: PluginSummary, prompt: string) => boolean | Promise<boolean>;
-  onOpenPluginDirectoryDetail?: (detail: PluginDetail) => void;
+  onOpenPluginDirectoryDetail?: (detail: PluginDetail | string) => void;
   onOpenPluginSettings?: (section: "connections" | "hooks-settings") => void;
 }
 
@@ -1209,13 +1211,15 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     setRuntimeWarning(errors.length ? `插件变更已确认，但运行时刷新失败：${errors.join("；")}` : null);
     return errors.length === 0;
   };
-  const handleRemotePlugin = async (plugin: PluginSummary, operation: RemoteOperation, verifyOnly = false) => {
+  const handleRemotePlugin = async (plugin: PluginSummary, operation: RemoteOperation, verifyOnly = false,
+    confirmedRemoval?: { isCurrent: () => boolean; onConfirmed: () => void }) => {
+    if (confirmedRemoval && !confirmedRemoval.isCurrent()) return;
     const identity = servicePlugins?.identity;
     if (!identity || !remoteId(plugin)) return;
     const key = remoteIntentKey(identity, plugin), actionKey = pluginActionKey(plugin), saved = remoteIntents.get(key);
     if (saved?.busy || pluginActionRef.current.has(actionKey)) return;
     if (!verifyOnly && (!remoteAvailable(plugin) || saved?.pending || plugin.availability === "DISABLED_BY_ADMIN" && operation !== "uninstall" || operation === "uninstall" && plugin.installed && plugin.installPolicy === "INSTALLED_BY_DEFAULT")) return;
-    if (!verifyOnly && operation === "uninstall" && !confirm(`确定要卸载插件「${pluginDisplayName(plugin)}」吗？`)) return;
+    if (!verifyOnly && operation === "uninstall" && !confirmedRemoval && !confirm(`确定要卸载插件「${pluginDisplayName(plugin)}」吗？`)) return;
     const context = pluginContextRef.current, controller = new AbortController();
     const intent: RemoteIntent = { plugin: verifyOnly && saved ? saved.plugin : plugin, operation: saved?.pending ? saved.operation : operation, identity, pending: true, busy: true, error: null, refreshError: null };
     saveRemoteIntent(key, intent); setRemoteOperations(current => ({ ...current, [key]: intent }));
@@ -1231,6 +1235,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       }
       if (result.verification === "confirmed") {
         notify(intent.operation === "uninstall" ? `已卸载 ${pluginDisplayName(plugin)}` : `${pluginDisplayName(plugin)} 插件已${intent.operation === "enable" ? "启用" : "禁用"}`);
+        if (intent.operation === "uninstall" && confirmedRemoval?.isCurrent()) confirmedRemoval.onConfirmed();
         try {
           const refreshed = await refreshRemoteRuntime();
           const snapshot = result.snapshot;
@@ -2137,9 +2142,7 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
       }} onBack={() => closeManagedDetail()} onOpenPlugin={() => openPlugin()} onUnavailable={() => openPlugin(true)} />;
   }
 
-  return (
-    <div ref={pageRef} className={`panel-page pm-extensions-page ${manageOnly ? "pm-management-page" : "pm-directory-page"}`}>
-      {manageOnly && detailKey !== null && <section className="pm-managed-detail" aria-label="插件管理详情">
+  const managedDetail = manageOnly && detailKey !== null ? <section className="pm-managed-detail" aria-label="插件管理详情">
         {detail && !detailLoading && !detailError ? <PluginManagementDetail
           key={JSON.stringify([installScope, detail.marketplaceName, detail.marketplacePath, detail.summary.id])}
           identity={JSON.stringify([installScope, detail.marketplaceName, detail.marketplacePath, detail.summary.id])}
@@ -2161,7 +2164,66 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
           <button type="button" className="pm-catalog-back" onClick={() => closeManagedDetail()}>插件设置</button>
           {renderPluginDetail()}
         </>}
-      </section>}
+      </section> : null;
+
+  if (managementAppRoute?.kind === "plugin" && managementAppRoute.section === "detail" && managementAppRoute.hostId === null &&
+      managementAppRoute.appId === null && managementAppRoute.skillName === null && managementAppRoute.pluginName === null &&
+      managementAppRoute.marketplacePath === null && managementAppRoute.remoteMarketplaceName === null) {
+    const pluginId = managementAppRoute.pluginId!;
+    const selectedLinkId = new URL(window.location.href).searchParams.get("linkId");
+    const isCurrentRoot = () => {
+      const route = parsePluginManagementLocation(window.location.href);
+      return isPluginContextCurrent(managementAppContext) && route?.kind === "plugin" && route.section === "detail" && route.pluginId === pluginId &&
+        route.hostId === null && route.appId === null && route.skillName === null && route.pluginName === null && route.marketplacePath === null && route.remoteMarketplaceName === null;
+    };
+    const plugin = directoryPluginInstallation(pluginId, mergedInstalledData).plugin;
+    return <PluginCanonicalRootPage key={JSON.stringify([connectionIdentity, pluginId])}
+      connectionIdentity={connectionIdentity} pluginId={pluginId} selectedLinkId={selectedLinkId}
+      onBack={() => { if (isCurrentRoot()) closeManagedDetail(); }}
+      onViewDetails={onOpenPluginDirectoryDetail ? () => { if (isCurrentRoot()) onOpenPluginDirectoryDetail(pluginId); } : undefined}
+      onSelectLink={(linkId, expectedLinkId) => {
+        if (!isCurrentRoot() || expectedLinkId !== undefined && new URL(window.location.href).searchParams.get("linkId") !== expectedLinkId) return false;
+        updateDirectoryUrl(pluginManagementCanonicalSelectionUrl(window.location.href, linkId), true); return true;
+      }}
+      onSync={linkId => {
+        if (!isCurrentRoot() || new URL(window.location.href).searchParams.get("linkId") !== selectedLinkId) return;
+        updateDirectoryUrl(pluginManagementAppSyncUrl(window.location.href, linkId)); directoryDetailRetry.current?.();
+      }}
+      onRenamed={() => { if (isCurrentRoot()) onNotify?.("账户已重命名", "success"); }}
+      onDisconnected={() => {
+        if (!isCurrentRoot()) return;
+        onNotify?.("账户已断开连接", "success");
+        const refresh = Promise.all([refreshRemoteRuntime(), loadServicePlugins()]);
+        const runtimeGeneration = runtimeRequest.current, serviceGeneration = serviceRequest.current;
+        void refresh.then(results => {
+          if (isCurrentRoot() && runtimeGeneration === runtimeRequest.current && serviceGeneration === serviceRequest.current && results.some(result => !result)) onNotify?.("账户已更新，但无法刷新账户列表", "error");
+        });
+      }}
+      renderCanonicalActions={context => plugin ? <>
+        {plugin.installed && <PluginCanonicalUninstall name={pluginDisplayName(plugin)} accountCount={context.accountCount}
+        disabled={context.blocked || busyPluginIds.has(pluginActionKey(plugin)) || unconfirmedUninstalls.has(plugin.id) ||
+          plugin.installPolicy === "INSTALLED_BY_DEFAULT" || !remoteAvailable(plugin) || !!remoteStatus(plugin)?.pending || !!remoteStatus(plugin)?.busy}
+        isCurrent={() => isCurrentRoot() && context.isCurrent()}
+        onConfirm={async () => {
+          let confirmed = false;
+          await handleRemotePlugin(plugin, "uninstall", false, {
+            isCurrent: () => isCurrentRoot() && context.isCurrent(), onConfirmed: () => { confirmed = true; closeManagedDetail(true); },
+          });
+          if (!confirmed && isCurrentRoot()) throw Object.assign(Error("卸载结果尚未确认，请核验卸载结果。"), { code: "unconfirmed_removal" });
+        }} />}
+        {remoteStatus(plugin)?.pending && <button type="button" className="secondary-btn-sm"
+          disabled={context.blocked || !!remoteStatus(plugin)?.busy}
+          onClick={() => { if (isCurrentRoot() && context.isCurrent()) void handleRemotePlugin(plugin, "uninstall", true, {
+            isCurrent: () => isCurrentRoot() && context.isCurrent(), onConfirmed: () => closeManagedDetail(true),
+          }); }}>核验卸载结果</button>}
+      </> : null}>
+      {managedDetail}
+    </PluginCanonicalRootPage>;
+  }
+
+  return (
+    <div ref={pageRef} className={`panel-page pm-extensions-page ${manageOnly ? "pm-management-page" : "pm-directory-page"}`}>
+      {managedDetail}
       {(!manageOnly && (subTab !== "plugins" || detailKey === null) || manageOnly && detailKey === null) && <div className="panel-page-header">
         <div>
           <h2>{manageOnly ? "插件" : subTab === "skills" ? "技能" : "插件"}</h2>

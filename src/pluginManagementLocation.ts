@@ -106,6 +106,17 @@ export function pluginManagementPermissionSelectionUrl(base: string | URL, linkI
   return `${url.pathname}${url.search}${url.hash}`;
 }
 
+/** Canonical App details keep the service plugin root while selecting an account. */
+export function pluginManagementCanonicalSelectionUrl(base: string | URL, linkId: string | null): string {
+  const location = checkedBase(base);
+  if (location.kind !== "plugin" || location.section !== "detail" || location.hostId !== null || location.appId !== null || location.skillName !== null ||
+      location.pluginName !== null || location.marketplacePath !== null || location.remoteMarketplaceName !== null) throw new Error("Invalid canonical plugin selection location");
+  const url = managementUrl(base)!;
+  if (linkId === null) url.searchParams.delete("linkId");
+  else { encodedSegment(linkId); url.searchParams.set("linkId", linkId); }
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
 /** t3('sync') constructs only the current actual linkId, not the old query. */
 export function pluginManagementAppSyncUrl(base: string | URL, linkId: string | null): string {
   const location = checkedBase(base);

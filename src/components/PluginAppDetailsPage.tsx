@@ -5,6 +5,8 @@ import { usePluginAppDetails } from "../pluginAppDetailsState";
 import { PluginAccountRenameDialog } from "./PluginAccountRenameDialog";
 import { PluginAccountMenu } from "./PluginAccountMenu";
 import { PluginAppSyncEntry } from "./PluginAppSyncEntry";
+import { PluginLogo } from "./PluginLogo";
+import { usePluginDetailExpansion } from "./PluginDirectoryDetail";
 import "./PluginManagementDetail.css";
 import "./PluginAppDetailsPage.css";
 
@@ -20,6 +22,12 @@ interface PluginAppDetailsPageProps {
   onRenamed?: () => void;
   onDisconnected?: () => void;
   onSync?: (linkId: string | null) => void;
+  canonicalRoot?: {
+    pluginHeader: { id: string; name: string; version: string | null; shortDescription: string | null; logoUrl: string | null; logoUrlDark: string | null };
+    hostedApp: { name: string; description: string | null; logoUrl: string | null; logoUrlDark: string | null } | null;
+  };
+  onViewDetails?: () => void;
+  renderCanonicalActions?: (context: { blocked: boolean; accountCount: number; isCurrent: () => boolean }) => React.ReactNode;
 }
 
 function accountIdentity(link: PluginAppLink, appName: string): string {
@@ -28,16 +36,16 @@ function accountIdentity(link: PluginAppLink, appName: string): string {
     : "账户");
 }
 
-export function PluginAppDetailsPage({ connectionIdentity, pluginId, appId, onBack, onOpenPlugin, onUnavailable, selectedLinkId, onSelectLink, onRenamed, onDisconnected, onSync }: PluginAppDetailsPageProps) {
+export function PluginAppDetailsPage({ connectionIdentity, pluginId, appId, onBack, onOpenPlugin, onUnavailable, selectedLinkId, onSelectLink, onRenamed, onDisconnected, onSync, canonicalRoot, onViewDetails, renderCanonicalActions }: PluginAppDetailsPageProps) {
   const { state, reload, rename, disconnect, clearRenameError } = usePluginAppDetails(connectionIdentity, pluginId, appId);
   const unavailable = useRef(onUnavailable); unavailable.current = onUnavailable;
-  useEffect(() => { if (state.unavailable) unavailable.current(); }, [state.unavailable]);
   const accountsId = useId(), details = state.snapshot?.details;
-  const scope = JSON.stringify([connectionIdentity, pluginId, appId]);
+  const scope = JSON.stringify([connectionIdentity, pluginId, appId, Boolean(canonicalRoot), details?.appId ?? null, state.snapshot?.identity.accountId, state.snapshot?.identity.userId, state.snapshot?.identity.generation]);
   const current = useRef({ scope, version: 0, mounted: false, state });
   const version = current.current.version + (current.current.scope === scope ? 0 : 1);
   current.current = { scope, version, mounted: current.current.mounted, state };
   const active = () => current.current.mounted && current.current.scope === scope && current.current.version === version;
+  useEffect(() => { if (state.unavailable && active()) unavailable.current(); }, [scope, state.unavailable]);
   const sequence = useRef(0);
   const [renaming, setRenaming] = useState<{ scope: string; version: number; linkId: string; token: number } | null>(null);
   const disconnectAttempt = useRef<{ scope: string; version: number; linkId: string; running: boolean } | null>(null);
@@ -51,7 +59,10 @@ export function PluginAppDetailsPage({ connectionIdentity, pluginId, appId, onBa
     try { persistPluginAppSelection(snapshot.identity, snapshot.details.connector.id, selectedLinkId); }
     catch (error) { console.warn("无法保存账户选择。", error); }
   }, [scope, state.snapshot?.identity.accountId, state.snapshot?.identity.userId, details?.connector.id, selectedLinkId]);
-  const title = details?.connector.name ?? "";
+  const title = canonicalRoot?.hostedApp?.name ?? details?.connector.name ?? "";
+  const description = canonicalRoot ? canonicalRoot.pluginHeader.shortDescription?.trim() || canonicalRoot.hostedApp?.description || details?.connector.description : details?.connector.description;
+  const expansion = usePluginDetailExpansion(`${scope}\0${description ?? ""}`, 3), descriptionId = `${accountsId}-description`;
+  useEffect(() => { if (!details) return; const previous = document.title; document.title = title; return () => { document.title = previous; }; }, [scope, title, Boolean(details)]);
   const selected = details?.links ? selectPluginAppLinks(details, selectedLinkId) : null;
   const accounts = selected?.accounts ?? [];
   // The shared account section consumes its explicit selection even when the
@@ -122,17 +133,30 @@ export function PluginAppDetailsPage({ connectionIdentity, pluginId, appId, onBa
     setRenaming(value => value?.token === selection.token ? null : value);
     clearRenameError();
   };
-  const retry = () => { void reload(); };
-  return <article className="pmd-detail" aria-busy={state.loading || pending}>
+  const retry = () => { if (active() && !current.current.state.loading && current.current.state.pendingLinkId == null) void reload(); };
+  const canonicalActionBlocked = () => {
+    const actual = current.current.state, links = actual.snapshot?.details.links;
+    return actual.loading || actual.pendingLinkId != null || actual.blocked || Boolean(actual.error || actual.writeError || actual.snapshot?.details.linksError) ||
+      links == null || links.some(link => link.visibility === "HIDDEN" || link.id.startsWith("implicit_link::"));
+  };
+  const canonicalActions = canonicalRoot && details && renderCanonicalActions?.({ accountCount: accounts.length,
+    blocked: canonicalActionBlocked() || selection !== null, isCurrent: () => active() && !canonicalActionBlocked() });
+  const heading = <><h1>{title}</h1>
+    {description && (canonicalRoot ? <div className="pmd-description"><div id={descriptionId} ref={expansion.ref} className="pmd-description-text" style={{ maxHeight: expansion.expanded ? expansion.fullHeight : expansion.maxHeight }}>{description}</div>
+      {(expansion.overflowing || expansion.expanded) && <button type="button" className="pmd-expand" aria-controls={descriptionId} aria-expanded={expansion.expanded} onClick={() => { if (active()) expansion.toggle(); }}>{expansion.expanded ? "收起" : "展开"}</button>}</div>
+      : <p className="pmd-description">{description}</p>)}</>;
+  return <article key={scope} className="pmd-detail" aria-busy={state.loading || pending}>
     <nav className="pmd-breadcrumb" aria-label="面包屑导航">
-      <button type="button" onClick={onBack}>插件设置</button>
-      {details && <><span aria-hidden="true">/</span><button type="button" onClick={onOpenPlugin}>{details.pluginName}</button>
+      <button type="button" onClick={() => { if (active()) onBack(); }}>插件设置</button>
+      {details && <>{!canonicalRoot && <><span aria-hidden="true">/</span><button type="button" onClick={() => { if (active()) onOpenPlugin(); }}>{details.pluginName}</button></>}
         <span aria-hidden="true">/</span><span aria-current="page">{title}</span></>}
     </nav>
-    {details && <header className="pmd-header"><div className="pmd-heading">
-      <h1>{title}</h1>
-      {details.connector.description && <p className="pmd-description">{details.connector.description}</p>}
-    </div></header>}
+    {details && <header className="pmd-header"><div className={canonicalRoot ? "pmd-identity" : "pmd-heading"}>
+      {canonicalRoot && <PluginLogo className="pmd-logo" plugin={{ id: canonicalRoot.pluginHeader.id, remotePluginId: canonicalRoot.pluginHeader.id,
+        interface: { logoUrl: canonicalRoot.pluginHeader.logoUrl, logoUrlDark: canonicalRoot.pluginHeader.logoUrlDark } }} />}
+      {canonicalRoot ? <div className="pmd-heading">{heading}</div> : heading}
+    </div>{canonicalRoot && (onViewDetails || canonicalActions) && <div className="pmd-actions">
+      {onViewDetails && <button type="button" className="secondary-btn-sm" onClick={() => { if (active()) onViewDetails(); }}>查看详情</button>}{canonicalActions}</div>}</header>}
     {state.loading && !details && <p role="status">正在加载…</p>}
     {(state.error || state.writeError) && <div role="alert"><p>{state.writeError || state.error}</p>
       <button type="button" className="secondary-btn-sm" disabled={state.loading || pending} onClick={retry}>重试</button>

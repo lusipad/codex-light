@@ -439,17 +439,25 @@ export const App: React.FC = () => {
     if (personalizationNavigationGuardRef.current?.(apply) === false) return;
     apply();
   }, []);
-  const handleOpenManagedPluginDirectory = useCallback((detail: PluginDetail) => {
+  const handleOpenManagedPluginDirectory = useCallback((detail: PluginDetail | string) => {
     const origin = window.location.href;
     const management = parsePluginManagementLocation(origin);
-    if (activeRouteRef.current !== "settings" || management?.kind !== "plugin" || management.hostId !== "local") return;
-    const { summary, marketplacePath, marketplaceName } = detail;
-    if (!summary.id.trim()) return;
-    const pluginName = marketplacePath ? summary.name : summary.remotePluginId;
-    if (!pluginName?.trim() || (marketplacePath ? !marketplacePath.trim() : !marketplaceName.trim())) return;
-    const target = pluginDirectoryDetailUrl("/plugins", { pluginId: summary.id, pluginName,
-      hostId: management.hostId, marketplacePath: marketplacePath || null,
-      remoteMarketplaceName: marketplacePath ? null : marketplaceName });
+    if (activeRouteRef.current !== "settings" || management?.kind !== "plugin") return;
+    let target: string;
+    if (typeof detail === "string") {
+      if (management.hostId !== null || management.section !== "detail" || management.appId !== null || management.skillName !== null ||
+          management.pluginId !== detail || management.pluginName !== null || management.marketplacePath !== null || management.remoteMarketplaceName !== null) return;
+      target = pluginDirectoryDetailUrl("/plugins", { pluginId: detail, pluginName: detail, remoteMarketplaceName: "chatgpt-workspace", hostId: "durable" });
+    } else {
+      if (management.hostId !== "local") return;
+      const { summary, marketplacePath, marketplaceName } = detail;
+      if (!summary.id.trim()) return;
+      const pluginName = marketplacePath ? summary.name : summary.remotePluginId;
+      if (!pluginName?.trim() || (marketplacePath ? !marketplacePath.trim() : !marketplaceName.trim())) return;
+      target = pluginDirectoryDetailUrl("/plugins", { pluginId: summary.id, pluginName,
+        hostId: management.hostId, marketplacePath: marketplacePath || null,
+        remoteMarketplaceName: marketplacePath ? null : marketplaceName });
+    }
     let applied = false;
     const apply = () => {
       if (applied || activeRouteRef.current !== "settings" || window.location.href !== origin) return;

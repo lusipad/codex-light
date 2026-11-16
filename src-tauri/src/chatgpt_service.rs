@@ -16,6 +16,8 @@ mod plugin_permissions;
 pub use plugin_permissions::{PluginPermissionsRequest, PluginPermissionsResponse, PluginPermissionsWriteRequest};
 mod plugin_app_details;
 pub use plugin_app_details::{PluginAppDetailsRequest, PluginAppEntryRequest};
+mod plugin_canonical_root;
+pub use plugin_canonical_root::PluginCanonicalRootRequest;
 mod plugin_app_accounts;
 pub use plugin_app_accounts::PluginAppRenameRequest;
 mod plugin_app_disconnect;

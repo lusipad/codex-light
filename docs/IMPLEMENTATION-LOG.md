@@ -3049,3 +3049,32 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 本阶段复用原同步snapshot、HTTP传输、实际账户选择及父确认，不新增依赖或跨请求ledger；新增选择仅在当前写请求内按query/cursor分组重读来源。源码可演示入口是具备真实Github资格的插件App详情→同步→已同步的代码仓库；本轮未执行真实配置写入/停止或OAuth。零选择移除内容仅在已有授权场景确认，不应以toast替代结果。
 
 下一仍在第02批：隐式canonical根App管理面（先纠正已证的常false宿主helper被误用为门禁及generic回退），再独立管理应用/授权/特殊宿主残项和第03批整页候选。阶段本地提交，无推送或发布，不升整页G5；剩余wire支持边界、严格读回/缓存时序和原生像素待验继续保留。
+
+## 2026-11-16 R2 canonical根分派与管理头部阶段（4219f89之后）
+
+本单元仍属于第02批，不能据此宣布完整App管理或插件整页完成。同版静态来源为8文件/59个0-based UTF-16锚点/37中文键；实际重新核对提取文件大小、SHA-256和全部片段一致，未重新计算整包hash，也未作官方运行时对照。原始合同/锚点见reference的app-canonical-root-*；本轮证据为`.ref/parity/12/whole-page/actual/plugin-canonical-root-r2-20261116/`。
+
+本轮接通固定IPC、白名单DTO、前后账号/用户/代次与routing核验、根读取组件和父页面。主详情/完整durable库存失败保持错误/重试；候选无解或reverse失败/null/mismatch才同URL回普通详情，权限/sync子页仍保持既有membership语义。RequiresLocal辅助函数在本固定构建常false，原错误unsupported_host已由真实红测复现并纠偏；这不授予本机执行资格。完整库存复用实际HTTP分页，不引入renderer hidden IDs或虚构native布尔值。
+
+canonical头部使用实际App名称、服务插件双色图标和官方描述优先级；根面包屑不增加插件祖先，显式App仍保留原模式。复用现有实际账户、改名/断开、选择持久化和同步链；旧scope/ABA/晚回及旧动作失效。普通回退保留真实旧PluginManagementDetail及包含项，尚未改成完整service详情adapter。
+
+根卸载复用真实服务写入/读回和未知结果journal，新增HTML确认，按可见账户数量选择源文案。真实confirmed后replace管理root；unknown不报成功，禁重复写，提供只读核验。保留管理员和账户加载/系统账户门禁。根“查看详情”已使用真实raw ID与官方durable/chatgpt-workspace/pluginName路由，不添加breadcrumb=settings；当前durable目录消费者仍拒不支持主机，下一单元必须接正确服务adapter，不能为了链接能打开而退到本机CLI。
+
+| 用例 | 官方预期与关键不变量 | 当前证据 |
+|---|---|---|
+| CR01 | 主读取/完整库存失败不是generic成功；取消/身份变化不能回退 | Rust root及domain回归 |
+| CR02 | canonical唯一/模板/库存首owner与reverse归属；RequiresLocal不错误拒绝 | 10项root、18项shared，错误门禁先红后绿 |
+| CR03 | generic保留同URL实际旧详情；canonical传真实App/header | root生产组件回放 |
+| CR04 | 标题/描述/双色资产/根及显式面包屑分开 | App生产组件回放；几何/像素未验 |
+| CR05 | 账户选择只改linkId；旧选择不能进入sync；离页旧动作不执行 | 路由及PMB08 |
+| CR06 | 多账户卸载警告、取消零写、fresh guard/单飞/IME/焦点 | 新确认组件回放；真实物理IME未验 |
+| CR07 | confirmed离开旧详情；unknown只读核验，绝不第二次卸载 | PMB09生产父页面四场景 |
+| CR08 | 查看详情精确durable服务身份；不得擅自执行本机路径 | App生产回调测试；目标目录能力仍缺失 |
+
+未验与边界：真实HTTP/OAuth、原生GUI/物理IME/多窗、同环境官方配对像素、托管CI及用户验收均未完成。nativeEligibility明确unverified，Meetings真实宿主/entrypoint/cache未接；完整App About、H-only管理、hosted tools/provider设置及授权恢复仍在返回队列。hosted内容读取失败时保留独立错误并回退实际connector展示，未提供单独hosted重试提示；不能当hosted读取成功。安装时间仅支持RFC3339/RFC2822/纯日期，无时区ISO datetime等完整JS Date.parse兼容尚未实现，没有实际wire样本证明出现。上述缺口不以阶段测试数量消除。
+
+本阶段最终检查：867项全Rust（0失败/忽略/过滤，131.19秒）；209组完整前端回放；末次卸载未知结果补丁另跑7个直接相关脚本及TypeScript；非Fast标准整轮及34个隔离协议探针；最终TypeScript/Vite/原生EXE、MSI、NSIS构建均exit0。516项产品输入在最终冻结与构建后逐项大小/hash一致；没有用测试数量升级整页验收。标准脚本的Rust过滤组不冒充全库，完整867结果另存rust-all.log。
+
+候选：`dist-artifacts/plugins-r2-canonical-root-20261116/CodexNative.exe`，30,257,664字节，SHA256 `4fb2a3b6f3c6ee009f3f45ca3ca4fd2db50c9d2ea98f39dac501c5a26e078ca9`。输入清单SHA256 `9c9b3fc58ffe9f8ec8bb0a2f063afac04d12e21c944edcae29695a8345e39a7f`。MSI/NSIS和详细检查范围见本阶段candidate-artifacts.json及verification-summary.json；源码由4219f89之后本阶段工作树生成，提交后在证据中补sourceCommit。真实HTTP、原生GUI/IME、多窗、配对像素、托管CI及用户验收均未验，visual-verdict保持score=null。
+
+本轮复用现有App账户/同步、真实服务变更及未知结果journal、PluginLogo/展开状态和弹窗样式，未新增依赖或替代执行器。本地阶段提交、不推送发布。下一仍为02.3：按已补durable目录合同接真实目录消费者与service详情转换，继而补普通根完整内容和独立App/授权/宿主；本阶段不是插件整页或全App的1:1完成声明。

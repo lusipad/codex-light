@@ -191,4 +191,15 @@ for (const [path, detail] of [
   pending(); assert.equal(h.writes.length, 0, "late confirmation cannot navigate a different current plugin");
 }
 assert.ok(source.includes("onOpenPluginDirectoryDetail={handleOpenManagedPluginDirectory}"));
+{
+  const h = fixture("/settings/plugins-settings/raw%2Fservice?linkId=selected", "settings");
+  h.evaluate("handleOpenManagedPluginDirectory")("raw/service");
+  const target = locations.parsePluginDirectoryLocation(h.context.window.location.href);
+  assert.equal(target.pluginId, "raw/service"); assert.equal(target.pluginName, "raw/service");
+  assert.equal(target.hostId, "durable"); assert.equal(target.remoteMarketplaceName, "chatgpt-workspace");
+  assert.equal(target.breadcrumb, null, "Q.l$ uses durable marketplace identity without an invented breadcrumb");
+}
+for (const path of ["/settings/plugins-settings/other", "/settings/plugins-settings/raw/apps/app", "/settings/plugins-settings/raw/sync", "/settings/plugins-settings/raw?hostId=local", "/settings/plugins-settings/raw?marketplacePath=x"]) {
+  const h = fixture(path, "settings"); h.evaluate("handleOpenManagedPluginDirectory")("raw"); assert.equal(h.writes.length, 0);
+}
 console.log("PASS actual App management initialization, validated popstate, URL cleanup, internal traversal and settings navigation guards");
