@@ -50,3 +50,11 @@
 5. 官方运行时/账号gate、同环境配对图、原生IME及用户验收。当前无1:1或全桌面宿主通过结论。
 
 下一可开发工作为自有Appshots宿主及其真实消费者合同，不再调查是否必须借官方二进制；保留Classic全文限制，后续按provider能力如实呈现。
+
+## 第04批增量：一次许可真实动作（2026-11-17）
+
+第二探针经主线程审读后运行，目录`.ref/parity/16/desktop-action-probe-r3-20261117/runs/20261117-050654-f13df5fc/`；runner退出0，实际`result.json`为success=true。仅操作自行spawn的fixture精确PID/HWND/nonce所绑定单行Edit，没有访问用户窗口、全局输入或官方helper。
+
+实际UIA SetValue调用1次，GetCurrentValue读回一致；fixture真实EN_CHANGE计数从0变1。拒绝、已消费许可重放、错目标、取消后晚批准均保持值和计数不变；先批准再关闭目标时在provider访问前拒绝。fixture PID296928事后查询不存在。原始result、trace、processes、源码和运行EXE哈希保留在探针目录。
+
+许可仅为私有测试状态机，不是系统权限、官方审批或产品Computer Use。尚缺并发、撤销、真实工具消费者、任意应用、物理取消和长期资源检查；第一捕获探针Classic全文失败没有因此消除。浏览器会话仍未执行。本增量不修改或重新解释上文历史结果。

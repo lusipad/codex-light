@@ -2,6 +2,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some(codex_tauri_lib::appshots_worker::ARGUMENT) {
+        std::process::exit(codex_tauri_lib::appshots_worker::run_stdio());
+    }
     if std::env::args().nth(1).as_deref() == Some(codex_tauri_lib::schedule_mcp::ARGUMENT) {
         codex_tauri_lib::schedule_mcp::run_stdio();
         return;

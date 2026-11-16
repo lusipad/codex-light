@@ -4,6 +4,8 @@ pub mod app_server;
 pub mod automations;
 mod automation_tool;
 pub mod schedule_mcp;
+pub mod appshots_worker;
+mod appshots_host;
 pub mod config_skills;
 pub mod recommended_skills;
 pub mod desktop_open;
