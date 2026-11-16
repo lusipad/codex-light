@@ -468,6 +468,17 @@ async fn plugin_app_standalone_read(
 }
 
 #[tauri::command]
+async fn plugin_app_account_rename(
+    app: AppHandle, state: State<'_, AppState>, request: chatgpt_service::PluginAppRenameRequest,
+) -> Result<chatgpt_service::ProfileMutationResponse, chatgpt_service::ServiceError> {
+    state.chatgpt_service.plugin_app_account_rename(request, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
 async fn plugin_app_details_read(
     app: AppHandle, state: State<'_, AppState>, request: chatgpt_service::PluginAppDetailsRequest,
 ) -> Result<chatgpt_service::PluginPermissionsResponse, chatgpt_service::ServiceError> {
@@ -2538,6 +2549,7 @@ pub fn run() {
             account_notifications_read,
             plugin_permissions_read,
             plugin_app_details_read,
+            plugin_app_account_rename,
             plugin_app_resolve,
             plugin_app_standalone_read,
             plugin_permissions_write,

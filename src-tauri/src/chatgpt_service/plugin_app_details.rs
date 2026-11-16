@@ -69,13 +69,24 @@ fn app_details_connector(app_id: &str, metadata: Value) -> ServiceResult<Value> 
     let id = source.get("id").and_then(Value::as_str).ok_or_else(app_details_invalid)?;
     if canonical_app_id(id) != canonical_app_id(app_id) { return Err(app_details_invalid()); }
     let mut connector = serde_json::Map::new();
-    connector.insert("id".into(), json!(app_id));
+    connector.insert("id".into(), json!(id));
     let name = source.get("name").and_then(Value::as_str).ok_or_else(app_details_invalid)?;
     connector.insert("name".into(), json!(name));
     for key in ["description", "status"] { copy_optional_string(source, &mut connector, key)?; }
     if let Some(value) = source.get("enable_multi_links") {
         if !value.is_null() && !value.is_boolean() { return Err(app_details_invalid()); }
         connector.insert("enable_multi_links".into(), value.clone());
+    }
+    if let Some(value) = source.get("supported_auth") {
+        if value.is_null() { connector.insert("supported_auth".into(), Value::Null); }
+        else {
+            let mut auth = Vec::new();
+            for item in value.as_array().ok_or_else(app_details_invalid)? {
+                let kind = item.get("type").and_then(Value::as_str).ok_or_else(app_details_invalid)?;
+                auth.push(json!({"type":kind}));
+            }
+            connector.insert("supported_auth".into(), json!(auth));
+        }
     }
     if let Some(value) = source.get("labels") {
         if value.is_null() { connector.insert("labels".into(), Value::Null); }
@@ -119,8 +130,8 @@ fn app_details_links(app_id: &str, accessible: Value) -> ServiceResult<Value> {
         let id = row.get("id").and_then(Value::as_str).filter(|id| !id.is_empty()).ok_or_else(app_details_invalid)?;
         let mut link = serde_json::Map::new();
         link.insert("id".into(), json!(id));
-        link.insert("connector_id".into(), json!(app_id));
-        for key in ["auth_status", "auth_type", "visibility", "name", "connector_name"] { copy_optional_string(row, &mut link, key)?; }
+        link.insert("connector_id".into(), json!(connector_id));
+        for key in ["auth_status", "auth_type", "auth_strategy_id", "visibility", "name", "connector_name"] { copy_optional_string(row, &mut link, key)?; }
         if let Some(value) = row.get("apps_privacy_control") {
             if !value.is_null() && !value.as_str().is_some_and(|value| matches!(value, "always_ask" | "ask_before_writes" | "review_important_actions" | "full_access")) {
                 return Err(app_details_invalid());
@@ -138,7 +149,7 @@ fn app_details_links(app_id: &str, accessible: Value) -> ServiceResult<Value> {
         if let Some(value) = row.get("owner_profile").filter(|value| !value.is_null()) {
             let profile = value.as_object().ok_or_else(app_details_invalid)?;
             let mut selected = serde_json::Map::new();
-            for key in ["picture", "email", "name", "nickname"] { copy_optional_string(profile, &mut selected, key)?; }
+            for key in ["id", "picture", "email", "name", "nickname"] { copy_optional_string(profile, &mut selected, key)?; }
             link.insert("owner_profile".into(), Value::Object(selected));
         }
         // Keep visibility and implicit IDs intact: selection/editability belong to
@@ -242,6 +253,23 @@ mod tests {
             (metadata(),json!({"links":[{"id":"bad","connector_id":"connector_real","owners":false}]})),
             (json!({"id":"connector_other"}),json!({"links":[]}))] {
             assert_eq!(app_details_body("plugin-real","connector_real",metadata,links).err().unwrap().code,"invalid_response");
+        }
+    }
+    #[test]
+    fn app_details_connector_keeps_raw_identity_and_supported_auth_projection() {
+        let links=app_details_links("connector_real",json!({"links":[link("raw","asdk_app_real","user")]})).unwrap();
+        assert_eq!(links[0]["connector_id"],"asdk_app_real","provider helpers compare raw IDs, not canonical aliases");
+        let mut source=metadata();source["id"]=json!("asdk_app_real");
+        source["supported_auth"]=json!([{"type":"OAUTH","secret":"never-return"},{"type":"UNKNOWN"}]);
+        let result=app_details_connector("connector_real",source.clone()).unwrap();
+        assert_eq!(result["id"],"asdk_app_real");assert_eq!(result["supported_auth"],json!([{"type":"OAUTH"},{"type":"UNKNOWN"}]));
+        assert!(!serde_json::to_string(&result).unwrap().contains("never-return"));
+        for value in [Value::Null,json!([])] {
+            source["supported_auth"]=value.clone();assert_eq!(app_details_connector("connector_real",source.clone()).unwrap()["supported_auth"],value);
+        }
+        source.as_object_mut().unwrap().remove("supported_auth");assert!(app_details_connector("connector_real",source.clone()).unwrap().get("supported_auth").is_none());
+        for value in [json!(false),json!([{}]),json!([{"type":null}])] {
+            source["supported_auth"]=value;assert!(app_details_connector("connector_real",source.clone()).is_err());
         }
     }
     #[tokio::test]
@@ -535,12 +563,18 @@ impl ChatgptService {
 
     async fn plugin_app_details_with<F, Fut, T>(&self, request: PluginAppDetailsRequest, call: F, transport: &T) -> ServiceResult<PluginPermissionsResponse>
     where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>>, T: Transport {
+        let registration = self.register(&request.request_id)?;
+        let body = self.plugin_app_snapshot(&request, &registration, &call, transport).await?;
+        Ok(PluginPermissionsResponse { request_id:request.request_id, identity:request.expected_identity, body })
+    }
+
+    pub(super) async fn plugin_app_snapshot<F, Fut, T>(&self, request: &PluginAppDetailsRequest, registration: &Registration<'_>, call: &F, transport: &T) -> ServiceResult<Value>
+    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>>, T: Transport {
         let plugin_encoded = encode_segment(&request.plugin_id)?;
         let app_id = canonical_app_id(&request.app_id);
         // nP passes route N unchanged through tB.appId/eC to L.zE. Only
         // membership and response identity comparisons use canonical aliases.
         let encoded = encode_segment(&request.app_id)?;
-        let registration = self.register(&request.request_id)?;
         let identity = &request.expected_identity;
         let plugin = self.remote_plugin_http(&format!("/backend-api/ps/plugins/{plugin_encoded}"), HttpMethod::Get, false,
             identity, &request.profile, &registration, &call, transport).await?;
@@ -557,6 +591,7 @@ impl ChatgptService {
         let mut body = app_details_body(&request.plugin_id, &app_id, metadata, json!({"links":[]}))?;
         let plugin_name = plugin["release"]["display_name"].as_str().or_else(|| plugin["name"].as_str()).ok_or_else(app_details_invalid)?;
         body["pluginName"] = json!(plugin_name);
+        if let Some(status) = plugin.get("status") { body["pluginStatus"] = status.clone(); }
         let accessible = self.review_gitlab_http("/backend-api/aip/connectors/links/list_accessible", true,
             identity, &request.profile, &registration, &call, transport).await.and_then(|value| app_details_links(&app_id, value));
         match accessible {
@@ -568,7 +603,7 @@ impl ChatgptService {
             },
         }
         self.check_share_current(identity, &registration)?;
-        Ok(PluginPermissionsResponse { request_id:request.request_id, identity:identity.clone(), body })
+        Ok(body)
     }
 
     async fn plugin_app_metadata_http<F, Fut, T>(&self, route: &str, identity: &ServiceIdentity, profile: &ServiceProfile,

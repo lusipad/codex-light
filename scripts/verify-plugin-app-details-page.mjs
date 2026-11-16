@@ -3,11 +3,11 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 
-function load(file, imports) {
+function load(file, imports, extra = {}) {
   const exports = {};
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: {
     target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React, esModuleInterop: true,
-  } }).outputText, { exports, require: name => {
+  } }).outputText, { exports, ...extra, require: name => {
     if (name in imports) return imports[name];
     if (name.endsWith('.css')) return {};
     throw Error(name);
@@ -17,21 +17,32 @@ function load(file, imports) {
 const helpers = load('src/pluginAppDetails.ts', {
   './config': {}, './chatgptService': {}, './pluginManagementMcp': { canonicalMcpAppId: value => value.replace(/^asdk_app_/, 'connector_') },
 });
-let state, retries = 0, backs = 0, plugins = 0, unavailable = 0;
-const props = { connectionIdentity: 'connection/account-A', pluginId: 'tool@market', appId: 'connector_tool', onBack: () => backs++, onOpenPlugin: () => plugins++, onUnavailable: () => unavailable++ };
-const react = { createElement: (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity) }), useId: () => 'accounts-heading', useRef: value => ({ current: value }), useEffect: callback => callback(), Fragment: 'Fragment' };
+const persisted = new Map(), selections = [], writes = [];
+const accountHelpers = load('src/pluginAppAccounts.ts', { './config': {}, './chatgptService': {}, './pluginAppDetails': helpers,
+  './pluginManagementMcp': { canonicalMcpAppId: value => value.replace(/^asdk_app_/, 'connector_') },
+}, { localStorage: { getItem: key => persisted.get(key) ?? null, setItem: (key, value) => persisted.set(key, value) } });
+let state, retries = 0, backs = 0, plugins = 0, unavailable = 0, cursor = 0, dirty = false, renamed = 0, renameResult = true;
+const slots = [], effects = [], queue = [];
+const props = { connectionIdentity: 'connection/account-A', pluginId: 'tool@market', appId: 'connector_tool', selectedLinkId: null,
+  onSelectLink: id => { selections.push(id); props.selectedLinkId = id; return true; }, onRenamed: () => renamed++, onBack: () => backs++, onOpenPlugin: () => plugins++, onUnavailable: () => unavailable++ };
+const react = { createElement: (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity) }), useId: () => 'accounts-heading', Fragment: 'Fragment',
+  useRef(value) { const index = cursor++; return slots[index] ??= { current: value }; },
+  useState(value) { const index = cursor++; if (!(index in slots)) slots[index] = value; return [slots[index], next => { slots[index] = typeof next === 'function' ? next(slots[index]) : next; dirty = true; }]; },
+  useEffect(callback, deps) { const index = cursor++, before = effects[index]; if (!before || deps.some((value, i) => value !== before.deps[i])) queue.push(() => { before?.cleanup?.(); effects[index] = { deps, cleanup: callback() }; }); },
+  useLayoutEffect(callback, deps) { react.useEffect(callback, deps); },
+};
 const { PluginAppDetailsPage } = load('src/components/PluginAppDetailsPage.tsx', {
-  react, '../pluginAppDetails': helpers, '../pluginAppDetailsState': { usePluginAppDetails: (...args) => {
+  react, '../pluginAppDetails': helpers, '../pluginAppAccounts': accountHelpers, './PluginAccountRenameDialog': { PluginAccountRenameDialog: 'PluginAccountRenameDialog' }, '../pluginAppDetailsState': { usePluginAppDetails: (...args) => {
     assert.deepEqual(args, [props.connectionIdentity, props.pluginId, props.appId]);
-    return { state, reload: () => retries++ };
+    return { state, reload: () => retries++, rename: async (...args) => { writes.push(args); return renameResult; }, clearRenameError: () => {} };
   } },
 });
 const nodes = node => !node || typeof node !== 'object' ? [] : [node, ...node.children.flatMap(nodes)];
 const text = node => typeof node === 'string' ? node : !node || typeof node !== 'object' ? '' : node.children.map(text).join('');
-const render = () => PluginAppDetailsPage(props);
+const render = () => { let tree, turn = 0; do { assert.ok(turn++ < 15); dirty = false; cursor = 0; tree = PluginAppDetailsPage(props); queue.splice(0).forEach(run => run()); } while (dirty); return tree; };
 const link = extra => ({ id: 'one', connector_id: 'connector_tool', owners: [{ type: 'USER', id: 'provider-owner' }], ...extra });
 const details = { pluginId: props.pluginId, pluginName: '真实插件', appId: props.appId, connector: { id: props.appId, name: '真实应用', description: '真实说明', enable_multi_links: true }, links: [], linksError: null };
-const set = (data = details, extra = {}) => { state = { snapshot: { identity: { userId: 'user' }, details: data }, loading: false, error: null, ...extra }; };
+const set = (data = details, extra = {}) => { state = { snapshot: { identity: { accountId: 'account', userId: 'user', generation: 1 }, details: data }, loading: false, error: null, pendingLinkId: null, blocked: false, writeError: null, ...extra }; };
 state = { snapshot: null, loading: true, error: null };
 assert.equal(render().props['aria-busy'], true);
 assert.ok(nodes(render()).find(node => node.props.role === 'status'));
@@ -58,6 +69,8 @@ const rows = nodes(tree).filter(node => node.props.className === 'pap-account');
 assert.equal(rows.length, 5, 'hidden and implicit links are excluded by the actual selection helper');
 assert.match(text(rows[0]), /provider@example.test工作账户/);
 assert.equal(text(nodes(rows[0]).find(node => node.props.className === 'sr-only')), '需要更新身份验证');
+const identityGroup = nodes(rows[0]).find(node => node.props.role === 'group');
+assert.equal(identityGroup.props['aria-describedby'], nodes(rows[0]).find(node => node.props.className === 'sr-only').props.id);
 assert.equal(text(rows[1]), 'Provider Name'); assert.equal(text(rows[2]), 'Provider Nick');
 assert.equal(text(rows[3]), '真实应用 账户本地昵称', 'missing provider identity uses app-only fallback instead of borrowing current user or alias');
 assert.equal(text(rows[4]), '真实应用（未关联账户）');
@@ -74,4 +87,30 @@ state = { snapshot: null, error: null, loading: false, unavailable: true }; rend
 assert.equal(unavailable, 1, 'only explicit membership loss asks the parent to replace to the plugin ancestor');
 state = { snapshot: null, error: 'Real 403', loading: false, unavailable: false }; render();
 assert.equal(unavailable, 1);
-console.log('Plugin app details page: actual metadata, scoped hook props, loading/retry, independent link error and header, empty omission, real profile priority, nickname, expired sr-only status, filtered accounts and no unsupported writes passed.');
+const actionDetails = { ...details, connector: { ...details.connector, id: 'asdk_app_tool', supported_auth: [{ type: 'OAUTH' }] },
+  links: [link({ name: ' Work ', owner_profile: { email: 'real@example.test' }, auth_type: 'OAUTH' })] };
+set(actionDetails); tree = render();
+const renameRow = nodes(tree).find(node => node.type === 'button' && node.props.className === 'pap-account-open');
+assert.equal(renameRow.props['aria-label'], '重命名 real@example.test（Work）', 'official Chinese row name includes the distinct nickname');
+renameRow.props.onClick();
+tree = render(); let dialog = nodes(tree).find(node => node.type === 'PluginAccountRenameDialog');
+assert.ok(dialog); assert.equal(dialog.props.initialNickname, 'Work'); assert.equal(dialog.props.currentName, ' Work ');
+assert.equal(selections.at(-1), 'one');
+assert.equal(JSON.parse(persisted.get('selected-plugin-links-v1'))[JSON.stringify(['account', 'user', 'asdk_app_tool'])], 'one');
+renameResult = false; assert.equal(await dialog.props.onSave('Not confirmed'), false); assert.equal(renamed, 0);
+renameResult = true;
+state.pendingLinkId = 'one'; render();
+assert.equal(await dialog.props.onSave('Actual new name'), true); dialog.props.onClose();
+assert.equal(renamed, 1, 'only actual confirmation notifies the application toast');
+assert.equal(nodes(render()).some(node => node.type === 'PluginAccountRenameDialog'), false, 'confirmed completion can close before React commits the pending=false render');
+for (const multi of [false, null, undefined]) {
+  props.selectedLinkId = 'one';
+  set({ ...actionDetails, connector: { ...actionDetails.connector, enable_multi_links: multi }, links: [actionDetails.links[0], link({ id: 'two', owner_profile: { email: 'second@example.test' } })] });
+  tree = render(); const choices = nodes(tree).filter(node => node.type === 'button' && node.props['aria-pressed'] !== undefined);
+  assert.equal(choices.length, 2, 'explicit multi eligibility is false whenever enable_multi_links is not true');
+  assert.equal(choices[1].props['aria-label'], '选择 second@example.test', 'selection names the provider identity');
+  assert.equal(choices[0].props['aria-labelledby'], `${choices[0].props.id} ${nodes(choices[0]).find(node => node.props.className === 'pap-account-nickname').props.id}`, 'distinct nickname participates in the source accessible name');
+  choices[1].props.onClick(); tree = render(); assert.equal(selections.at(-1), 'two');
+  assert.equal(nodes(tree).filter(node => node.type === 'button' && node.props['aria-pressed'] !== undefined)[1].props['aria-pressed'], true);
+}
+console.log('Plugin app details page: actual metadata/profile, independent errors, scoped source rename entry, raw selection persistence, confirmed close ordering and nonmulti explicit selection passed. OAuth/disconnect/sync remain separate work.');

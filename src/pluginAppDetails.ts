@@ -11,15 +11,18 @@ export interface PluginAppLink {
   connector_name?: string | null;
   auth_status?: string | null;
   auth_type?: string | null;
+  auth_strategy_id?: string | null;
   visibility?: string | null;
   apps_privacy_control?: PluginPermission | null;
-  owner_profile?: { name?: string | null; nickname?: string | null; email?: string | null; picture?: string | null } | null;
+  owner_profile?: { id?: string | null; name?: string | null; nickname?: string | null; email?: string | null; picture?: string | null } | null;
 }
 export interface PluginAppDetails {
   pluginId: string;
   pluginName: string;
+  pluginStatus?: string | null;
   appId: string;
   connector: { id: string; name: string; description?: string | null; status?: string | null; enable_multi_links?: boolean | null;
+    supported_auth?: { type: string }[] | null;
     labels?: { apps_privacy_control_available?: string | null } | null };
   links: PluginAppLink[] | null;
   linksError: { code: string; message: string } | null;
@@ -36,10 +39,20 @@ export function decodePluginAppConnector(raw: unknown, appId: string): PluginApp
     connector.enable_multi_links != null && typeof connector.enable_multi_links !== "boolean") throw invalid();
   const labels = connector.labels == null ? connector.labels : object(connector.labels);
   if (connector.labels != null && labels === null || labels?.apps_privacy_control_available != null && typeof labels.apps_privacy_control_available !== "string") throw invalid();
+  let supported: { type: string }[] | null | undefined;
+  if (connector.supported_auth === null) supported = null;
+  else if (connector.supported_auth !== undefined) {
+    if (!Array.isArray(connector.supported_auth)) throw invalid();
+    supported = connector.supported_auth.map(value => {
+      const auth = object(value); if (!auth || typeof auth.type !== "string") throw invalid();
+      return { type: auth.type };
+    });
+  }
   return { id: connector.id, name: connector.name,
     ...(connector.description !== undefined ? { description: connector.description as string | null } : {}),
     ...(connector.status !== undefined ? { status: connector.status as string | null } : {}),
     ...(connector.enable_multi_links !== undefined ? { enable_multi_links: connector.enable_multi_links as boolean | null } : {}),
+    ...(supported !== undefined ? { supported_auth: supported } : {}),
     ...(connector.labels === null ? { labels: null } : labels ? { labels: labels.apps_privacy_control_available === undefined ? {} : { apps_privacy_control_available: labels.apps_privacy_control_available as string | null } } : {}),
   };
 }
@@ -47,6 +60,7 @@ export function decodePluginAppConnector(raw: unknown, appId: string): PluginApp
 export function decodePluginAppDetails(raw: unknown, pluginId: string, appId: string): PluginAppDetails {
   const body = object(raw);
   if (body?.pluginId !== pluginId || typeof body.pluginName !== "string" || !requiredString(body.appId) || !sameApp(body.appId, appId)) throw invalid();
+  if (body.pluginStatus != null && typeof body.pluginStatus !== "string") throw invalid();
   const connector = decodePluginAppConnector(body.connector, appId);
   const error = body.linksError === null ? null : object(body.linksError);
   if (body.links === null ? !error || !requiredString(error.code) || !requiredString(error.message) : !Array.isArray(body.links) || body.linksError !== null) throw invalid();
@@ -59,7 +73,7 @@ export function decodePluginAppDetails(raw: unknown, pluginId: string, appId: st
       return { type: owner.type, id: owner.id };
     });
     const result: PluginAppLink = { id: link.id, connector_id: link.connector_id, owners };
-    for (const key of ["name", "connector_name", "auth_status", "auth_type", "visibility"] as const) {
+    for (const key of ["name", "connector_name", "auth_status", "auth_type", "auth_strategy_id", "visibility"] as const) {
       if (link[key] != null && typeof link[key] !== "string") throw invalid();
       if (link[key] !== undefined) result[key] = link[key] as string | null;
     }
@@ -71,14 +85,14 @@ export function decodePluginAppDetails(raw: unknown, pluginId: string, appId: st
       const profile = link.owner_profile === null ? null : object(link.owner_profile);
       if (link.owner_profile !== null && !profile) throw invalid();
       result.owner_profile = profile === null ? null : {};
-      for (const key of ["name", "nickname", "email", "picture"] as const) {
+      for (const key of ["id", "name", "nickname", "email", "picture"] as const) {
         if (profile?.[key] != null && typeof profile[key] !== "string") throw invalid();
         if (profile?.[key] !== undefined) result.owner_profile![key] = profile[key] as string | null;
       }
     }
     return result;
   });
-  return { pluginId, pluginName: body.pluginName, appId: body.appId, connector, links, linksError: error ? { code: error.code as string, message: error.message as string } : null };
+  return { pluginId, pluginName: body.pluginName, ...(body.pluginStatus !== undefined ? { pluginStatus: body.pluginStatus as string | null } : {}), appId: body.appId, connector, links, linksError: error ? { code: error.code as string, message: error.message as string } : null };
 }
 
 // Zpwo.nA/Dr/wB; a link's name is its alias, not owner_profile.nickname.

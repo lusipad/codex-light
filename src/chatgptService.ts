@@ -542,6 +542,17 @@ export async function readStandalonePluginApp(appId: string, identity: ServiceId
   return responseBody(result, requestId, identity);
 }
 
+export async function renamePluginAppAccount(pluginId: string, appId: string, linkId: string, name: string, identity: ServiceIdentity, signal: AbortSignal): Promise<ProfileMutationResult> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<ProfileMutationResult & { requestId: string; identity: ServiceIdentity }>(
+    "plugin_app_account_rename", requestId,
+    { request: { requestId, expectedIdentity: identity, profile: browserProfile(), pluginId, appId, linkId, name } }, signal,
+  );
+  responseBody(result, requestId, identity);
+  if (!["confirmed", "pending"].includes(result.verification)) throw Error("无法确认账户昵称保存结果，请重新读取。");
+  return result;
+}
+
 export async function writePluginPermission(value: string, identity: ServiceIdentity, signal: AbortSignal): Promise<ProfileMutationResult> {
   if (!["always_ask", "ask_before_writes", "review_important_actions"].includes(value)) throw Error("无效的默认权限。");
   const requestId = crypto.randomUUID();

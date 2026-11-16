@@ -9,7 +9,8 @@ const snapshot = (appId = 'app-A', name = appId) => ({ identity: { accountId: 'a
 
 function harness(read = async (_plugin, app) => snapshot(app)) {
   let slots = [], cursor = 0, effects = [], scheduled = [], output, props = ['connection-A', 'plugin', 'app-A'], writes = 0;
-  const calls = [], api = { read };
+  const calls = [], saveCalls = [], api = { read, save: async (before, _app, linkId, name) => ({ snapshot: { ...before,
+    details: { ...before.details, links: before.details.links.map(link => link.id === linkId ? { ...link, name: name.trim() } : link) } }, confirmed: true }) };
   const react = {
     useRef(value) { const i = cursor++; return slots[i] ?? (slots[i] = { current: value }); },
     useState(value) { const i = cursor++; if (!(i in slots)) slots[i] = value; return [slots[i], next => { writes++; slots[i] = typeof next === 'function' ? next(slots[i]) : next; }]; },
@@ -21,6 +22,7 @@ function harness(read = async (_plugin, app) => snapshot(app)) {
   }).outputText, { exports, AbortController, require: name => {
     if (name === 'react') return react;
     if (name === './pluginAppDetails') return { loadPluginAppDetails: (...args) => { calls.push(args); return api.read(...args); } };
+    if (name === './pluginAppAccounts') return { savePluginAppAccountName: (...args) => { saveCalls.push(args); return api.save(...args); } };
     if (name === './chatgptService') return { serviceErrorMessage: error => error?.code === 'cancelled' ? '请求已取消。' : error?.message || '暂时无法读取服务，请重试。' };
     throw Error(`Unexpected dependency ${name}`);
   } });
@@ -28,7 +30,7 @@ function harness(read = async (_plugin, app) => snapshot(app)) {
   const render = (commit = true) => { cursor = 0; output = exports.usePluginAppDetails(...props); if (commit) flush(); return output; };
   const tick = async () => { for (let i = 0; i < 8; i++) { await Promise.resolve(); render(); } };
   render();
-  return { calls, api, render, flush, tick, get output() { return output; }, get writes() { return writes; },
+  return { calls, saveCalls, api, render, flush, tick, get output() { return output; }, get writes() { return writes; },
     set props(value) { props = value; }, unmount() { for (const entry of effects) entry?.cleanup?.(); } };
 }
 
@@ -104,3 +106,73 @@ console.log('Plugin app details state: real hook reads, read-only retry, indepen
   await h.output.reload(); await h.tick(); assert.equal(h.output.state.unavailable, false);
   assert.equal(h.output.state.error, 'Real service denial', 'actual 403 must remain an error instead of redirecting'); h.unmount();
 }
+
+const accountSnapshot = (name = 'Original') => {
+  const value = snapshot(); value.details.links = [{ id: 'link', connector_id: 'app-A', name, owners: [] }]; return value;
+};
+{
+  const h = harness(async () => accountSnapshot(' Original ')); await h.tick();
+  assert.equal(await h.output.rename('link', 'Original'), false);
+  assert.equal(h.saveCalls.length, 0, 'same trimmed wire name does not start a rename'); h.unmount();
+}
+{
+  const h = harness(async () => accountSnapshot()); assert.equal(await h.output.rename('link', 'New'), false);
+  await h.tick(); assert.equal(await h.output.rename('link', '  Original  '), false); assert.equal(h.saveCalls.length, 0);
+  const gate = deferred(); h.api.save = () => gate.promise;
+  const pending = h.output.rename('link', 'New'); assert.equal(await h.output.rename('link', 'Duplicate'), false);
+  const reads = h.calls.length, signal = h.saveCalls[0][4]; await h.output.reload(); assert.equal(h.calls.length, reads); assert.equal(signal.aborted, false);
+  h.render(); assert.equal(h.output.state.pendingLinkId, 'link'); assert.equal(h.output.state.snapshot.details.links[0].name, 'Original');
+  h.output.clearRenameError(); gate.resolve({ snapshot: accountSnapshot('New'), confirmed: true });
+  assert.equal(await pending, true, 'only confirmed readback tells the dialog to close'); await h.tick();
+  assert.equal(h.output.state.pendingLinkId, null); assert.equal(h.output.state.blocked, false);
+  assert.equal(h.output.state.snapshot.details.links[0].name, 'New'); assert.equal(h.saveCalls[0][1], 'app-A'); h.unmount();
+}
+for (const actual of [null, accountSnapshot('Different actual')]) {
+  const h = harness(async () => accountSnapshot()); await h.tick(); h.api.save = async () => ({ snapshot: actual, confirmed: false });
+  assert.equal(await h.output.rename('link', 'Requested'), false); await h.tick();
+  assert.equal(h.output.state.snapshot.details.links[0].name, actual ? 'Different actual' : 'Original');
+  assert.equal(h.output.state.blocked, true); assert.match(h.output.state.writeError, /无法确认账户昵称是否已保存/);
+  const error = h.output.state.writeError; h.output.clearRenameError(); h.render(); assert.equal(h.output.state.writeError, error);
+  assert.equal(await h.output.rename('link', 'Again'), false); assert.equal(h.saveCalls.length, 1);
+  h.api.read = async () => accountSnapshot('Verified'); await h.output.reload(); await h.tick();
+  assert.equal(h.output.state.blocked, false); assert.equal(h.output.state.writeError, null); assert.equal(h.saveCalls.length, 1); h.unmount();
+}
+for (const code of ['forbidden', 'invalid_request', 'not_found', 'cancelled', 'account_changed', 'transport_error']) {
+  const h = harness(async () => accountSnapshot()); await h.tick(); h.api.save = async () => { throw { code, message: `Failure ${code}` }; };
+  assert.equal(await h.output.rename('link', 'New'), false); await h.tick();
+  const rejected = ['forbidden', 'invalid_request', 'not_found'].includes(code);
+  assert.equal(h.output.state.blocked, !rejected); assert.equal(h.output.state.unavailable, false);
+  assert.equal(h.output.state.snapshot.details.links[0].name, 'Original'); assert.ok(h.output.state.writeError);
+  h.output.clearRenameError(); h.render(); assert.equal(h.output.state.writeError === null, rejected);
+  if (!rejected) {
+    assert.equal(await h.output.rename('link', 'No replay'), false); assert.equal(h.saveCalls.length, 1);
+    h.api.read = async () => { throw Error('Readback offline'); }; await h.output.reload(); await h.tick();
+    assert.equal(h.output.state.blocked, true); assert.equal(h.output.state.error, 'Readback offline');
+    h.api.read = async () => accountSnapshot(); await h.output.reload(); await h.tick(); assert.equal(h.output.state.blocked, false);
+  }
+  h.unmount();
+}
+{
+  const h = harness(async () => accountSnapshot()); await h.tick();
+  h.api.save = async () => { throw { code: 'app_not_in_plugin' }; }; await h.output.rename('link', 'New'); await h.tick();
+  assert.equal(h.output.state.unavailable, true); assert.equal(h.output.state.snapshot, null); assert.equal(h.output.state.writeError, null); h.unmount();
+}
+{
+  const oldGate = deferred(), nextGate = deferred(), h = harness(async () => accountSnapshot()); await h.tick(); const staleRename = h.output.rename;
+  h.api.save = () => oldGate.promise; const old = h.output.rename('link', 'Old'); const oldSignal = h.saveCalls[0][4];
+  h.props = ['connection-B', 'plugin', 'app-A']; h.render(); await h.tick(); assert.equal(oldSignal.aborted, true);
+  h.api.save = () => nextGate.promise; const next = h.output.rename('link', 'Current'); h.render();
+  oldGate.resolve({ snapshot: accountSnapshot('Old'), confirmed: true }); assert.equal(await old, false); await h.tick();
+  assert.equal(h.output.state.pendingLinkId, 'link'); assert.equal(await h.output.rename('link', 'Duplicate'), false, 'old finally cannot unlock new scope write');
+  nextGate.resolve({ snapshot: accountSnapshot('Current'), confirmed: true }); assert.equal(await next, true); await h.tick();
+  h.props = ['connection-A', 'plugin', 'app-A']; h.render(); await h.tick();
+  assert.equal(await staleRename('link', 'ABA old handler'), false); assert.equal(h.saveCalls.length, 2); h.unmount();
+}
+{
+  const gate = deferred(), h = harness(async () => accountSnapshot()); await h.tick(); h.api.save = () => gate.promise;
+  const pending = h.output.rename('link', 'New'), oldClear = h.output.clearRenameError; h.unmount();
+  assert.equal(h.saveCalls[0][4].aborted, true); const writes = h.writes;
+  gate.reject({ code: 'cancelled' }); assert.equal(await pending, false); oldClear();
+  assert.equal(h.writes, writes); assert.equal(await h.output.rename('link', 'Again'), false); assert.equal(h.saveCalls.length, 1);
+}
+console.log('Plugin app account rename state: confirmed-only close, synchronous single-flight, actual readback, unknown-write read-only recovery, membership/403, ABA and unmount isolation passed.');

@@ -190,3 +190,18 @@
 | 未验 | 未重跑非Fast标准/协议探针、全Rust或新原生打包；无真实账号服务/OAuth、物理IME、官方配对像素及用户验收。上轮GUI工具因无法确认浏览器URL停止，无截图；隔离预览服务已关闭，创建的浏览器窗口未用其他方式绕过限制清理 |
 
 证据根仍为`.ref/parity/12/whole-page/actual/plugin-app-details-r2-20261116/`，最终检查与构建日志包含`reviewed-*.log`、`frontend-entry-reviewed-build.log`、`entry-code-review.md`。本包是只读开发检查点，不提供旧EXE当作新源码候选；完整Manage app、账户选择/持久化与重命名/关联、权限/sync及hosted主详情字段/认证资格继续同页开发。未推送，无本包托管CI结果。
+## R2账户动作阶段记录（2026-11-16，36e222d之后）
+
+本阶段继续总计划第02批，范围为实际关联账户的重命名、选中导航和持久化；不转入R3，不代表完整App管理或插件整页验收。依据同版`app-account-actions-contract.md`及13个精确UTF-16锚点，5个相关资源大小与SHA-256重新核验，证据为`.ref/parity/12/whole-page/actual/plugin-account-actions-r2-20261116/reference-audit.json`。
+
+- 功能：保留原始provider ID，仅在归属比较时规范化；按实际multi资格和默认认证显示账户动作。昵称只写真实`link.name`，JS trim及1–64个Unicode码点；固定PATCH目标和CODEX/settings上下文，fresh归属/唯一账户检查，写后真实读取确认。超时或未知交付只读恢复，不自动重发；真实403不当成功或无归属跳转。
+- 交互：多账户行选择并打开rename，其他适用账户选择仅replace当前linkId并保留query；身份三元组使用实际metadata.id，null删除、最近写入尾插并限100项。弹层单飞、IME保护、Escape/外点/焦点返回及旧scope/ABA隔离；confirmed后才关闭并发“账户已重命名”，未知结果保留草稿。
+- 已验证：191项完整前端回放exit0；最后成功通知接线后生产页面专项及TypeScript再验0。全Rust799项通过，0失败/忽略/过滤，122.49秒。独立有界复核未发现证据充分的新增P1/P2。red日志保留旧弹层回调、关闭渲染时序、同值空白、null multi选择、implicit前缀和raw link ID六类实际回归，不是CI失败。随后PAA09补核官方中文与可访问行命名，先红复现昵称遗漏，再绿验证重命名/选择名称、昵称及认证警告关联；新增4段来源锚点，不宣称原生屏幕阅读器实测。
+- 统一检查：非Fast `scripts/verify-all.ps1`整轮exit0，34个真实隔离协议探针通过；覆盖最终可访问语义补丁、TypeScript及Vite构建，不以Rust过滤组冒充全库799项。EXE/MSI/NSIS构建exit0，493个产品输入前后稳定；本包新增源文件亦在输入清单中，不使用旧阶段EXE。
+- 未验/未接：真实账号HTTP写入、原生GUI/物理IME、官方同环境配对图、用户验收；完整More菜单、关联/断开/重新授权、权限/sync、current-user身份fallback、hosted详情完整区域与跨窗持久同步仍未收口。本项目仅读恢复及写入单飞为恢复措施，不宣称是官方完全相同的忙状态UI。
+
+本阶段无新依赖、无真实账户写入、无推送/发布，也没有当前提交托管CI成功结论。详细PAA01–PAA09合同在规格末节，完整日志和独立复核在上述证据目录。
+
+候选：`dist-artifacts/plugins-r2-accounts-20261116/CodexNative.exe`，28,139,008字节，SHA-256 `d03f44308b237283a40ce3e3c353798d057c76968df093b47e594a892857d12d`。MSI/NSIS路径、大小和哈希见证据`candidate-artifacts.json`。产品输入清单SHA-256 `396c239e13123c74449cda29fc1c643e5e4861527de9bc23e3a8bb60459ad67e`，基于36e222d后的本阶段工作树；构建后重新逐文件核验。构建完成不等于原生GUI、安装/升级、账户服务或像素验收。
+
+复现入口：打开具备真实关联插件的App详情，实际multi资格账户行打开昵称编辑；检查初始昵称、空白和65码点报错、取消/焦点返回；经授权的真实写入须核保存后读取的实际link.name。未知结果仅点读取重试，不重复提交；切账号/离页的晚回不得提示成功。当前没有自动执行这组真实账号操作。下一继续More菜单/断开链，输入合同已补13个源码锚点和10个真实中文键；reconnect/OAuth资格仍按独立合同处理。

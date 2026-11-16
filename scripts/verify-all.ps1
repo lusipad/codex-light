@@ -380,6 +380,8 @@ try {
   Invoke-Step "Plugin app details parent" { node scripts/verify-plugin-app-details-parent.mjs }
   Invoke-Step "Plugin app entry client" { node scripts/verify-plugin-app-entry.mjs }
   Invoke-Step "Plugin app entry page" { node scripts/verify-plugin-app-entry-page.mjs }
+  Invoke-Step "Plugin app account actions" { node scripts/verify-plugin-app-accounts.mjs }
+  Invoke-Step "Plugin account rename dialog" { node scripts/verify-plugin-account-rename-dialog.mjs }
   Invoke-Step "Plugin permissions state" { node scripts/verify-plugin-permissions-state.mjs }
   Invoke-Step "Plugin permissions presentation" { node scripts/verify-plugin-permissions-ui.mjs }
   Invoke-Step "Plugin-provided settings data" { node scripts/verify-plugin-provided-settings.mjs }
@@ -388,7 +390,7 @@ try {
   Invoke-Step "Plugin-provided settings form" { node scripts/verify-plugin-provided-settings-form.mjs }
   Invoke-Step "Plugin-provided settings parent" { node scripts/verify-plugin-provided-settings-parent.mjs }
   Invoke-Step "Rust plugin global permissions" { cargo test --manifest-path src-tauri/Cargo.toml plugin_permissions }
-  Invoke-Step "Rust plugin app details read" { cargo test --manifest-path src-tauri/Cargo.toml plugin_app_details }
+  Invoke-Step "Rust plugin app details and accounts" { cargo test --manifest-path src-tauri/Cargo.toml plugin_app_ }
   Invoke-Step "Plugin marketplace-dialog regression" { node scripts/verify-plugin-marketplace-dialog.mjs }
   Invoke-Step "Plugin marketplace-parent regression" { node scripts/verify-plugin-marketplace-parent.mjs }
   Invoke-Step "Rust shared plugin operation regression" { cargo test --locked --manifest-path src-tauri/Cargo.toml plugin_operations }

@@ -23,8 +23,17 @@ try {
   assert.equal(reads.length, 0, "app route uses its scoped service reader instead of a competing plugin-only load");
   assert.ok(!view.text(view.tree).includes("此插件管理子页面尚未接入"));
   const initialKey = app().props.key;
+  pop("/settings/plugins-settings/plugin%2Freal/apps/asdk_app_A?keep=literal%2Fvalue&linkId=old"); await view.tick();
+  assert.equal(app().props.selectedLinkId, "old"); const retiredSelection = app().props.onSelectLink;
+  const selectionWrite = historyWrites.length;
+  assert.equal(app().props.onSelectLink("second/?中文"), true); await view.tick();
+  assert.equal(new URL(location.href).searchParams.get("keep"), "literal/value");
+  assert.equal(app().props.selectedLinkId, "second/?中文"); assert.equal(historyWrites[selectionWrite][0], "replace");
+  assert.equal(app().props.key, initialKey, "selection does not remount the current App reader or discard its dialog draft");
   pop("/settings/plugins-settings/plugin%2Freal/apps/connector_B"); await view.tick();
   assert.equal(app().props.appId, "connector_B"); assert.notEqual(app().props.key, initialKey);
+  assert.equal(retiredSelection("stale selection"), false, "retired parent rejects selection before the child persists it");
+  assert.equal(new URL(location.href).searchParams.has("linkId"), false);
   const retiredMembership = app().props.onUnavailable;
   pop("/settings/plugins-settings/plugin%2Freal/apps/connector_B/permissions"); await view.tick();
   retiredMembership(); await view.tick();

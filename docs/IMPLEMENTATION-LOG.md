@@ -2999,3 +2999,10 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 验证实际发现并修复：原始metadata ID与别名双边规范化混淆；官方Map最后项语义被误改为歧义拒绝；独立复审P2归属失效误停无权限页。后者增加专用结果、身份后验与当前路由replace，真实403不误跳；红日志及独立闭环记录保留。189完整前端回放通过后，复审补丁相关10专项和最终TypeScript/Vite构建再验0；最终Rust22专项通过、763过滤，未跑全量785或新原生，不继承9661cf0 EXE验收。
 
 隔离预览服务已通过原exec句柄关闭。浏览器验收此前被工具URL策略中止，未取得截图或绕过限制，官方配对像素与原生状态保持未验。只读页缺完整账户/管理/权限/sync写链和hosted主详情消费者，不当插件整页完成；下一继续真实账户重命名/选择合同及资格，不转R3、不推送。
+## 2026-11-16 — R2账户重命名与选择闭环
+
+继续总计划第02批，在36e222d只读详情上接真实账户动作。先核同版13锚点/5资源，修正rename仅multi资格、JS空白/Unicode码点、默认认证隐藏与provider原始ID语义；不挪用关联账户权限的owner/personal门禁。复用现有身份/网络/取消/回验框架、管理样式和全局toast，无新依赖。固定PATCH仅写name，fresh归属及唯一可见link核验，确认实际读回后才关闭和成功提示；结果未知保留草稿、只读恢复。
+
+实际回归先红后绿：退休弹层回调/ABA、确认保存与pending旧渲染关闭竞态、同值空白无写、null multi的显式选择、implicit_link::精确前缀及raw connector ID。URL replace保query，父导航接受后才持久化，实际metadata.id+账号/用户分区，null删除、末100次写入。完整191前端回放与TypeScript/Vite通过，最后通知补丁生产页面专项再验0；全Rust799通过且0失败/忽略/过滤。独立有界复审未发现确定新增P1/P2。
+
+最终非Fast标准exit0、34个真实隔离协议探针通过；可访问名称/昵称及认证警告关联补丁先红后绿，最终生产页面、TypeScript/Vite亦在标准中通过。EXE/MSI/NSIS构建exit0，493产品输入前后稳定。候选`dist-artifacts/plugins-r2-accounts-20261116/CodexNative.exe`，SHA256 `d03f44308b237283a40ce3e3c353798d057c76968df093b47e594a892857d12d`；产物详情见证据`candidate-artifacts.json`。旧EXE不覆盖新源码。没有真实账号HTTP/OAuth、原生GUI/物理IME、官方配对像素或托管CI成功结论；More菜单/关联/断开/权限/sync等继续留第02批，不升级整页状态，不推送/发布。下一包More/断开合同已补13源码锚点及10中文键，区分共享允许last、普通fallback限制last和独立管理无此入口。证据根`.ref/parity/12/whole-page/actual/plugin-account-actions-r2-20261116/`。

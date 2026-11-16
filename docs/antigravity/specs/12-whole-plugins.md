@@ -171,3 +171,17 @@ ON_USE且无显式app setup的普通提示词可先起草，不把有apps本身�
 PAD07–PAD12新增验收：association的string/null/missing/error；原始ID编码和请求上下文；durable内容投影与图标fallback/其他应用隔离；元数据失败保header；replace导航及账号/路由ABA；包含项与MCP映射App行走独立入口且管理员禁用。完整Manage app写控件、账户重命名/关联、当前用户身份fallback、hosted主详情数据及区域资格仍须后续同页收口，不能以只读首包算完整App详情。
 
 独立复审补正PAD01：materialized归属失效使用专用`app_not_in_plugin`结果，客户端先后验当前账户/用户/generation，状态层清旧快照，仅当前plugin/app/detail及无host路由才replace回对应插件详情；真实HTTP403、网络错误不能触发该跳转。手动点击插件祖先仍push。hosted重复canonical ID按BQbE.w的Map语义保留最后项，不能自造“歧义”拒绝；原始metadata请求ID与canonical身份比较分别处理。
+
+### 账户重命名与选择工作包（36e222d之后）
+
+开工依据为`app-account-actions-contract.md`及13个同版源码锚点。rename仅以实际多账户资格开启，不添加personal、owner、email、管理员或REAUTH_REQUIRED门禁；实际连接/断开进行中的忙状态在对应消费者接通后合并。本包不造OAuth或断开菜单成功。默认认证及精确provider特例按NT/H9核：NONE/API_KEY且无真实可重新认证link时隐藏账户区；supported_auth缺失不能默认OAuth。
+
+后端单注册、fresh插件归属/metadata/完整links→真实同App可见非implicit目标→`PATCH /ps/v2/links/{link_id}`，仅写trim后的name、Unicode码点1–64、CODEX/settings；同值不PATCH。ACK/未知交付均只读回验，不能靠缓存补丁或空ACK宣称名称已保存。回验失败/不同保持pending，仅显式读取恢复；同一scope写入单飞，取消/换账号/晚回不污染新页。
+
+账户行多账户点击先选择并打开rename；非rename且兄弟多于一项时是选择按钮。URL只replace linkId，保留其他query，路由拒绝旧回调后不持久化。选中record按`[accountId,userId,实际metadata.id]`原值分区，null删除，最近写入移末尾并限100项，不把规范化身份比较误当所有原始ID都可覆盖。外层单账户详情fallback与共享账户区显式选择分别处理。
+
+弹层字段/关闭/焦点/IME/校验按原eo；本项目增加的未知结果仅读重试单列为恢复差异。PAA01–PAA08覆盖真实请求与读回、资格/隐藏条件、空白/64–65码点/同值、单飞及结果未知、scope/ABA/旧finally、URL与100项持久化、弹层关闭渲染时序、真实403与归属失效。真实账号HTTP、原生IME、官方同环境像素及完整More菜单/关联/断开/权限/sync仍未验或未接，不升级整页状态。
+
+补核同版中文和el行语义：rename可访问名为“重命名 {identity}（{nickname}）”，仅实际不同昵称存在时加括号；选择按钮为“选择 {identity}”，不同昵称通过自引用按钮id和昵称id的aria-labelledby合并。非选择身份区域是group，认证过期说明通过aria-describedby关联；不是仅放一个无归属sr-only文本。PAA09先红复现遗漏昵称，再绿验证真实生产JSX。四个精确来源片段在本包证据`account-accessible-label-anchors.json`，此项不证明屏幕阅读器原生实测或视觉一致。
+
+下一同页工作包输入是`app-account-disconnect-contract.md`与13个源码锚点/10个中文键。共享账户More依次为适用rename、适用reconnect、危险色断开，align=end/contentWidth=xs；断开先选中实际link，再直接调用DELETE `/aip/connectors/links/{link_id}`，无body、settings/CODEX、204允许空响应，无确认层。成功后的选择回退、账户变更成功提示与独立刷新失败分别处理。EF5T共享区允许最后一项断开，tB普通fallback限制最后一项，独立ManageApp没有此link入口；不能混成一个通用last-account规则。本项目仍保留强身份及未知交付仅读恢复。准确图标矢量、真实账号服务和原生/像素尚未证实；该合同是下一包开发输入，不表示断开消费者已实现。

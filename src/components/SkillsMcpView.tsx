@@ -45,7 +45,7 @@ import { PluginPreparationPanel } from "./PluginPreparationPanel";
 import { RecommendedSkillsPanel } from "./RecommendedSkillsPanel";
 import { recommendedSkillDisplayName, readRecommendedSkills, type RecommendedSkill } from "../recommendedSkills";
 import { filterManagedSkills } from "../pluginManagementSkills";
-import { parsePluginManagementLocation, pluginManagementAppUrl, pluginManagementDetailUrl, pluginManagementRootUrl } from "../pluginManagementLocation";
+import { parsePluginManagementLocation, pluginManagementAppSelectionUrl, pluginManagementAppUrl, pluginManagementDetailUrl, pluginManagementRootUrl } from "../pluginManagementLocation";
 import { SkillPreviewDialog } from "./SkillPreviewDialog";
 import { PluginDirectoryDetail } from "./PluginDirectoryDetail";
 import { PluginDirectoryIncluded } from "./PluginDirectoryIncluded";
@@ -2056,7 +2056,15 @@ export const SkillsMcpView: React.FC<SkillsMcpViewProps> = ({
     };
     return <PluginAppDetailsPage key={JSON.stringify([connectionIdentity, managementAppRoute.pluginId, managementAppRoute.appId])}
       connectionIdentity={connectionIdentity} pluginId={managementAppRoute.pluginId!} appId={managementAppRoute.appId}
-      onBack={() => closeManagedDetail()} onOpenPlugin={() => openPlugin()} onUnavailable={() => openPlugin(true)} />;
+      onRenamed={() => onNotify?.("账户已重命名", "success")}
+      selectedLinkId={new URL(window.location.href).searchParams.get("linkId")}
+      onSelectLink={linkId => {
+        const current = parsePluginManagementLocation(window.location.href);
+        if (!isPluginContextCurrent(managementAppContext) || current?.kind !== "plugin" || current.section !== "detail" || current.hostId !== null ||
+          current.pluginId !== managementAppRoute.pluginId || current.appId !== managementAppRoute.appId) return false;
+        updateDirectoryUrl(pluginManagementAppSelectionUrl(window.location.href, linkId), true);
+        return true;
+      }} onBack={() => closeManagedDetail()} onOpenPlugin={() => openPlugin()} onUnavailable={() => openPlugin(true)} />;
   }
 
   return (
