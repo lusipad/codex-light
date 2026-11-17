@@ -1,0 +1,30 @@
+.appearance-mode-art {
+  --appearance-mode-ring: var(--color-ring, light-dark(#0169cc, #0285ff));
+  position: relative;
+  isolation: isolate;
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border-radius: var(--radius-lg, 8px);
+  color: var(--color-text-info, light-dark(#0169cc, #66b5ff));
+}
+
+.appearance-mode-art-halves {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  height: 100%;
+}
+
+.appearance-mode-art svg { display: block; width: 100%; height: 100%; }
+
+.appearance-mode-art-ring {
+  position: absolute;
+  inset: 0;
+  border: 2px solid var(--border-default);
+  border-radius: inherit;
+}
+
+label:hover > .appearance-mode-art:not([data-selected="true"]) .appearance-mode-art-ring { border-color: var(--border-strong); }
+.appearance-mode-art[data-selected="true"] .appearance-mode-art-ring { border-color: var(--appearance-mode-ring); }
+input:focus-visible + .appearance-mode-art { outline: 2px solid var(--appearance-mode-ring); outline-offset: 2px; }

@@ -38,7 +38,8 @@ function mount(component, props, { document = { activeElement: null, body: {} } 
     if (name === "react-dom") return { createPortal: value => value };
     if (name.endsWith("AppearanceFontPicker")) return { AppearanceFontPicker: function AppearanceFontPicker() {} };
     if (name.endsWith("AppearanceColorPicker")) return { AppearanceColorPicker: function AppearanceColorPicker() {} };
-    if (name.endsWith("GeneralPreferenceSelect")) return { GeneralPreferenceSelect: function GeneralPreferenceSelect() {} };
+    if (name.endsWith("AppearanceModePreview")) return { AppearanceModePreview: function AppearanceModePreview() {} };
+    if (name.endsWith("AppearanceThemePresetPicker")) return { AppearanceThemePresetPicker: function AppearanceThemePresetPicker() {} };
     if (name.endsWith("appearanceTheme")) return { ...engine, themePresets: () => presets, loadThemePreset: (...args) => loadPreset(...args) };
     if (name.endsWith("clipboard")) return { copyTextToClipboard: text => clipboard(text) };
     return { parseAppearanceFontSize: (_, text) => Number(text) };
@@ -62,14 +63,27 @@ function createState() {
 }
 const { state, calls } = createState();
 const initialPage = mount("AppearanceSettings", { state });
-assert.equal(initialPage.all().filter(node => node.props.className === "appearance-mode-preview").length, 3,
-  "Store Mode uses three 4:3 preview choices rather than bare radio text");
+assert.ok(initialPage.by(node => node.props.className === "appearance-mode-card"), "mode has its own card");
+assert.equal(initialPage.by(node => node.props.id === "appearance-advanced"), undefined, "Advanced is initially collapsed");
+const previews = initialPage.all().filter(node => node.type?.name === "AppearanceModePreview");
+assert.deepEqual(previews.map(node => [node.props.mode, node.props.selected]), [["system", true], ["light", false], ["dark", false]]);
 initialPage.by(node => node.props["aria-controls"] === "appearance-advanced").props.onClick(); initialPage.render();
 assert.deepEqual(initialPage.all().filter(node => typeof node.type === "function" && node.type.name === "FontSizeField").map(node => node.props.setting),
   ["sansFontSize", "codeFontSize"], "Advanced starts with independent font size settings");
 const order = initialPage.all();
-assert.ok(order.findIndex(node => node.props.setting === "codeFontSize") < order.findIndex(node => node.props.id === "appearance-separate"),
-  "font sizes precede separate theme controls");
+const reduced = initialPage.by(node => node.props.id === "reduced-motion");
+assert.equal(reduced.props.role, "group");
+const options = nodes(reduced).filter(node => node.type === "button");
+assert.deepEqual(options.map(content), ["系统", "开启", "关闭"]);
+assert.deepEqual(options.map(node => node.props["aria-pressed"]), [false, true, false]);
+options[1].props.onClick();
+assert.equal(calls.length, 0, "same effective selection does not save");
+options[0].props.onClick();
+assert.deepEqual(calls.splice(0), [["reduced-motion-preference", "system"]]);
+const separate = initialPage.by(node => node.props.id === "appearance-separate");
+assert.equal(separate.props["aria-describedby"], "appearance-separate-description");
+assert.ok(order.findIndex(node => node.props.setting === "codeFontSize") < order.indexOf(reduced)
+  && order.indexOf(reduced) < order.indexOf(separate), "font sizes are in the first card; motion and separate modes follow in the next card");
 initialPage.dispose();
 const defaults = createState().state;
 defaults.preferences.sansFontSize = 14; defaults.preferences.codeFontSize = 12; defaults.preferences["reduced-motion-preference"] = "system";
@@ -111,7 +125,7 @@ for (const variant of ["light", "dark"]) {
   const presetCard = mount("ThemeCard", { state: presetData.state, variant, showTitle: true, editRevision: { current: 0 } });
   let resolvePreset;
   loadPreset = () => new Promise(resolve => { resolvePreset = resolve; });
-  const selection = presetCard.by(node => typeof node.type === "function" && node.type.name === "GeneralPreferenceSelect").props.onChange("dracula");
+  const selection = presetCard.by(node => typeof node.type === "function" && node.type.name === "AppearanceThemePresetPicker").props.onChange("dracula");
   // A newer confirmed read can arrive during lazy loading without a local editing revision.
   const latest = { ...custom, contrast: 31, fonts: { ...custom.fonts, content: "Latest Content" } };
   presetData.state.preferences[themeKey] = latest; presetCard.render();
@@ -129,34 +143,46 @@ for (const variant of ["light", "dark"]) {
 }
 
 const cardData = createState(), revision = { current: 0 };
-const card = mount("ThemeCard", { state: cardData.state, variant: "dark", showTitle: true, editRevision: revision });
+const notices = [];
+const card = mount("ThemeCard", { state: cardData.state, variant: "dark", showTitle: true, editRevision: revision,
+  onNotify: (...args) => notices.push(args) });
 assert.equal(card.by(node => node.props.className === "appearance-theme-preview"), undefined,
   "official compact theme controls do not contain an invented Aa preview card");
+const visualRows = card.all().filter(node => node.props.className === "appearance-setting-row");
+assert.deepEqual(visualRows.map(row => content(row.children[0])), ["强调色", "背景", "前景", "字体"]);
+const themeHeader = card.by(node => node.props.className === "appearance-theme-heading appearance-theme-card-heading");
+assert.equal(content(themeHeader.children[0]), "深色主题");
+assert.ok(nodes(themeHeader).some(node => node.props["aria-label"] === "导入深色主题"));
+assert.ok(nodes(themeHeader).some(node => node.props["aria-label"] === "复制深色主题"));
+assert.ok(nodes(themeHeader).some(node => node.props.id === "appearance-dark-preset"));
 let release;
 loadPreset = () => new Promise(resolve => { release = resolve; });
-const changing = card.by(node => typeof node.type === "function" && node.type.name === "GeneralPreferenceSelect").props.onChange("dracula"); card.render();
+const changing = card.by(node => typeof node.type === "function" && node.type.name === "AppearanceThemePresetPicker").props.onChange("dracula"); card.render();
 await card.by(node => typeof node.type === "function" && node.props.label === "深色 强调色").props.onSave("#123456");
 release(engine.defaultChromeTheme("dark")); await changing; card.render();
 assert.equal(cardData.calls.length, 1, "late preset cannot overwrite subsequent color edit");
 assert.equal(cardData.calls[0][1].accent, "#123456"); assert.equal(cardData.calls[0][1].accentSource, "custom");
 const advancedCard = mount("ThemeCard", { state: cardData.state, variant: "dark", advanced: true, showTitle: true, editRevision: revision });
-const loading = card.by(node => typeof node.type === "function" && node.type.name === "GeneralPreferenceSelect").props.onChange("dracula");
+assert.deepEqual(advancedCard.all().filter(node => node.props.className === "appearance-setting-row").map(row => content(row.children[0])),
+  ["界面字体样式", "内容字体", "代码字体", "对比度"]);
+const loading = card.by(node => typeof node.type === "function" && node.type.name === "AppearanceThemePresetPicker").props.onChange("dracula");
 await advancedCard.by(node => typeof node.type === "function" && node.props.label === "深色 代码字体").props.onChange("Consolas");
 release(engine.defaultChromeTheme("dark")); await loading;
 assert.equal(cardData.calls.length, 2, "advanced font edit also invalidates pending visual-card preset");
 loadPreset = async () => { throw Error("offline"); };
-await card.by(node => typeof node.type === "function" && node.type.name === "GeneralPreferenceSelect").props.onChange("dracula"); card.render();
+await card.by(node => typeof node.type === "function" && node.type.name === "AppearanceThemePresetPicker").props.onChange("dracula"); card.render();
 assert.ok(card.by(node => node.props.role === "alert" && content(node) === "无法应用主题"));
 loadPreset = async () => engine.defaultChromeTheme("dark");
-await card.by(node => typeof node.type === "function" && node.type.name === "GeneralPreferenceSelect").props.onChange("codex"); card.render();
+await card.by(node => typeof node.type === "function" && node.type.name === "AppearanceThemePresetPicker").props.onChange("codex"); card.render();
 assert.equal(cardData.calls.at(-1)[2], "codex");
 clipboard = async () => false;
 await card.by(node => node.props["aria-label"] === "复制深色主题").props.onClick(); card.render();
 assert.ok(card.by(node => node.props.role === "alert" && content(node) === "复制主题失败"));
 assert.ok(!card.by(node => node.props.role === "status" && content(node).includes("已复制")));
+assert.deepEqual(notices, []);
 clipboard = async text => { assert.equal(engine.parseTheme(text, "dark", ["codex", "dracula"]).variant, "dark"); return true; };
 await card.by(node => node.props["aria-label"] === "复制深色主题").props.onClick(); card.render();
-assert.ok(card.by(node => node.props.role === "status" && content(node) === "已复制深色主题"));
+assert.deepEqual(notices, [["已复制深色主题", "success"]]);
 card.by(node => node.props["aria-label"] === "导入深色主题").props.onClick(); card.render();
 let modal = card.by(node => typeof node.type === "function" && node.type.name === "ThemeImportDialog");
 const count = cardData.calls.length;
@@ -166,9 +192,11 @@ assert.equal(cardData.calls.length, count, "invalid or wrong-variant imports can
 cardData.state.saveTheme = async () => "unconfirmed";
 assert.equal(await modal.props.onImport(engine.serializeTheme({ variant: "dark", theme: engine.defaultChromeTheme("dark"), codeThemeId: "codex" })), false);
 card.render(); assert.ok(card.by(node => typeof node.type === "function" && node.type.name === "ThemeImportDialog"), "unconfirmed import stays open");
+assert.equal(notices.length, 1, "an unconfirmed import cannot announce success");
 cardData.state.saveTheme = async () => "saved";
 assert.equal(await modal.props.onImport(engine.serializeTheme({ variant: "dark", theme: engine.defaultChromeTheme("dark"), codeThemeId: "codex" })), true);
 card.render(); assert.ok(!card.by(node => typeof node.type === "function" && node.type.name === "ThemeImportDialog"));
+assert.deepEqual(notices[1], ["已导入 深色 主题", "success"]);
 card.dispose(); advancedCard.dispose();
 
 const edits = [], field = mount("ThemeTextField", { label: "深色 背景", value: "#181818", color: true, disabled: false, onSave: value => edits.push(value) });

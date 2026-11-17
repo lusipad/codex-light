@@ -264,6 +264,9 @@ try {
   Invoke-Step "Appearance theme semantics and preset data regression" { node scripts/verify-appearance-theme.mjs }
   Invoke-Step "Appearance theme writes and multiwindow regression" { node scripts/verify-appearance-theme-state.mjs }
   Invoke-Step "Appearance theme settings component regression" { node scripts/verify-appearance-theme-ui.mjs }
+  Invoke-Step "Appearance mode preview source vector regression" { node scripts/verify-appearance-mode-preview.mjs }
+  Invoke-Step "Appearance preset picker and responsive submenu" { node scripts/verify-appearance-theme-preset-picker.mjs }
+  Invoke-Step "Appearance theme action source vectors" { node scripts/verify-appearance-theme-action-icons.mjs }
   Invoke-Step "Rust appearance configuration boundaries" { cargo test --manifest-path src-tauri/Cargo.toml appearance_preferences }
   Invoke-Step "Notification classification, persistence and dispatch regression" { node scripts/verify-notification-preferences.mjs }
   Invoke-Step "Native notification routing and approval intents" { node scripts/verify-notification-delivery.mjs }

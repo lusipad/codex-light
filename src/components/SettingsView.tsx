@@ -418,7 +418,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
         {activeSection === "appearance" && (
           <div className="settings-scroll-container settings-appearance-content">
-            <AppearanceSettings state={appearanceState} />
+            <AppearanceSettings state={appearanceState} onNotify={onNotify} />
           </div>
         )}
 

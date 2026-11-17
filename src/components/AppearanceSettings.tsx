@@ -4,9 +4,11 @@ import { parseAppearanceFontSize, type AppearanceState } from "../appearancePref
 import { copyTextToClipboard } from "../clipboard";
 import { loadThemePreset, parseTheme, resetAdvancedTheme, serializeTheme, themePresets,
   type ChromeTheme, type ThemeVariant } from "../appearanceTheme";
-import { GeneralPreferenceSelect } from "./GeneralPreferenceSelect";
+import { AppearanceThemePresetPicker } from "./AppearanceThemePresetPicker";
 import { AppearanceFontPicker } from "./AppearanceFontPicker";
 import { AppearanceColorPicker } from "./AppearanceColorPicker";
+import { AppearanceModePreview } from "./AppearanceModePreview";
+import { AppearanceThemeActionIcon } from "./AppearanceThemeActionIcon";
 import "./AppearanceSettings.css";
 
 function FontSizeField({ setting, state, label }: {
@@ -137,14 +139,19 @@ function ThemeContrast({ value, disabled, label, onSave }: {
     onChange={event => setDraft(Number(event.target.value))} onPointerUp={persist} onKeyUp={persist} onBlur={persist} /><output>{draft}</output></>;
 }
 
-function ThemeCard({ state, variant, advanced = false, showTitle, editRevision }: {
+function ThemeCard({ state, variant, advanced = false, showTitle, editRevision, onNotify }: {
   state: AppearanceState; variant: ThemeVariant; advanced?: boolean; showTitle: boolean; editRevision: { current: number };
+  onNotify?: (message: string, type: "success") => void;
 }) {
   const theme = variant === "light" ? state.preferences.appearanceLightChromeTheme : state.preferences.appearanceDarkChromeTheme;
   const latestTheme = useRef(theme);
   latestTheme.current = theme;
   const codeThemeId = variant === "light" ? state.preferences.appearanceLightCodeThemeId : state.preferences.appearanceDarkCodeThemeId;
   const [notice, setNotice] = useState("");
+  const reportSuccess = (message: string) => {
+    if (onNotify) onNotify(message, "success");
+    else setNotice(message);
+  };
   const [failure, setFailure] = useState("");
   const [importing, setImporting] = useState(false);
   const [loadingPreset, setLoadingPreset] = useState(false);
@@ -194,19 +201,18 @@ function ThemeCard({ state, variant, advanced = false, showTitle, editRevision }
           patch({ fonts });
         }} /></div>;
   return <section className="appearance-theme-card" aria-label={`${name}${advanced ? "高级" : ""}主题`}>
-    {(showTitle || !advanced) && <div className="appearance-theme-heading"><h4>{showTitle ? `${name}主题` : "主题"}</h4>
+    {(showTitle || !advanced) && <div className="appearance-theme-heading appearance-theme-card-heading"><h4>{showTitle ? `${name}主题` : "主题"}</h4>
       {!advanced && <div className="appearance-theme-actions">
         <button type="button" className="appearance-icon-button" aria-label={`导入${name}主题`} title={`导入${name}主题`} disabled={state.busy} onClick={() => setImporting(true)}>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M5 15v5h14v-5" /></svg></button>
+          <AppearanceThemeActionIcon action="import" /></button>
         <button type="button" className="appearance-icon-button" aria-label={`复制${name}主题`} title={`复制${name}主题`} disabled={state.busy} onClick={async () => {
           const copied = await copyTextToClipboard(serializeTheme({ variant, theme, codeThemeId }));
           if (!alive.current) return;
-          setNotice(copied ? `已复制${name}主题` : ""); setFailure(copied ? "" : "复制主题失败");
-        }}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V4H4v12h4" /></svg></button>
-        <div className="appearance-preset-control" aria-busy={loadingPreset}>
-          <span className="appearance-preset-swatches" aria-hidden="true">{[theme.surface, theme.ink, theme.accent].map((color, index) => <i key={index} style={{ background: color }} />)}</span>
-          <GeneralPreferenceSelect id={`appearance-${variant}-preset`} label={`${name} 代码主题`} value={codeThemeId} disabled={state.busy}
-          options={[...(!presets.some(preset => preset.id === codeThemeId) ? [{ value: codeThemeId, label: codeThemeId }] : []), ...presets.map(preset => ({ value: preset.id, label: preset.label }))]}
+          setNotice(""); setFailure(copied ? "" : "复制主题失败");
+          if (copied) reportSuccess(`已复制${name}主题`);
+        }}><AppearanceThemeActionIcon action="copy" /></button>
+          <AppearanceThemePresetPicker id={`appearance-${variant}-preset`} label={`${name} 代码主题`} value={codeThemeId}
+          theme={theme} variant={variant} loading={loadingPreset} disabled={state.busy} presets={presets}
           onChange={async id => {
             const revision = ++editRevision.current, request = ++presetRequest.current;
             setLoadingPreset(true); setFailure(""); setNotice("");
@@ -218,7 +224,7 @@ function ThemeCard({ state, variant, advanced = false, showTitle, editRevision }
               }, id);
             } catch { if (alive.current && revision === editRevision.current) setFailure("无法应用主题"); }
             finally { if (alive.current && request === presetRequest.current) setLoadingPreset(false); }
-          }} /></div>
+          }} />
       </div>}
     </div>}
     {!advanced && <>
@@ -243,14 +249,14 @@ function ThemeCard({ state, variant, advanced = false, showTitle, editRevision }
       try {
         const value = parseTheme(text, variant, presets.map(preset => preset.id));
         if (!await persistTheme(value.theme, value.codeThemeId)) return false;
-        if (alive.current) { setImporting(false); setNotice(`已导入 ${name} 主题`); }
+        if (alive.current) { setImporting(false); reportSuccess(`已导入 ${name} 主题`); }
         return true;
       } catch { return false; }
     }} />}
   </section>;
 }
 
-export const AppearanceSettings: React.FC<{ state: AppearanceState }> = ({ state }) => {
+export const AppearanceSettings: React.FC<{ state: AppearanceState; onNotify?: (message: string, type: "success") => void }> = ({ state, onNotify }) => {
   const [advanced, setAdvanced] = useState(false);
   const [separateModes, setSeparateModes] = useState(false);
   const [resetting, setResetting] = useState(false);
@@ -283,32 +289,53 @@ export const AppearanceSettings: React.FC<{ state: AppearanceState }> = ({ state
   return <div className="appearance-settings">
     <div className="card-section">
       <h3>视觉风格</h3>
-      <div className="appearance-mode-row"><span>模式</span><fieldset disabled={state.busy || resetting} className="appearance-mode-options" aria-label="模式">
+      <div className="appearance-mode-card"><div className="appearance-mode-row"><span>模式</span><fieldset disabled={state.busy || resetting} className="appearance-mode-options" role="radiogroup" aria-label="模式">
         <legend className="appearance-sr-only">模式</legend>
         {([["system", "系统"], ["light", "浅色"], ["dark", "深色"]] as const).map(([value, label]) =>
           <label key={value} title={label}><input type="radio" name="appearance-mode" value={value} aria-label={label}
             checked={state.preferences.appearanceTheme === value} onChange={() => void state.save("appearanceTheme", value)} />
-            <span className="appearance-mode-preview" data-mode={value} aria-hidden="true"><span className="appearance-mode-window"><i /><span /><span /><span /><b /><b /><em /></span></span></label>)}
-      </fieldset></div>
-      {variants.map(variant => <ThemeCard key={variant} state={controlsState} variant={variant} showTitle={separateModes} editRevision={themeRevisions.current[variant]} />)}
+            <AppearanceModePreview mode={value} selected={state.preferences.appearanceTheme === value} /></label>)}
+      </fieldset></div></div>
+      <div className="appearance-variant-cards">
+        {variants.map(variant => <ThemeCard key={variant} state={controlsState} variant={variant} showTitle={separateModes} editRevision={themeRevisions.current[variant]} onNotify={onNotify} />)}
+      </div>
     </div>
     <div className="card-section">
       <div className="appearance-theme-heading"><h3><button type="button" className="appearance-advanced-toggle" aria-expanded={advanced}
-        aria-controls="appearance-advanced" onClick={() => setAdvanced(value => !value)}>高级 <span aria-hidden="true">{advanced ? "⌃" : "⌄"}</span></button></h3>
+        aria-controls="appearance-advanced" onClick={() => setAdvanced(value => !value)}>高级
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"
+            strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={advanced ? "m4 10 4-4 4 4" : "m4 6 4 4 4-4"} /></svg>
+        </button></h3>
         {hasAdvancedChanges && <button type="button" className="appearance-reset" disabled={state.busy || resetting} onClick={() => void reset()}>重置为默认设置</button>}</div>
       {advanced && <div id="appearance-advanced">
         <div className="appearance-advanced-group"><FontSizeField setting="sansFontSize" state={controlsState} label="界面字号" />
           <FontSizeField setting="codeFontSize" state={controlsState} label="代码字体大小" /></div>
-        <div className="appearance-advanced-group"><div className="appearance-setting-row"><div><span>减少动态效果</span>
-          <p className="card-subtitle-desc">减少动画效果或匹配系统设置</p></div>
-          <GeneralPreferenceSelect id="reduced-motion" label="减少动态效果" disabled={state.busy || resetting} value={state.preferences["reduced-motion-preference"]}
-            options={[{ value: "system", label: "系统" }, { value: "on", label: "开启" }, { value: "off", label: "关闭" }]}
-            onChange={value => void state.save("reduced-motion-preference", value as "system" | "on" | "off")} /></div>
-        <div className="appearance-setting-row"><label htmlFor="appearance-separate">分别设置浅色和深色模式</label>
-          <input type="checkbox" role="switch" id="appearance-separate" checked={separateModes} disabled={state.busy || resetting}
-            onChange={event => setSeparateModes(event.target.checked)} /></div>
-        <p className="card-subtitle-desc appearance-separate-description">分别选择各自的主题、颜色和字体</p></div>
-        {variants.map(variant => <ThemeCard key={variant} state={controlsState} variant={variant} advanced showTitle={separateModes} editRevision={themeRevisions.current[variant]} />)}
+        <div className="appearance-advanced-group">
+          <div className="appearance-setting-row">
+            <div><span id="reduced-motion-label">减少动态效果</span>
+              <p id="reduced-motion-description">减少动画效果或匹配系统设置</p></div>
+            <div id="reduced-motion" className="appearance-segmented" role="group"
+              aria-labelledby="reduced-motion-label" aria-describedby="reduced-motion-description">
+              {([["system", "系统"], ["on", "开启"], ["off", "关闭"]] as const).map(([value, label]) =>
+                <button key={value} type="button" disabled={controlsState.busy}
+                  aria-pressed={state.preferences["reduced-motion-preference"] === value}
+                  onClick={() => {
+                    if (!controlsState.busy && state.preferences["reduced-motion-preference"] !== value) {
+                      void state.save("reduced-motion-preference", value);
+                    }
+                  }}>{label}</button>)}
+            </div>
+          </div>
+          <div className="appearance-setting-row">
+            <div><label htmlFor="appearance-separate">分别设置浅色和深色模式</label>
+              <p id="appearance-separate-description">分别选择各自的主题、颜色和字体</p></div>
+            <input type="checkbox" role="switch" id="appearance-separate" checked={separateModes} disabled={controlsState.busy}
+              aria-describedby="appearance-separate-description" onChange={event => setSeparateModes(event.target.checked)} />
+          </div>
+        </div>
+        <div className="appearance-variant-cards">
+          {variants.map(variant => <ThemeCard key={variant} state={controlsState} variant={variant} advanced showTitle={separateModes} editRevision={themeRevisions.current[variant]} />)}
+        </div>
       </div>}
     </div>
     {resetError && <div role="alert">部分外观设置无法重置。请重试。</div>}
