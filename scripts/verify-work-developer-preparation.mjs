@@ -28,3 +28,14 @@ payload.feature_gates['2826489636']={value:'bad'};projected=project(payload);ass
 payload=body();payload.response_format='init-v2';payload.values=[];payload.feature_gates['2826489636']={v:true};assert.equal(project(payload).unifiedCustomInstructionsEnabled,true);
 payload.feature_gates['codex-unified-custom-instructions']={v:false};assert.equal(project(payload).unifiedCustomInstructionsEnabled,false,'SDK name lookup wins over hash');payload.is_delta=true;assert.equal(project(payload).status,'not-ready');
 console.log('PASS exact SDK named/hash gate: V1/V2, loaded absence false, malformed null, name precedence, unread/delta not accepted');
+// R8 source: existing-thread preparation has no homepage target and permits a
+// null model, while threadId and heartbeat are explicit confirmed inputs.
+reset();const restoreContext={identity,model:null,execution:ready().execution};
+result=await api.readWorkThreadDeveloperPreparation(restoreContext,{threadId:'thread-existing',heartbeatEnabled:false},signal());
+assert.equal(result.status,'ready');assert.equal(result.inputs.threadId,'thread-existing');assert.equal(result.inputs.heartbeatEnabled,false);assert.equal(result.inputs.instructionOverrides,null);
+const restored=assembler.buildWorkDeveloperInstructions({...result.inputs,customInstructions:null});assert.equal(typeof restored,'string');
+reset();result=await api.readWorkThreadDeveloperPreparation({identity,model:'wire-model',execution:ready().execution},{threadId:'thread-existing',heartbeatEnabled:true},signal());assert.equal(result.inputs.heartbeatEnabled,true);assert.equal(result.inputs.instructionOverrides.desktopContextSection,'current wire model');
+reset();result=await api.readWorkThreadDeveloperPreparation(restoreContext,{threadId:'thread-existing'},signal());assert.equal(result.status,'not-ready');assert.equal(calls.some(call=>call[0]==='desktop_state_get'),false);
+reset();await assert.rejects(()=>api.readWorkThreadDeveloperPreparation({...restoreContext,execution:{...restoreContext.execution,identity:{...identity,generation:8}}},{threadId:'thread-existing',heartbeatEnabled:false},signal()),/账号/);
+reset();const restoreCancel=new AbortController();after=command=>{if(command==='desktop_state_get')restoreCancel.abort();};await assert.rejects(()=>api.readWorkThreadDeveloperPreparation(restoreContext,{threadId:'thread-existing',heartbeatEnabled:false},restoreCancel.signal));assert.equal(calls.some(call=>call[0]==='experimentalFeature/list'),false);
+console.log('PASS R8 thread producer: no home target, null model, explicit heartbeat, matching execution identity and cancellation');

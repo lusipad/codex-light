@@ -90,6 +90,21 @@ export interface WorkHomeState {
   preferences: Record<string, unknown>;
 }
 
+export async function readWorkHeartbeatRegistry(identity: ServiceIdentity, threadId: string, signal: AbortSignal): Promise<{
+  status: "ready"; enabled: boolean; automations: { kind: string; status: string; targetThreadId: string }[];
+}> {
+  const expected = { ...identity }, requestId = crypto.randomUUID();
+  const result = await invokeService<{ requestId: string; identity: ServiceIdentity; enabled: unknown; automations: unknown }>(
+    "work_heartbeat_read", requestId, { request: { requestId, expectedIdentity: expected }, threadId }, signal,
+  );
+  if (result?.requestId !== requestId || result.identity?.accountId !== expected.accountId
+    || result.identity?.userId !== expected.userId || result.identity?.generation !== expected.generation
+    || typeof result.enabled !== "boolean" || !Array.isArray(result.automations)
+    || result.automations.some(item => !item || typeof item !== "object" || Array.isArray(item)
+      || typeof item.kind !== "string" || typeof item.status !== "string" || item.targetThreadId !== threadId)) throw Error("无法确认此会话的心跳任务状态。");
+  return { status: "ready", enabled: result.enabled, automations: result.automations };
+}
+
 export interface WorkCustomInstructions {
   customInstructions: string | null;
   communicationGuide: string;

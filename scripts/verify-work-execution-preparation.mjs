@@ -13,7 +13,7 @@ const source = 'src/workExecutionPreparation.ts';
 function fixture() {
   const calls = [], modules = new Map(); let serial = 0, infoCount = 0;
   const c = { identity: () => clone(identity), body: payload(), config: { config: { desktop: null } },
-    atom: { status: 'missing' }, plan: 'plus', authMethod: 'chatgpt', fail: null, after() {},
+    atom: { status: 'missing' }, configCwd: null, plan: 'plus', authMethod: 'chatgpt', fail: null, after() {},
     route: identity.accountId, info: value => value };
   const bridge = {
     callAppServer: async (method, params) => {
@@ -23,7 +23,7 @@ function fixture() {
         assert.deepEqual(clone(params), { refreshToken: false });
         result = { account: { type: 'chatgpt', planType: 'not-the-real-plan' }, workspaceRouting: { chatgptAccountId: c.route } };
       } else {
-        assert.equal(method, 'config/read'); assert.deepEqual(clone(params), { includeLayers: true, cwd: null });
+        assert.equal(method, 'config/read'); assert.deepEqual(clone(params), { includeLayers: true, cwd: c.configCwd });
         if (c.fail === 'config') { await c.after(method); throw Error('offline config'); }
         result = clone(c.config);
       }
@@ -301,5 +301,15 @@ await test('guardian source preserves original feature values on missing or inva
     assert.equal(current.guardianv2.enabled, true); assert.equal(current.guardianv2.future, undefined);
     assert.equal(base.guardianv2, guardianv2, 'projection must not mutate caller features');
   }
+});
+await test('R8 restore reads actual thread configuration cwd and cancels stale thread paths', async () => {
+  const f=fixture();f.c.configCwd='D:/private/thread-project';
+  const result=ready(await f.read(new AbortController().signal,{cwd:f.c.configCwd}));
+  assert.equal(result.identity.accountId,identity.accountId);
+  assert.equal(f.calls.filter(call=>call.method==='config/read').every(call=>call.params.cwd===f.c.configCwd),true);
+  const fresh=fixture();ready(await fresh.read());assert.equal(fresh.calls.find(call=>call.method==='config/read').params.cwd,null);
+  const stopped=fixture();stopped.c.configCwd='D:/private/old-thread';const controller=new AbortController();
+  stopped.c.after=method=>{if(method==='config/read')controller.abort();};
+  await assert.rejects(()=>stopped.read(controller.signal,{cwd:stopped.c.configCwd}));
 });
 console.log(`Work execution preparation: ${groups} groups passed`);

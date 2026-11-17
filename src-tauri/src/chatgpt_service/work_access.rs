@@ -26,7 +26,47 @@ pub struct WorkHomePreferencesResponse {
     pub preferences: Value,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkHeartbeatResponse {
+    pub request_id: String,
+    pub identity: ServiceIdentity,
+    pub enabled: bool,
+    pub automations: Vec<crate::work_heartbeat::WorkHeartbeatEntry>,
+}
+
 impl ChatgptService {
+    pub async fn work_heartbeat_read<F, Fut>(
+        &self, request: WorkAccountInfoRequest, thread_id: String, call: F,
+    ) -> ServiceResult<WorkHeartbeatResponse>
+    where
+        F: Fn(&'static str, Value) -> Fut,
+        Fut: Future<Output = Result<Value, String>>,
+    {
+        self.work_heartbeat_read_with(request, thread_id, call, |identity, thread_id| {
+            crate::work_heartbeat::read_work_heartbeat(&crate::state::codex_home_dir(), identity, thread_id)
+        }).await
+    }
+
+    async fn work_heartbeat_read_with<F, Fut>(
+        &self, request: WorkAccountInfoRequest, thread_id: String, call: F,
+        read: impl FnOnce(&ServiceIdentity, &str) -> Result<Vec<crate::work_heartbeat::WorkHeartbeatEntry>, String>,
+    ) -> ServiceResult<WorkHeartbeatResponse>
+    where
+        F: Fn(&'static str, Value) -> Fut,
+        Fut: Future<Output = Result<Value, String>>,
+    {
+        if thread_id.is_empty() || thread_id.chars().any(char::is_control) {
+            return Err(failure("invalid_request", "A thread ID is required"));
+        }
+        self.with_work_account_info(request, call, |account, _| {
+            let automations = read(&account.identity, &thread_id)
+                .map_err(|_| failure("work_heartbeat_unavailable", "Work heartbeat registry could not be confirmed"))?;
+            Ok(WorkHeartbeatResponse { request_id: account.request_id, identity: account.identity,
+                enabled: true, automations })
+        }).await
+    }
+
     pub async fn work_account_info<F, Fut>(
         &self,
         request: WorkAccountInfoRequest,
@@ -328,6 +368,57 @@ mod tests {
                     }
                 );
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn work_heartbeat_boundary_authenticates_and_returns_only_target_projection() {
+        let service = ChatgptService::default();
+        let fresh = auth(None);
+        let rpc = Rpc::new(vec![fresh.clone(), account(), fresh]);
+        let result = service.work_heartbeat_read_with(request("heartbeat-view"), "thread-1".into(),
+            |method, params| rpc.call(method, params), |actual, target| {
+                assert_eq!(actual, &identity());
+                assert_eq!(target, "thread-1");
+                Ok(vec![crate::work_heartbeat::WorkHeartbeatEntry { kind: "heartbeat".into(), status: "ACTIVE".into(), target_thread_id: target.into() }])
+            }).await.unwrap();
+        assert_eq!(serde_json::to_value(result).unwrap(), json!({
+            "requestId":"heartbeat-view", "identity":identity(), "enabled":true,
+            "automations":[{"kind":"heartbeat","status":"ACTIVE","targetThreadId":"thread-1"}]
+        }));
+        rpc.assert_calls();
+        assert_eq!(rpc.calls.lock().unwrap().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn work_heartbeat_boundary_rejects_invalid_target_auth_and_registry_failure() {
+        let service = ChatgptService::default();
+        let rpc = Rpc::new(vec![]);
+        assert!(service.work_heartbeat_read_with(request("heartbeat-empty"), "".into(),
+            |method, params| rpc.call(method, params), |_, _| panic!("invalid target must not read files")).await.is_err());
+        let rpc = Rpc::new(vec![json!({"authMethod":"apikey"})]);
+        assert!(service.work_heartbeat_read_with(request("heartbeat-auth"), "thread-1".into(),
+            |method, params| rpc.call(method, params), |_, _| panic!("invalid auth must not read files")).await.is_err());
+        let fresh = auth(None);
+        let rpc = Rpc::new(vec![fresh.clone(), account(), fresh]);
+        let error = service.work_heartbeat_read_with(request("heartbeat-error"), "thread-1".into(),
+            |method, params| rpc.call(method, params), |_, _| Err("private path must not leak".into())).await.unwrap_err();
+        assert_eq!(error.code, "work_heartbeat_unavailable");
+        assert!(!error.message.contains("private path"));
+    }
+
+    #[tokio::test]
+    async fn work_heartbeat_boundary_retires_cancelled_or_replaced_owner_after_local_read() {
+        for cancel in [false, true] {
+            let service = ChatgptService::default();
+            let fresh = auth(None);
+            let rpc = Rpc::new(vec![fresh.clone(), account(), fresh]);
+            let result = service.work_heartbeat_read_with(request("heartbeat-retired"), "thread-1".into(),
+                |method, params| rpc.call(method, params), |_, _| {
+                    if cancel { service.cancel("heartbeat-retired"); } else { service.invalidate(); }
+                    Ok(vec![])
+                }).await;
+            assert!(result.is_err(), "retired reads cannot release even an empty registry proof");
         }
     }
 

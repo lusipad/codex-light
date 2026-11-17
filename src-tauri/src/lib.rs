@@ -8,6 +8,7 @@ pub mod appshots_worker;
 mod appshots_host;
 mod appshots_preferences;
 mod work_home_preferences;
+mod work_heartbeat;
 mod appshots_entry;
 mod appshots_native_entry;
 mod appshots_capture_task;
@@ -369,6 +370,18 @@ async fn work_home_preferences(
     request: chatgpt_service::WorkAccountInfoRequest,
 ) -> Result<chatgpt_service::WorkHomePreferencesResponse, chatgpt_service::ServiceError> {
     state.chatgpt_service.work_home_preferences(request, &state.desktop_state, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
+async fn work_heartbeat_read(
+    app: AppHandle, state: State<'_, AppState>,
+    request: chatgpt_service::WorkAccountInfoRequest, thread_id: String,
+) -> Result<chatgpt_service::WorkHeartbeatResponse, chatgpt_service::ServiceError> {
+    state.chatgpt_service.work_heartbeat_read(request, thread_id, |method, params| {
         let app = &app;
         let state = &state;
         async move { state.app_server.call(app, method, Some(params)).await }
@@ -2854,6 +2867,7 @@ pub fn run() {
             chatgpt_service_identity,
             work_account_info,
             work_home_preferences,
+            work_heartbeat_read,
             work_home_activate,
             chatgpt_service_read,
             chatgpt_service_site_pin,

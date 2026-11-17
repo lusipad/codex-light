@@ -226,7 +226,7 @@ export function projectWorkExecutionPreparation(input: WorkExecutionInput): Work
 }
 
 export async function readWorkExecutionPreparation(input: { identity: ServiceIdentity; appServerVersion: string | null; workAccess: WorkExecutionAccess;
-  preferences?: WorkHomePreferencesSnapshot }, signal: AbortSignal): Promise<WorkExecutionPreparation> {
+  preferences?: WorkHomePreferencesSnapshot; cwd?: string | null }, signal: AbortSignal): Promise<WorkExecutionPreparation> {
   const identity = { ...input.identity }, changed = () => Object.assign(Error("执行准备期间账号或认证发生变化。"), { code: "account_changed" });
   const current = async () => { signal.throwIfAborted(); const actual = await serviceIdentity(signal); signal.throwIfAborted(); if (!same(identity, actual)) throw changed(); };
   const route = async () => { const raw = await callAppServer("account/read", { refreshToken: false }); await current();
@@ -236,7 +236,7 @@ export async function readWorkExecutionPreparation(input: { identity: ServiceIde
   let bootstrap: unknown, config: unknown, preferences = input.preferences;
   const missing: string[] = [];
   try { bootstrap = await shareAccessBootstrap(identity, signal); } catch { missing.push("bootstrap"); } await current();
-  try { config = await callAppServer("config/read", { includeLayers: true, cwd: null }); } catch { missing.push("config"); } await current();
+  try { config = await callAppServer("config/read", { includeLayers: true, cwd: input.cwd ?? null }); } catch { missing.push("config"); } await current();
   if (!preferences) { try { preferences = await readWorkHomePreferences(identity, signal); } catch { missing.push("default-request-owner"); } await current(); }
   if (preferences && !same(identity, preferences.identity)) throw changed();
   await route(); const after = await readWorkAccountInfo(identity, signal); await current();

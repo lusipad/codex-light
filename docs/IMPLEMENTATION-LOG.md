@@ -1,5 +1,12 @@
 # 实施日志（按轮次）
 
+## 2026-11-17 — Work-local 冷恢复与当前owner heartbeat（R8）
+
+- 先核固定源旧thread/cwd/model的恢复、实际resume JSON及本地registry producer，补24+6精确锚点；原12清单共154段逐资源hash/header重验。恢复producer从首页输入解耦，不虚构target，不从home选项目或型号；null model保源语义。
+- 持久来源证明支持非prose与fresh generation，恢复RPC删除不存在的mode等字段；真实ACK按源重建default mode，已加载receipt保已有Plan。实际selectThread和权限cache miss接同恢复消费者，历史fallback不绕回普通resume；发送前刷新真实context，恢复中/错误的发送和Plan入口有guard及显式重读。
+- 新本机heartbeat读口复用fresh认证/取消屏障，按global marker及owner读取真实legacy或SQLite，迁移中合并/complete隔离/DELETED占位和完整legacy fallback沿源。无新依赖、不迁移/不生成marker；系统WinSQLite3只读同事务，正常WAL/SHM读者租约物理行为明确保留，测试仅隔离fixture。
+- 1103完整Rust及31前端专项通过，TSC与标准脚本语法通过；13个新增reader/认证用例实际执行Windows SQLite。普通较新权限event被新增严格fence误阻的回归已修为Work-only策略fence；相关失败与夹具缺省修复留证。最终EXE/MSI/NSIS退出0，1065输入前后稳定，EXE SHA256 `6bba89b5524fc1aa2959b4023b5442ef55a2572bbb50b29fa29c4b79d8c84b62`；真实账户/模型/GUI/IME/配对像素与用户验收未跑。CI/push继续暂停，完整picker/项目落地/Work-cloud及14批仍未完成，见16.23A。
+
 ## 2026-11-17 — Work-local 真实指令、首条与已加载跟进（R7）
 
 - 固定源取证恢复账户指令路径/缓存、完整项目指令组合及named gate、线程连续性。10清单124精确片段重核；首聊、heartbeat、64KiB、整record schema、Git未知及真实实验feature均有独立golden，不执行官方JS、不读/创建AGENTS替代账户指令。

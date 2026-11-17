@@ -39,6 +39,11 @@ export function mountProjectContext({ pending = null, membership = metadata, wor
     committedWorkDraftPolicy: { current: "fixture-draft-policy" },
     workPermissionRevision: { current: 0 },
     workActiveSend: { current: null },
+    workThreadRestoreController: { current: null },
+    loadingThread: false, workThreadRestoreState: null,
+    committedWorkHost: { current: "fixture-host" },
+    restoreWorkLocalThread: async () => ({ kind: "ordinary" }),
+    appServerStatus: { appServerVersion: "0.165.0" }, workCustomInstructions: {},
     workThreadContexts: { current: new Map() }, workHostIdentity: "fixture-host",
     readWorkThreadProvenance: async () => null,
     ...module.exports, ...executionModule.exports, ...appshotModule.exports, promptInput: "hello", attachedFiles: [], isStreaming: false,
@@ -103,7 +108,7 @@ export function mountProjectContext({ pending = null, membership = metadata, wor
     moveHomeAttachmentsToThread: id => calls.push(["moveHomeAttachmentsToThread", id]),
     setThreadPrompt: (_id, update) => { state.promptInput = typeof update === "function" ? update(state.promptInput) : update; },
   };
-  for (const name of ["ActiveRoute", "Turns", "IsStreaming", "ActiveTurnId", "SidebarCreatedThread", "ActiveThreadId", "WorkspaceHints", "PromptInput", "AttachedFiles", "ShowGoalModal", "ServerGoal"]) {
+  for (const name of ["ActiveRoute", "Turns", "IsStreaming", "ActiveTurnId", "SidebarCreatedThread", "ActiveThreadId", "WorkspaceHints", "PromptInput", "AttachedFiles", "ShowGoalModal", "ServerGoal", "WorkThreadRestoreState"]) {
     const key = name[0].toLowerCase() + name.slice(1);
     context[`set${name}`] = value => { state[key] = typeof value === "function" ? value(state[key] ?? {}) : value; };
   }

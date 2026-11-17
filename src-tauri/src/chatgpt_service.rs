@@ -65,7 +65,7 @@ mod work_project;
 pub use durable_models::{DurableModelsRequest, DurableModelsResponse};
 mod durable_thread;
 mod work_access;
-pub use work_access::{WorkAccountInfoRequest, WorkAccountInfoResponse, WorkHomePreferencesResponse};
+pub use work_access::{WorkAccountInfoRequest, WorkAccountInfoResponse, WorkHomePreferencesResponse, WorkHeartbeatResponse};
 pub use durable_thread::DurableThreadRequest;
 pub use sites_settings::{SitesSettingsRequest, SitesSettingsResponse};
 pub use sites_assets::{SiteAssetRef, SitesPinRequest, SitesPinResponse};

@@ -218,6 +218,8 @@ try {
   Invoke-Step "Work project-aware instruction real producers" { node scripts/verify-work-developer-preparation.mjs }
   Invoke-Step "Work message preparation composition" { node scripts/verify-work-local-message-preparation.mjs }
   Invoke-Step "Work thread continuity and resume projection" { node scripts/verify-work-thread-context.mjs }
+  Invoke-Step "Work local cold-restore consumer and native registry wrapper" { node scripts/verify-work-local-thread-restore.mjs }
+  Invoke-Step "Work actual App thread restoration and history isolation" { node scripts/verify-work-thread-restore-app.mjs }
   Invoke-Step "Work actual first message and loaded follow-up" { node scripts/verify-work-local-send.mjs }
   Invoke-Step "Deferred navigation continuation lifecycle" { node scripts/verify-navigation-continuation.mjs }
   Invoke-Step "Work actual App home navigation" { node scripts/verify-work-home-app.mjs }

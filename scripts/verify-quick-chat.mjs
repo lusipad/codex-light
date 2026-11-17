@@ -68,6 +68,7 @@ function visit(node) { if (ts.isVariableDeclaration(node) && ["renderThreadCompo
 visit(ast);
 let sends = 0, interrupts = 0, responses = 0;
 const context = { activeWorkContext: null, selectedModelId: "fixture-model", defaultModelSelected: false, reasoningEffort: "shared:reasoningEffort", fastMode: false,
+  activeWorkRestore: null, loadingThread: false, models: "shared:models", modelsLoading: false, modelsError: null, refreshModels() {},
   React, ComposerBox: "ComposerBox", ApprovalCenter: "ApprovalCenter", handleSendMessage: () => sends++, handleInterruptTurn: () => interrupts++, handleRespondServerRequest: () => responses++,
   appshotsEntry: { pendingIds: [] },
   keyboardState: { bindings: [{ command: "composer.submit", key: "Ctrl+Enter" }] }, queueBusy: false,
@@ -112,4 +113,15 @@ assert.equal(workComposer.props.selectedModelId, "confirmed-work-model");
 assert.equal(workComposer.props.reasoningEffort, "high");
 assert.equal(workComposer.props.serviceTier, null); assert.equal(workComposer.props.fastMode, false);
 assert.ok(workComposer.props.modelReadOnlyReason);
+context.modelSelection.selectionPending = true;
+context.modelSelection.selectionDisabledReason = "ordinary model unavailable";
+context.sendStartPendingRef.current.clear();
+assert.equal(vm.runInNewContext(compile(`(${helpers.get("renderThreadComposer")})`), context)().props.submissionDisabled, false,
+  "a confirmed Work thread does not borrow ordinary model eligibility");
+context.activeWorkRestore = { threadId: "work-1", status: "error", error: "真实恢复错误" };
+context.activeThreadId = "work-1";
+let retries = 0; context.selectThread = id => { assert.equal(id, "work-1"); retries++; };
+const blockedWork = vm.runInNewContext(compile(`(${helpers.get("renderThreadComposer")})`), context)();
+assert.equal(blockedWork.props.submissionDisabled, true); assert.equal(blockedWork.props.selectionError, "真实恢复错误");
+assert.equal(blockedWork.props.models.length, 0); blockedWork.props.onRefreshModels(); assert.equal(retries, 1);
 console.log("PASS shared Composer Work branch: confirmed thread model/effort, no ordinary speed substitution, explicit temporary read-only boundary");

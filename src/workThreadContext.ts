@@ -1,5 +1,6 @@
 import type { ServiceIdentity } from "./chatgptService";
 import type { WorkLocalCollaborationMode } from "./workLocalRequest";
+import type { WorkThreadProvenance } from "./workThreadProvenance";
 
 type Values = Record<string, unknown>;
 export interface WorkThreadScope { identity: ServiceIdentity; hostIdentity: string }
@@ -41,19 +42,27 @@ function collaboration(value: unknown): WorkLocalCollaborationMode | null {
     ...(settings.developer_instructions === undefined ? {} : { developer_instructions: settings.developer_instructions as string | null }) } };
 }
 function readContext(scope: WorkThreadScope, response: unknown, previous?: WorkThreadContext,
-  created?: { serviceName: "codex_work_desktop" | null; collaborationMode?: unknown }): WorkThreadContextResult {
+  created?: { serviceName: "codex_work_desktop" | null; collaborationMode?: unknown }, provenance?: WorkThreadProvenance): WorkThreadContextResult {
   const raw = record(response), thread = record(raw?.thread);
   if (!validScope(scope)) return { context: null, missingInputs: ["work-thread-scope"] };
   if (!thread || !string(thread.id)) return { context: null, missingInputs: ["work-thread-id"] };
-  if (previous && !workThreadContextMatches(previous, scope, thread.id)) return { context: null, missingInputs: ["work-thread-scope"] };
-  if (!created && !previous && thread.originator !== "codex_work_desktop") return { context: null, missingInputs: ["work-thread-provenance"] };
+  if (provenance && (provenance.threadId !== thread.id || provenance.accountId !== scope.identity.accountId
+    || provenance.userId !== scope.identity.userId || provenance.hostIdentity !== scope.hostIdentity
+    || provenance.serviceName !== null && provenance.serviceName !== "codex_work_desktop")) return { context: null, missingInputs: ["work-thread-provenance"] };
+  if (previous && !workThreadContextMatches(previous, scope, thread.id)) {
+    if (!provenance) return { context: null, missingInputs: ["work-thread-scope"] };
+    // Durable provenance proves ownership, not the old generation's runtime
+    // settings. Rebind only fields returned by this fresh read/resume.
+    previous = undefined;
+  }
+  if (!created && !previous && !provenance && thread.originator !== "codex_work_desktop") return { context: null, missingInputs: ["work-thread-provenance"] };
   if (created && created.serviceName !== null && created.serviceName !== "codex_work_desktop") return { context: null, missingInputs: ["work-thread-provenance"] };
   const field = (name: string) => Object.hasOwn(raw!, name) ? raw![name] : thread[name];
   const model = field("model"), reason = field("reasoningEffort"), cwd = field("cwd");
   const suppliedMode = Object.hasOwn(raw!, "collaborationMode") ? raw!.collaborationMode
     : created?.collaborationMode === undefined ? previous?.collaborationMode : created.collaborationMode;
   const context: WorkThreadContext = {
-    scope: copyScope(scope), threadId: thread.id, serviceName: created?.serviceName ?? previous?.serviceName ?? null,
+    scope: copyScope(scope), threadId: thread.id, serviceName: created ? created.serviceName : provenance ? provenance.serviceName : previous?.serviceName ?? null,
     originator: typeof thread.originator === "string" || thread.originator === null ? thread.originator : previous?.originator,
     model: string(model) ? model : null, reasoningEffort: typeof reason === "string" || reason === null ? reason : undefined,
     cwd: string(cwd) ? cwd : null,
@@ -71,8 +80,42 @@ export function captureWorkThreadContext(scope: WorkThreadScope, response: unkno
   sent: { serviceName: "codex_work_desktop" | null; collaborationMode?: unknown }): WorkThreadContextResult {
   return readContext(scope, response, undefined, sent);
 }
-export function restoreWorkThreadContext(scope: WorkThreadScope, response: unknown, previous?: WorkThreadContext): WorkThreadContextResult {
-  return readContext(scope, response, previous);
+export function restoreWorkThreadContext(scope: WorkThreadScope, response: unknown, previous?: WorkThreadContext, provenance?: WorkThreadProvenance): WorkThreadContextResult {
+  return readContext(scope, response, previous, undefined, provenance);
+}
+/** WLR14–16: normal local resume reconstructs the runtime's default mode from
+ * its actual result. Neither response.collaborationMode nor home mode is this
+ * producer's input. Captured fallbacks must belong to this same live scope. */
+export function confirmWorkThreadResumeResult(scope: WorkThreadScope, response: unknown, previous?: WorkThreadContext,
+  provenance?: WorkThreadProvenance): WorkThreadContextResult {
+  const restored = restoreWorkThreadContext(scope, response, previous, provenance);
+  if (!restored.context) return restored;
+  const raw = record(response)!;
+  const captured = previous && workThreadContextMatches(previous, scope, restored.context.threadId) ? previous : undefined;
+  const capturedReasoning = captured?.collaborationMode?.settings.reasoning_effort;
+  const responseReasoning = raw.reasoningEffort;
+  const latestReasoning = captured?.reasoningEffort;
+  let reasoning: string | null | undefined;
+  const candidates = [capturedReasoning, responseReasoning, latestReasoning];
+  let invalidReasoning = false;
+  for (const value of candidates) {
+    if (value == null) continue;
+    if (typeof value === "string") reasoning = value;
+    else invalidReasoning = true;
+    break;
+  }
+  // The live runtime initializes latestReasoningEffort to null. Preserve a
+  // confirmed null when a partial local receipt has no latest field yet.
+  if (!invalidReasoning && reasoning === undefined && candidates.includes(null)) reasoning = null;
+  const model = typeof raw.model === "string" && raw.model.trim() ? raw.model.trim() : null;
+  const context: WorkThreadContext = { ...restored.context, model, reasoningEffort: reasoning,
+    collaborationMode: model !== null && reasoning !== undefined ? { mode: "default", settings: {
+      model, reasoning_effort: reasoning, developer_instructions: null,
+    } } : null };
+  const missingInputs = restored.missingInputs.filter(name => name !== "work-thread-model" && name !== "work-thread-reasoning");
+  if (model === null) missingInputs.push("work-thread-model");
+  if (reasoning === undefined) missingInputs.push("work-thread-reasoning");
+  return { context, missingInputs };
 }
 interface RequestInput { scope: WorkThreadScope; context: WorkThreadContext | null; threadId: string; baseParams: Values }
 function requestMissing(input: RequestInput): string[] {
@@ -101,7 +144,9 @@ export function projectWorkThreadHeartbeat(threadId: string, registry: WorkHeart
 export function projectWorkThreadResume(input: RequestInput & { preparedDeveloperInstructions?: string; heartbeatRegistry: WorkHeartbeatRegistry | null | undefined }): {
   request: Values | null; instructionOptions: { threadId: string; heartbeatEnabled: boolean } | null; missingInputs: string[];
 } {
-  const missingInputs = requestMissing(input), heartbeat = projectWorkThreadHeartbeat(input.threadId, input.heartbeatRegistry);
+  // The existing runtime can resolve its own model on resume. Unknown read
+  // metadata is not permission to replace it with a home selection.
+  const missingInputs = requestMissing(input).filter(name => name !== "work-thread-model"), heartbeat = projectWorkThreadHeartbeat(input.threadId, input.heartbeatRegistry);
   missingInputs.push(...heartbeat.missingInputs);
   if (typeof input.preparedDeveloperInstructions !== "string") missingInputs.push("project-aware-developer-instructions");
   const instructionOptions = heartbeat.heartbeatEnabled === null ? null : { threadId: input.threadId, heartbeatEnabled: heartbeat.heartbeatEnabled };
@@ -109,6 +154,5 @@ export function projectWorkThreadResume(input: RequestInput & { preparedDevelope
   // reasoningEffort is an official manager input, not a declared top-level
   // ThreadResumeParams field. Do not copy home/turn options into this RPC.
   const { effort: _effort, reasoningEffort: _reasoning, serviceName: _service, collaborationMode: _mode, ...base } = input.baseParams;
-  return { request: { ...base, threadId: input.threadId, model: null, developerInstructions: input.preparedDeveloperInstructions,
-    ...(input.context?.collaborationMode ? { collaborationMode: collaboration(input.context.collaborationMode) } : {}) }, instructionOptions, missingInputs };
+  return { request: { ...base, threadId: input.threadId, model: null, developerInstructions: input.preparedDeveloperInstructions }, instructionOptions, missingInputs };
 }

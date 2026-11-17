@@ -29,6 +29,7 @@ import { readWorkCaptureTarget, type WorkCaptureTarget } from "./workHomePrepara
 import { awaitGuardedNavigation } from "./navigationContinuation";
 import { useWorkCustomInstructions } from "./useWorkCustomInstructions";
 import { readWorkLocalMessagePreparation, type WorkLocalMessagePreparation } from "./workLocalMessagePreparation";
+import { restoreWorkLocalThread } from "./workLocalThreadRestore";
 import { buildWorkLocalThreadRequest, buildWorkLocalTurnRequest } from "./workLocalRequest";
 import { captureWorkThreadContext, projectWorkThreadFollowUp, workThreadContextMatches, type WorkThreadContext } from "./workThreadContext";
 import { assertWorkThreadOwner, persistWorkThreadProvenance, readWorkThreadProvenance } from "./workThreadProvenance";
@@ -1525,6 +1526,12 @@ export const App: React.FC = () => {
   const workSendPreparing = useRef<AbortController | null>(null);
   const workActiveSend = useRef<AbortController | null>(null);
   const workHostIdentity = JSON.stringify([appServerStatus.binaryPath, appServerStatus.appServerVersion]);
+  const committedWorkHost = useRef(workHostIdentity);
+  useLayoutEffect(() => { committedWorkHost.current = workHostIdentity; }, [workHostIdentity]);
+  const workThreadRestoreController = useRef<AbortController | null>(null);
+  const [workThreadRestoreState, setWorkThreadRestoreState] = useState<{ threadId: string; status: "loading" | "error"; error?: string } | null>(null);
+  useLayoutEffect(() => () => { workThreadRestoreController.current?.abort(); workThreadRestoreController.current = null; },
+    [modelAccountIdentity, workHostIdentity, appServerStatus.connected]);
   useLayoutEffect(() => () => { workActiveSend.current?.abort(); workActiveSend.current = null; },
     [modelAccountIdentity, workHostIdentity, appServerStatus.connected]);
   useLayoutEffect(() => () => { workSendPreparing.current?.abort(); workSendPreparing.current = null; },
@@ -1632,13 +1639,23 @@ export const App: React.FC = () => {
     else threadExecutionPoliciesRef.current.delete(threadId);
     return resolved;
   }, []);
-  const resolveExecutionContext = useCallback(async (threadId: string | null, cwd: string | undefined, workspaceRoots: string[]) => {
+  const resolveExecutionContext = useCallback(async (threadId: string | null, cwd: string | undefined, workspaceRoots: string[], signal?: AbortSignal) => {
     const identity = executionIdentityRef.current;
     if (threadId) {
       let resolved = threadExecutionPoliciesRef.current.get(threadId);
       if (!resolved) {
         const revision = threadExecutionRevisionsRef.current.get(threadId) ?? 0;
-        const response = await callAppServer<any>("thread/resume", { threadId });
+        const request = threadRequestRef.current, owner = committedWorkOwner.current;
+        const permissionRevision = workPermissionRevision.current;
+        const current = () => identity === executionIdentityRef.current && request === threadRequestRef.current
+          && owner === committedWorkOwner.current && workHostIdentity === committedWorkHost.current;
+        const policyCurrent = () => revision === (threadExecutionRevisionsRef.current.get(threadId) ?? 0) && permissionRevision === workPermissionRevision.current;
+        const restored = await restoreWorkLocalThread({ threadId, hostIdentity: workHostIdentity, appServerVersion: appServerStatus.appServerVersion,
+          previous: workThreadContexts.current.get(threadId), forceResume: true, isCurrent: current, isPolicyCurrent: policyCurrent }, workCustomInstructions, signal ?? new AbortController().signal);
+        if (!current() || restored.kind !== "ordinary" && !policyCurrent()) throw new Error("会话权限恢复已失效，请重新发送");
+        const response = restored.kind === "ordinary" ? await callAppServer<any>("thread/resume", { threadId }) : restored.response;
+        if (!current() || restored.kind !== "ordinary" && !policyCurrent()) throw new Error("会话权限恢复已失效，请重新发送");
+        if (restored.kind !== "ordinary") workThreadContexts.current.set(threadId, restored.context);
         if (identity !== executionIdentityRef.current) throw new Error("账号已变化，请重新发送");
         resolved = captureThreadExecutionPolicy(threadId, response, revision);
       }
@@ -1650,7 +1667,7 @@ export const App: React.FC = () => {
     const summary = config.model_reasoning_summary;
     if (summary != null && !["auto", "concise", "detailed", "none"].includes(String(summary))) throw new Error("无法识别推理摘要配置");
     return { policy: permissionMode === "custom" ? resolveConfiguredExecutionPolicy(config, workspaceRoots) : resolvePresetExecutionPolicy(permissionMode, workspaceRoots, sessionAllowNetwork), summary: typeof summary === "string" ? summary : undefined, config };
-  }, [permissionMode, sessionAllowNetwork, captureThreadExecutionPolicy]);
+  }, [permissionMode, sessionAllowNetwork, captureThreadExecutionPolicy, workHostIdentity, appServerStatus.appServerVersion, workCustomInstructions]);
   const modelSelection = useModelSelection({
     models, modelsLoading, connected: appServerStatus.connected,
     threadId: activeThreadId, cwd: activeThreadId ? activeWorkspace?.path : homeWorkspace?.path,
@@ -3518,6 +3535,9 @@ export const App: React.FC = () => {
       void markScheduledActivityRead([threadId], Date.now(), scope);
     }
     for (const controller of worktreeCreationControllersRef.current.keys()) controller.abort();
+    workThreadRestoreController.current?.abort();
+    const restoreController = new AbortController();
+    workThreadRestoreController.current = restoreController;
     const executionIdentity = executionIdentityRef.current;
     const modelHydration = beginThreadModelHydration(threadId);
     const reviewHistorySnapshot = reviewResultsRef.current!.getRuns().filter(run => run.threadId === threadId);
@@ -3527,7 +3547,10 @@ export const App: React.FC = () => {
     if (navigation !== navigationRequestRef.current) return;
     const request = ++threadRequestRef.current;
     const lifecycle = turnLifecycleRef.current;
-    const isCurrent = () => executionIdentity === executionIdentityRef.current && isCurrentThreadRequest(request, threadRequestRef.current, threadId, activeThreadIdRef.current);
+    const owner = committedWorkOwner.current;
+    const isCurrent = () => !restoreController.signal.aborted && owner === committedWorkOwner.current
+      && workHostIdentity === committedWorkHost.current && navigation === navigationRequestRef.current
+      && executionIdentity === executionIdentityRef.current && isCurrentThreadRequest(request, threadRequestRef.current, threadId, activeThreadIdRef.current);
     activeThreadIdRef.current = threadId;
     attachmentScopeRef.current = `thread:${threadId}`;
     threadHistoryBufferRef.current.begin(request, threadId);
@@ -3550,7 +3573,10 @@ export const App: React.FC = () => {
     setTurnDiffFiles([]);
     setTurnsCursor(null);
     setHasMoreTurns(false);
+    setWorkThreadRestoreState(null);
     let loadedHistoryForReplay: TurnData[] = [];
+    let workHistoryResponse: any = null;
+    let classified = false, workThread = false;
     try {
       // 遵循官方 Codex 分页协议：只读元数据，不携带已废弃的 includeTurns: true
       const fullRes = await callAppServer<any>("thread/read", {
@@ -3561,15 +3587,41 @@ export const App: React.FC = () => {
       hydrateThreadModel(threadId, fullRes, modelHydration);
       try {
         const revision = threadExecutionRevisionsRef.current.get(threadId) ?? 0;
-        const settings = await callAppServer<any>("thread/resume", {
-          threadId,
-          ...(fullRes?.thread?.status?.type === "notLoaded" && fullRes?.thread?.ephemeral === false
-            ? { codexNativeScheduleTool: true } : {}),
-        });
+        const permissionRevision = workPermissionRevision.current;
+        const restoreCurrent = () => isCurrent() && revision === (threadExecutionRevisionsRef.current.get(threadId) ?? 0)
+          && permissionRevision === workPermissionRevision.current;
+        const provenance = await readWorkThreadProvenance(threadId);
         if (!isCurrent()) return;
-        hydrateThreadModel(threadId, settings, modelHydration);
-        captureThreadExecutionPolicy(threadId, settings, revision);
+        workThread = !!provenance || workThreadContexts.current.has(threadId) || fullRes?.thread?.originator === "codex_work_desktop";
+        classified = true;
+        let settings;
+        if (workThread) {
+          setWorkThreadRestoreState({ threadId, status: "loading" });
+          const restored = await restoreWorkLocalThread({ threadId, metadata: fullRes, provenance,
+            previous: workThreadContexts.current.get(threadId), hostIdentity: workHostIdentity,
+            appServerVersion: appServerStatus.appServerVersion, forceResume: !threadExecutionPoliciesRef.current.has(threadId),
+            isCurrent: restoreCurrent }, workCustomInstructions, restoreController.signal);
+          if (!restoreCurrent()) throw Error("会话恢复期间权限或执行方式已变化，请重新读取。");
+          if (restored.kind === "ordinary") throw Error("Work 会话来源恢复未确认。");
+          workThreadContexts.current.set(threadId, restored.context);
+          workHistoryResponse = restored.kind === "resumed" ? restored.response : null;
+          settings = restored.kind === "resumed" ? restored.response : null;
+          setWorkThreadRestoreState(null);
+        } else {
+          settings = await callAppServer<any>("thread/resume", {
+            threadId,
+            ...(fullRes?.thread?.status?.type === "notLoaded" && fullRes?.thread?.ephemeral === false
+              ? { codexNativeScheduleTool: true } : {}),
+          });
+        }
+        if (!isCurrent()) return;
+        if (settings) {
+          hydrateThreadModel(threadId, settings, modelHydration);
+          captureThreadExecutionPolicy(threadId, settings, revision);
+        }
       } catch (error) {
+        if (!isCurrent()) return;
+        if (workThread || !classified) setWorkThreadRestoreState({ threadId, status: "error", error: `会话配置恢复未确认：${String(error)}` });
         // A newly created thread has no rollout yet. Its thread/start settings remain authoritative.
         console.warn("会话速度档恢复未确认", error);
       }
@@ -3597,13 +3649,18 @@ export const App: React.FC = () => {
           setTurnsCursor(page.nextCursor);
           setHasMoreTurns(true);
         }
-      } catch {
+      } catch (error) {
         if (!isCurrent()) return;
+        if (workThread || !classified) {
+          if (!workHistoryResponse) throw error;
+          loadedTurns = normalizeTurnsFromThread(workHistoryResponse);
+        } else {
         const revision = threadExecutionRevisionsRef.current.get(threadId) ?? 0;
         const resumeRes = await callAppServer<any>("thread/resume", { threadId });
         if (!isCurrent()) return;
         captureThreadExecutionPolicy(threadId, resumeRes, revision);
         loadedTurns = normalizeTurnsFromThread(resumeRes);
+        }
       }
       if (!isCurrent()) return;
       loadedHistoryForReplay = loadedTurns;
@@ -3642,6 +3699,7 @@ export const App: React.FC = () => {
     } catch (e) {
       if (isCurrent()) setHistoryError(`加载会话失败: ${String(e)}`);
     } finally {
+      if (workThreadRestoreController.current === restoreController) workThreadRestoreController.current = null;
       if (isCurrent()) {
         const buffered = threadHistoryBufferRef.current.release(request, threadId, loadedHistoryForReplay);
         for (const event of buffered ?? []) replayThreadNotificationRef.current(event);
@@ -3666,7 +3724,8 @@ export const App: React.FC = () => {
     } catch {
       // ignore goal read failures
     }
-  }, [handleSelectWorkspace, hydrateThreadModel, beginThreadModelHydration, captureThreadExecutionPolicy, markScheduledActivityRead]);
+  }, [handleSelectWorkspace, hydrateThreadModel, beginThreadModelHydration, captureThreadExecutionPolicy, markScheduledActivityRead,
+    workHostIdentity, appServerStatus.appServerVersion, workCustomInstructions]);
   const selectScheduledThread = useCallback((threadId: string) => {
     void selectThread(threadId, true);
   }, [selectThread]);
@@ -3831,6 +3890,10 @@ export const App: React.FC = () => {
 
   const handleTogglePlanMode = useCallback(
     async () => {
+      if (activeThreadId && (loadingThread || workThreadRestoreState?.threadId === activeThreadId)) {
+        showAppToast("会话配置尚未恢复，暂时无法切换计划模式。", "error");
+        return;
+      }
       workPermissionRevision.current++;
       const next = !planModeRef.current;
       setPlanMode(next);
@@ -3851,7 +3914,7 @@ export const App: React.FC = () => {
         showAppToast(`切换计划模式失败：${e?.message || e}`, "error");
       }
     },
-    [activeThreadId, applyCollaborationMode, showAppToast]
+    [activeThreadId, applyCollaborationMode, showAppToast, loadingThread, workThreadRestoreState]
   );
 
   // Quick reviews use ordinary turns; commit/custom retain the existing review RPC.
@@ -4042,6 +4105,10 @@ export const App: React.FC = () => {
   const handleSendMessage = useCallback(async (overrideText?: string) => {
     if (activeRouteRef.current === "cloud-draft" || activeRouteRef.current === "cloud-new-chat") return;
     if (activeRouteRef.current === "home" && homeCloud.active) return;
+    if (activeThreadIdRef.current && (loadingThread || workThreadRestoreState?.threadId === activeThreadIdRef.current)) {
+      showAppToast("会话配置尚未恢复，输入已保留，请重新读取。", "error");
+      return;
+    }
     const rawText = (typeof overrideText === "string" ? overrideText : promptInput).trim();
     const sendAppshotGeneration = appshotCaptureGenerations.current[appshotScope] ?? 0;
     if (!rawText && attachedFiles.length === 0 && appshots.length === 0) return;
@@ -4245,9 +4312,16 @@ export const App: React.FC = () => {
 
       if (sendRequest !== threadRequestRef.current || sendIdentity !== executionIdentityRef.current || sendNavigation !== navigationRequestRef.current) return;
       const threadCwd = currentThreadId ? threadsRef.current.find(thread => thread.id === currentThreadId)?.cwd || workspaceHintsRef.current[currentThreadId] : undefined;
-      const execution = await resolveExecutionContext(currentThreadId, targetCwd || threadCwd, turnWorkspaceRoots ?? (threadCwd ? [threadCwd] : targetCwd ? [targetCwd] : []));
+      const execution = await resolveExecutionContext(currentThreadId, targetCwd || threadCwd, turnWorkspaceRoots ?? (threadCwd ? [threadCwd] : targetCwd ? [targetCwd] : []),
+        workOperation ? preparationController.signal : undefined);
       if (workOperation) preparationController.signal.throwIfAborted();
       if (sendRequest !== threadRequestRef.current || sendIdentity !== executionIdentityRef.current || sendNavigation !== navigationRequestRef.current) return;
+      if (existingWork && currentThreadId) {
+        const restored = workThreadContexts.current.get(currentThreadId);
+        if (!restored?.model || !restored.collaborationMode || !workThreadContextMatches(restored, existingWork.scope, currentThreadId)) throw Error("Work 会话配置恢复未确认，输入已保留。");
+        existingWork = restored;
+        configuration = { model: restored.model, reasoningEffort: restored.reasoningEffort ?? null, serviceTier: null };
+      }
       let { approvalPolicy, approvalsReviewer, sandboxPolicy, sandbox: sandboxMode } = execution.policy;
 
       if (!currentThreadId) {
@@ -4432,6 +4506,8 @@ export const App: React.FC = () => {
     workHomeSession,
     workHostIdentity,
     workCustomInstructions,
+    loadingThread,
+    workThreadRestoreState,
     appServerStatus.appServerVersion,
     setPromptInput,
     setThreadPrompt,
@@ -6362,6 +6438,7 @@ export const App: React.FC = () => {
   }, [projectMoveConfirmation]);
 
   const activeWorkContext = activeThreadId ? workThreadContexts.current.get(activeThreadId) : undefined;
+  const activeWorkRestore = workThreadRestoreState?.threadId === activeThreadId ? workThreadRestoreState : null;
   const renderThreadComposer = () => (
     <ComposerBox
       registerAppshotInput={registerAppshotInput}
@@ -6371,7 +6448,7 @@ export const App: React.FC = () => {
       contextUsageIndicator={contextUsageVisible && activeThreadId
         ? <ComposerContextUsage key={activeThreadId} usage={tokenUsage} /> : undefined}
       keyBindings={keyboardState.bindings}
-      submissionDisabled={queueBusy || modelSelection.selectionPending || !!modelSelection.selectionDisabledReason || sendStartPendingRef.current.has(threadRequestRef.current)}
+      submissionDisabled={loadingThread || !!activeWorkRestore || queueBusy || !activeWorkContext && (modelSelection.selectionPending || !!modelSelection.selectionDisabledReason) || sendStartPendingRef.current.has(threadRequestRef.current)}
       variant="thread"
       promptInput={promptInput}
       onPromptInputChange={setPromptInput}
@@ -6391,13 +6468,14 @@ export const App: React.FC = () => {
       onSetUseWorktree={setUseWorktree}
       permissionMode={permissionMode}
       onSelectPermissionMode={setPermissionMode}
-      models={models}
-      modelsLoading={modelsLoading}
-      modelsError={modelsError}
-      onRefreshModels={refreshModels}
-      selectedModelId={activeWorkContext?.model ?? selectedModelId}
-      modelReadOnlyReason={activeWorkContext ? "当前使用已确认的 Work 模型，暂不支持切换。" : null}
-      defaultModelSelected={activeWorkContext ? false : defaultModelSelected}
+      models={activeWorkRestore ? [] : models}
+      modelsLoading={activeWorkRestore ? activeWorkRestore.status === "loading" : modelsLoading}
+      modelsError={activeWorkRestore?.error ?? modelsError}
+      onRefreshModels={activeWorkRestore ? () => { if (activeThreadId) void selectThread(activeThreadId); } : refreshModels}
+      selectedModelId={activeWorkRestore ? "" : activeWorkContext?.model ?? selectedModelId}
+      modelReadOnlyReason={loadingThread ? "正在读取会话配置。" : activeWorkRestore ? null : activeWorkContext ? "当前使用已确认的 Work 模型，暂不支持切换。" : null}
+      modelDisplayLabel={activeWorkRestore ? "会话配置未就绪" : null}
+      defaultModelSelected={activeWorkRestore || activeWorkContext ? false : defaultModelSelected}
       onSelectModel={handleSelectComposerModel}
       reasoningEffort={activeWorkContext ? activeWorkContext.reasoningEffort ?? "" : reasoningEffort}
       onSelectReasoningEffort={setReasoningEffort}
@@ -6405,10 +6483,10 @@ export const App: React.FC = () => {
       serviceTier={activeWorkContext ? null : modelSelection.serviceTier}
       serviceTierAccess={modelSelection.serviceTierAccess}
       modelEligibilityContext={modelSelection.eligibilityContext}
-      selectionPending={modelSelection.selectionPending}
-      selectionError={modelSelection.selectionError}
-      selectionDisabledReason={modelSelection.selectionDisabledReason}
-      recentModelConfigurations={modelSelection.recentModelConfigurations}
+      selectionPending={activeWorkRestore ? activeWorkRestore.status === "loading" : activeWorkContext ? false : modelSelection.selectionPending}
+      selectionError={activeWorkRestore?.error ?? (activeWorkContext ? null : modelSelection.selectionError)}
+      selectionDisabledReason={activeWorkContext || activeWorkRestore ? null : modelSelection.selectionDisabledReason}
+      recentModelConfigurations={activeWorkContext || activeWorkRestore ? [] : modelSelection.recentModelConfigurations}
       onSelectServiceTier={modelSelection.selectTier}
       onSelectConfiguration={modelSelection.selectConfiguration}
       onToggleFastMode={toggleFastMode}

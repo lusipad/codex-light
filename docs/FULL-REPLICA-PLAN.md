@@ -32,7 +32,7 @@
 
 ### 当前起点与下一工作包
 
-当前已将Work资格、owner模式/导航与原flight交接接入实际App；新补账户缓存/源指令及“已选本机项目”首条和已加载跟进请求、服务确认模型、创建重试与来源保留，capture-ready仍独立。1090 Rust库及29前端专项通过，协议实测仅隔离空线程，准确候选及边界见[16.23A](antigravity/acceptance/16.23A.md)。下一工作包接冷恢复的真实重新组装消费者、g-p materialization/目录分配和完整Work模型选择与持久化；当前未知恢复/未准备目录及未接排队、目标、会话内审查明确拒绝普通回退，完整picker临时只读，不算对应功能或视觉完成。Work-cloud仍按共享消费者独立接，不能用现homeCloud代替。legacy完整迁移/live SDK/工具链等保分项差异，标准/协议本阶段未全重跑。CI/push暂停，真实账号/模型、原生交互、像素及整页/14批目标均未验收。
+当前已接Work资格、owner模式/导航、原flight交接、已选本机项目首条及已加载跟进；R8继续接真实冷恢复消费者，以旧thread/cwd/model和当前owner heartbeat重新组装指令，非prose持久来源可恢复，不重用首页选择或普通resume旁路。1103 Rust库、31前端专项及同源码原生构建通过，准确候选与未验边界见[16.23A](antigravity/acceptance/16.23A.md)。下一工作包接完整Work模型选择与持久化、g-p materialization/目录分配；未准备目录、未接排队/目标/会话内审查仍保明确边界，picker临时只读不算完整功能或视觉通过。Work-cloud仍独立接，不用现homeCloud替代。真实冷恢复/账户模型/迁移库/原生与像素尚未实测；legacy完整迁移/live SDK/工具链继续分项登记，标准/协议本阶段未全重跑。CI/push暂停，整页及14批总目标未验收。
 
 最新 Work 输入已纠正为后端 fresh JWT 白名单，不再使用近似 planType；新增运行地点纯层（非reader/页面），15组Work、9组地点、1046完整Rust及前端/原生debug编译通过。CLI0.165声明并接受顶层serviceName创建私有空线程，但普通/Work的完整turns读取均遇同一未实现错误；不把元数据成功当历史通过。下一仍是 Work 模式/模型/真实地点reader、本地/云端消费者及原flight交接，输入基础不代表新聊天已可用。准确范围见[16.23A](antigravity/acceptance/16.23A.md)，CI/push暂停。
 
