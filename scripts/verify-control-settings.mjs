@@ -12,10 +12,26 @@ for (const prefix of ["computerUseEnabled", "computerUseScope", "computerUseAllo
   "browserUseEnabled", "browserUseHeadless", "browserUseCdpPort", "browserUseAutoDownload", "browserUseWebMcp"]) {
   assert.ok(!source.includes(prefix), `remove ineffective ${prefix}`);
 }
+const settingsAst = ts.createSourceFile("SettingsView.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+let headerCondition;
+function findHeader(node) {
+  if (ts.isJsxExpression(node) && node.expression && ts.isBinaryExpression(node.expression)
+    && node.expression.getText(settingsAst).includes('className="panel-page-header"')) headerCondition = node.expression.left;
+  ts.forEachChild(node, findHeader);
+}
+findHeader(settingsAst); assert.ok(headerCondition);
+for (const [activeSection, expected] of [["appshots", false], ["general-settings", true], ["codex-cloud", false], ["plugins-settings", false]]) {
+  assert.equal(vm.runInNewContext(headerCondition.getText(settingsAst), { activeSection }), expected,
+    `generic header must not duplicate the dedicated ${activeSection} page heading`);
+}
 const exports = {};
+const settings = { available: true, configuredHotkey: "DoubleAlt", destination: "automatic", onHotkeyChange() {}, onDestinationChange() {} };
+let hookProps;
 vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/components/ControlCapabilitySettings.tsx", "utf8"), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React, esModuleInterop: true },
 }).outputText, { exports, require: name => {
+  if (name === "../useAppshotsSettings") return { useAppshotsSettings: props => { hookProps = props; return settings; } };
+  if (name === "./AppshotsSettings") return { AppshotsSettingsView: "AppshotsSettingsView" };
   assert.equal(name, "react");
   return { createElement: (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity) }) };
 } });
@@ -24,10 +40,15 @@ let opened = 0;
 const computer = exports.ComputerUseSettings({ onManagePlugins: () => opened++ });
 const button = nodes(computer).find(node => node.type === "button");
 button.props.onClick(); assert.equal(opened, 1);
-for (const tree of [computer, exports.AppshotsSettings(), exports.BrowserUseSettings()]) {
+for (const tree of [computer, exports.BrowserUseSettings()]) {
   assert.ok(nodes(tree).some(node => node.props.role === "status"));
   assert.ok(!nodes(tree).some(node => ["input", "select"].includes(node.type)));
 }
+const shot = exports.AppshotsSettings({ scope: "settings-scope", connected: true });
+assert.equal(shot.type, "AppshotsSettingsView"); assert.equal(shot.props.configuredHotkey, "DoubleAlt");
+assert.equal(shot.props.onHotkeyChange, settings.onHotkeyChange);
+assert.equal(hookProps.scope, "settings-scope"); assert.equal(hookProps.connected, true);
+assert.ok(source.includes('connected={appServerStatus.connected}'));
 assert.ok(source.includes('onManagePlugins={() => setActiveSection("plugins-settings")}'));
 for (const slug of ["computer-use", "appshots", "browser-use"]) {
   assert.ok(source.includes(`activeSection === "${slug}" &&`));
@@ -38,7 +59,7 @@ assert.ok(native.includes('.env("CODEX_APPSHOT_OUTPUT", &out_path)'));
 assert.ok(!native.includes('out_path_str.replace'));
 assert.ok(native.includes('uuid::Uuid::new_v4()'));
 assert.ok(native.includes('tauri::image::Image::from_bytes'));
-console.log("PASS CS01-CS03: actual capability JSX, plugin callback and no ineffective preference controls; screenshot path is passed as environment data, output uniquely named and decoded before attachment");
+console.log("PASS CS01-CS03: actual capability JSX, Appshots real-state delegation, plugin callback and no ineffective preference controls; screenshot path is passed as environment data, output uniquely named and decoded before attachment");
 if (process.platform === "win32") {
   // Exercise the production shell script with a 1x1 fixture, never reading the screen.
   const literal = native.match(/let ps_script\s*=\s*"([\s\S]*?)";/)[1];

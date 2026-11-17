@@ -1,5 +1,13 @@
 # 实施日志（按轮次）
 
+## 2026-11-17 — B4 Appshots热键与目标设置（本地限定阶段）
+
+- 固定版B4/未知目标schema/布局继承取证后，新增真实settings client/controller/view与主窗命令：同步注册失败/磁盘失败回滚运行配置，异步失败保已存热键；目标用真实用户层版本写入/保存/effective/owner读回。复用现owner、global偏好、config协议、portal菜单和设置容器，无新依赖或替代音视频。
+- 修正真实CLI默认desktop:null误拒、未知字段strict策略、目标读回State循环、旧refresh覆盖新runtime、乐观回滚伪值、独立设置ACK互盖、旧scope提交后失效通知丢失、重复标题及无来源toast。raw custom不隐写，可明确迁移；Work仍独立unknown→skip。
+- 完整Rust1039通过后移除本轮造成的无调用旧解析器，最终79快照专项通过；15组前端与TSC、新真实CLI0.165协议探针退出0，零模型调用。红/绿证及准确测试时点见16.23A，本轮不重跑全标准或继承旧标准结论。新EXE/MSI/NSIS构建退出0，1019输入hash稳定，候选及hash见16.23A和本地verification-summary。
+- CUA路径故障；Computer Use浏览器URL策略中止后停止界面输入，无截图/原生GUI/物理IME或像素验收，score=null。临时Vite已停。音效/视频/图形、独立Work、Computer Use/浏览器及14批全域范围继续排队；CI/push保持暂停，非整页验收。
+
+
 ## 2026-11-17 — B3 Appshots捕获占位与排序（本地阶段）
 
 - 先核固定版pending合同及31余精确片段，纠正按完成顺序push和pending尾插；独立总附件账本保留混合文件位置，完成同key原位替换，取消只清对应请求。UI单独处理pending，不向context/model写占位。

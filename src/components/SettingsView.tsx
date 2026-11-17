@@ -333,7 +333,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
       {/* Right Content Pane */}
       <div className="settings-right-content">
-        {activeSection !== "codex-cloud" && activeSection !== "plugins-settings" && <div className="panel-page-header">
+        {activeSection !== "codex-cloud" && activeSection !== "plugins-settings" && activeSection !== "appshots" && <div className="panel-page-header">
           <div>
             <h2>
               {activeSection === "storage" ? "存储空间" : SETTINGS_NAV_GROUPS.flatMap((g) => g.items).find(
@@ -511,7 +511,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         {activeSection === "code-review" && <CodeReviewSettings state={codeReviewPreferencesState} providerScope={JSON.stringify([connectionIdentity, accountIdentity])} />}
 
         {activeSection === "computer-use" && <ComputerUseSettings onManagePlugins={() => setActiveSection("plugins-settings")} />}
-        {activeSection === "appshots" && <AppshotsSettings />}
+        {activeSection === "appshots" && <AppshotsSettings scope={JSON.stringify([connectionIdentity, accountIdentity])} connected={appServerStatus.connected} onError={message => onNotify?.(message, "error")} />}
         {activeSection === "browser-use" && <BrowserUseSettings />}
 
         {activeSection === "cloud-settings" && <CloudPreferencesSettings />}

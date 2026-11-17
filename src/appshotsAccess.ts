@@ -10,21 +10,22 @@ export interface AppshotsAccess {
   windowsGate: AppshotsQualification;
   requirementsAllowed: AppshotsQualification;
   enabled: AppshotsQualification;
+  miniFeature: AppshotsQualification;
 }
 
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
 const and = (...values: AppshotsQualification[]): AppshotsQualification => values.includes(false) ? false : values.every(value => value === true) ? true : null;
 const sameIdentity = (left: ServiceIdentity, right: ServiceIdentity) => left.accountId === right.accountId && left.userId === right.userId && left.generation === right.generation;
 
-function gates(bootstrap: unknown, identity: ServiceIdentity): [AppshotsQualification, AppshotsQualification] {
-  if (!object(bootstrap) || typeof bootstrap.statsigPayload !== "string") return [null, null];
+function gates(bootstrap: unknown, identity: ServiceIdentity): [AppshotsQualification, AppshotsQualification, AppshotsQualification] {
+  if (!object(bootstrap) || typeof bootstrap.statsigPayload !== "string") return [null, null, null];
   let payload: unknown;
-  try { payload = JSON.parse(bootstrap.statsigPayload); } catch { return [null, null]; }
+  try { payload = JSON.parse(bootstrap.statsigPayload); } catch { return [null, null, null]; }
   // This adapter supports explicit full snapshots, not Statsig live/delta evaluation.
   if (!object(payload) || !object(payload.user) || !object(payload.user.customIDs)
     || payload.user.userID !== identity.userId || payload.user.customIDs.account_id !== identity.accountId
     || !object(payload.feature_gates) || payload.has_updates !== true || payload.is_delta === true || payload.isDelta === true
-    || payload.live_overlay != null || ![undefined, "init-v1", "init-v2"].includes(payload.response_format as string | undefined)) return [null, null];
+    || payload.live_overlay != null || ![undefined, "init-v1", "init-v2"].includes(payload.response_format as string | undefined)) return [null, null, null];
   const entries = payload.feature_gates;
   const gate = (key: string): AppshotsQualification => {
     let hash = 0; for (let index = 0; index < key.length; ++index) hash = (Math.imul(hash, 31) + key.charCodeAt(index)) >>> 0;
@@ -32,7 +33,7 @@ function gates(bootstrap: unknown, identity: ServiceIdentity): [AppshotsQualific
     const value = object(entry) ? entry[payload.response_format === "init-v2" ? "v" : "value"] : undefined;
     return typeof value === "boolean" ? value : null;
   };
-  return [gate("1304276663"), gate("2124127696")];
+  return [gate("1304276663"), gate("2124127696"), gate("1532120159")];
 }
 
 function requirementsAllowed(response: unknown): AppshotsQualification {
@@ -44,11 +45,11 @@ function requirementsAllowed(response: unknown): AppshotsQualification {
 }
 
 export function decodeAppshotsAccess(bootstrap: unknown, requirementsResponse: unknown, identity: ServiceIdentity, platform: string): AppshotsAccess {
-  const [generalGate, windowsGate] = gates(bootstrap, identity);
+  const [generalGate, windowsGate, miniFeature] = gates(bootstrap, identity);
   const allowed = requirementsAllowed(requirementsResponse);
   const supportedPlatform = platform === "windows" || platform === "macOS";
   return { hostId: "local", identity: { ...identity }, platform, generalGate, windowsGate, requirementsAllowed: allowed,
-    enabled: supportedPlatform ? and(generalGate, platform === "windows" ? windowsGate : true, allowed) : false };
+    enabled: supportedPlatform ? and(generalGate, platform === "windows" ? windowsGate : true, allowed) : false, miniFeature };
 }
 
 /** Pass the actual host state; a helper file or configured shortcut is not support. */

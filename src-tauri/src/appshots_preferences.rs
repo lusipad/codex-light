@@ -11,6 +11,43 @@ use serde_json::Value;
 const INTRO: &str = "has-accepted-appshot-intro";
 const HOTKEY: &str = "appshotHotkey";
 
+pub(crate) fn configured_hotkey(
+    state: &DesktopStateManager,
+) -> Result<(Option<String>, bool), String> {
+    match state.get_optional_value(HOTKEY) {
+        None => Ok((Some("DoubleAlt".into()), true)),
+        Some(Value::Null) => Ok((None, false)),
+        Some(Value::String(value)) => Ok((Some(value), false)),
+        _ => Err("应用快照快捷键存储格式无效，未覆盖原记录。".into()),
+    }
+}
+
+pub(crate) fn hotkey_value(hotkey: Option<Hotkey>) -> Value {
+    match hotkey {
+        Some(Hotkey::DoubleAlt) => Value::String("DoubleAlt".into()),
+        Some(Hotkey::DoubleShift) => Value::String("DoubleShift".into()),
+        None => Value::Null,
+    }
+}
+
+pub(crate) fn write_hotkey(
+    state: &DesktopStateManager,
+    hotkey: Option<Hotkey>,
+) -> Result<(), String> {
+    state.update_value_persisted(HOTKEY, |_| Ok(hotkey_value(hotkey)))?;
+    Ok(())
+}
+
+/// Unsupported existing custom strings stay visible without becoming defaults.
+pub(crate) fn read_runtime_hotkey(state: &DesktopStateManager) -> Result<Option<Hotkey>, String> {
+    let (configured, _) = configured_hotkey(state)?;
+    Ok(match configured.as_deref() {
+        Some("DoubleAlt") => Some(Hotkey::DoubleAlt),
+        Some("DoubleShift") => Some(Hotkey::DoubleShift),
+        _ => None,
+    })
+}
+
 fn owner_key(identity: &ServiceIdentity) -> Result<String, String> {
     if identity.user_id.is_empty() || identity.account_id.is_empty() {
         return Err("尚未确认应用快照账号，未读取或写入接受状态。".into());
@@ -61,20 +98,12 @@ pub(crate) fn accept_intro(
     read_intro(state, identity)
 }
 
-/// Only the two verified Windows choices are usable by this adapter. Other
-/// official custom-key syntax remains unsupported rather than becoming a default.
-pub(crate) fn read_hotkey(state: &DesktopStateManager) -> Result<Option<Hotkey>, String> {
-    match state.get_optional_value(HOTKEY) {
-        None => Ok(Some(Hotkey::DoubleAlt)),
-        Some(Value::Null) => Ok(None),
-        Some(Value::String(value)) if value == "DoubleAlt" => Ok(Some(Hotkey::DoubleAlt)),
-        Some(Value::String(value)) if value == "DoubleShift" => Ok(Some(Hotkey::DoubleShift)),
-        _ => Err("应用快照快捷键未知或当前注册器尚不支持，未启用默认快捷键。".into()),
-    }
-}
-
 /// The real config/read response, not a global-state or owner-atom alias.
 pub(crate) fn read_destination(response: &Value) -> Result<Destination, String> {
+    read_destination_setting(response).map(|(destination, _)| destination)
+}
+
+pub(crate) fn read_destination_setting(response: &Value) -> Result<(Destination, bool), String> {
     let config = response
         .get("config")
         .and_then(Value::as_object)
@@ -85,11 +114,12 @@ pub(crate) fn read_destination(response: &Value) -> Result<Destination, String> 
         _ => return Err("应用快照桌面配置格式无效。".into()),
     };
     match desktop.and_then(|values| values.get("appshotDestination")) {
-        None => Ok(Destination::Automatic),
-        Some(Value::String(value)) if value == "automatic" => Ok(Destination::Automatic),
-        Some(Value::String(value)) if value == "last-chat" => Ok(Destination::LastChat),
-        Some(Value::String(value)) if value == "new-chat" => Ok(Destination::NewChat),
-        _ => Err("应用快照目标设置未知，未选择默认路由。".into()),
+        Some(Value::String(value)) if value == "automatic" => Ok((Destination::Automatic, false)),
+        Some(Value::String(value)) if value == "last-chat" => Ok((Destination::LastChat, false)),
+        Some(Value::String(value)) if value == "new-chat" => Ok((Destination::NewChat, false)),
+        // The official settings store drops enum-invalid fields, then reads
+        // the registry default. This projection never rewrites the raw config.
+        _ => Ok((Destination::Automatic, true)),
     }
 }
 
@@ -108,6 +138,72 @@ mod tests {
     }
     fn fixture(value: Value) -> DesktopStateManager {
         DesktopStateManager::fixture_for_appshots_preferences(value.as_object().unwrap().clone())
+    }
+
+    #[test]
+    fn configured_hotkey_preserves_custom_and_missing_versus_explicit_null() {
+        assert_eq!(
+            configured_hotkey(&fixture(json!({}))).unwrap(),
+            (Some("DoubleAlt".into()), true)
+        );
+        assert_eq!(
+            configured_hotkey(&fixture(json!({HOTKEY:null}))).unwrap(),
+            (None, false)
+        );
+        for custom in ["Ctrl+Alt+A", "", "DoubleShift"] {
+            let state = fixture(json!({HOTKEY:custom}));
+            assert_eq!(
+                configured_hotkey(&state).unwrap(),
+                (Some(custom.into()), false)
+            );
+            assert_eq!(state.get_optional_value(HOTKEY), Some(json!(custom)));
+            if custom != "DoubleShift" {
+                assert_eq!(read_runtime_hotkey(&state).unwrap(), None);
+                assert_eq!(state.get_optional_value(HOTKEY), Some(json!(custom)));
+            }
+        }
+        assert!(configured_hotkey(&fixture(json!({HOTKEY:true}))).is_err());
+    }
+
+    #[test]
+    fn hotkey_persistence_private_roundtrip_and_failed_write_keep_previous_value() {
+        let root = std::env::temp_dir().join(format!("appshots-hotkey-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        let path = root.join("state.json");
+        let state = fixture(json!({HOTKEY:"Ctrl+Alt+A","sibling":17}));
+        state
+            .update_appshots_fixture(
+                HOTKEY,
+                |_| Ok(hotkey_value(Some(Hotkey::DoubleShift))),
+                &path,
+            )
+            .unwrap();
+        assert_eq!(
+            configured_hotkey(&state).unwrap(),
+            (Some("DoubleShift".into()), false)
+        );
+        let disk: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(disk["sibling"], 17);
+        assert_eq!(
+            configured_hotkey(&fixture(disk)).unwrap(),
+            (Some("DoubleShift".into()), false)
+        );
+        let blocked = root.join("directory");
+        fs::create_dir(&blocked).unwrap();
+        assert!(state
+            .update_appshots_fixture(HOTKEY, |_| Ok(hotkey_value(None)), &blocked)
+            .is_err());
+        assert_eq!(
+            configured_hotkey(&state).unwrap(),
+            (Some("DoubleShift".into()), false)
+        );
+        state
+            .update_appshots_fixture(HOTKEY, |_| Ok(hotkey_value(None)), &path)
+            .unwrap();
+        assert_eq!(configured_hotkey(&state).unwrap(), (None, false));
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(blocked).unwrap();
+        fs::remove_dir(root).unwrap();
     }
 
     #[test]
@@ -223,20 +319,25 @@ mod tests {
     #[test]
     fn appshots_preferences_missing_hotkey_and_explicit_null_are_distinct() {
         assert_eq!(
-            read_hotkey(&fixture(json!({}))).unwrap(),
+            read_runtime_hotkey(&fixture(json!({}))).unwrap(),
             Some(Hotkey::DoubleAlt)
         );
-        assert_eq!(read_hotkey(&fixture(json!({HOTKEY:null}))).unwrap(), None);
+        assert_eq!(read_runtime_hotkey(&fixture(json!({HOTKEY:null}))).unwrap(), None);
         assert_eq!(
-            read_hotkey(&fixture(json!({HOTKEY:"DoubleShift"}))).unwrap(),
+            read_runtime_hotkey(&fixture(json!({HOTKEY:"DoubleShift"}))).unwrap(),
             Some(Hotkey::DoubleShift)
         );
         assert_eq!(
-            read_hotkey(&fixture(json!({HOTKEY:"DoubleAlt"}))).unwrap(),
+            read_runtime_hotkey(&fixture(json!({HOTKEY:"DoubleAlt"}))).unwrap(),
             Some(Hotkey::DoubleAlt)
         );
-        for unknown in [json!("Ctrl+Alt+A"), json!(""), json!(true), json!([])] {
-            assert!(read_hotkey(&fixture(json!({HOTKEY:unknown}))).is_err());
+        for custom in ["Ctrl+Alt+A", ""] {
+            let state = fixture(json!({HOTKEY:custom}));
+            assert_eq!(read_runtime_hotkey(&state).unwrap(), None);
+            assert_eq!(configured_hotkey(&state).unwrap().0.as_deref(), Some(custom));
+        }
+        for malformed in [json!(true), json!([])] {
+            assert!(read_runtime_hotkey(&fixture(json!({HOTKEY:malformed}))).is_err());
         }
     }
 
@@ -259,11 +360,53 @@ mod tests {
         }
         assert!(read_destination(&json!({"appshotDestination":"last-chat"})).is_err());
         for unknown in [json!(null), json!(false), json!([]), json!("unknown")] {
-            assert!(read_destination(
-                &json!({"config":{"desktop":{"appshotDestination":unknown}}})
-            )
-            .is_err());
+            assert_eq!(
+                read_destination(&json!({"config":{"desktop":{"appshotDestination":unknown}}}))
+                    .unwrap(),
+                Destination::Automatic
+            );
         }
         assert!(read_destination(&json!({"config":{"desktop":[]}})).is_err());
+    }
+
+    #[test]
+    fn destination_invalid_field_defaults_without_changing_response_or_private_disk() {
+        let path = std::env::temp_dir().join(format!(
+            "appshots-destination-{}.json",
+            uuid::Uuid::new_v4()
+        ));
+        for raw in [
+            json!(null),
+            json!(17),
+            json!("future-custom"),
+            json!({"unknown":true}),
+        ] {
+            let response = json!({"config":{"desktop":{"appshotDestination":raw,"unrelated":42}}});
+            let original = response.clone();
+            let bytes = serde_json::to_vec(&response).unwrap();
+            fs::write(&path, &bytes).unwrap();
+            assert_eq!(
+                read_destination_setting(&response).unwrap(),
+                (Destination::Automatic, true)
+            );
+            assert_eq!(response, original);
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+        }
+        fs::remove_file(path).unwrap();
+        assert_eq!(
+            read_destination_setting(&json!({"config":{}})).unwrap(),
+            (Destination::Automatic, true)
+        );
+        assert_eq!(
+            read_destination_setting(
+                &json!({"config":{"desktop":{"appshotDestination":"automatic"}}})
+            )
+            .unwrap(),
+            (Destination::Automatic, false)
+        );
+        for bad_parent in [json!(false), json!("unknown"), json!([])] {
+            assert!(read_destination_setting(&json!({"config":{"desktop":bad_parent}})).is_err());
+        }
+        assert!(read_destination_setting(&json!({"config":null})).is_err());
     }
 }

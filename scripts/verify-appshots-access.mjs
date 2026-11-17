@@ -62,7 +62,7 @@ async function test(name, run) { await run(); console.log('PASS', name); ++passe
 
 await test('positive account gates and actual local null requirements allow base only', async () => {
   const h = fixture(), result = await h.read();
-  assert.deepEqual(clone(result), { hostId: 'local', identity, platform: 'windows', generalGate: true, windowsGate: true, requirementsAllowed: true, enabled: true });
+  assert.deepEqual(clone(result), { hostId: 'local', identity, platform: 'windows', generalGate: true, windowsGate: true, requirementsAllowed: true, enabled: true, miniFeature: null });
   assert.equal(h.api.evaluateAppshotsAvailability(result, null), null);
   assert.equal(h.api.evaluateAppshotsAvailability(result, false), false);
   assert.equal(h.api.evaluateAppshotsAvailability(result, true), true);
@@ -102,6 +102,16 @@ await test('V1/V2 and existing hashed gate encoding are parsed from actual wrapp
   for (const compact of [false, true]) for (const hashed of [false, true]) {
     const h = fixture(); Object.assign(h.config, { compact, hashed });
     assert.equal((await h.read()).enabled, true);
+  }
+});
+
+await test('Mini gate affects description only and preserves unknown without changing Windows permission', async () => {
+  for (const compact of [false, true]) for (const hashed of [false, true]) for (const mini of [true, false, undefined, 'true']) {
+    const h = fixture(); Object.assign(h.config, { compact, hashed });
+    if (mini !== undefined) h.config.gates['1532120159'] = mini;
+    const access = await h.read();
+    assert.equal(access.miniFeature, typeof mini === 'boolean' ? mini : null);
+    assert.equal(access.enabled, true, 'Mini is not an additional Windows Appshots access gate');
   }
 });
 

@@ -1,0 +1,25 @@
+/* Fixed 26.1111 B4 + LT02/LT03: Electron body panel gap is 5×spacing;
+ * menu gutter is 1×spacing, row-y 1.25×spacing and row-x 2×spacing.
+ * Scope source-derived fallbacks to this page and its portal. Toolbar geometry
+ * and paired physical pixels remain unverified; no numeric visual verdict. */
+.appshots-settings { display: flex; flex-direction: column; gap: var(--padding-panel, calc(var(--spacing) * 5)); min-width: 0; }
+.appshots-settings > h2, .appshots-settings-hero h3 { margin: 0; font: inherit; }
+.appshots-settings-hero p { color: var(--text-secondary); }
+.appshots-settings-grid { display: grid; gap: var(--padding-panel, calc(var(--spacing) * 5)); min-width: 0; }
+.appshots-settings-group { align-self: start; min-width: 0; border: 1px solid var(--border-default); border-radius: 1rem; background: var(--color-background-panel, var(--color-background-neutral-soft-alpha)); }
+.appshots-settings-row { container-type: inline-size; container-name: settings-row; display: flex; align-items: center; justify-content: space-between; padding: calc(var(--spacing) * 3) calc(var(--spacing) * 4); gap: calc(var(--spacing) * 6); }
+.appshots-settings-copy { display: flex; flex-direction: column; gap: .125rem; min-width: 0; flex: 1; }
+.appshots-settings-copy label { font-size: 12px; font-weight: 500; }
+.appshots-settings-copy p { margin: 0; font-size: 11px; line-height: 16px; color: var(--text-secondary); }
+.appshots-settings-copy .appshots-settings-error { color: var(--accent-red); }
+.appshots-settings-control { display: flex; flex-shrink: 0; align-items: center; justify-content: flex-end; gap: .5rem; max-width: 100%; min-width: min(10rem, 40cqw); }
+.appshots-hotkey-select .general-preference-trigger { width: max-content; }
+.general-preference-menu.appshots-hotkey-select { width: max-content; min-width: 120px; }
+.general-preference-menu.appshots-destination-select { width: 360px; }
+.general-preference-menu.appshots-hotkey-select,
+.general-preference-menu.appshots-destination-select { box-sizing: border-box; max-width: calc(100vw - 16px); border-radius: 1rem; padding: var(--app-menu-gutter, var(--spacing)); }
+.general-preference-menu.appshots-hotkey-select > button,
+.general-preference-menu.appshots-destination-select > button { min-height: var(--app-menu-item-height, 0px); padding: var(--app-menu-item-padding, var(--padding-row-y, calc(var(--spacing) * 1.25)) var(--padding-row-x, calc(var(--spacing) * 2))); border-radius: .75rem; font-size: var(--app-menu-item-font-size, 12px); line-height: var(--app-menu-item-line-height, normal); }
+.appshots-destination-select .general-preference-option-copy { gap: 0; }
+.appshots-destination-select .general-preference-option-description { padding-top: .25rem; font-size: 12px; color: var(--text-secondary); white-space: normal; }
+@media (min-width: 64rem) { .appshots-settings-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

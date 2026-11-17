@@ -68,10 +68,12 @@ pub(crate) enum RuntimeEvent {
 pub(crate) enum RuntimeError {
     Closed,
     OwnerPanicked,
+    NativeStart(u32),
     Cleanup(Arc<HostError>),
 }
 
 enum Command {
+    ReadState(mpsc::Sender<Result<State, RuntimeError>>),
     Configure(
         RuntimeConfiguration,
         mpsc::Sender<Result<State, RuntimeError>>,
@@ -151,6 +153,9 @@ impl AppshotsRuntime {
     pub fn configure(&self, config: RuntimeConfiguration) -> Result<State, RuntimeError> {
         self.request(|reply| Command::Configure(config, reply))
     }
+    pub fn state(&self) -> Result<State, RuntimeError> {
+        self.request(Command::ReadState)
+    }
     pub fn claim(&self, id: Uuid, origin: String, scope: Scope) -> Result<bool, RuntimeError> {
         self.request(|reply| Command::Claim(id, origin, scope, reply))
     }
@@ -217,6 +222,8 @@ struct Flight {
 }
 
 struct Owner {
+    #[cfg(test)]
+    native_start_error: Option<u32>,
     root: PathBuf,
     emit: Box<dyn Fn(RuntimeEvent) + Send>,
     controller: Controller,
@@ -231,6 +238,8 @@ struct Owner {
 impl Owner {
     fn new(root: PathBuf, emit: Box<dyn Fn(RuntimeEvent) + Send>) -> Self {
         Self {
+            #[cfg(test)]
+            native_start_error: None,
             root,
             emit,
             controller: Controller::default(),
@@ -332,7 +341,13 @@ impl Owner {
                 .reconcile(config.eligible, config.capable, config.hotkey);
             self.generation = change.generation;
             if let Some(hotkey) = change.hotkey {
-                match NativeEntry::start(hotkey) {
+                #[cfg(test)]
+                let started = self
+                    .native_start_error
+                    .map_or_else(|| NativeEntry::start(hotkey), Err);
+                #[cfg(not(test))]
+                let started = NativeEntry::start(hotkey);
+                match started {
                     Ok(entry) => {
                         self.native = Some(entry);
                         self.installation_deadline = Some(Instant::now() + Duration::from_secs(5));
@@ -343,6 +358,9 @@ impl Owner {
                             id: None,
                             error: RuntimeFailure::Native(code),
                         });
+                        self.config = Some(config);
+                        self.state();
+                        return Err(RuntimeError::NativeStart(code));
                     }
                 }
             }
@@ -370,7 +388,7 @@ impl Owner {
         self.check_epoch();
         if let Err(error) = self.health() {
             match command {
-                Command::Configure(_, reply) => {
+                Command::Configure(_, reply) | Command::ReadState(reply) => {
                     let _ = reply.send(Err(error));
                 }
                 Command::Claim(_, _, _, reply)
@@ -385,6 +403,9 @@ impl Owner {
             return;
         }
         match command {
+            Command::ReadState(reply) => {
+                let _ = reply.send(Ok(self.controller.state()));
+            }
             Command::Configure(config, reply) => {
                 let result = self.configure(config);
                 let _ = reply.send(result);
@@ -773,6 +794,62 @@ mod tests {
             }),
             work_allowed: None,
         }
+    }
+    #[test]
+    fn hotkey_sync_native_start_failure_is_typed_and_can_restore_disabled_configuration() {
+        let mut owner = Owner::new(PathBuf::new(), Box::new(|_| {}));
+        owner.native_start_error = Some(87);
+        let mut old = config();
+        old.hotkey = None;
+        owner.configure(old.clone()).unwrap();
+        assert!(matches!(
+            owner.configure(config()),
+            Err(RuntimeError::NativeStart(87))
+        ));
+        assert_eq!(owner.controller.state().registration, Registration::None);
+        owner.configure(old).unwrap();
+        assert_eq!(owner.config.as_ref().unwrap().hotkey, None);
+    }
+
+    #[test]
+    fn late_native_failure_keeps_committed_configuration_and_read_state_does_not_reconfigure() {
+        let mut owner = Owner::new(PathBuf::new(), Box::new(|_| {}));
+        owner.config = Some(config());
+        let change = owner
+            .controller
+            .reconcile(Some(true), true, Some(Hotkey::DoubleAlt));
+        owner.generation = change.generation;
+        owner.native_event(EntryEvent::Failed(5));
+        assert_eq!(
+            owner.config.as_ref().unwrap().hotkey,
+            Some(Hotkey::DoubleAlt)
+        );
+        let generation = owner.generation;
+        let (send, receive) = mpsc::channel();
+        owner.command(Command::ReadState(send));
+        assert_eq!(
+            receive.recv().unwrap().unwrap().registration,
+            Registration::None
+        );
+        assert_eq!(owner.generation, generation);
+        assert!(owner.native.is_none());
+    }
+
+    #[test]
+    fn destination_only_refresh_keeps_registration_generation_and_native_choice() {
+        let mut owner = Owner::new(PathBuf::new(), Box::new(|_| {}));
+        let mut initial = config();
+        initial.hotkey = None;
+        owner.configure(initial.clone()).unwrap();
+        let generation = owner.generation;
+        initial.destination = Destination::NewChat;
+        owner.configure(initial).unwrap();
+        assert_eq!(owner.generation, generation);
+        assert_eq!(
+            owner.config.as_ref().unwrap().destination,
+            Destination::NewChat
+        );
+        assert!(owner.native.is_none());
     }
     fn owner(route: Route) -> (Owner, Uuid) {
         let mut owner = Owner::new(PathBuf::new(), Box::new(|_| {}));

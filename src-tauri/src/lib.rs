@@ -170,6 +170,7 @@ async fn app_server_call(
     method: String,
     mut params: Option<Value>,
 ) -> Result<Value, String> {
+    let appshots_destination_mutation = is_appshots_destination_write(&method, params.as_ref());
     if matches!(method.as_str(), "thread/start" | "thread/resume") {
         if let Some(params) = params.as_mut().and_then(Value::as_object_mut) {
             let requested = params.remove("codexNativeScheduleTool") == Some(Value::Bool(true));
@@ -243,6 +244,9 @@ async fn app_server_call(
         if is_mcp_config_write(&method, params.as_ref()) {
             let _ = app.emit("mcp-settings-changed", json!({}));
         }
+        if appshots_destination_mutation {
+            let _ = app.emit("appshots-settings-changed", json!({}));
+        }
         result?
     } else {
         let result = state.app_server.call(&app, &method, params.clone()).await;
@@ -250,6 +254,9 @@ async fn app_server_call(
             // An unsuccessful response can still follow a delivered write. Ask
             // other windows to reread; never broadcast config values or secrets.
             let _ = app.emit("mcp-settings-changed", json!({}));
+        }
+        if appshots_destination_mutation {
+            let _ = app.emit("appshots-settings-changed", json!({}));
         }
         result?
     };
@@ -281,6 +288,35 @@ async fn app_server_call(
     drop(attachment_protection);
     if attachment_mutation { request_worktree_cleanup(&app); }
     Ok(res)
+}
+
+fn is_appshots_destination_write(method: &str, params: Option<&Value>) -> bool {
+    let Some(params) = params else { return false; };
+    let target = |edit: &Value| edit.get("keyPath").and_then(Value::as_str)
+        .is_some_and(|key| matches!(key, "desktop" | "desktop.appshotDestination"));
+    match method {
+        "config/value/write" => target(params),
+        "config/batchWrite" => params.get("edits").and_then(Value::as_array)
+            .is_some_and(|edits| edits.iter().any(target)),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod appshots_config_event_tests {
+    use super::*;
+    #[test]
+    fn appshots_destination_writes_invalidate_without_exposing_or_matching_values() {
+        assert!(is_appshots_destination_write("config/batchWrite", Some(&json!({"edits":[{"keyPath":"desktop.appshotDestination","value":"last-chat"}]}))));
+        assert!(is_appshots_destination_write("config/value/write", Some(&json!({"keyPath":"desktop","value":{}}))));
+        for method in ["config/read", "configRequirements/read"] {
+            assert!(!is_appshots_destination_write(method, Some(&json!({"keyPath":"desktop.appshotDestination"}))));
+        }
+        for key in ["desktop.appshotDestinationOther", "model", "mcp_servers", "desktop.appshotSoundEnabled"] {
+            assert!(!is_appshots_destination_write("config/value/write", Some(&json!({"keyPath":key,"value":"desktop.appshotDestination"}))));
+        }
+        assert!(!is_appshots_destination_write("config/batchWrite", None));
+    }
 }
 
 fn is_mcp_config_write(method: &str, params: Option<&Value>) -> bool {
@@ -2979,6 +3015,9 @@ pub fn run() {
             pet_preferences_update,
             pets_open_folder,
             capture_appshot,
+            appshots_bridge::appshots_settings_read,
+            appshots_bridge::appshots_hotkey_set,
+            appshots_bridge::appshots_destination_refresh,
             appshots_bridge::appshots_entry_configure,
             appshots_bridge::appshots_entry_stop,
             appshots_bridge::appshots_entry_claim,

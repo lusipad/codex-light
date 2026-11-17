@@ -201,6 +201,9 @@ try {
   Invoke-Step "Appshot account and local host qualification" { node scripts/verify-appshots-access.mjs }
   Invoke-Step "Appshot native entry and scoped consumer lifecycle" { node scripts/verify-appshots-entry.mjs }
   Invoke-Step "Appshot pending Composer presentation" { node scripts/verify-appshots-pending-presentation.mjs }
+  Invoke-Step "Appshots settings versioned client" { node scripts/verify-appshots-settings-client.mjs }
+  Invoke-Step "Appshots settings controller lifecycle" { node scripts/verify-appshots-settings-state.mjs }
+  Invoke-Step "Appshots settings actual controls" { node scripts/verify-appshots-settings-view.mjs }
   Invoke-Step "Appshot first-use dialog lifecycle" { node scripts/verify-appshot-intro.mjs }
   Invoke-Step "Appshot history image classification" { node scripts/verify-appshot-history.mjs }
   Invoke-Step "Appshot attachment preview lifecycle" { node scripts/verify-appshot-attachment.mjs }
@@ -507,6 +510,7 @@ Invoke-Step "TypeScript typecheck (tsc --noEmit)" { npx tsc --noEmit }
       "scripts/protocol-verify/verify-agent-settings.mjs"
       "scripts/protocol-verify/verify-agent-scopes.mjs"
       "scripts/protocol-verify/verify-appearance-preferences.mjs"
+      "scripts/protocol-verify/verify-appshots-settings.mjs"
       "scripts/protocol-verify/verify-keyboard-number-target.mjs"
       "scripts/protocol-verify/verify-notification-preferences.mjs"
       "scripts/protocol-verify/verify-personal-instructions.mjs"

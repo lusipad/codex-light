@@ -1,4 +1,6 @@
 import React from "react";
+import { useAppshotsSettings } from "../useAppshotsSettings";
+import { AppshotsSettingsView } from "./AppshotsSettings";
 
 export function ComputerUseSettings({ onManagePlugins }: { onManagePlugins: () => void }) {
   return <div className="settings-scroll-container"><div className="card-section">
@@ -9,12 +11,9 @@ export function ComputerUseSettings({ onManagePlugins }: { onManagePlugins: () =
   </div></div>;
 }
 
-export function AppshotsSettings() {
-  return <div className="settings-scroll-container"><div className="card-section">
-    <h3>Appshots</h3>
-    <p role="status">尚未接入官方前台窗口捕获、屏外文本及全局快捷键服务。</p>
-    <p className="card-subtitle-desc">输入框附件菜单的“截屏”可捕获主屏幕并添加为图片附件；它仅捕获屏幕像素，不会读取应用屏外文本。</p>
-  </div></div>;
+export function AppshotsSettings({ scope, connected, onError }: { scope: string; connected: boolean; onError?: (message: string) => void }) {
+  const settings = useAppshotsSettings({ scope, connected, onError });
+  return <AppshotsSettingsView {...settings} />;
 }
 
 export function BrowserUseSettings() {
