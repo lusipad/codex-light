@@ -3,7 +3,9 @@
 use crate::{
     appshots_entry::{Hotkey, PrimaryWindow, Registration, Route, Scope, State as EntryState},
     appshots_preferences,
-    appshots_runtime::{AppshotsRuntime, RuntimeConfiguration, RuntimeError, RuntimeEvent},
+    appshots_runtime::{
+        AppshotsRuntime, HandoffContext, RuntimeConfiguration, RuntimeError, RuntimeEvent,
+    },
     chatgpt_service::ServiceIdentity,
     AppState,
 };
@@ -76,6 +78,8 @@ pub(crate) struct ConfigureRequest {
     capture_generation: u64,
     can_accept: bool,
     is_new_chat: bool,
+    #[serde(default)]
+    work_allowed: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -99,6 +103,169 @@ pub(crate) struct ContextRequest {
     capture_generation: u64,
     can_accept: bool,
     is_new_chat: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct HandoffRequest {
+    identity: ServiceIdentity,
+    id: String,
+    composer: String,
+    capture_generation: u64,
+    target_composer: String,
+    target_capture_generation: u64,
+    can_accept: bool,
+    is_new_chat: bool,
+}
+
+fn handoff_configuration(
+    session: &Session,
+    revision: u64,
+    request: &HandoffRequest,
+) -> Result<RuntimeConfiguration, String> {
+    valid_context(&request.composer, request.capture_generation)?;
+    valid_context(&request.target_composer, request.target_capture_generation)?;
+    if session.revision != revision
+        || session.identity != request.identity
+        || session.config.scope.composer != request.composer
+        || session.config.capture_generation != request.capture_generation
+    {
+        return Err("应用快照原交接作用域或账号已变化。".into());
+    }
+    if session.config.work_allowed != Some(true) || !request.can_accept || !request.is_new_chat {
+        return Err("Work 新聊天输入尚未获准或未就绪。".into());
+    }
+    let mut config = session.config.clone();
+    let primary = config
+        .primary
+        .as_mut()
+        .filter(|primary| primary.is_primary && primary.alive)
+        .ok_or("应用快照主窗口不可用。")?;
+    primary.can_accept = request.can_accept;
+    primary.is_new_chat = request.is_new_chat;
+    config.scope.composer = request.target_composer.clone();
+    config.capture_generation = request.target_capture_generation;
+    Ok(config)
+}
+
+fn retire_handoff(session: &Session, id: Uuid) -> Result<(), String> {
+    session
+        .runtime
+        .decline(id, "main".into(), session.config.scope.clone())
+        .map(|_| ())
+        .map_err(|error| format!("应用快照交接取消失败：{error:?}"))
+}
+
+fn claim_needs_intro(route: Option<Route>, intro_accepted: bool) -> bool {
+    route == Some(Route::Current) && !intro_accepted
+}
+
+#[tauri::command]
+pub(crate) async fn appshots_entry_handoff(
+    app: AppHandle,
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    bridge: State<'_, AppshotsBridge>,
+    request: HandoffRequest,
+) -> Result<Value, String> {
+    require_main(&window)?;
+    let id = Uuid::parse_str(&request.id).map_err(|_| "应用快照交接请求无效。")?;
+    valid_context(&request.composer, request.capture_generation)?;
+    valid_context(&request.target_composer, request.target_capture_generation)?;
+    let bridge = bridge.inner().clone();
+    let revision = bridge.0.revision.load(Ordering::SeqCst);
+    let ticket = bridge.0.context_ticket();
+    let identity = state
+        .chatgpt_service
+        .identity(&Uuid::new_v4().to_string(), |method, params| {
+            let state = &state;
+            let app = &app;
+            async move { state.app_server.call(app, method, Some(params)).await }
+        })
+        .await
+        .map_err(|_| "无法确认应用快照交接账号身份。".to_owned());
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let mut slot = bridge
+            .0
+            .session
+            .lock()
+            .map_err(|_| "应用快照管理线程不可用。")?;
+        // Stale handoffs cannot even cancel a flight adopted by a newer caller.
+        bridge.0.context_current(revision, ticket)?;
+        let session = slot
+            .as_mut()
+            .filter(|session| session.revision == revision && session.identity == request.identity)
+            .ok_or("应用快照原入口或账号已变化。")?;
+        let result = (|| {
+            settings_current(&bridge, &state, revision, &request.identity)?;
+            if identity? != request.identity {
+                return Err("应用快照交接账号已变化。".into());
+            }
+            let config = handoff_configuration(session, revision, &request)?;
+            let accepted = session
+                .runtime
+                .handoff_context(
+                    id,
+                    "main".into(),
+                    HandoffContext {
+                        from: session.config.scope.clone(),
+                        from_capture_generation: request.capture_generation,
+                        to: config.scope.clone(),
+                        capture_generation: config.capture_generation,
+                        can_accept: request.can_accept,
+                        is_new_chat: request.is_new_chat,
+                    },
+                )
+                .map_err(|error| format!("应用快照原子交接失败：{error:?}"))?;
+            if !accepted {
+                retire_handoff(session, id)?;
+            }
+            if accepted {
+                session.config = config;
+                settings_current(&bridge, &state, revision, &request.identity)?;
+                bridge.0.context_current(revision, ticket)?;
+                window
+                    .unminimize()
+                    .and_then(|_| window.show())
+                    .and_then(|_| window.set_focus())
+                    .map_err(|error| format!("无法显示 Work 应用快照输入：{error}"))?;
+            }
+            let intro_accepted =
+                appshots_preferences::read_intro(&state.desktop_state, &session.identity)?;
+            let current = session
+                .runtime
+                .state()
+                .map_err(|error| format!("无法确认应用快照交接状态：{error:?}"))?;
+            if accepted
+                && !session
+                    .runtime
+                    .handoff_current(
+                        id,
+                        "main".into(),
+                        session.config.scope.clone(),
+                        session.config.capture_generation,
+                    )
+                    .map_err(|error| format!("应用快照交接确认失败：{error:?}"))?
+            {
+                return Err("应用快照交接在确认前已失效。".into());
+            }
+            let mut payload = context_payload(&current, &session.config);
+            payload["accepted"] = json!(accepted);
+            payload["introAccepted"] = json!(intro_accepted);
+            settings_current(&bridge, &state, revision, &request.identity)?;
+            bridge.0.context_current(revision, ticket)?;
+            Ok(payload)
+        })();
+        if result.is_err() && bridge.0.context_current(revision, ticket).is_ok() {
+            if let Err(cleanup) = retire_handoff(session, id) {
+                return Err(format!("{}；{cleanup}", result.err().unwrap_or_default()));
+            }
+        }
+        result
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 fn valid_context(composer: &str, capture_generation: u64) -> Result<(), String> {
@@ -758,7 +925,7 @@ pub(crate) async fn appshots_entry_configure(
             primary:Some(PrimaryWindow { is_primary:true,alive:true,can_accept:request.can_accept,focused,
                 last_active_ms:Some(bridge.0.last_active_ms.load(Ordering::SeqCst)).filter(|value|*value!=0),is_new_chat:request.is_new_chat }),
             // This requires an independent Work projection, not the Appshots gate.
-            work_allowed:None,
+            work_allowed:request.work_allowed,
         };
         let result = runtime.configure(config.clone()).map_err(|e| format!("应用快照注册失败：{e:?}"))?;
         *slot = Some(Session {revision,identity,runtime,config});
@@ -811,13 +978,14 @@ async fn flight_action(
         let scope = session.config.scope.clone();
         match action {
             "claim" => {
-                let accepted = session
+                let route = session
                     .runtime
-                    .claim(id, origin, scope)
+                    .claim_route(id, origin, scope)
                     .map_err(|e| format!("应用快照认领失败：{e:?}"))?;
+                let accepted = route.is_some();
                 let intro_accepted =
                     appshots_preferences::read_intro(&state.desktop_state, &session.identity)?;
-                if accepted && !intro_accepted {
+                if claim_needs_intro(route, intro_accepted) {
                     if let Err(error) = window
                         .unminimize()
                         .and_then(|_| window.show())
@@ -920,6 +1088,110 @@ mod tests {
             user_id: "context-user".into(),
             generation: 4,
         }
+    }
+    fn handoff_request() -> HandoffRequest {
+        HandoffRequest {
+            identity: context_identity(),
+            id: Uuid::new_v4().to_string(),
+            composer: "home".into(),
+            capture_generation: 10,
+            target_composer: "home".into(),
+            target_capture_generation: 0,
+            can_accept: true,
+            is_new_chat: true,
+        }
+    }
+
+    #[test]
+    fn handoff_target_configuration_preserves_owner_and_requires_exact_ready_work_tuple() {
+        let (mut session, states) = context_session();
+        session.config.work_allowed = Some(true);
+        let request = handoff_request();
+        let target = handoff_configuration(&session, 7, &request).unwrap();
+        assert_eq!(target.scope, session.config.scope);
+        assert_eq!(target.capture_generation, 0);
+        assert_eq!(target.hotkey, session.config.hotkey);
+        assert_eq!(target.destination, session.config.destination);
+        assert_eq!(target.eligible, session.config.eligible);
+        assert_eq!(target.work_allowed, Some(true));
+        assert!(target.primary.as_ref().unwrap().is_new_chat);
+        assert_eq!(session.config.capture_generation, 10);
+        for mismatch in [
+            "identity",
+            "source",
+            "generation",
+            "unknown",
+            "denied",
+            "unready",
+            "not-home",
+            "revision",
+        ] {
+            let mut request = handoff_request();
+            session.config.work_allowed = Some(true);
+            match mismatch {
+                "identity" => request.identity.generation += 1,
+                "source" => request.composer = "different".into(),
+                "generation" => request.capture_generation = 9,
+                "unknown" => session.config.work_allowed = None,
+                "denied" => session.config.work_allowed = Some(false),
+                "unready" => request.can_accept = false,
+                "not-home" => request.is_new_chat = false,
+                _ => {}
+            }
+            assert!(handoff_configuration(
+                &session,
+                if mismatch == "revision" { 8 } else { 7 },
+                &request
+            )
+            .is_err());
+        }
+        assert_eq!(
+            states.load(Ordering::SeqCst),
+            0,
+            "preparation alone cannot configure/re-register"
+        );
+        session.runtime.shutdown().unwrap();
+    }
+
+    #[test]
+    fn new_chat_claim_never_opens_intro_before_target_handoff_and_work_defaults_unknown() {
+        assert!(!claim_needs_intro(Some(Route::NewChat), false));
+        assert!(!claim_needs_intro(Some(Route::NewChat), true));
+        assert!(!claim_needs_intro(None, false));
+        assert!(claim_needs_intro(Some(Route::Current), false));
+        assert!(!claim_needs_intro(Some(Route::Current), true));
+        let raw = json!({"identity":context_identity(),"eligible":true,"composer":"home","captureGeneration":10,
+            "canAccept":true,"isNewChat":true});
+        assert!(serde_json::from_value::<ConfigureRequest>(raw.clone())
+            .unwrap()
+            .work_allowed
+            .is_none());
+        for allowed in [Value::Null, json!(false), json!(true)] {
+            let mut raw = raw.clone();
+            raw["workAllowed"] = allowed.clone();
+            assert_eq!(
+                serde_json::from_value::<ConfigureRequest>(raw)
+                    .unwrap()
+                    .work_allowed,
+                allowed.as_bool()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn delayed_handoff_uses_context_ticket_and_cannot_cancel_or_ack_after_new_context() {
+        let inner = Inner::default();
+        let revision = inner.ticket();
+        let handoff = inner.context_ticket();
+        let (send, pending) = tokio::sync::oneshot::channel();
+        let consumer = inner.context_ticket();
+        send.send(()).unwrap();
+        pending.await.unwrap();
+        assert!(inner.context_current(revision, handoff).is_err());
+        assert!(inner.context_current(revision, consumer).is_ok());
+        assert!(inner.current(revision));
+        inner.ticket();
+        assert!(inner.context_current(revision, consumer).is_err());
     }
     fn context_request(
         previous: &str,

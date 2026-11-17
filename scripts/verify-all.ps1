@@ -39,6 +39,8 @@ try {
   Invoke-Step "Rust real system font directory" { cargo test --locked --manifest-path src-tauri/Cargo.toml system_fonts }
   Invoke-Step "Rust Appshots capture and entry lifecycle" { cargo test --locked --manifest-path src-tauri/Cargo.toml --lib appshots_ }
   Invoke-Step "Rust Work account-info JWT boundary" { cargo test --locked --manifest-path src-tauri/Cargo.toml --lib chatgpt_service::work_access }
+  Invoke-Step "Rust Work owner preference projection" { cargo test --locked --manifest-path src-tauri/Cargo.toml --lib work_home_preferences }
+  Invoke-Step "Rust Work project fixed read boundary" { cargo test --locked --manifest-path src-tauri/Cargo.toml --lib work_project }
   Invoke-Step "All-page workflow UI correction" { node scripts/verify-workflow-ui-d.mjs }
   Invoke-Step "Workspace file tree and actual file selection" { node scripts/verify-workspace-file-tree.mjs }
   Invoke-Step "Recursive workspace tree and multi-root lifecycle" { node scripts/verify-workspace-recursive-tree.mjs }
@@ -204,6 +206,10 @@ try {
   Invoke-Step "Work run-location evidence and routing decisions" { node scripts/verify-work-run-location.mjs }
   Invoke-Step "Work cloud-orchestration capability and lockdown reader" { node scripts/verify-work-orchestration-access.mjs }
   Invoke-Step "Work merged model catalog and native mapping" { node scripts/verify-work-model-catalog.mjs }
+  Invoke-Step "Work owner-bound home preferences" { node scripts/verify-work-home-preferences.mjs }
+  Invoke-Step "Work preference native client pipeline" { node scripts/verify-work-home-state-client.mjs }
+  Invoke-Step "Work selected-project and cloud compatibility" { node scripts/verify-work-project-access.mjs }
+  Invoke-Step "Work execution assignment and effective settings" { node scripts/verify-work-execution-preparation.mjs }
   Invoke-Step "Appshot native entry and scoped consumer lifecycle" { node scripts/verify-appshots-entry.mjs }
   Invoke-Step "Appshot actual Composer input registration" { node scripts/verify-appshot-composer-input.mjs }
   Invoke-Step "Appshot pending Composer presentation" { node scripts/verify-appshots-pending-presentation.mjs }

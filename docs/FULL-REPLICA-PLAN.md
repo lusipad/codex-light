@@ -32,7 +32,7 @@
 
 ### 当前起点与下一工作包
 
-最新产品入口保留独立全局owner，并已接实际Composer输入lease；卸载、错scope、inert/disabled/readOnly及observer前的晚事件不再凭路由放行，同草稿内置浮窗可接续。Work merged模型目录新增受限真实读口/首次选择/host映射，但与orchestration reader一样尚未挂入Work页面。17前端专项、完整1057 Rust及EXE/MSI/NSIS通过，1030输入hash稳定；本阶段未重跑整套标准或协议探针，前轮438等结果按历史时点记录，具体见[16.23A](antigravity/acceptance/16.23A.md)。下一目标仍是Work真实消费者和原flight交接，模式/地点/项目/持久选择按实际来源接；不额外增加QA或完整Chat能力阻断，不假设无项目或capture-ready等同send-ready。CI/push仍暂停，原生/像素及整页/全域未验收。
+当前已有实际Composer输入lease、独立全局owner和Work模型目录；本轮补齐受身份约束的owner偏好读口、项目兼容producer、执行assignment/settings单次producer及原子handoff宿主。完整1075 Rust、10前端专项、TSC通过，标准/协议本阶段未全重跑，准确构建与证据见[16.23A](antigravity/acceptance/16.23A.md)。下一轮直接将已取证producer接到Work-local：模式持久意图→主窗导航及真实项目/地点→模型与执行准备→计划transition/原flight交接；Work-cloud按共享消费者独立接，不能用普通Codex或现homeCloud代替。legacy adoption/live SDK等保分项差异，不以未恢复旁支重复阻断已证路径，也不把capture-ready等同send-ready。Work配置仍默认None、UI尚未放行。CI/push暂停，原生/像素及整页/14批目标均未验收。
 
 最新 Work 输入已纠正为后端 fresh JWT 白名单，不再使用近似 planType；新增运行地点纯层（非reader/页面），15组Work、9组地点、1046完整Rust及前端/原生debug编译通过。CLI0.165声明并接受顶层serviceName创建私有空线程，但普通/Work的完整turns读取均遇同一未实现错误；不把元数据成功当历史通过。下一仍是 Work 模式/模型/真实地点reader、本地/云端消费者及原flight交接，输入基础不代表新聊天已可用。准确范围见[16.23A](antigravity/acceptance/16.23A.md)，CI/push暂停。
 
@@ -54,7 +54,7 @@
 | B Appshots产品入口 | 真实资格、支持状态、偏好、快捷键注册/注销、正确目标与同次捕获、取消及目标丢失 | 设置到捕获再到草稿的真实连续旅程；当前主屏截图不能当作此链完成 |
 | C Computer Use | 自有动作执行器接产品许可与消费者，拒绝、取消、错目标和失联后不执行 | 自有窗口动作探针已有局部证据，产品链和任意应用支持仍未验 |
 | D 浏览器 | 私有真实会话、打开/导航、适用设置与管理、关闭和资源回收 | 先落实现有浏览器宿主合同及隔离探针；源码发现和API可用性不当作运行通过 |
-| E 本批交付与返回清单 | 三项各自的可运行结果、阻塞和缺证，插件返回项继续保留；随后进入Sites服务合同与主链 | 本地较大阶段验证后Lore提交；用户最新已要求推送本轮版本，须跟进同提交CI终态，不包含发布授权 |
+| E 本批交付与返回清单 | 三项各自的可运行结果、阻塞和缺证，插件返回项继续保留；随后进入Sites服务合同与主链 | 本地较大阶段验证后Lore提交；用户当前暂停推送及托管CI，恢复后再核同提交CI终态，不包含发布授权 |
 
 官方基准沿用Store `26.1111.2228.0`、package `26.1111.21308`的固定快照，不宣称它是当前最新安装版。缺同环境官方图时视觉评分保持`null`，不宣称像素1:1。历史CI成功或账单阻塞均不作为本次CI结论；当前未取得本提交的托管CI成功结果。
 

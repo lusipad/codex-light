@@ -48,7 +48,7 @@ pub(crate) fn read_runtime_hotkey(state: &DesktopStateManager) -> Result<Option<
     })
 }
 
-fn owner_key(identity: &ServiceIdentity) -> Result<String, String> {
+pub(crate) fn owner_key(identity: &ServiceIdentity) -> Result<String, String> {
     if identity.user_id.is_empty() || identity.account_id.is_empty() {
         return Err("尚未确认应用快照账号，未读取或写入接受状态。".into());
     }

@@ -7,6 +7,7 @@ pub mod schedule_mcp;
 pub mod appshots_worker;
 mod appshots_host;
 mod appshots_preferences;
+mod work_home_preferences;
 mod appshots_entry;
 mod appshots_native_entry;
 mod appshots_capture_task;
@@ -355,6 +356,19 @@ async fn work_account_info(
     request: chatgpt_service::WorkAccountInfoRequest,
 ) -> Result<chatgpt_service::WorkAccountInfoResponse, chatgpt_service::ServiceError> {
     state.chatgpt_service.work_account_info(request, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
+async fn work_home_preferences(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: chatgpt_service::WorkAccountInfoRequest,
+) -> Result<chatgpt_service::WorkHomePreferencesResponse, chatgpt_service::ServiceError> {
+    state.chatgpt_service.work_home_preferences(request, &state.desktop_state, |method, params| {
         let app = &app;
         let state = &state;
         async move { state.app_server.call(app, method, Some(params)).await }
@@ -2826,6 +2840,7 @@ pub fn run() {
             image_save::preview_image_save,
             chatgpt_service_identity,
             work_account_info,
+            work_home_preferences,
             chatgpt_service_read,
             chatgpt_service_site_pin,
             chatgpt_service_sites_settings,
@@ -3034,6 +3049,7 @@ pub fn run() {
             appshots_bridge::appshots_destination_refresh,
             appshots_bridge::appshots_entry_configure,
             appshots_bridge::appshots_entry_context,
+            appshots_bridge::appshots_entry_handoff,
             appshots_bridge::appshots_entry_stop,
             appshots_bridge::appshots_entry_claim,
             appshots_bridge::appshots_entry_accept,

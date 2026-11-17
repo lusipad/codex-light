@@ -75,7 +75,35 @@ pub(crate) enum RuntimeError {
     Cleanup(Arc<HostError>),
 }
 
+pub(crate) struct HandoffContext {
+    pub from: Scope,
+    pub from_capture_generation: u64,
+    pub to: Scope,
+    pub capture_generation: u64,
+    pub can_accept: bool,
+    pub is_new_chat: bool,
+}
+
 enum Command {
+    HandoffCurrent(
+        Uuid,
+        String,
+        Scope,
+        u64,
+        mpsc::Sender<Result<bool, RuntimeError>>,
+    ),
+    ClaimRoute(
+        Uuid,
+        String,
+        Scope,
+        mpsc::Sender<Result<Option<Route>, RuntimeError>>,
+    ),
+    HandoffContext(
+        Uuid,
+        String,
+        HandoffContext,
+        mpsc::Sender<Result<bool, RuntimeError>>,
+    ),
     ReadState(mpsc::Sender<Result<State, RuntimeError>>),
     Configure(
         RuntimeConfiguration,
@@ -162,6 +190,14 @@ impl AppshotsRuntime {
     pub fn claim(&self, id: Uuid, origin: String, scope: Scope) -> Result<bool, RuntimeError> {
         self.request(|reply| Command::Claim(id, origin, scope, reply))
     }
+    pub fn claim_route(
+        &self,
+        id: Uuid,
+        origin: String,
+        scope: Scope,
+    ) -> Result<Option<Route>, RuntimeError> {
+        self.request(|reply| Command::ClaimRoute(id, origin, scope, reply))
+    }
     pub fn reserve_accept(
         &self,
         id: Uuid,
@@ -189,6 +225,23 @@ impl AppshotsRuntime {
         to: Scope,
     ) -> Result<bool, RuntimeError> {
         self.request(|reply| Command::Handoff(id, origin, from, to, reply))
+    }
+    pub fn handoff_context(
+        &self,
+        id: Uuid,
+        origin: String,
+        context: HandoffContext,
+    ) -> Result<bool, RuntimeError> {
+        self.request(|reply| Command::HandoffContext(id, origin, context, reply))
+    }
+    pub fn handoff_current(
+        &self,
+        id: Uuid,
+        origin: String,
+        scope: Scope,
+        capture_generation: u64,
+    ) -> Result<bool, RuntimeError> {
+        self.request(|reply| Command::HandoffCurrent(id, origin, scope, capture_generation, reply))
     }
     pub fn shutdown(&self) -> Result<(), RuntimeError> {
         let mut thread = self
@@ -401,6 +454,51 @@ impl Owner {
         })
     }
 
+    fn claim(&mut self, id: Uuid, origin: &str, scope: &Scope) -> bool {
+        let accepted =
+            self.matches(id, origin, scope) && self.controller.claim(id, origin, &scope.account);
+        if accepted {
+            self.flight.as_mut().unwrap().claimed = true;
+        }
+        accepted
+    }
+
+    fn handoff(&mut self, id: Uuid, origin: &str, context: HandoffContext) -> bool {
+        let accepted = self.matches(id, origin, &context.from)
+            && self.config.as_ref().is_some_and(|config| {
+                config.work_allowed == Some(true)
+                    && config.capture_generation == context.from_capture_generation
+                    && config
+                        .primary
+                        .as_ref()
+                        .is_some_and(|primary| primary.is_primary && primary.alive)
+            })
+            && context.from.account == context.to.account
+            && !context.to.composer.is_empty()
+            && context.can_accept
+            && context.is_new_chat
+            && self.flight.as_ref().is_some_and(|flight| {
+                flight.claimed
+                    && !flight.reserved
+                    && !flight.accepted
+                    && !flight.handed_off
+                    && flight.route == Route::NewChat
+            });
+        if accepted {
+            let flight = self.flight.as_mut().unwrap();
+            flight.scope = context.to.clone();
+            flight.capture_generation = context.capture_generation;
+            flight.handed_off = true;
+            let config = self.config.as_mut().unwrap();
+            config.scope = context.to;
+            config.capture_generation = context.capture_generation;
+            let primary = config.primary.as_mut().unwrap();
+            primary.can_accept = context.can_accept;
+            primary.is_new_chat = context.is_new_chat;
+        }
+        accepted
+    }
+
     fn command(&mut self, command: Command) {
         self.check_epoch();
         if let Err(error) = self.health() {
@@ -415,11 +513,41 @@ impl Owner {
                 | Command::Handoff(_, _, _, _, reply) => {
                     let _ = reply.send(Err(error));
                 }
+                Command::HandoffContext(_, _, _, reply) => {
+                    let _ = reply.send(Err(error));
+                }
+                Command::ClaimRoute(_, _, _, reply) => {
+                    let _ = reply.send(Err(error));
+                }
+                Command::HandoffCurrent(_, _, _, _, reply) => {
+                    let _ = reply.send(Err(error));
+                }
                 Command::Shutdown => {}
             }
             return;
         }
         match command {
+            Command::HandoffCurrent(id, origin, scope, generation, reply) => {
+                let current = self.matches(id, &origin, &scope)
+                    && self.flight.as_ref().is_some_and(|flight| {
+                        flight.handed_off
+                            && flight.claimed
+                            && !flight.reserved
+                            && !flight.accepted
+                            && flight.capture_generation == generation
+                    });
+                let _ = reply.send(Ok(current));
+            }
+            Command::HandoffContext(id, origin, context, reply) => {
+                let accepted = self.handoff(id, &origin, context);
+                let _ = reply.send(Ok(accepted));
+            }
+            Command::ClaimRoute(id, origin, scope, reply) => {
+                let route = self
+                    .claim(id, &origin, &scope)
+                    .then(|| self.flight.as_ref().unwrap().route);
+                let _ = reply.send(Ok(route));
+            }
             Command::ReadState(reply) => {
                 let _ = reply.send(Ok(self.controller.state()));
             }
@@ -428,11 +556,7 @@ impl Owner {
                 let _ = reply.send(result);
             }
             Command::Claim(id, origin, scope, reply) => {
-                let accepted = self.matches(id, &origin, &scope)
-                    && self.controller.claim(id, &origin, &scope.account);
-                if accepted {
-                    self.flight.as_mut().unwrap().claimed = true;
-                }
+                let accepted = self.claim(id, &origin, &scope);
                 let _ = reply.send(Ok(accepted));
             }
             Command::Reserve(id, origin, scope, reply) => {
@@ -478,26 +602,22 @@ impl Owner {
                 let _ = reply.send(self.health().map(|_| accepted));
             }
             Command::Handoff(id, origin, from, to, reply) => {
-                let accepted = self.matches(id, &origin, &from)
-                    && self
-                        .config
-                        .as_ref()
-                        .is_some_and(|c| c.work_allowed == Some(true))
-                    && from.account == to.account
-                    && !to.composer.is_empty()
-                    && self.flight.as_ref().is_some_and(|f| {
-                        f.claimed
-                            && !f.reserved
-                            && !f.accepted
-                            && !f.handed_off
-                            && f.route == Route::NewChat
-                    });
-                if accepted {
-                    let flight = self.flight.as_mut().unwrap();
-                    flight.scope = to.clone();
-                    flight.handed_off = true;
-                    self.config.as_mut().unwrap().scope = to;
-                }
+                let generation = self
+                    .config
+                    .as_ref()
+                    .map_or(0, |config| config.capture_generation);
+                let accepted = self.handoff(
+                    id,
+                    &origin,
+                    HandoffContext {
+                        from,
+                        from_capture_generation: generation,
+                        to,
+                        capture_generation: generation,
+                        can_accept: true,
+                        is_new_chat: true,
+                    },
+                );
                 let _ = reply.send(Ok(accepted));
             }
             Command::Shutdown => {}
@@ -1369,6 +1489,251 @@ mod tests {
             (1, 2, 3)
         );
         assert!(owner.controller.start_capture(id, "main", &home).is_none());
+    }
+
+    #[test]
+    fn atomic_work_handoff_moves_generation_and_home_flags_without_replacing_target() {
+        for same_home in [false, true] {
+            let (mut owner, id) = owner(Route::NewChat);
+            let from = if same_home {
+                scope("home")
+            } else {
+                scope("original")
+            };
+            owner.config.as_mut().unwrap().scope = from.clone();
+            owner.config.as_mut().unwrap().capture_generation = 10;
+            owner.config.as_mut().unwrap().work_allowed = Some(true);
+            owner.flight.as_mut().unwrap().scope = from.clone();
+            owner.flight.as_mut().unwrap().capture_generation = 10;
+            let metadata = owner.flight.as_ref().unwrap().metadata.clone();
+            let generation = owner.generation;
+            assert!(boolean(&mut owner, |reply| Command::Claim(
+                id,
+                "main".into(),
+                from.clone(),
+                reply
+            )));
+            assert!(
+                boolean(&mut owner, |reply| Command::HandoffContext(
+                    id,
+                    "main".into(),
+                    HandoffContext {
+                        from: from.clone(),
+                        from_capture_generation: 10,
+                        to: scope("home"),
+                        capture_generation: 0,
+                        can_accept: true,
+                        is_new_chat: true,
+                    },
+                    reply
+                )),
+                "claimed Work flight requires an atomic home handoff"
+            );
+            assert_eq!(owner.config.as_ref().unwrap().capture_generation, 0);
+            assert_eq!(owner.flight.as_ref().unwrap().capture_generation, 0);
+            assert!(
+                owner
+                    .config
+                    .as_ref()
+                    .unwrap()
+                    .primary
+                    .as_ref()
+                    .unwrap()
+                    .is_new_chat
+            );
+            assert_eq!(owner.generation, generation);
+            assert_eq!(owner.controller.state().registration, Registration::Ready);
+            assert_eq!(owner.flight.as_ref().unwrap().metadata, metadata);
+            assert!(boolean(&mut owner, |reply| Command::Reserve(
+                id,
+                "main".into(),
+                scope("home"),
+                reply
+            )));
+            assert!(boolean(&mut owner, |reply| Command::Commit(
+                id,
+                "main".into(),
+                scope("home"),
+                reply
+            )));
+            assert!(owner.flight.as_ref().unwrap().task.is_none());
+            owner
+                .controller
+                .up(
+                    owner.generation,
+                    1,
+                    Destination::NewChat,
+                    owner.config.as_ref().unwrap().primary.as_ref(),
+                    now_ms(),
+                    true,
+                )
+                .unwrap();
+            let original = owner
+                .controller
+                .start_capture(id, "main", &scope("home"))
+                .unwrap();
+            assert_eq!(
+                (original.hwnd, original.pid, original.process_creation_time),
+                (1, 2, 3)
+            );
+            assert!(owner
+                .controller
+                .start_capture(id, "main", &scope("home"))
+                .is_none());
+        }
+    }
+
+    #[test]
+    fn atomic_work_handoff_rejects_unready_permission_and_stale_source_without_mutation() {
+        for scenario in [
+            "unknown",
+            "denied",
+            "unclaimed",
+            "reserved",
+            "accepted",
+            "repeated",
+            "source-generation",
+            "source-scope",
+            "target-account",
+            "origin",
+            "unready",
+            "not-home",
+        ] {
+            let (mut owner, id) = owner(Route::NewChat);
+            owner.config.as_mut().unwrap().work_allowed = Some(true);
+            if scenario != "unclaimed" {
+                assert!(boolean(&mut owner, |reply| Command::Claim(
+                    id,
+                    "main".into(),
+                    scope("original"),
+                    reply
+                )));
+            }
+            let mut context = HandoffContext {
+                from: scope("original"),
+                from_capture_generation: 1,
+                to: scope("home"),
+                capture_generation: 0,
+                can_accept: true,
+                is_new_chat: true,
+            };
+            match scenario {
+                "unknown" => owner.config.as_mut().unwrap().work_allowed = None,
+                "denied" => owner.config.as_mut().unwrap().work_allowed = Some(false),
+                "reserved" => owner.flight.as_mut().unwrap().reserved = true,
+                "accepted" => owner.flight.as_mut().unwrap().accepted = true,
+                "repeated" => owner.flight.as_mut().unwrap().handed_off = true,
+                "source-generation" => context.from_capture_generation = 9,
+                "source-scope" => context.from = scope("foreign"),
+                "target-account" => context.to.account = "foreign-account".into(),
+                "unready" => context.can_accept = false,
+                "not-home" => context.is_new_chat = false,
+                _ => {}
+            }
+            assert!(
+                !boolean(&mut owner, |reply| Command::HandoffContext(
+                    id,
+                    if scenario == "origin" {
+                        "other".into()
+                    } else {
+                        "main".into()
+                    },
+                    context,
+                    reply
+                )),
+                "{scenario}"
+            );
+            assert_eq!(owner.config.as_ref().unwrap().scope, scope("original"));
+            assert_eq!(owner.flight.as_ref().unwrap().scope, scope("original"));
+            assert_eq!(owner.config.as_ref().unwrap().capture_generation, 1);
+            assert_eq!(owner.flight.as_ref().unwrap().capture_generation, 1);
+        }
+    }
+
+    #[test]
+    fn atomic_handoff_late_receipt_and_ordinary_context_update_cannot_keep_the_old_flight() {
+        for invalidate in ["epoch", "context"] {
+            let (mut owner, id) = owner(Route::NewChat);
+            owner.config.as_mut().unwrap().work_allowed = Some(true);
+            assert!(boolean(&mut owner, |reply| Command::Claim(
+                id,
+                "main".into(),
+                scope("original"),
+                reply
+            )));
+            assert!(boolean(&mut owner, |reply| Command::HandoffContext(
+                id,
+                "main".into(),
+                HandoffContext {
+                    from: scope("original"),
+                    from_capture_generation: 1,
+                    to: scope("home"),
+                    capture_generation: 0,
+                    can_accept: true,
+                    is_new_chat: true,
+                },
+                reply
+            )));
+            assert!(boolean(&mut owner, |reply| Command::HandoffCurrent(
+                id,
+                "main".into(),
+                scope("home"),
+                0,
+                reply
+            )));
+            assert!(!boolean(&mut owner, |reply| Command::HandoffContext(
+                id,
+                "main".into(),
+                HandoffContext {
+                    from: scope("home"),
+                    from_capture_generation: 0,
+                    to: scope("home"),
+                    capture_generation: 0,
+                    can_accept: true,
+                    is_new_chat: true,
+                },
+                reply
+            )));
+            if invalidate == "epoch" {
+                owner.observe_epoch(2);
+            } else {
+                let mut next = owner.config.as_ref().unwrap().clone();
+                next.capture_generation = 2;
+                owner.configure(next).unwrap();
+            }
+            assert!(!boolean(&mut owner, |reply| Command::HandoffCurrent(
+                id,
+                "main".into(),
+                scope("home"),
+                0,
+                reply
+            )));
+            assert!(owner.flight.is_none());
+        }
+    }
+
+    #[test]
+    fn claimed_route_is_returned_atomically_without_creating_capture_or_reclaiming() {
+        for route in [Route::Current, Route::NewChat] {
+            let (mut owner, id) = owner(route);
+            let (send, receive) = mpsc::channel();
+            owner.command(Command::ClaimRoute(
+                id,
+                "main".into(),
+                scope("original"),
+                send,
+            ));
+            assert_eq!(receive.recv().unwrap().unwrap(), Some(route));
+            let (send, receive) = mpsc::channel();
+            owner.command(Command::ClaimRoute(
+                id,
+                "main".into(),
+                scope("original"),
+                send,
+            ));
+            assert_eq!(receive.recv().unwrap().unwrap(), None);
+            assert!(owner.flight.as_ref().unwrap().task.is_none());
+        }
     }
 
     #[test]

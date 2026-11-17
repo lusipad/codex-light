@@ -1,5 +1,13 @@
 # 实施日志（按轮次）
 
+## 2026-11-17 — Work owner/项目/执行producer与原子handoff宿主
+
+- 固定版取证先行：owner4资源16片段、项目3资源10片段、执行5资源32片段逐一核header/hash/exact slice，不重算整包、不将重叠资源相加。新owner读口复用fresh认证/取消，单锁白名单快照，legacy未绑定不假默认、不泄值、不迁移；保五atom、原项目placement和detail存在性。
+- 项目producer恢复唯一backing、locked/pending/provision/缓存与真实GET，确认null库存按空map、未知不当空。execution恢复V1/V2池、34features、层覆盖/typed/default/policy及guardian；源反例修正局部catch/短路/参数和版本保留规则，16组通过，没有执行模型或配置写。
+- 原子handoff新增有界宿主命令，同owner/身份/票据/原tuple下同时转移scope/gen/flags，保原target/注册；新聊天claim不提前intro/focus，普通context继续取消。新功能先红后绿，95 Appshots专项包含于完整1075 Rust（0失败/忽略/过滤）；最终10前端脚本、TSC与空白通过。初次测试夹具编译失败已修并保留，不冒功能红证。
+- 原生release EXE/MSI/NSIS退出0，1039输入hash稳定，包与SHA见16.23A；17项Rust及Vite既有警告保留。标准入口新增6项并校语法，本阶段未重跑整套标准或私有CLI协议，不沿用旧包/旧检查时点。
+- 这些reader/宿主尚未连到Work前端消费者，Work默认None，不能宣称新聊天已可用。下一轮直接接模式/主窗导航、真实local目标与计划handoff，再接Work-cloud独立消费者，不再用普通Codex或现homeCloud冒充。真实HTTP/turn/GUI/像素/用户验收仍未完成，CI/push继续暂停。
+
 ## 2026-11-17 — Appshots 实际输入就绪与 Work 模型目录
 
 - 先核固定版实际输入publisher/handler及模型合同，直接snapshot资源/header/hash与输入39、模型19个精确片段全部匹配，未重算整包。按真实Composer挂载/附件handler发布scope lease，主窗已接入；observer与同步检查共同拒绝错scope、卸载/inert/disabled/readOnly输入，旧清理不清新lease，同草稿内置浮窗可继续接收。

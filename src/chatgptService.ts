@@ -22,7 +22,7 @@ export interface ReviewProviderPreferences {
   gitlabConnectorId: string | null;
 }
 export type ServiceOperation = "library_favorites" | "library_nodes" | "library_directory_path" | "library_file" | "library_file_content" | "library_suggested" | "library_images" | "library_settings" | "library_image" | "storage_usage" | "images_init" | "images_styles" |
-  "images_recent" | "images_workspace_settings" | "images_asset" | "gpts_discovery" | "gpts_category" | "gpts_search" | "gpts_detail" | "gpts_about" | "gpts_avatar" | "gpts_workspace_settings" | "cloud_workspace_settings" | "work_models" |
+  "images_recent" | "images_workspace_settings" | "images_asset" | "gpts_discovery" | "gpts_category" | "gpts_search" | "gpts_detail" | "gpts_about" | "gpts_avatar" | "gpts_workspace_settings" | "cloud_workspace_settings" | "work_models" | "work_project" |
   "sites_entry_access" | "sites_pinned" | "sites_pin" | "sites_asset" | "sites_access" | "sites_list" | "sites_shared" | "sites_detail" | "sites_environment" | "sites_domains" | "sites_share_access" | "sites_preferred_live_url" | "sites_workspace_settings" | "sites_users" | "sites_groups" | "sites_teams" | "github_repository" |
   "cloud_github_default" | "cloud_github_enterprise" | "cloud_github_links" | "cloud_github_installations" | "cloud_github_repositories" |
   "share_accounts" | "share_users" | "share_groups" | "wham_usage" | "account_me" | "profile_identity" | "profile_page";
@@ -83,6 +83,22 @@ export async function readWorkAccountInfo(identity: ServiceIdentity, signal: Abo
     || result.plan !== null && typeof result.plan !== "string") throw Error("无法确认 Work 账号信息，请重新读取。");
   return { identity: { accountId: identity.accountId, userId: identity.userId, generation: identity.generation },
     authMethod: result.authMethod, plan: result.plan };
+}
+
+export interface WorkHomeState {
+  identity: ServiceIdentity;
+  preferences: Record<string, unknown>;
+}
+
+export async function readWorkHomeState(identity: ServiceIdentity, signal: AbortSignal): Promise<WorkHomeState> {
+  const expected = { ...identity }, requestId = crypto.randomUUID();
+  const result = await invokeService<WorkHomeState & { requestId: string }>("work_home_preferences", requestId,
+    { request: { requestId, expectedIdentity: expected } }, signal);
+  if (result?.requestId !== requestId || result.identity?.accountId !== expected.accountId
+    || result.identity?.userId !== expected.userId || result.identity?.generation !== expected.generation
+    || result.preferences === null || typeof result.preferences !== "object" || Array.isArray(result.preferences)
+    || result.preferences.owner !== "bound") throw Error("无法确认 Work 偏好，请重新读取。");
+  return { identity: expected, preferences: result.preferences };
 }
 
 export function cloudServiceIdentity(signal: AbortSignal): Promise<ServiceIdentity> {

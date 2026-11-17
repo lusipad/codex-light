@@ -1422,6 +1422,11 @@ impl DesktopStateManager {
         guard.get(key).cloned().unwrap_or(Value::Null)
     }
 
+    pub(crate) fn work_home_preferences(&self, identity: &crate::chatgpt_service::ServiceIdentity) -> Result<Value, String> {
+        let snapshot = self.state_map.lock().map_err(|_| "Work 偏好读取线程不可用。")?;
+        crate::work_home_preferences::project(&snapshot, identity)
+    }
+
     pub(crate) fn get_optional_value(&self, key: &str) -> Option<Value> {
         self.state_map.lock().unwrap().get(key).cloned()
     }

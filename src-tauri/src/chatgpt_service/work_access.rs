@@ -18,6 +18,14 @@ pub struct WorkAccountInfoResponse {
     pub plan: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkHomePreferencesResponse {
+    pub request_id: String,
+    pub identity: ServiceIdentity,
+    pub preferences: Value,
+}
+
 impl ChatgptService {
     pub async fn work_account_info<F, Fut>(
         &self,
@@ -28,6 +36,28 @@ impl ChatgptService {
         F: Fn(&'static str, Value) -> Fut,
         Fut: Future<Output = Result<Value, String>>,
     {
+        self.with_work_account_info(request, call, Ok).await
+    }
+
+    pub async fn work_home_preferences<F, Fut>(
+        &self,
+        request: WorkAccountInfoRequest,
+        state: &crate::state::DesktopStateManager,
+        call: F,
+    ) -> ServiceResult<WorkHomePreferencesResponse>
+    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>> {
+        self.with_work_account_info(request, call, |account| {
+            let preferences = state.work_home_preferences(&account.identity)
+                .map_err(|_| failure("invalid_work_preferences", "Work preferences could not be confirmed"))?;
+            Ok(WorkHomePreferencesResponse {request_id:account.request_id, identity:account.identity, preferences})
+        }).await
+    }
+
+    async fn with_work_account_info<F, Fut, T>(
+        &self, request: WorkAccountInfoRequest, call: F,
+        read: impl FnOnce(WorkAccountInfoResponse) -> ServiceResult<T>,
+    ) -> ServiceResult<T>
+    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>> {
         let registration = self.register(&request.request_id)?;
         self.check_share_current(&request.expected_identity, &registration)?;
         let result = tokio::select! {
@@ -63,7 +93,9 @@ impl ChatgptService {
             } => result,
         };
         self.check_share_current(&request.expected_identity, &registration)?;
-        result
+        let value = read(result?)?;
+        self.check_share_current(&request.expected_identity, &registration)?;
+        Ok(value)
     }
 }
 
@@ -226,6 +258,43 @@ mod tests {
                     }
                 );
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn work_home_preferences_returns_only_the_authenticated_owner_view() {
+        let service=ChatgptService::default();let owner=crate::appshots_preferences::owner_key(&identity()).unwrap();
+        let state=crate::state::DesktopStateManager::fixture_for_appshots_preferences(json!({
+            owner:{"home-composer-mode-v1":"work"},
+            "electron-persisted-atom-state":{"work-run-location-v1":"cloud","unrelated-secret":"private"}
+        }).as_object().unwrap().clone());
+        let before=state.get_value("electron-persisted-atom-state");
+        let fresh=auth(Some(json!("plus")));let rpc=Rpc::new(vec![fresh.clone(),account(),fresh]);
+        let result=service.work_home_preferences(request("owner-view"),&state,|method,params|rpc.call(method,params)).await.unwrap();
+        assert_eq!(result.request_id,"owner-view");assert_eq!(result.identity,identity());
+        assert_eq!(result.preferences["atoms"]["home-composer-mode-v1"],"work");
+        assert_eq!(result.preferences["unboundAtoms"],json!(["work-run-location-v1"]));
+        let serialized=serde_json::to_string(&result).unwrap();
+        assert!(!serialized.contains("private")&&!serialized.contains("authToken")&&!serialized.contains("cloud"));
+        assert_eq!(state.get_value("electron-persisted-atom-state"),before);
+        rpc.assert_calls();assert_eq!(rpc.calls.lock().unwrap().len(),3);
+    }
+
+    #[tokio::test]
+    async fn work_home_snapshot_callback_stays_inside_authentication_and_retirement_fences() {
+        let service=ChatgptService::default();let read=AtomicBool::new(false);
+        let rpc=Rpc::new(vec![json!({"authMethod":"apikey"})]);
+        assert!(service.with_work_account_info(request("no-auth-state"),|method,params|rpc.call(method,params),|_|{
+            read.store(true,Ordering::SeqCst);Ok(Value::Null)
+        }).await.is_err());
+        assert!(!read.load(Ordering::SeqCst),"state is not read before fresh authentication succeeds");
+        for cancel in [false,true] {
+            let service=ChatgptService::default();let fresh=auth(None);let rpc=Rpc::new(vec![fresh.clone(),account(),fresh]);
+            let result=service.with_work_account_info(request("retire-state"),|method,params|rpc.call(method,params),|_|{
+                if cancel {service.cancel("retire-state");} else {service.invalidate();}
+                Ok(json!({"must-not-return":true}))
+            }).await;
+            assert!(result.is_err(),"retirement during the atomic state read cannot release its response");
         }
     }
 
