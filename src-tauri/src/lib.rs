@@ -349,6 +349,19 @@ mod mcp_config_event_tests {
 }
 
 #[tauri::command]
+async fn work_account_info(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: chatgpt_service::WorkAccountInfoRequest,
+) -> Result<chatgpt_service::WorkAccountInfoResponse, chatgpt_service::ServiceError> {
+    state.chatgpt_service.work_account_info(request, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
 async fn chatgpt_service_identity(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -2812,6 +2825,7 @@ pub fn run() {
             image_save::generated_image_save,
             image_save::preview_image_save,
             chatgpt_service_identity,
+            work_account_info,
             chatgpt_service_read,
             chatgpt_service_site_pin,
             chatgpt_service_sites_settings,

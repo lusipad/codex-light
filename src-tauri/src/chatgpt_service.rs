@@ -61,6 +61,8 @@ pub use cloud_drafts::{CloudConfigRequest, CloudConfigResponse, CloudDraftReques
 mod durable_models;
 pub use durable_models::{DurableModelsRequest, DurableModelsResponse};
 mod durable_thread;
+mod work_access;
+pub use work_access::{WorkAccountInfoRequest, WorkAccountInfoResponse};
 pub use durable_thread::DurableThreadRequest;
 pub use sites_settings::{SitesSettingsRequest, SitesSettingsResponse};
 pub use sites_assets::{SiteAssetRef, SitesPinRequest, SitesPinResponse};

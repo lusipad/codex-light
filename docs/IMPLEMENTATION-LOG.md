@@ -1,5 +1,13 @@
 # 实施日志（按轮次）
 
+## 2026-11-17 — Work JWT 输入纠偏与运行地点决策
+
+- 先核固定版 WS08、C4、Work-local 实际提交与协议字段。将 Work 读口从近似 planType 改为后端 fresh JWT 白名单投影；沿用取消/代次/真实路由，令牌不出后端。复审发现 legacy account_id 可能误放行，先红后绿仅新读口要求原 chatgpt_account_id；不扩大修改共享 parser。
+- 新增运行地点核心与完整证据适配层，恢复持久/默认/回退/locked及canChoose独立规则，复用 WorkDecision 类型，无新依赖或猜测默认本地。真实 reader、项目生产者、特殊草稿覆盖及UI消费者仍未接。
+- 15组 Work、9组地点、相关资格/入口/服务 wrapper、TSC和Vite构建通过；完整1046 Rust通过。日志/未验边界见16.23A，不把schema声明或纯层测试当整个Work已可用。CLI0.165顶层serviceName声明已定向核实，未强发未知字段或发送模型。
+- debug产品编译退出0，保留17项编译警告。私有普通/Work空thread差分均接受创建和元数据读取，完整turns读取均报同一未实现错误；首次探针exit1保留，差分观察exit0不代表功能通过，无模型turn，两个CLI自然退出并核实不存在。
+- 标准入口登记两新专项；本轮没有整套标准、整页安装包或原生/像素验收。CI/push暂停；继续实际模式、Work模型/权限、地点reader、本地/云端提交及同flight交接，不将第04–05批或14批目标缩成基础模块。
+
 ## 2026-11-17 — Work 独立许可与同首页快照交接基础
 
 - 先核官方 Work 条件表、Desktop surface publisher、账号来源及 freshDraft 精确默认，新增独立许可投影/限定身份读取器，复用既有固定 GET、账号和 bootstrap，不新增依赖、权限门槛或代理服务。读取器尚未挂入产品，不以纯投影代表实际获准。

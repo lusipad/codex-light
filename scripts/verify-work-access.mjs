@@ -6,14 +6,14 @@ const identity = { accountId: 'work-account', userId: 'work-user', generation: 2
 const clone = value => JSON.parse(JSON.stringify(value));
 const surfaces = { supportedSurface: true, workCloudSupportedSurface: true };
 function fixture() {
-  const calls = []; let serial = 0;
-  const c = { plan: 'business', auth: 'chatgpt', gates: { '1463309241': true, '1625797156': true }, compact: false, hashed: false,
+  const calls = []; let serial = 0, workInfoReads = 0;
+  const c = { plan: 'business', planType: undefined, workAuthMethod: 'chatgpt', auth: 'chatgpt', gates: { '1463309241': true, '1625797156': true }, compact: false, hashed: false,
     workspace: { admin_work_mode_enabled: true, admin_work_local_enabled: false, beta_settings: { wham_local_access: false } },
-    workspaceError: null, payload: value => value, identity: () => clone(identity), after: () => {}, account: value => value };
+    workspaceError: null, payload: value => value, identity: () => clone(identity), after: () => {}, account: value => value, workInfo: value => value };
   const bridge = {
     callAppServer: async (method, params) => {
       calls.push({ method, params: clone(params) }); assert.equal(method, 'account/read'); assert.deepEqual(clone(params), { refreshToken: false });
-      const value = c.account({ account: { type: c.auth, planType: c.plan }, workspaceRouting: { chatgptAccountId: identity.accountId } });
+      const value = c.account({ account: { type: c.auth, planType: c.planType === undefined ? c.plan : c.planType }, workspaceRouting: { chatgptAccountId: identity.accountId } });
       c.after(method); return value;
     },
     tauriInvoke: async (command, args) => {
@@ -21,7 +21,12 @@ function fixture() {
       if (command === 'chatgpt_service_identity') return c.identity();
       if (command === 'chatgpt_service_cancel') return;
       let result;
-      if (command === 'share_thread_access') {
+      if (command === 'work_account_info') {
+        const r = args.request;
+        assert.deepEqual(Object.keys(r).sort(), ['expectedIdentity', 'requestId']);
+        assert.deepEqual(clone(r.expectedIdentity), identity); assert.equal(typeof r.requestId, 'string');
+        result = await c.workInfo({ requestId: r.requestId, identity: clone(identity), authMethod: c.workAuthMethod, plan: c.plan }, ++workInfoReads);
+      } else if (command === 'share_thread_access') {
         assert.deepEqual(clone(args.request.expectedIdentity), identity);
         const hash = key => { let n = 0; for (const ch of key) n = (Math.imul(n, 31) + ch.charCodeAt(0)) >>> 0; return String(n); };
         result = { statsigPayload: JSON.stringify(c.payload({ has_updates: true, response_format: c.compact ? 'init-v2' : 'init-v1',
@@ -31,7 +36,7 @@ function fixture() {
         assert.equal(command, 'chatgpt_service_read'); const r = args.request;
         assert.equal(r.operation, 'cloud_workspace_settings'); assert.deepEqual(clone(r.params), {});
         assert.deepEqual(clone(r.expectedIdentity), identity);
-        if (c.workspaceError) throw c.workspaceError;
+        if (c.workspaceError) { c.after(command); throw c.workspaceError; }
         result = { requestId: r.requestId, identity: clone(identity), body: c.workspace };
       }
       c.after(command); return result;
@@ -47,14 +52,19 @@ function fixture() {
         require: name => name === './bridge' ? bridge : load(`src/${name.slice(2)}.ts`) }, { filename: file });
     return exports;
   }
-  return { c, calls, api: load('src/workAccess.ts'), read: (s = surfaces, signal = new AbortController().signal) => load('src/workAccess.ts').readLocalWorkAccess(signal, s) };
+  return { c, calls, api: load('src/workAccess.ts'), read: (s = surfaces, signal = new AbortController().signal) => load('src/workAccess.ts').readLocalWorkAccess(signal, s),
+    workAccountInfo: (signal = new AbortController().signal) => load('src/chatgptService.ts').readWorkAccountInfo(identity, signal) };
 }
 let passed = 0;
 async function test(name, run) { await run(); console.log('PASS', name); ++passed; }
-await test('real reader uses auth plan, explicit surfaces and workspace GET without inventory permissions', async () => {
+await test('real reader uses JWT plan, explicit surfaces and workspace GET without inventory permissions', async () => {
   const h = fixture(), result = await h.read();
   assert.equal(result.combined.status, 'allowed'); assert.equal(result.combined.accountId, identity.accountId);
   assert.ok(!h.calls.some(call => call.args?.request?.operation === 'share_accounts'));
+  const jwt = fixture(); jwt.c.plan = 'free'; jwt.c.planType = 'business';
+  const actual = await jwt.read();
+  assert.deepEqual(clone(actual.workCloud), { status: 'denied', reason: 'free-plan' }, 'actual JWT plan must override account/read planType');
+  assert.equal(jwt.calls.filter(call => call.args?.request?.operation === 'cloud_workspace_settings').length, 0);
 });
 const input = overrides => ({ accountId: 'a', plan: 'business', authMethod: 'chatgpt', authLoading: false,
   accountInfoLoading: false, accountInfoError: false, ...surfaces, ...overrides });
@@ -202,13 +212,17 @@ await test('identity, relevant auth/plan/route changes and cancellation reject l
     const h = fixture(); h.c.after = command => { if (command === 'chatgpt_service_read') h.c.identity = () => ({ ...identity, [field]: field === 'generation' ? 3 : 'changed' }); };
     await assert.rejects(h.read(), error => error.code === 'account_changed');
   }
-  for (const field of ['plan', 'auth', 'route']) {
+  for (const field of ['auth', 'route']) {
     const h = fixture(); let reads = 0;
-    h.c.account = value => { if (++reads === 2) { if (field === 'plan') value.account.planType = 'plus'; if (field === 'auth') value.account.type = 'apiKey'; if (field === 'route') value.workspaceRouting.chatgptAccountId = 'other'; } return value; };
+    h.c.account = value => { if (++reads === 2) { if (field === 'auth') value.account.type = 'apiKey'; if (field === 'route') value.workspaceRouting.chatgptAccountId = 'other'; } return value; };
     await assert.rejects(h.read(), error => error.code === 'account_changed');
   }
   const h = fixture(); let reads = 0; h.c.account = value => ({ ...value, account: { ...value.account, email: `unrelated-${++reads}` } });
   assert.equal((await h.read()).combined.status, 'allowed');
+  const changedPlanType = fixture(); let planTypeReads = 0;
+  changedPlanType.c.plan = 'free'; changedPlanType.c.planType = 'business';
+  changedPlanType.c.account = value => { if (++planTypeReads === 2) value.account.planType = 'plus'; return value; };
+  assert.deepEqual(clone((await changedPlanType.read()).workCloud), deny('free-plan'), 'unrelated account/read planType changes cannot replace the real JWT plan');
   const cancelled = fixture(), controller = new AbortController(); controller.abort(); await assert.rejects(cancelled.read(surfaces, controller.signal)); assert.equal(cancelled.calls.length, 0);
   const active = fixture(), pending = new AbortController(); active.c.after = command => { if (command === 'chatgpt_service_read') pending.abort(); };
   await assert.rejects(active.read(surfaces, pending.signal));
@@ -229,13 +243,69 @@ await test('identity, relevant auth/plan/route changes and cancellation reject l
   await assert.rejects(finalRead.read(surfaces, finalRequest.signal), error => finalRequest.signal.aborted);
   assert.equal(accountReads, 2, 'cancellation actually occurs during the final auth read');
   for (const changedField of ['userId', 'generation']) {
-    const failedWorkspace = fixture(); let identityReads = 0;
+    const failedWorkspace = fixture();
     failedWorkspace.c.workspaceError = Object.assign(Error('workspace request failed'), { status: 403 });
-    failedWorkspace.c.identity = () => ++identityReads === 1 ? clone(identity)
-      : { ...identity, [changedField]: changedField === 'generation' ? 3 : 'other-user' };
+    failedWorkspace.c.after = command => { if (command === 'chatgpt_service_read') failedWorkspace.c.identity = () => ({ ...identity, [changedField]: changedField === 'generation' ? 3 : 'other-user' }); };
     await assert.rejects(failedWorkspace.read(), error => error.code === 'account_changed');
     assert.equal(failedWorkspace.calls.filter(call => call.args?.request?.operation === 'cloud_workspace_settings').length, 1);
     assert.equal(failedWorkspace.calls.filter(call => call.command === 'share_thread_access').length, 0, 'identity retirement is not swallowed as a workspace error');
   }
+});
+await test('JWT null, unknown and empty plans retain source semantics and token auth is not fabricated account type', async () => {
+  const missing = fixture(); missing.c.plan = null; missing.c.planType = 'business';
+  assert.deepEqual(clone((await missing.read()).combined), deny('missing-account'));
+  assert.equal(missing.calls.filter(call => call.args?.request?.operation === 'cloud_workspace_settings').length, 0);
+  for (const plan of ['', 'new-plan-not-in-inventory']) {
+    const h = fixture(); h.c.plan = plan; h.c.planType = null;
+    assert.equal((await h.read()).combined.status, 'allowed');
+    assert.equal(h.calls.filter(call => call.args?.request?.operation === 'cloud_workspace_settings').length, 1);
+  }
+  const tokens = fixture(); tokens.c.plan = 'plus'; tokens.c.workAuthMethod = 'chatgptAuthTokens';
+  const access = await tokens.read();
+  assert.deepEqual(clone(access.workCloud), deny('unsupported-auth'));
+  assert.deepEqual(clone(access.workLocal), allow(identity.accountId));
+  assert.equal(tokens.calls.filter(call => call.command === 'share_thread_access').length, 0, 'non-chatgpt JWT auth does not read Work rollout gates');
+  assert.equal(tokens.calls.filter(call => call.command === 'work_account_info').length, 2);
+});
+await test('real work_account_info wrapper rejects wrong request, identity, auth and plan snapshots', async () => {
+  const changes = [
+    value => ({ ...value, requestId: 'another-request' }),
+    value => ({ ...value, identity: { ...identity, accountId: 'other' } }),
+    value => ({ ...value, identity: { ...identity, userId: 'other' } }),
+    value => ({ ...value, identity: { ...identity, generation: 3 } }),
+    value => ({ ...value, identity: null }),
+    value => ({ ...value, authMethod: 'apiKey' }), value => ({ ...value, authMethod: null }),
+    value => { delete value.authMethod; return value; },
+    ...[undefined, false, 1, [], {}].map(plan => value => ({ ...value, plan })),
+  ];
+  for (const change of changes) {
+    const h = fixture(); h.c.workInfo = change;
+    await assert.rejects(h.workAccountInfo());
+    assert.equal(h.calls.filter(call => call.command === 'work_account_info').length, 1);
+    assert.ok(!h.calls.some(call => call.command === 'share_thread_access' || call.command === 'chatgpt_service_read'));
+  }
+});
+await test('JWT plan or auth changes, in-flight abort and late identity responses never return old allow', async () => {
+  for (const field of ['plan', 'authMethod']) {
+    const h = fixture(); h.c.workInfo = (value, count) => count === 1 ? value : { ...value, [field]: field === 'plan' ? 'plus' : 'chatgptAuthTokens' };
+    await assert.rejects(h.read(), error => error.code === 'account_changed');
+    assert.equal(h.calls.filter(call => call.command === 'work_account_info').length, 2);
+  }
+  const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
+  for (const outcome of ['abort', 'user', 'generation']) {
+    const h = fixture(), entered = deferred(), release = deferred(), controller = new AbortController(); h.c.plan = 'plus';
+    h.c.workInfo = async value => { entered.resolve(); await release.promise; return value; };
+    const pending = h.read(surfaces, controller.signal); await entered.promise;
+    if (outcome === 'abort') controller.abort();
+    else h.c.identity = () => ({ ...identity, ...(outcome === 'user' ? { userId: 'other-user' } : { generation: 3 }) });
+    release.resolve();
+    await assert.rejects(pending, error => outcome === 'abort' ? controller.signal.aborted : error.code === 'account_changed');
+    assert.ok(!h.calls.some(call => call.command === 'share_thread_access' || call.command === 'chatgpt_service_read'));
+    if (outcome === 'abort') assert.ok(h.calls.some(call => call.command === 'chatgpt_service_cancel'));
+  }
+  const final = fixture(), entered = deferred(), release = deferred(), controller = new AbortController();
+  final.c.workInfo = async (value, count) => { if (count === 2) { entered.resolve(); await release.promise; } return value; };
+  const pending = final.read(surfaces, controller.signal); await entered.promise; controller.abort(); release.resolve();
+  await assert.rejects(pending); assert.equal(final.calls.filter(call => call.command === 'work_account_info').length, 2);
 });
 console.log(`PASS ${passed} Work access groups; official decision tables, real TS service wrappers, offline bridge, zero HTTP/model or key activity`);

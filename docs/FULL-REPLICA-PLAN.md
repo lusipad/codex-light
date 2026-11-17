@@ -32,6 +32,8 @@
 
 ### 当前起点与下一工作包
 
+最新 Work 输入已纠正为后端 fresh JWT 白名单，不再使用近似 planType；新增运行地点纯层（非reader/页面），15组Work、9组地点、1046完整Rust及前端/原生debug编译通过。CLI0.165声明并接受顶层serviceName创建私有空线程，但普通/Work的完整turns读取均遇同一未实现错误；不把元数据成功当历史通过。下一仍是 Work 模式/模型/真实地点reader、本地/云端消费者及原flight交接，输入基础不代表新聊天已可用。准确范围见[16.23A](antigravity/acceptance/16.23A.md)，CI/push暂停。
+
 本轮补齐独立 Work 许可纯投影与限定账号读取基础，并按官方未启动首页草稿可复用的规则修正同 scope 显式快照交接；12组前端、TSC及80项 Appshots Rust通过。读取器尚未挂入产品，Work 新聊天仍未接通。下一工作包是有效本地/云端分派、模式导航与同 flight 交接；不得拿普通本地 Composer 替代，也不清空既有首页草稿。准确范围见[16.23A](antigravity/acceptance/16.23A.md)，不将基础测试通过计作整页验收。
 
 最新推进：B3主窗口实际入口及捕获pending/原位替换/开始顺序已形成本地候选（83ef967、e8228ca）。本轮继续B4热键与目标位置：真实注册事务、用户层版本保存/读回、现owner更新及离页提交失效通知已接，15组前端与真实CLI0.165隔离探针通过；Rust与构建的准确时点见[16.23A](antigravity/acceptance/16.23A.md)。声音/视频/图形、完整custom、独立Work新聊天、物理/原生连续旅程及官方配对像素仍未完成，Appshots整页不放行。用户要求先不跑CI，持续不push、不触发/重跑托管workflow；总目标与14批范围不变。

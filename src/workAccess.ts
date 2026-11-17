@@ -1,5 +1,5 @@
 import { callAppServer } from "./bridge";
-import { readChatgptService, serviceIdentity, shareAccessBootstrap, type ServiceIdentity } from "./chatgptService";
+import { readChatgptService, readWorkAccountInfo, serviceIdentity, shareAccessBootstrap, type ServiceIdentity } from "./chatgptService";
 
 export type WorkDecision = { status: "allowed"; accountId: string | null }
   | { status: "loading" }
@@ -126,11 +126,11 @@ function bootstrapGates(bootstrap: unknown, identity: ServiceIdentity): WorkGate
   return { gate146: gate("1463309241"), gate162: gate("1625797156") };
 }
 const changed = () => Object.assign(Error("读取期间 Work 账号、套餐或服务路由发生变化。"), { code: "account_changed" });
-function accountInput(raw: unknown): { accountId: string; plan: string } {
+function accountInput(raw: unknown): { accountId: string } {
   if (!object(raw) || !object(raw.account) || raw.account.type !== "chatgpt") throw Object.assign(Error("当前 Work 服务适配器不支持此认证方式。"), { code: "unsupported_auth" });
-  if (typeof raw.account.planType !== "string" || !raw.account.planType || !object(raw.workspaceRouting)
-    || typeof raw.workspaceRouting.chatgptAccountId !== "string" || !raw.workspaceRouting.chatgptAccountId) throw Error("Work 账号或套餐数据未确认。");
-  return { accountId: raw.workspaceRouting.chatgptAccountId, plan: raw.account.planType };
+  if (!object(raw.workspaceRouting)
+    || typeof raw.workspaceRouting.chatgptAccountId !== "string" || !raw.workspaceRouting.chatgptAccountId) throw Error("Work 账号或路由数据未确认。");
+  return { accountId: raw.workspaceRouting.chatgptAccountId };
 }
 export async function readLocalWorkAccess(signal: AbortSignal, surfaces: WorkSurfaces): Promise<LocalWorkAccess> {
   signal.throwIfAborted();
@@ -144,7 +144,9 @@ export async function readLocalWorkAccess(signal: AbortSignal, surfaces: WorkSur
     signal.throwIfAborted(); const actual = await serviceIdentity(signal); signal.throwIfAborted();
     if (actual.accountId !== identity.accountId || actual.userId !== identity.userId || actual.generation !== identity.generation) throw changed();
   };
-  const input: WorkAccessInput = { ...confirmedSurfaces, accountId: identity.accountId, plan: before.plan, authMethod: "chatgpt", authLoading: false, accountInfoError: false, accountInfoLoading: false };
+  const info = await readWorkAccountInfo(identity, signal); await current();
+  const input: WorkAccessInput = { ...confirmedSurfaces, accountId: identity.accountId, plan: info.plan, authMethod: info.authMethod,
+    authLoading: false, accountInfoError: false, accountInfoLoading: false };
   let workspace: WorkWorkspaceQuery | null = null;
   if (needsWorkWorkspace(input)) {
     try { workspace = workspaceQuery(await readChatgptService("cloud_workspace_settings", {}, identity, signal)); }
@@ -159,6 +161,8 @@ export async function readLocalWorkAccess(signal: AbortSignal, surfaces: WorkSur
   const afterRaw = await callAppServer("account/read", { refreshToken: false }); await current();
   if (!object(afterRaw) || !object(afterRaw.account) || afterRaw.account.type !== "chatgpt") throw changed();
   const after = accountInput(afterRaw);
-  if (after.accountId !== before.accountId || after.plan !== before.plan) throw changed();
+  if (after.accountId !== before.accountId) throw changed();
+  const afterInfo = await readWorkAccountInfo(identity, signal); await current();
+  if (afterInfo.plan !== info.plan || afterInfo.authMethod !== info.authMethod) throw changed();
   return { identity: { ...identity }, ...projectWorkAccess(input, workspace, gates) };
 }

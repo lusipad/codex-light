@@ -38,6 +38,7 @@ try {
   Invoke-Step "System font directory and local font selection contracts" { node scripts/verify-system-fonts.mjs }
   Invoke-Step "Rust real system font directory" { cargo test --locked --manifest-path src-tauri/Cargo.toml system_fonts }
   Invoke-Step "Rust Appshots capture and entry lifecycle" { cargo test --locked --manifest-path src-tauri/Cargo.toml --lib appshots_ }
+  Invoke-Step "Rust Work account-info JWT boundary" { cargo test --locked --manifest-path src-tauri/Cargo.toml --lib chatgpt_service::work_access }
   Invoke-Step "All-page workflow UI correction" { node scripts/verify-workflow-ui-d.mjs }
   Invoke-Step "Workspace file tree and actual file selection" { node scripts/verify-workspace-file-tree.mjs }
   Invoke-Step "Recursive workspace tree and multi-root lifecycle" { node scripts/verify-workspace-recursive-tree.mjs }
@@ -200,6 +201,7 @@ try {
   Invoke-Step "Appshot context serialization and image roundtrip" { node scripts/verify-appshot-context.mjs }
   Invoke-Step "Appshot account and local host qualification" { node scripts/verify-appshots-access.mjs }
   Invoke-Step "Independent Work access decision tables and identity-bound reader" { node scripts/verify-work-access.mjs }
+  Invoke-Step "Work run-location evidence and routing decisions" { node scripts/verify-work-run-location.mjs }
   Invoke-Step "Appshot native entry and scoped consumer lifecycle" { node scripts/verify-appshots-entry.mjs }
   Invoke-Step "Appshot pending Composer presentation" { node scripts/verify-appshots-pending-presentation.mjs }
   Invoke-Step "Appshots settings versioned client" { node scripts/verify-appshots-settings-client.mjs }

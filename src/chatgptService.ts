@@ -66,6 +66,25 @@ export function serviceIdentity(signal: AbortSignal): Promise<ServiceIdentity> {
   return invokeService("chatgpt_service_identity", requestId, { requestId }, signal);
 }
 
+export interface WorkAccountInfo {
+  identity: ServiceIdentity;
+  authMethod: "chatgpt" | "chatgptAuthTokens";
+  plan: string | null;
+}
+
+/** Only confirmed account fields leave the host; bearer tokens stay backend-only. */
+export async function readWorkAccountInfo(identity: ServiceIdentity, signal: AbortSignal): Promise<WorkAccountInfo> {
+  const requestId = crypto.randomUUID();
+  const result = await invokeService<WorkAccountInfo & { requestId: string }>("work_account_info", requestId,
+    { request: { requestId, expectedIdentity: identity } }, signal);
+  if (result?.requestId !== requestId || result.identity?.accountId !== identity.accountId
+    || result.identity?.userId !== identity.userId || result.identity?.generation !== identity.generation
+    || !["chatgpt", "chatgptAuthTokens"].includes(result.authMethod)
+    || result.plan !== null && typeof result.plan !== "string") throw Error("无法确认 Work 账号信息，请重新读取。");
+  return { identity: { accountId: identity.accountId, userId: identity.userId, generation: identity.generation },
+    authMethod: result.authMethod, plan: result.plan };
+}
+
 export function cloudServiceIdentity(signal: AbortSignal): Promise<ServiceIdentity> {
   const requestId = crypto.randomUUID();
   return invokeService("cloud_service_identity", requestId, { requestId }, signal);
