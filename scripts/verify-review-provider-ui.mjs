@@ -30,6 +30,7 @@ function harness(initial = base()) {
   vm.runInNewContext(source, { exports, AbortController, require: name => name === "react" ? react : name === "../bridge" ? {
     tauriListen: (...args) => control.listen(...args),
   } : { serviceIdentity: async () => identity, readReviewProviderAccess: (...args) => control.read(...args),
+    serviceErrorMessage: error => error.message ?? String(error),
     updateReviewProviderPreference: async (...args) => { writes.push(args); return control.write(...args); } } });
   const render = (scope = currentScope) => { currentScope = scope; cursor = 0; tree = exports.ReviewProviderSettings({ scope }); return tree; };
   const effects = () => { const queue = pending; pending = []; queue.forEach(fn => fn()); };
@@ -163,4 +164,8 @@ assert.doesNotMatch(h.text(), /同步失败/);
 const accountRead = deferred(); h.control.read = () => accountRead.promise;
 h.events["app-server:notification"]({ method: "account/updated" }); h.render();
 assert.equal(h.select("代码审查提供商"), undefined); h.unmount(); accountRead.resolve(base()); await flush();
+h = harness(); h.control.read = async () => { throw { code: "forbidden", message: "fixture account denied" }; }; await h.start();
+assert.match(h.text(), /fixture account denied/);
+assert.doesNotMatch(h.text(), /\[object Object\]/);
+h.unmount();
 console.log("PASS review provider production UI: gates, preserved unknown values, real connection identity, single-flight/readback, failures, scope/account isolation and listener cleanup");

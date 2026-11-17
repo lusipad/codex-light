@@ -108,6 +108,20 @@ for (const enabled of [null, false]) {
   const f = fixture({ enabled }); await f.flush(); assert.equal(f.view.available, false);
   assert.equal(f.count("readDestination"), 0, "unknown/denied access does not load native settings"); f.unmount();
 }
+{
+  const f = fixture();
+  f.plan("access", () => { throw { code: "not_logged_in", message: "请先登录 ChatGPT 账号。" }; });
+  await f.flush();
+  assert.equal(f.view.available, false);
+  assert.equal(f.view.unavailableMessage, "请先登录 ChatGPT 账号。");
+  assert.equal(f.errors.length, 0, "the same failure is shown inline");
+  f.view.onRetry();
+  await f.flush();
+  assert.equal(f.view.available, true);
+  assert.equal(f.count("access"), 2);
+  assert.equal(f.count("setHotkey") + f.count("writeDestination"), 0, "read retry never writes settings");
+  f.unmount();
+}
 const ready = fixture(); await ready.flush(); assert.equal(ready.view.available, true);
 ready.emit("appshots:entry", { type: "state", supported: true, registration: "ready" }); await ready.flush();
 assert.equal(ready.count("setHotkey") + ready.count("writeDestination"), 0, "state refresh is read-only"); ready.unmount();

@@ -4,6 +4,8 @@ import "./AppshotsSettings.css";
 
 export interface AppshotsSettingsViewProps {
   available: boolean;
+  unavailableMessage?: string;
+  onRetry?: () => void;
   configuredHotkey: string | null;
   supported: boolean | null;
   hotkeyPending: boolean;
@@ -23,7 +25,11 @@ const hotkeys = [
 /** Windows B4 partial consumer. Sound, licensed artwork/video and paired visual
  * acceptance are separate outstanding work, not simulated controls here. */
 export function AppshotsSettingsView(props: AppshotsSettingsViewProps) {
-  if (!props.available) return null;
+  if (!props.available) return <section className="settings-scroll-container appshots-settings" aria-labelledby="appshots-settings-title">
+    <h2 id="appshots-settings-title">应用快照</h2>
+    <p role="status">{props.unavailableMessage ?? "应用快照尚不可用。"}</p>
+    {props.onRetry && <button type="button" className="secondary-btn" onClick={props.onRetry}>重试</button>}
+  </section>;
   const hotkeyValue = props.configuredHotkey === null ? "none"
     : props.configuredHotkey === "DoubleAlt" || props.configuredHotkey === "DoubleShift"
       ? props.configuredHotkey : `custom:${props.configuredHotkey}`;

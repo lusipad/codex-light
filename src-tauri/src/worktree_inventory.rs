@@ -334,12 +334,20 @@ fn scan(
 
 /// Only the supplied managed roots are scanned; roots do not grant deletion rights.
 pub fn collect(managed_roots: &[String]) -> Result<Inventory, String> {
+    collect_with_default_root(managed_roots, &crate::state::codex_home_dir().join("worktrees"))
+}
+
+fn collect_with_default_root(managed_roots: &[String], default_root: &Path) -> Result<Inventory, String> {
     let mut inventory = Inventory::default();
     let mut seen = HashSet::new();
+    let default_key = key(default_root);
     for root in managed_roots {
         let path = Path::new(root);
         match checked_path(path) {
             Ok(root) => scan(&mut inventory, &root, &root, 2, &mut seen),
+            Err(_) if key(path) == default_key
+                && fs::symlink_metadata(path).is_err_and(|err| err.kind() == std::io::ErrorKind::NotFound)
+                && path.parent().is_some_and(|parent| checked_path(parent).is_ok()) => {}
             Err(error) => inventory.error(path, "managed-root", error),
         }
     }
@@ -513,6 +521,25 @@ mod tests {
         .unwrap();
         assert_eq!(bad_roots.errors.len(), 2);
         assert!(bad_roots.records.is_empty());
+    }
+
+    #[test]
+    fn uncreated_default_root_is_empty_but_missing_custom_root_remains_an_error() {
+        let fixture = Fixture::new();
+        let default_root = fixture.root.join("worktrees");
+        let custom_root = fixture.root.join("unavailable-custom");
+        let first_run = collect_with_default_root(&[path_string(&default_root)], &default_root).unwrap();
+        assert!(first_run.records.is_empty());
+        assert!(first_run.errors.is_empty());
+        assert!(!default_root.exists(), "inventory must not create directories");
+
+        let mixed = collect_with_default_root(
+            &[path_string(&custom_root), path_string(&default_root), path_string(&fixture.managed)],
+            &default_root,
+        ).unwrap();
+        assert_eq!(mixed.records.len(), 1);
+        assert_eq!(mixed.errors.len(), 1);
+        assert_eq!(mixed.errors[0].path, path_string(&custom_root));
     }
 
     #[test]

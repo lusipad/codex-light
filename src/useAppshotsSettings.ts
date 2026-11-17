@@ -12,6 +12,7 @@ interface SettingsView {
   destination: string;
   hotkeyPending: boolean;
   hotkeyError: string | null;
+  readError: string | null;
 }
 interface Actions {
   token: object;
@@ -23,7 +24,8 @@ export function useAppshotsSettings({ scope, connected, onError }: {
   scope: string; connected: boolean; onError?: (message: string) => void;
 }) {
   const [revision, setRevision] = useState(0);
-  const enabled = connected && isTauriRuntime() && navigator.platform.startsWith("Win");
+  const supportedHost = isTauriRuntime() && navigator.platform.startsWith("Win");
+  const enabled = connected && supportedHost;
   const key = JSON.stringify([scope, enabled, revision]);
   const lifetime = useRef({ key });
   if (lifetime.current.key !== key) lifetime.current = { key };
@@ -40,11 +42,17 @@ export function useAppshotsSettings({ scope, connected, onError }: {
     const controller = new AbortController(), signal = controller.signal;
     let access: AppshotsAccess | null = null, snapshot: AppshotsSettingsSnapshot | null = null;
     let destination = "automatic", confirmedDestination = "automatic", hotkeyPending = false, hotkeyError: string | null = null;
+    let readError: string | null = null;
     let destinationWrites = 0, destinationVersion = 0, readVersion = 0, stateVersion = 0;
     const unlisten: (() => void)[] = [];
     const current = () => lifetime.current === token && !signal.aborted;
-    const publish = () => { if (current()) setView({ token, access, snapshot, destination, hotkeyPending, hotkeyError }); };
-    const report = (cause: unknown) => { if (current()) notify.current?.(serviceErrorMessage(cause)); };
+    const publish = () => { if (current()) setView({ token, access, snapshot, destination, hotkeyPending, hotkeyError, readError }); };
+    const report = (cause: unknown) => {
+      if (!current()) return;
+      readError = serviceErrorMessage(cause);
+      publish();
+      if (snapshot?.eligible === true && snapshot.ownerState === "active" && snapshot.supported === true) notify.current?.(readError);
+    };
     const reload = async () => {
       if (!current()) return;
       if (hotkeyPending || destinationWrites) { return; }
@@ -52,6 +60,7 @@ export function useAppshotsSettings({ scope, connected, onError }: {
       try {
         const nextAccess = await readLocalAppshotsAccess(signal, "windows");
         if (!current() || request !== readVersion) return;
+        readError = null;
         access = nextAccess;
         if (access.enabled !== true) { snapshot = null; publish(); return; }
         const next = await readAppshotsDestination(access.identity, signal);
@@ -147,9 +156,18 @@ export function useAppshotsSettings({ scope, connected, onError }: {
   }, [key]);
 
   const current = view?.token === token && enabled ? view : null;
+  const unavailableMessage = !supportedHost ? "当前平台不支持原生应用快照。"
+    : !connected ? "连接已断开，重新连接后即可读取设置。"
+    : current?.readError ?? (!current ? "正在读取应用快照设置…"
+      : current.access?.enabled === false ? "当前账号或工作区未启用应用快照。"
+      : current.access?.enabled !== true ? "无法确认应用快照使用资格。"
+      : "原生应用快照功能尚未就绪。");
   return {
     available: current?.access?.enabled === true && current.snapshot?.eligible === true
       && current.snapshot.ownerState === "active" && current.snapshot.supported === true,
+    unavailableMessage,
+    onRetry: enabled && current && (current.readError !== null || current.access?.enabled === null)
+      ? () => setRevision(value => value + 1) : undefined,
     configuredHotkey: current?.snapshot?.configuredHotkey ?? null,
     supported: current?.snapshot?.supported ?? null,
     hotkeyPending: current?.hotkeyPending ?? false,

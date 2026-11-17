@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { tauriListen } from "../bridge";
-import { serviceIdentity } from "../chatgptService";
+import { serviceErrorMessage, serviceIdentity } from "../chatgptService";
 import { formatStorageBytes, readStorageUsage, storageFullness, type StorageUsage } from "../storageUsage";
 
 export function StorageSettings({ scope, onOpenLibrary }: { scope: string; onOpenLibrary?: (tab: "all" | "images") => void }) {
@@ -32,7 +32,7 @@ export function StorageSettings({ scope, onOpenLibrary }: { scope: string; onOpe
         const next = await readStorageUsage(identity, signal);
         if (valid()) setSnapshot({ scope, usage: next });
       } catch (cause) {
-        if (valid()) setError(String(cause));
+        if (valid()) setError(serviceErrorMessage(cause));
       } finally { if (valid()) setLoading(false); }
     };
     const refreshIdentity = () => { identityInvalidated = false; void load(); };
@@ -41,7 +41,7 @@ export function StorageSettings({ scope, onOpenLibrary }: { scope: string; onOpe
         const stop = await tauriListen(name, handler);
         if (alive) stops.push(stop); else stop();
       } catch (cause) {
-        if (alive && currentScope.current === scope) setSyncError(`存储配额同步失败：${String(cause)}`);
+        if (alive && currentScope.current === scope) setSyncError(`存储配额同步失败：${serviceErrorMessage(cause)}`);
       }
     };
     setSyncError("");

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { tauriListen } from "../bridge";
-import { serviceIdentity, readReviewProviderAccess, updateReviewProviderPreference,
+import { serviceErrorMessage, serviceIdentity, readReviewProviderAccess, updateReviewProviderPreference,
   type ReviewProviderAccess, type ReviewProviderPreferences } from "../chatgptService";
 
 // 修改前用例：CRB06 身份/作用域晚到隔离；CRB07 gate 回退不写回；
@@ -41,7 +41,7 @@ export function ReviewProviderSettings({ scope }: { scope: string }) {
         const next = await readReviewProviderAccess(identity, controller.signal);
         if (valid(ticket)) setSnapshot({ scope, access: next });
       } catch (cause) {
-        if (valid(ticket)) setError(String(cause));
+        if (valid(ticket)) setError(serviceErrorMessage(cause));
       }
     };
     const register = async (name: string, handler: (payload: any) => void) => {
@@ -49,7 +49,7 @@ export function ReviewProviderSettings({ scope }: { scope: string }) {
         const stop = await tauriListen(name, handler);
         if (alive) unlisten.push(stop); else stop();
       } catch (cause) {
-        if (alive && currentScope.current === scope) setSyncError(`提供商设置同步失败：${String(cause)}`);
+        if (alive && currentScope.current === scope) setSyncError(`提供商设置同步失败：${serviceErrorMessage(cause)}`);
       }
     };
     setSyncError("");
@@ -80,7 +80,7 @@ export function ReviewProviderSettings({ scope }: { scope: string }) {
       const next = await updateReviewProviderPreference(change.field, change.value, access.identity, controller.signal, access.preferences[change.field]);
       if (valid()) setSnapshot({ scope, access: next });
     } catch (cause) {
-      if (valid()) { setError(String(cause)); setFailed(change); }
+      if (valid()) { setError(serviceErrorMessage(cause)); setFailed(change); }
     } finally {
       if (valid()) {
         saving.current = false; setBusy(false);

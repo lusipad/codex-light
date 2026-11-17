@@ -114,6 +114,7 @@ assert.equal(contacts.menu("家庭"), undefined); assert.ok(contacts.menu("来�
 assert.ok(contacts.all().some(node => node.props.role === "alert" && text(node).includes("无法加载你的联系方式"))); contacts.dispose();
 for (const snapshot of [{ ...sample(), access: "denied" }, { ...sample(), settings: [] }]) {
   const empty = mount(); await flush(); empty.render(); empty.reads[0].resolve(snapshot); await flush(); empty.render();
+  assert.ok(empty.all().some(node => node.props.role === "status" && text(node).includes(snapshot.access === "denied" ? "当前账号无法使用" : "暂无可配置")));
   assert.equal(empty.all().filter(node => node.type?.name === "AccountNotificationMenu").length, 0); empty.dispose();
 }
 const unavailable = mount();

@@ -116,8 +116,8 @@ assert.doesNotMatch(h.text(), /文件数量|图像数量|升级|清理|尚未连
 const opened = []; h.render({ onOpenLibrary: tab => opened.push(tab) });
 h.button("文件").props.onClick(); h.button("图像").props.onClick();
 assert.deepEqual(opened, ["all", "images"], "storage entries keep the explicit official cleanup tab"); h.unmount();
-h = surface(); h.control.read = async () => { throw Error("fixture unavailable"); }; await h.start();
-assert.match(h.text(), /fixture unavailable/); assert.ok(!h.nodes().some(node => node.type === "progress"));
+h = surface(); h.control.read = async () => { throw { code: "not_logged_in" }; }; await h.start();
+assert.match(h.text(), /请先登录 ChatGPT 账号/); assert.ok(!h.nodes().some(node => node.type === "progress"));
 h.control.read = async request => ({ requestId: request.requestId, identity, body: { ...body, allowed_bytes: 0, used_bytes: 0, remaining_bytes: 0 } });
 h.button("重试").props.onClick(); h.render(); h.effects(); await h.settle();
 assert.match(h.text(), /0 B/); assert.match(h.text(), /已满/); assert.ok(!h.nodes().some(node => node.type === "progress")); h.unmount();

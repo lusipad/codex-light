@@ -145,11 +145,12 @@ export function AccountNotificationSettings({ scope, connected, onManageTasks }:
     {listenerError && <p role="alert">{listenerError}</p>}
     {listenerError && <button type="button" disabled={retryDisabled} onClick={retry}>重试</button>}
   </div>;
-  if (visible.access !== "allowed") return null;
   return <section className="account-notification-settings" aria-labelledby="account-notification-heading">
     <h3 id="account-notification-heading">ChatGPT</h3>
+    {visible.access === "denied" && <p role="status">当前账号无法使用 ChatGPT 通知设置。</p>}
+    {visible.access === "allowed" && visible.settings.length === 0 && <p role="status">暂无可配置的通知。</p>}
     <div className="account-notification-card">
-      {visible.settings.map(row => {
+      {visible.access === "allowed" && visible.settings.map(row => {
         const contactRow = row.category === "teen_safety";
         const contactError = contactRow && visible.contactsError;
         const contactLoading = contactRow && !visible.contacts && !contactError;

@@ -75,7 +75,12 @@ function fixture(overrides = {}) {
 }
 const selected = view => view.all().filter(node => node.props.role === "menuitemradio" && node.props["aria-checked"]).map(text);
 const menu = view => view.all().find(node => node.props.role === "menu");
-assert.equal(fixture({ available: false }).tree, null);
+let retries = 0;
+const unavailable = fixture({ available: false, unavailableMessage: "请先登录 ChatGPT 账号。", onRetry: () => retries++ });
+assert.match(text(unavailable.tree), /应用快照.*请先登录 ChatGPT 账号/);
+assert.equal(unavailable.all().some(node => node.props.id === "appshots-hotkey" || node.props.id === "appshots-destination"), false);
+unavailable.all().find(node => node.type === "button" && text(node) === "重试").props.onClick();
+assert.equal(retries, 1);
 const normal = fixture(); assert.match(text(normal.tree), /截取应用快照，向 ChatGPT 展示最前面的窗口/);
 assert.match(text(normal.tree), /应用快照包含视觉和文本内容，包括滚动到屏幕外的文本。/);
 assert.match(text(normal.tree), /同时按下两个 Alt 键/);
