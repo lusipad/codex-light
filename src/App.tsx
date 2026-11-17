@@ -1518,9 +1518,14 @@ export const App: React.FC = () => {
     onCapture: appshot => {
       const generation = appshot.capture?.generation;
       if (generation === undefined) return;
-      const captured = { ...appshot, capture: { scope: appshotScope, generation } };
-      setScopedAppshots(appshotScope, current => (appshotCaptureGenerations.current[appshotScope] ?? 0) !== generation
-        || current.some(item => item.id === captured.id) ? current : [...current, captured]);
+      const captured = { ...appshot, capture: { scope: appshotScope, generation, order: appshot.capture?.order } };
+      setScopedAppshots(appshotScope, current => {
+        if ((appshotCaptureGenerations.current[appshotScope] ?? 0) !== generation || current.some(item => item.id === captured.id)) return current;
+        const order = captured.capture.order;
+        const index = order === undefined ? 0 : current.filter(item => item.capture?.scope === appshotScope
+          && item.capture.generation === generation && (item.capture.order ?? -1) > order).length;
+        return [...current.slice(0, index), captured, ...current.slice(index)];
+      });
     },
     onError: message => showAppToast(message, "error"),
   });
@@ -6094,6 +6099,8 @@ export const App: React.FC = () => {
       onTogglePlanMode={handleTogglePlanMode}
       attachedFiles={attachedFiles}
       appshots={appshots}
+      attachmentScopeKey={appshotScope}
+      pendingAppshotIds={appshotsEntry.pendingIds}
       onRemoveAppshot={id => setScopedAppshots(appshotScope, current => current.filter(item => item.id !== id))}
       onAttachFiles={handleAttachFiles}
       onAppshot={handleAppshot}
@@ -7148,6 +7155,8 @@ export const App: React.FC = () => {
               onTogglePlanMode={handleTogglePlanMode}
               attachedFiles={homeCloud.active ? [] : attachedFiles}
               appshots={homeCloud.active ? [] : appshots}
+              attachmentScopeKey={appshotScope}
+              pendingAppshotIds={homeCloud.active ? [] : appshotsEntry.pendingIds}
               onRemoveAppshot={id => setScopedAppshots(appshotScope, current => current.filter(item => item.id !== id))}
               onAttachFiles={handleAttachFiles}
               onAppshot={handleAppshot}

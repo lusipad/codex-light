@@ -1,5 +1,13 @@
 # 实施日志（按轮次）
 
+## 2026-11-17 — B3 Appshots捕获占位与排序（本地阶段）
+
+- 先核固定版pending合同及31余精确片段，纠正按完成顺序push和pending尾插；独立总附件账本保留混合文件位置，完成同key原位替换，取消只清对应请求。UI单独处理pending，不向context/model写占位。
+- fresh资格后flushSync提交再原生accept；跨effect开始序号和现有scope/generation共同阻止乱序与晚回污染。未拿bool ACK冒充prepare/heightReady；缺真实过渡图保持空span。父横条nowrap/横向滚动与源gap分别实现，保留原生动画、跨卸载总排序恢复与配对像素缺口。
+- 生产函数、JSX、App回调及卡组件聚焦回归通过；start-before-commit和旧插入顺序均保留真实红证据。独立只读复核无新增确定P1/P2。整套首次暴露Quick Chat夹具缺appshotsEntry，补实际pending透传及scope断言后该专项通过；不把ReferenceError写成产品原生捕获失败。
+- 最终非Fast标准554步骤/34真实CLI探针及EXE/MSI/NSIS构建退出0，1011输入hash稳定；新候选见16.23A及`.ref/parity/16/appshots-pending-r3-20261117/verification-summary.json`，不沿用83ef967 EXE代表本轮。无CI/push，整页仍未用户验收。下一B4热键事务→目标位置真实保存/读回；声音缺专用consumer/合法素材不造空开关，见既有本地B4接线图。
+
+
 ## 2026-11-17 — B3 Appshots实际入口（本地构建候选）
 
 - 先核10资源33精确片段，区分global热键、desktop配置目标及owner intro；另追踪确认后生成ISO文件名的实际调用时点。自有Win32目标metadata沿锁定三元组读取，不另查foreground；路径名称回退、icon/transition缺失与官方helper ID生成未知均保留边界。

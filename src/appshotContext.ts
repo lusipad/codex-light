@@ -20,7 +20,7 @@ export interface DraftAppshot {
   id: string;
   context: AppshotContext;
   /** Local attachment provenance only; never part of the serialized context. */
-  capture?: { scope: string; generation: number };
+  capture?: { scope: string; generation: number; order?: number };
 }
 
 /** Original target metadata plus the actual completed capture. A missing image

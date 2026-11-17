@@ -40,6 +40,21 @@ import type { useHomeCloudComposer } from "../useHomeCloudComposer";
 import { acceleratorFromEvent, commandId, normalizeAccelerator, type KeyBinding } from "../shortcuts";
 import { findModel, getDefaultModel, getSupportedEfforts, getFastServiceTier, resolveServiceTier, getModelEligibility, type ModelConfiguration, type ModelEligibilityContext, type ServiceTierAccess } from "../modelCapabilities";
 
+type ComposerAttachmentOrderItem = { kind: "file" | "appshot" | "pending"; id: string };
+function reconcileComposerAttachmentOrder(previous: ComposerAttachmentOrderItem[], files: string[], appshots: string[], pending: string[]): ComposerAttachmentOrderItem[] {
+  const next: ComposerAttachmentOrderItem[] = [];
+  for (const item of previous) {
+    if (item.kind === "pending" && appshots.includes(item.id) && previous.some(other => other.kind === "appshot" && other.id === item.id)) continue;
+    const kind = item.kind === "pending" && appshots.includes(item.id) ? "appshot" : item.kind;
+    const valid = kind === "file" ? files.includes(item.id) : kind === "appshot" ? appshots.includes(item.id) : pending.includes(item.id);
+    if (valid && !next.some(other => other.id === item.id && (other.kind === "file") === (kind === "file"))) next.push({ kind, id: item.id });
+  }
+  for (const id of pending) if (!next.some(item => item.kind !== "file" && item.id === id) && !appshots.includes(id)) next.unshift({ kind: "pending", id });
+  for (const id of appshots) if (!next.some(item => item.kind !== "file" && item.id === id)) next.push({ kind: "appshot", id });
+  for (const id of files) if (!next.some(item => item.kind === "file" && item.id === id)) next.push({ kind: "file", id });
+  return next.length === previous.length && next.every((item, index) => item.id === previous[index].id && item.kind === previous[index].kind) ? previous : next;
+}
+
 export interface ComposerBoxProps {
   dictationSessionKey: string;
   composerEnterBehavior: ComposerEnterBehavior;
@@ -97,6 +112,8 @@ export interface ComposerBoxProps {
   // Attachments & Autocomplete
   attachedFiles: AttachedFileItem[];
   appshots?: DraftAppshot[];
+  pendingAppshotIds?: string[];
+  attachmentScopeKey?: string;
   onRemoveAppshot?: (id: string) => void;
   onAttachFiles: () => void;
   onAppshot?: () => void;
@@ -188,6 +205,8 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
   onTogglePlanMode,
   attachedFiles,
   appshots = [],
+  pendingAppshotIds = [],
+  attachmentScopeKey = dictationSessionKey,
   onRemoveAppshot,
   onAttachFiles,
   onAppshot,
@@ -234,6 +253,22 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
   const [projectQuery, setProjectQuery] = useState("");
   const [cloudQuery, setCloudQuery] = useState("");
   const cloudActive = variant === "home" && homeCloud?.active === true;
+  const [attachmentOrderState, setAttachmentOrderState] = useState<{ scope: string; items: ComposerAttachmentOrderItem[] }>({ scope: attachmentScopeKey, items: [] });
+  const attachmentOrder = cloudActive ? attachmentOrderState.items : reconcileComposerAttachmentOrder(
+    attachmentOrderState.scope === attachmentScopeKey ? attachmentOrderState.items : [],
+    attachedFiles.map(file => file.id), appshots.map(item => item.id), pendingAppshotIds);
+  if (attachmentOrderState.scope !== attachmentScopeKey || attachmentOrder !== attachmentOrderState.items) {
+    setAttachmentOrderState({ scope: attachmentScopeKey, items: cloudActive ? [] : attachmentOrder });
+  }
+  const attachmentScroll = useRef<HTMLDivElement>(null);
+  const pendingScroll = useRef({ scope: attachmentScopeKey, ids: [] as string[] });
+  useLayoutEffect(() => {
+    if (!cloudActive && pendingAppshotIds.some(id => pendingScroll.current.scope !== attachmentScopeKey || !pendingScroll.current.ids.includes(id))) {
+      if (attachmentScroll.current) attachmentScroll.current.scrollLeft = 0;
+    }
+    pendingScroll.current = { scope: attachmentScopeKey, ids: pendingAppshotIds };
+  }, [attachmentScopeKey, cloudActive, pendingAppshotIds]);
+
   const [isDictating, setIsDictating] = useState(false);
   const [dictationError, setDictationError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -979,17 +1014,20 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
         {cloudActive && homeCloud?.error && <div role="alert">{homeCloud.error}</div>}
         {cloudActive && homeCloud?.entry && !homeCloud.entry.threadId && <div role="status">云端聊天的创建结果尚未确认。</div>}
         {cloudActive && homeCloud?.busy && <div role="status">正在启动云端聊天…</div>}
-        {(variant === "home" || attachedFiles.length > 0 || appshots.length > 0) && (
-          <div className="composer-attachments-row">
-            {attachedFiles.map((file) => (
-              <ComposerAttachmentChip
-                key={file.id}
-                file={file}
-                onRemove={() => onRemoveAttachedFile(file.id)}
-              />
-            ))}
-            {!cloudActive && appshots.map(item => <AppshotAttachment key={item.id} id={item.id} context={item.context}
-              onRemove={onRemoveAppshot ? () => onRemoveAppshot(item.id) : undefined} />)}
+        {(variant === "home" || attachedFiles.length > 0 || appshots.length > 0 || pendingAppshotIds.length > 0) && (
+          <div ref={attachmentScroll} className="composer-attachments-scroll" data-composer-attachments-scroll-container>
+            <div className="composer-attachments-row" data-composer-attachments-row>
+              {cloudActive && attachedFiles.map(file => <ComposerAttachmentChip key={`file:${file.id}`} file={file} onRemove={() => onRemoveAttachedFile(file.id)} />)}
+              {!cloudActive && attachmentOrder.map(item => {
+                if (item.kind === "file") {
+                  const file = attachedFiles.find(file => file.id === item.id);
+                  return file ? <ComposerAttachmentChip key={`file:${item.id}`} file={file} onRemove={() => onRemoveAttachedFile(file.id)} /> : null;
+                }
+                const context = appshots.find(capture => capture.id === item.id)?.context ?? null;
+                return <AppshotAttachment key={`capture:${item.id}`} id={item.id} context={context} pending={context === null} handoffHeightReady={context !== null}
+                  onRemove={context !== null && onRemoveAppshot ? () => onRemoveAppshot(item.id) : undefined} />;
+              })}
+            </div>
           </div>
         )}
 

@@ -1,4 +1,5 @@
 import { createElement, useEffect, useRef, useState, type ReactNode } from "react";
+import { flushSync } from "react-dom";
 import { tauriInvoke, tauriListen } from "./bridge";
 import { readLocalAppshotsAccess, type AppshotsQualification } from "./appshotsAccess";
 import { capturedAppshotContext, type DraftAppshot } from "./appshotContext";
@@ -10,7 +11,7 @@ interface RouteEvent { type: "route"; id: string; account: string; composer: str
 interface CaptureEvent { type: "capture"; id: string; account: string; composer: string; metadata: EntryMetadata; imageDataUrl: string; axTree: string | null }
 type EntryEvent = RouteEvent | CaptureEvent | { type: "retired"; id: string } | { type: "failed"; id?: string; message: string }
   | { type: "state"; supported: boolean; registration: "none" | "pending" | "ready" };
-interface Flight { route: RouteEvent; phase: "claiming" | "intro" | "accepting" | "accepted"; capture?: CaptureEvent; captureRequestedAt?: string }
+interface Flight { route: RouteEvent; phase: "claiming" | "intro" | "accepting" | "accepted"; capture?: CaptureEvent; captureRequestedAt?: string; captureOrder?: number }
 interface EntryProps {
   enabled: boolean;
   scope: string;
@@ -29,23 +30,27 @@ const metadataValid = (value: EntryMetadata | null | undefined) => value != null
 
 /** Main-window current-Composer consumer only. Work/new-chat access is not inferred
  * from Appshots gates, registration, or acceptance of the introduction. */
-export function useAppshotsEntry(props: EntryProps): { intro: ReactNode } {
+export function useAppshotsEntry(props: EntryProps): { intro: ReactNode; pendingIds: string[] } {
   const latest = useRef(props); latest.current = props;
   const key = JSON.stringify([props.enabled, props.scope, props.contextKey, props.canAccept, props.isNewChat, props.captureGeneration]);
   const lifetime = useRef({ key });
   if (lifetime.current.key !== key) lifetime.current = { key };
   const token = lifetime.current;
   const stopping = useRef<Promise<unknown>>(Promise.resolve());
+  const captureSequence = useRef(0);
   const [intro, setIntro] = useState<Intro | null>(null);
+  const [pending, setPending] = useState<{ token: object; ids: string[] } | null>(null);
 
   useEffect(() => {
-    if (!props.enabled) { setIntro(null); return; }
+    if (!props.enabled) { setIntro(null); setPending(null); return; }
     const controller = new AbortController(), flights = new Map<string, Flight>(), seen = new Set<string>();
     let identity: ServiceIdentity | null = null, account = "", eligible: AppshotsQualification = null;
     let unlisten: (() => void) | undefined, unlistenIdentity: (() => void) | undefined, introId: string | null = null;
     const current = () => lifetime.current === token && !controller.signal.aborted && latest.current.enabled
       && latest.current.getCaptureGeneration() === props.captureGeneration;
     const report = (message: string) => { if (current()) latest.current.onError(message); };
+    const clearPending = (id?: string) => setPending(previous => previous?.token === token
+      ? id ? { token, ids: previous.ids.filter(value => value !== id) } : null : previous);
     const clearIntro = (id: string) => {
       if (introId === id) introId = null;
       if (current()) setIntro(previous => previous?.token === token && previous.id === id ? null : previous);
@@ -58,7 +63,7 @@ export function useAppshotsEntry(props: EntryProps): { intro: ReactNode } {
     const request = (id: string) => ({ identity: identity!, id, composer: props.scope });
     const decline = async (id: string) => {
       if (!identity) return;
-      flights.delete(id); clearIntro(id);
+      flights.delete(id); clearIntro(id); clearPending(id);
       try { await tauriInvoke("appshots_entry_decline", { request: request(id) }); }
       catch { report("无法取消应用快照请求，请重新触发。"); }
     };
@@ -68,13 +73,13 @@ export function useAppshotsEntry(props: EntryProps): { intro: ReactNode } {
       if (!metadataValid(capture.metadata) || capture.metadata.bundleIdentifier !== flight.route.metadata.bundleIdentifier ||
           typeof capture.imageDataUrl !== "string" || !/^data:image\/(?:png|jpeg);base64,/.test(capture.imageDataUrl) ||
           capture.axTree !== null && typeof capture.axTree !== "string") {
-        flights.delete(id); report("应用快照结果无效，未附加到消息。"); return;
+        flights.delete(id); clearPending(id); report("应用快照结果无效，未附加到消息。"); return;
       }
-      if (!flight.captureRequestedAt) { flights.delete(id); report("应用快照请求信息已失效。"); return; }
+      if (!flight.captureRequestedAt) { flights.delete(id); clearPending(id); report("应用快照请求信息已失效。"); return; }
       const context = capturedAppshotContext({ ...flight.route.metadata, imageDataUrl: capture.imageDataUrl, axTree: capture.axTree }, flight.captureRequestedAt);
-      flights.delete(id);
+      flights.delete(id); clearPending(id);
       if (!context) { report("未能获取应用快照图像。"); return; }
-      try { latest.current.onCapture({ id, context, capture: { scope: props.scope, generation: props.captureGeneration } }); }
+      try { latest.current.onCapture({ id, context, capture: { scope: props.scope, generation: props.captureGeneration, order: flight.captureOrder } }); }
       catch { report("无法附加应用快照，请重新触发。"); }
     };
     const configure = (activeIdentity: ServiceIdentity, value: AppshotsQualification) => tauriInvoke<{
@@ -99,6 +104,9 @@ export function useAppshotsEntry(props: EntryProps): { intro: ReactNode } {
         // C02: the filename clock starts in the capture continuation after the
         // intro, not when the shortcut first locked its target.
         flight.captureRequestedAt = new Date().toISOString();
+        flight.captureOrder = ++captureSequence.current;
+        flushSync(() => setPending(previous => ({ token, ids: previous?.token === token ? [...previous.ids, id] : [id] })));
+        if (!current() || !flights.has(id)) return;
         const accepted = await tauriInvoke<boolean>("appshots_entry_accept", { request: { ...request(id), acceptIntro } });
         if (!current() || !flights.has(id)) return;
         if (accepted !== true) throw Error("Retired request");
@@ -130,15 +138,16 @@ export function useAppshotsEntry(props: EntryProps): { intro: ReactNode } {
     };
     const receive = (event: EntryEvent) => {
       if (!current() || !event || typeof event.type !== "string") return;
-      if (event.type === "retired") { flights.delete(event.id); clearIntro(event.id); return; }
+      if (event.type === "retired") { flights.delete(event.id); clearIntro(event.id); clearPending(event.id); return; }
       if (event.type === "failed") {
         if (event.id && !flights.has(event.id)) return;
-        if (event.id) { flights.delete(event.id); clearIntro(event.id); }
+        if (event.id) { flights.delete(event.id); clearIntro(event.id); clearPending(event.id); }
+        else { flights.clear(); introId = null; setIntro(null); clearPending(); }
         if (typeof event.message === "string") report(event.message);
         return;
       }
       if (event.type === "state") {
-        if (event.registration === "none") { flights.clear(); introId = null; setIntro(null); }
+        if (event.registration === "none") { flights.clear(); introId = null; setIntro(null); clearPending(); }
         return;
       }
       if (!identity || event.account !== account || event.composer !== props.scope || typeof event.id !== "string" || !event.id) return;
@@ -155,7 +164,7 @@ export function useAppshotsEntry(props: EntryProps): { intro: ReactNode } {
         if (!current()) { unlisten(); return; }
         unlistenIdentity = await tauriListen("chatgpt-service:invalidated", () => {
           if (!current()) return;
-          setIntro(null); flights.clear(); introId = null; controller.abort();
+          setIntro(null); clearPending(); flights.clear(); introId = null; controller.abort();
           void stop().catch(() => {});
         });
         if (!current()) { unlistenIdentity(); return; }
@@ -174,5 +183,5 @@ export function useAppshotsEntry(props: EntryProps): { intro: ReactNode } {
 
   return { intro: intro?.token === token && props.enabled ? createElement(AppshotIntroDialog, {
     key: intro.id, isCurrent: intro.isCurrent, onAccept: intro.accept, onClose: intro.decline,
-  }) : null };
+  }) : null, pendingIds: pending?.token === token && props.enabled && props.getCaptureGeneration() === props.captureGeneration ? pending.ids : [] };
 }

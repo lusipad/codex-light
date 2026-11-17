@@ -240,8 +240,8 @@ function AppshotPreview({ id, title, src, text, trigger, onClose, onImageError, 
   </div></div>, document.body);
 }
 
-export function AppshotAttachment({ id, context, pending = false, variant = "composer", onRemove }: {
-  id: string; context: AppshotContext | null; pending?: boolean; variant?: "composer" | "thread"; onRemove?: () => void;
+export function AppshotAttachment({ id, context, pending = false, handoffHeightReady, variant = "composer", onRemove }: {
+  id: string; context: AppshotContext | null; pending?: boolean; handoffHeightReady?: boolean; variant?: "composer" | "thread"; onRemove?: () => void;
 }) {
   const { src, error, onError } = useImageSource(context, id);
   const title = context?.windowTitle?.trim() || context?.appName || "";
@@ -253,13 +253,14 @@ export function AppshotAttachment({ id, context, pending = false, variant = "com
   const [dimensions, setDimensions] = useState<{ src: string; width: number; height: number } | null>(null);
   const trigger = useRef<HTMLDivElement>(null);
   const previewable = !pending && !!src;
+  const expanded = !pending || handoffHeightReady !== false;
   useEffect(() => { setOpened(null); }, [id, pending, src]);
   const screenshotHeight = dimensions?.src === src && dimensions.width > 0 && dimensions.height > 0
     ? Math.min(232 / dimensions.width, 140 / dimensions.height) * dimensions.height : 140;
   return <>
     <div ref={trigger} data-appshot-attachment="true" data-appshot-id={id} data-appshot-capture-request-id={pending ? id : undefined}
-      aria-busy={pending || undefined} aria-label={title || undefined} className={`appshot-attachment appshot-attachment-${variant}${pending ? " appshot-attachment-pending" : ""}`}
-      style={variant === "composer" ? { height: height + 8 } : undefined}
+      aria-label={!pending && title || undefined} className={`appshot-attachment appshot-attachment-${variant}${pending ? " appshot-attachment-pending" : ""}`}
+      style={variant === "composer" ? { height: expanded ? height + 8 : 0, width: expanded ? 232 : 0, flexBasis: expanded ? 232 : 0, marginRight: `calc(var(--composer-attachment-gap, calc(var(--spacing) * 3)) * ${expanded ? 0 : -1})` } : undefined}
       role={previewable ? "button" : undefined} tabIndex={previewable ? 0 : undefined}
       onClick={previewable ? () => setOpened(id) : undefined}
       onKeyDown={previewable ? event => {

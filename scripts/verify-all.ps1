@@ -200,6 +200,7 @@ try {
   Invoke-Step "Appshot context serialization and image roundtrip" { node scripts/verify-appshot-context.mjs }
   Invoke-Step "Appshot account and local host qualification" { node scripts/verify-appshots-access.mjs }
   Invoke-Step "Appshot native entry and scoped consumer lifecycle" { node scripts/verify-appshots-entry.mjs }
+  Invoke-Step "Appshot pending Composer presentation" { node scripts/verify-appshots-pending-presentation.mjs }
   Invoke-Step "Appshot first-use dialog lifecycle" { node scripts/verify-appshot-intro.mjs }
   Invoke-Step "Appshot history image classification" { node scripts/verify-appshot-history.mjs }
   Invoke-Step "Appshot attachment preview lifecycle" { node scripts/verify-appshot-attachment.mjs }

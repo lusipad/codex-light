@@ -81,6 +81,15 @@ const flush = async mounted => { for (let i = 0; i < 12; i++) await Promise.reso
 const image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==";
 const context = { appName: "Private App", bundleIdentifier: "fixture", windowTitle: "  Window title  ", axTree: "line one\n<script>literal</script>\nline three", imagePath: null, imageName: "fixture.png", imageDataUrl: image };
 const props = { id: "attachment-a", context };
+const slot = mount(module.exports.AppshotAttachment, { id: "pending-only", context: null, pending: true, handoffHeightReady: false, onRemove: () => assert.fail("pending capture has no remove action") });
+assert.equal(slot.find(node => node.props["data-appshot-attachment"] === "true").props["aria-busy"], undefined);
+assert.equal(slot.find(node => node.props["data-appshot-attachment"] === "true").props.role, undefined);
+assert.equal(slot.find(node => node.type === "img"), undefined, "pending does not invent an image");
+assert.equal(slot.find(node => node.type === "button"), undefined, "pending is not previewable or removable");
+const pendingStyle = slot.find(node => node.props["data-appshot-attachment"] === "true").props.style;
+assert.equal(pendingStyle.height, 0); assert.equal(pendingStyle.width, 0); assert.equal(pendingStyle.flexBasis, 0);
+assert.match(pendingStyle.marginRight, /\* -1/);
+slot.unmount();
 const card = mount(module.exports.AppshotAttachment, { ...props, pending: true });
 assert.equal(card.find(node => node.props["data-appshot-attachment"] === "true").props.role, undefined);
 assert.equal(card.find(node => node.type === "img"), undefined, "composer cannot use screenshot as transition placeholder");

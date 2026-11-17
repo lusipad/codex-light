@@ -68,6 +68,7 @@ function visit(node) { if (ts.isVariableDeclaration(node) && ["renderThreadCompo
 visit(ast);
 let sends = 0, interrupts = 0, responses = 0;
 const context = { React, ComposerBox: "ComposerBox", ApprovalCenter: "ApprovalCenter", handleSendMessage: () => sends++, handleInterruptTurn: () => interrupts++, handleRespondServerRequest: () => responses++,
+  appshotsEntry: { pendingIds: [] },
   keyboardState: { bindings: [{ command: "composer.submit", key: "Ctrl+Enter" }] }, queueBusy: false,
   modelSelection: { selectionPending: false, selectionDisabledReason: "", serviceTier: "swift", recentModelConfigurations: [] },
   sendStartPendingRef: { current: new Set() }, threadRequestRef: { current: "t1" } };
@@ -81,6 +82,8 @@ assert.equal(sends, 1); assert.equal(interrupts, 1); assert.equal(responses, 1);
 for (const key of ["promptInput", "models", "permissionMode", "attachedFiles", "reasoningEffort"]) assert.equal(sharedComposer.props[key], `shared:${key}`);
 assert.equal(sharedApprovals.props.requests, "shared:activePendingRequests");
 assert.equal(sharedApprovals.props.responseStates, "shared:requestResponses");
+assert.equal(sharedComposer.props.pendingAppshotIds, context.appshotsEntry.pendingIds, "shared composer receives actual dedicated pending state");
+assert.equal(sharedComposer.props.attachmentScopeKey, context.appshotScope);
 assert.equal(sharedComposer.props.keyBindings, context.keyboardState.bindings, "quick chat shares the production keyboard bindings");
 assert.equal(sharedComposer.props.submissionDisabled, false);
 assert.equal(sharedComposer.props.serviceTier, context.modelSelection.serviceTier);
