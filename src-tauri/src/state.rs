@@ -1427,6 +1427,54 @@ impl DesktopStateManager {
         crate::work_home_preferences::project(&snapshot, identity)
     }
 
+    pub(crate) fn set_work_home_model<F>(&self, identity: &crate::chatgpt_service::ServiceIdentity, model: &crate::work_home_preferences::WorkHomeModel, current: F) -> Result<Value, String>
+    where F: Fn() -> Result<(), String> {
+        self.set_work_home_model_at_path(identity, model, &desktop_global_state_path(), current)
+    }
+
+    fn set_work_home_model_at_path<F>(&self, identity: &crate::chatgpt_service::ServiceIdentity, model: &crate::work_home_preferences::WorkHomeModel, path: &Path, current: F) -> Result<Value, String>
+    where F: Fn() -> Result<(), String> {
+        let mut guard = self.state_map.lock().map_err(|_| "Work 偏好写入线程不可用。")?;
+        current()?;
+        let next = crate::work_home_preferences::set_home_model(&guard, identity, model)?;
+        current()?;
+        if next != *guard {
+            persist_state_map(&next, path)?;
+            *guard = next;
+        }
+        crate::work_home_preferences::project(&guard, identity)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_work_home_model_fixture<F>(&self, identity: &crate::chatgpt_service::ServiceIdentity, model: &crate::work_home_preferences::WorkHomeModel, path: &Path, current: F) -> Result<Value, String>
+    where F: Fn() -> Result<(), String> {
+        self.set_work_home_model_at_path(identity, model, path, current)
+    }
+
+    pub(crate) fn set_work_home_model_version<F>(&self, identity: &crate::chatgpt_service::ServiceIdentity, version: &crate::work_home_preferences::WorkHomeModelVersion, current: F) -> Result<Value, String>
+    where F: Fn() -> Result<(), String> {
+        self.set_work_home_model_version_at_path(identity, version, &desktop_global_state_path(), current)
+    }
+
+    fn set_work_home_model_version_at_path<F>(&self, identity: &crate::chatgpt_service::ServiceIdentity, version: &crate::work_home_preferences::WorkHomeModelVersion, path: &Path, current: F) -> Result<Value, String>
+    where F: Fn() -> Result<(), String> {
+        let mut guard = self.state_map.lock().map_err(|_| "Work 偏好写入线程不可用。")?;
+        current()?;
+        let next = crate::work_home_preferences::set_home_model_version(&guard, identity, version)?;
+        current()?;
+        if next != *guard {
+            persist_state_map(&next, path)?;
+            *guard = next;
+        }
+        crate::work_home_preferences::project(&guard, identity)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_work_home_model_version_fixture<F>(&self, identity: &crate::chatgpt_service::ServiceIdentity, version: &crate::work_home_preferences::WorkHomeModelVersion, path: &Path, current: F) -> Result<Value, String>
+    where F: Fn() -> Result<(), String> {
+        self.set_work_home_model_version_at_path(identity, version, path, current)
+    }
+
     pub(crate) fn activate_work_home<F>(&self, identity: &crate::chatgpt_service::ServiceIdentity, current: F) -> Result<Value, String>
     where F: Fn() -> Result<(), String> {
         self.activate_work_home_at_path(identity, &desktop_global_state_path(), current)

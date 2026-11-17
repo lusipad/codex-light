@@ -1,4 +1,5 @@
 import { tauriInvoke } from "./bridge";
+import type { WorkModelSelection } from "./workModelCatalog";
 import type { CloudNetworkPolicy } from "./cloudDraftNetwork";
 import type { ModelInfo } from "./types";
 import { parseSiteDomains, type SiteDomain } from "./sitesService";
@@ -130,10 +131,22 @@ export async function activateWorkHome(identity: ServiceIdentity, signal: AbortS
   return requestWorkHomeState("work_home_activate", identity, signal);
 }
 
-async function requestWorkHomeState(command: "work_home_preferences" | "work_home_activate", identity: ServiceIdentity, signal: AbortSignal): Promise<WorkHomeState> {
+export async function saveWorkHomeModel(identity: ServiceIdentity, homeModel: WorkModelSelection, signal: AbortSignal): Promise<WorkHomeState> {
+  return requestWorkHomeState("work_home_model_set", identity, signal, {
+    homeModel: { slug: homeModel.slug, thinkingEffort: homeModel.thinkingEffort, versionId: homeModel.versionId ?? null },
+  });
+}
+
+export async function saveWorkHomeModelVersion(identity: ServiceIdentity, preference: { versionId: string; selectionMode: "default" | "model" }, signal: AbortSignal): Promise<WorkHomeState> {
+  return requestWorkHomeState("work_home_model_version_set", identity, signal, preference);
+}
+
+async function requestWorkHomeState(command: "work_home_preferences" | "work_home_activate" | "work_home_model_set" | "work_home_model_version_set", identity: ServiceIdentity, signal: AbortSignal,
+  fields: { homeModel: WorkModelSelection } | { versionId: string; selectionMode: "default" | "model" } | Record<string, never> = {},
+): Promise<WorkHomeState> {
   const expected = { ...identity }, requestId = crypto.randomUUID();
   const result = await invokeService<WorkHomeState & { requestId: string }>(command, requestId,
-    { request: { requestId, expectedIdentity: expected } }, signal);
+    { request: { ...fields, requestId, expectedIdentity: expected } }, signal);
   if (result?.requestId !== requestId || result.identity?.accountId !== expected.accountId
     || result.identity?.userId !== expected.userId || result.identity?.generation !== expected.generation
     || result.preferences === null || typeof result.preferences !== "object" || Array.isArray(result.preferences)

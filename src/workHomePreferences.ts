@@ -14,6 +14,7 @@ export interface WorkHomePreferencesSnapshot {
   homeModel: WorkHomeAtom;
   lastModel: WorkHomeAtom;
   defaultModeRequestUserInput: WorkHomeAtom;
+  pickerVersion: WorkHomeAtom;
   /** Presence of the old root setting only; omitted means not established. */
   legacyDetail?: "missing" | "unbound";
   selectedProject: WorkHomeAtom & { placement: SelectedPlacement; binding: "confirmed" | "legacy-unbound" };
@@ -23,6 +24,7 @@ const keys = {
   runLocation: "work-run-location-v1", mode: "home-composer-mode-v1",
   homeModel: "chatgpt-last-selected-home-model-v1", lastModel: "chatgpt-last-selected-model-v1",
   defaultModeRequestUserInput: "default-mode-request-user-input-enabled",
+  pickerVersion: "chatgpt-merged-model-picker-version-v1",
 } as const;
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
 const invalid = () => Error("Work 首页偏好响应无效或身份已变化。");
@@ -60,6 +62,8 @@ export function parseWorkHomePreferences(raw: unknown, identity: ServiceIdentity
     mode: atom(keys.mode, value => value === null || value === "chat" || value === "work"),
     homeModel: atom(keys.homeModel, modelValue), lastModel: atom(keys.lastModel, modelValue),
     defaultModeRequestUserInput: atom(keys.defaultModeRequestUserInput, value => value === null || typeof value === "boolean"),
+    pickerVersion: atom(keys.pickerVersion, value => value === null || record(value) && typeof value.versionId === "string"
+      && ["default", "model"].includes(String(value.selectionMode))),
     selectedProject: { ...selectedAtom, placement: selected.placement as SelectedPlacement, binding: selected.binding as "confirmed" | "legacy-unbound" },
     localProjects: { ...localAtom, placement: local.placement as LocalPlacement },
   };

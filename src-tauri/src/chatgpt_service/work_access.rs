@@ -9,6 +9,23 @@ pub struct WorkAccountInfoRequest {
     pub expected_identity: ServiceIdentity,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkHomeModelSetRequest {
+    pub request_id: String,
+    pub expected_identity: ServiceIdentity,
+    pub home_model: crate::work_home_preferences::WorkHomeModel,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkHomeModelVersionSetRequest {
+    pub request_id: String,
+    pub expected_identity: ServiceIdentity,
+    pub version_id: String,
+    pub selection_mode: crate::work_home_preferences::WorkVersionSelectionMode,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkAccountInfoResponse {
@@ -106,6 +123,40 @@ impl ChatgptService {
             })
         })
         .await
+    }
+
+    pub async fn work_home_model_set<F, Fut>(
+        &self, request: WorkHomeModelSetRequest, state: &crate::state::DesktopStateManager, call: F,
+    ) -> ServiceResult<WorkHomePreferencesResponse>
+    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>> {
+        let model = request.home_model;
+        self.work_home_model_write_with(WorkAccountInfoRequest {request_id:request.request_id,expected_identity:request.expected_identity}, call,
+            |identity,current| state.set_work_home_model(identity,&model,current)).await
+    }
+
+    pub async fn work_home_model_version_set<F, Fut>(
+        &self, request: WorkHomeModelVersionSetRequest, state: &crate::state::DesktopStateManager, call: F,
+    ) -> ServiceResult<WorkHomePreferencesResponse>
+    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>> {
+        let version = crate::work_home_preferences::WorkHomeModelVersion {version_id:request.version_id,selection_mode:request.selection_mode};
+        self.work_home_model_write_with(WorkAccountInfoRequest {request_id:request.request_id,expected_identity:request.expected_identity}, call,
+            |identity,current| state.set_work_home_model_version(identity,&version,current)).await
+    }
+
+    async fn work_home_model_write_with<F, Fut>(
+        &self, request: WorkAccountInfoRequest, call: F,
+        write: impl FnOnce(&ServiceIdentity, &dyn Fn() -> Result<(), String>) -> Result<Value, String>,
+    ) -> ServiceResult<WorkHomePreferencesResponse>
+    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>> {
+        self.with_work_account_info(request, call, |account,registration| {
+            let current = || self.check_share_current(&account.identity, registration)
+                .map_err(|_| "Work 模型选择所属账号或请求已失效。".to_owned());
+            let preferences=write(&account.identity,&current).map_err(|_| {
+                self.check_share_current(&account.identity, registration).err().unwrap_or_else(||
+                    failure("work_preferences_write_failed","Work model preference could not be persisted"))
+            })?;
+            Ok(WorkHomePreferencesResponse {request_id:account.request_id,identity:account.identity,preferences})
+        }).await
     }
 
     pub async fn work_home_activate<F, Fut>(
@@ -500,6 +551,54 @@ mod tests {
                 "retirement during the atomic state read cannot release its response"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn work_home_model_writes_use_fresh_auth_and_return_only_current_owner_projection() {
+        let service=ChatgptService::default();
+        let state=crate::state::DesktopStateManager::fixture_for_appshots_preferences(serde_json::Map::new());
+        let fresh=auth(None);let rpc=Rpc::new(vec![fresh.clone(),account(),fresh]);
+        let model:crate::work_home_preferences::WorkHomeModel=serde_json::from_value(json!({"slug":"selected","thinkingEffort":"extended","versionId":null})).unwrap();
+        let root=std::env::temp_dir().join(format!("work-model-write-{}",uuid::Uuid::new_v4()));std::fs::create_dir(&root).unwrap();
+        let path=root.join("state.json");
+        let ack=service.work_home_model_write_with(request("model-write"),|m,p|rpc.call(m,p),|identity,current|state.set_work_home_model_fixture(identity,&model,&path,current)).await.unwrap();
+        assert_eq!(ack.identity,identity());assert_eq!(ack.preferences["atoms"]["chatgpt-last-selected-home-model-v1"]["slug"],"selected");
+        assert!(ack.preferences["atoms"].get("home-composer-mode-v1").is_none());
+        assert!(!serde_json::to_string(&ack).unwrap().contains("must-not-cross"));rpc.assert_calls();
+        std::fs::remove_file(path).unwrap();std::fs::remove_dir(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn work_home_model_write_identity_cancel_and_generation_fences_prevent_false_success() {
+        for phase in ["wrong-identity","precancel","cancel-before","identity-before","cancel-after"] {
+            let service=ChatgptService::default();let fresh=auth(None);let rpc=Rpc::new(vec![fresh.clone(),account(),fresh]);
+            let mut req=request("model-fence");if phase=="wrong-identity" {req.expected_identity.user_id="foreign".into();}
+            if phase=="precancel" {service.cancel("model-fence");}
+            let called=AtomicBool::new(false);let committed=AtomicBool::new(false);
+            let result=service.work_home_model_write_with(req,|m,p|rpc.call(m,p),|_,current|{
+                called.store(true,Ordering::SeqCst);
+                if phase=="cancel-before" {service.cancel("model-fence");}
+                if phase=="identity-before" {service.invalidate();}
+                current()?;committed.store(true,Ordering::SeqCst);
+                if phase=="cancel-after" {service.cancel("model-fence");}
+                Ok(json!({"atoms":{}}))
+            }).await;
+            assert_eq!(result.unwrap_err().code,if phase=="wrong-identity"||phase=="identity-before" {"account_changed"} else {"cancelled"});
+            assert_eq!(called.load(Ordering::SeqCst),!matches!(phase,"wrong-identity"|"precancel"));
+            assert_eq!(committed.load(Ordering::SeqCst),phase=="cancel-after");
+        }
+    }
+
+    #[tokio::test]
+    async fn work_home_model_write_sanitizes_errors_and_rejects_arbitrary_request_fields() {
+        let service=ChatgptService::default();let fresh=auth(None);let rpc=Rpc::new(vec![fresh.clone(),account(),fresh]);
+        let error=service.work_home_model_write_with(request("model-failed"),|m,p|rpc.call(m,p),|_,_|Err("private-file-token".into())).await.unwrap_err();
+        assert_eq!(error.code,"work_preferences_write_failed");assert!(!serde_json::to_string(&error).unwrap().contains("private-file-token"));
+        let mut input=json!({"requestId":"model","expectedIdentity":identity(),"homeModel":{"slug":"raw","thinkingEffort":null,"versionId":null}});
+        assert!(serde_json::from_value::<WorkHomeModelSetRequest>(input.clone()).is_ok());
+        input["key"]=json!("arbitrary");assert!(serde_json::from_value::<WorkHomeModelSetRequest>(input).is_err());
+        let input=json!({"requestId":"version","expectedIdentity":identity(),"versionId":"latest","selectionMode":"default","conversationId":"invented"});
+        assert!(serde_json::from_value::<WorkHomeModelVersionSetRequest>(input).is_err());
     }
 
     #[tokio::test]

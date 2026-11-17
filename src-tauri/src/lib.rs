@@ -389,6 +389,28 @@ async fn work_heartbeat_read(
 }
 
 #[tauri::command]
+async fn work_home_model_set(
+    app: AppHandle, state: State<'_, AppState>, request: chatgpt_service::WorkHomeModelSetRequest,
+) -> Result<chatgpt_service::WorkHomePreferencesResponse, chatgpt_service::ServiceError> {
+    state.chatgpt_service.work_home_model_set(request, &state.desktop_state, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
+async fn work_home_model_version_set(
+    app: AppHandle, state: State<'_, AppState>, request: chatgpt_service::WorkHomeModelVersionSetRequest,
+) -> Result<chatgpt_service::WorkHomePreferencesResponse, chatgpt_service::ServiceError> {
+    state.chatgpt_service.work_home_model_version_set(request, &state.desktop_state, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
 async fn work_home_activate(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -2868,6 +2890,8 @@ pub fn run() {
             work_account_info,
             work_home_preferences,
             work_heartbeat_read,
+            work_home_model_set,
+            work_home_model_version_set,
             work_home_activate,
             chatgpt_service_read,
             chatgpt_service_site_pin,

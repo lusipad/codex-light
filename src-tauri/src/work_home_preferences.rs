@@ -5,6 +5,7 @@ use serde_json::{json, Map, Value};
 const ATOMS: &str = "electron-persisted-atom-state";
 const MARKER: &str = "electron-renderer-content-owner";
 const WORK_MARKER: &str = "codex-native-work-content-owner";
+const MODEL_VERSION: &str = "chatgpt-merged-model-picker-version-v1";
 const KEYS: [&str; 5] = [
     "work-run-location-v1",
     "home-composer-mode-v1",
@@ -12,6 +13,68 @@ const KEYS: [&str; 5] = [
     "chatgpt-last-selected-model-v1",
     "default-mode-request-user-input-enabled",
 ];
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkHomeModel {
+    pub slug: String,
+    #[serde(deserialize_with = "nullable")]
+    pub thinking_effort: Option<WorkThinkingEffort>,
+    #[serde(deserialize_with = "nullable")]
+    pub version_id: Option<String>,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum WorkThinkingEffort { Standard, Extended, Min, Max, Ultra, Xhigh, Zero }
+
+fn nullable<'de, D: serde::Deserializer<'de>, T: serde::Deserialize<'de>>(deserializer: D) -> Result<Option<T>, D::Error> {
+    serde::Deserialize::deserialize(deserializer)
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkHomeModelVersion {
+    pub version_id: String,
+    pub selection_mode: WorkVersionSelectionMode,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum WorkVersionSelectionMode { Default, Model }
+
+pub(crate) fn set_home_model(
+    state: &Map<String, Value>, identity: &ServiceIdentity, model: &WorkHomeModel,
+) -> Result<Map<String, Value>, String> {
+    set_model_atom(state, identity, KEYS[2], serde_json::to_value(model).map_err(|_| "Work 首页模型格式无效。")?)
+}
+
+pub(crate) fn set_home_model_version(state: &Map<String, Value>, identity: &ServiceIdentity, version: &WorkHomeModelVersion) -> Result<Map<String, Value>, String> {
+    set_model_atom(state, identity, MODEL_VERSION, serde_json::to_value(version).map_err(|_| "Work 模型版本格式无效。")?)
+}
+
+fn set_model_atom(state: &Map<String, Value>, identity: &ServiceIdentity, atom: &str, value: Value) -> Result<Map<String, Value>, String> {
+    let bucket_key = owner_key(identity)?;
+    let owner = bucket_key.strip_prefix("electron-owner-atoms:").unwrap();
+    let live_owner = marker(state.get(MARKER))?.or(marker(state.get(WORK_MARKER))?);
+    let mut next = state.clone();
+    let mut bucket = dictionary(state.get(&bucket_key))?.cloned().unwrap_or_default();
+    bucket.insert(atom.into(), value);
+    next.insert(bucket_key.clone(), Value::Object(bucket));
+    // Only this selected atom is superseded. Never adopt unrelated legacy
+    // selection, change mode, or remove a foreign owner's live preferences.
+    if live_owner.is_none() || live_owner == Some(owner) {
+        if let Some(flat) = dictionary(state.get(ATOMS))? {
+            if flat.contains_key(atom) {
+                let mut flat = flat.clone();
+                flat.remove(atom);
+                next.insert(ATOMS.into(), Value::Object(flat));
+            }
+        }
+    }
+    project(&next, identity)?;
+    Ok(next)
+}
 
 fn dictionary(value: Option<&Value>) -> Result<Option<&Map<String, Value>>, String> {
     match value {
@@ -102,7 +165,7 @@ pub(crate) fn project(
     };
     let mut atoms = Map::new();
     let mut unbound = Vec::new();
-    for key in KEYS {
+    for key in KEYS.into_iter().chain(std::iter::once(MODEL_VERSION)) {
         let live = flat.and_then(|values| values.get(key));
         if marker.is_none() && live.is_some() {
             unbound.push(key);
@@ -175,6 +238,122 @@ mod tests {
             let _ = std::fs::remove_dir(&self.0);
             let _ = std::fs::remove_dir(self.0.parent().unwrap());
         }
+    }
+
+    #[test]
+    fn work_home_model_set_persists_home_only_and_removes_same_owner_flat_shadow() {
+        let identity = identity("model-user");
+        let key = owner_key(&identity).unwrap();
+        let owner = key.strip_prefix("electron-owner-atoms:").unwrap();
+        let raw = fixture(json!({MARKER:owner,ATOMS:{KEYS[2]:{"slug":"old"},KEYS[1]:"chat",KEYS[3]:{"slug":"last"},"other":41},
+            key.clone():{KEYS[2]:{"slug":"bucket"},"unknown":"keep"},"selected-project":{"projectId":"legacy"}}));
+        let state = crate::state::DesktopStateManager::fixture_for_appshots_preferences(raw.clone());
+        let file = PrivateState::new();
+        let model: WorkHomeModel = serde_json::from_value(json!({"slug":"work-model","thinkingEffort":"extended","versionId":"v2"})).unwrap();
+        let ack = state.set_work_home_model_fixture(&identity, &model, &file.0, || Ok(())).unwrap();
+        let disk: Value = serde_json::from_slice(&std::fs::read(&file.0).unwrap()).unwrap();
+        assert_eq!(disk[&key][KEYS[2]], serde_json::to_value(&model).unwrap());
+        assert!(disk[ATOMS].get(KEYS[2]).is_none());
+        assert_eq!(disk[ATOMS][KEYS[1]], raw[ATOMS][KEYS[1]]);
+        assert_eq!(disk[ATOMS][KEYS[3]], raw[ATOMS][KEYS[3]]);
+        assert_eq!(disk["selected-project"], raw["selected-project"]);
+        assert!(disk.get(WORK_MARKER).is_none());
+        assert_eq!(disk[&key]["unknown"], "keep");
+        assert_eq!(ack["atoms"][KEYS[2]], serde_json::to_value(&model).unwrap());
+        assert_eq!(state.work_home_preferences(&identity).unwrap(), ack);
+    }
+
+    #[test]
+    fn work_home_model_writers_leave_foreign_flat_and_all_unselected_atoms_untouched() {
+        let identity = identity("model-user");
+        let key = owner_key(&identity).unwrap();
+        let model: WorkHomeModel = serde_json::from_value(json!({"slug":" Raw Model ","thinkingEffort":null,"versionId":null})).unwrap();
+        for owner in [None, Some("foreign-owner")] {
+            let mut raw = fixture(json!({ATOMS:{KEYS[2]:{"slug":"old"},KEYS[3]:{"slug":"last"},KEYS[1]:"chat",MODEL_VERSION:{"versionId":"old","selectionMode":"model"}},
+                "selected-project":{"projectId":"unbound"},"unrelated":"keep"}));
+            if let Some(owner) = owner { raw.insert(MARKER.into(),json!(owner)); }
+            let next = set_home_model(&raw,&identity,&model).unwrap();
+            assert_eq!(next[&key][KEYS[2]],serde_json::to_value(&model).unwrap());
+            if owner.is_some() { assert_eq!(next[ATOMS],raw[ATOMS]); }
+            else { assert!(next[ATOMS].get(KEYS[2]).is_none()); }
+            assert_eq!(next[ATOMS][KEYS[3]],raw[ATOMS][KEYS[3]]);
+            assert_eq!(next[ATOMS][KEYS[1]],raw[ATOMS][KEYS[1]]);
+            assert_eq!(next[ATOMS][MODEL_VERSION],raw[ATOMS][MODEL_VERSION]);
+            assert_eq!(next["selected-project"],raw["selected-project"]);
+            assert!(next.get(WORK_MARKER).is_none());
+            assert_eq!(project(&next,&identity).unwrap()["atoms"][KEYS[2]],serde_json::to_value(&model).unwrap());
+        }
+    }
+
+    #[test]
+    fn work_home_model_version_is_independent_and_unbound_until_explicitly_selected() {
+        let identity = identity("version-user");
+        let key = owner_key(&identity).unwrap();
+        let raw = fixture(json!({ATOMS:{MODEL_VERSION:{"versionId":"legacy","selectionMode":"model"},KEYS[2]:{"slug":"home"},KEYS[3]:{"slug":"last"},KEYS[1]:"chat"}}));
+        let before = project(&raw,&identity).unwrap();
+        assert!(before["unboundAtoms"].as_array().unwrap().contains(&json!(MODEL_VERSION)));
+        let state = crate::state::DesktopStateManager::fixture_for_appshots_preferences(raw.clone());
+        let file = PrivateState::new();
+        for (version_id,selection_mode) in [("latest",WorkVersionSelectionMode::Default),("v2",WorkVersionSelectionMode::Model)] {
+            let version = WorkHomeModelVersion{version_id:version_id.into(),selection_mode};
+            let ack = state.set_work_home_model_version_fixture(&identity,&version,&file.0,||Ok(())).unwrap();
+            assert_eq!(ack["atoms"][MODEL_VERSION],serde_json::to_value(&version).unwrap());
+            assert!(!ack["unboundAtoms"].as_array().unwrap().contains(&json!(MODEL_VERSION)));
+            let disk:Value=serde_json::from_slice(&std::fs::read(&file.0).unwrap()).unwrap();
+            assert_eq!(disk[&key][MODEL_VERSION],serde_json::to_value(&version).unwrap());
+            assert!(disk[ATOMS].get(MODEL_VERSION).is_none());
+            assert_eq!(disk[ATOMS][KEYS[2]],raw[ATOMS][KEYS[2]]);
+            assert_eq!(disk[ATOMS][KEYS[3]],raw[ATOMS][KEYS[3]]);
+            assert_eq!(disk[ATOMS][KEYS[1]],raw[ATOMS][KEYS[1]]);
+            let blocked=file.0.parent().unwrap().join("blocked-version");std::fs::create_dir(&blocked).unwrap();
+            assert_eq!(state.set_work_home_model_version_fixture(&identity,&version,&blocked,||Ok(())).unwrap(),ack,"same version does not attempt persistence");
+            std::fs::remove_dir(blocked).unwrap();
+        }
+    }
+
+    #[test]
+    fn work_home_model_writes_fail_atomically_and_skip_unchanged_persistence() {
+        let identity = identity("model-user");
+        let model:WorkHomeModel=serde_json::from_value(json!({"slug":"home","thinkingEffort":"ultra","versionId":null})).unwrap();
+        let raw=fixture(json!({ATOMS:{KEYS[2]:{"slug":"old"},"other":true}}));
+        let state=crate::state::DesktopStateManager::fixture_for_appshots_preferences(raw.clone());
+        let file=PrivateState::new();
+        let blocked=file.0.parent().unwrap().join("blocked");std::fs::create_dir(&blocked).unwrap();
+        assert!(state.set_work_home_model_fixture(&identity,&model,&blocked,||Ok(())).is_err());
+        assert_eq!(state.get_value(ATOMS),raw[ATOMS]);
+        assert_eq!(state.get_optional_value(&owner_key(&identity).unwrap()),None);
+        let checks=std::cell::Cell::new(0);
+        assert!(state.set_work_home_model_fixture(&identity,&model,&file.0,||{checks.set(checks.get()+1);if checks.get()==2 {Err("stale".into())} else {Ok(())}}).is_err());
+        assert!(!file.0.exists());assert_eq!(state.get_value(ATOMS),raw[ATOMS]);
+        let ack=state.set_work_home_model_fixture(&identity,&model,&file.0,||Ok(())).unwrap();
+        assert_eq!(state.set_work_home_model_fixture(&identity,&model,&blocked,||Ok(())).unwrap(),ack);
+        let version=WorkHomeModelVersion{version_id:"latest".into(),selection_mode:WorkVersionSelectionMode::Default};
+        assert!(state.set_work_home_model_version_fixture(&identity,&version,&blocked,||Ok(())).is_err());
+        assert_eq!(state.work_home_preferences(&identity).unwrap(),ack);
+        std::fs::remove_dir(blocked).unwrap();
+    }
+
+    #[test]
+    fn work_home_model_writers_reject_ambiguous_owner_or_bucket_without_overwrite() {
+        let identity=identity("model-user");let key=owner_key(&identity).unwrap();
+        let model:WorkHomeModel=serde_json::from_value(json!({"slug":"raw","thinkingEffort":null,"versionId":null})).unwrap();
+        for raw in [fixture(json!({MARKER:{"unknown":true}})),fixture(json!({key.clone():false})),fixture(json!({ATOMS:false}))] {
+            let original=raw.clone();assert!(set_home_model(&raw,&identity,&model).is_err());assert_eq!(raw,original);
+        }
+        let foreign=fixture(json!({MARKER:"foreign-owner",ATOMS:false}));
+        assert!(set_home_model(&foreign,&identity,&model).is_ok(),"unrelated foreign malformed flat is not this writer input");
+    }
+
+    #[test]
+    fn work_home_model_typed_values_reject_unknown_shapes_without_reinterpreting_effort() {
+        for effort in ["standard","extended","min","max","ultra","xhigh","zero"] {
+            assert!(serde_json::from_value::<WorkHomeModel>(json!({"slug":"raw","thinkingEffort":effort,"versionId":null})).is_ok());
+        }
+        for bad in [json!({"slug":"raw","thinkingEffort":"high","versionId":null}),json!({"slug":"raw","versionId":null}),json!({"slug":"raw","thinkingEffort":null}),json!({"slug":"raw","thinkingEffort":null,"versionId":null,"key":"arbitrary"})] {
+            assert!(serde_json::from_value::<WorkHomeModel>(bad).is_err());
+        }
+        assert!(serde_json::from_value::<WorkHomeModelVersion>(json!({"versionId":"v2","selectionMode":"unknown"})).is_err());
+        assert!(serde_json::from_value::<WorkHomeModelVersion>(json!({"versionId":"v2","selectionMode":"model","conversationId":"invented"})).is_err());
     }
 
     #[test]

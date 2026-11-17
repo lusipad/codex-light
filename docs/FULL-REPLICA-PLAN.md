@@ -32,7 +32,7 @@
 
 ### 当前起点与下一工作包
 
-当前已接Work资格、owner模式/导航、原flight交接、已选本机项目首条及已加载跟进；R8继续接真实冷恢复消费者，以旧thread/cwd/model和当前owner heartbeat重新组装指令，非prose持久来源可恢复，不重用首页选择或普通resume旁路。1103 Rust库、31前端专项及同源码原生构建通过，准确候选与未验边界见[16.23A](antigravity/acceptance/16.23A.md)。下一工作包接完整Work模型选择与持久化、g-p materialization/目录分配；未准备目录、未接排队/目标/会话内审查仍保明确边界，picker临时只读不算完整功能或视觉通过。Work-cloud仍独立接，不用现homeCloud替代。真实冷恢复/账户模型/迁移库/原生与像素尚未实测；legacy完整迁移/live SDK/工具链继续分项登记，标准/协议本阶段未全重跑。CI/push暂停，整页及14批总目标未验收。
+当前已接Work资格、owner模式/导航、原flight交接、本机项目首条/跟进及R8真实冷恢复。R9继续接首页merged模型菜单、本机线程真实下一轮模型更新及独立owner home/version持久化；不再统一只读，但guardian/全权限确认、Speed/Daybreak/location条件控件仍缺，不能叫完整选择器。准确检查、构建及未验边界见[16.23A](antigravity/acceptance/16.23A.md)R9节。下一工作包先补ChatGPT真实消息消费者和后台偏好同步、权限确认分支，再接g-p materialization/目录分配；非Work选择不能冒普通CLI发送。未准备目录、未接排队/目标/会话内审查仍保明确边界。Work-cloud独立接，不用现homeCloud替代。真实服务/迁移库/原生GUI/IME与官方配对像素尚未实测；legacy完整迁移/live SDK/工具链继续分项登记。CI/push暂停，整页及14批总目标未验收。
 
 最新 Work 输入已纠正为后端 fresh JWT 白名单，不再使用近似 planType；新增运行地点纯层（非reader/页面），15组Work、9组地点、1046完整Rust及前端/原生debug编译通过。CLI0.165声明并接受顶层serviceName创建私有空线程，但普通/Work的完整turns读取均遇同一未实现错误；不把元数据成功当历史通过。下一仍是 Work 模式/模型/真实地点reader、本地/云端消费者及原flight交接，输入基础不代表新聊天已可用。准确范围见[16.23A](antigravity/acceptance/16.23A.md)，CI/push暂停。
 

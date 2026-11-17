@@ -12,7 +12,11 @@ import { useWorkspaceOpenTargets } from "./workspaceOpenTargets";
 import { loadModelCatalog } from "./modelCatalog";
 import { useModelSelection } from "./modelSelection";
 import { executionThreadConfig, readThreadExecutionPolicy, resolveConfiguredExecutionPolicy, resolvePresetExecutionPolicy, type ExecutionPolicy } from "./executionPolicy";
-import { configRead } from "./config";
+import { configRead, configRequirementsRead } from "./config";
+import { useWorkHomeModelSelection } from "./useWorkHomeModelSelection";
+import { adaptWorkModelSelection, type WorkModelSelection } from "./workModelCatalog";
+import { decideWorkModelPermissions } from "./workModelPermissionDecision";
+import { createWorkThreadModelSelectionController, type WorkThreadModelSnapshot } from "./workThreadModelSelection";
 import { createNotificationDispatcher, notificationRequestCategory, shouldNotifyTurn, useNotificationPreferences, type NotificationEvent } from "./notificationPreferences";
 import { useAppearancePreferences } from "./appearancePreferences";
 import { notificationApprovalActions, notificationApprovalResponse } from "./notificationActions";
@@ -25,13 +29,13 @@ import { useAppshotsEntry, type AppshotComposerInput, type AppshotWorkPlan } fro
 import { activateWorkHome } from "./chatgptService";
 import { readLocalWorkAccess } from "./workAccess";
 import { parseWorkHomePreferences } from "./workHomePreferences";
-import { readWorkCaptureTarget, type WorkCaptureTarget } from "./workHomePreparation";
+import { readWorkCaptureTarget, type WorkCaptureTarget, type WorkLocalSubmissionPreparation } from "./workHomePreparation";
 import { awaitGuardedNavigation } from "./navigationContinuation";
 import { useWorkCustomInstructions } from "./useWorkCustomInstructions";
 import { readWorkLocalMessagePreparation, type WorkLocalMessagePreparation } from "./workLocalMessagePreparation";
 import { restoreWorkLocalThread } from "./workLocalThreadRestore";
 import { buildWorkLocalThreadRequest, buildWorkLocalTurnRequest } from "./workLocalRequest";
-import { captureWorkThreadContext, projectWorkThreadFollowUp, workThreadContextMatches, type WorkThreadContext } from "./workThreadContext";
+import { captureWorkThreadContext, restoreWorkThreadContext, projectWorkThreadFollowUp, workThreadContextMatches, type WorkThreadContext } from "./workThreadContext";
 import { assertWorkThreadOwner, persistWorkThreadProvenance, readWorkThreadProvenance } from "./workThreadProvenance";
 import { AppshotAttachment, UserImageAttachments, dispatchImagePreviewZoom } from "./components/AppshotAttachment";
 import { fileChangeApprovalForItem, pendingRequestKey, requestThreadId, requestsForThread, type RequestResponseState } from "./approvalRequests";
@@ -96,7 +100,7 @@ import { createShortcutMatcher, shortcutEventAllowed, SHORTCUTS, effectiveBindin
 import { useKeyboardPreferences } from "./keyboardPreferences";
 import { installNativeMenuHandler, installTrayHandler } from "./nativeShell";
 import { playNotificationChime } from "./sound";
-import { getPickerModels, modelRequestName, type ModelConfiguration } from "./modelCapabilities";
+import { findModel, getDefaultModel, getPickerModels, modelRequestName, type ModelConfiguration } from "./modelCapabilities";
 import {
   AppServerStatus,
   ArchiveDeleteResult,
@@ -1523,6 +1527,16 @@ export const App: React.FC = () => {
   const [workMessageError, setWorkMessageError] = useState<string | null>(null);
   const [workMessageRevision, setWorkMessageRevision] = useState(0);
   const workThreadContexts = useRef(new Map<string, WorkThreadContext>());
+  const workNativeModelController = useRef<ReturnType<typeof createWorkThreadModelSelectionController> | null>(null);
+  const workNativeModelInputs = useRef({ models, modelsLoading, connected: appServerStatus.connected });
+  useLayoutEffect(() => { workNativeModelInputs.current = { models, modelsLoading, connected: appServerStatus.connected }; }, [models, modelsLoading, appServerStatus.connected]);
+  const workModelRequest = useRef(0);
+  const workModelCommitting = useRef(new Map<string, number>());
+  const workHomeModelCommitting = useRef(false);
+  const workHomeModelRevision = useRef(0);
+  const [workModelState, setWorkModelState] = useState<{ threadId: string; pending: boolean; error: string } | null>(null);
+  const [, setWorkModelRevision] = useState(0);
+  const workHomePickerRef = useRef<{ pending: boolean; isWorkModel: boolean | null } | null>(null);
   const workSendPreparing = useRef<AbortController | null>(null);
   const workActiveSend = useRef<AbortController | null>(null);
   const workHostIdentity = JSON.stringify([appServerStatus.binaryPath, appServerStatus.appServerVersion]);
@@ -1684,6 +1698,147 @@ export const App: React.FC = () => {
     onUserMessageCompleted: recordModelUserMessage,
   } = modelSelection;
   const selectedModelName = modelRequestName(models, selectedModelId);
+
+  const confirmWorkModelPermissions = useCallback(async (input: {
+    identity: ServiceIdentity; cwd: string | undefined; policy: ExecutionPolicy; permissionProfileId: string | null | undefined;
+    currentModel: string | null; currentEffort: string | null; model: string; effort: string | null; guardianEnabled: boolean | null;
+  }, signal: AbortSignal) => {
+    const ticket = workPermissionRevision.current;
+    const fence = async () => {
+      signal.throwIfAborted(); const actual = await serviceIdentity(signal); signal.throwIfAborted();
+      if (actual.accountId !== input.identity.accountId || actual.userId !== input.identity.userId || actual.generation !== input.identity.generation) throw Error("模型选择期间账号已变化。");
+      if (ticket !== workPermissionRevision.current) throw Error("模型选择期间权限已变化，请重新选择。");
+    };
+    await fence();
+    const [{ config }, { requirements }] = await Promise.all([configRead(input.cwd, true), configRequirementsRead()]);
+    await fence();
+    const decision = decideWorkModelPermissions({ isConfigDataPending: false, requirements, resolvedConfig: config,
+      current: { model: input.currentModel, reasoningEffort: input.currentEffort, permissionProfileId: input.permissionProfileId,
+        agentMode: input.policy.approvalsReviewer === "auto_review" || input.policy.approvalsReviewer === "guardian_subagent" ? "guardian-approvals"
+          : input.policy.sandboxPolicy.type === "dangerFullAccess" ? "full-access" : input.policy.sandboxPolicy.type === "readOnly" ? "read-only"
+            : typeof input.policy.approvalPolicy === "object" ? "granular" : "auto" },
+      candidate: { model: input.model, reasoningEffort: input.effort }, statsigGuardianEnabled: input.guardianEnabled,
+      hasAuthoritativeGuardianApprovalDefault: null });
+    if (decision.status !== "allowed") {
+      showAppToast(decision.status === "not-ready" ? "此模型所需的权限尚未确认，原选择已保留。"
+        : "此模型需要额外权限确认，暂时无法应用，原选择已保留。", "error");
+      return false;
+    }
+    return true;
+  }, [showAppToast]);
+
+  const confirmHomeWorkModel = useCallback(async (selection: WorkModelSelection,
+    prepared: Extract<WorkLocalSubmissionPreparation, { status: "ready" }>, signal: AbortSignal) => {
+    const owner = committedWorkOwner.current, host = committedWorkHost.current;
+    const permissionTicket = workPermissionRevision.current, draftPolicyTicket = committedWorkDraftPolicy.current;
+    const fence = () => {
+      signal.throwIfAborted();
+      if (owner !== committedWorkOwner.current || host !== committedWorkHost.current
+        || permissionTicket !== workPermissionRevision.current || draftPolicyTicket !== committedWorkDraftPolicy.current) throw Error("模型选择所属项目、账号或权限已变化。");
+    };
+    fence();
+    const selected = prepared.target.selectedWorkProject;
+    if (!selected || selected.type !== "local" || selected.projectId.startsWith("g-p-")) throw Error("此 Work 项目的本地工作目录尚未准备好，原模型已保留。");
+    const project = sidebarProjectMembership.localProjects?.find(project => project.id === selected.projectId);
+    if (!project?.serverProjectId || !project.rootPaths.length) throw Error("尚未确认 Work 本地项目，原模型已保留。");
+    const selectedRoot = activeWorkspace?.path && project.rootPaths.find(root => fileDedupeKey(root) === fileDedupeKey(activeWorkspace.path));
+    const cwd = selectedRoot || (project.rootPaths.length === 1 ? project.rootPaths[0] : undefined);
+    if (!cwd) throw Error("请选择此 Work 项目的工作目录，原模型已保留。");
+    const mapped = adaptWorkModelSelection(selection, prepared.hostModels);
+    const previous = prepared.isWorkModel === false ? getModelConfiguration()
+      : { model: prepared.model, reasoningEffort: prepared.reasoningEffort };
+    const { config } = await configRead(cwd, true);
+    fence();
+    const policy = permissionMode === "custom" ? resolveConfiguredExecutionPolicy(config, cwd ? [cwd] : [])
+      : resolvePresetExecutionPolicy(permissionMode, cwd ? [cwd] : [], sessionAllowNetwork);
+    const confirmed = await confirmWorkModelPermissions({ identity: prepared.identity, cwd, policy,
+      permissionProfileId: permissionMode === "custom" && config.default_permissions != null ? undefined : null,
+      currentModel: previous.model, currentEffort: previous.reasoningEffort, model: mapped.model, effort: mapped.reasoningEffort,
+      guardianEnabled: prepared.execution.defaultEnableFeatures.guardian_approval === true }, signal);
+    fence();
+    return confirmed;
+  }, [activeWorkspace?.path, sidebarProjectMembership.localProjects, permissionMode, sessionAllowNetwork, confirmWorkModelPermissions, getModelConfiguration]);
+  const onWorkHomeModelApplied = useCallback(() => { setWorkMessageRevision(value => value + 1); }, []);
+  const workHomeModels = useWorkHomeModelSelection({ entryKey: workHomeSession?.key ?? "", target: workHomeSession?.target ?? null,
+    appServerVersion: appServerStatus.appServerVersion, hasAttachments: attachedFiles.length > 0 || appshots.length > 0,
+    confirmNativeSelection: confirmHomeWorkModel, onApplied: onWorkHomeModelApplied });
+  useLayoutEffect(() => { workHomePickerRef.current = workHomeSession ? workHomeModels : null; }, [workHomeSession, workHomeModels]);
+  const commitHomeWorkModel = useCallback(async (selection: WorkModelSelection) => {
+    if (workHomeModelCommitting.current || sendStartPendingRef.current.has(threadRequestRef.current)) return false;
+    workHomeModelRevision.current++; workHomeModelCommitting.current = true;
+    try { return await workHomeModels.commit(selection); }
+    finally { workHomeModelCommitting.current = false; }
+  }, [workHomeModels.commit]);
+  const commitHomeWorkVersion = useCallback(async (preference: { versionId: string; selectionMode: "default" | "model" }) => {
+    if (workHomeModelCommitting.current || sendStartPendingRef.current.has(threadRequestRef.current)) return false;
+    workHomeModelRevision.current++; workHomeModelCommitting.current = true;
+    try { return await workHomeModels.saveVersion(preference); }
+    finally { workHomeModelCommitting.current = false; }
+  }, [workHomeModels.saveVersion]);
+
+  useLayoutEffect(() => {
+    const owner = modelAccountIdentity, host = workHostIdentity;
+    let alive = true;
+    workModelRequest.current++; workModelCommitting.current.clear(); setWorkModelState(null);
+    const read = (threadId: string): WorkThreadModelSnapshot | null => {
+      const context = workThreadContexts.current.get(threadId);
+      if (!context || !workNativeModelInputs.current.connected || workNativeModelInputs.current.modelsLoading) return null;
+      return { scope: context.scope, context, models: workNativeModelInputs.current.models,
+        policyRevision: (threadExecutionRevisionsRef.current.get(threadId) ?? 0) + workPermissionRevision.current };
+    };
+    const current = (snapshot: WorkThreadModelSnapshot) => owner === committedWorkOwner.current && host === committedWorkHost.current
+      && workNativeModelInputs.current.connected && snapshot.context.scope.hostIdentity === host
+      && workThreadContexts.current.get(snapshot.context.threadId) === snapshot.context
+      && snapshot.policyRevision === (threadExecutionRevisionsRef.current.get(snapshot.context.threadId) ?? 0) + workPermissionRevision.current;
+    const controller = createWorkThreadModelSelectionController({ read, isCurrent: current,
+      preparePermissions: async ({ snapshot, selection }, signal) => {
+        const policy = threadExecutionPoliciesRef.current.get(snapshot.context.threadId);
+        if (!policy) return null;
+        return await confirmWorkModelPermissions({ identity: snapshot.scope.identity, cwd: snapshot.context.cwd ?? undefined, policy,
+          permissionProfileId: snapshot.context.permissionProfileId, currentModel: snapshot.context.model,
+          currentEffort: snapshot.context.reasoningEffort ?? null, model: selection.model, effort: selection.reasoningEffort,
+          guardianEnabled: snapshot.context.guardianApprovalEnabledByStatsig ?? null }, signal) ? {} : false;
+      }, update: async params => {
+        const context = workThreadContexts.current.get(params.threadId), identity = context?.scope.identity;
+        const revision = (threadExecutionRevisionsRef.current.get(params.threadId) ?? 0) + workPermissionRevision.current;
+        const signal = new AbortController().signal;
+        const before = await serviceIdentity(signal);
+        if (!alive || !workNativeModelInputs.current.connected || revision !== (threadExecutionRevisionsRef.current.get(params.threadId) ?? 0) + workPermissionRevision.current
+          || host !== committedWorkHost.current || owner !== committedWorkOwner.current
+          || workThreadContexts.current.get(params.threadId) !== context || !identity || before.accountId !== identity.accountId
+          || before.userId !== identity.userId || before.generation !== identity.generation) throw Error("模型选择所属账号或宿主已变化。");
+        const response = await callAppServer("thread/settings/update", params);
+        const after = await serviceIdentity(signal);
+        if (after.accountId !== identity.accountId || after.userId !== identity.userId || after.generation !== identity.generation) throw Error("模型选择期间账号已变化。");
+        return response;
+      }, commit: (snapshot, next) => {
+        if (!current(snapshot)) return false;
+        workThreadContexts.current.set(next.threadId, next); setWorkModelRevision(value => value + 1); return true;
+      } });
+    workNativeModelController.current = controller;
+    return () => { alive = false; workModelRequest.current++; workModelCommitting.current.clear(); if (workNativeModelController.current === controller) workNativeModelController.current = null; controller.dispose(); };
+  }, [modelAccountIdentity, workHostIdentity, appServerStatus.connected, confirmWorkModelPermissions]);
+
+  const selectWorkThreadModel = useCallback(async (configuration: ModelConfiguration) => {
+    const threadId = activeThreadIdRef.current, context = threadId ? workThreadContexts.current.get(threadId) : null;
+    if (!threadId || !context || !workNativeModelController.current) return;
+    if (configuration.serviceTier !== null) { showAppToast("Work 速度选择暂不可用，原设置已保留。", "error"); return; }
+    if (configuration.model === context.model && configuration.reasoningEffort === context.reasoningEffort) return;
+    const request = ++workModelRequest.current;
+    workModelCommitting.current.set(threadId, request);
+    setWorkModelState({ threadId, pending: true, error: "" });
+    try {
+      const accepted = await workNativeModelController.current.select(threadId, configuration);
+      const actual = workThreadContexts.current.get(threadId);
+      if (request === workModelRequest.current) setWorkModelState({ threadId, pending: false,
+        error: accepted || actual?.model === configuration.model && actual.reasoningEffort === configuration.reasoningEffort ? "" : "模型选择未确认，原设置已保留。" });
+    } catch (error) {
+      if (request === workModelRequest.current) setWorkModelState({ threadId, pending: false, error: `模型选择失败：${String(error)}` });
+    } finally {
+      if (workModelCommitting.current.get(threadId) === request) workModelCommitting.current.delete(threadId);
+      setWorkModelRevision(value => value + 1);
+    }
+  }, [showAppToast]);
 
   const workspaceReviewRuns = reviewRuns.filter(run => activeWorkspace?.path &&
     attachmentIdentityKey(run.cwd) === attachmentIdentityKey(activeWorkspace.path));
@@ -2330,6 +2485,18 @@ export const App: React.FC = () => {
         if (!replay && method === "thread/settings/updated" && typeof eventThreadId === "string" && params?.threadSettings) {
           applyModelThreadSettings(eventThreadId, params.threadSettings);
           captureThreadExecutionPolicy(eventThreadId, params);
+          const current = workThreadContexts.current.get(eventThreadId);
+          if (current) {
+            const settings = params.threadSettings, model = Object.hasOwn(settings, "model") ? settings.model : current.model;
+            const effort = Object.hasOwn(settings, "effort") ? settings.effort : current.reasoningEffort;
+            const mode = Object.hasOwn(settings, "collaborationMode") ? settings.collaborationMode
+              : current.collaborationMode && model ? { ...current.collaborationMode,
+                settings: { ...current.collaborationMode.settings, model, reasoning_effort: effort } } : null;
+            const next = restoreWorkThreadContext(current.scope, { thread: { id: eventThreadId, projectId: current.projectId,
+              originator: current.originator }, cwd: current.cwd, model, reasoningEffort: effort, collaborationMode: mode,
+              ...(Object.hasOwn(settings, "activePermissionProfile") ? { activePermissionProfile: settings.activePermissionProfile } : {}) }, current);
+            if (next.context) { workThreadContexts.current.set(eventThreadId, next.context); setWorkModelRevision(value => value + 1); }
+          }
         }
         if (!replay && method === "item/completed" && params?.item?.type === "userMessage") {
           void recordModelUserMessage(eventThreadId, eventTurnId, params.item.id).catch(error => {
@@ -4105,6 +4272,12 @@ export const App: React.FC = () => {
   const handleSendMessage = useCallback(async (overrideText?: string) => {
     if (activeRouteRef.current === "cloud-draft" || activeRouteRef.current === "cloud-new-chat") return;
     if (activeRouteRef.current === "home" && homeCloud.active) return;
+    if (workHomeModelCommitting.current || activeThreadIdRef.current && workModelCommitting.current.has(activeThreadIdRef.current)) {
+      showAppToast("正在应用模型选择，输入已保留。", "error"); return;
+    }
+    if (activeRouteRef.current === "home" && workHomeSession && workHomePickerRef.current?.isWorkModel === false) {
+      showAppToast("ChatGPT 聊天暂不可用，输入已保留，请选择 Work 模型继续。", "error"); return;
+    }
     if (activeThreadIdRef.current && (loadingThread || workThreadRestoreState?.threadId === activeThreadIdRef.current)) {
       showAppToast("会话配置尚未恢复，输入已保留，请重新读取。", "error");
       return;
@@ -4121,8 +4294,11 @@ export const App: React.FC = () => {
     const originOwner = committedWorkOwner.current, originThread = activeThreadIdRef.current;
     const draftPolicyTicket = committedWorkDraftPolicy.current;
     const workPermissionTicket = workPermissionRevision.current;
+    const homeModelTicket = workHomeModelRevision.current, threadModelTicket = workModelRequest.current;
     const preparationCurrent = () => !preparationController.signal.aborted && originRequest === threadRequestRef.current && originNavigation === navigationRequestRef.current
       && originOwner === committedWorkOwner.current && originThread === activeThreadIdRef.current && draftPolicyTicket === committedWorkDraftPolicy.current;
+    const modelSelectionCurrent = () => homeModelTicket === workHomeModelRevision.current && threadModelTicket === workModelRequest.current
+      && !workHomeModelCommitting.current && (!originThread || !workModelCommitting.current.has(originThread));
     const preparationController = new AbortController();
     workSendPreparing.current = preparationController;
     try {
@@ -4174,7 +4350,7 @@ export const App: React.FC = () => {
       if (preparationCurrent()) showAppToast(`无法发送：${String(error)}`, "error");
       return;
     } finally { if (workSendPreparing.current === preparationController) workSendPreparing.current = null; }
-    if (!preparationCurrent()) return;
+    if (!preparationCurrent() || !modelSelectionCurrent()) return;
     if (sendStartPendingRef.current.has(threadRequestRef.current)) return;
     const projectless = !preparedWork && !activeThreadIdRef.current && pendingProjectlessRef.current;
     const pendingProject = preparedWork ? workProject : activeThreadIdRef.current || projectless ? null : resolveNewThreadProject(
@@ -4315,6 +4491,7 @@ export const App: React.FC = () => {
       const execution = await resolveExecutionContext(currentThreadId, targetCwd || threadCwd, turnWorkspaceRoots ?? (threadCwd ? [threadCwd] : targetCwd ? [targetCwd] : []),
         workOperation ? preparationController.signal : undefined);
       if (workOperation) preparationController.signal.throwIfAborted();
+      if (workOperation && !modelSelectionCurrent()) throw Error("发送期间模型选择已变化，输入已保留。");
       if (sendRequest !== threadRequestRef.current || sendIdentity !== executionIdentityRef.current || sendNavigation !== navigationRequestRef.current) return;
       if (existingWork && currentThreadId) {
         const restored = workThreadContexts.current.get(currentThreadId);
@@ -4370,7 +4547,8 @@ export const App: React.FC = () => {
           const receipt = captureWorkThreadContext({ identity: preparedWork.identity, hostIdentity: workHostIdentity }, startRes,
             { serviceName: preparedWork.serviceName ?? null });
           if (creationCurrent()) {
-            if (receipt.context) workThreadContexts.current.set(createdThreadId, receipt.context);
+            if (receipt.context) workThreadContexts.current.set(createdThreadId, { ...receipt.context,
+              guardianApprovalEnabledByStatsig: preparedWork.execution.defaultEnableFeatures.guardian_approval === true });
             // The ID is already real. Bind its draft before fallible local
             // persistence/remaining setup so a retry cannot create it twice.
             bindCreatedThread();
@@ -4442,6 +4620,7 @@ export const App: React.FC = () => {
         collaborationMode: workThreadContexts.current.get(currentThreadId!)!.collaborationMode }) : null;
       const sendTurn = () => callAppServer<any>("turn/start", workFollowUp?.request ?? workTurn ?? turnParams);
       if (workOperation) preparationController.signal.throwIfAborted();
+      if (workOperation && !modelSelectionCurrent()) throw Error("发送前模型选择已变化，输入已保留。");
       turnWasDispatched = true;
       const turnRes = preparedWork || existingWork ? await sendTurn() : await trackModelTurn(currentThreadId!, configuration, sendTurn);
       const startedTurnId =
@@ -6439,6 +6618,12 @@ export const App: React.FC = () => {
 
   const activeWorkContext = activeThreadId ? workThreadContexts.current.get(activeThreadId) : undefined;
   const activeWorkRestore = workThreadRestoreState?.threadId === activeThreadId ? workThreadRestoreState : null;
+  const activeWorkModel = workModelState?.threadId === activeThreadId ? workModelState : null;
+  const homeWorkPicker = workHomeSession ? { catalog: workHomeModels.catalog, selection: workHomeModels.selection,
+    versionPreference: workHomeModels.versionPreference, loading: workHomeModels.loading, error: workHomeModels.error,
+    pending: workHomeModels.pending || sendStartPendingRef.current.has(threadRequestRef.current),
+    refresh: workHomeModels.refresh, onCommit: commitHomeWorkModel, onVersionPreference: commitHomeWorkVersion,
+    contextKey: `${modelAccountIdentity}:${workHostIdentity}:${workHomeSession.key}` } : undefined;
   const renderThreadComposer = () => (
     <ComposerBox
       registerAppshotInput={registerAppshotInput}
@@ -6448,7 +6633,9 @@ export const App: React.FC = () => {
       contextUsageIndicator={contextUsageVisible && activeThreadId
         ? <ComposerContextUsage key={activeThreadId} usage={tokenUsage} /> : undefined}
       keyBindings={keyboardState.bindings}
-      submissionDisabled={loadingThread || !!activeWorkRestore || queueBusy || !activeWorkContext && (modelSelection.selectionPending || !!modelSelection.selectionDisabledReason) || sendStartPendingRef.current.has(threadRequestRef.current)}
+      submissionDisabled={loadingThread || !!activeWorkRestore || !!activeWorkModel?.pending || !!activeThreadId && workModelCommitting.current.has(activeThreadId)
+        || !!homeWorkPicker && (homeWorkPicker.loading || homeWorkPicker.pending || workHomeModels.isWorkModel !== true)
+        || queueBusy || !activeWorkContext && !homeWorkPicker && (modelSelection.selectionPending || !!modelSelection.selectionDisabledReason) || sendStartPendingRef.current.has(threadRequestRef.current)}
       variant="thread"
       promptInput={promptInput}
       onPromptInputChange={setPromptInput}
@@ -6469,27 +6656,31 @@ export const App: React.FC = () => {
       permissionMode={permissionMode}
       onSelectPermissionMode={setPermissionMode}
       models={activeWorkRestore ? [] : models}
+      workModelPicker={activeRoute === "home" ? homeWorkPicker : undefined}
       modelsLoading={activeWorkRestore ? activeWorkRestore.status === "loading" : modelsLoading}
       modelsError={activeWorkRestore?.error ?? modelsError}
       onRefreshModels={activeWorkRestore ? () => { if (activeThreadId) void selectThread(activeThreadId); } : refreshModels}
-      selectedModelId={activeWorkRestore ? "" : activeWorkContext?.model ?? selectedModelId}
-      modelReadOnlyReason={loadingThread ? "正在读取会话配置。" : activeWorkRestore ? null : activeWorkContext ? "当前使用已确认的 Work 模型，暂不支持切换。" : null}
+      selectedModelId={activeWorkRestore ? "" : activeWorkContext ? activeWorkContext.model ?? "" : selectedModelId}
+      modelReadOnlyReason={loadingThread ? "正在读取会话配置。" : null}
       modelDisplayLabel={activeWorkRestore ? "会话配置未就绪" : null}
       defaultModelSelected={activeWorkRestore || activeWorkContext ? false : defaultModelSelected}
-      onSelectModel={handleSelectComposerModel}
+      onSelectModel={activeWorkContext ? (id, useDefault) => {
+        const model = useDefault ? getDefaultModel(models, modelSelection.eligibilityContext) : findModel(models, id);
+        if (model?.model) void selectWorkThreadModel({ model: model.model, reasoningEffort: activeWorkContext.reasoningEffort ?? null, serviceTier: null });
+      } : handleSelectComposerModel}
       reasoningEffort={activeWorkContext ? activeWorkContext.reasoningEffort ?? "" : reasoningEffort}
-      onSelectReasoningEffort={setReasoningEffort}
+      onSelectReasoningEffort={activeWorkContext ? effort => { if (activeWorkContext.model) void selectWorkThreadModel({ model: activeWorkContext.model, reasoningEffort: effort, serviceTier: null }); } : setReasoningEffort}
       fastMode={activeWorkContext ? false : fastMode}
       serviceTier={activeWorkContext ? null : modelSelection.serviceTier}
       serviceTierAccess={modelSelection.serviceTierAccess}
       modelEligibilityContext={modelSelection.eligibilityContext}
-      selectionPending={activeWorkRestore ? activeWorkRestore.status === "loading" : activeWorkContext ? false : modelSelection.selectionPending}
-      selectionError={activeWorkRestore?.error ?? (activeWorkContext ? null : modelSelection.selectionError)}
-      selectionDisabledReason={activeWorkContext || activeWorkRestore ? null : modelSelection.selectionDisabledReason}
+      selectionPending={activeWorkRestore ? activeWorkRestore.status === "loading" : activeWorkContext ? !!activeWorkModel?.pending : modelSelection.selectionPending}
+      selectionError={activeWorkRestore?.error ?? (activeWorkContext ? activeWorkModel?.error ?? null : modelSelection.selectionError)}
+      selectionDisabledReason={activeWorkContext ? activeWorkContext.model ? null : "Work 模型尚未确认，请重新读取会话。" : activeWorkRestore ? null : modelSelection.selectionDisabledReason}
       recentModelConfigurations={activeWorkContext || activeWorkRestore ? [] : modelSelection.recentModelConfigurations}
-      onSelectServiceTier={modelSelection.selectTier}
-      onSelectConfiguration={modelSelection.selectConfiguration}
-      onToggleFastMode={toggleFastMode}
+      onSelectServiceTier={activeWorkContext ? () => showAppToast("Work 速度选择暂不可用，原设置已保留。", "error") : modelSelection.selectTier}
+      onSelectConfiguration={activeWorkContext ? selectWorkThreadModel : modelSelection.selectConfiguration}
+      onToggleFastMode={activeWorkContext ? () => showAppToast("Work 速度选择暂不可用，原设置已保留。", "error") : toggleFastMode}
       planMode={planMode}
       onTogglePlanMode={handleTogglePlanMode}
       attachedFiles={attachedFiles}
@@ -7496,7 +7687,8 @@ export const App: React.FC = () => {
                 followUpMode={followUpMode}
                 keyBindings={keyboardState.bindings}
                 submissionDisabled={homeCloud.active ? !homeCloud.canSend : workHomeSession
-                  ? !appServerStatus.connected || workMessagePreparation?.status !== "ready" || sendStartPendingRef.current.has(threadRequestRef.current)
+                  ? !appServerStatus.connected || workHomeModels.loading || workHomeModels.pending || workHomeModels.isWorkModel !== true
+                    || workMessagePreparation?.status !== "ready" || sendStartPendingRef.current.has(threadRequestRef.current)
                   : queueBusy || modelSelection.selectionPending || !!modelSelection.selectionDisabledReason || sendStartPendingRef.current.has(threadRequestRef.current)}
               variant="home"
               homeCloud={homeCloud}
@@ -7530,12 +7722,13 @@ export const App: React.FC = () => {
               permissionMode={permissionMode}
               onSelectPermissionMode={setPermissionMode}
               models={workHomeSession ? workMessagePreparation?.status === "ready" ? workMessagePreparation.hostModels : [] : models}
+              workModelPicker={homeWorkPicker}
               modelsLoading={workHomeSession ? !workMessagePreparation && !workMessageError : modelsLoading}
               modelsError={workHomeSession ? workMessageError ?? (workMessagePreparation?.status === "not-ready" ? "Work 所需的模型或设置暂时不可用，请重新读取。" : null) : modelsError}
               onRefreshModels={workHomeSession ? () => setWorkMessageRevision(value => value + 1) : refreshModels}
               selectedModelId={workHomeSession ? workMessagePreparation?.status === "ready" ? workMessagePreparation.model : "" : selectedModelId}
               defaultModelSelected={workHomeSession ? false : defaultModelSelected}
-              modelReadOnlyReason={workHomeSession && workMessagePreparation?.status === "ready" ? "当前使用已确认的 Work 模型，暂不支持切换。" : null}
+              modelReadOnlyReason={null}
               modelDisplayLabel={workHomeSession && workMessagePreparation?.status !== "ready" ? "Work 模型未就绪" : null}
               onSelectModel={handleSelectComposerModel}
               reasoningEffort={workHomeSession && workMessagePreparation?.status === "ready" ? workMessagePreparation.reasoningEffort ?? "" : reasoningEffort}
@@ -7545,7 +7738,8 @@ export const App: React.FC = () => {
               serviceTierAccess={modelSelection.serviceTierAccess}
               modelEligibilityContext={modelSelection.eligibilityContext}
               selectionPending={workHomeSession ? !workMessagePreparation && !workMessageError : modelSelection.selectionPending}
-              selectionError={workHomeSession ? workMessageError ?? (workMessagePreparation?.status === "not-ready" ? "Work 所需的模型或设置暂时不可用，请重新读取。" : null) : modelSelection.selectionError}
+              selectionError={workHomeSession ? workHomeModels.isWorkModel === false ? "ChatGPT 聊天暂不可用，请选择 Work 模型继续。"
+                : workHomeModels.error || workMessageError || (workMessagePreparation?.status === "not-ready" ? "Work 所需的模型或设置暂时不可用，请重新读取。" : null) : modelSelection.selectionError}
               selectionDisabledReason={workHomeSession ? null : modelSelection.selectionDisabledReason}
               recentModelConfigurations={modelSelection.recentModelConfigurations}
               onSelectServiceTier={modelSelection.selectTier}

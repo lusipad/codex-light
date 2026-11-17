@@ -206,6 +206,12 @@ try {
   Invoke-Step "Work run-location evidence and routing decisions" { node scripts/verify-work-run-location.mjs }
   Invoke-Step "Work cloud-orchestration capability and lockdown reader" { node scripts/verify-work-orchestration-access.mjs }
   Invoke-Step "Work merged model catalog and native mapping" { node scripts/verify-work-model-catalog.mjs }
+  Invoke-Step "Work home model and independent version persistence" { node scripts/verify-work-home-model-selection.mjs }
+  Invoke-Step "Work model permission source decisions" { node scripts/verify-work-model-permissions.mjs }
+  Invoke-Step "Work merged picker projection and staged choices" { node scripts/verify-work-model-picker-state.mjs }
+  Invoke-Step "Work merged picker component and keyboard" { node scripts/verify-work-model-picker-ui.mjs }
+  Invoke-Step "Work native model update coalescing and receipts" { node scripts/verify-work-thread-model-selection.mjs }
+  Invoke-Step "Work actual App model selection and stale-send guards" { node scripts/verify-work-model-picker-app.mjs }
   Invoke-Step "Work owner-bound home preferences" { node scripts/verify-work-home-preferences.mjs }
   Invoke-Step "Work preference native client pipeline" { node scripts/verify-work-home-state-client.mjs }
   Invoke-Step "Work selected-project and cloud compatibility" { node scripts/verify-work-project-access.mjs }

@@ -5,7 +5,7 @@ import { readLocalWorkOrchestration, type LocalWorkOrchestration } from "./workO
 import { readWorkHomePreferences, type WorkHomeAtom, type WorkHomePreferencesSnapshot } from "./workHomePreferences";
 import { parseWorkSelectedProject, readWorkProjectAccess, type WorkProjectAccessResult, type WorkSelectedProject } from "./workProjectAccess";
 import { isWorkEnterprisePlan, projectWorkRunLocationCore, type WorkRunLocationState } from "./workRunLocation";
-import { readWorkModelCatalog, selectWorkHomeModel, adaptWorkModelSelection, type WorkModelSelection } from "./workModelCatalog";
+import { readWorkModelCatalog, selectWorkHomeModel, adaptWorkModelSelection, type WorkModelSelection, type WorkModelCatalog } from "./workModelCatalog";
 import { readWorkExecutionPreparation, type WorkExecutionPreparation } from "./workExecutionPreparation";
 import { loadModelCatalog } from "./modelCatalog";
 import type { ModelInfo } from "./types";
@@ -133,10 +133,29 @@ export type WorkLocalSubmissionPreparation = NotReady | {
   model: string; reasoningEffort: string | null; serviceName?: "codex_work_desktop";
   execution: Extract<WorkExecutionPreparation, { status: "ready" }>; hostModels: ModelInfo[];
   modelCatalogFilterMissingInputs: string[];
+  catalog: WorkModelCatalog; isWorkModel: boolean;
 };
+export type WorkHomeModelPreparation = NotReady | (Omit<Extract<WorkLocalSubmissionPreparation, { status: "ready" }>, "execution"> & { execution: null });
 export async function readWorkLocalSubmissionPreparation(target: WorkCaptureTarget, input: {
   appServerVersion: string | null;
 }, signal: AbortSignal): Promise<WorkLocalSubmissionPreparation> {
+  const result = await readLocalModelPreparation(target, input, signal, true, true);
+  return result.status !== "ready" || result.execution !== null ? result as WorkLocalSubmissionPreparation : unavailable("execution", "native-execution");
+}
+export async function readWorkHomeModelPreparation(target: WorkCaptureTarget, input: {
+  appServerVersion: string | null;
+}, signal: AbortSignal): Promise<WorkHomeModelPreparation> {
+  return readLocalModelPreparation(target, input, signal, false, false) as Promise<WorkHomeModelPreparation>;
+}
+/** Called only after a candidate is known to be Work. Base selection/model
+ * remain current-home values, never the candidate passed to permission review. */
+export async function readWorkHomeNativeModelPreparation(target: WorkCaptureTarget, input: { appServerVersion: string | null }, signal: AbortSignal): Promise<WorkLocalSubmissionPreparation> {
+  const result = await readLocalModelPreparation(target, input, signal, false, true);
+  return result.status !== "ready" || result.execution !== null ? result as WorkLocalSubmissionPreparation : unavailable("execution", "native-execution");
+}
+async function readLocalModelPreparation(target: WorkCaptureTarget, input: {
+  appServerVersion: string | null;
+}, signal: AbortSignal, requireWork: boolean, prepareNative: boolean): Promise<WorkLocalSubmissionPreparation | WorkHomeModelPreparation> {
   const identity = { ...target.identity }; await fence(identity, signal);
   if (target.location !== "local") return unavailable("execution-location", "local-execution-location");
   const before = await readWorkAccountInfo(identity, signal); await fence(identity, signal);
@@ -160,7 +179,14 @@ export async function readWorkLocalSubmissionPreparation(target: WorkCaptureTarg
   let chosen: ReturnType<typeof selectWorkHomeModel>;
   try { chosen = selectWorkHomeModel(catalog, { homeSelection: modelValue(home), lastSelection: modelValue(last), plan: before.plan }); }
   catch { return unavailable("model-preferences", "model-selection"); }
-  if (!chosen.isWorkModel) return unavailable("model-selection", "work-model-selection");
+  if (requireWork && !chosen.isWorkModel) return unavailable("model-selection", "work-model-selection");
+  if (!prepareNative) {
+    const after = await readWorkAccountInfo(identity, signal); await fence(identity, signal);
+    if (before.authMethod !== after.authMethod || before.plan !== after.plan) throw changed();
+    return { status: "ready", identity, target, preferences, selection: chosen.selection, model: chosen.selection.slug,
+      reasoningEffort: chosen.selection.thinkingEffort, execution: null, hostModels: [], modelCatalogFilterMissingInputs: [],
+      catalog, isWorkModel: chosen.isWorkModel };
+  }
   const execution = await readWorkExecutionPreparation({ identity, appServerVersion: input.appServerVersion, workAccess: target.access, preferences }, signal);
   await fence(identity, signal);
   if (execution.status !== "ready") return unavailable("execution", ...execution.missingInputs);
@@ -181,5 +207,5 @@ export async function readWorkLocalSubmissionPreparation(target: WorkCaptureTarg
   if (before.authMethod !== after.authMethod || before.plan !== after.plan || after.plan !== target.orchestration.accountInfo.plan) throw changed();
   return { status: "ready", identity, target, preferences, selection: chosen.selection, model: mapped.model, reasoningEffort: mapped.reasoningEffort,
     ...(execution.settings.effectiveDetail === "STEPS_PROSE" ? { serviceName: "codex_work_desktop" as const } : {}),
-    execution, hostModels: models, modelCatalogFilterMissingInputs: missing };
+    execution, hostModels: models, modelCatalogFilterMissingInputs: missing, catalog, isWorkModel: chosen.isWorkModel };
 }

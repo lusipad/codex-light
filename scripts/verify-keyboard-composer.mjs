@@ -22,13 +22,13 @@ function mount(name, initial) {
   function load(file) {
     if (cache.has(file)) return cache.get(file);
     const exports = {}; cache.set(file, exports);
-    const code = ts.transpileModule(fs.readFileSync(file, "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React, esModuleInterop: true } }).outputText;
+    const code = ts.transpileModule(fs.readFileSync(file, "utf8"), { fileName: file, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React, esModuleInterop: true } }).outputText;
     vm.runInNewContext(code, { exports, document: doc, console, Promise,
       window: { addEventListener(type, fn) { if (type === "codex:keyboard-command") listeners.add(fn); }, removeEventListener(type, fn) { listeners.delete(fn); } },
       require: id => id === "react" ? react : id === "lucide-react" || id.endsWith("Icons") ? new Proxy({}, { get: (_, key) => String(key) }) :
         id.includes("ComposerAutocomplete") ? { getAutocompleteItems: () => [] } :
         id.includes("AppshotAttachment") ? { AppshotAttachment: () => null } :
-        id.includes("ModelSelector") || id.includes("AttachmentChip") ? {} :
+        id.includes("ModelSelector") || id.includes("WorkModelPicker") || id.includes("AttachmentChip") ? {} :
         id.endsWith("/bridge") ? { isTauriRuntime: () => false } : id.endsWith("/fsClient") ? { baseNameFsPath: p => p.split("/").at(-1) } :
         load(path.resolve(path.dirname(file), id + ".ts")),
     }, { filename: file });

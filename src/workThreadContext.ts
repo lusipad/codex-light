@@ -16,6 +16,8 @@ export interface WorkThreadContext {
   cwd: string | null;
   projectId: string | null | undefined;
   collaborationMode: WorkLocalCollaborationMode | null;
+  permissionProfileId?: string | null;
+  guardianApprovalEnabledByStatsig?: boolean;
 }
 export interface WorkThreadContextResult { context: WorkThreadContext | null; missingInputs: string[] }
 export interface WorkHeartbeatRegistry {
@@ -68,6 +70,10 @@ function readContext(scope: WorkThreadScope, response: unknown, previous?: WorkT
     cwd: string(cwd) ? cwd : null,
     projectId: typeof thread.projectId === "string" || thread.projectId === null ? thread.projectId : undefined,
     collaborationMode: collaboration(suppliedMode),
+    permissionProfileId: Object.hasOwn(raw!, "activePermissionProfile")
+      ? raw!.activePermissionProfile === null ? null : string(record(raw!.activePermissionProfile)?.id) ? record(raw!.activePermissionProfile)!.id as string : undefined
+      : previous?.permissionProfileId,
+    guardianApprovalEnabledByStatsig: previous?.guardianApprovalEnabledByStatsig,
   };
   const missingInputs = [];
   if (context.model === null) missingInputs.push("work-thread-model");

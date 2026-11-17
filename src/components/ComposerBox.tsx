@@ -1,6 +1,8 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { CircleX, Cloud, Lightbulb } from "lucide-react";
 import type { DraftAppshot } from "../appshotContext";
+import { WorkModelPicker, type WorkModelPickerProps } from "./WorkModelPicker";
+import { projectWorkModelPickerState } from "../workModelPickerState";
 import { AppshotAttachment } from "./AppshotAttachment";
 import {
   FolderIcon,
@@ -106,6 +108,7 @@ export interface ComposerBoxProps {
   selectionDisabledReason?: string | null;
   modelReadOnlyReason?: string | null;
   modelDisplayLabel?: string | null;
+  workModelPicker?: Omit<WorkModelPickerProps, "open" | "onOpenChange">;
   recentModelConfigurations?: ModelConfiguration[];
   onSelectServiceTier?: (tier: string | null) => void;
   onSelectConfiguration?: (configuration: ModelConfiguration, useDefault?: boolean) => void;
@@ -202,6 +205,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
   selectionError,
   selectionDisabledReason,
   modelReadOnlyReason,
+  workModelPicker,
   modelDisplayLabel,
   recentModelConfigurations,
   onSelectServiceTier,
@@ -543,7 +547,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
 
   const handleAutocompleteSelect = (item: AutocompleteItem) => {
     if (item.action === "open_model_picker") {
-      if (modelsLoading || selectionPending || selectionDisabledReason || modelReadOnlyReason) return;
+      if (workModelPicker ? workModelPicker.loading || workModelPicker.pending : modelsLoading || selectionPending || selectionDisabledReason || modelReadOnlyReason) return;
       onPromptInputChange("");
       setAutocompleteMode(null);
       setOpenMenu("model-recent");
@@ -605,7 +609,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
       let handled = true;
       switch (id) {
         case "composer-open-recent-models":
-          if (modelsLoading || selectionPending || selectionDisabledReason || modelReadOnlyReason) handled = false;
+          if (workModelPicker ? workModelPicker.loading || workModelPicker.pending : modelsLoading || selectionPending || selectionDisabledReason || modelReadOnlyReason) handled = false;
           else { setAutocompleteMode(null); setOpenMenu("model-recent"); }
           break;
         case "composer-submit": handled = submit(isStreaming && !cloudActive && followUpMode === "queue"); break;
@@ -614,6 +618,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
         case "composer-clear": onPromptInputChange(""); break;
         case "composer-add-files": onAttachFiles(); break;
         case "composer-toggle-fast-mode":
+          if (workModelPicker) { handled = false; break; }
           if (selectionPending || selectionDisabledReason || modelReadOnlyReason || !getModelEligibility(activeModel, modelEligibilityContext).available ||
               !getFastServiceTier(activeModel) || (!fastMode && !resolveServiceTier(activeModel, getFastServiceTier(activeModel)?.id, serviceTierAccess).available)) handled = false;
           else if (onSelectConfiguration && activeModel) onSelectConfiguration({ model: activeModel.model || activeModel.id,
@@ -624,6 +629,19 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
         case "composer-increase-reasoning-effort":
         case "composer-decrease-reasoning-effort":
         case "composer-cycle-reasoning-effort": {
+          if (workModelPicker) {
+            if (workModelPicker.loading || workModelPicker.pending || !workModelPicker.catalog || !workModelPicker.selection) { handled = false; break; }
+            const picker = projectWorkModelPickerState({ catalog: workModelPicker.catalog, selection: workModelPicker.selection,
+              versionPreference: workModelPicker.versionPreference });
+            const available = picker.powerOptions.filter(option => !option.disabled);
+            const index = available.findIndex(option => option.id === picker.selectedPowerId);
+            if (index < 0 || available.length < 2) { handled = false; break; }
+            const next = id === "composer-cycle-reasoning-effort" ? (index + 1) % available.length
+              : Math.max(0, Math.min(available.length - 1, index + (id === "composer-increase-reasoning-effort" ? 1 : -1)));
+            if (next === index) handled = false;
+            else void workModelPicker.onCommit(available[next].selection);
+            break;
+          }
           if (selectionPending || selectionDisabledReason || modelReadOnlyReason || efforts.length < 2) { handled = false; break; }
           const index = Math.max(0, efforts.findIndex(effort => effort.reasoningEffort === reasoningEffort));
           const next = id === "composer-cycle-reasoning-effort" ? (index + 1) % efforts.length
@@ -643,7 +661,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
   }, [cloudActive, models, selectedModelId, reasoningEffort, submissionDisabled, promptInput, attachedFiles, appshots,
     autocompleteMode, autocompleteItems, isStreaming, followUpMode, onSendMessage, onQueueMessage, onPromptInputChange,
     onAttachFiles, onToggleFastMode, onTogglePlanMode, onSelectReasoningEffort, modelsLoading,
-    selectionPending, selectionDisabledReason, modelReadOnlyReason, modelEligibilityContext, serviceTierAccess, fastMode, serviceTier, onSelectConfiguration]);
+    selectionPending, selectionDisabledReason, modelReadOnlyReason, modelEligibilityContext, serviceTierAccess, fastMode, serviceTier, onSelectConfiguration, workModelPicker]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
@@ -1230,7 +1248,9 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
           {/* Right: Combined Model+Effort Dropdown + Mic + Send */}
           <div className="composer-bottom-right">
             {!cloudActive && !isDictating && contextUsageIndicator}
-            {!cloudActive && <ModelSelector
+            {!cloudActive && (workModelPicker ? <WorkModelPicker {...workModelPicker}
+              open={openMenu === "model" || openMenu === "model-recent"}
+              onOpenChange={open => setOpenMenu(open ? "model" : null)} /> : <ModelSelector
               models={models}
               modelsLoading={modelsLoading}
               modelsError={modelsError}
@@ -1256,7 +1276,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
               onSelectModel={onSelectModel}
               onSelectReasoningEffort={onSelectReasoningEffort}
               onToggleFastMode={onToggleFastMode}
-            />}
+            />)}
 
             {/* Mic / Voice Dictation Button */}
             {!cloudActive && <button

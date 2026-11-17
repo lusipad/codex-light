@@ -39,7 +39,12 @@ export function parseWorkModelCatalog(value: unknown): WorkModelCatalog {
   const modelOption = (slug: string): WorkModelOption => ({ ...models.get(slug), slug, thinkingEffort: null, title: text(models.get(slug)?.title) });
   const categoryOption = (category: Record<string, unknown>): WorkModelOption | null => {
     const slug = text(category.default_model) ?? strings(category.supported_models)[0];
-    return slug ? { ...category, ...modelOption(slug), lane: typeof category.model_lane === "string" ? category.model_lane : undefined } : null;
+    if (!slug) return null;
+    const model = modelOption(slug);
+    return { ...category, ...model,
+      title: text(model.displayTitleOverride) ?? text(category.title) ?? text(category.human_category_short_name) ?? text(category.human_category_name) ?? model.title ?? null,
+      description: text(category.short_explainer) ?? text(category.tagline) ?? text(model.description),
+      lane: typeof category.model_lane === "string" ? category.model_lane : undefined };
   };
   const presets = (version: Record<string, unknown>): WorkModelOption[] => {
     const slugs = strings(version.slugs), raw = entries(version.intelligence_presets);

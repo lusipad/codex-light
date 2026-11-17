@@ -8,6 +8,13 @@ const m=load('src/workModelCatalog.ts');
 const model=(slug,extra={})=>({slug,title:slug,description:null,...extra});
 const base={models:[model('native-wm',{is_work_mode_model:true,default_thinking_effort:'extended',thinking_efforts:[{thinking_effort:'standard'},{thinking_effort:'extended'}]})],default_model_slug:'native-wm',categories:[],versions:[],internal_groups:[{model_ids:['native-wm']}],slider_settings:[{model_slug:'native-wm',thinking_effort:'standard'},{model_slug:'native-wm',thinking_effort:'extended'}]};
 const catalog=m.parseWorkModelCatalog(base);
+const categoryLabels=m.parseWorkModelCatalog({models:[model('labelled',{title:'wire model title',description:'wire model description'})],
+  categories:[{default_model:'labelled',title:'服务分类名',human_category_short_name:'短名',human_category_name:'全名',short_explainer:'服务说明'}]});
+assert.equal(categoryLabels.options[0].title,'服务分类名','TFzY.y category title must not be overwritten by model metadata');
+assert.equal(categoryLabels.options[0].description,'服务说明');
+for(const [fields,expected] of [[{human_category_short_name:'短名',human_category_name:'全名'},'短名'],[{human_category_name:'全名'},'全名'],[{},'wire model title']]) {
+  assert.equal(m.parseWorkModelCatalog({models:[model('labelled',{title:'wire model title'})],categories:[{default_model:'labelled',...fields}]}).options[0].title,expected);
+}
 assert.equal(catalog.defaultModelSlug,'native-wm');assert.equal(catalog.modelConfigBySlug['native-wm'].isWorkModeModel,true);
 const selected=m.selectWorkHomeModel(catalog,{homeSelection:null,lastSelection:null,plan:null});
 assert.equal(selected.selection.slug,'native-wm');assert.equal(selected.selection.thinkingEffort,'extended');assert.equal(selected.isWorkModel,true);

@@ -1,5 +1,14 @@
 # 实施日志（按轮次）
 
+## 2026-11-17 — Work 首页模型菜单与本机线程选择（R9）
+
+- 先核固定26.1111的merged首页、native线程、版本原子偏好及权限producer，16份清单共249段严格切片与资源hash/header通过，整包未重新hash。首页接simple/advanced/older及暂存/关闭提交、slider cancel；分类title优先级、独立版本先写与失败保旧按源处理。
+- 新typed owner home/version写口复用认证、取消、偏好投影与原子DesktopStateManager，不写普通config默认、last或模式。已有Work线程真实settings/update按每target320ms合并/串行，保实际ACK、既有mode及晚通知/账号/宿主/权限屏障；不将merged字段冒RPC字段。
+- 实际App接模型菜单、快捷键、发送pending/版本守卫与Chat不走普通CLI。首页权限cwd精确匹配Work项目；修复最后身份await权限race、普通项目A替Work项目B确认、Chat型号冒旧native配置。复审另先红后绿修版本字段顺序读回误判、确认期间目录退休仍保存、非Work目录被Work执行准备误阻。复用原组件/bridge，无新依赖；guardian/全权限弹层、Speed等条件分支继续保留未完成。
+- 全量1112 Rust库测试、最终40相关前端脚本、TSC、标准入口语法及diff检查退出0。旧UI测试补文件扩展名转译和实际回调夹具，不删除断言。未完整重跑非Fast/全部私有协议，无单独lint命令；不将登记新专项写成完整标准通过。
+- 最终release EXE/MSI/NSIS退出0，1077输入构建前后稳定。候选`dist-artifacts/work-picker-r9-20261117/CodexNative.exe` SHA256 `58238fea3fdc95ccf73fa997cfd282a2ec389de98335d33e45fac3a6144349d0`；完整范围与产物hash见`.ref/parity/16/work-picker-r9-20261117/verification-summary.json`。没有真实账户HTTP/模型turn/用户配置数据库写测试、原生GUI/物理键/IME或官方配对像素，score=null。
+- 本地阶段提交，不推送/发布/托管CI，不标整页或用户验收。下一先取证并接ChatGPT真实消息消费者、后台偏好同步和权限分支，再目录materializer/无项目分配与独立Work-cloud；14批总目标继续有效。源unsupported native update兼容回退及视觉差异仍在16.23A登记。
+
 ## 2026-11-17 — Work-local 冷恢复与当前owner heartbeat（R8）
 
 - 先核固定源旧thread/cwd/model的恢复、实际resume JSON及本地registry producer，补24+6精确锚点；原12清单共154段逐资源hash/header重验。恢复producer从首页输入解耦，不虚构target，不从home选项目或型号；null model保源语义。

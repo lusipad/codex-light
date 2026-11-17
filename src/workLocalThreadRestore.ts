@@ -79,5 +79,6 @@ export async function restoreWorkLocalThread(input: WorkLocalThreadRestoreInput,
     hostIdentity: input.hostIdentity, serviceName: context.serviceName,
   });
   if (!confirmed.context || confirmed.missingInputs.length) throw Error(`Work 恢复结果尚未确认：${confirmed.missingInputs.join("、")}`);
-  return { kind: "resumed", context: confirmed.context, response };
+  return { kind: "resumed", context: { ...confirmed.context,
+    guardianApprovalEnabledByStatsig: execution.defaultEnableFeatures.guardian_approval === true }, response };
 }

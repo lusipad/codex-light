@@ -39,6 +39,8 @@ export function mountProjectContext({ pending = null, membership = metadata, wor
     committedWorkDraftPolicy: { current: "fixture-draft-policy" },
     workPermissionRevision: { current: 0 },
     workActiveSend: { current: null },
+    workHomeModelCommitting: { current: false }, workHomeModelRevision: { current: 0 },
+    workModelRequest: { current: 0 }, workModelCommitting: { current: new Map() }, workHomePickerRef: { current: null },
     workThreadRestoreController: { current: null },
     loadingThread: false, workThreadRestoreState: null,
     committedWorkHost: { current: "fixture-host" },

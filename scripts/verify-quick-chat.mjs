@@ -69,6 +69,9 @@ visit(ast);
 let sends = 0, interrupts = 0, responses = 0;
 const context = { activeWorkContext: null, selectedModelId: "fixture-model", defaultModelSelected: false, reasoningEffort: "shared:reasoningEffort", fastMode: false,
   activeWorkRestore: null, loadingThread: false, models: "shared:models", modelsLoading: false, modelsError: null, refreshModels() {},
+  activeWorkModel: null, homeWorkPicker: undefined, workHomeModels: { isWorkModel: null }, workModelCommitting: { current: new Map() },
+  activeRoute: "thread", selectWorkThreadModel() {}, handleSelectComposerModel() {},
+  setReasoningEffort() {}, toggleFastMode() {},
   React, ComposerBox: "ComposerBox", ApprovalCenter: "ApprovalCenter", handleSendMessage: () => sends++, handleInterruptTurn: () => interrupts++, handleRespondServerRequest: () => responses++,
   appshotsEntry: { pendingIds: [] },
   keyboardState: { bindings: [{ command: "composer.submit", key: "Ctrl+Enter" }] }, queueBusy: false,
@@ -112,7 +115,8 @@ const workComposer = vm.runInNewContext(compile(`(${helpers.get("renderThreadCom
 assert.equal(workComposer.props.selectedModelId, "confirmed-work-model");
 assert.equal(workComposer.props.reasoningEffort, "high");
 assert.equal(workComposer.props.serviceTier, null); assert.equal(workComposer.props.fastMode, false);
-assert.ok(workComposer.props.modelReadOnlyReason);
+assert.equal(workComposer.props.modelReadOnlyReason, null);
+assert.equal(workComposer.props.onSelectConfiguration, context.selectWorkThreadModel, "native Work choices use the actual thread consumer");
 context.modelSelection.selectionPending = true;
 context.modelSelection.selectionDisabledReason = "ordinary model unavailable";
 context.sendStartPendingRef.current.clear();
@@ -124,4 +128,4 @@ let retries = 0; context.selectThread = id => { assert.equal(id, "work-1"); retr
 const blockedWork = vm.runInNewContext(compile(`(${helpers.get("renderThreadComposer")})`), context)();
 assert.equal(blockedWork.props.submissionDisabled, true); assert.equal(blockedWork.props.selectionError, "真实恢复错误");
 assert.equal(blockedWork.props.models.length, 0); blockedWork.props.onRefreshModels(); assert.equal(retries, 1);
-console.log("PASS shared Composer Work branch: confirmed thread model/effort, no ordinary speed substitution, explicit temporary read-only boundary");
+console.log("PASS shared Composer Work branch: confirmed thread model/effort, native selection callback, no ordinary speed substitution");
