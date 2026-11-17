@@ -32,6 +32,8 @@
 
 ### 当前起点与下一工作包
 
+最新产品入口已将全局注册与草稿上下文分离，普通切换保owner、取消等待旧flight，前端/原生代次与ACK/ABA均有定向回归；另有Work orchestration/lockdown实际reader（尚未挂页面）。首包后另修复被放弃render污染已提交owner，真实先红后绿；最终Fast438步骤、0失败及R2 EXE/MSI/NSIS通过，1026输入hash稳定。较早非Fast477步骤/35协议探针及11组专项的准确时点见[16.23A](antigravity/acceptance/16.23A.md)，不混作最终重跑。下一目标是Work真实消费者和原flight交接，模型/地点/项目按实际来源接；N.allowed后模式为Work的有界证明已闭合，不额外增加QA或完整Chat能力阻断，也不假设无项目或capture-ready等同send-ready。CI/push仍暂停，整页/全域未验收。
+
 最新 Work 输入已纠正为后端 fresh JWT 白名单，不再使用近似 planType；新增运行地点纯层（非reader/页面），15组Work、9组地点、1046完整Rust及前端/原生debug编译通过。CLI0.165声明并接受顶层serviceName创建私有空线程，但普通/Work的完整turns读取均遇同一未实现错误；不把元数据成功当历史通过。下一仍是 Work 模式/模型/真实地点reader、本地/云端消费者及原flight交接，输入基础不代表新聊天已可用。准确范围见[16.23A](antigravity/acceptance/16.23A.md)，CI/push暂停。
 
 本轮补齐独立 Work 许可纯投影与限定账号读取基础，并按官方未启动首页草稿可复用的规则修正同 scope 显式快照交接；12组前端、TSC及80项 Appshots Rust通过。读取器尚未挂入产品，Work 新聊天仍未接通。下一工作包是有效本地/云端分派、模式导航与同 flight 交接；不得拿普通本地 Composer 替代，也不清空既有首页草稿。准确范围见[16.23A](antigravity/acceptance/16.23A.md)，不将基础测试通过计作整页验收。

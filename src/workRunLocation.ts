@@ -68,6 +68,10 @@ const enterprisePlans = new Set(["business", "enterprise", "enterprise_cbp_usage
   "enterprise_cbp_view_only", "deprecated_enterprise", "hc", "hc_consumption", "finserv", "law", "ent26", "education", "edu_plus", "edu_pro",
   "edu", "deprecated_edu", "k12", "quorum"]);
 
+export function isWorkEnterprisePlan(plan: string | null): boolean {
+  return plan !== null && enterprisePlans.has(plan);
+}
+
 /** Complete-evidence adapter for the real home enforceAccess=true caller.
  * Insufficient evidence is our null state, not an official unavailable reason.
  * Deliberately requires the full reader envelope; it never substitutes N.allowed,
@@ -90,7 +94,7 @@ export function projectWorkRunLocation(input: WorkRunLocationEvidence): { state:
   return { state: projectWorkRunLocationCore({
     applyRolloutRules: input.gate246!, cloudAccess: input.workCloud!, localAccess: input.workLocal!, enforceAccess: true,
     cloudProjectUnavailableReason: input.project!.cloudUnavailableReason, lockedProject: input.project!.locked,
-    isEnterprise: enterprisePlans.has(input.plan!), isM2SyncEnabled,
+    isEnterprise: isWorkEnterprisePlan(input.plan!), isM2SyncEnabled,
     preferredLocation: input.persistedLocation === "local" || input.persistedLocation === "cloud" ? input.persistedLocation
       : isM2SyncEnabled && input.gate355 ? "cloud" : "local",
   }), missingInputs };

@@ -1,5 +1,13 @@
 # 实施日志（按轮次）
 
+## 2026-11-17 — Appshots owner/consumer 实际分离与 Work 能力读取
+
+- 先核固定版全局注册与本地订阅两生命周期。主窗生产hook改用原owner的串行context更新，普通切换/附件代次/路由flags不重注册，旧flight仍cancel+await；原代次事件、真实ACK、独立ticket和consumer token共同隔离早到/晚回/ABA。scope独立计数允许下降，focus不退役，同值不循环State，poison不被换consumer清除。
+- 旧hook5次configure及runtime未退休旧代次分别真实先红后绿；入口完整竞态与88项Rust专项通过。完整非Fast本地标准按日志477步骤/35真实CLI私有探针退出0；新增Work能力专项在登记前后单独11组通过、最终PS语法通过，不把新增478步说成一轮全跑。全库未重跑，准确范围见16.23A。
+- Work orchestration/lockdown只读reader已实现：三独立能力块、真实provider/profile、失败/缺字段状态、身份和JWT晚变更；复用既有读口与企业表，无新依赖。该reader尚未挂入Work页面，runtime仍不因此获得Work handoff许可。
+- 首包后真实复现被放弃render污染已提交owner；改用纯memo token、layout commit发布与独立卸载屏障，定向先红后绿。只读复审未发现确定P1/P2；隔离阶段夹具不等于真实StrictMode/dialog/native验收。最终Fast实计438步骤、0失败、退出0，包含新reader和修复后的入口；不把此前35探针记成最终重跑。
+- 修复后R2 EXE/MSI/NSIS构建退出0，1026输入hash稳定，最终候选及SHA见16.23A，首包仅保留中间证据；没有真实OS注册次数/物理键/原生GUI或配对像素验收。下一接Work真实模式/消费者与原flight交接，按实际capture-ready条件收敛，不把内部服务名字逐个复制当唯一实现；项目保持选择，模型与执行准备单独核。CI/push继续暂停，14批总目标不变。
+
 ## 2026-11-17 — Work JWT 输入纠偏与运行地点决策
 
 - 先核固定版 WS08、C4、Work-local 实际提交与协议字段。将 Work 读口从近似 planType 改为后端 fresh JWT 白名单投影；沿用取消/代次/真实路由，令牌不出后端。复审发现 legacy account_id 可能误放行，先红后绿仅新读口要求原 chatgpt_account_id；不扩大修改共享 parser。

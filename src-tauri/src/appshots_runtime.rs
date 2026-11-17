@@ -22,6 +22,7 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub(crate) struct RuntimeConfiguration {
     pub scope: Scope,
+    pub capture_generation: u64,
     pub origin: String,
     pub eligible: Option<bool>,
     pub capable: bool,
@@ -43,6 +44,7 @@ pub(crate) enum RuntimeEvent {
     State(State),
     Route {
         id: Uuid,
+        capture_generation: u64,
         scope: Scope,
         origin: String,
         route: Route,
@@ -50,6 +52,7 @@ pub(crate) enum RuntimeEvent {
     },
     CaptureReady {
         id: Uuid,
+        capture_generation: u64,
         scope: Scope,
         origin: String,
         metadata: TargetMetadata,
@@ -208,6 +211,7 @@ impl Drop for AppshotsRuntime {
 
 struct Flight {
     id: Uuid,
+    capture_generation: u64,
     generation: u64,
     epoch: u64,
     origin: String,
@@ -319,10 +323,19 @@ impl Owner {
                 || old.capable != config.capable
                 || old.hotkey != config.hotkey
         });
-        let context_changed = self
-            .config
-            .as_ref()
-            .is_some_and(|old| old.scope != config.scope || old.origin != config.origin);
+        let context_changed = self.config.as_ref().is_some_and(|old| {
+            old.scope != config.scope
+                || old.origin != config.origin
+                || old.capture_generation != config.capture_generation
+                || old
+                    .primary
+                    .as_ref()
+                    .map(|p| (p.is_primary, p.alive, p.can_accept, p.is_new_chat))
+                    != config
+                        .primary
+                        .as_ref()
+                        .map(|p| (p.is_primary, p.alive, p.can_accept, p.is_new_chat))
+        });
         let consumer_lost = self.flight.as_ref().is_some_and(|flight| {
             !config
                 .primary
@@ -381,6 +394,10 @@ impl Owner {
                 && f.scope == *scope
                 && f.generation == self.generation
                 && f.epoch == self.controller.state().input_epoch
+                && self
+                    .config
+                    .as_ref()
+                    .is_some_and(|config| config.capture_generation == f.capture_generation)
         })
     }
 
@@ -529,6 +546,7 @@ impl Owner {
         if let Some(flight) = self.flight.as_ref().filter(|f| f.route != Route::Skip) {
             (self.emit)(RuntimeEvent::Route {
                 id: flight.id,
+                capture_generation: flight.capture_generation,
                 scope: flight.scope.clone(),
                 origin: flight.origin.clone(),
                 route: flight.route,
@@ -626,6 +644,7 @@ impl Owner {
                 );
                 self.flight = Some(Flight {
                     id: start.id,
+                    capture_generation: config.capture_generation,
                     generation: self.generation,
                     epoch: input_epoch,
                     origin: config.origin.clone(),
@@ -735,6 +754,7 @@ impl Owner {
             {
                 (self.emit)(RuntimeEvent::CaptureReady {
                     id: flight.id,
+                    capture_generation: flight.capture_generation,
                     scope: flight.scope,
                     origin: flight.origin,
                     metadata: flight.metadata,
@@ -778,6 +798,7 @@ mod tests {
     fn config() -> RuntimeConfiguration {
         RuntimeConfiguration {
             scope: scope("original"),
+            capture_generation: 1,
             origin: "main".into(),
             eligible: Some(true),
             capable: true,
@@ -882,6 +903,7 @@ mod tests {
         );
         owner.flight = Some(Flight {
             id: start.id,
+            capture_generation: 1,
             generation: change.generation,
             epoch: 1,
             origin: "main".into(),
@@ -984,6 +1006,227 @@ mod tests {
             scope("new-composer"),
             reply
         )));
+    }
+
+    #[test]
+    fn ordinary_consumer_generation_and_routing_updates_retire_tasks_without_reregistering() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        for change in ["generation", "scope", "can-accept", "new-chat"] {
+            let (mut owner, id) = owner(Route::Current);
+            assert!(boolean(&mut owner, |reply| Command::Claim(
+                id,
+                "main".into(),
+                scope("original"),
+                reply
+            )));
+            let cancelled = Arc::new(AtomicBool::new(false));
+            let observed = cancelled.clone();
+            owner.flight.as_mut().unwrap().task = Some(CaptureTask::spawn(
+                id,
+                "main".into(),
+                scope("original"),
+                move |cancel| async move {
+                    let _ = cancel.await;
+                    observed.store(true, Ordering::SeqCst);
+                    Err(HostError::Cancelled)
+                },
+            ));
+            let generation = owner.generation;
+            let mut next = config();
+            match change {
+                "generation" => next.capture_generation += 1,
+                "scope" => next.scope = scope("next"),
+                "can-accept" => next.primary.as_mut().unwrap().can_accept = false,
+                _ => next.primary.as_mut().unwrap().is_new_chat = true,
+            }
+            owner.configure(next).unwrap();
+            let retired = owner.flight.is_none();
+            // The red implementation must also cancel/join its private mock
+            // task before assertion, rather than leaving background work alive.
+            if !retired {
+                owner.retire();
+            }
+            assert!(cancelled.load(Ordering::SeqCst));
+            assert!(
+                retired,
+                "consumer {change} changed but retained the old flight"
+            );
+            assert_eq!(owner.generation, generation);
+            assert_eq!(owner.controller.state().registration, Registration::Ready);
+        }
+    }
+
+    #[test]
+    fn focus_and_last_active_updates_keep_the_current_claim_and_registration() {
+        let (mut owner, id) = owner(Route::Current);
+        assert!(boolean(&mut owner, |reply| Command::Claim(
+            id,
+            "main".into(),
+            scope("original"),
+            reply
+        )));
+        let generation = owner.generation;
+        let mut next = config();
+        let primary = next.primary.as_mut().unwrap();
+        primary.focused = false;
+        primary.last_active_ms = Some(123);
+        owner.configure(next).unwrap();
+        assert!(owner
+            .flight
+            .as_ref()
+            .is_some_and(|flight| flight.id == id && flight.claimed));
+        assert_eq!(owner.generation, generation);
+        assert_eq!(owner.controller.state().registration, Registration::Ready);
+    }
+
+    #[test]
+    fn same_scope_generation_aba_cannot_restore_retired_claim_or_capture() {
+        let (mut owner, id) = owner(Route::Current);
+        assert!(boolean(&mut owner, |reply| Command::Claim(
+            id,
+            "main".into(),
+            scope("original"),
+            reply
+        )));
+        let generation = owner.generation;
+        let mut next = config();
+        next.capture_generation = 0;
+        owner.configure(next).unwrap();
+        owner.configure(config()).unwrap();
+        assert_eq!(owner.generation, generation);
+        assert!(!boolean(&mut owner, |reply| Command::Claim(
+            id,
+            "main".into(),
+            scope("original"),
+            reply
+        )));
+        assert!(!boolean(&mut owner, |reply| Command::Reserve(
+            id,
+            "main".into(),
+            scope("original"),
+            reply
+        )));
+        assert!(!boolean(&mut owner, |reply| Command::Commit(
+            id,
+            "main".into(),
+            scope("original"),
+            reply
+        )));
+    }
+
+    #[test]
+    fn route_and_completed_capture_emit_the_flights_original_capture_generation() {
+        let (mut owner, id) = owner(Route::Current);
+        let tags = Arc::new(Mutex::new(Vec::new()));
+        let emitted = tags.clone();
+        owner.emit = Box::new(move |event| match event {
+            RuntimeEvent::Route {
+                capture_generation, ..
+            } => emitted.lock().unwrap().push(("route", capture_generation)),
+            RuntimeEvent::CaptureReady {
+                capture_generation, ..
+            } => emitted
+                .lock()
+                .unwrap()
+                .push(("capture", capture_generation)),
+            _ => {}
+        });
+        owner.dispatch();
+        assert!(boolean(&mut owner, |reply| Command::Claim(
+            id,
+            "main".into(),
+            scope("original"),
+            reply
+        )));
+        assert!(boolean(&mut owner, |reply| Command::Reserve(
+            id,
+            "main".into(),
+            scope("original"),
+            reply
+        )));
+        assert!(boolean(&mut owner, |reply| Command::Commit(
+            id,
+            "main".into(),
+            scope("original"),
+            reply
+        )));
+        owner
+            .controller
+            .up(
+                owner.generation,
+                1,
+                Destination::Automatic,
+                owner.config.as_ref().unwrap().primary.as_ref(),
+                now_ms(),
+                false,
+            )
+            .unwrap();
+        assert!(owner
+            .controller
+            .start_capture(id, "main", &scope("original"))
+            .is_some());
+        owner.flight.as_mut().unwrap().task = Some(CaptureTask::spawn(
+            id,
+            "main".into(),
+            scope("original"),
+            |_| async move {
+                Ok(HostCapture {
+                    request_id: id.to_string(),
+                    png: Vec::new(),
+                    capture: crate::appshots_worker::WorkerCapture {
+                        width: 1,
+                        height: 1,
+                        text_status: crate::appshots_worker::TextStatus::Unavailable,
+                        text_source: crate::appshots_worker::TextSource::None,
+                        text: None,
+                    },
+                })
+            },
+        ));
+        // This is an injected completed result, not a native capture or image
+        // validity test. Await its task before invoking the real finish path.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !owner
+            .flight
+            .as_ref()
+            .unwrap()
+            .task
+            .as_ref()
+            .unwrap()
+            .is_finished()
+        {
+            assert!(Instant::now() < deadline);
+            thread::yield_now();
+        }
+        owner.finish();
+        assert_eq!(*tags.lock().unwrap(), vec![("route", 1), ("capture", 1)]);
+    }
+
+    #[test]
+    fn consumer_generation_update_preserves_cleanup_poison() {
+        let (mut owner, id) = owner(Route::Current);
+        owner.flight.as_mut().unwrap().task = Some(CaptureTask::spawn(
+            id,
+            "main".into(),
+            scope("original"),
+            |cancel| async move {
+                let _ = cancel.await;
+                Err(HostError::CleanupFailed)
+            },
+        ));
+        let mut next = config();
+        next.capture_generation += 1;
+        assert!(matches!(
+            owner.configure(next),
+            Err(RuntimeError::Cleanup(_))
+        ));
+        assert!(matches!(
+            owner.configure(config()),
+            Err(RuntimeError::Cleanup(_))
+        ));
+        assert!(owner.poison.is_some());
+        assert!(owner.flight.is_none());
+        assert!(owner.native.is_none());
     }
 
     #[test]

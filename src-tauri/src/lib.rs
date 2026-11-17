@@ -3033,6 +3033,7 @@ pub fn run() {
             appshots_bridge::appshots_hotkey_set,
             appshots_bridge::appshots_destination_refresh,
             appshots_bridge::appshots_entry_configure,
+            appshots_bridge::appshots_entry_context,
             appshots_bridge::appshots_entry_stop,
             appshots_bridge::appshots_entry_claim,
             appshots_bridge::appshots_entry_accept,

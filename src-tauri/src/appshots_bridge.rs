@@ -24,6 +24,7 @@ pub(crate) struct AppshotsBridge(Arc<Inner>);
 struct Inner {
     revision: AtomicU64,
     destination_revision: AtomicU64,
+    context_revision: AtomicU64,
     focused: AtomicBool,
     last_active_ms: AtomicU64,
     session: Mutex<Option<Session>>,
@@ -47,6 +48,16 @@ impl Inner {
             Err("应用快照目标读取已被新的入口或读取替代。".into())
         }
     }
+    fn context_ticket(&self) -> u64 {
+        self.context_revision.fetch_add(1, Ordering::SeqCst) + 1
+    }
+    fn context_current(&self, revision: u64, ticket: u64) -> Result<(), String> {
+        if self.current(revision) && self.context_revision.load(Ordering::SeqCst) == ticket {
+            Ok(())
+        } else {
+            Err("应用快照输入框更新已失效。".into())
+        }
+    }
 }
 
 struct Session {
@@ -62,6 +73,7 @@ pub(crate) struct ConfigureRequest {
     identity: ServiceIdentity,
     eligible: Option<bool>,
     composer: String,
+    capture_generation: u64,
     can_accept: bool,
     is_new_chat: bool,
 }
@@ -72,8 +84,151 @@ pub(crate) struct FlightRequest {
     identity: ServiceIdentity,
     id: String,
     composer: String,
+    capture_generation: u64,
     #[serde(default)]
     accept_intro: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ContextRequest {
+    identity: ServiceIdentity,
+    previous_composer: String,
+    previous_capture_generation: u64,
+    composer: String,
+    capture_generation: u64,
+    can_accept: bool,
+    is_new_chat: bool,
+}
+
+fn valid_context(composer: &str, capture_generation: u64) -> Result<(), String> {
+    if composer.is_empty() || composer.len() > 4096 || capture_generation > 9_007_199_254_740_991 {
+        Err("应用快照输入框作用域或附件代次无效。".into())
+    } else {
+        Ok(())
+    }
+}
+
+fn context_configuration(
+    old: &RuntimeConfiguration,
+    request: &ContextRequest,
+) -> Result<Option<RuntimeConfiguration>, String> {
+    valid_context(
+        &request.previous_composer,
+        request.previous_capture_generation,
+    )?;
+    valid_context(&request.composer, request.capture_generation)?;
+    if old.scope.account != account(&request.identity)
+        || old.scope.composer != request.previous_composer
+        || old.capture_generation != request.previous_capture_generation
+    {
+        return Err("应用快照输入框更新的原作用域已变化。".into());
+    }
+    let primary = old
+        .primary
+        .as_ref()
+        .filter(|primary| primary.is_primary && primary.alive)
+        .ok_or("应用快照主窗口不可用。")?;
+    if old.scope.composer == request.composer
+        && old.capture_generation == request.capture_generation
+        && primary.can_accept == request.can_accept
+        && primary.is_new_chat == request.is_new_chat
+    {
+        return Ok(None);
+    }
+    let mut candidate = old.clone();
+    candidate.scope.composer = request.composer.clone();
+    candidate.capture_generation = request.capture_generation;
+    let primary = candidate.primary.as_mut().unwrap();
+    primary.can_accept = request.can_accept;
+    primary.is_new_chat = request.is_new_chat;
+    Ok(Some(candidate))
+}
+
+fn context_payload(state: &EntryState, config: &RuntimeConfiguration) -> Value {
+    let mut value = state_payload(state);
+    value["composer"] = json!(config.scope.composer);
+    value["captureGeneration"] = json!(config.capture_generation);
+    value["canAccept"] = json!(config
+        .primary
+        .as_ref()
+        .is_some_and(|primary| primary.can_accept));
+    value["isNewChat"] = json!(config
+        .primary
+        .as_ref()
+        .is_some_and(|primary| primary.is_new_chat));
+    value
+}
+
+fn update_context(
+    session: &mut Session,
+    revision: u64,
+    request: &ContextRequest,
+) -> Result<Value, String> {
+    if session.revision != revision || session.identity != request.identity {
+        return Err("应用快照原入口已停止或账号已变化。".into());
+    }
+    if let Some(config) = context_configuration(&session.config, request)? {
+        session
+            .runtime
+            .configure(config.clone())
+            .map_err(|error| format!("应用快照输入框更新失败：{error:?}"))?;
+        session.config = config;
+    }
+    let current = session
+        .runtime
+        .state()
+        .map_err(|error| format!("应用快照入口不可用：{error:?}"))?;
+    Ok(context_payload(&current, &session.config))
+}
+
+#[tauri::command]
+pub(crate) async fn appshots_entry_context(
+    app: AppHandle,
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    bridge: State<'_, AppshotsBridge>,
+    request: ContextRequest,
+) -> Result<Value, String> {
+    require_main(&window)?;
+    valid_context(
+        &request.previous_composer,
+        request.previous_capture_generation,
+    )?;
+    valid_context(&request.composer, request.capture_generation)?;
+    let bridge = bridge.inner().clone();
+    let revision = bridge.0.revision.load(Ordering::SeqCst);
+    let ticket = bridge.0.context_ticket();
+    let identity = state
+        .chatgpt_service
+        .identity(&Uuid::new_v4().to_string(), |method, params| {
+            let state = &state;
+            let app = &app;
+            async move { state.app_server.call(app, method, Some(params)).await }
+        })
+        .await
+        .map_err(|_| "无法确认应用快照账号身份。")?;
+    if identity != request.identity {
+        return Err("应用快照账号已变化。".into());
+    }
+    bridge.0.context_current(revision, ticket)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let mut slot = bridge
+            .0
+            .session
+            .lock()
+            .map_err(|_| "应用快照管理线程不可用。")?;
+        settings_current(&bridge, &state, revision, &request.identity)?;
+        bridge.0.context_current(revision, ticket)?;
+        let session = slot.as_mut().ok_or("应用快照原入口已停止。")?;
+        let result = update_context(session, revision, &request)?;
+        settings_current(&bridge, &state, revision, &request.identity)?;
+        bridge.0.context_current(revision, ticket)?;
+        Ok(result)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[derive(Deserialize)]
@@ -529,9 +684,7 @@ pub(crate) async fn appshots_entry_configure(
     if !bridge.0.current(revision) {
         return Err("应用快照入口已失效。".into());
     }
-    if request.composer.is_empty() || request.composer.len() > 4096 {
-        return Err("应用快照输入框作用域无效。".into());
-    }
+    valid_context(&request.composer, request.capture_generation)?;
     let identity = state
         .chatgpt_service
         .identity(&Uuid::new_v4().to_string(), |method, params| {
@@ -583,10 +736,10 @@ pub(crate) async fn appshots_entry_configure(
                 || event_app.state::<AppState>().chatgpt_service.generation() != event_identity.generation { return; }
             let payload = match event {
                 RuntimeEvent::State(value) => state_payload(&value),
-                RuntimeEvent::Route { id, scope, route, metadata: target, .. } => json!({"type":"route","id":id.to_string(),
+                RuntimeEvent::Route { id, scope, route, capture_generation, metadata: target, .. } => json!({"type":"route","id":id.to_string(),"captureGeneration":capture_generation,
                     "account":scope.account,"composer":scope.composer,"route":match route {Route::Current=>"current",Route::NewChat=>"new-chat",Route::Skip=>"skip"},
                     "metadata":metadata(&target),"requestedAt":chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis,true)}),
-                RuntimeEvent::CaptureReady { id, scope, metadata: target, capture, .. } => json!({"type":"capture","id":id.to_string(),
+                RuntimeEvent::CaptureReady { id, scope, capture_generation, metadata: target, capture, .. } => json!({"type":"capture","id":id.to_string(),"captureGeneration":capture_generation,
                     "account":scope.account,"composer":scope.composer,"metadata":metadata(&target),
                     "imageDataUrl":format!("data:image/png;base64,{}",STANDARD.encode(capture.png)),"axTree":capture.capture.text}),
                 RuntimeEvent::Retired { id } => json!({"type":"retired","id":id.to_string()}),
@@ -596,6 +749,7 @@ pub(crate) async fn appshots_entry_configure(
         }).map_err(|e| format!("无法启动应用快照管理线程：{e}"))?;
         let config = RuntimeConfiguration {
             scope: Scope {account:account(&identity),composer:request.composer},origin:"main".into(),
+            capture_generation:request.capture_generation,
             eligible:match (request.eligible,requirements_allowed(&requirements)) {
                 (Some(false),_) | (_,Some(false)) => Some(false),
                 (Some(true),Some(true)) => Some(true),
@@ -608,7 +762,7 @@ pub(crate) async fn appshots_entry_configure(
         };
         let result = runtime.configure(config.clone()).map_err(|e| format!("应用快照注册失败：{e:?}"))?;
         *slot = Some(Session {revision,identity,runtime,config});
-        let mut payload = state_payload(&result);
+        let mut payload = context_payload(&result, &slot.as_ref().unwrap().config);
         payload["introAccepted"] = json!(intro_accepted);
         Ok(payload)
     }).await.map_err(|e| e.to_string())?
@@ -647,6 +801,7 @@ async fn flight_action(
         let state = app.state::<AppState>();
         if session.identity != request.identity
             || session.config.scope.composer != request.composer
+            || session.config.capture_generation != request.capture_generation
             || session.revision != bridge.0.revision.load(Ordering::SeqCst)
             || state.chatgpt_service.generation() != request.identity.generation
         {
@@ -759,8 +914,160 @@ mod tests {
     use super::*;
     use crate::appshots_entry::{Destination, Hotkey};
 
+    fn context_identity() -> ServiceIdentity {
+        ServiceIdentity {
+            account_id: "context-account".into(),
+            user_id: "context-user".into(),
+            generation: 4,
+        }
+    }
+    fn context_request(
+        previous: &str,
+        previous_generation: u64,
+        composer: &str,
+        generation: u64,
+    ) -> ContextRequest {
+        ContextRequest {
+            identity: context_identity(),
+            previous_composer: previous.into(),
+            previous_capture_generation: previous_generation,
+            composer: composer.into(),
+            capture_generation: generation,
+            can_accept: true,
+            is_new_chat: false,
+        }
+    }
+    fn context_session() -> (Session, Arc<std::sync::atomic::AtomicUsize>) {
+        let states = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let emitted = states.clone();
+        let runtime = AppshotsRuntime::start(std::env::temp_dir(), move |event| {
+            if matches!(event, RuntimeEvent::State(_)) {
+                emitted.fetch_add(1, Ordering::SeqCst);
+            }
+        })
+        .unwrap();
+        let mut config = settings_config();
+        config.eligible = Some(false); // no OS registration in this bridge fixture
+        config.scope = Scope {
+            account: account(&context_identity()),
+            composer: "home".into(),
+        };
+        config.capture_generation = 10;
+        config.primary = Some(PrimaryWindow {
+            is_primary: true,
+            alive: true,
+            can_accept: true,
+            focused: false,
+            last_active_ms: Some(1),
+            is_new_chat: false,
+        });
+        runtime.configure(config.clone()).unwrap();
+        states.store(0, Ordering::SeqCst);
+        (
+            Session {
+                revision: 7,
+                identity: context_identity(),
+                runtime,
+                config,
+            },
+            states,
+        )
+    }
+
+    #[test]
+    fn context_ack_same_fields_is_read_only_and_account_scoped_counters_can_decrease() {
+        let (mut session, states) = context_session();
+        let unchanged =
+            update_context(&mut session, 7, &context_request("home", 10, "home", 10)).unwrap();
+        assert_eq!(states.load(Ordering::SeqCst), 0);
+        assert_eq!(unchanged["composer"], "home");
+        assert_eq!(unchanged["captureGeneration"], 10);
+        assert_eq!(unchanged["canAccept"], true);
+        assert_eq!(unchanged["isNewChat"], false);
+        let original_hotkey = session.config.hotkey;
+        update_context(&mut session, 7, &context_request("home", 10, "thread:B", 0)).unwrap();
+        update_context(&mut session, 7, &context_request("thread:B", 0, "home", 10)).unwrap();
+        assert_eq!(states.load(Ordering::SeqCst), 2);
+        assert_eq!(session.config.hotkey, original_hotkey);
+        assert_eq!(session.config.eligible, Some(false));
+        assert_eq!(session.config.destination, Destination::Automatic);
+        assert_eq!(session.config.work_allowed, None);
+        assert_eq!(session.revision, 7);
+        session.runtime.shutdown().unwrap();
+    }
+
+    #[test]
+    fn context_wrong_previous_identity_lifecycle_and_unsafe_generation_are_rejected() {
+        let (mut session, states) = context_session();
+        for mismatch in [
+            "previous-scope",
+            "previous-generation",
+            "account",
+            "user",
+            "service-generation",
+            "unsafe-generation",
+            "lifecycle",
+        ] {
+            let mut request = context_request("home", 10, "thread:new", 0);
+            match mismatch {
+                "previous-scope" => request.previous_composer = "other".into(),
+                "previous-generation" => request.previous_capture_generation = 9,
+                "account" => request.identity.account_id = "other-account".into(),
+                "user" => request.identity.user_id = "other-user".into(),
+                "service-generation" => request.identity.generation += 1,
+                "unsafe-generation" => request.capture_generation = 9_007_199_254_740_992,
+                _ => {}
+            }
+            assert!(update_context(
+                &mut session,
+                if mismatch == "lifecycle" { 8 } else { 7 },
+                &request
+            )
+            .is_err());
+        }
+        assert_eq!(states.load(Ordering::SeqCst), 0);
+        assert_eq!(session.config.scope.composer, "home");
+        assert_eq!(session.config.capture_generation, 10);
+        session.runtime.shutdown().unwrap();
+        assert!(update_context(
+            &mut session,
+            7,
+            &context_request("home", 10, "thread:new", 0)
+        )
+        .is_err());
+        assert_eq!(session.config.scope.composer, "home");
+    }
+
+    #[tokio::test]
+    async fn context_ticket_rejects_late_aba_and_stopped_owner_without_changing_lifecycle() {
+        let inner = Inner::default();
+        let revision = inner.ticket();
+        let old = inner.context_ticket();
+        let (send, pending) = tokio::sync::oneshot::channel();
+        let newer = inner.context_ticket();
+        inner.context_current(revision, newer).unwrap();
+        let back_to_same_context = inner.context_ticket();
+        inner
+            .context_current(revision, back_to_same_context)
+            .unwrap();
+        send.send(()).unwrap();
+        pending.await.unwrap();
+        assert!(inner.context_current(revision, old).is_err());
+        assert!(inner.context_current(revision, newer).is_err());
+        assert!(inner.current(revision));
+        inner.destination_ticket();
+        assert!(inner
+            .context_current(revision, back_to_same_context)
+            .is_ok());
+        inner.ticket(); // stop/configure invalidates every context update
+        assert!(inner
+            .context_current(revision, back_to_same_context)
+            .is_err());
+    }
+
     fn settings_config() -> RuntimeConfiguration {
         RuntimeConfiguration {
+            capture_generation: 1,
             scope: Scope {
                 account: "fixture".into(),
                 composer: "home".into(),
@@ -1089,6 +1396,7 @@ mod tests {
             generation: 4,
         };
         let config = RuntimeConfiguration {
+            capture_generation: 1,
             scope: Scope {
                 account: account(&identity),
                 composer: "home".into(),

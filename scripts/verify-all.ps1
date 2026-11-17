@@ -202,6 +202,7 @@ try {
   Invoke-Step "Appshot account and local host qualification" { node scripts/verify-appshots-access.mjs }
   Invoke-Step "Independent Work access decision tables and identity-bound reader" { node scripts/verify-work-access.mjs }
   Invoke-Step "Work run-location evidence and routing decisions" { node scripts/verify-work-run-location.mjs }
+  Invoke-Step "Work cloud-orchestration capability and lockdown reader" { node scripts/verify-work-orchestration-access.mjs }
   Invoke-Step "Appshot native entry and scoped consumer lifecycle" { node scripts/verify-appshots-entry.mjs }
   Invoke-Step "Appshot pending Composer presentation" { node scripts/verify-appshots-pending-presentation.mjs }
   Invoke-Step "Appshots settings versioned client" { node scripts/verify-appshots-settings-client.mjs }
