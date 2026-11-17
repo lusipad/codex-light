@@ -46,6 +46,7 @@ function mount(overrides = {}) {
     reviewStartPendingRef: { current: false }, reviewContextRef: { current: { cwd: "D:/repo", route: "review", generation: 0 } },
     navigationRequestRef: { current: 0 }, threadRequestRef: { current: 0 }, activeThreadIdRef: { current: null },
     threadsRef: { current: [] }, workspaceHintsRef: { current: {} }, attachmentIdentityKey: value => value.toLowerCase(),
+    readWorkThreadProvenance: async () => null, workThreadContexts: { current: new Map() },
     isStreaming: false,
     permissionMode: "ask", sessionAllowNetwork: false, fastMode: false, models: [],
     modelSupportsFast: () => false, reasoningEffort: "medium", reasoningSummary: "auto",
@@ -95,6 +96,32 @@ function mount(overrides = {}) {
   return { context, calls, notices, selected, tracker, start: vm.runInNewContext(js, context) };
 }
 export { mount as mountReviewContext };
+for (const evidence of ["provenance", "receipt", "originator", "unreadable"]) {
+  const view = mount({ activeThreadIdRef: { current: "work-review" }, threadsRef: { current: [{ id: "work-review", cwd: "D:/repo",
+    ...(evidence === "originator" ? { originator: "codex_work_desktop" } : {}) }] } });
+  if (evidence === "provenance") view.context.readWorkThreadProvenance = async () => ({ threadId: "work-review" });
+  if (evidence === "receipt") view.context.workThreadContexts.current.set("work-review", {});
+  if (evidence === "unreadable") view.context.readWorkThreadProvenance = async () => { throw Error("source unavailable"); };
+  const pending = view.start({ kind: "uncommitted" }); await flush();
+  assert.equal(view.calls.length, 0, `Work ${evidence} must not send an ordinary inline review`);
+  await pending; assert.equal(view.context.reviewBusy, false); assert.ok(view.notices.length);
+}
+console.log("PASS known/unknown Work inline review sources block before settings/model requests; ordinary/detached reviews retain existing behavior");
+{
+  const sourceRead = defer();
+  const view = mount({ activeThreadIdRef: { current: "ordinary" }, threadsRef: { current: [{ id: "ordinary", cwd: "D:/repo" }] },
+    readWorkThreadProvenance: () => sourceRead.promise });
+  const pending = view.start({ kind: "uncommitted" });
+  view.context.navigationRequestRef.current++; sourceRead.resolve(null); await pending;
+  assert.equal(view.calls.length, 0, "late provenance read cannot start a review after navigation");
+}
+{
+  const view = mount({ activeThreadIdRef: { current: "work-source" }, threadsRef: { current: [{ id: "work-source", cwd: "D:/repo", originator: "codex_work_desktop" }] },
+    readWorkThreadProvenance: () => assert.fail("detached review must not use the old Work thread") });
+  const pending = view.start({ kind: "uncommitted", delivery: "detached" }); await flush();
+  assert.equal(view.calls[0].name, "thread/start"); view.calls[0].resolve({ thread: { id: "separate-review" } }); await flush();
+  assert.equal(view.calls[1].params.threadId, "separate-review"); view.calls[1].resolve({ turn: { id: "separate-review-turn" } }); await pending;
+}
 {
   const calls = [], updates = [], context = {
     useCallback: f => f, activeWorkspace: { path: "A" }, gitRefreshRequestRef: { current: 0 },

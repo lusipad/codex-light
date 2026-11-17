@@ -67,7 +67,8 @@ const helpers = new Map();
 function visit(node) { if (ts.isVariableDeclaration(node) && ["renderThreadComposer", "renderApprovals"].includes(node.name.getText(ast))) helpers.set(node.name.getText(ast), node.initializer.getText(ast)); ts.forEachChild(node, visit); }
 visit(ast);
 let sends = 0, interrupts = 0, responses = 0;
-const context = { React, ComposerBox: "ComposerBox", ApprovalCenter: "ApprovalCenter", handleSendMessage: () => sends++, handleInterruptTurn: () => interrupts++, handleRespondServerRequest: () => responses++,
+const context = { activeWorkContext: null, selectedModelId: "fixture-model", defaultModelSelected: false, reasoningEffort: "shared:reasoningEffort", fastMode: false,
+  React, ComposerBox: "ComposerBox", ApprovalCenter: "ApprovalCenter", handleSendMessage: () => sends++, handleInterruptTurn: () => interrupts++, handleRespondServerRequest: () => responses++,
   appshotsEntry: { pendingIds: [] },
   keyboardState: { bindings: [{ command: "composer.submit", key: "Ctrl+Enter" }] }, queueBusy: false,
   modelSelection: { selectionPending: false, selectionDisabledReason: "", serviceTier: "swift", recentModelConfigurations: [] },
@@ -105,3 +106,10 @@ const popout = app.slice(app.lastIndexOf("<HotkeyWindow"), app.indexOf("<MiniPet
 assert.ok(!popout.includes("selectThread("), "main continuation must not re-resume the already active thread");
 assert.ok(!read("src/main.tsx").includes("<HotkeyWindow"), "legacy utility URL must initialize the real App transport/state owner");
 console.log("PASS QC02/QC03 production composer/approval callbacks and shared state; singleton placement and same-thread main continuation");
+context.activeWorkContext = { model: "confirmed-work-model", reasoningEffort: "high" };
+const workComposer = vm.runInNewContext(compile(`(${helpers.get("renderThreadComposer")})`), context)();
+assert.equal(workComposer.props.selectedModelId, "confirmed-work-model");
+assert.equal(workComposer.props.reasoningEffort, "high");
+assert.equal(workComposer.props.serviceTier, null); assert.equal(workComposer.props.fastMode, false);
+assert.ok(workComposer.props.modelReadOnlyReason);
+console.log("PASS shared Composer Work branch: confirmed thread model/effort, no ordinary speed substitution, explicit temporary read-only boundary");

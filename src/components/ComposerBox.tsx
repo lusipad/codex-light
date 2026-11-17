@@ -104,6 +104,8 @@ export interface ComposerBoxProps {
   selectionPending?: boolean;
   selectionError?: string | null;
   selectionDisabledReason?: string | null;
+  modelReadOnlyReason?: string | null;
+  modelDisplayLabel?: string | null;
   recentModelConfigurations?: ModelConfiguration[];
   onSelectServiceTier?: (tier: string | null) => void;
   onSelectConfiguration?: (configuration: ModelConfiguration, useDefault?: boolean) => void;
@@ -199,6 +201,8 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
   selectionPending,
   selectionError,
   selectionDisabledReason,
+  modelReadOnlyReason,
+  modelDisplayLabel,
   recentModelConfigurations,
   onSelectServiceTier,
   onSelectConfiguration,
@@ -539,7 +543,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
 
   const handleAutocompleteSelect = (item: AutocompleteItem) => {
     if (item.action === "open_model_picker") {
-      if (modelsLoading || selectionPending || selectionDisabledReason) return;
+      if (modelsLoading || selectionPending || selectionDisabledReason || modelReadOnlyReason) return;
       onPromptInputChange("");
       setAutocompleteMode(null);
       setOpenMenu("model-recent");
@@ -601,7 +605,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
       let handled = true;
       switch (id) {
         case "composer-open-recent-models":
-          if (modelsLoading || selectionPending || selectionDisabledReason) handled = false;
+          if (modelsLoading || selectionPending || selectionDisabledReason || modelReadOnlyReason) handled = false;
           else { setAutocompleteMode(null); setOpenMenu("model-recent"); }
           break;
         case "composer-submit": handled = submit(isStreaming && !cloudActive && followUpMode === "queue"); break;
@@ -610,7 +614,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
         case "composer-clear": onPromptInputChange(""); break;
         case "composer-add-files": onAttachFiles(); break;
         case "composer-toggle-fast-mode":
-          if (selectionPending || selectionDisabledReason || !getModelEligibility(activeModel, modelEligibilityContext).available ||
+          if (selectionPending || selectionDisabledReason || modelReadOnlyReason || !getModelEligibility(activeModel, modelEligibilityContext).available ||
               !getFastServiceTier(activeModel) || (!fastMode && !resolveServiceTier(activeModel, getFastServiceTier(activeModel)?.id, serviceTierAccess).available)) handled = false;
           else if (onSelectConfiguration && activeModel) onSelectConfiguration({ model: activeModel.model || activeModel.id,
             reasoningEffort, serviceTier: fastMode ? null : getFastServiceTier(activeModel)!.id });
@@ -620,7 +624,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
         case "composer-increase-reasoning-effort":
         case "composer-decrease-reasoning-effort":
         case "composer-cycle-reasoning-effort": {
-          if (selectionPending || selectionDisabledReason || efforts.length < 2) { handled = false; break; }
+          if (selectionPending || selectionDisabledReason || modelReadOnlyReason || efforts.length < 2) { handled = false; break; }
           const index = Math.max(0, efforts.findIndex(effort => effort.reasoningEffort === reasoningEffort));
           const next = id === "composer-cycle-reasoning-effort" ? (index + 1) % efforts.length
             : Math.max(0, Math.min(efforts.length - 1, index + (id === "composer-increase-reasoning-effort" ? 1 : -1)));
@@ -639,7 +643,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
   }, [cloudActive, models, selectedModelId, reasoningEffort, submissionDisabled, promptInput, attachedFiles, appshots,
     autocompleteMode, autocompleteItems, isStreaming, followUpMode, onSendMessage, onQueueMessage, onPromptInputChange,
     onAttachFiles, onToggleFastMode, onTogglePlanMode, onSelectReasoningEffort, modelsLoading,
-    selectionPending, selectionDisabledReason, modelEligibilityContext, serviceTierAccess, fastMode, serviceTier, onSelectConfiguration]);
+    selectionPending, selectionDisabledReason, modelReadOnlyReason, modelEligibilityContext, serviceTierAccess, fastMode, serviceTier, onSelectConfiguration]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
@@ -1232,6 +1236,8 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
               modelsError={modelsError}
               onRefreshModels={onRefreshModels}
               selectedModelId={selectedModelId}
+              readOnlyReason={modelReadOnlyReason}
+              displayLabel={modelDisplayLabel}
               defaultModelSelected={defaultModelSelected}
               reasoningEffort={reasoningEffort}
               fastMode={fastMode}

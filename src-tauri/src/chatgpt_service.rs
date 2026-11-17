@@ -60,6 +60,7 @@ pub use cloud_publish::CloudPublishRequest;
 pub use cloud_drafts::{CloudConfigRequest, CloudConfigResponse, CloudDraftRequest, CloudDraftResponse};
 mod durable_models;
 mod work_models;
+mod work_custom_instructions;
 mod work_project;
 pub use durable_models::{DurableModelsRequest, DurableModelsResponse};
 mod durable_thread;
@@ -109,6 +110,7 @@ pub enum ServiceOperation {
     GptsWorkspaceSettings,
     CloudWorkspaceSettings,
     WorkModels,
+    WorkCustomInstructions,
     WorkProject,
     GptsDiscovery,
     GptsCategory,
@@ -1782,7 +1784,8 @@ impl ChatgptService {
         let archive_tasks = matches!(request.operation, ServiceOperation::ArchiveCloudTasks);
         let gpts_read = matches!(request.operation, ServiceOperation::GptsDiscovery | ServiceOperation::GptsCategory | ServiceOperation::GptsSearch | ServiceOperation::GptsDetail | ServiceOperation::GptsAbout | ServiceOperation::GptsWorkspaceSettings);
         let sites_read = matches!(request.operation, ServiceOperation::SitesEntryAccess | ServiceOperation::SitesPinned | ServiceOperation::SitesPin | ServiceOperation::SitesAccess | ServiceOperation::SitesList | ServiceOperation::SitesShared | ServiceOperation::SitesDetail | ServiceOperation::SitesEnvironment | ServiceOperation::SitesDomains | ServiceOperation::SitesShareAccess | ServiceOperation::SitesPreferredLiveUrl | ServiceOperation::SitesWorkspaceSettings | ServiceOperation::SitesUsers | ServiceOperation::SitesGroups | ServiceOperation::SitesTeams);
-        let cloud_read = matches!(request.operation, ServiceOperation::CloudWorkspaceSettings | ServiceOperation::WorkModels | ServiceOperation::WorkProject);
+        let cloud_read = matches!(request.operation, ServiceOperation::CloudWorkspaceSettings | ServiceOperation::WorkModels | ServiceOperation::WorkProject | ServiceOperation::WorkCustomInstructions);
+        let work_custom_instructions = matches!(request.operation, ServiceOperation::WorkCustomInstructions);
         let repository_read = cloud_repositories::repository_read(&request.operation);
         let images_read = matches!(request.operation, ServiceOperation::ImagesInit | ServiceOperation::ImagesStyles | ServiceOperation::ImagesRecent | ServiceOperation::ImagesWorkspaceSettings);
         // Order snapshots before the session lock, not when a possibly late response arrives.
@@ -1793,6 +1796,7 @@ impl ChatgptService {
             return Err(failure("account_changed", "Authenticated identity changed"));
         }
         let result = tokio::select! {
+            _ = async { if work_custom_instructions {tokio::time::sleep(Duration::from_secs(5)).await} else {std::future::pending::<()>().await} } => Err(failure("timeout", "Work custom instructions read timed out")),
             _ = cancelled(&registration.cancelled) => Err(failure("cancelled", "Service request cancelled")),
             result = async {
                 let mut session = self.session.lock().await;
@@ -1807,6 +1811,12 @@ impl ChatgptService {
                     }
                     let sent_integrity = session.integrity.clone();
                     let mut http_request = build_http_request(&route, credentials, sent_integrity.as_deref(), &request.profile)?;
+                    if work_custom_instructions {
+                        http_request.headers.insert("originator".into(), "Codex Desktop".into());
+                        http_request.headers.insert("X-OpenAI-Attach-Auth".into(), "1".into());
+                        http_request.headers.insert("Content-Type".into(), "application/json".into());
+                        http_request.headers.remove("x-oai-mcp-form-version");
+                    }
                     if matches!(request.operation, ServiceOperation::LibraryImages | ServiceOperation::LibrarySuggested) {
                         http_request.method = HttpMethod::Post;
                         http_request.headers.insert("Content-Type".into(), "application/json".into());
@@ -1854,7 +1864,7 @@ impl ChatgptService {
                     }
                     if sites_read || cloud_read || gpts_read || images_read || archive_tasks || matches!(request.operation, ServiceOperation::LibraryDirectoryPath | ServiceOperation::LibrarySuggested) { self.check_share_current(&request.expected_identity, &registration)?; }
                     apply_integrity(&mut session.integrity, sent_integrity.as_deref(), response.headers.get("x-oai-is-update"));
-                    if archive_tasks && account_instructions_ip_denied(&response) {
+                    if (archive_tasks || work_custom_instructions) && account_instructions_ip_denied(&response) {
                         // A workspace IP refusal is not NDn's unavailable/unsupported source.
                         return Err(ServiceError { code:"ip_not_authorized", message:"Current IP address is not authorized for this workspace", status:Some(401) });
                     }
@@ -1869,6 +1879,7 @@ impl ChatgptService {
                             status:response.status, body:Value::Null, headers:BTreeMap::new(), assets:None, gpt_assets:None,site_assets:None });
                     }
                     let mut decoded = decode_response(response, request.request_id.clone(), request.expected_identity.clone())?;
+                    if work_custom_instructions { decoded.body = work_custom_instructions::body(decoded.body)?; }
                     if matches!(request.operation, ServiceOperation::WorkProject) { decoded.body = work_project::body(decoded.body)?; }
                     if repository_read {
                         decoded.body = cloud_repositories::repository_body(&request.operation, &decoded.body)?;
@@ -2697,6 +2708,7 @@ fn encode_segment(segment: &str) -> ServiceResult<String> {
 }
 
 fn resolve_read_route(operation: &ServiceOperation, params: &Value, identity: &ServiceIdentity) -> ServiceResult<String> {
+    if matches!(operation, ServiceOperation::WorkCustomInstructions) { return work_custom_instructions::route(params); }
     if matches!(operation, ServiceOperation::WorkModels) { return work_models::route(params); }
     if matches!(operation, ServiceOperation::WorkProject) { return work_project::route(params); }
     if matches!(operation, ServiceOperation::ImagesWorkspaceSettings | ServiceOperation::GptsWorkspaceSettings | ServiceOperation::CloudWorkspaceSettings | ServiceOperation::SitesWorkspaceSettings) {
@@ -2842,7 +2854,7 @@ fn resolve_route(operation: &ServiceOperation, params: &Value) -> ServiceResult<
         ServiceOperation::SitesEntryAccess => ("/backend-api/codex/sites/access".into(), &[]),
         ServiceOperation::SitesPinned => ("/backend-api/websites/pinned".into(), &["limit", "query", "after"]),
         ServiceOperation::SitesAccess => ("/backend-api/websites/access".into(), &[]),
-        ServiceOperation::WorkProject | ServiceOperation::WorkModels | ServiceOperation::ImagesWorkspaceSettings | ServiceOperation::GptsWorkspaceSettings | ServiceOperation::CloudWorkspaceSettings | ServiceOperation::SitesWorkspaceSettings | ServiceOperation::SitesUsers | ServiceOperation::SitesGroups | ServiceOperation::SitesTeams | ServiceOperation::ShareAccounts | ServiceOperation::ShareUsers | ServiceOperation::ShareGroups => {
+        ServiceOperation::WorkCustomInstructions | ServiceOperation::WorkProject | ServiceOperation::WorkModels | ServiceOperation::ImagesWorkspaceSettings | ServiceOperation::GptsWorkspaceSettings | ServiceOperation::CloudWorkspaceSettings | ServiceOperation::SitesWorkspaceSettings | ServiceOperation::SitesUsers | ServiceOperation::SitesGroups | ServiceOperation::SitesTeams | ServiceOperation::ShareAccounts | ServiceOperation::ShareUsers | ServiceOperation::ShareGroups => {
             return Err(failure("invalid_request", "Identity-bound share route required"));
         }
         ServiceOperation::GithubRepository => {

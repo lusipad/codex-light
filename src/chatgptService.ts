@@ -25,7 +25,7 @@ export type ServiceOperation = "library_favorites" | "library_nodes" | "library_
   "images_recent" | "images_workspace_settings" | "images_asset" | "gpts_discovery" | "gpts_category" | "gpts_search" | "gpts_detail" | "gpts_about" | "gpts_avatar" | "gpts_workspace_settings" | "cloud_workspace_settings" | "work_models" | "work_project" |
   "sites_entry_access" | "sites_pinned" | "sites_pin" | "sites_asset" | "sites_access" | "sites_list" | "sites_shared" | "sites_detail" | "sites_environment" | "sites_domains" | "sites_share_access" | "sites_preferred_live_url" | "sites_workspace_settings" | "sites_users" | "sites_groups" | "sites_teams" | "github_repository" |
   "cloud_github_default" | "cloud_github_enterprise" | "cloud_github_links" | "cloud_github_installations" | "cloud_github_repositories" |
-  "share_accounts" | "share_users" | "share_groups" | "wham_usage" | "account_me" | "profile_identity" | "profile_page";
+  "share_accounts" | "share_users" | "share_groups" | "wham_usage" | "account_me" | "profile_identity" | "profile_page" | "work_custom_instructions";
 
 function browserProfile() {
   const browser = (navigator as Navigator & { userAgentData?: {
@@ -88,6 +88,22 @@ export async function readWorkAccountInfo(identity: ServiceIdentity, signal: Abo
 export interface WorkHomeState {
   identity: ServiceIdentity;
   preferences: Record<string, unknown>;
+}
+
+export interface WorkCustomInstructions {
+  customInstructions: string | null;
+  communicationGuide: string;
+  communicationGuideEnabled: boolean;
+}
+
+export async function readWorkCustomInstructions(identity: ServiceIdentity, signal: AbortSignal): Promise<WorkCustomInstructions> {
+  const body = await readChatgptService("work_custom_instructions", {}, identity, signal);
+  if (body === null || typeof body !== "object" || Array.isArray(body)) throw Error("账户指令响应无效。");
+  const value = body as Record<string, unknown>;
+  if (value.custom_instructions !== null && typeof value.custom_instructions !== "string"
+    || typeof value.communication_guide !== "string" || typeof value.communication_guide_enabled !== "boolean") throw Error("账户指令响应无效。");
+  return { customInstructions: value.custom_instructions as string | null,
+    communicationGuide: value.communication_guide, communicationGuideEnabled: value.communication_guide_enabled };
 }
 
 export async function readWorkHomeState(identity: ServiceIdentity, signal: AbortSignal): Promise<WorkHomeState> {

@@ -102,6 +102,7 @@ function queueFixture({ invalid = null, settingsFailure = false, response = { tu
     executionIdentityRef: { current: "fixture-account" },
     threadExecutionRevisionsRef: { current: new Map() },
     threadsRef: { current: [{ id: "queue-thread", cwd: "D:/repo" }] }, workspaceHintsRef: { current: {} },
+    readWorkThreadProvenance: async () => null, workThreadContexts: { current: new Map() },
     resolveExecutionContext: async () => ({ policy: execution.resolvePresetExecutionPolicy("ask", ["D:/repo"]) }),
     captureThreadExecutionPolicy: (_id, response) => execution.readThreadExecutionPolicy(response),
     activeThreadIdRef: { current: "queue-thread" }, followupQueue: [{ id: "queued-item", text: "queued text" }],
@@ -124,6 +125,34 @@ function queueFixture({ invalid = null, settingsFailure = false, response = { tu
     },
   };
   return { context, calls, recorded, ledger, finishSettings, start: vm.runInNewContext(callback("handleStartServerQueue"), context) };
+}
+for (const evidence of ["provenance", "receipt", "originator", "unreadable"]) for (const streaming of [false, true]) {
+  const view = queueFixture(); view.context.isStreaming = streaming;
+  if (evidence === "provenance") view.context.readWorkThreadProvenance = async () => ({ threadId: "queue-thread" });
+  if (evidence === "receipt") view.context.workThreadContexts.current.set("queue-thread", {});
+  if (evidence === "originator") view.context.threadsRef.current[0].originator = "codex_work_desktop";
+  if (evidence === "unreadable") view.context.readWorkThreadProvenance = async () => { throw Error("source unavailable"); };
+  const pending = view.start(); await flush();
+  assert.equal(view.calls.some(([method]) => ["thread/settings/update", "thread/resume", "thread/queue/start", "steer"].includes(method)), false,
+    `Work ${evidence}/${streaming} must not reach ordinary queue submission`);
+  await pending; assert.equal(view.context.queueMutationThreadsRef.current.size, 0);
+}
+console.log("PASS Work queue start/steer sources reject before ordinary settings or dispatch, including unreadable provenance");
+for (const retirement of ["thread", "owner"]) {
+  const view = queueFixture(); let complete;
+  view.context.readWorkThreadProvenance = () => new Promise(resolve => { complete = resolve; });
+  const pending = view.start();
+  if (retirement === "thread") view.context.activeThreadIdRef.current = "other-thread";
+  else view.context.executionIdentityRef.current = "other-owner";
+  complete(null); await pending; assert.equal(view.calls.length, 0, `queue provenance await respects ${retirement} retirement`);
+}
+{
+  const view = queueFixture(); let complete;
+  const sourceRead = new Promise(resolve => { complete = resolve; }); view.context.readWorkThreadProvenance = () => sourceRead;
+  const first = view.start(), duplicate = view.start(); complete(null); await flush();
+  assert.equal(view.calls.filter(([method]) => method === "thread/settings/update").length, 1, "ordinary duplicate clicks recheck the queue lock after source await");
+  view.finishSettings(); await Promise.all([first, duplicate]);
+  assert.equal(view.calls.filter(([method]) => method === "thread/queue/start").length, 1);
 }
 {
   const view = queueFixture(); const pending = view.start();

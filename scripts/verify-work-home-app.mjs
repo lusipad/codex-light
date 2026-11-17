@@ -107,10 +107,7 @@ for (const location of ["cloud", null]) {
   f.controller.abort(); f.state.pending.resolve(); assert.equal(await operation, false);
   assert.equal(f.state.session.target, null);
 }
-// Execute the actual leading send guards: Work must not fall through to the
-// ordinary Codex sender while project-aware instructions are unimplemented.
-const firstGuards = send.body.statements.slice(0, 3).map(node => node.getText(tree)).join("\n");
-const blocked = { activeRouteRef: { current: "home" }, workHomeSession: { key: "capture-id" }, showAppToast: () => { blocked.notified = true; }, homeCloud: { active: false } };
-vm.runInNewContext(compile(`var send = async () => { ${firstGuards} throw Error("ordinary sender reached"); };`), blocked);
-await blocked.send(); assert.equal(blocked.notified, true);
+// The previously unconditional send block is now replaced by the real sender.
+// Its actual callback tests cover preparation failures and ordinary fallthrough.
+await import("./verify-work-local-send.mjs");
 console.log("PASS actual App Work callbacks: explicit owner mode ACK, fresh post-guard target, home draft/project/generation preservation, no early focus, deferred approve/cancel/abort, stale owner/navigation/generation fences, cloud blocked, late target rejection and no ordinary-send fallback. Isolated VM; no real account, GUI or model calls.");

@@ -148,6 +148,8 @@ export interface ThreadReadState {
 
 export interface ThreadSummary {
   id: string;
+    originator?: string | null;
+    reasoningEffort?: string | null;
   name?: string | null;
   preview?: string | null;
   cwd?: string | null;

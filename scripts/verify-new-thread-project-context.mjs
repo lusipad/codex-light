@@ -35,6 +35,12 @@ export function mountProjectContext({ pending = null, membership = metadata, wor
   const calls = [], state = { promptInput: "hello", turns: [] };
   const context = {
     workHomeSession: null,
+    committedWorkOwner: { current: "fixture-account" }, workSendPreparing: { current: null },
+    committedWorkDraftPolicy: { current: "fixture-draft-policy" },
+    workPermissionRevision: { current: 0 },
+    workActiveSend: { current: null },
+    workThreadContexts: { current: new Map() }, workHostIdentity: "fixture-host",
+    readWorkThreadProvenance: async () => null,
     ...module.exports, ...executionModule.exports, ...appshotModule.exports, promptInput: "hello", attachedFiles: [], isStreaming: false,
     appshots: [], appshotScope: `fixture-account:thread:${threadId}`, modelAccountIdentity: "fixture-account",
     appshotCaptureGenerations: { current: {} },
@@ -113,9 +119,10 @@ export function mountProjectContext({ pending = null, membership = metadata, wor
   context.captureThreadExecutionPolicy = vm.runInContext(callback("captureThreadExecutionPolicy"), sandbox);
   context.resolveExecutionContext = vm.runInContext(callback("resolveExecutionContext"), sandbox);
   const send = vm.runInContext(callback("handleSendMessage"), sandbox);
+  const interrupt = vm.runInContext(callback("handleInterruptTurn"), sandbox);
   context.handleSendMessage = send;
   const goal = vm.runInContext(callback("handleSaveGoal"), sandbox);
-  return { send, goal, context, state, calls };
+  return { send, goal, interrupt, context, state, calls };
 }
 
 {

@@ -21,6 +21,10 @@ const callback = name => {
   assert.ok(found, name);
   return ts.transpileModule(`(${found})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 };
+const until = async predicate => {
+  for (let index = 0; index < 40 && !predicate(); index++) await Promise.resolve();
+  assert.ok(predicate(), "production asynchronous queue stage must actually be reached");
+};
 let queue = [], draft = "hello", toasts = [], calls = [], rpc;
 const appshotClears = [];
 const ctx = vm.createContext({
@@ -29,6 +33,7 @@ const ctx = vm.createContext({
   appshotCaptureGenerations: { current: {} },
   clearSentAppshots: (scope, snapshot) => appshotClears.push({ scope, snapshot }),
   activeThreadId: "a", activeThreadIdRef: { current: "a" }, activeTurnIdRef: { current: "turn-a" }, threadRequestRef: { current: 1 },
+  readWorkThreadProvenance: async () => null, workThreadContexts: { current: new Map() }, threadsRef: { current: [] },
   queueListRequestRef: { current: 0 }, queueMutationThreadsRef: { current: new Set() }, steeredQueueItemsRef: { current: new Map() },
   followupQueue: queue, promptInput: draft, attachedFiles: [], isStreaming: false,
   persistThreadAttachments: async () => ({ errors: [] }),
@@ -88,7 +93,7 @@ console.log("PASS queue steer preserves input, cleans original and blocks resend
 calls = []; draft = "old"; ctx.promptInput = draft;
 rpc = () => new Promise(resolve => { release = resolve; });
 const enqueuing = ctx.handleEnqueueFollowup();
-await ctx.handleEnqueueFollowup(); assert.equal(calls.length, 1, "duplicate enqueue blocked");
+await ctx.handleEnqueueFollowup(); await until(() => calls.length === 1); assert.equal(calls.length, 1, "duplicate enqueue blocked");
 draft = "new"; rpc = async () => ({ data: [] });
 release({ queuedSubmission: { id: "created", clientUserMessageId: "client", input: [] } }); await enqueuing;
 assert.equal(draft, "new", "newly typed draft must survive old enqueue completion");
@@ -180,8 +185,10 @@ ctx.persistThreadAttachments = async () => ({ errors: [{ message: "save refused"
 await ctx.handleEnqueueFollowup();
 assert.equal(calls.length, 0, "attachment persistence failure cannot enqueue partial input");
 assert.equal(draft, "keep"); assert.equal(ctx.attachedFiles.length, 1);
-ctx.persistThreadAttachments = () => new Promise(resolve => { release = resolve; });
+let attachmentSaveEntered = false;
+ctx.persistThreadAttachments = () => new Promise(resolve => { attachmentSaveEntered = true; release = resolve; });
 const saving = ctx.handleEnqueueFollowup();
+await until(() => attachmentSaveEntered);
 ctx.activeThreadIdRef.current = "b"; ctx.threadRequestRef.current++;
 release({ errors: [] }); await saving;
 assert.equal(calls.length, 0, "switching thread while saving must not dispatch into old thread");
@@ -192,7 +199,7 @@ calls = []; await ctx.handleEnqueueFollowup();
 assert.equal(draft, "keep"); assert.equal(ctx.attachedFiles.length, 1, "queue error preserves original attachments");
 rpc = () => new Promise(resolve => { release = resolve; });
 const sendingFiles = ctx.handleEnqueueFollowup();
-await Promise.resolve();
+await until(() => calls.some(([method]) => method === "thread/queue/add"));
 const newFiles = [image]; ctx.attachedFiles = newFiles; draft = "new draft";
 rpc = async () => ({ data: [] }); release({ queuedSubmission: { id: "old-files" } }); await sendingFiles;
 assert.equal(ctx.attachedFiles, newFiles, "late enqueue cannot clear new attachments");

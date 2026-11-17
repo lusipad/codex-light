@@ -227,6 +227,7 @@ for (const branch of ["first-resume", "history-fallback", "identity-change"]) {
   let finish;
   Object.assign(view.context, {
     followupQueue: [{ id: "entry", text: "queued" }], queueMutationThreadsRef: { current: new Set() }, steeredQueueItemsRef: { current: new Map() },
+    readWorkThreadProvenance: async () => null, workThreadContexts: { current: new Map() },
     setQueueMutationVersion() {}, handleSteerTurn() {}, setFollowupQueue() {}, refreshThreadQueue: async () => {},
     callAppServer: async (method, params) => {
       view.calls.push([method, plain(params)]);
@@ -261,6 +262,7 @@ for (const branch of ["first-resume", "history-fallback", "identity-change"]) {
     return ts.transpileModule(`(${found.getText(ast)})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   }
   const context = { modelAccountIdentity: "account", activeThreadId: "first", activeWorkspace: { path: "D:/repo" },
+    workPermissionRevision: { current: 0 },
     pendingProjectlessRef: { current: false }, permissionModes: {} };
   const readScope = () => {
     context.homeWorkspace = context.pendingProjectlessRef.current ? null : context.activeWorkspace;

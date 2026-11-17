@@ -42,6 +42,8 @@ export interface ModelSelectorProps {
   selectionPending?: boolean;
   selectionError?: string | null;
   selectionDisabledReason?: string | null;
+  readOnlyReason?: string | null;
+  displayLabel?: string | null;
   recentModelConfigurations?: ModelConfiguration[];
   recentOpen?: boolean;
   onSelectServiceTier?: (tier: string | null) => void;
@@ -68,12 +70,15 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   selectionPending = false,
   selectionError,
   selectionDisabledReason,
+  readOnlyReason,
+  displayLabel,
   recentModelConfigurations = [],
   recentOpen = false,
   onSelectServiceTier,
   onSelectConfiguration,
 }) => {
   const [view, setView] = useState<"compact" | "models">("compact");
+  useEffect(() => { if (readOnlyReason && open) onOpenChange(false); }, [readOnlyReason, open, onOpenChange]);
   const [query, setQuery] = useState("");
   const menuId = useId();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -90,7 +95,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
     || supportedEfforts.find((effort) => effort.reasoningEffort === activeModel?.defaultReasoningEffort)
     || supportedEfforts[0];
   const activeEffortIndex = Math.max(0, supportedEfforts.indexOf(activeEffort));
-  const unavailable = selectionPending || modelsLoading;
+  const unavailable = selectionPending || modelsLoading || !!readOnlyReason;
   const activeDisabledReason = selectionDisabledReason || getModelEligibility(activeModel, modelEligibilityContext).reason;
   const tierOptions = activeModel ? [{ id: null, name: "标准" }, ...getModelServiceTiers(activeModel)
     .filter(tier => tier.id !== "default").map(tier => ({ id: tier.id, name: tier.name || tier.id }))] : [];
@@ -232,10 +237,11 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
         aria-busy={selectionPending}
+        disabled={!!readOnlyReason}
         onClick={() => (open ? closeMenu() : onOpenChange(true))}
-        title={activeDisabledReason || "选择模型、推理强度与生成速度"}
+        title={readOnlyReason || activeDisabledReason || "选择模型、推理强度与生成速度"}
       >
-        <span>{formatModelName(activeModel)}{activeEffort ? ` ${EFFORT_LABELS[activeEffort.reasoningEffort] || activeEffort.reasoningEffort}` : ""}</span>
+        <span>{displayLabel ?? <>{formatModelName(activeModel)}{activeEffort ? ` ${EFFORT_LABELS[activeEffort.reasoningEffort] || activeEffort.reasoningEffort}` : ""}</>}</span>
         <ChevronDownIcon size={11} />
       </button>
       {!open && selectionError && <span role="alert">{selectionError}</span>}

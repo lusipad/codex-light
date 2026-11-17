@@ -13,7 +13,7 @@ export interface WorkExecutionInput {
 }
 export type WorkExecutionPreparation = { status: "not-ready"; identity: ServiceIdentity; missingInputs: string[] }
   | { status: "ready"; identity: ServiceIdentity; assignmentIdentity: WorkAssignmentIdentity; values: RecordValue;
-    assignmentFeatures: RecordValue; defaultEnableFeatures: RecordValue; policy: "preference" | "coding" | "everyday";
+    assignmentFeatures: RecordValue; defaultEnableFeatures: RecordValue; unifiedCustomInstructionsEnabled: boolean | null; policy: "preference" | "coding" | "everyday";
     settings: { configuredDetail: string | null; effectiveDetail: "STEPS_PROSE" | "STEPS_COMMANDS"; defaultModeRequestUserInput: boolean };
     missingInputs: [] };
 const record = (value: unknown): value is RecordValue => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -70,6 +70,16 @@ function decoder(raw: unknown, identity: ServiceIdentity) {
     if (typeof value !== "boolean") throw Error("bootstrap-gate");
     return value;
   };
+  const unifiedCustomInstructionsGate = () => {
+    try {
+      const entry = lookup(body.feature_gates, "codex-unified-custom-instructions");
+      // A loaded complete SDK snapshot has no result for an absent name; the
+      // source _makeFeatureGate evaluates result?.value === true to false.
+      if (!entry) return false;
+      const value = entry[compact ? "v" : "value"];
+      return typeof value === "boolean" ? value : null;
+    } catch { return null; }
+  };
   const rawConfig = (key: string, layer = false) => {
     const entry = lookup(layer ? body.layer_configs : body.dynamic_configs, key);
     if (!entry) return { value: {} as RecordValue, participating: false, active: undefined as boolean | undefined };
@@ -86,7 +96,7 @@ function decoder(raw: unknown, identity: ServiceIdentity) {
     const source = rawConfig(key, layer).value, value = record(source) ? source[field] : undefined;
     return value == null || fallback !== null && (Array.isArray(fallback) ? !Array.isArray(value) : typeof value !== typeof fallback || Array.isArray(value)) ? fallback : value as T;
   };
-  return { assignmentIdentity, gate, config, rawConfig, parameter };
+  return { assignmentIdentity, gate, config, rawConfig, parameter, unifiedCustomInstructionsGate };
 }
 
 type Version = { parts: number[]; prerelease: (string | number)[] };
@@ -210,7 +220,7 @@ export function projectWorkExecutionPreparation(input: WorkExecutionInput): Work
       permissionRefresh: gate("4226282475"), personality: config("1867347216").value, instructions: config("1574672957", true).value };
     return { status: "ready", identity: { ...identity }, assignmentIdentity, values, assignmentFeatures,
       defaultEnableFeatures: !defaultModeRequestUserInput && assignmentFeatures.default_mode_request_user_input === true
-        ? { ...assignmentFeatures, default_mode_request_user_input: false } : { ...assignmentFeatures }, policy,
+        ? { ...assignmentFeatures, default_mode_request_user_input: false } : { ...assignmentFeatures }, unifiedCustomInstructionsEnabled: decoded.unifiedCustomInstructionsGate(), policy,
       settings: { configuredDetail, effectiveDetail, defaultModeRequestUserInput }, missingInputs: [] };
   } catch (error) { return notReady(identity, error instanceof Error ? error.message : "bootstrap"); }
 }

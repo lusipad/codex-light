@@ -130,3 +130,21 @@ const autocomplete = composer.find(n => n.props.items?.[0]?.action === "open_mod
 autocomplete.props.onSelect(autocomplete.props.items[0]); composer.render();
 assert.ok(composer.find(n => n.props.recentOpen === true && n.props.open === true));
 console.log("PASS MC-B07/11 Composer: /model and focused keyboard command open independent recent model view; pending entry blocked");
+
+picker.props.readOnlyReason = "Confirmed Work model is read-only";
+picker.props.displayLabel = "Work model pending";
+picker.props.open = true; picker.render();
+assert.equal(picker.props.open, false, "a stale ordinary picker closes when entering Work read-only mode");
+picker.render();
+const readonlyTrigger = picker.find(n => n.props["aria-haspopup"] === "menu");
+assert.equal(readonlyTrigger.props.disabled, true); assert.equal(text(readonlyTrigger), "Work model pending");
+assert.equal(readonlyTrigger.props.title, picker.props.readOnlyReason);
+composer.props.modelReadOnlyReason = "Confirmed Work model is read-only";
+composer.render(); composer.focus(n => n.tag === "textarea");
+assert.equal(composer.command("composer-open-recent-models"), false);
+assert.equal(composer.command("composer-toggle-fast-mode"), false);
+assert.equal(composer.command("composer-increase-reasoning-effort"), false);
+const beforeReadonly = composer.find(n => n.props.items?.[0]?.action === "open_model_picker");
+if (beforeReadonly) beforeReadonly.props.onSelect(beforeReadonly.props.items[0]);
+assert.ok(composer.find(n => n.props.readOnlyReason === composer.props.modelReadOnlyReason), "the actual model child receives the boundary");
+console.log("PASS Work temporary read-only model boundary: real label, stale popup closure, disabled trigger, keyboard/effort/speed entry guards; no substitute ordinary model write");

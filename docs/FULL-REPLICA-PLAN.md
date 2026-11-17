@@ -32,7 +32,7 @@
 
 ### 当前起点与下一工作包
 
-当前已将独立Work资格、显式owner模式保存、真实导航确认、项目/地点读取及计划transition/原flight交接接入实际App；capture-ready不等待模型或执行准备。Work资格失败不阻断current捕获，已有首页草稿保留；云端发送中不能误进入Work等待态。完整1083 Rust及27前端专项通过，准确构建与验证边界见[16.23A](antigravity/acceptance/16.23A.md)。下一工作包接真实项目指令assembler、账户自定义指令缓存及工具标志，再绑定Work-local模型/执行准备、首条与后续发送、保存恢复；当前Work消息明确保留草稿并阻断普通发送回退。Work-cloud仍按共享消费者独立接，不能用现homeCloud代替。legacy完整迁移/live SDK等保分项差异，标准/协议本阶段未全重跑。CI/push暂停，真实账号、原生交互、像素及整页/14批目标均未验收。
+当前已将Work资格、owner模式/导航与原flight交接接入实际App；新补账户缓存/源指令及“已选本机项目”首条和已加载跟进请求、服务确认模型、创建重试与来源保留，capture-ready仍独立。1090 Rust库及29前端专项通过，协议实测仅隔离空线程，准确候选及边界见[16.23A](antigravity/acceptance/16.23A.md)。下一工作包接冷恢复的真实重新组装消费者、g-p materialization/目录分配和完整Work模型选择与持久化；当前未知恢复/未准备目录及未接排队、目标、会话内审查明确拒绝普通回退，完整picker临时只读，不算对应功能或视觉完成。Work-cloud仍按共享消费者独立接，不能用现homeCloud代替。legacy完整迁移/live SDK/工具链等保分项差异，标准/协议本阶段未全重跑。CI/push暂停，真实账号/模型、原生交互、像素及整页/14批目标均未验收。
 
 最新 Work 输入已纠正为后端 fresh JWT 白名单，不再使用近似 planType；新增运行地点纯层（非reader/页面），15组Work、9组地点、1046完整Rust及前端/原生debug编译通过。CLI0.165声明并接受顶层serviceName创建私有空线程，但普通/Work的完整turns读取均遇同一未实现错误；不把元数据成功当历史通过。下一仍是 Work 模式/模型/真实地点reader、本地/云端消费者及原flight交接，输入基础不代表新聊天已可用。准确范围见[16.23A](antigravity/acceptance/16.23A.md)，CI/push暂停。
 

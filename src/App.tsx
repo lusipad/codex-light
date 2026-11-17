@@ -27,6 +27,11 @@ import { readLocalWorkAccess } from "./workAccess";
 import { parseWorkHomePreferences } from "./workHomePreferences";
 import { readWorkCaptureTarget, type WorkCaptureTarget } from "./workHomePreparation";
 import { awaitGuardedNavigation } from "./navigationContinuation";
+import { useWorkCustomInstructions } from "./useWorkCustomInstructions";
+import { readWorkLocalMessagePreparation, type WorkLocalMessagePreparation } from "./workLocalMessagePreparation";
+import { buildWorkLocalThreadRequest, buildWorkLocalTurnRequest } from "./workLocalRequest";
+import { captureWorkThreadContext, projectWorkThreadFollowUp, workThreadContextMatches, type WorkThreadContext } from "./workThreadContext";
+import { assertWorkThreadOwner, persistWorkThreadProvenance, readWorkThreadProvenance } from "./workThreadProvenance";
 import { AppshotAttachment, UserImageAttachments, dispatchImagePreviewZoom } from "./components/AppshotAttachment";
 import { fileChangeApprovalForItem, pendingRequestKey, requestThreadId, requestsForThread, type RequestResponseState } from "./approvalRequests";
 import { copyTextToClipboard } from "./clipboard";
@@ -1137,7 +1142,11 @@ export const App: React.FC = () => {
   const [permissionModes, setPermissionModes] = useState<Record<string, "custom" | "ask" | "auto" | "full">>({});
   const threadExecutionPoliciesRef = useRef(new Map<string, ExecutionPolicy>());
   const threadExecutionRevisionsRef = useRef(new Map<string, number>());
-  const [useWorktree, setUseWorktree] = useState<boolean>(false);
+  const workPermissionRevision = useRef(0);
+  const [useWorktree, setUseWorktreeState] = useState<boolean>(false);
+  const setUseWorktree = useCallback((value: React.SetStateAction<boolean>) => {
+    workPermissionRevision.current++; setUseWorktreeState(value);
+  }, []);
   const [planMode, setPlanMode] = useState<boolean>(false);
   const planModeRef = useRef<boolean>(false);
   planModeRef.current = planMode;
@@ -1257,7 +1266,10 @@ export const App: React.FC = () => {
   const [sessionTopP, setSessionTopP] = useState<number>(1.0);
   const [sessionMaxTokens, setSessionMaxTokens] = useState<number>(8192);
   const [sessionWebSearch, setSessionWebSearch] = useState<"disabled" | "cached" | "live">("cached");
-  const [sessionAllowNetwork, setSessionAllowNetwork] = useState<boolean>(true);
+  const [sessionAllowNetwork, setSessionAllowNetworkState] = useState<boolean>(true);
+  const setSessionAllowNetwork = useCallback((value: React.SetStateAction<boolean>) => {
+    workPermissionRevision.current++; setSessionAllowNetworkState(value);
+  }, []);
   const [sessionVerbosity, setSessionVerbosity] = useState<"low" | "medium" | "high">("medium");
 
   const [petVisible, setPetVisible] = useState<boolean>(false);
@@ -1453,11 +1465,14 @@ export const App: React.FC = () => {
   const skillTrialContextRef = useRef({ key: skillTrialContextKey });
   if (skillTrialContextRef.current.key !== skillTrialContextKey) skillTrialContextRef.current = { key: skillTrialContextKey };
   const skillTrialRequestRef = useRef(0);
-  const createWorktree = useCallback(async (options: WorktreeCreationOptions) => {
+  const createWorktree = useCallback(async (options: WorktreeCreationOptions, parentSignal?: AbortSignal) => {
     const controller = new AbortController();
+    const cancel = () => controller.abort();
+    if (parentSignal?.aborted) controller.abort();
+    parentSignal?.addEventListener("abort", cancel, { once: true });
     worktreeCreationControllersRef.current.set(controller, activeRouteRef.current);
     try { return await createEnvironmentWorktree(options, controller.signal); }
-    finally { worktreeCreationControllersRef.current.delete(controller); }
+    finally { parentSignal?.removeEventListener("abort", cancel); worktreeCreationControllersRef.current.delete(controller); }
   }, []);
   useEffect(() => () => {
     for (const controller of worktreeCreationControllersRef.current.keys()) controller.abort();
@@ -1502,6 +1517,30 @@ export const App: React.FC = () => {
   const committedWorkOwner = useRef(modelAccountIdentity);
   useLayoutEffect(() => { committedWorkOwner.current = modelAccountIdentity; }, [modelAccountIdentity]);
   const workNewChatFactory = useRef<((id: string, identity: ServiceIdentity, signal: AbortSignal) => Promise<AppshotWorkPlan>) | null>(null);
+  const workCustomInstructions = useWorkCustomInstructions();
+  const [workMessagePreparation, setWorkMessagePreparation] = useState<WorkLocalMessagePreparation | null>(null);
+  const [workMessageError, setWorkMessageError] = useState<string | null>(null);
+  const [workMessageRevision, setWorkMessageRevision] = useState(0);
+  const workThreadContexts = useRef(new Map<string, WorkThreadContext>());
+  const workSendPreparing = useRef<AbortController | null>(null);
+  const workActiveSend = useRef<AbortController | null>(null);
+  const workHostIdentity = JSON.stringify([appServerStatus.binaryPath, appServerStatus.appServerVersion]);
+  useLayoutEffect(() => () => { workActiveSend.current?.abort(); workActiveSend.current = null; },
+    [modelAccountIdentity, workHostIdentity, appServerStatus.connected]);
+  useLayoutEffect(() => () => { workSendPreparing.current?.abort(); workSendPreparing.current = null; },
+    [modelAccountIdentity, workHostIdentity, activeThreadId, activeRoute, appshotCaptureGenerations.current[appshotScope] ?? 0]);
+  useLayoutEffect(() => { workThreadContexts.current.clear(); }, [modelAccountIdentity, appServerStatus.connected, workHostIdentity]);
+  useLayoutEffect(() => { workCustomInstructions.update(null, false); }, [workCustomInstructions, modelAccountIdentity]);
+  useEffect(() => {
+    setWorkMessagePreparation(null); setWorkMessageError(null);
+    const target = workHomeSession?.target;
+    if (!target || target.location !== "local") return;
+    const controller = new AbortController();
+    void readWorkLocalMessagePreparation(target, { appServerVersion: appServerStatus.appServerVersion }, workCustomInstructions, controller.signal)
+      .then(prepared => { if (!controller.signal.aborted) setWorkMessagePreparation(prepared); })
+      .catch(error => { if (!controller.signal.aborted) setWorkMessageError(String(error)); });
+    return () => controller.abort();
+  }, [workHomeSession?.key, workHomeSession?.target, appServerStatus.appServerVersion, workCustomInstructions, workMessageRevision]);
   const readAppshotWorkAccess = useCallback(async (identity: ServiceIdentity, signal: AbortSignal): Promise<boolean | null> => {
     const access = await readLocalWorkAccess(signal, { supportedSurface: true, workCloudSupportedSurface: true });
     if (access.identity.accountId !== identity.accountId || access.identity.userId !== identity.userId
@@ -1574,7 +1613,14 @@ export const App: React.FC = () => {
     onError: message => showAppToast(message, "error"),
   });
   const permissionMode = permissionModes[permissionScope] ?? "custom";
+  const workDraftPolicyKey = JSON.stringify([modelAccountIdentity, workHostIdentity, activeWorkspace?.path,
+    worktreeProjectScope, permissionMode, sessionAllowNetwork, useWorktree, planMode]);
+  const committedWorkDraftPolicy = useRef(workDraftPolicyKey);
+  useLayoutEffect(() => { committedWorkDraftPolicy.current = workDraftPolicyKey; }, [workDraftPolicyKey]);
+  useLayoutEffect(() => () => { workSendPreparing.current?.abort(); workSendPreparing.current = null; },
+    [permissionMode, sessionAllowNetwork, useWorktree, planMode, activeWorkspace?.path, worktreeProjectScope]);
   const setPermissionMode = useCallback((mode: "ask" | "auto" | "full") => {
+    workPermissionRevision.current++;
     setPermissionModes(previous => ({ ...previous, [permissionScope]: mode }));
   }, [permissionScope]);
   const captureThreadExecutionPolicy = useCallback((threadId: string, response: unknown, expectedRevision?: number) => {
@@ -3766,24 +3812,26 @@ export const App: React.FC = () => {
 
   /** 官方 Plan 模式：thread/settings/update 的 collaborationMode（plan/default） */
   const applyCollaborationMode = useCallback(
-    async (threadId: string, enabled: boolean, configuration: ModelConfiguration = getModelConfiguration()) => {
+    async (threadId: string, enabled: boolean, configuration?: ModelConfiguration) => {
+      const work = workThreadContexts.current.get(threadId);
+      if (work && !configuration && !work.model) throw Error("Work 会话模型尚未确认。");
+      configuration ??= work ? { model: work.model!, reasoningEffort: work.reasoningEffort ?? null, serviceTier: null } : getModelConfiguration();
+      const collaborationMode = { mode: enabled ? "plan" : "default", settings: {
+        model: configuration.model, reasoning_effort: configuration.reasoningEffort, developer_instructions: null,
+      } };
       await callAppServer("thread/settings/update", {
         threadId,
-        collaborationMode: {
-          mode: enabled ? "plan" : "default",
-          settings: {
-            model: configuration.model,
-            reasoning_effort: configuration.reasoningEffort,
-            developer_instructions: null,
-          },
-        },
+        collaborationMode,
       });
+      if (work && workThreadContexts.current.get(threadId) === work) workThreadContexts.current.set(threadId,
+        { ...work, model: configuration.model, reasoningEffort: configuration.reasoningEffort, collaborationMode });
     },
     [getModelConfiguration]
   );
 
   const handleTogglePlanMode = useCallback(
     async () => {
+      workPermissionRevision.current++;
       const next = !planModeRef.current;
       setPlanMode(next);
       if (!activeThreadId) {
@@ -3835,6 +3883,13 @@ export const App: React.FC = () => {
       reviewStartPendingRef.current = true;
       setReviewBusy(true);
       try {
+        if (inline && currentId) {
+          const work = await readWorkThreadProvenance(currentId);
+          if (!isCurrent()) return;
+          if (work || workThreadContexts.current.has(currentId) || threadsRef.current.find(thread => thread.id === currentId)?.originator === "codex_work_desktop") {
+            throw Error("Work 会话内的代码审查尚未接通，请使用独立审查聊天。");
+          }
+        }
         const configuration = getModelConfiguration();
         const execution = await resolveExecutionContext(inline ? currentId : null, cwd, [cwd]);
         if (!isCurrent()) return;
@@ -3986,17 +4041,76 @@ export const App: React.FC = () => {
   // Send or Steer Message
   const handleSendMessage = useCallback(async (overrideText?: string) => {
     if (activeRouteRef.current === "cloud-draft" || activeRouteRef.current === "cloud-new-chat") return;
-    if (activeRouteRef.current === "home" && workHomeSession) {
-      showAppToast("暂时无法发送 Work 消息，草稿已保留。", "error");
-      return;
-    }
     if (activeRouteRef.current === "home" && homeCloud.active) return;
     const rawText = (typeof overrideText === "string" ? overrideText : promptInput).trim();
     const sendAppshotGeneration = appshotCaptureGenerations.current[appshotScope] ?? 0;
     if (!rawText && attachedFiles.length === 0 && appshots.length === 0) return;
+    if (workSendPreparing.current) return;
+    let preparedWork: Extract<WorkLocalMessagePreparation, { status: "ready" }> | null = null;
+    let existingWork: WorkThreadContext | null = null;
+    let workProject: SidebarLocalProject | null = null;
+    let workCwd: string | undefined;
+    const originRequest = threadRequestRef.current, originNavigation = navigationRequestRef.current;
+    const originOwner = committedWorkOwner.current, originThread = activeThreadIdRef.current;
+    const draftPolicyTicket = committedWorkDraftPolicy.current;
+    const workPermissionTicket = workPermissionRevision.current;
+    const preparationCurrent = () => !preparationController.signal.aborted && originRequest === threadRequestRef.current && originNavigation === navigationRequestRef.current
+      && originOwner === committedWorkOwner.current && originThread === activeThreadIdRef.current && draftPolicyTicket === committedWorkDraftPolicy.current;
+    const preparationController = new AbortController();
+    workSendPreparing.current = preparationController;
+    try {
+      if (activeRouteRef.current === "home" && workHomeSession) {
+        const original = workHomeSession.target;
+        if (!original) throw Error("Work 主页尚未就绪。");
+        const target = await readWorkCaptureTarget({ identity: original.identity }, preparationController.signal);
+        if (!preparationCurrent()) return;
+        if (target.status !== "ready" || target.location !== "local") throw Error("当前 Work 项目没有就绪的本地运行位置。");
+        if (target.preferences.mode.status !== "value" || target.preferences.mode.value !== "work") throw Error("Work 模式已变化，请重新打开聊天。");
+        if (JSON.stringify(target.selectedWorkProject) !== JSON.stringify(original.selectedWorkProject)) throw Error("Work 项目已变化，请重新打开该项目。");
+        const selected = target.selectedWorkProject;
+        if (!selected || selected.type !== "local" || selected.projectId.startsWith("g-p-")) throw Error("此 Work 项目的本地工作目录尚未准备好，输入已保留。");
+        workProject = sidebarProjectMembership.localProjects?.find(project => project.id === selected.projectId) ?? null;
+        if (!workProject?.serverProjectId || !workProject.rootPaths.length) throw Error("尚未确认 Work 本地项目，输入已保留。");
+        const selectedRoot = activeWorkspace?.path && workProject.rootPaths.find(root => fileDedupeKey(root) === fileDedupeKey(activeWorkspace.path));
+        workCwd = selectedRoot || (workProject.rootPaths.length === 1 ? workProject.rootPaths[0] : undefined);
+        if (!workCwd) throw Error("请选择此 Work 项目的工作目录，输入已保留。");
+        const prepared = await readWorkLocalMessagePreparation(target, { appServerVersion: appServerStatus.appServerVersion }, workCustomInstructions, preparationController.signal);
+        if (!preparationCurrent()) return;
+        if (prepared.status !== "ready") throw Error("Work 所需的模型或设置暂时不可用，输入已保留。");
+        preparedWork = prepared;
+      } else if (originThread) {
+        const provenance = await readWorkThreadProvenance(originThread);
+        if (!preparationCurrent()) return;
+        if (provenance || threadsRef.current.find(thread => thread.id === originThread)?.originator === "codex_work_desktop"
+          || workThreadContexts.current.has(originThread)) {
+          const identity = await serviceIdentity(preparationController.signal);
+          if (!preparationCurrent()) return;
+          if (provenance) assertWorkThreadOwner(provenance, identity, workHostIdentity);
+          let context = workThreadContexts.current.get(originThread);
+          if (!context || !workThreadContextMatches(context, { identity, hostIdentity: workHostIdentity }, originThread)) throw Error("Work 会话的执行配置尚未恢复，输入已保留。");
+          await persistWorkThreadProvenance(originThread, identity, workHostIdentity, provenance?.serviceName ?? context.serviceName);
+          if (!preparationCurrent()) return;
+          if (context.model === null || context.cwd === null || context.projectId === undefined) throw Error("Work 会话的执行配置尚未恢复，输入已保留。");
+          if (!context.collaborationMode) {
+            const mode = { mode: planMode ? "plan" : "default", settings: { model: context.model,
+              reasoning_effort: context.reasoningEffort ?? null, developer_instructions: null } };
+            await callAppServer("thread/settings/update", { threadId: originThread, collaborationMode: mode });
+            if (!preparationCurrent()) return;
+            if (workPermissionTicket !== workPermissionRevision.current || workThreadContexts.current.get(originThread) !== context) throw Error("Work 会话配置已变化，输入已保留。");
+            context = { ...context, collaborationMode: mode };
+            workThreadContexts.current.set(originThread, context);
+          }
+          existingWork = context;
+        }
+      }
+    } catch (error) {
+      if (preparationCurrent()) showAppToast(`无法发送：${String(error)}`, "error");
+      return;
+    } finally { if (workSendPreparing.current === preparationController) workSendPreparing.current = null; }
+    if (!preparationCurrent()) return;
     if (sendStartPendingRef.current.has(threadRequestRef.current)) return;
-    const projectless = !activeThreadIdRef.current && pendingProjectlessRef.current;
-    const pendingProject = activeThreadIdRef.current || projectless ? null : resolveNewThreadProject(
+    const projectless = !preparedWork && !activeThreadIdRef.current && pendingProjectlessRef.current;
+    const pendingProject = preparedWork ? workProject : activeThreadIdRef.current || projectless ? null : resolveNewThreadProject(
       pendingNewThreadProjectRef.current, sidebarProjectMembership, activeWorkspace?.path,
     );
     if (pendingProject && (!pendingProject.serverProjectId || pendingProject.rootPaths.length === 0)) {
@@ -4005,6 +4119,10 @@ export const App: React.FC = () => {
     }
 
     // Direct /goal command detection (官方 goal 走 thread/goal/* 协议)
+    if ((preparedWork || existingWork) && /^\/goal(?:\s|$)/.test(rawText)) {
+      showAppToast("Work 目标执行尚未就绪，输入已保留。", "error");
+      return;
+    }
     if (rawText === "/goal") {
       setShowGoalModal(true);
       setPromptInput("");
@@ -4037,7 +4155,7 @@ export const App: React.FC = () => {
     }
     nativeInputs.push(...appshotImageInputs(appshotContexts));
 
-    setActiveRoute("thread");
+    if (!preparedWork) setActiveRoute("thread");
 
     // If currently streaming and we have an activeThreadId, use turn/steer
     if (isStreaming && activeThreadId) {
@@ -4086,11 +4204,15 @@ export const App: React.FC = () => {
     }
 
     let configuration;
-    try { configuration = getModelConfiguration(); }
+    try { configuration = preparedWork ? { model: preparedWork.model, reasoningEffort: preparedWork.reasoningEffort, serviceTier: null }
+      : existingWork ? { model: existingWork.model!, reasoningEffort: existingWork.reasoningEffort ?? null, serviceTier: null } : getModelConfiguration(); }
     catch (error) { showAppToast(`无法发送：${String(error)}`, "error"); return; }
     const sendRequest = threadRequestRef.current;
     const sendIdentity = executionIdentityRef.current;
     const sendNavigation = navigationRequestRef.current;
+    const workOperation = preparedWork !== null || existingWork !== null;
+    if (workOperation) workActiveSend.current = preparationController;
+    let turnWasDispatched = false;
     sendStartPendingRef.current.add(sendRequest);
     const tempTurnId = `pending-${Date.now()}`;
     pendingTurnIdRef.current = tempTurnId;
@@ -4105,15 +4227,16 @@ export const App: React.FC = () => {
     setActiveTurnId(tempTurnId);
 
     try {
+      if (workOperation) preparationController.signal.throwIfAborted();
       let currentThreadId = activeThreadIdRef.current;
-      let targetCwd = currentThreadId || projectless ? "" : pendingProject?.rootPaths[0] || activeWorkspace?.path || "";
+      let targetCwd = preparedWork ? workCwd! : existingWork ? existingWork.cwd! : currentThreadId || projectless ? "" : pendingProject?.rootPaths[0] || activeWorkspace?.path || "";
       if (!currentThreadId && useWorktree && targetCwd) {
         const wt = await createWorktree({
           sourceCwd: targetCwd,
           startingMode: "HEAD",
           branchName: null,
           ownerThreadId: activeThreadId,
-        });
+        }, workOperation ? preparationController.signal : undefined);
         if (!wt?.path) throw new Error("Worktree 创建未返回目录，输入已保留");
         targetCwd = wt.path;
       }
@@ -4123,11 +4246,13 @@ export const App: React.FC = () => {
       if (sendRequest !== threadRequestRef.current || sendIdentity !== executionIdentityRef.current || sendNavigation !== navigationRequestRef.current) return;
       const threadCwd = currentThreadId ? threadsRef.current.find(thread => thread.id === currentThreadId)?.cwd || workspaceHintsRef.current[currentThreadId] : undefined;
       const execution = await resolveExecutionContext(currentThreadId, targetCwd || threadCwd, turnWorkspaceRoots ?? (threadCwd ? [threadCwd] : targetCwd ? [targetCwd] : []));
+      if (workOperation) preparationController.signal.throwIfAborted();
       if (sendRequest !== threadRequestRef.current || sendIdentity !== executionIdentityRef.current || sendNavigation !== navigationRequestRef.current) return;
       let { approvalPolicy, approvalsReviewer, sandboxPolicy, sandbox: sandboxMode } = execution.policy;
 
       if (!currentThreadId) {
-        const startRes = await callAppServer<any>("thread/start", {
+        if (preparedWork && draftPolicyTicket !== committedWorkDraftPolicy.current) throw Error("发送前权限或项目已变化，输入已保留，请重新发送。");
+        const startParams = {
           cwd: targetCwd || undefined,
           codexNativeScheduleTool: true,
           ...projectStartParams,
@@ -4136,39 +4261,77 @@ export const App: React.FC = () => {
           approvalsReviewer,
           sandbox: sandboxMode,
           config: executionThreadConfig(execution.policy, execution.config, turnWorkspaceRoots ?? (targetCwd ? [targetCwd] : [])),
-        });
+        };
+        const workRequest = preparedWork ? buildWorkLocalThreadRequest({ baseParams: startParams,
+          hostConfig: execution.config ?? {}, selection: configuration, preparation: preparedWork.execution,
+          appServerVersion: appServerStatus.appServerVersion, preparedDeveloperInstructions: preparedWork.developerInstructions }) : null;
+        if (workRequest && (!workRequest.request || workRequest.missingInputs.length)) throw Error("Work 请求尚未准备好，输入已保留。");
+        const startRes = await callAppServer<any>("thread/start", workRequest?.request ?? startParams);
         const createdThreadId =
           startRes?.threadId ||
           startRes?.thread?.id ||
           startRes?.conversationId;
         if (typeof createdThreadId !== "string" || !createdThreadId) throw new Error("thread/start 未返回会话 ID");
         currentThreadId = createdThreadId;
+        const creationCurrent = () => sendRequest === threadRequestRef.current && sendIdentity === executionIdentityRef.current && sendNavigation === navigationRequestRef.current;
+        const bindCreatedThread = () => {
+          pendingNewThreadProjectRef.current = null;
+          pendingProjectlessRef.current = false;
+          setSidebarCreatedThread({ id: createdThreadId, cwd: targetCwd || undefined, projectId: startRes?.thread?.projectId });
+          moveHomeAttachmentsToThread(createdThreadId);
+          moveHomeAppshotsToThread(createdThreadId);
+          moveHomePromptToThread(createdThreadId);
+          activeThreadIdRef.current = createdThreadId;
+          attachmentScopeRef.current = `thread:${createdThreadId}`;
+          setActiveThreadId(createdThreadId);
+          if (preparedWork && activeRouteRef.current === "home") {
+            activeRouteRef.current = "thread";
+            commitActiveRoute("thread");
+          }
+          if (targetCwd) setWorkspaceHints(previous => ({ ...previous, [createdThreadId]: targetCwd }));
+          refreshThreads();
+        };
+        let actualPolicy: ExecutionPolicy | undefined;
+        if (preparedWork) {
+          const receipt = captureWorkThreadContext({ identity: preparedWork.identity, hostIdentity: workHostIdentity }, startRes,
+            { serviceName: preparedWork.serviceName ?? null });
+          if (creationCurrent()) {
+            if (receipt.context) workThreadContexts.current.set(createdThreadId, receipt.context);
+            // The ID is already real. Bind its draft before fallible local
+            // persistence/remaining setup so a retry cannot create it twice.
+            bindCreatedThread();
+            actualPolicy = captureThreadExecutionPolicy(createdThreadId, startRes);
+          }
+          // Persist an acknowledged side effect even if its original view left;
+          // the record remains bound to the submitting account and local host.
+          await persistWorkThreadProvenance(createdThreadId, preparedWork.identity, workHostIdentity, preparedWork.serviceName ?? null);
+          if (sendRequest !== threadRequestRef.current || sendIdentity !== executionIdentityRef.current || sendNavigation !== navigationRequestRef.current) return;
+          if (!receipt.context || receipt.missingInputs.length) throw Error("Work 会话已创建，执行配置尚未确认，输入已保留。");
+          configuration = { model: receipt.context.model!, reasoningEffort: receipt.context.reasoningEffort ?? null, serviceTier: null };
+        }
         if (sendRequest !== threadRequestRef.current || sendIdentity !== executionIdentityRef.current || sendNavigation !== navigationRequestRef.current) return;
-        const actualPolicy = captureThreadExecutionPolicy(createdThreadId, startRes);
+        actualPolicy ??= captureThreadExecutionPolicy(createdThreadId, startRes);
         if (!actualPolicy) throw new Error("服务未确认新聊天的权限，输入已保留");
         ({ approvalPolicy, approvalsReviewer, sandboxPolicy } = actualPolicy);
         hydrateThreadModel(createdThreadId, { ...startRes, ...configuration });
-        pendingNewThreadProjectRef.current = null;
-        pendingProjectlessRef.current = false;
-        setSidebarCreatedThread({ id: createdThreadId, cwd: targetCwd || undefined, projectId: startRes?.thread?.projectId });
-        if (sendRequest === threadRequestRef.current) {
-          moveHomeAttachmentsToThread(currentThreadId);
-          moveHomeAppshotsToThread(currentThreadId);
-          moveHomePromptToThread(currentThreadId);
-          activeThreadIdRef.current = currentThreadId;
-          attachmentScopeRef.current = `thread:${currentThreadId}`;
-          setActiveThreadId(currentThreadId);
-        }
-        if (currentThreadId && targetCwd) {
-          setWorkspaceHints((prev) => ({ ...prev, [currentThreadId!]: targetCwd }));
-        }
-        refreshThreads();
+        if (!preparedWork) bindCreatedThread();
       }
 
       const permissionRevision = threadExecutionRevisionsRef.current.get(currentThreadId!) ?? 0;
+      if (workOperation) preparationController.signal.throwIfAborted();
+      if (preparedWork && workPermissionTicket !== workPermissionRevision.current) throw Error("发送前权限或执行方式已变化，请重新确认后发送，输入已保留。");
       const observedPermissions = JSON.stringify(threadExecutionPoliciesRef.current.get(currentThreadId!));
       // 计划模式：走真实 thread/settings/update（新会话也在首个 turn 前应用）
-      if (planMode && currentThreadId) {
+      if (preparedWork && currentThreadId) {
+        const context = workThreadContexts.current.get(currentThreadId)!;
+        const collaborationMode = { mode: planMode ? "plan" : "default", settings: {
+          model: context.model!, reasoning_effort: context.reasoningEffort ?? null, developer_instructions: null,
+        } };
+        await callAppServer("thread/settings/update", { threadId: currentThreadId, collaborationMode });
+        if (sendRequest !== threadRequestRef.current || sendIdentity !== executionIdentityRef.current || sendNavigation !== navigationRequestRef.current) return;
+        if (workPermissionTicket !== workPermissionRevision.current || workThreadContexts.current.get(currentThreadId) !== context) throw Error("发送前权限或执行方式已变化，请重新确认后发送，输入已保留。");
+        workThreadContexts.current.set(currentThreadId, { ...context, collaborationMode });
+      } else if (planMode && currentThreadId && !existingWork) {
         await applyCollaborationMode(currentThreadId, true, configuration);
       }
 
@@ -4183,7 +4346,7 @@ export const App: React.FC = () => {
           files: attachedFiles,
         };
       }
-      const turnRes = await trackModelTurn(currentThreadId!, configuration, () => callAppServer<any>("turn/start", {
+      const turnParams = {
         threadId: currentThreadId,
         cwd: targetCwd || undefined,
         runtimeWorkspaceRoots: turnWorkspaceRoots,
@@ -4195,10 +4358,30 @@ export const App: React.FC = () => {
         approvalsReviewer,
         sandboxPolicy,
         serviceTier: configuration.serviceTier,
-      }));
-      if (sendRequest !== threadRequestRef.current || sendIdentity !== executionIdentityRef.current) return;
+      };
+      if (existingWork && draftPolicyTicket !== committedWorkDraftPolicy.current) throw Error("发送前权限或项目已变化，输入已保留，请重新发送。");
+      const workFollowUp = existingWork ? projectWorkThreadFollowUp({ scope: existingWork.scope, context: existingWork,
+        threadId: currentThreadId!, baseParams: turnParams }) : null;
+      if (workFollowUp && (!workFollowUp.request || workFollowUp.missingInputs.length)) throw Error("Work 会话配置尚未就绪，输入已保留。");
+      const workTurn = preparedWork ? buildWorkLocalTurnRequest({ baseParams: turnParams, threadId: currentThreadId!,
+        createdThreadModel: workThreadContexts.current.get(currentThreadId!)!.model!,
+        collaborationMode: workThreadContexts.current.get(currentThreadId!)!.collaborationMode }) : null;
+      const sendTurn = () => callAppServer<any>("turn/start", workFollowUp?.request ?? workTurn ?? turnParams);
+      if (workOperation) preparationController.signal.throwIfAborted();
+      turnWasDispatched = true;
+      const turnRes = preparedWork || existingWork ? await sendTurn() : await trackModelTurn(currentThreadId!, configuration, sendTurn);
       const startedTurnId =
         turnRes?.turn?.id || turnRes?.turnId || turnRes?.id || null;
+      if (sendRequest !== threadRequestRef.current || sendIdentity !== executionIdentityRef.current) return;
+      // Host/account cleanup retires the controller; a late ACK must not write
+      // an interrupt through the replacement connection.
+      if (workOperation && (originOwner !== committedWorkOwner.current || workActiveSend.current !== preparationController)) return;
+      if (workOperation && preparationController.signal.aborted && startedTurnId) {
+        try { await callAppServer("turn/interrupt", { threadId: currentThreadId, turnId: String(startedTurnId) }); }
+        catch (error) { if (sendRequest === threadRequestRef.current && sendIdentity === executionIdentityRef.current) showAppToast(`停止请求未确认：${String(error)}`, "error"); }
+      }
+      if (sendRequest !== threadRequestRef.current || sendIdentity !== executionIdentityRef.current) return;
+      if (workOperation && (originOwner !== committedWorkOwner.current || workActiveSend.current !== preparationController)) return;
       if (startedTurnId) {
         if (!overrideText) clearSentAppshots(`${sendIdentity}:thread:${currentThreadId}`, appshots, sendAppshotGeneration, appshotScope);
         const turnIdStr = String(startedTurnId);
@@ -4232,14 +4415,24 @@ export const App: React.FC = () => {
       if (sendRequest !== threadRequestRef.current || sendIdentity !== executionIdentityRef.current) return;
       pendingAttachmentSaveRef.current = null;
       setIsStreaming(false);
+      if (workOperation && preparationController.signal.aborted && !turnWasDispatched) {
+        pendingTurnIdRef.current = null;
+        setActiveTurnId(null);
+        setTurns(previous => previous.filter(turn => turn.id !== tempTurnId));
+        return;
+      }
       setTurns((prev) => prev.map((t) => t.id === tempTurnId ? { ...t, status: "failed", items: [...t.items, { id: `err-item-${Date.now()}`, type: "agentMessage", text: `⚠️ 执行出错: ${err?.message || err}` }] } : t));
     } finally {
+      if (workActiveSend.current === preparationController) workActiveSend.current = null;
       sendStartPendingRef.current.delete(sendRequest);
     }
   }, [
     promptInput,
     homeCloud.active,
     workHomeSession,
+    workHostIdentity,
+    workCustomInstructions,
+    appServerStatus.appServerVersion,
     setPromptInput,
     setThreadPrompt,
     moveHomePromptToThread,
@@ -4304,6 +4497,10 @@ export const App: React.FC = () => {
       const isCurrent = () => request === threadRequestRef.current && identity === executionIdentityRef.current && navigation === navigationRequestRef.current;
       try {
         let threadId = activeThreadIdRef.current;
+        if (workHomeSession || threadId && (workThreadContexts.current.has(threadId)
+          || threadsRef.current.find(thread => thread.id === threadId)?.originator === "codex_work_desktop"
+          || await readWorkThreadProvenance(threadId))) throw Error("Work 目标执行尚未就绪，输入已保留。");
+        if (!isCurrent()) return;
         if (!threadId) {
           const projectless = pendingProjectlessRef.current;
           const pendingProject = projectless ? null : resolveNewThreadProject(
@@ -4359,6 +4556,7 @@ export const App: React.FC = () => {
     [
       activeWorkspace?.path,
       sidebarProjectMembership,
+      workHomeSession,
       getModelConfiguration,
       hydrateThreadModel,
       resolveExecutionContext,
@@ -4419,10 +4617,13 @@ export const App: React.FC = () => {
 
   const handleInterruptTurn = useCallback(async () => {
     if (activeRouteRef.current === "cloud-draft" || activeRouteRef.current === "cloud-new-chat") return;
+    const work = workActiveSend.current;
+    work?.abort();
+    workSendPreparing.current?.abort();
     const threadId = activeThreadIdRef.current;
     const turnId = activeTurnIdRef.current;
     const request = threadRequestRef.current;
-    if (!threadId || !turnId) return;
+    if (!threadId || !turnId || work && turnId === pendingTurnIdRef.current) return;
     try {
       await callAppServer("turn/interrupt", { threadId, turnId });
     } catch (e) {
@@ -4585,11 +4786,23 @@ export const App: React.FC = () => {
     const tid = activeThreadIdRef.current;
     const first = followupQueue[0];
     if (!tid || !first || queueMutationThreadsRef.current.has(tid) || steeredQueueItemsRef.current.has(`${tid}:${first.id}`)) return;
+    const request = threadRequestRef.current;
+    const sourceIdentity = executionIdentityRef.current;
+    try {
+      const work = await readWorkThreadProvenance(tid);
+      if (sourceIdentity !== executionIdentityRef.current || !isCurrentThreadRequest(request, threadRequestRef.current, tid, activeThreadIdRef.current)) return;
+      if (work || workThreadContexts.current.has(tid) || threadsRef.current.find(thread => thread.id === tid)?.originator === "codex_work_desktop") {
+        throw Error("Work 排队发送尚未就绪，队列消息已保留。");
+      }
+    } catch (error) {
+      if (sourceIdentity === executionIdentityRef.current && isCurrentThreadRequest(request, threadRequestRef.current, tid, activeThreadIdRef.current)) showAppToast(`启动队列消息失败：${String(error)}`, "error");
+      return;
+    }
+    if (queueMutationThreadsRef.current.has(tid) || steeredQueueItemsRef.current.has(`${tid}:${first.id}`)) return;
     if (isStreaming) {
       await handleSteerTurn(first.text, first);
       return;
     }
-    const request = threadRequestRef.current;
     queueMutationThreadsRef.current.add(tid);
     setQueueMutationVersion(v => v + 1);
     try {
@@ -4635,6 +4848,11 @@ export const App: React.FC = () => {
     queueMutationThreadsRef.current.add(tid);
     setQueueMutationVersion(v => v + 1);
     try {
+      const work = await readWorkThreadProvenance(tid);
+      if (!isCurrent()) return;
+      if (work || workThreadContexts.current.has(tid) || threadsRef.current.find(thread => thread.id === tid)?.originator === "codex_work_desktop") {
+        throw Error("Work 排队发送尚未就绪，输入已保留；可等待当前消息完成后发送。");
+      }
       const { errors } = await persistThreadAttachments(tid, files);
       if (errors.length > 0) throw new Error(errors[0].message);
       if (!isCurrent()) return;
@@ -6143,6 +6361,7 @@ export const App: React.FC = () => {
     };
   }, [projectMoveConfirmation]);
 
+  const activeWorkContext = activeThreadId ? workThreadContexts.current.get(activeThreadId) : undefined;
   const renderThreadComposer = () => (
     <ComposerBox
       registerAppshotInput={registerAppshotInput}
@@ -6176,13 +6395,14 @@ export const App: React.FC = () => {
       modelsLoading={modelsLoading}
       modelsError={modelsError}
       onRefreshModels={refreshModels}
-      selectedModelId={selectedModelId}
-      defaultModelSelected={defaultModelSelected}
+      selectedModelId={activeWorkContext?.model ?? selectedModelId}
+      modelReadOnlyReason={activeWorkContext ? "当前使用已确认的 Work 模型，暂不支持切换。" : null}
+      defaultModelSelected={activeWorkContext ? false : defaultModelSelected}
       onSelectModel={handleSelectComposerModel}
-      reasoningEffort={reasoningEffort}
+      reasoningEffort={activeWorkContext ? activeWorkContext.reasoningEffort ?? "" : reasoningEffort}
       onSelectReasoningEffort={setReasoningEffort}
-      fastMode={fastMode}
-      serviceTier={modelSelection.serviceTier}
+      fastMode={activeWorkContext ? false : fastMode}
+      serviceTier={activeWorkContext ? null : modelSelection.serviceTier}
       serviceTierAccess={modelSelection.serviceTierAccess}
       modelEligibilityContext={modelSelection.eligibilityContext}
       selectionPending={modelSelection.selectionPending}
@@ -7197,7 +7417,9 @@ export const App: React.FC = () => {
                 composerEnterBehavior={composerEnterBehavior}
                 followUpMode={followUpMode}
                 keyBindings={keyboardState.bindings}
-                submissionDisabled={homeCloud.active ? !homeCloud.canSend : queueBusy || modelSelection.selectionPending || !!modelSelection.selectionDisabledReason || sendStartPendingRef.current.has(threadRequestRef.current)}
+                submissionDisabled={homeCloud.active ? !homeCloud.canSend : workHomeSession
+                  ? !appServerStatus.connected || workMessagePreparation?.status !== "ready" || sendStartPendingRef.current.has(threadRequestRef.current)
+                  : queueBusy || modelSelection.selectionPending || !!modelSelection.selectionDisabledReason || sendStartPendingRef.current.has(threadRequestRef.current)}
               variant="home"
               homeCloud={homeCloud}
               onCreateCloudEnvironment={() => setActiveRoute("cloud-create")}
@@ -7229,22 +7451,24 @@ export const App: React.FC = () => {
               onSetUseWorktree={setUseWorktree}
               permissionMode={permissionMode}
               onSelectPermissionMode={setPermissionMode}
-              models={models}
-              modelsLoading={modelsLoading}
-              modelsError={modelsError}
-              onRefreshModels={refreshModels}
-              selectedModelId={selectedModelId}
-              defaultModelSelected={defaultModelSelected}
+              models={workHomeSession ? workMessagePreparation?.status === "ready" ? workMessagePreparation.hostModels : [] : models}
+              modelsLoading={workHomeSession ? !workMessagePreparation && !workMessageError : modelsLoading}
+              modelsError={workHomeSession ? workMessageError ?? (workMessagePreparation?.status === "not-ready" ? "Work 所需的模型或设置暂时不可用，请重新读取。" : null) : modelsError}
+              onRefreshModels={workHomeSession ? () => setWorkMessageRevision(value => value + 1) : refreshModels}
+              selectedModelId={workHomeSession ? workMessagePreparation?.status === "ready" ? workMessagePreparation.model : "" : selectedModelId}
+              defaultModelSelected={workHomeSession ? false : defaultModelSelected}
+              modelReadOnlyReason={workHomeSession && workMessagePreparation?.status === "ready" ? "当前使用已确认的 Work 模型，暂不支持切换。" : null}
+              modelDisplayLabel={workHomeSession && workMessagePreparation?.status !== "ready" ? "Work 模型未就绪" : null}
               onSelectModel={handleSelectComposerModel}
-              reasoningEffort={reasoningEffort}
+              reasoningEffort={workHomeSession && workMessagePreparation?.status === "ready" ? workMessagePreparation.reasoningEffort ?? "" : reasoningEffort}
               onSelectReasoningEffort={setReasoningEffort}
-              fastMode={fastMode}
-              serviceTier={modelSelection.serviceTier}
+              fastMode={workHomeSession ? false : fastMode}
+              serviceTier={workHomeSession ? null : modelSelection.serviceTier}
               serviceTierAccess={modelSelection.serviceTierAccess}
               modelEligibilityContext={modelSelection.eligibilityContext}
-              selectionPending={modelSelection.selectionPending}
-              selectionError={modelSelection.selectionError}
-              selectionDisabledReason={modelSelection.selectionDisabledReason}
+              selectionPending={workHomeSession ? !workMessagePreparation && !workMessageError : modelSelection.selectionPending}
+              selectionError={workHomeSession ? workMessageError ?? (workMessagePreparation?.status === "not-ready" ? "Work 所需的模型或设置暂时不可用，请重新读取。" : null) : modelSelection.selectionError}
+              selectionDisabledReason={workHomeSession ? null : modelSelection.selectionDisabledReason}
               recentModelConfigurations={modelSelection.recentModelConfigurations}
               onSelectServiceTier={modelSelection.selectTier}
               onSelectConfiguration={modelSelection.selectConfiguration}
