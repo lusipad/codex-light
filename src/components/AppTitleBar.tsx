@@ -13,7 +13,7 @@ export interface AppTitleBarProps {
   sidebarCollapsed: boolean;
   onBack: () => void;
   onForward: () => void;
-  onToggleSidebar: () => void;
+  onToggleSidebar?: () => void;
   onCommand: (command: string) => void;
 }
 
@@ -199,7 +199,7 @@ export const AppTitleBar: React.FC<AppTitleBarProps> = ({
         <button type="button" className="app-titlebar-icon" onClick={onForward} disabled={!canGoForward} aria-label="前进" title="前进">
           <ArrowRightIcon size={16} />
         </button>
-        <button
+        {onToggleSidebar && <button
           type="button"
           className="app-titlebar-icon"
           onClick={onToggleSidebar}
@@ -207,7 +207,7 @@ export const AppTitleBar: React.FC<AppTitleBarProps> = ({
           title={sidebarCollapsed ? "展开侧边栏 (Ctrl+B)" : "隐藏侧边栏 (Ctrl+B)"}
         >
           <SidebarLeftIcon size={16} />
-        </button>
+        </button>}
       </div>
 
       <nav className="app-titlebar-menus" aria-label="应用程序菜单">
@@ -256,6 +256,7 @@ export const AppTitleBar: React.FC<AppTitleBarProps> = ({
                       key={entry.id}
                       type="button"
                       role="menuitem"
+                      disabled={entry.id === "toggle-sidebar" && !onToggleSidebar}
                       className={`app-titlebar-menu-item ${entry.danger ? "danger" : ""}`}
                       onClick={(event) => {
                         const popover = event.currentTarget.closest("[popover]") as HTMLElement;

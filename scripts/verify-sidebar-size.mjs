@@ -9,7 +9,7 @@ const compiled = ts.transpileModule(source, {
 }).outputText;
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
 
-function mount({ saved = null, shellWidth = 1200, invoke, runtime = {} } = {}) {
+function mount({ saved = null, shellWidth = 1200, invoke, runtime = {}, contextual = false } = {}) {
   const slots = [], listeners = new Map(), styles = new Map(), calls = [], notices = [];
   let cursor = 0, effect, cleanup, tree, observed = false, currentShellWidth = shellWidth;
   const sidebar = { parentElement: { getBoundingClientRect: () => ({ width: currentShellWidth }) }, style: {
@@ -41,7 +41,7 @@ function mount({ saved = null, shellWidth = 1200, invoke, runtime = {} } = {}) {
       if (command === "desktop_state_set") saved = args.value;
       else return saved;
     } } : {},
-    window: { innerWidth: 1200,
+    window: { get innerWidth() { return currentShellWidth; },
       addEventListener: (...args) => runtime.window.addEventListener(...args),
       removeEventListener: (...args) => runtime.window.removeEventListener(...args),
     },
@@ -56,7 +56,7 @@ function mount({ saved = null, shellWidth = 1200, invoke, runtime = {} } = {}) {
   const render = () => {
     cursor = 0;
     runtime.react = react;
-    tree = runtime.module.exports.SidebarResizeHandle({ onError: (...args) => notices.push(args) });
+    tree = runtime.module.exports.SidebarResizeHandle({ contextual, onError: (...args) => notices.push(args) });
     nodes(tree).find(node => node.props.role === "separator").props.ref.current = handle;
   };
   const separator = () => { render(); return nodes(tree).find(node => node.props.role === "separator"); };
@@ -110,6 +110,17 @@ view.unmount();
 assert.equal(view.styles.has("--sidebar-width"), false);
 assert.equal(view.listening(), 0);
 assert.equal(view.observed(), false);
+
+const settings = mount({ saved: 250, contextual: true });
+await flush();
+assert.equal(settings.separator().props['aria-valuemin'], 290);
+assert.equal(settings.current(), 290);
+assert.equal(settings.calls.some(([command]) => command === 'desktop_state_set'), false, 'settings minimum must not rewrite the narrower chat preference');
+settings.resize(550);
+assert.equal(settings.separator().props['aria-valuemax'], 310);
+settings.key('ArrowRight'); await flush();
+assert.equal(settings.calls.find(([command]) => command === 'desktop_state_set')[1].value, 300);
+settings.unmount();
 
 for (const [saved, expected] of [[100, 240], [900, 520], [NaN, 340], ["480", 340]]) {
   const hydrated = mount({ saved });

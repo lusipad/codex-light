@@ -5,7 +5,11 @@ import "./SidebarResizeHandle.css";
 // Sidebar collapse remounts the handle while an earlier native write may still be running.
 let pendingSave = Promise.resolve();
 
-export function SidebarResizeHandle({ onError }: { onError?: (message: string, type: "error") => void }) {
+export function SidebarResizeHandle({ onError, contextual = false }: {
+  onError?: (message: string, type: "error") => void;
+  contextual?: boolean;
+}) {
+  const minimum = contextual ? 290 : 240;
   const handle = useRef<HTMLDivElement>(null);
   const preferredWidth = useRef(340);
   const edited = useRef(false);
@@ -19,9 +23,9 @@ export function SidebarResizeHandle({ onError }: { onError?: (message: string, t
 
   const applyWidth = (value: number) => {
     const sidebar = handle.current?.parentElement;
-    const shellWidth = sidebar?.parentElement?.getBoundingClientRect().width ?? window.innerWidth;
-    const max = Math.max(240, Math.min(520, shellWidth - 240));
-    const next = Math.max(240, Math.min(value, max));
+    const shellWidth = contextual ? window.innerWidth : sidebar?.parentElement?.getBoundingClientRect().width ?? window.innerWidth;
+    const max = Math.max(minimum, Math.min(520, shellWidth - 240));
+    const next = Math.max(minimum, Math.min(value, max));
     sidebar?.style.setProperty("--sidebar-width", `${next}px`);
     setWidth(next);
     setMaximum(max);
@@ -110,11 +114,11 @@ export function SidebarResizeHandle({ onError }: { onError?: (message: string, t
       if (original) sidebar?.style.setProperty("--sidebar-width", original);
       else sidebar?.style.removeProperty("--sidebar-width");
     };
-  }, []);
+  }, [contextual]);
 
   return <>
     <div ref={handle} className="sidebar-resize-handle" role="separator" tabIndex={0}
-      aria-label="调整侧栏宽度" aria-orientation="vertical" aria-valuemin={240}
+      aria-label="调整侧栏宽度" aria-orientation="vertical" aria-valuemin={minimum}
       aria-valuemax={maximum} aria-valuenow={width}
       onPointerDown={event => {
         if (event.button !== 0 || !event.isPrimary) return;

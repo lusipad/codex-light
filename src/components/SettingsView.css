@@ -6,26 +6,36 @@
   margin-inline: auto;
 }
 
-.settings-center-shell .settings-left-nav { flex: 0 0 250px; min-height: 0; overflow: hidden; }
+.settings-center-shell .settings-left-nav {
+  position: relative;
+  flex: 0 0 calc(var(--sidebar-width, 340px) - var(--nav-rail-width));
+  min-height: 0;
+  overflow: hidden;
+}
+.settings-left-nav > .sidebar-resize-handle { right: 0; }
 .settings-center-shell .settings-nav-title { margin: 0 8px 12px; font-size: 14px; font-weight: 500; }
 .settings-center-shell .settings-search-box { flex-shrink: 0; }
 .settings-center-shell .settings-search-box input { width: 0; min-width: 0; }
 .settings-center-shell .settings-search-box > button { display: flex; border: 0; padding: 0; background: transparent; color: inherit; }
-.settings-center-shell .settings-nav-groups { min-height: 0; overflow-y: auto; gap: 16px; }
+.settings-center-shell .settings-nav-groups { min-height: 0; flex: 1; overflow-y: auto; gap: 16px; padding-block: 4px 8px; }
 .settings-center-shell .settings-nav-item { gap: 8px; padding-inline: 8px; border-radius: 10px; font-weight: 400; }
 .settings-center-shell .settings-nav-item > svg { flex-shrink: 0; }
 .settings-center-shell .settings-nav-item > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .settings-center-shell .settings-search-empty { padding: 8px; margin: 0; color: var(--text-secondary); }
-.settings-center-shell .settings-right-content { min-width: 0; padding: 20px; }
-
-@media (max-width: 900px) {
-  .settings-center-shell .settings-left-nav { flex-basis: clamp(156px, 26vw, 212px); }
-  .settings-center-shell .settings-right-content { padding-inline: 16px; }
-}
+.settings-center-shell .settings-right-content { min-width: 0; padding: 20px; scrollbar-gutter: stable; }
 
 .settings-center-shell .settings-right-content > .panel-page-header {
   border-bottom: 0;
   padding-bottom: 0;
+}
+
+.settings-center-shell .panel-page-header h1 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: calc(32px * var(--font-ui-scale, 1));
+  line-height: 1.1875;
+  font-weight: 600;
+  letter-spacing: -.025em;
 }
 
 .settings-center-shell .settings-general-content,

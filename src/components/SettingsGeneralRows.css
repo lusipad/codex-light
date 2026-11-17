@@ -1,0 +1,103 @@
+.settings-general-card {
+  container: general-settings-card / inline-size;
+  border: 1px solid var(--border-default);
+  border-radius: 16px;
+  background: var(--bg-secondary);
+}
+
+.settings-general-card > .settings-general-row + .settings-general-row {
+  border-block-start: 1px solid var(--border-subtle);
+}
+
+.settings-general-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 12px 16px;
+}
+
+.settings-general-copy {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  color: var(--text-primary);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.settings-general-copy p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+}
+
+.settings-general-copy [role="alert"],
+.settings-general-row[role="alert"] .settings-general-copy {
+  color: var(--accent-red);
+}
+
+.settings-general-control {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  min-width: min(160px, 40cqw);
+  max-width: calc(100% - 24px);
+}
+
+.settings-general-card .terminal-location-options,
+.settings-general-segmented {
+  display: inline-flex;
+  max-width: 100%;
+  padding: 2px;
+  gap: 2px;
+  border-radius: 999px;
+  background: var(--bg-pill);
+}
+
+.settings-general-card .terminal-location-options > button,
+.settings-general-segmented > button {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.settings-general-card .terminal-location-options > button[aria-pressed="true"],
+.settings-general-segmented > button[aria-pressed="true"] {
+  background: var(--bg-pill-active);
+  color: var(--text-primary);
+}
+
+.settings-general-card .terminal-location-options > button:not(:disabled):hover,
+.settings-general-segmented > button:not(:disabled):hover {
+  background: var(--bg-pill-hover);
+  color: var(--text-primary);
+}
+
+.settings-general-segmented > button:disabled {
+  cursor: default;
+  opacity: .55;
+}
+
+@container general-settings-card (max-width: 360px) {
+  .settings-general-row {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .settings-general-control {
+    justify-content: flex-start;
+    min-width: 0;
+    max-width: 100%;
+  }
+}

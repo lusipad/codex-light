@@ -5912,7 +5912,7 @@ export const App: React.FC = () => {
         if (trigger.getAttribute("aria-expanded") !== "true") trigger.click();
       }
     },
-    "toggle-sidebar": () => setSidebarCollapsed((v) => !v),
+    "toggle-sidebar": () => { if (activeRouteRef.current !== "settings") setSidebarCollapsed((v) => !v); },
     "toggle-terminal": () => requestTerminalPanel("open-terminal"),
     "toggle-bottom-panel": () => requestTerminalPanel("toggle-bottom"),
     "toggle-changes": () => setShowRightDrawer((v) => !v),
@@ -7102,7 +7102,7 @@ export const App: React.FC = () => {
         sidebarCollapsed={sidebarCollapsed}
         onBack={() => navigateRouteHistory(-1)}
         onForward={() => navigateRouteHistory(1)}
-        onToggleSidebar={() => setSidebarCollapsed((value) => !value)}
+        onToggleSidebar={activeRoute === "settings" ? undefined : () => setSidebarCollapsed((value) => !value)}
         onCommand={(command) => void handleAppCommand(command)}
       />
       {appshotsEntry.intro}
@@ -7209,7 +7209,7 @@ export const App: React.FC = () => {
           else void chatServerList.retry();
         }}
         onLoadMoreChatgptList={() => { void chatServerList.loadMore(); }}
-        collapsed={sidebarCollapsed}
+        collapsed={activeRoute === "settings" || sidebarCollapsed}
         activeRoute={activeRoute}
         workspaces={workspaces}
         activeWorkspace={activeWorkspace}
@@ -7283,7 +7283,7 @@ export const App: React.FC = () => {
       <div className="workspace-main-with-terminal">
       <main className="codex-main-area">
         {/* Top Window / Thread Chrome Header */}
-        <header
+        {activeRoute !== "settings" && <header
           className="main-top-navbar"
           data-tauri-drag-region={canShowBottomPanelLauncher ? "deep" : true}
           onContextMenu={showBottomPanelLauncherMenu}
@@ -7581,7 +7581,7 @@ export const App: React.FC = () => {
               </button>
             )}
           </div>}
-        </header>
+        </header>}
 
         {/* Pinned Summary Banner (置顶摘要 1:1) */}
         {pinnedSummaryVisible && activeRoute === "thread" && (

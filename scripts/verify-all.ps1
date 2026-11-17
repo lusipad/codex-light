@@ -48,6 +48,7 @@ try {
   Invoke-Step "Terminal controls, theme and keyboard" { node scripts/verify-terminal-ui.mjs }
   Invoke-Step "General preference menu positioning and keyboard" { node scripts/verify-general-preference-select.mjs }
   Invoke-Step "Settings wrapper and immediate-save UI correction" { node scripts/verify-settings-ui-correction.mjs }
+  Invoke-Step "Pinned Windows settings navigation glyphs" { node scripts/verify-settings-nav-icons.mjs }
   Invoke-Step "Project, worktree and archive UI correction" { node scripts/verify-organization-ui.mjs }
   Invoke-Step "Project sorting, timestamps and read-only projection" { node scripts/verify-project-index-sort.mjs }
   Invoke-Step "Plugin and skill directory UI correction" { node scripts/verify-extensions-ui-d.mjs }

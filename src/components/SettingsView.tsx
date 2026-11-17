@@ -37,12 +37,12 @@ import type { KeyboardPreferencesState } from "../keyboardPreferences";
 import type { AppearanceState } from "../appearancePreferences";
 import { GeneralOpenPreferences, type BottomPanelLauncherPreference } from "./GeneralOpenPreferences";
 import { GeneralPreferenceSelect } from "./GeneralPreferenceSelect";
+import { SidebarResizeHandle } from "./SidebarResizeHandle";
+import { SettingsNavIcon } from "./SettingsNavIcon";
 import "./SettingsView.css";
 import type { ComposerEnterBehavior, FollowUpMode } from "../composerPreferences";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Search, X, Settings, Bell, Download, User, Palette, Archive, Mic, HardDrive, SlidersHorizontal,
-  Sparkles, Cat, Keyboard, ChartNoAxesCombined, Plug, Monitor, Camera, Globe, Webhook, Cable,
-  Cloud, ScanSearch, GitBranch, Terminal, FolderGit2 } from "lucide-react";
+import { Search, X, Settings } from "lucide-react";
 import { isTauriRuntime, tauriInvoke } from "../bridge";
 import { AccountSettings } from "./AccountSettings";
 import { UsageSettings } from "./UsageSettings";
@@ -99,16 +99,6 @@ const SETTINGS_NAV_GROUPS: Array<{
     ],
   },
 ];
-
-// Existing icon set supplies the navigation structure; official asset contours remain unverified.
-const SETTINGS_NAV_ICONS = {
-  "general-settings": Settings, notifications: Bell, import: Download, profile: User, appearance: Palette,
-  account: User, "archived-chats": Archive, voice: Mic, storage: HardDrive, agent: SlidersHorizontal,
-  personalization: Sparkles, pets: Cat, "keyboard-shortcuts": Keyboard, usage: ChartNoAxesCombined,
-  "plugins-settings": Plug, "computer-use": Monitor, appshots: Camera, "browser-use": Globe,
-  "hooks-settings": Webhook, connections: Cable, "cloud-settings": Cloud, "codex-cloud": Cloud, "code-review": ScanSearch,
-  "git-settings": GitBranch, "local-environments": Terminal, worktrees: FolderGit2,
-};
 
 interface SettingsViewProps {
   onOpenCloudDraft?: OpenCloudDraft;
@@ -280,6 +270,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }}>
       {/* Settings navigation uses the current official grouping for existing routes. */}
       <aside className="settings-left-nav" aria-label="设置">
+        <SidebarResizeHandle contextual onError={onNotify} />
         <h2 className="settings-nav-title">设置</h2>
         <div className="settings-search-box">
           <Search size={13} />
@@ -313,9 +304,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           {filteredNavGroups.map((group) => (
             <div key={group.groupTitle} className="settings-nav-group">
               <div className="settings-nav-group-title">{group.groupTitle}</div>
-              {group.items.map((item) => {
-                const Icon = SETTINGS_NAV_ICONS[item.slug as keyof typeof SETTINGS_NAV_ICONS];
-                return (
+              {group.items.map((item) => (
                 <button
                   key={item.slug}
                   data-settings-panel-slug={item.slug}
@@ -327,9 +316,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   aria-current={activeSection === item.slug ? "page" : undefined}
                   onClick={() => setActiveSection(item.slug)}
                 >
-                  {Icon && <Icon size={16} aria-hidden="true" />}<span>{item.label}</span>
+                  <SettingsNavIcon slug={item.slug} active={activeSection === item.slug} fallback={Settings} /><span>{item.label}</span>
                 </button>
-              ); })}
+              ))}
             </div>
           ))}
           {filteredNavGroups.length === 0 && <p className="settings-search-empty" role="status">未找到结果</p>}
@@ -340,11 +329,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       <div className="settings-right-content" ref={contentRef}>
         {activeSection !== "codex-cloud" && activeSection !== "plugins-settings" && activeSection !== "appshots" && <div className="panel-page-header">
           <div>
-            <h2>
+            <h1>
               {activeSection === "storage" ? "存储空间" : SETTINGS_NAV_GROUPS.flatMap((g) => g.items).find(
                 (i) => i.slug === activeSection
               )?.label || "设置"}
-            </h2>
+            </h1>
             {activeSection === "agent" && <p className="card-subtitle-desc">
               配置新聊天的权限、网页访问和智能体回复{" "}
               <a href="https://developers.openai.com/codex/config-basic" target="_blank" rel="noreferrer"
@@ -362,45 +351,64 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         {activeSection === "general-settings" && (
           <div className="settings-scroll-container settings-general-content">
             <section className="settings-general-group" aria-labelledby="general-preferences-heading">
-              <h3 id="general-preferences-heading">文件与终端</h3>
-              <GeneralOpenPreferences bottomPanelLauncher={bottomPanelLauncher} />
+              <h3 id="general-preferences-heading">常规</h3>
+              <div className="settings-general-card">
+                <GeneralOpenPreferences bottomPanelLauncher={bottomPanelLauncher} />
+              </div>
             </section>
             <section className="settings-general-group" aria-labelledby="composer-preferences-heading">
               <h3 id="composer-preferences-heading">编辑器</h3>
-              <div className="form-field">
-                <label htmlFor="composer-enter-behavior">发送快捷键</label>
-                <p className="card-subtitle-desc">选择按 Enter 时是发送提示还是插入新行</p>
-                <GeneralPreferenceSelect id="composer-enter-behavior" label="发送快捷键" value={composerEnterBehavior}
-                  disabled={composerEnterSaving}
-                  options={[
-                    { value: "enter", label: "按 Enter 键" },
-                    { value: "cmdIfMultiline", label: "Ctrl + Enter 用于多行提示" },
-                    { value: "cmdAlways", label: "总是使用 Ctrl + Enter" },
-                  ]}
-                  onChange={value => onSetComposerEnterBehavior(value as ComposerEnterBehavior)} />
-                {composerEnterError && <p role="alert">{composerEnterError}</p>}
-              </div>
-              <div className="form-field">
-                <label htmlFor="follow-up-mode">后续消息处理方式</label>
-                <p className="card-subtitle-desc">在 Codex 运行时将后续消息加入队列，或引导当前运行。按 {composerEnterBehavior === "enter" ? "Ctrl + Enter" : "Ctrl + Shift + Enter"} 可对单条消息执行相反操作</p>
-                <GeneralPreferenceSelect id="follow-up-mode" label="后续消息处理方式" value={followUp.mode}
-                  disabled={followUp.saving}
-                  options={[{ value: "queue", label: "排队" }, { value: "steer", label: "引导" }]}
-                  onChange={value => followUp.onChange(value === "queue" ? "queue" : "steer")}
-                  onReselect={() => { if (followUp.error) followUp.onChange(followUp.mode); }} />
-                {followUp.error && <p role="alert">{followUp.error}</p>}
-              </div>
-              <div className="form-field">
-                <label htmlFor="show-context-window-usage">显示上下文窗口使用情况</label>
-                <div className="bottom-panel-launcher-setting">
-                  <label className="switch-control">
-                    <input id="show-context-window-usage" type="checkbox" role="switch" checked={contextUsage.visible}
-                      aria-label="在编辑器中显示上下文窗口使用情况" disabled={contextUsage.saving}
-                      onChange={event => contextUsage.onChange(event.target.checked)} />
-                    <span className="switch-slider" aria-hidden="true" />
-                  </label>
+              <div className="settings-general-card">
+                <div className="settings-general-row">
+                  <div className="settings-general-copy">
+                    <label htmlFor="show-context-window-usage">显示上下文窗口使用情况</label>
+                    {contextUsage.error && <p role="alert">{contextUsage.error}</p>}
+                  </div>
+                  <div className="settings-general-control">
+                    <div className="bottom-panel-launcher-setting">
+                      <label className="switch-control">
+                        <input id="show-context-window-usage" type="checkbox" role="switch" checked={contextUsage.visible}
+                          aria-label="在编辑器中显示上下文窗口使用情况" disabled={contextUsage.saving}
+                          onChange={event => contextUsage.onChange(event.target.checked)} />
+                        <span className="switch-slider" aria-hidden="true" />
+                      </label>
+                    </div>
+                  </div>
                 </div>
-                {contextUsage.error && <p role="alert">{contextUsage.error}</p>}
+                <div className="settings-general-row">
+                  <div className="settings-general-copy">
+                    <label htmlFor="composer-enter-behavior">发送快捷键</label>
+                    <p>选择按 Enter 时是发送提示词还是换行</p>
+                    {composerEnterError && <p role="alert">{composerEnterError}</p>}
+                  </div>
+                  <div className="settings-general-control">
+                    <GeneralPreferenceSelect id="composer-enter-behavior" label="发送快捷键" value={composerEnterBehavior}
+                      disabled={composerEnterSaving}
+                      options={[
+                        { value: "enter", label: "按 Enter 键" },
+                        { value: "cmdIfMultiline", label: "Ctrl + Enter 用于多行提示" },
+                        { value: "cmdAlways", label: "总是使用 Ctrl + Enter" },
+                      ]}
+                      onChange={value => onSetComposerEnterBehavior(value as ComposerEnterBehavior)} />
+                  </div>
+                </div>
+                <div className="settings-general-row">
+                  <div className="settings-general-copy">
+                    <span id="follow-up-mode-label">后续消息处理方式</span>
+                    <p id="follow-up-mode-description">在 Codex 运行时将后续消息加入队列，或引导当前运行。按 {composerEnterBehavior === "enter" ? "Ctrl + Enter" : "Ctrl + Shift + Enter"} 可对单条消息执行相反操作</p>
+                    {followUp.error && <p role="alert">{followUp.error}</p>}
+                  </div>
+                  <div className="settings-general-control">
+                    <div id="follow-up-mode" className="settings-general-segmented" role="group"
+                      aria-labelledby="follow-up-mode-label" aria-describedby="follow-up-mode-description">
+                      {([["queue", "排队"], ["steer", "引导"]] as const).map(([value, label]) =>
+                        <button key={value} type="button" disabled={followUp.saving} aria-pressed={followUp.mode === value}
+                          onClick={() => {
+                            if (!followUp.saving && (followUp.mode !== value || followUp.error)) followUp.onChange(value);
+                          }}>{label}</button>)}
+                    </div>
+                  </div>
+                </div>
               </div>
             </section>
             <ExperimentalFeatures connected={appServerStatus.connected} />

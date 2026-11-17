@@ -153,6 +153,7 @@ console.log('PASS portal menu: composing keys ignored, measured viewport positio
   assert.equal(controls[0].props.value, fixture.preferredTarget);
   assert.equal(JSON.stringify(controls[0].props.options), JSON.stringify([{ value: 'cursor', label: 'Cursor' }]));
   assert.equal(controls[1].props.value, fixture.preferredShell);
+  assert.equal(controls[1].props.placeholder, '无可用 Shell');
   assert.equal(controls[1].props.options.length, 2);
   assert.equal(controls.every(control => control.props.disabled), true, 'loading disables service changes');
   const changes = [];
@@ -168,6 +169,8 @@ console.log('PASS portal menu: composing keys ignored, measured viewport positio
   cursor = 0;
   const on = flatten(module.exports.GeneralOpenPreferences({ bottomPanelLauncher: { visible: true, busy: false } }));
   assert.ok(on.some(node => node.props.className === 'terminal-location-options'));
+  assert.equal(on.filter(node => node.props.className === 'settings-general-row').length, 4);
+  assert.equal(on.filter(node => node.props.className === 'settings-general-control').length, 4);
 }
 console.log('PASS general production consumer: service options, confirmed values, loading lock, custom menu replacing native selects');
 {

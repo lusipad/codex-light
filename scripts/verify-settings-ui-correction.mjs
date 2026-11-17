@@ -90,10 +90,19 @@ test('New sections begin at the top without resetting scroll for a blocked chang
 });
 test('General keeps real external-open and Enter consumers without debug/reset cards', () => {
   const page = mount('general-settings'); assert.ok(page.child('GeneralOpenPreferences'));
+  assert.equal(content(page.by(n => n.props.id === 'general-preferences-heading')), '常规');
+  assert.equal(page.all().filter(n => n.props.className === 'settings-general-card').length, 2);
+  const rowOrder = page.all().filter(n => ['show-context-window-usage', 'composer-enter-behavior', 'follow-up-mode'].includes(n.props.id));
+  assert.deepEqual(rowOrder.map(n => n.props.id), ['show-context-window-usage', 'composer-enter-behavior', 'follow-up-mode']);
+  assert.match(content(page.render()), /选择按 Enter 时是发送提示词还是换行/);
   const followUp = page.by(n => n.props.id === 'follow-up-mode');
-  assert.equal(followUp.props.value, 'steer');
-  assert.deepEqual(Array.from(followUp.props.options, option => option.label), ['排队', '引导']);
-  followUp.props.onChange('queue');
+  const buttons = nodes(followUp).filter(n => n.type === 'button');
+  assert.equal(followUp.props.role, 'group');
+  assert.deepEqual(buttons.map(n => content(n)), ['排队', '引导']);
+  assert.deepEqual(buttons.map(n => n.props['aria-pressed']), [false, true]);
+  buttons[1].props.onClick();
+  assert.deepEqual(page.calls, [], 'confirmed same selection must not repeat the write');
+  buttons[0].props.onClick();
   assert.deepEqual(page.calls.at(-1), ['follow-up', 'queue']);
   assert.equal(page.child('NotificationSettings')?.props.state, page.props.notificationState, 'local notification group belongs in General');
   assert.equal(mount('notifications').child('NotificationSettings'), undefined, 'account notification route cannot reuse local preferences');
@@ -106,6 +115,14 @@ test('General keeps real external-open and Enter consumers without debug/reset c
   const enter = page.by(n => n.props.id === 'composer-enter-behavior');
   assert.equal(enter.type.name, 'GeneralPreferenceSelect');
   enter.props.onChange('cmdAlways'); assert.deepEqual(page.calls, [['follow-up', 'queue'], ['enter', 'cmdAlways']]);
+  page.props.followUp.error = '跟进设置失败'; page.render();
+  page.by(n => n.type === 'button' && content(n) === '引导').props.onClick();
+  assert.deepEqual(page.calls.at(-1), ['follow-up', 'steer'], 'same selection retries a failed write');
+  page.props.followUp.saving = true; page.render();
+  const lockedFollowUp = page.by(n => n.type === 'button' && content(n) === '排队');
+  assert.equal(lockedFollowUp.props.disabled, true);
+  lockedFollowUp.props.onClick();
+  assert.deepEqual(page.calls.at(-1), ['follow-up', 'steer'], 'saving disables and fences extra changes');
   const usage = page.by(n => n.props.id === 'show-context-window-usage');
   assert.equal(usage.props.role, 'switch');
   assert.equal(usage.props.checked, false);
