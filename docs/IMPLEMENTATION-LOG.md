@@ -1,5 +1,14 @@
 # 实施日志（按轮次）
 
+## 2026-11-18 — 普通 ChatGPT 真实流基础层（R10，主窗未接）
+
+- 先用kickoff参考提取补主入口、网络/requirements、首聊parent、事件、UI草稿与独立远端偏好合同。重新读本机Store仍26.1111.2228.0，22清单资源与安装asar byte/SHA/header匹配；369官方切片、5历史本地映射及4本地UI快照核验通过，不冒整包新hash。
+- 复用现有认证/routing/网络限制、系统curl、UploadBodyFile及Tauri Channel，不加依赖。新增真实browser初始requirements环境封装、受限普通text-only消息/next投影、requirements→SSE及独立server stop；缺required挑战明确失败，源允许无token时不反向增门槛。首聊parent固定client-created-root，local-chatgpt UUID不是server id。
+- 每请求Channel保scope/sequence，v1 delta保每channel快照与全局继承元数据、实际消息ID及逻辑/运输终态；不造timer回复或工具/图片结果。真实live curl fixture锁EOF前交付、Unicode分片、取消/reap与Stop；EOF尾由业务只消费合法JSON且仍incomplete。源首聊force_login与retry分立、trim DONE也已纠偏。
+- 复审真实红包括最终身份await额外帧、错误回执早于partial、EOF尾丢失与多余初次登录gate。已修按声明计数拒额外帧、失败信封排空后抛原错误、仅成功投递后计数，以及取消完整await owned运输清理。旧有界JSON取消/drop仍未新增原生证明，不外推SSE清理结论。
+- 最终1140全量Rust、44相关前端、TSC/标准入口语法/diff检查通过；非测试debug产品编译退出0、17既有警告保留。debug hash `d8a25515e92fa8cff8b560736deb31e8ebdc6f15101335ac9c6c92b46b38c5b0`只证明非测试编译，未打新release页面候选。具体日志/失败/范围见`.ref/parity/16/chat-home-r10-20261117/verification-summary.json`，不声称完整非Fast或全部私有协议本轮重跑。
+- 当前尚未接主窗owner/controller、源response acceptance元数据、/c/路由与transcript/真实草稿退休；prepare/conduit、投递核验、resume/WS、上传/工具/多模态、required challenge/native attestation、远端偏好同步与持久会话图均继续队列。没有真实账号HTTP、模型turn、原生GUI/IME、配对像素或用户验收，score=null。保存本地基础层提交，不推送/CI，不升级R10或14批目标完成。
+
 ## 2026-11-17 — Work 首页模型菜单与本机线程选择（R9）
 
 - 先核固定26.1111的merged首页、native线程、版本原子偏好及权限producer，16份清单共249段严格切片与资源hash/header通过，整包未重新hash。首页接simple/advanced/older及暂存/关闭提交、slider cancel；分类title优先级、独立版本先写与失败保旧按源处理。

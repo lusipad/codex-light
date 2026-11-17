@@ -65,6 +65,9 @@ mod work_project;
 pub use durable_models::{DurableModelsRequest, DurableModelsResponse};
 mod durable_thread;
 mod work_access;
+mod stream_transport;
+mod conversation_text;
+pub use conversation_text::{ConversationTextRequest, ConversationTextResponse, ConversationTextFrame, ConversationStopRequest, ConversationStopResponse};
 pub use work_access::{WorkAccountInfoRequest, WorkAccountInfoResponse, WorkHomePreferencesResponse, WorkHeartbeatResponse, WorkHomeModelSetRequest, WorkHomeModelVersionSetRequest};
 pub use durable_thread::DurableThreadRequest;
 pub use sites_settings::{SitesSettingsRequest, SitesSettingsResponse};
@@ -4008,12 +4011,16 @@ fn curl_quote(value: &str) -> ServiceResult<String> {
 }
 
 fn curl_config(request: &HttpRequest) -> ServiceResult<String> {
+    curl_config_with_post_limit(request, 256 * 1024)
+}
+
+fn curl_config_with_post_limit(request: &HttpRequest, post_limit: usize) -> ServiceResult<String> {
     match request.method {
         HttpMethod::Delete if !request.body.is_empty() =>
             return Err(failure("invalid_request", "DELETE cannot carry an upload body")),
         HttpMethod::Get if !request.body.is_empty() =>
             return Err(failure("invalid_request", "GET cannot carry an upload body")),
-        HttpMethod::Post | HttpMethod::Patch if request.body.len() > 256 * 1024 =>
+        HttpMethod::Post | HttpMethod::Patch if request.body.len() > post_limit =>
             return Err(failure("invalid_request", "Share request exceeded size limit")),
         HttpMethod::Put if request.body.len() > MAX_SHARE_ASSET =>
             return Err(failure("invalid_request", "Share upload exceeded size limit")),

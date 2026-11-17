@@ -400,6 +400,32 @@ async fn work_home_model_set(
 }
 
 #[tauri::command]
+async fn chatgpt_text_submit(
+    app: AppHandle, state: State<'_, AppState>,
+    on_frame: tauri::ipc::Channel<chatgpt_service::ConversationTextFrame>,
+    request: chatgpt_service::ConversationTextRequest,
+) -> Result<chatgpt_service::ConversationTextResponse, chatgpt_service::ServiceError> {
+    state.chatgpt_service.conversation_text(request, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }, |frame| on_frame.send(frame).map_err(|_| chatgpt_service::ServiceError {
+        code: "channel_closed", message: "ChatGPT stream receiver closed", status: None,
+    })).await
+}
+
+#[tauri::command]
+async fn chatgpt_text_stop(
+    app: AppHandle, state: State<'_, AppState>, request: chatgpt_service::ConversationStopRequest,
+) -> Result<chatgpt_service::ConversationStopResponse, chatgpt_service::ServiceError> {
+    state.chatgpt_service.conversation_stop(request, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
 async fn work_home_model_version_set(
     app: AppHandle, state: State<'_, AppState>, request: chatgpt_service::WorkHomeModelVersionSetRequest,
 ) -> Result<chatgpt_service::WorkHomePreferencesResponse, chatgpt_service::ServiceError> {
@@ -2892,6 +2918,8 @@ pub fn run() {
             work_heartbeat_read,
             work_home_model_set,
             work_home_model_version_set,
+            chatgpt_text_submit,
+            chatgpt_text_stop,
             work_home_activate,
             chatgpt_service_read,
             chatgpt_service_site_pin,

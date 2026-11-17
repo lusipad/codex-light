@@ -32,6 +32,8 @@
 
 ### 当前起点与下一工作包
 
+R10已补普通ChatGPT的独立requirements/SSE/stop宿主、源消息与流投影、真实WebView初始环境和逐请求Channel；基础层1140全Rust、44相关前端/TSC及非测试debug编译通过。主窗owner/controller、响应接受/稿件生命周期、/c/路由与transcript尚未接，不能将这些内部检查称为Chat页面可用。下一继续本页真实主旅程，再推进下文远端同步/权限等队列；完整范围及未验项见16.23A的R10记录，不用基础层替代整页完成。
+
 当前已接Work资格、owner模式/导航、原flight交接、本机项目首条/跟进及R8真实冷恢复。R9继续接首页merged模型菜单、本机线程真实下一轮模型更新及独立owner home/version持久化；不再统一只读，但guardian/全权限确认、Speed/Daybreak/location条件控件仍缺，不能叫完整选择器。准确检查、构建及未验边界见[16.23A](antigravity/acceptance/16.23A.md)R9节。下一工作包先补ChatGPT真实消息消费者和后台偏好同步、权限确认分支，再接g-p materialization/目录分配；非Work选择不能冒普通CLI发送。未准备目录、未接排队/目标/会话内审查仍保明确边界。Work-cloud独立接，不用现homeCloud替代。真实服务/迁移库/原生GUI/IME与官方配对像素尚未实测；legacy完整迁移/live SDK/工具链继续分项登记。CI/push暂停，整页及14批总目标未验收。
 
 最新 Work 输入已纠正为后端 fresh JWT 白名单，不再使用近似 planType；新增运行地点纯层（非reader/页面），15组Work、9组地点、1046完整Rust及前端/原生debug编译通过。CLI0.165声明并接受顶层serviceName创建私有空线程，但普通/Work的完整turns读取均遇同一未实现错误；不把元数据成功当历史通过。下一仍是 Work 模式/模型/真实地点reader、本地/云端消费者及原flight交接，输入基础不代表新聊天已可用。准确范围见[16.23A](antigravity/acceptance/16.23A.md)，CI/push暂停。
