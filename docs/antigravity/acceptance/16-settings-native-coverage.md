@@ -17,3 +17,18 @@
 共 8 个本地值完成原生重启读回。25 项设置相关前端检查、6 项工作树清单 Rust 回归、TypeScript 和原生 Debug 构建通过。测试构建 SHA-256 为 `f868c42ed4dc54d861394b780f8dceb03a95318f598b887db7ec3123e004ff15`。本轮未生成发行安装包。证据在 `.ref/native-local-journey/settings-26/` 的 `sections-before.json`、`sections-after.json`、`local-readback.json`、`search.json`、`frontend-results.json`、`worktree-tests.log` 和 `settings-build.log`。
 
 本次验证覆盖全导航及列出的样本。每分区其余动作、完整原生键鼠与 IME、视觉对照及用户验收分别待测。测试实例与测试端口已关闭。未推送、未跑托管 CI。
+
+## 导入、归档、钩子与连接的本地动作实测
+
+从 `ceacdc5` 复用上文通过哈希核验的原生 Debug 构建。创建新 Git 仓库、WebView2 数据目录与 CODEX_HOME。app-server 子进程另用私有来源目录。实际点击设置控件，磁盘、真实协议和进程重启读回交叉确认。没有登录或发送模型任务。
+
+| 用例 | 原生操作和独立读回 |
+|---|---|
+| SA-01 导入 | 检测隔离仓库中的 Claude Code `CLAUDE.md`，只选该项目条目。取消确认时没有生成目标。确认后服务报告成功 1 项，失败 0 项，界面读回 55 字节。重启后目标 `AGENTS.md` 与来源哈希一致 |
+| SA-02 归档 | 真实 app-server 建立并归档零模型轮次的本地会话。在设置页用不匹配和匹配的搜索词筛选，点击取消归档，再通过反馈中的「查看」打开同一会话 ID。重启后归档列表仍不含该 ID，真实 `thread/read` 指向活动 `sessions` 目录且磁盘记录存在 |
+| SA-03 钩子 | 展开用户配置来源，信任唯一的私有 `PreToolUse` 定义，实际操作停用、启用、再停用。每次真 `hooks/list` 独立读回。磁盘保存 hash 与禁用值，重启后依旧可信、禁用。未执行钩子命令 |
+| SA-04 连接 | 通过设置新增私有 STDIO 服务器并保存，用户层配置读回正确。重启 app-server 后实际夹具收到 `initialize`、`tools/list`，服务返回 `local_fixture_echo`。整应用重开后，编辑器仍读回原命令和参数。停用并再次重启后配置与开关均为关闭，状态返回空工具集，读状态没有启动夹具 |
+
+初次归档断言假定零轮次会话会出现在默认活动列表，改用真实活动路径、身份和打开结果校验。初次 MCP 停用断言假定状态列表会移除配置条目，实测其保留配置摘要，工具为空、没有启动握手。两处均为测试预期过强。此次没有复现需修复的产品缺陷。9 项相关前端检查通过。
+
+证据在 `.ref/native-local-journey/settings-actions-cd95424b/`，包含 `import-detect.json`、`import-cancel.json`、`import-apply.json`、`archive-open.json`、`hooks-write.json`、`mcp-save.json`、`mcp-handshake.jsonl`、`mcp-disable.json`、`restart-read.json` 和 `related-checks.json`。未覆盖其他导入类型、云端归档、实际钩子执行、远程 MCP/OAuth 或界面像素。原生实例、测试端口和夹具进程均已关闭。未推送、未跑远端 CI。
