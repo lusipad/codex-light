@@ -5,7 +5,7 @@ import ts from "typescript";
 
 const compile = text => ts.transpileModule(`(${text})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 const exports = {};
-for (const file of ["src/pluginDirectoryLocation.ts", "src/pluginManagementLocation.ts"]) {
+for (const file of ["src/pluginDirectoryLocation.ts", "src/pluginManagementLocation.ts", "src/chatgptRoutes.ts"]) {
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(file, "utf8"), { compilerOptions: {
     target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS,
   } }).outputText, { exports, URL, URLSearchParams });

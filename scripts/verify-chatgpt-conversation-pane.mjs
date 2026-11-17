@@ -68,4 +68,25 @@ const render = props => api.ChatgptConversationPane({ messages: [], pending: fal
   assert.equal(all(empty).filter(node => node === composer).length, 1);
   console.log("PASS independent pending/error slots preserve partial messages and original composer, with no fake retry/success");
 }
-console.log("ChatGPT conversation pane: 4 production JSX groups passed; leaf renderer props inspected, no GUI/HTTP/model");
+{
+  let retries = 0;
+  const loading = render({ loadingHistory: true });
+  assert.ok(all(loading).some(node => node.props.role === "status" && text(node).includes("读取聊天历史")));
+  assert.equal(all(loading).some(node => node.type === "button"), false);
+  const failed = render({ error: "历史读取失败", onRetryHistory: () => { retries++; } });
+  const retry = all(failed).find(node => node.type === "button");
+  assert.ok(retry); assert.equal(retries, 0); retry.props.onClick(); assert.equal(retries, 1);
+  assert.equal(all(render({ error: "流结果未知" })).some(node => node.type === "button"), false,
+    "unknown submission must not acquire a history retry or resend action");
+  console.log("PASS history loading and explicit read retry remain separate from unknown submission delivery");
+}
+{
+  const tree = render({ readOnly: true, remoteActivity: "active" });
+  assert.ok(text(tree).includes("只读")); assert.ok(text(tree).includes("远端任务正在进行"));
+  assert.equal(text(tree).includes("正在等待回复"), false, "remote activity is not an attached local completion stream");
+  assert.equal(all(tree).some(node => node.type === "button"), false, "remote activity never invents stop or resend results");
+  assert.ok(text(render({ remoteActivity: "background" })).includes("远端后台任务"));
+  assert.equal(text(render({ remoteActivity: "unknown" })).includes("远端任务"), false);
+  console.log("PASS readonly and known remote activity are explicit without fabricating a resumed local stream");
+}
+console.log("ChatGPT conversation pane: 6 production JSX groups passed; leaf renderer props inspected, no GUI/HTTP/model");

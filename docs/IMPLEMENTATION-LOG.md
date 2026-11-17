@@ -1,5 +1,14 @@
 # 实施日志（按轮次）
 
+## 2026-11-18 — 普通服务器详情与冷路由恢复（R10C）
+
+- 先核完整详情/模型/父链/隐藏/异步合同；两份清单52个精确片段与当前安装asar核验通过，整包未重hash。专用受限GET不借归档资格/CLI、不发假owner或completion的MCP头，复用真实profile/认证/政策/取消。
+- 初始普通/c/地址读取真实图与模型/档位，按current_node跟进；保全部分支raw，未知/坏/只读不冒完整或可写。history pending/error/read retry独立于completion unknown。模型失败保图、重读只填原会话空model；cold selector按源重实现，不复用首页policy。
+- 修同页popstate A→B不加载、A晚流回写B URL及B输入误投A；前后owner/host/location及既有pending记录隔离。已证remote activity保原事实并显式提示尚未接实时恢复，不假本机stream/停止成功。
+- 1152全Rust、55相关前端（实际App14组、controller40、graph22、model8、client15、Pane6及受影响四项导航）、TSC/前端构建通过。最终原生产物、hash/输入稳定与失败历史见`.ref/parity/16/chat-history-r10c-20261118/verification-summary.json`及16.23A。
+- 同源码EXE/MSI/NSIS退出0，616输入稳定；候选`dist-artifacts/chat-history-r10c-20261118/CodexNative.exe` SHA-256 `daeda27c2c65294bfe1856683de1e9afb7597eca454e179cea9f8568a5ae25dd`。17项既有Rust警告及Vite chunk警告保留，没有启动GUI验证。
+- 服务端列表、重启自动可达恢复、持久草稿、分页/实时流/工具和原生/视觉仍未完成；无真实模型、GUI/IME、用户验收或CI结论。阶段本地保存，继续总目标。
+
 ## 2026-11-18 — 普通 ChatGPT 主窗文本接线（R10B）
 
 - 沿用固定源UI/草稿/网络合同，接主窗多会话owner、/c/与项目路由、transcript、侧栏及独立Composer/停止。复用既有模型目录、气泡、Markdown、认证、curl和Channel，无新依赖。

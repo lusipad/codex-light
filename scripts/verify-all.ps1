@@ -219,6 +219,8 @@ try {
   Invoke-Step "ChatGPT conversation ownership and background delivery" { node scripts/verify-chatgpt-text-conversation.mjs }
   Invoke-Step "ChatGPT transcript pane" { node scripts/verify-chatgpt-conversation-pane.mjs }
   Invoke-Step "ChatGPT route identity" { node scripts/verify-chatgpt-routes.mjs }
+  Invoke-Step "ChatGPT complete history graph projection" { node scripts/verify-chatgpt-conversation-history.mjs }
+  Invoke-Step "ChatGPT cold history model context" { node scripts/verify-chatgpt-history-model.mjs }
   Invoke-Step "ChatGPT sidebar entries" { node scripts/verify-sidebar-chatgpt.mjs }
   Invoke-Step "ChatGPT actual App integration" { node scripts/verify-chatgpt-app.mjs }
   Invoke-Step "Rust ChatGPT incremental stream transport" { cargo test --locked --manifest-path src-tauri/Cargo.toml --lib stream_transport }

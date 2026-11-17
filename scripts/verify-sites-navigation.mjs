@@ -7,6 +7,8 @@ const filename = 'src/sitesNavigation.ts';
 assert.ok(fs.existsSync(filename), 'Sites deep links require a shared URL contract');
 vm.runInNewContext(ts.transpileModule(fs.readFileSync(filename, 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText, { exports, URL });
 const { parseSitesLocation: parse, sitesLocationUrl: url } = exports;
+const chatRoutes = {};
+vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/chatgptRoutes.ts', 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText, { exports: chatRoutes, URL });
 const plain = value => JSON.parse(JSON.stringify(value));
 assert.deepEqual(plain(parse('/sites')), { view: 'owned', siteId: null, search: '' });
 assert.deepEqual(plain(parse('/sites?view=shared&search=ignored')), { view: 'shared', siteId: null, search: '' });
@@ -42,7 +44,7 @@ assert.ok(restoreEffect, 'Sites native history must register the real App restor
 {
   const listeners = new Map(), restored = [], location = { href: 'https://private.test/sites?view=pinned', pathname: '/sites', search: '?view=pinned', hash: '' };
   const state = { current: 'home' };
-  const restoreContext = { exports: {}, URL, activeRouteRef: state, isQuickChatWindow: false, isThreadWindow: false,
+  const restoreContext = { exports: {}, ...chatRoutes, URL, activeRouteRef: state, isQuickChatWindow: false, isThreadWindow: false,
     pluginManagementHandoffRef: { current: null }, pluginManagementLocationRef: { current: false },
     parseSitesLocation: parse, parsePluginDirectoryLocation: () => null, parsePluginManagementLocation: () => null,
     parseLibraryFileLocation: () => null, parseLibraryLocation: () => null,

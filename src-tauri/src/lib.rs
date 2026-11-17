@@ -415,6 +415,17 @@ async fn chatgpt_text_submit(
 }
 
 #[tauri::command]
+async fn chatgpt_conversation_history_read(
+    app: AppHandle, state: State<'_, AppState>, request: chatgpt_service::ConversationHistoryRequest,
+) -> Result<chatgpt_service::ConversationHistoryResponse, chatgpt_service::ServiceError> {
+    state.chatgpt_service.conversation_history_read(request, |method, params| {
+        let app = &app;
+        let state = &state;
+        async move { state.app_server.call(app, method, Some(params)).await }
+    }).await
+}
+
+#[tauri::command]
 async fn chatgpt_text_stop(
     app: AppHandle, state: State<'_, AppState>, request: chatgpt_service::ConversationStopRequest,
 ) -> Result<chatgpt_service::ConversationStopResponse, chatgpt_service::ServiceError> {
@@ -2920,6 +2931,7 @@ pub fn run() {
             work_home_model_version_set,
             chatgpt_text_submit,
             chatgpt_text_stop,
+            chatgpt_conversation_history_read,
             work_home_activate,
             chatgpt_service_read,
             chatgpt_service_site_pin,

@@ -147,3 +147,30 @@ export async function stopChatgptText(principal: ServiceIdentity, conversationId
     signal.throwIfAborted();
   } finally { signal.removeEventListener("abort", cancel); }
 }
+
+/** H01–H06 complete-history branch. A local draft id is never a server read. */
+export async function readChatgptConversation(principal: ServiceIdentity, conversationId: string,
+  options: { temporary?: boolean; projectId?: string | null }, signal: AbortSignal): Promise<unknown> {
+  if (!/^[A-Za-z0-9_-]+$/.test(conversationId)) throw Error("ChatGPT 历史会话标识无效。");
+  const identity = { ...principal };
+  signal.throwIfAborted();
+  if (!sameIdentity(identity, await serviceIdentity(signal))) throw Error("ChatGPT 账号已变化。");
+  signal.throwIfAborted();
+  const requestId = crypto.randomUUID(), cancel = () => { void tauriInvoke("chatgpt_service_cancel", { requestId }).catch(() => {}); };
+  signal.addEventListener("abort", cancel, { once: true });
+  try {
+    const result = await tauriInvoke<unknown>("chatgpt_conversation_history_read", { request: {
+      requestId, expectedIdentity: identity, profile: chatProfile(), conversationId, temporary: options.temporary ?? false,
+      projectId: options.projectId?.startsWith("g-p-") ? options.projectId : null,
+    } });
+    signal.throwIfAborted();
+    if (!record(result) || result.requestId !== requestId || !record(result.identity)
+      || !sameIdentity(identity, result.identity as unknown as ServiceIdentity) || !Number.isInteger(result.status)
+      || typeof result.status !== "number" || result.status < 200 || result.status >= 300 || !record(result.body)) {
+      throw Error("ChatGPT 历史响应尚未确认。");
+    }
+    if (!sameIdentity(identity, await serviceIdentity(signal))) throw Error("ChatGPT 历史读取期间账号已变化。");
+    signal.throwIfAborted();
+    return result.body;
+  } finally { signal.removeEventListener("abort", cancel); }
+}

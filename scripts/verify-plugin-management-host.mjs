@@ -5,7 +5,7 @@ import ts from "typescript";
 
 const compile = text => ts.transpileModule(text, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
 const locations = {};
-for (const file of ["pluginDirectoryLocation", "pluginManagementLocation"]) {
+for (const file of ["pluginDirectoryLocation", "pluginManagementLocation", "chatgptRoutes"]) {
   vm.runInNewContext(compile(fs.readFileSync(`src/${file}.ts`, "utf8")), { exports: locations, URL, URLSearchParams });
 }
 const source = fs.readFileSync("src/App.tsx", "utf8");

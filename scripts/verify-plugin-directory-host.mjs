@@ -6,6 +6,7 @@ const compile = text => ts.transpileModule(text, { compilerOptions: { target: ts
 const locations = {};
 vm.runInNewContext(compile(fs.readFileSync("src/pluginDirectoryLocation.ts", "utf8")), { exports: locations, URL, URLSearchParams });
 vm.runInNewContext(compile(fs.readFileSync("src/pluginManagementLocation.ts", "utf8")), { exports: locations, URL, URLSearchParams });
+vm.runInNewContext(compile(fs.readFileSync("src/chatgptRoutes.ts", "utf8")), { exports: locations, URL });
 const source = fs.readFileSync("src/App.tsx", "utf8"), ast = ts.createSourceFile("App.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 let initial, restore, synchronize, toolbar;
 function visit(node) {

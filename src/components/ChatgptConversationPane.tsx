@@ -15,6 +15,10 @@ export interface ChatgptConversationPaneProps {
   /** Actual ordered message identities supplied by the scoped controller. */
   messages: readonly ChatgptConversationMessage[];
   pending: boolean;
+  loadingHistory?: boolean;
+  onRetryHistory?: () => void;
+  readOnly?: boolean;
+  remoteActivity?: 'active' | 'background' | 'idle' | 'unknown';
   error?: string | null;
   composer: React.ReactNode;
   title?: string;
@@ -22,7 +26,7 @@ export interface ChatgptConversationPaneProps {
 
 /** Text-only transcript slots. Existing local renderers are reused; this does
  * not claim parity with the official GSDP message subtree or its tool actions. */
-export function ChatgptConversationPane({ messages, pending, error, composer, title }: ChatgptConversationPaneProps) {
+export function ChatgptConversationPane({ messages, pending, loadingHistory, onRetryHistory, readOnly, remoteActivity, error, composer, title }: ChatgptConversationPaneProps) {
   return <section className="chatgpt-conversation-pane" aria-label={title || "ChatGPT 聊天"}>
     <div className="timeline-scroll-pane">
       <div className="timeline-content-wrapper">
@@ -40,7 +44,14 @@ export function ChatgptConversationPane({ messages, pending, error, composer, ti
           </div>;
         })}
         {pending && <div role="status" className="chatgpt-conversation-pending">正在等待回复…</div>}
-        {error && <div role="alert" className="chatgpt-conversation-error">{error}</div>}
+        {loadingHistory && <div role="status" className="chatgpt-conversation-pending">正在读取聊天历史…</div>}
+        {readOnly && <div role="status" className="chatgpt-conversation-pending">此聊天为只读。</div>}
+        {(remoteActivity === 'active' || remoteActivity === 'background') && <div role="status" className="chatgpt-conversation-pending">
+          {remoteActivity === 'background' ? '远端后台任务正在进行' : '远端任务正在进行'}，实时消息恢复尚未接通。
+        </div>}
+        {error && <div role="alert" className="chatgpt-conversation-error">{error}
+          {onRetryHistory && <button type="button" onClick={onRetryHistory}>重试读取历史</button>}
+        </div>}
       </div>
     </div>
     <div className="chatgpt-conversation-composer">{composer}</div>

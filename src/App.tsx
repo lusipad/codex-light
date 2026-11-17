@@ -17,6 +17,9 @@ import { useWorkHomeModelSelection } from "./useWorkHomeModelSelection";
 import { useChatgptTextConversation } from "./useChatgptTextConversation";
 import { ChatgptConversationPane } from "./components/ChatgptConversationPane";
 import { chatgptConversationPath, parseChatgptConversationLocation } from "./chatgptRoutes";
+import { readChatgptConversation } from "./chatgptTextClient";
+import { decodeChatgptConversationHistory, getChatgptHistoryActivity, type ChatgptConversationHistory } from "./chatgptConversationHistory";
+import { readChatgptHistoryModelContext } from "./chatgptHistoryModel";
 import { adaptWorkModelSelection, selectWorkHomeModel, readWorkModelCatalog, type WorkModelSelection, type WorkModelCatalog } from "./workModelCatalog";
 import { decideWorkModelPermissions } from "./workModelPermissionDecision";
 import { createWorkThreadModelSelectionController, type WorkThreadModelSnapshot } from "./workThreadModelSelection";
@@ -399,6 +402,7 @@ export const App: React.FC = () => {
     : parseSitesLocation(window.location.href) ? "sites"
       : libraryFileId ? "library-file"
         : !isQuickChatWindow && !isThreadWindow && parseLibraryLocation(window.location.href) ? "library" : "home");
+  const [chatHistoryLocation, setChatHistoryLocation] = useState(() => window.location.href);
   const isCloudChatRoute = activeRoute === "cloud-draft" || activeRoute === "cloud-new-chat";
   const [cloudDraft, setCloudDraft] = useState<{ session: CloudDraftSession; persisted: boolean; origin: "settings" | "cloud-environments" | "home"; title?: string } | null>(null);
   const refreshCloudRecentRef = useRef<(() => void) | null>(null);
@@ -604,6 +608,9 @@ export const App: React.FC = () => {
         if (!parsePluginManagementLocation(window.location.href)) window.history.replaceState(window.history.state, "", "/settings/plugins-settings");
         setSettingsInitialSection("plugins-settings");
         setActiveRoute("settings");
+      } else if (!isQuickChatWindow && !isThreadWindow && parseChatgptConversationLocation(window.location.href)) {
+        setChatHistoryLocation(window.location.href);
+        setActiveRoute("chatgpt-thread");
       } else if (parseSitesLocation(window.location.href)) setActiveRoute("sites");
       else if (!isQuickChatWindow && !isThreadWindow && parsePluginDirectoryLocation(window.location.href)) setActiveRoute("plugins");
       else {
@@ -614,7 +621,7 @@ export const App: React.FC = () => {
         } else if (!isQuickChatWindow && !isThreadWindow && parseLibraryLocation(window.location.href)) {
           setLibraryCleanupTab(null);
           setActiveRoute("library");
-        } else if (["sites", "library", "library-file", "plugins"].includes(activeRouteRef.current)
+        } else if (["sites", "library", "library-file", "plugins", "chatgpt-thread"].includes(activeRouteRef.current)
           || (activeRouteRef.current === "settings" && wasPluginManagement)) setActiveRoute("home");
       }
     };
@@ -1523,7 +1530,10 @@ export const App: React.FC = () => {
   const [workHomeSession, setWorkHomeSession] = useState<{
     key: string; owner: string; navigation: number | null; target: WorkCaptureTarget | null;
   } | null>(null);
-  const [chatEntry, setChatEntry] = useState<{ identity: ServiceIdentity; owner: string; catalog: WorkModelCatalog; plan: string | null; target: WorkCaptureTarget | null; homeKey: string } | null>(null);
+  const [chatEntry, setChatEntry] = useState<{ identity: ServiceIdentity; owner: string; catalog: WorkModelCatalog | null; plan: string | null; target: WorkCaptureTarget | null; homeKey: string } | null>(null);
+  const [chatCatalogError, setChatCatalogError] = useState("");
+  const [chatCatalogLoading, setChatCatalogLoading] = useState(false);
+  const chatCatalogRequest = useRef<AbortController | null>(null);
   const [chatDrafts, setChatDrafts] = useState<Record<string, string>>({});
   const chatDraftValues = useRef<Record<string, string>>({});
   const chatDraftRevisions = useRef(new Map<string, number>());
@@ -1537,6 +1547,11 @@ export const App: React.FC = () => {
   const chatPreparing = useRef(false);
   const chatPreparationTicket = useRef(0);
   const [chatPreparingState, setChatPreparingState] = useState(false);
+  const [chatHistoryRetry, setChatHistoryRetry] = useState(0);
+  const [chatHistoryLoad, setChatHistoryLoad] = useState<{ pending: boolean; error: string | null } | null>(null);
+  const [chatHistoryResult, setChatHistoryResult] = useState<{ owner: string; host: string; location: string;
+    identity: ServiceIdentity; history: ChatgptConversationHistory; selection: WorkModelSelection | null;
+    serverId: string; temporary: boolean } | null>(null);
   const committedWorkOwner = useRef(modelAccountIdentity);
   useLayoutEffect(() => { committedWorkOwner.current = modelAccountIdentity; }, [modelAccountIdentity]);
   const workNewChatFactory = useRef<((id: string, identity: ServiceIdentity, signal: AbortSignal) => Promise<AppshotWorkPlan>) | null>(null);
@@ -1820,6 +1835,77 @@ export const App: React.FC = () => {
     ownerKey: JSON.stringify([modelAccountIdentity, workHostIdentity]),
     onOptimisticStart: navigateOptimisticChat, onAccepted: acceptChatPrompt, onRestore: restoreChatPrompt,
   });
+  const chatRouteLocation = activeRoute === "chatgpt-thread" ? parseChatgptConversationLocation(window.location.href) : null;
+  const visibleChatConversation = !chatRouteLocation || chatConversation.conversation?.clientId === chatRouteLocation.id
+    || chatConversation.conversation?.serverId === chatRouteLocation.id ? chatConversation.conversation : null;
+  useEffect(() => {
+    const location = window.location.href, target = parseChatgptConversationLocation(location);
+    if (activeRoute !== "chatgpt-thread" || !target) { setChatHistoryLoad(null); return; }
+    const existing = chatConversation.conversations.find(item => item.clientId === target.id || item.serverId === target.id);
+    if (existing) {
+      if (chatConversation.conversation?.clientId !== existing.clientId) chatConversation.open(existing.clientId);
+      setChatHistoryLoad(null); return;
+    }
+    if (!/^[A-Za-z0-9_-]+$/.test(target.id) || target.temporary) {
+      setChatHistoryLoad({ pending: false, error: "此本地草稿或临时聊天尚不能从冷启动历史恢复。" }); return;
+    }
+    if (!appServerStatus.connected) { setChatHistoryLoad({ pending: false, error: "app-server 未连接，暂时无法读取聊天历史。" }); return; }
+    const abort = new AbortController(), owner = modelAccountIdentity, host = workHostIdentity;
+    const current = () => !abort.signal.aborted && committedWorkOwner.current === owner && committedWorkHost.current === host
+      && activeRouteRef.current === "chatgpt-thread" && window.location.href === location;
+    setChatHistoryLoad({ pending: true, error: null });
+    void (async () => {
+      const identity = await serviceIdentity(abort.signal);
+      const body = await readChatgptConversation(identity, target.id, { projectId: target.projectId }, abort.signal);
+      const history = decodeChatgptConversationHistory(body);
+      const models = await readChatgptHistoryModelContext(identity, history, abort.signal)
+        .then(result => ({ ...result, error: result.warnings.join(" ") }))
+        .catch(error => ({ catalog: null, plan: null, selection: null, error: serviceErrorMessage(error) }));
+      if (!current()) return;
+      const { catalog, plan } = models;
+      const selection = models.selection && catalog?.modelConfigBySlug[models.selection.slug]?.isWorkModeModel !== true ? models.selection : null;
+      setChatCatalogError(models.error);
+      setChatEntry({ identity, owner, catalog, plan, target: null, homeKey: "" });
+      setChatHistoryResult({ owner, host, location, identity, history, selection, serverId: target.id, temporary: target.temporary });
+    })().catch(error => { if (current()) setChatHistoryLoad({ pending: false, error: `读取聊天历史失败：${serviceErrorMessage(error)}` }); });
+    return () => abort.abort();
+  }, [activeRoute, appServerStatus.connected, modelAccountIdentity, workHostIdentity, chatHistoryRetry, chatHistoryLocation]);
+  useEffect(() => {
+    const result = chatHistoryResult;
+    if (!result) return;
+    if (result.owner === committedWorkOwner.current && result.host === committedWorkHost.current
+      && activeRouteRef.current === "chatgpt-thread" && result.location === window.location.href) {
+      const id = chatConversation.hydrate(result.identity, result.history, { serverId: result.serverId,
+        selection: result.selection, temporary: result.temporary, select: true });
+      setChatHistoryLoad({ pending: false, error: id ? null : "聊天身份已变化，历史未被采纳，请重试。" });
+    }
+    setChatHistoryResult(null);
+  }, [chatHistoryResult, chatConversation.hydrate]);
+  const refreshChatCatalog = useCallback(async () => {
+    const entry = chatEntry, owner = modelAccountIdentity, host = workHostIdentity;
+    const conversation = visibleChatConversation;
+    if (!entry || entry.owner !== owner || owner !== committedWorkOwner.current || host !== committedWorkHost.current
+      || chatCatalogLoading || chatCatalogRequest.current) return;
+    const abort = new AbortController();
+    chatCatalogRequest.current = abort;
+    const current = () => !abort.signal.aborted && chatCatalogRequest.current === abort
+      && committedWorkOwner.current === owner && committedWorkHost.current === host;
+    setChatCatalogLoading(true);
+    try {
+      const result = conversation?.history ? await readChatgptHistoryModelContext(entry.identity, conversation.history, abort.signal)
+        : { catalog: await readWorkModelCatalog(entry.identity, abort.signal), plan: entry.plan, selection: null, warnings: [] };
+      if (!current()) return;
+      setChatEntry(previous => previous?.identity === entry.identity ? { ...previous, catalog: result.catalog, plan: result.plan } : previous);
+      if (conversation && result.selection && result.catalog.modelConfigBySlug[result.selection.slug]?.isWorkModeModel !== true) {
+        chatConversation.fillHistoryModel(conversation.clientId, result.selection, { identity: entry.identity, ownerKey: JSON.stringify([owner, host]) });
+      }
+      setChatCatalogError(result.warnings.join(" "));
+    } catch (error) { if (current()) setChatCatalogError(serviceErrorMessage(error)); }
+    finally { if (chatCatalogRequest.current === abort) { chatCatalogRequest.current = null; setChatCatalogLoading(false); } }
+  }, [chatEntry, modelAccountIdentity, workHostIdentity, chatCatalogLoading, visibleChatConversation, chatConversation.fillHistoryModel]);
+  useLayoutEffect(() => () => {
+    chatCatalogRequest.current?.abort(); chatCatalogRequest.current = null; setChatCatalogLoading(false);
+  }, [modelAccountIdentity, workHostIdentity]);
   const previousChatRoute = useRef(activeRoute);
   useEffect(() => {
     const previous = previousChatRoute.current; previousChatRoute.current = activeRoute;
@@ -1838,6 +1924,8 @@ export const App: React.FC = () => {
   useEffect(() => {
     const conversation = chatConversation.conversation;
     if (activeRoute !== "chatgpt-thread" || !conversation) return;
+    const target = parseChatgptConversationLocation(window.location.href);
+    if (target && target.id !== conversation.clientId && target.id !== conversation.serverId) return;
     const path = chatgptConversationPath({ id: conversation.serverId ?? conversation.clientId, projectId: conversation.projectId, temporary: conversation.isTemporaryChat });
     if (window.location.pathname + window.location.search !== path) window.history.replaceState(window.history.state, "", path);
   }, [activeRoute, chatConversation.conversation]);
@@ -4351,6 +4439,8 @@ export const App: React.FC = () => {
   const handleSendChatgptText = useCallback(async (overrideText?: string) => {
     const home = activeRouteRef.current === "home";
     const conversation = chatConversation.conversation;
+    const targetLocation = parseChatgptConversationLocation(window.location.href);
+    if (!home && (!conversation || targetLocation && targetLocation.id !== conversation.clientId && targetLocation.id !== conversation.serverId)) return;
     const prompt = overrideText ?? (home ? promptInput : conversation ? chatDrafts[conversation.clientId] ?? "" : "");
     if (!prompt.trim() || chatPreparing.current || conversation?.pending && !home) return;
     if (attachedFiles.length || appshots.length) { showAppToast("ChatGPT 附件上传尚未接通，输入已保留。", "error"); return; }
@@ -6754,7 +6844,8 @@ export const App: React.FC = () => {
     contextKey: `${modelAccountIdentity}:${workHostIdentity}:${workHomeSession.key}` } : undefined;
   const chatSidebarConversations = useMemo(() => chatConversation.conversations.map(conversation => ({
     id: conversation.clientId, title: conversation.title ?? conversation.messages.find(message => message.raw.author &&
-      typeof message.raw.author === "object" && (message.raw.author as { role?: unknown }).role === "user")?.text ?? "新聊天", pending: conversation.pending,
+      typeof message.raw.author === "object" && (message.raw.author as { role?: unknown }).role === "user")?.text ?? "新聊天",
+    pending: conversation.pending || !!conversation.history && ["active", "background"].includes(getChatgptHistoryActivity(conversation.history)),
   })), [chatConversation.conversations]);
   const openChatgptConversation = (id: string) => {
     const origin = window.location.href, navigation = navigationRequestRef.current;
@@ -6763,37 +6854,42 @@ export const App: React.FC = () => {
     const apply = () => {
       if (applied || window.location.href !== origin || navigationRequestRef.current !== navigation
         || committedWorkOwner.current !== owner || committedWorkHost.current !== host) return;
-      if (!chatConversation.open(id)) return;
+      const conversation = chatConversation.conversations.find(item => item.clientId === id);
+      if (!conversation || !chatConversation.open(id)) return;
       applied = true;
       activeThreadIdRef.current = null; setActiveThreadId(null); threadRequestRef.current++;
+      window.history.replaceState(window.history.state, "", chatgptConversationPath({ id: conversation.serverId ?? id,
+        projectId: conversation.projectId, temporary: conversation.isTemporaryChat }));
       activeRouteRef.current = "chatgpt-thread"; commitActiveRoute("chatgpt-thread");
     };
     if (personalizationNavigationGuardRef.current?.(apply) === false) return;
     apply();
   };
   const renderChatgptComposer = () => {
-    const conversation = chatConversation.conversation;
+    const conversation = visibleChatConversation;
+    const draftId = conversation?.clientId ?? (chatRouteLocation ? chatConversation.conversations.find(item => item.clientId === chatRouteLocation.id
+      || item.serverId === chatRouteLocation.id)?.clientId ?? chatRouteLocation.id : null);
     return <ComposerBox chatgptMode variant="thread" dictationSessionKey={conversation?.clientId ?? "chatgpt"}
       followUpMode={followUpMode}
       composerEnterBehavior={composerEnterBehavior} keyBindings={keyboardState.bindings}
-      promptInput={conversation ? chatDrafts[conversation.clientId] ?? "" : ""}
-      onPromptInputChange={value => { if (conversation) writeChatDraft(conversation.clientId, value); }}
+      promptInput={draftId ? chatDrafts[draftId] ?? "" : ""}
+      onPromptInputChange={value => { if (draftId) writeChatDraft(draftId, value); }}
       onSendMessage={() => { void handleSendChatgptText(); }}
       onQueueMessage={() => showAppToast("ChatGPT 排队发送尚未接通，输入已保留。", "error")}
       onInterruptTurn={() => { void chatConversation.stop(); }} isStreaming={!!conversation?.pending}
-      submissionDisabled={!conversation || chatPreparingState || conversation.pending || conversation.deliveryUnknown}
+      submissionDisabled={!conversation || !conversation.model || conversation.readOnly === true || chatPreparingState || conversation.pending || conversation.deliveryUnknown}
       workspaces={[]} activeWorkspace={null} onSelectWorkspace={() => {}} onPickNewFolder={() => {}}
       gitStatus={null} gitBranches={[]} onSwitchBranch={() => {}} onCreateBranch={() => {}}
       useWorktree={false} onSetUseWorktree={() => {}} permissionMode="custom" onSelectPermissionMode={() => {}}
       models={[]} selectedModelId="" defaultModelSelected={false} onSelectModel={() => {}}
-      reasoningEffort={conversation?.model.thinkingEffort ?? ""} onSelectReasoningEffort={() => {}}
+      reasoningEffort={conversation?.model?.thinkingEffort ?? ""} onSelectReasoningEffort={() => {}}
       fastMode={false} onToggleFastMode={() => {}} planMode={false} onTogglePlanMode={() => {}}
       attachedFiles={[]} onAttachFiles={() => showAppToast("ChatGPT 附件上传尚未接通，输入已保留。", "error")}
       onRemoveAttachedFile={() => {}} workspaceFiles={[]} workspaceFileHits={[]} skills={[]}
-      workModelPicker={{ catalog: chatEntry?.catalog ?? null, selection: conversation?.model ?? null, loading: !chatEntry,
-        pending: !!conversation?.pending, refresh: () => {}, contextKey: conversation?.clientId ?? null,
+      workModelPicker={{ catalog: chatEntry?.catalog ?? null, selection: conversation?.model ?? null, loading: chatCatalogLoading,
+        error: chatCatalogError, pending: !!conversation?.pending, refresh: () => { void refreshChatCatalog(); }, contextKey: conversation?.clientId ?? null,
         onCommit: async selection => {
-          const chosen = chatEntry && selectWorkHomeModel(chatEntry.catalog, { homeSelection: null, lastSelection: null,
+          const chosen = chatEntry?.catalog && selectWorkHomeModel(chatEntry.catalog, { homeSelection: null, lastSelection: null,
             temporarySelection: selection, plan: chatEntry.plan });
           if (!chosen?.hasExplicitSelection || chosen.isWorkModel) { showAppToast("此模型的 Work 会话切换尚未接通，原选择已保留。", "error"); return false; }
           return chatConversation.selectModel(selection);
@@ -7027,7 +7123,7 @@ export const App: React.FC = () => {
       {/* ── 2. Official Three-Section Codex Sidebar ── */}
       <CodexSidebar
         chatgptConversations={chatSidebarConversations}
-        activeChatgptConversationId={activeRoute === "chatgpt-thread" ? chatConversation.conversation?.clientId : null}
+        activeChatgptConversationId={activeRoute === "chatgpt-thread" ? visibleChatConversation?.clientId : null}
         onOpenChatgptConversation={openChatgptConversation}
         collapsed={sidebarCollapsed}
         activeRoute={activeRoute}
@@ -7122,7 +7218,7 @@ export const App: React.FC = () => {
           }}
         >
           <div className="top-nav-left">
-            {activeRoute === "chatgpt-thread" ? <span className="thread-header-title">{chatConversation.conversation?.title ?? "新聊天"}</span> : activeRoute === "thread" && activeThreadId ? (
+            {activeRoute === "chatgpt-thread" ? <span className="thread-header-title">{visibleChatConversation?.title ?? "新聊天"}</span> : activeRoute === "thread" && activeThreadId ? (
               <>
                 {editingThreadTitle ? (
                   <input
@@ -7803,8 +7899,12 @@ export const App: React.FC = () => {
             />
           </div>
         ) : activeRoute === "chatgpt-thread" ? (
-          <ChatgptConversationPane messages={chatConversation.conversation?.messages ?? []}
-            pending={!!chatConversation.conversation?.pending} error={chatConversation.conversation?.error ?? (!chatConversation.conversation ? "聊天尚未恢复，请从首页打开聊天。" : null)}
+          <ChatgptConversationPane messages={visibleChatConversation?.messages ?? []}
+            pending={!!visibleChatConversation?.pending} loadingHistory={!!chatHistoryLoad?.pending}
+            readOnly={visibleChatConversation?.readOnly === true}
+            remoteActivity={visibleChatConversation?.history ? getChatgptHistoryActivity(visibleChatConversation.history) : "idle"}
+            error={visibleChatConversation?.error ?? chatHistoryLoad?.error ?? null}
+            onRetryHistory={chatHistoryLoad?.error ? () => setChatHistoryRetry(value => value + 1) : undefined}
             composer={renderChatgptComposer()} />
         ) : activeRoute === "home" || (!activeThreadId && turns.length === 0) ? (
           /* ── Home / New Task View ── */

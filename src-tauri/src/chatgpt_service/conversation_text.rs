@@ -334,9 +334,9 @@ impl TextStream for NativeTextStream {
 impl ChatgptService {
     // Fresh JWT and workspace routing are read for each stage. No session lock is
     // retained while awaiting HTTP, stream bytes or the renderer Channel.
-    async fn conversation_request<F, Fut>(
+    pub(super) async fn conversation_request<F, Fut>(
         &self,
-        route: &'static str,
+        route: &str,
         identity: &ServiceIdentity,
         profile: &ServiceProfile,
         registration: &Registration<'_>,

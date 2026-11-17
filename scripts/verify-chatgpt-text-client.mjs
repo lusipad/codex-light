@@ -8,7 +8,7 @@ const foreign = { ...identity, generation: 8 };
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 function fixture(options = {}) {
   const calls = [], frames = [], accepted = [], channels = [], timers = new Map(), storage = new Map(options.deviceId ? [["codex.chatgpt-conversations.device-id", options.deviceId]] : []);
-  const submit = deferred(), stop = deferred(), abort = new AbortController();
+  const submit = deferred(), stop = deferred(), history = deferred(), abort = new AbortController();
   let uuid = 0, reads = 0, tick = 10, timerId = 0;
   const navigator = Object.assign(Object.create({ hardwareConcurrency: 8 }), { userAgent: "Actual WebView fixture UA", language: "zh-CN", languages: ["zh-CN", "en"],
     userAgentData: { brands: [{ brand: "WebView Test", version: "123" }], platform: "Windows" } });
@@ -38,6 +38,7 @@ function fixture(options = {}) {
         calls.push({ command, args });
         if (command === "chatgpt_text_submit") return submit.promise;
         if (command === "chatgpt_text_stop") return stop.promise;
+        if (command === "chatgpt_conversation_history_read") return history.promise;
         if (command === "chatgpt_service_cancel") return;
         throw Error(`Forbidden ordinary CLI or unexpected command: ${command}`);
       } };
@@ -61,7 +62,7 @@ function fixture(options = {}) {
   const responsePacket = (sequence, overrides = {}) => packet(sequence, { kind: "response", responseStatus: 200, event: "", data: "", id: "", ...overrides });
   const respond = (sequence, overrides) => channels[0].emit(responsePacket(sequence, overrides));
   const receipt = (eventCount, overrides = {}) => ({ requestId: request("chatgpt_text_submit").requestId, identity: { ...identity }, status: "transport-complete", eventCount, ...overrides });
-  return { ...client, body, start, submit, stop, abort, calls, frames, accepted, channels, timers, storage, navigator, request, packet, emit, responsePacket, respond, receipt,
+  return { ...client, body, start, submit, stop, history, abort, calls, frames, accepted, channels, timers, storage, navigator, request, packet, emit, responsePacket, respond, receipt,
     get reads() { return reads; }, expire: () => { const pending = [...timers.values()]; timers.clear(); pending.forEach(fn => fn()); } };
 }
 const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
@@ -218,6 +219,37 @@ test("stop requires actual accepted ACK and fresh owner; local cancellation is n
   const cancelled = fixture(), aborted = rejection(cancelled.stopChatgptText(identity, "server-conversation", cancelled.abort.signal)); await flush(); cancelled.abort.abort();
   cancelled.stop.resolve({ requestId: cancelled.request("chatgpt_text_stop").requestId, identity, status: "accepted" }); await failed(aborted);
   assert.ok(cancelled.calls.some(c => c.command === "chatgpt_service_cancel"));
+});
+
+test("complete history read retains raw graph and isolates project and temporary inputs", async () => {
+  for (const projectId of [null, "g-custom", "g-p-real"]) {
+    const h = fixture(), result = h.readChatgptConversation(identity, "server-history", { temporary: true, projectId }, h.abort.signal);
+    await flush(); const request = h.request("chatgpt_conversation_history_read");
+    assert.equal(request.conversationId, "server-history"); assert.equal(request.temporary, true);
+    assert.equal(request.projectId, projectId === "g-p-real" ? projectId : null);
+    const graph = { mapping: { root: { message: null, parent: null } }, current_node: "root", unknown: { preserved: true } };
+    h.history.resolve({ requestId: request.requestId, identity, status: 200, body: graph });
+    assert.equal(await result, graph); assert.equal(h.reads, 2);
+    assert.equal(h.calls.filter(c => c.command !== "chatgpt_conversation_history_read").length, 0);
+  }
+});
+test("history invalid/local ID, stale identity, cancellation and bad receipt never publish", async () => {
+  for (const id of ["", "local-chatgpt:uuid", "../other", "server?query", "汉字"]) {
+    const h = fixture(); await failed(rejection(h.readChatgptConversation(identity, id, {}, h.abort.signal))); assert.equal(h.calls.length, 0); assert.equal(h.reads, 0);
+  }
+  for (const scenario of ["request", "identity", "shape", "owner", "cancel", "http", "status"]) {
+    const h = fixture(scenario === "owner" ? { readIdentity: count => count === 1 ? identity : foreign } : {});
+    const result = rejection(h.readChatgptConversation(identity, "server-history", {}, h.abort.signal)); await flush();
+    const request = h.request("chatgpt_conversation_history_read"); assert.equal(request.temporary, false);
+    if (scenario === "cancel") h.abort.abort();
+    if (scenario === "http") h.history.reject({ code: "http_error", status: 423, message: "locked" });
+    else h.history.resolve({ requestId: scenario === "request" ? "other" : request.requestId,
+      identity: scenario === "identity" ? foreign : identity, status: scenario === "status" ? 423 : 200,
+      body: scenario === "shape" ? [] : { mapping: {}, current_node: null } });
+    const error = await failed(result);
+    if (scenario === "http") assert.equal(error.status, 423);
+    if (scenario === "cancel") assert.ok(h.calls.some(c => c.command === "chatgpt_service_cancel"));
+  }
 });
 
 let failures = 0;

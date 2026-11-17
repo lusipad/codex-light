@@ -46,3 +46,25 @@
 真实回归先红记录：`app-native-isolation-red`、`app-late-chat-route-red`、`controller-late-route-red`、`response-red`、`service-green-02`；另有旧AST夹具缺新增route ref导致失败，补齐真实native路由前置而未删除原断言。1145全Rust测试通过、0失败/忽略/过滤；实际App组合9组、controller30组及TSC/前端生产构建已通过。最终整组前端及原生构建结果另见本批验收记录，不以此句推断未完成命令。
 
 本阶段只接text-only内存会话。远端历史列表/持久图、冷启动恢复、prepare/conduit、resume/WS与存在性核验、附件/工具/多模态、required挑战/native attestation、远端偏好同步仍在总范围。真实账号/付费模型、原生GUI/物理IME、同环境官方宽窄配对像素及用户验收未做；visual verdict为unverified、score=null。不push，不触发、重跑或查询托管CI。
+
+## R10C 普通完整详情与冷路由恢复（2026-11-18）
+
+按[本批计划](chat-history-r10c-plan.md)继续，不将本批改称完整历史交付。固定版本重新读取仍26.1111.2228.0；普通历史与冷模型两份合同/锚点保存在`.ref/parity/16/desktop-host-r1-20261116-current/chat-history*-r10c-*`。41+11个官方UTF-16切片及两份清单的资源条目直接与当前安装asar的bytes/SHA/header核验，未重算整包哈希。
+
+### 功能与实现映射
+
+- H01–07：受限GET单数`/backend-api/conversation/{id}`，只允许服务器ID；临时参数只在明确temporary请求加`history_off=true`。g-p项目才附项目头，不用登录user补owner；history默认不带completion专有MCP form头。真实凭据、路由、取消和网络政策在读取前后核验，错误保留。没有普通CLI或模型写调用。
+- H08–09/H12/H30–33：从真实`current_node`沿parent回溯，保留全部raw mapping和非当前分支；null消息节点仍可作为父链，隐藏气泡不改变下一轮parent。缺节点/环/坏消息不假完整历史。记录真实只读、模型、effort和原始异步状态；不会将owner相等推成发送权限。
+- 冷模型沿Ow2S.e0/mNEt.G独立投影，使用真实目录、一般lastModel与用户设置；不复用首页workspace policy或补medium。必需模型/账号读取失败时保留已经读取的历史，重试只填原会话尚空的模型，核身份/owner且不覆盖用户后来选择或在途请求。
+- 初始普通`/c/`及`/g/.../c/`地址可读取并安装服务器详情。同页popstate切到B会切换已有B或读取B；A的晚事件不能把B地址改回A，B尚未加载的输入写入B的草稿，不能通过旧A回调投递给A。恢复后手动文本跟进使用真实当前节点。
+- 历史读取pending/error/retry与发送pending/unknown分开，重试按钮只重新读取，不重发消息。只读与已证远端active/background状态单独提示，未接远端SSE不能冒已恢复的本机stream或假停止按钮。
+
+### 验证与边界
+
+后端7项隔离回归先由`not_implemented`真实失败再通过，覆盖固定GET/headers/query、认证前拒非法输入、无项目/CustomGPT、不吞HTTP/JSON/IP错误、取消与generation ABA及前后fresh身份/政策。完整Rust1152项通过，0失败/忽略/过滤。前端纯图22组、controller40组、客户端15组、cold模型8组和Pane6组已通过；实际App组合及冻结构建的最终结果以`.ref/parity/16/chat-history-r10c-20261118/verification-summary.json`为准，不把中间检查冒最终通过。
+
+冻结检查为55个相关前端全部通过（含实际App14组及受影响四项导航），TSC、前端构建与原生EXE/MSI/NSIS均退出0，616产品输入稳定。候选与hash见16.23A，不将构建或离线VM当真实账号/GUI验证。
+
+本批不等于退出重开后自动找回全部聊天：服务端历史列表、星标/项目合并、上次窗口地址与草稿/图持久化仍未接。动态`num_turns`分页、版本图/活动分支合并、locked PIN、完整模型fallback条件/权限、远端resume/WS与实时取消、上传/工具等继续队列。临时冷路由的官方入口条件另有约束，本批未自动开放；底层temporary参数用例不代表临时恢复已完成。
+
+本地资源上限2048字节ID/8MiB响应、50秒读取仍是本项目约束，非官方限额。只读HTTP暂保一次请求，源`except-rate-limit`重试尚未全对齐。真实账号/模型、原生GUI/物理IME、官方配对像素、完整非Fast标准/全部协议探针和用户验收均未做，score=null；CI/push继续暂停。旧R10/R10B局部限制按本批已实现项更新，不用本批通过覆盖仍缺的恢复分支。

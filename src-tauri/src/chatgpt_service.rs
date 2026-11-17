@@ -66,6 +66,8 @@ pub use durable_models::{DurableModelsRequest, DurableModelsResponse};
 mod durable_thread;
 mod work_access;
 mod stream_transport;
+mod conversation_history;
+pub use conversation_history::{ConversationHistoryRequest, ConversationHistoryResponse};
 mod conversation_text;
 pub use conversation_text::{ConversationTextRequest, ConversationTextResponse, ConversationTextFrame, ConversationStopRequest, ConversationStopResponse};
 pub use work_access::{WorkAccountInfoRequest, WorkAccountInfoResponse, WorkHomePreferencesResponse, WorkHeartbeatResponse, WorkHomeModelSetRequest, WorkHomeModelVersionSetRequest};

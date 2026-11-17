@@ -11,7 +11,7 @@ const evaluate = (node, context) => { assert.ok(node, "actual App expression exi
 const callback = (name, context) => evaluate(variable(name)?.arguments[0], context);
 const plain = value => JSON.parse(JSON.stringify(value));
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
-const flush = async () => { for (let index = 0; index < 16; index++) await Promise.resolve(); };
+const flush = async () => { for (let index = 0; index < 64; index++) await Promise.resolve(); };
 const identity = { accountId: "chat-account", userId: "chat-user", generation: 7 };
 const selection = { slug: "chat", thinkingEffort: null, versionId: "latest" };
 function pure(file) {
@@ -36,11 +36,11 @@ function actualConversation(f) {
         return load(name.slice(2));
       } }); return exports;
   }
-  const controller = load("useChatgptTextConversation").createChatgptTextConversationController(() => ({ identity,
-    ownerKey: '["owner","host"]', onOptimisticStart: f.context.navigateOptimisticChat,
+  const controller = load("useChatgptTextConversation").createChatgptTextConversationController(() => ({ identity: f.context.chatEntry?.identity ?? f.context.workHomeSession?.target?.identity ?? null,
+    ownerKey: JSON.stringify([f.context.modelAccountIdentity, f.context.workHostIdentity]), onOptimisticStart: f.context.navigateOptimisticChat,
     onAccepted: f.context.acceptChatPrompt, onRestore: f.context.restoreChatPrompt }));
   const sync = () => Object.assign(f.context.chatConversation, controller.getStateSnapshot(), { send: controller.send,
-    stop: controller.stop, open: controller.open, newConversation: controller.newConversation });
+    stop: controller.stop, open: controller.open, hydrate: controller.hydrate, fillHistoryModel: controller.fillHistoryModel, newConversation: controller.newConversation });
   controller.subscribe(sync); sync(); return { controller, requests };
 }
 function fixture() {
@@ -62,6 +62,7 @@ function fixture() {
     chatStart: { current: null }, chatSubmission: { current: new Map() }, chatDrafts: state.drafts,
     chatDraftValues: { current: state.drafts }, chatDraftRevisions: { current: new Map() },
     chatPreparing: { current: false }, chatPreparationTicket: { current: 0 }, chatPreparingState: false,
+    chatCatalogLoading: false, chatCatalogError: "", refreshChatCatalog: () => calls.push(["refreshCatalog"]),
     promptInput: state.home, attachedFiles: [], appshots: [], workHomeSession: { key: "home-key", target, owner: "owner" },
     workHomeModels: { selection, loading: false, pending: false, isWorkModel: false }, chatEntry: null,
     appServerStatus: { connected: true, appServerVersion: "0.165.0" },
@@ -69,7 +70,7 @@ function fixture() {
     workHomePickerRef: { current: { isWorkModel: false } },
     setChatDrafts: update => { state.drafts = typeof update === "function" ? update(state.drafts) : update; context.chatDrafts = state.drafts; },
     setPromptDrafts: update => { const drafts = typeof update === "function" ? update({ home: state.home }) : update; state.home = drafts.home ?? ""; context.promptInput = state.home; },
-    setChatEntry: entry => { state.entry = entry; context.chatEntry = entry; },
+    setChatEntry: update => { state.entry = typeof update === "function" ? update(state.entry) : update; context.chatEntry = state.entry; },
     setChatPreparingState: value => { context.chatPreparingState = value; },
     setActiveThreadId: value => { context.activeThreadId = value; },
     setActiveRoute: route => { calls.push(["route", route]); state.route = route; context.activeRoute = route; context.activeRouteRef.current = route; },
@@ -87,10 +88,60 @@ function fixture() {
   };
   for (const name of ["setThreadPrompt", "writeChatDraft", "acceptChatPrompt", "restoreChatPrompt", "navigateOptimisticChat", "handleSendChatgptText", "handleSendMessage", "handleInterruptTurn", "handleTogglePlanMode"])
     context[name] = callback(name, context);
+  for (const name of ["chatRouteLocation", "visibleChatConversation"]) Object.defineProperty(context, name, { configurable: true,
+    get: () => evaluate(variable(name), context) });
   return { context, state, calls, paths, notices, controls, target, catalog, location,
     cli: () => calls.filter(([kind]) => kind === "CLI" || kind === "native"), sends: () => calls.filter(([kind]) => kind === "chatSend") };
 }
 const groups = [], test = (name, run) => groups.push([name, run]);
+function coldFixture() {
+  const f = fixture(); f.context.workHomeSession = null;
+  f.context.activeRoute = "chatgpt-thread"; f.context.activeRouteRef.current = "chatgpt-thread"; f.state.route = "chatgpt-thread";
+  Object.assign(f.location, { pathname: "/c/server-history", search: "", href: "https://app.test/c/server-history" });
+  f.catalog.options.push({ slug: "chat", thinkingEffort: "extended" });
+  const message = (id, role, text, metadata = {}) => ({ id, author: { role }, content: { content_type: "text", parts: [text] },
+    recipient: "all", channel: role === "assistant" ? "final" : null, status: "finished_successfully", end_turn: true, metadata });
+  const body = { conversation_id: "server-history", title: "Server history", default_model_slug: "chat", current_node: "hidden-node",
+    gizmo_id: null, is_read_only: false, async_status: null, mapping: {
+      root: { id: "root", parent: null, children: ["user-node"], message: null },
+      "user-node": { id: "user-node", parent: "root", children: ["assistant-node"], message: message("user-node", "user", "old user") },
+      "assistant-node": { id: "assistant-node", parent: "user-node", children: ["hidden-node"], message: message("assistant-node", "assistant", "visible answer") },
+      "hidden-node": { id: "hidden-node", parent: "assistant-node", children: [], message: message("hidden-node", "assistant", "hidden control", { is_visually_hidden_from_conversation: true, thinking_effort: "extended" }) },
+    } };
+  const controls = { body, history: null, failHistory: false, failCatalog: false, identityGate: null };
+  Object.assign(f.context, pure("chatgptConversationHistory"), { chatHistoryRetry: 0, chatHistoryLoad: null, chatHistoryResult: null,
+    chatCatalogRequest: { current: null },
+    setChatHistoryLoad: value => { f.state.load = value; f.context.chatHistoryLoad = value; },
+    setChatHistoryResult: value => { f.state.historyResult = value; f.context.chatHistoryResult = value; },
+    setChatHistoryRetry: update => { f.context.chatHistoryRetry = typeof update === "function" ? update(f.context.chatHistoryRetry) : update; },
+    setChatCatalogError: value => { f.context.chatCatalogError = value; }, setChatCatalogLoading: value => { f.context.chatCatalogLoading = value; },
+    serviceIdentity: async signal => { signal.throwIfAborted(); f.calls.push(["identity"]); if (controls.identityGate) await controls.identityGate.promise; signal.throwIfAborted(); return identity; },
+    readChatgptConversation: async (owner, id, options, signal) => { signal.throwIfAborted(); f.calls.push(["history", owner, id, options]);
+      const value = controls.history ? await controls.history.promise : controls.body; signal.throwIfAborted(); if (controls.failHistory) throw Error("history read failed"); return value; },
+    readWorkModelCatalog: async (_identity, signal) => { signal.throwIfAborted(); f.calls.push(["catalog"]); if (controls.failCatalog) throw Error("catalog read failed"); return f.catalog; },
+    readWorkAccountInfo: async (_identity, signal) => { signal.throwIfAborted(); f.calls.push(["account"]); return { plan: "plus" }; },
+  });
+  const historyModel = {};
+  vm.runInNewContext(compile(fs.readFileSync("src/chatgptHistoryModel.ts", "utf8")), { exports: historyModel, require: name => {
+    if (name === "./workModelCatalog") return { readWorkModelCatalog: (...args) => f.context.readWorkModelCatalog(...args) };
+    if (name === "./workHomePreferences") return pure("workHomePreferences");
+    assert.equal(name, "./chatgptService"); return {
+      serviceIdentity: (...args) => f.context.serviceIdentity(...args), readWorkAccountInfo: (...args) => f.context.readWorkAccountInfo(...args),
+      readChatgptService: async operation => { assert.equal(operation, "library_settings"); f.calls.push(["settings"]); return { settings: {} }; },
+      readWorkHomeState: async () => { f.calls.push(["homePrefs"]); return { identity, preferences: { owner: "bound", atoms: {}, unboundAtoms: [],
+        selectedProject: { placement: "missing", binding: "confirmed" }, localProjects: { placement: "missing" } } }; },
+    };
+  } });
+  f.context.readChatgptHistoryModelContext = historyModel.readChatgptHistoryModelContext;
+  const actual = actualConversation(f);
+  const reader = nodes.find(node => ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect"
+    && node.arguments[0]?.getText(ast).includes("readChatgptConversation(identity, target.id"));
+  const adoption = nodes.find(node => ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect"
+    && node.arguments[0]?.getText(ast).includes("const result = chatHistoryResult"));
+  f.context.refreshChatCatalog = callback("refreshChatCatalog", f.context);
+  return { ...f, ...actual, cold: controls, start: () => evaluate(reader.arguments[0], f.context)(),
+    adopt: () => { actual.controller.syncScope(); evaluate(adoption.arguments[0], f.context)(); } };
+}
 
 test("home non-Work goes through actual Chat preparation and optimistic project route, never CLI", async () => {
   for (const project of [null, "g-p/project"]) {
@@ -197,6 +248,7 @@ test("actual Home Composer enables ready Chat independently of native Work prepa
 test("actual Chat sidebar and Composer handlers stay separate from native thread actions", async () => {
   const f = fixture(); f.context.activeRouteRef.current = "chatgpt-thread"; f.context.activeRoute = "chatgpt-thread";
   f.context.chatConversation.conversation = { clientId: "known-chat", model: selection, projectId: null, pending: false, deliveryUnknown: false };
+  f.context.chatConversation.conversations = [f.context.chatConversation.conversation];
   f.context.chatEntry = { identity, owner: "owner", catalog: f.catalog, plan: "plus" };
   f.context.writeChatDraft("known-chat", "followup");
   const open = evaluate(variable("openChatgptConversation"), f.context); open("missing"); assert.equal(f.state.route, "home");
@@ -222,6 +274,7 @@ test("actual sidebar navigation guard defers every mutation and retires stale ap
     const f = fixture(); let pending, asked = 0;
     f.context.activeRouteRef.current = "settings"; f.context.activeRoute = "settings"; f.state.route = "settings";
     f.context.activeThreadIdRef.current = "native-before"; f.context.activeThreadId = "native-before";
+    f.context.chatConversation.conversations = [{ clientId: "known-chat", serverId: null, projectId: null, isTemporaryChat: false }];
     f.context.personalizationNavigationGuardRef.current = action => { asked++; pending = action; return false; };
     const open = evaluate(variable("openChatgptConversation"), f.context); open("known-chat");
     assert.equal(asked, 1); assert.equal(f.calls.filter(([kind]) => kind === "chatOpen").length, 0);
@@ -270,6 +323,88 @@ test("Chat route directly fences native Plan, queue, steering and review entrypo
     assert.equal(f.context.workPermissionRevision.current, 3);
   }
   assert.deepEqual(leaks, [], "a retained native id is never a Chat execution target");
+});
+
+test("actual cold read stages authenticated render before real graph hydration and explicit followup", async () => {
+  const f = coldFixture(); const cleanup = f.start(); await flush();
+  assert.equal(f.calls.filter(([kind]) => kind === "history").length, 1); assert.ok(f.state.historyResult);
+  assert.equal(f.controller.getConversations().length, 0, "asynchronous read result is staged until the committed owner hook scope can adopt it");
+  f.adopt(); const history = f.controller.getSnapshot(); assert.equal(history.serverId, "server-history"); assert.equal(history.currentNodeId, "hidden-node");
+  assert.equal(history.history.mapping, f.cold.body.mapping); assert.equal(history.messages.length, 2); assert.equal(history.model.slug, "chat"); assert.equal(history.model.thinkingEffort, "extended");
+  assert.equal(f.state.load.pending, false); assert.equal(f.state.load.error, null); assert.equal(f.requests.length, 0, "restoring history never automatically sends a model request");
+  f.context.writeChatDraft(history.clientId, "explicit followup"); const sending = f.context.handleSendMessage(); await flush();
+  assert.equal(f.requests.length, 1); assert.equal(f.requests[0].input.body.conversation_id, "server-history");
+  assert.equal(f.requests[0].input.body.parent_message_id, "hidden-node", "visible rendering must not replace the authoritative server parent");
+  f.requests[0].done.resolve({ status: "transport-complete" }); await sending; cleanup?.(); assert.equal(f.cli().length, 0);
+});
+
+test("cold history and staged adoption reject late owner/host/location and cleaned-up effects", async () => {
+  for (const phase of ["read", "adopt"]) for (const mode of phase === "read" ? ["owner", "host", "location", "cleanup"] : ["owner", "host", "location"]) {
+    const f = coldFixture(); if (phase === "read") f.cold.history = deferred(); const cleanup = f.start(); await flush();
+    if (mode === "owner") f.context.committedWorkOwner.current = "retired";
+    if (mode === "host") f.context.committedWorkHost.current = "retired";
+    if (mode === "location") f.location.href = "https://app.test/c/different";
+    if (mode === "cleanup") cleanup?.();
+    if (phase === "read") { f.cold.history.resolve(f.cold.body); await flush(); }
+    f.adopt(); assert.equal(f.controller.getConversations().length, 0, `${phase}/${mode}`); assert.equal(f.requests.length, 0);
+    cleanup?.();
+  }
+});
+
+test("cold local/temporary/disconnected and existing pending records never read or overwrite", async () => {
+  for (const mode of ["local", "temporary", "disconnected"]) {
+    const f = coldFixture();
+    if (mode === "local") f.location.href = "https://app.test/c/local-chatgpt%3Adraft";
+    if (mode === "temporary") f.location.href += "?temporary-chat=true";
+    if (mode === "disconnected") f.context.appServerStatus.connected = false;
+    f.start(); await flush(); assert.equal(f.calls.filter(([kind]) => kind === "history").length, 0, mode); assert.ok(f.state.load.error); assert.equal(f.requests.length, 0);
+  }
+  const f = coldFixture(); f.context.setChatEntry({ identity, owner: "owner", catalog: f.catalog, plan: "plus" }); f.controller.syncScope();
+  f.controller.hydrate(identity, f.context.decodeChatgptConversationHistory(f.cold.body), { serverId: "server-history", selection, temporary: false, select: true });
+  const pending = f.controller.send({ clientId: "server-history", prompt: "live request", selection }); await flush(); const original = f.controller.getSnapshot();
+  f.start(); await flush(); assert.equal(f.calls.filter(([kind]) => kind === "history").length, 0); assert.equal(f.controller.getSnapshot(), original);
+  f.requests[0].done.resolve({ status: "transport-complete" }); await pending;
+});
+
+test("catalog failure preserves cold graph and real refresh; history retry only rereads", async () => {
+  const f = coldFixture(); f.cold.failCatalog = true; const cleanup = f.start(); await flush(); f.adopt();
+  assert.equal(f.controller.getSnapshot().messages.length, 2); assert.equal(f.controller.getSnapshot().model, null);
+  assert.equal(f.state.entry.catalog, null); assert.match(f.context.chatCatalogError, /catalog/); assert.equal(f.requests.length, 0);
+  f.context.writeChatDraft("server-history", "kept draft"); await f.context.handleSendMessage(); assert.equal(f.requests.length, 0); assert.equal(f.state.drafts["server-history"], "kept draft");
+  f.cold.failCatalog = false; await f.context.refreshChatCatalog(); assert.equal(f.state.entry.catalog, f.catalog);
+  assert.equal(f.controller.getSnapshot().model.slug, "chat"); assert.equal(f.controller.getSnapshot().model.thinkingEffort, "extended", "refresh fills only real source-confirmed history model inputs");
+  assert.equal(f.context.chatCatalogError, ""); assert.equal(f.requests.length, 0); cleanup?.();
+  const retry = coldFixture(); retry.cold.failHistory = true; const failedCleanup = retry.start(); await flush(); assert.match(retry.state.load.error, /history read failed/);
+  const pane = nodes.find(node => ts.isJsxSelfClosingElement(node) && node.tagName.getText(ast) === "ChatgptConversationPane");
+  const attr = pane.attributes.properties.find(node => ts.isJsxAttribute(node) && node.name.getText(ast) === "onRetryHistory").initializer.expression;
+  evaluate(attr, retry.context)(); assert.equal(retry.context.chatHistoryRetry, 1); failedCleanup?.(); retry.cold.failHistory = false;
+  retry.start(); await flush(); retry.adopt(); assert.equal(retry.calls.filter(([kind]) => kind === "history").length, 2);
+  assert.equal(retry.requests.length, 0); assert.equal(retry.controller.getSnapshot().serverId, "server-history");
+});
+
+test("same-route popstate to an unloaded Chat cannot type or submit into the previous conversation", async () => {
+  const f = coldFixture(); f.start(); await flush(); f.adopt(); f.context.writeChatDraft("server-history", "A-kept-draft");
+  Object.assign(f.context, { isQuickChatWindow: false, isThreadWindow: false, pluginManagementLocationRef: { current: false },
+    setChatHistoryLocation: value => { f.context.chatHistoryLocation = value; },
+    parsePluginManagementLocation: () => null, parseSitesLocation: () => null, parsePluginDirectoryLocation: () => null,
+    parseLibraryFileLocation: () => null, parseLibraryLocation: () => null,
+    React: { createElement: (type, props) => ({ type, props }) }, ComposerBox: "ComposerBox", composerEnterBehavior: "enter", followUpMode: "queue", keyboardState: { bindings: {} } });
+  f.context.setActiveRoute = callback("setActiveRoute", f.context);
+  Object.assign(f.location, { pathname: "/c/server-B", search: "", href: "https://app.test/c/server-B" });
+  evaluate(variable("restorePageRoute"), f.context)();
+  assert.equal(f.context.chatHistoryLocation, f.location.href, "same MainViewRoute still invalidates the history URL input");
+  const projection = nodes.find(node => ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect"
+    && node.arguments[0]?.getText(ast).includes("conversation.serverId ?? conversation.clientId"));
+  evaluate(projection.arguments[0], f.context)(); assert.equal(f.location.pathname, "/c/server-B", "old A cannot project its URL over B");
+  f.cold.history = deferred(); const cleanup = f.start(); await flush();
+  const composer = evaluate(variable("renderChatgptComposer"), f.context)(); const disabled = composer.props.submissionDisabled;
+  composer.props.onPromptInputChange("typed for B"); const draftA = f.state.drafts["server-history"];
+  const sending = f.context.handleSendMessage(); await flush(); const sent = f.requests.map(request => request.input.body.conversation_id);
+  for (const request of f.requests) request.done.resolve({ status: "transport-complete" }); await sending;
+  cleanup?.(); f.cold.history.resolve(f.cold.body); await flush();
+  assert.deepEqual(sent, [], "B URL must never submit a new turn with conversation_id A");
+  assert.equal(disabled, true); assert.equal(draftA, "A-kept-draft", "B input must not overwrite A's draft while B is loading");
+  assert.equal(f.state.drafts["server-B"], "typed for B", "unloaded URL draft is stored under its actual parsed target");
 });
 
 let failures = 0;
