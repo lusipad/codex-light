@@ -49,6 +49,9 @@ function fixture() {
     notificationNativeActionRef: { current: null }, isQuickChatWindow: false,
     setPromptInput: value => { state.draft = value; state.calls.push(["draft", value]); },
     setAttachedFiles: value => { state.files = value; state.calls.push(["files", value]); },
+    appshotScope: "account-a:thread:thread-a",
+    retireAppshotCapture: scope => state.calls.push(["retire-appshot", scope]),
+    setScopedAppshots: (scope, value) => state.calls.push(["appshots", scope, value]),
     showAppToast: (...args) => { state.calls.push(["toast", ...args]); },
   });
   context.setActiveRoute = run(callback("setActiveRoute"), context);
@@ -100,6 +103,9 @@ console.log("PASS notification guard: zero effects while dirty/cancelled, single
   const view = fixture(); view.slash("reset_to_home");
   await view.discard(); await view.discard();
   assert.equal(view.state.draft, ""); assert.equal(view.state.files.length, 0); assert.equal(view.state.route, "home");
-  for (const kind of ["draft", "files", "route", "toast"]) assert.equal(view.state.calls.filter(call => call[0] === kind).length, 1, `${kind} happens exactly once after discard`);
+  for (const kind of ["draft", "files", "route", "toast", "retire-appshot", "appshots"]) assert.equal(view.state.calls.filter(call => call[0] === kind).length, 1, `${kind} happens exactly once after discard`);
+  const appshotClear = view.state.calls.find(call => call[0] === "appshots");
+  assert.equal(appshotClear[1], "account-a:thread:thread-a");
+  assert.ok(Array.isArray(appshotClear[2])); assert.equal(appshotClear[2].length, 0);
 }
 console.log("PASS reset guard: composer text, attachments, route and toast commit together only after confirmed discard");

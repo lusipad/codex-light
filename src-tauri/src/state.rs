@@ -1422,6 +1422,24 @@ impl DesktopStateManager {
         guard.get(key).cloned().unwrap_or(Value::Null)
     }
 
+    pub(crate) fn get_optional_value(&self, key: &str) -> Option<Value> {
+        self.state_map.lock().unwrap().get(key).cloned()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture_for_appshots_preferences(values: Map<String, Value>) -> Self {
+        Self {
+            state_map: Arc::new(Mutex::new(values)),
+            workspace_turn_owners: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn update_appshots_fixture<F>(&self, key: &str, update: F, path: &Path) -> Result<Value, String>
+    where F: FnOnce(Value) -> Result<Value, String> {
+        self.update_value_persisted_at_path(key, update, path)
+    }
+
     pub fn sidebar_project_membership(&self) -> Value {
         read_sidebar_project_membership(&self.state_map.lock().unwrap())
     }

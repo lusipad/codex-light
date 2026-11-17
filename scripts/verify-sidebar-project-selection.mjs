@@ -32,6 +32,8 @@ function mount({ select = async () => snapshot, persist = async () => ({ errors:
     attachedFiles: [{ id: "draft", persisted: false }], activeRoute: "thread", activeThreadId: "old",
   };
   const context = {
+    executionIdentityRef: { current: "account" },
+    retireAppshotCapture: scope => calls.push(["retireAppshotCapture", scope]),
     worktreeCreationControllersRef: { current: new Map() },
     personalizationNavigationGuardRef: { current: null },
     setPermissionModes: update => { state.permissionModes = update(state.permissionModes ?? {}); },

@@ -12,6 +12,24 @@ const plain = value => JSON.parse(JSON.stringify(value));
 const context = (patch = {}) => ({ appName: "Editor", bundleIdentifier: "editor.exe", windowTitle: " Work ",
   axTree: "Window: Work\nOffscreen text", imagePath: null, imageName: "capture.png", imageDataUrl: "data:image/png;base64,AA==", ...patch });
 
+const captured = { appName: "  A/B: Editor  ", bundleIdentifier: "process:C:\\Editor.exe", windowTitle: " Original ",
+  axTree: 'Window: "  Actual title  ", App: "Editor"\nOffscreen text', imageDataUrl: "data:image/png;base64,AA==" };
+assert.equal(typeof exports.capturedAppshotContext, "function", "native results need the official consumer mapping");
+const time = "2026-11-17T01:02:03.456Z";
+const mapped = exports.capturedAppshotContext(captured, time);
+assert.equal(mapped.appName, captured.appName, "original target name is retained");
+assert.equal(mapped.bundleIdentifier, captured.bundleIdentifier, "do not derive a second identity from the display name");
+assert.equal(mapped.windowTitle, "Actual title", "actual AX header takes precedence over original title");
+assert.equal(mapped.imageName, "A-B- Editor Appshot 2026-11-17T01-02-03.456Z.png");
+assert.equal(mapped.imagePath, null);
+assert.equal(mapped.transitionSnapshotDataUrl, null, "main screenshot is not a transition snapshot");
+assert.equal(mapped.appIconDataUrl, null);
+assert.equal(exports.capturedAppshotContext({ ...captured, axTree: "AX without header", imageDataUrl: "data:image/jpeg;base64,AA==" }, time).imageName,
+  "A-B- Editor Appshot 2026-11-17T01-02-03.456Z.jpg");
+assert.equal(exports.capturedAppshotContext({ ...captured, axTree: 'Window: " ", App: "Editor"' }, time).windowTitle, "Original");
+assert.equal(exports.capturedAppshotContext({ ...captured, axTree: "", windowTitle: " " }, time).windowTitle, null);
+assert.equal(exports.capturedAppshotContext({ ...captured, imageDataUrl: null }, time), null, "AX alone cannot fabricate a completed capture");
+
 assert.equal(serialize(context()), '<appshot app="Editor" bundle-identifier="editor.exe" window-title="Work" image="capture.png">\nWindow: Work\nOffscreen text\n</appshot>');
 assert.equal(exports.serializeAppshotPromptContext([]), "");
 assert.equal(exports.serializeAppshotPromptContext([context(), context({ appName: "Second" })]),

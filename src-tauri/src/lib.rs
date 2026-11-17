@@ -6,8 +6,13 @@ mod automation_tool;
 pub mod schedule_mcp;
 pub mod appshots_worker;
 mod appshots_host;
+mod appshots_preferences;
 mod appshots_entry;
 mod appshots_native_entry;
+mod appshots_capture_task;
+mod appshots_target;
+mod appshots_runtime;
+mod appshots_bridge;
 pub mod config_skills;
 pub mod recommended_skills;
 pub mod desktop_open;
@@ -75,6 +80,9 @@ pub struct AppState {
 }
 
 fn invalidate_chatgpt_service(app: &AppHandle) {
+    if let Some(bridge) = app.try_state::<appshots_bridge::AppshotsBridge>() {
+        bridge.invalidate();
+    }
     if let Some(state) = app.try_state::<AppState>() {
         let generation = state.chatgpt_service.invalidate();
         if let Err(error) = desktop_notifications::invalidate_context(app, &generation.to_string()) {
@@ -2705,7 +2713,16 @@ pub fn run() {
         .manage(remote_review::RemoteReviewState::default())
         .manage(local_environment_setup::SetupState::default())
         .manage(worktree_cleanup_runtime::WorktreeCleanupRuntime::default())
+        .manage(appshots_bridge::AppshotsBridge::default())
         .on_window_event(|window, event| {
+            if window.label() == "main" {
+                let bridge = window.app_handle().state::<appshots_bridge::AppshotsBridge>();
+                match event {
+                    tauri::WindowEvent::Focused(focused) => bridge.focus_changed(*focused),
+                    tauri::WindowEvent::Destroyed => bridge.invalidate(),
+                    _ => (),
+                }
+            }
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 let state = window.app_handle().state::<AppState>();
                 let setup = window.app_handle().state::<local_environment_setup::SetupState>();
@@ -2962,6 +2979,11 @@ pub fn run() {
             pet_preferences_update,
             pets_open_folder,
             capture_appshot,
+            appshots_bridge::appshots_entry_configure,
+            appshots_bridge::appshots_entry_stop,
+            appshots_bridge::appshots_entry_claim,
+            appshots_bridge::appshots_entry_accept,
+            appshots_bridge::appshots_entry_decline,
             show_desktop_notification,
             exec_shell_command,
         ])
@@ -2969,6 +2991,9 @@ pub fn run() {
         .expect("error while building codex-tauri application")
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
+                if let Err(error) = app.state::<appshots_bridge::AppshotsBridge>().stop() {
+                    eprintln!("Cannot stop Appshots on exit: {error}");
+                }
                 app.state::<AppState>().chatgpt_service.invalidate();
             }
         });

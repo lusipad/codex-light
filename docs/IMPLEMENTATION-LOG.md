@@ -1,5 +1,13 @@
 # 实施日志（按轮次）
 
+## 2026-11-17 — B3 Appshots实际入口（本地构建候选）
+
+- 先核10资源33精确片段，区分global热键、desktop配置目标及owner intro；另追踪确认后生成ISO文件名的实际调用时点。自有Win32目标metadata沿锁定三元组读取，不另查foreground；路径名称回退、icon/transition缺失与官方helper ID生成未知均保留边界。
+- 接专属native owner线程、真实主窗口焦点和账号生命周期、renderer资格与宿主requirements、首次说明reserve→持久化→commit、自有worker任务cancel+await、原Composer附件；未知Work不新建聊天。复用既有SHA256、真实状态原子写、捕获worker/host、草稿和共享dialog，不增加依赖。
+- 回归修复Pending零epoch提前销毁、旧configure晚回重注册、清理失败继续捕获、随机/退役accept写intro、服务失效后旧说明与结果残留。最终完整Rust1023通过，前端专项、TSC、非Fast标准及原生构建退出0，详见16.23A与本地证据。
+- 用户要求暂不跑CI，本轮不push、不触发/重跑workflow。不是整页验收；B4设置、独立Work、官方配对图、平台插图、物理键/IME、原生连续旅程与既有输入/窗口边界仍待完成。
+- 最终完整1023 Rust、非Fast标准553步骤/34真实CLI探针、EXE/MSI/NSIS构建均退出0，1010输入hash稳定。补修同进程标题消息互等、发送ACK前后捕获串下一草稿、云端首页误接本地捕获；失败与修复日志全部保留。候选与hash见16.23A；当前未跑真实原生捕获连续旅程，pending卡/顺序与B4设置继续排队。
+
 ## 2026-11-17 — Appshots输入失效与有效epoch
 
 - 先核Microsoft desktop/session/WinEvent/WTS与零键状态歧义，接当前session隐藏非激活HWND、窄DesktopSwitch observer和Reset(inputEpoch)。GetAsyncKeyState零快照不作为松键依据，未知恢复仅可信非注入keyup解除屏障；首周期的运行时差异保留，不启用户入口。

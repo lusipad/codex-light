@@ -21,6 +21,7 @@ import { McpCallCard } from "./components/McpCallCard";
 import { extractTextFromItem } from "./threadText";
 import { appshotImageInputs, buildAppshotPrompt, type DraftAppshot } from "./appshotContext";
 import { restoreAppshotHistory } from "./appshotHistory";
+import { useAppshotsEntry } from "./useAppshotsEntry";
 import { AppshotAttachment, UserImageAttachments, dispatchImagePreviewZoom } from "./components/AppshotAttachment";
 import { fileChangeApprovalForItem, pendingRequestKey, requestThreadId, requestsForThread, type RequestResponseState } from "./approvalRequests";
 import { copyTextToClipboard } from "./clipboard";
@@ -1469,6 +1470,12 @@ export const App: React.FC = () => {
   }
   const permissionScope = `${modelAccountIdentity}:${activeThreadId ?? `draft:${homeWorkspace?.path ?? ""}`}`;
   const [composerAppshotDrafts, setComposerAppshotDrafts] = useState<Record<string, DraftAppshot[]>>({});
+  const appshotCaptureGenerations = useRef<Record<string, number>>({});
+  const [, setAppshotCaptureRevision] = useState(0);
+  const retireAppshotCapture = useCallback((scope: string) => {
+    appshotCaptureGenerations.current[scope] = (appshotCaptureGenerations.current[scope] ?? 0) + 1;
+    setAppshotCaptureRevision(value => value + 1);
+  }, []);
   const appshotScope = `${modelAccountIdentity}:${attachmentScopeRef.current}`;
   const appshots = composerAppshotDrafts[appshotScope] ?? [];
   const setScopedAppshots = useCallback((key: string, update: React.SetStateAction<DraftAppshot[]>) => {
@@ -1482,9 +1489,11 @@ export const App: React.FC = () => {
       return next;
     });
   }, []);
-  const clearSentAppshots = useCallback((scope: string, snapshot: DraftAppshot[]) => {
-    setScopedAppshots(scope, current => current.filter(item => !snapshot.includes(item)));
-  }, [setScopedAppshots]);
+  const clearSentAppshots = useCallback((scope: string, snapshot: DraftAppshot[], expectedGeneration: number, captureScope = scope) => {
+    if ((appshotCaptureGenerations.current[captureScope] ?? 0) === expectedGeneration) retireAppshotCapture(captureScope);
+    setScopedAppshots(scope, current => current.filter(item => !snapshot.includes(item)
+      && !(item.capture?.scope === captureScope && item.capture.generation === expectedGeneration)));
+  }, [setScopedAppshots, retireAppshotCapture]);
   const moveHomeAppshotsToThread = useCallback((threadId: string) => {
     setComposerAppshotDrafts(previous => {
       const homeKey = `${modelAccountIdentity}:home`;
@@ -1496,6 +1505,25 @@ export const App: React.FC = () => {
       return next;
     });
   }, [modelAccountIdentity]);
+  const appshotsEntry = useAppshotsEntry({
+    enabled: isTauriRuntime() && navigator.platform.startsWith("Win") && !isQuickChatWindow && !isThreadWindow
+      && appServerStatus.connected && accountInfo?.account?.type === "chatgpt",
+    scope: attachmentScopeRef.current,
+    canAccept: (activeRoute === "home" && !homeCloud.active) || activeRoute === "thread",
+    isNewChat: activeRoute === "home" && !activeThreadId,
+    contextKey: JSON.stringify([modelAccountIdentity, shareAccessRevision, appServerStatus.connected,
+      appServerStatus.binaryPath, appServerStatus.appServerVersion]),
+    captureGeneration: appshotCaptureGenerations.current[appshotScope] ?? 0,
+    getCaptureGeneration: () => appshotCaptureGenerations.current[appshotScope] ?? 0,
+    onCapture: appshot => {
+      const generation = appshot.capture?.generation;
+      if (generation === undefined) return;
+      const captured = { ...appshot, capture: { scope: appshotScope, generation } };
+      setScopedAppshots(appshotScope, current => (appshotCaptureGenerations.current[appshotScope] ?? 0) !== generation
+        || current.some(item => item.id === captured.id) ? current : [...current, captured]);
+    },
+    onError: message => showAppToast(message, "error"),
+  });
   const permissionMode = permissionModes[permissionScope] ?? "custom";
   const setPermissionMode = useCallback((mode: "ask" | "auto" | "full") => {
     setPermissionModes(previous => ({ ...previous, [permissionScope]: mode }));
@@ -3229,6 +3257,7 @@ export const App: React.FC = () => {
       const finalCommit = (): number | null => {
         if (committed || navigation !== navigationRequestRef.current) return null;
         committed = true;
+        retireAppshotCapture(`${executionIdentityRef.current}:home`);
         pendingNewThreadProjectRef.current = project ?? null;
         pendingProjectlessRef.current = projectless;
         setPermissionModes(previous => Object.fromEntries(Object.entries(previous).filter(([key]) => !key.includes(":draft:"))));
@@ -3261,7 +3290,7 @@ export const App: React.FC = () => {
       if (project && personalizationNavigationGuardRef.current?.(() => { finalCommit(); }) === false) return null;
       return finalCommit();
     },
-    [handleSelectWorkspace, showAppToast]
+    [handleSelectWorkspace, showAppToast, retireAppshotCapture]
   );
 
   const startNewThread = useCallback(async (workspacePath?: string, project?: SidebarLocalProject, projectless = false): Promise<void> => {
@@ -3863,6 +3892,7 @@ export const App: React.FC = () => {
     if (activeRouteRef.current === "cloud-draft" || activeRouteRef.current === "cloud-new-chat") return;
     if (activeRouteRef.current === "home" && homeCloud.active) return;
     const rawText = (typeof overrideText === "string" ? overrideText : promptInput).trim();
+    const sendAppshotGeneration = appshotCaptureGenerations.current[appshotScope] ?? 0;
     if (!rawText && attachedFiles.length === 0 && appshots.length === 0) return;
     if (sendStartPendingRef.current.has(threadRequestRef.current)) return;
     const projectless = !activeThreadIdRef.current && pendingProjectlessRef.current;
@@ -3944,7 +3974,7 @@ export const App: React.FC = () => {
         if (!overrideText) {
           setPromptInput(current => current === promptInput ? "" : current);
           setAttachedFiles(current => current === attachedFiles ? [] : current);
-          clearSentAppshots(appshotScope, appshots);
+          clearSentAppshots(appshotScope, appshots, sendAppshotGeneration);
         }
         return true;
       } catch (error) {
@@ -4070,7 +4100,7 @@ export const App: React.FC = () => {
       const startedTurnId =
         turnRes?.turn?.id || turnRes?.turnId || turnRes?.id || null;
       if (startedTurnId) {
-        if (!overrideText) clearSentAppshots(`${sendIdentity}:thread:${currentThreadId}`, appshots);
+        if (!overrideText) clearSentAppshots(`${sendIdentity}:thread:${currentThreadId}`, appshots, sendAppshotGeneration, appshotScope);
         const turnIdStr = String(startedTurnId);
         setActiveTurnId(turnIdStr);
         setTurns((prev) => {
@@ -4493,6 +4523,7 @@ export const App: React.FC = () => {
   }, [followupQueue, isStreaming, handleSteerTurn, refreshThreadQueue, showAppToast, getModelConfiguration, trackModelTurn, resolveExecutionContext, captureThreadExecutionPolicy]);
 
   const handleEnqueueFollowup = useCallback(async () => {
+    const sendAppshotGeneration = appshotCaptureGenerations.current[appshotScope] ?? 0;
     const tid = activeThreadIdRef.current;
     const text = promptInput;
     const files = attachedFiles;
@@ -4521,7 +4552,7 @@ export const App: React.FC = () => {
       if (isCurrent()) {
         setPromptInput(value => value === text ? "" : value);
         setAttachedFiles(current => current === files ? [] : current);
-        clearSentAppshots(appshotScope, appshots);
+        clearSentAppshots(appshotScope, appshots, sendAppshotGeneration);
         await refreshThreadQueue(tid);
       }
     } catch (e) {
@@ -5481,6 +5512,8 @@ export const App: React.FC = () => {
       }
     } else if (action === "reset_to_home") {
       const reset = () => {
+        retireAppshotCapture(appshotScope);
+        setScopedAppshots(appshotScope, []);
         setPromptInput("");
         setAttachedFiles([]);
         setActiveRoute("home");
@@ -6133,6 +6166,7 @@ export const App: React.FC = () => {
         onToggleSidebar={() => setSidebarCollapsed((value) => !value)}
         onCommand={(command) => void handleAppCommand(command)}
       />
+      {appshotsEntry.intro}
       {projectMoveConfirmation && (
         <div
           className="codex-modal-overlay"
@@ -7474,6 +7508,7 @@ export const App: React.FC = () => {
                               className="turn-action-mini-btn"
                               title="重新填入输入框编辑"
                               onClick={() => {
+                                retireAppshotCapture(appshotScope);
                                 setPromptInput(userText);
                                 setScopedAppshots(appshotScope, userAppshots.map(context => ({ id: crypto.randomUUID(), context })));
                                 setAttachedFiles(userImages.map((source, index) => /^data:image\//i.test(source)

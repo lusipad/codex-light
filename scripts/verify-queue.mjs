@@ -26,6 +26,7 @@ const appshotClears = [];
 const ctx = vm.createContext({
   console, Date, Set, Map, crypto, isCurrentThreadRequest, buildAppshotPrompt, appshotImageInputs,
   executionIdentityRef: { current: "account-a" }, appshots: [], appshotScope: "account-a:thread:a",
+  appshotCaptureGenerations: { current: {} },
   clearSentAppshots: (scope, snapshot) => appshotClears.push({ scope, snapshot }),
   activeThreadId: "a", activeThreadIdRef: { current: "a" }, activeTurnIdRef: { current: "turn-a" }, threadRequestRef: { current: 1 },
   queueListRequestRef: { current: 0 }, queueMutationThreadsRef: { current: new Set() }, steeredQueueItemsRef: { current: new Map() },

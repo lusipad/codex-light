@@ -32,6 +32,7 @@ pub(crate) struct Scope {
     pub account: String,
     pub composer: String,
 }
+#[derive(Clone)]
 pub(crate) struct PrimaryWindow {
     pub is_primary: bool,
     pub alive: bool,

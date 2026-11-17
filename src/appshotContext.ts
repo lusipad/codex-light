@@ -16,7 +16,40 @@ export interface AppshotContext {
 }
 
 /** Local draft identity only; never spread this wrapper into a turn request. */
-export interface DraftAppshot { id: string; context: AppshotContext }
+export interface DraftAppshot {
+  id: string;
+  context: AppshotContext;
+  /** Local attachment provenance only; never part of the serialized context. */
+  capture?: { scope: string; generation: number };
+}
+
+/** Original target metadata plus the actual completed capture. A missing image
+ * is a failed capture, even when accessibility text was returned. */
+export function capturedAppshotContext(capture: {
+  appName: string;
+  bundleIdentifier: string;
+  windowTitle: string | null;
+  axTree: string | null;
+  imageDataUrl: string | null;
+}, requestedAt: string): AppshotContext | null {
+  if (!capture.imageDataUrl) return null;
+  const axTree = capture.axTree ?? "";
+  const title = /^Window:\s*"(.*)",\s*App:/.exec(axTree)?.[1]?.trim();
+  const name = capture.appName.replaceAll("/", "-").replaceAll(":", "-").replace(/\s+/g, " ").trim() || "App";
+  const extension = capture.imageDataUrl.startsWith("data:image/jpeg;") ? "jpg" : "png";
+  return {
+    appName: capture.appName,
+    bundleIdentifier: capture.bundleIdentifier,
+    windowTitle: title || capture.windowTitle?.trim() || null,
+    axTree,
+    imagePath: null,
+    imageName: `${name} Appshot ${requestedAt.replaceAll(":", "-")}.${extension}`,
+    imageDataUrl: capture.imageDataUrl,
+    transitionSnapshotDataUrl: null,
+    transitionSnapshotHeight: null,
+    appIconDataUrl: null,
+  };
+}
 
 export const APP_SHOT_REQUEST_DELIMITER = "## My request:";
 

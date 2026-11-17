@@ -1,0 +1,4 @@
+/* Reuse the application's existing AddPluginMarketplaceDialog shared dialog,
+ * header, footer and button styles; these are not asserted as official Appshots
+ * compact geometry. Fixed-version Windows artwork and pixel parity remain unverified. */
+.appshot-intro-dialog { box-sizing: border-box; }

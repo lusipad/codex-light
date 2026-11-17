@@ -36,6 +36,8 @@ export function mountProjectContext({ pending = null, membership = metadata, wor
   const context = {
     ...module.exports, ...executionModule.exports, ...appshotModule.exports, promptInput: "hello", attachedFiles: [], isStreaming: false,
     appshots: [], appshotScope: `fixture-account:thread:${threadId}`, modelAccountIdentity: "fixture-account",
+    appshotCaptureGenerations: { current: {} },
+    retireAppshotCapture() {},
     clearSentAppshots() {},
     moveHomeAppshotsToThread: id => calls.push(["moveHomeAppshotsToThread", id]),
     activeThreadId: threadId, activeThreadIdRef: { current: threadId }, activeTurnIdRef: { current: null },

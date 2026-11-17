@@ -199,6 +199,8 @@ try {
   Invoke-Step "Composer attachment draft scope regression" { node scripts/verify-composer-attachment-drafts.mjs }
   Invoke-Step "Appshot context serialization and image roundtrip" { node scripts/verify-appshot-context.mjs }
   Invoke-Step "Appshot account and local host qualification" { node scripts/verify-appshots-access.mjs }
+  Invoke-Step "Appshot native entry and scoped consumer lifecycle" { node scripts/verify-appshots-entry.mjs }
+  Invoke-Step "Appshot first-use dialog lifecycle" { node scripts/verify-appshot-intro.mjs }
   Invoke-Step "Appshot history image classification" { node scripts/verify-appshot-history.mjs }
   Invoke-Step "Appshot attachment preview lifecycle" { node scripts/verify-appshot-attachment.mjs }
   Invoke-Step "Appshot localized download and native dialog contract" { node scripts/verify-appshot-download.mjs }

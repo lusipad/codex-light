@@ -190,7 +190,7 @@ visit(ast);
 const evaluate = (node, context) => vm.runInNewContext(ts.transpileModule(`(${node.getText(ast)})`, { compilerOptions: options }).outputText, context);
 assert.ok(navigation && copy && edit);
 {
-  let target, copied, edited;
+  let target, copied, edited, retired;
   const original = "full\n".repeat(40);
   const context = {
     React: { createElement }, activeThreadId: "a", bookmarkedTurnIds: {},
@@ -199,6 +199,7 @@ assert.ok(navigation && copy && edit);
     copyThreadText: async value => { copied = value; }, userText: original,
     userAppshots: [], userImages: [], appshotScope: "fixture:thread:a",
     setScopedAppshots() {}, setAttachedFiles() {},
+    retireAppshotCapture: scope => { retired = scope; },
     setPromptInput: value => { edited = value; }, composerTextareaRef: { current: { focus() {} } }, showAppToast() {},
   };
   context.turns = Array.from({ length: 3 }, (_, i) => ({ id: `t${i}`, items: [{ type: "userMessage", text: `prompt${i}` }, { type: "agentMessage", text: "private response preview" }] }));
@@ -213,6 +214,7 @@ assert.ok(navigation && copy && edit);
   evaluate(edit, context)();
   assert.equal(copied, original, "UM10: copy receives full text independent of folding");
   assert.equal(edited, original, "UM10: composer refill receives full text independent of folding");
+  assert.equal(retired, "fixture:thread:a", "editing even without existing Appshots retires the old pending capture generation");
 }
 console.log("PASS UM01-UM10 production message presentation: measured folding, text reset, resize, cleanup, prompt navigation and full-text actions (L2)");
 

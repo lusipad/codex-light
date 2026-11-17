@@ -105,6 +105,7 @@ for (const mode of ["start", "steer", "queue"]) {
     userText: restored.text, userAppshots: restored.appshots, userImages: restored.nonAppshotImageUrls,
     appshotScope: "fixture-account:thread:thread-a", crypto: { randomUUID: () => `restored-${++serial}` },
     setPromptInput: value => { state.prompt = value; },
+    retireAppshotCapture: scope => { state.retiredScope = scope; },
     setScopedAppshots: (_scope, value) => { state.appshots = value; },
     setAttachedFiles: value => { state.files = value; },
     createAttachedFileItem() { assert.fail("an inline URI must never be turned into a local file"); },
@@ -201,13 +202,28 @@ for (const mode of ["steer", "queue"]) {
   assert.deepEqual(plain(context.composerAppshotDrafts["account-a:thread:target"]), [other, shot], "home handoff happens once and retains the existing target draft");
   assert.equal(context.composerAppshotDrafts["account-a:home"], undefined);
   assert.deepEqual(plain(context.composerAppshotDrafts["account-b:home"]), [other], "another account's home capture is untouched");
+  context.appshotCaptureGenerations = { current: {} };
+  context.setAppshotCaptureRevision = () => {};
+  context.retireAppshotCapture = callback("retireAppshotCapture", context);
   const clear = callback("clearSentAppshots", context);
   const replacement = { ...shot };
   context.setScopedAppshots("account-a:thread:target", current => [...current, replacement]);
-  clear("account-a:thread:target", [shot]);
+  clear("account-a:thread:target", [shot], 0);
   assert.deepEqual(plain(context.composerAppshotDrafts["account-a:thread:target"]), [other, replacement], "late confirmation does not discard a newly added or same-ID reattached capture");
-  clear("account-a:thread:target", [shot]);
+  clear("account-a:thread:target", [shot], 0);
   assert.deepEqual(plain(context.composerAppshotDrafts["account-a:thread:target"]), [other, replacement], "duplicate confirmation does not consume new data");
+  assert.equal(context.appshotCaptureGenerations.current["account-a:thread:target"], 1, "duplicate ACK cannot retire a newer draft generation");
+  clear("account-a:thread:target", [], 0);
+  assert.equal(context.appshotCaptureGenerations.current["account-a:thread:target"], 1, "late ACK of the old generation preserves replacements");
+  clear("account-a:thread:target", [], 1);
+  assert.equal(context.appshotCaptureGenerations.current["account-a:thread:target"], 2, "confirmed empty snapshot still retires pending capture");
+  const beforeAck = { id: "completed-after-send", context: shot.context, capture: { scope: "account-a:thread:target", generation: 2 } };
+  const newerDraft = { id: "new-generation", context: shot.context, capture: { scope: "account-a:thread:target", generation: 3 } };
+  const migratedScope = { id: "different-origin", context: shot.context, capture: { scope: "account-a:home", generation: 2 } };
+  context.setScopedAppshots("account-a:thread:target", [beforeAck, newerDraft, migratedScope]);
+  clear("account-a:thread:target", [], 2);
+  assert.deepEqual(plain(context.composerAppshotDrafts["account-a:thread:target"]), [newerDraft, migratedScope],
+    "capture completed between send and ACK must leave with its original generation, preserving other generations and origins");
 }
 console.log("PASS: real start/steer/queue callbacks preserve Appshot text/image inputs and consume confirmed draft snapshots");
 
