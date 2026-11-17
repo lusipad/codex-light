@@ -60,7 +60,7 @@ export function GitSettings({ state }: { state: GitPreferencesState }) {
     for (const { key } of instructions) if (draft.current[key] !== null && !timers.current[key] && !pending.current.has(key) && status[key] !== "error") timers.current[key] = window.setTimeout(() => { void flush(key); }, 3000);
   }, [state.instructionsReady]);
   return <div className="settings-scroll-container"><div className="card-section">
-    <h3>Git</h3>
+    <h3>差异与提交</h3>
     {state.error && <p role="alert" className="error-banner">{state.error}</p>}
     <button type="button" className="secondary-btn" disabled={state.busy} onClick={async () => {
       if (latest.current.instructionsReady && !(await Promise.all(instructions.map(item => flush(item.key)))).every(Boolean)) return;

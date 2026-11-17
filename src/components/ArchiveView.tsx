@@ -173,6 +173,7 @@ function ArchiveFilterMenu({ kindFilter, sortKey, onKindFilterChange, onSortKeyC
       className="general-preference-menu archive-filter-menu" style={position} onBlur={blur}
       onKeyDown={event => {
         if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+        if (event.key === "Tab") { close(); return; }
         if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); return; }
         if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
         event.preventDefault();
@@ -181,11 +182,11 @@ function ArchiveFilterMenu({ kindFilter, sortKey, onKindFilterChange, onSortKeyC
         items[event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus();
       }}>
       <div role="group" aria-label="类型"><div className="archive-menu-label">类型</div>
-        {kinds.map(item => <button key={item.value} type="button" role="menuitemradio" aria-checked={kindFilter === item.value}
+        {kinds.map(item => <button key={item.value} type="button" role="menuitemradio" tabIndex={-1} aria-checked={kindFilter === item.value}
           onClick={() => { close(); onKindFilterChange(item.value); }}><span>{item.label}</span>{kindFilter === item.value && <Check size={14} aria-hidden="true" />}</button>)}
       </div><div role="separator" className="archive-menu-separator" />
       <div role="group" aria-label="排序方式"><div className="archive-menu-label">排序方式</div>
-        {sorts.map(item => <button key={item.value} type="button" role="menuitemradio" aria-checked={sortKey === item.value}
+        {sorts.map(item => <button key={item.value} type="button" role="menuitemradio" tabIndex={-1} aria-checked={sortKey === item.value}
           onClick={() => { close(); onSortKeyChange(item.value); }}><span>{item.label}</span>{sortKey === item.value && <Check size={14} aria-hidden="true" />}</button>)}
       </div>
     </div>, document.body)}

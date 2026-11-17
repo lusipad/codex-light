@@ -18,6 +18,11 @@
 .settings-center-shell .settings-search-empty { padding: 8px; margin: 0; color: var(--text-secondary); }
 .settings-center-shell .settings-right-content { min-width: 0; padding: 20px; }
 
+@media (max-width: 900px) {
+  .settings-center-shell .settings-left-nav { flex-basis: clamp(156px, 26vw, 212px); }
+  .settings-center-shell .settings-right-content { padding-inline: 16px; }
+}
+
 .settings-center-shell .settings-right-content > .panel-page-header {
   border-bottom: 0;
   padding-bottom: 0;

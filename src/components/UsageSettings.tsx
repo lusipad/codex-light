@@ -26,7 +26,7 @@ export function UsageSettings({ accountIdentity, connectionIdentity }: { account
   const { data, loading, error, refresh } = useAccountUsage(accountIdentity, connectionIdentity);
   const groups = data ? (data.source === "service" ? defaultUsageGroups(data.groups) : data.groups) : [];
   return <div className="settings-scroll-container usage-settings" aria-busy={loading}>
-    <div className="usage-settings-heading"><h3>使用情况和计费</h3>
+    <div className="usage-settings-heading"><h3>用量概览</h3>
       <button type="button" className="secondary-btn" disabled={loading} onClick={() => void refresh()}>刷新</button></div>
     {loading && <p role="status">正在加载使用情况设置…</p>}
     {error && <p role="alert" className="error-banner">{error}</p>}

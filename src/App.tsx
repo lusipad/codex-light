@@ -7617,7 +7617,7 @@ export const App: React.FC = () => {
         )}
 
         {/* Windows 沙箱就绪提示 */}
-        {sandboxNotice && (
+        {sandboxNotice && activeRoute !== "settings" && (
           <div className="sandbox-notice-banner">
             <span className="sandbox-notice-text">
               ⚠️ Windows 沙箱未就绪（{sandboxNotice}）：Codex 命令将在降级模式下执行。

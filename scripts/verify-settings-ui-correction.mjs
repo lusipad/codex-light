@@ -20,7 +20,12 @@ function mount(section) {
       return [hooks[i], value => { hooks[i] = typeof value === 'function' ? value(hooks[i]) : value; }]; },
     useRef(value) { return hooks[cursor++] ??= { current: value }; },
     useCallback(fn) { cursor++; return fn; }, useMemo(fn) { cursor++; return fn(); },
-    useEffect(fn) { const i = cursor++; if (!(i in hooks)) { hooks[i] = true; effects.push(fn); } },
+    useEffect(fn, deps) {
+      const i = cursor++, previous = hooks[i];
+      if (!previous || deps.some((value, index) => !Object.is(value, previous[index]))) {
+        hooks[i] = deps; effects.push(fn);
+      }
+    },
   };
   const module = { exports: {} };
   const location = { href: 'https://codex.invalid/' };
@@ -51,8 +56,9 @@ function mount(section) {
     },
   });
   const render = () => { cursor = 0; tree = module.exports.SettingsView(props); return tree; };
-  render(); for (const effect of effects.splice(0)) effect(); render();
-  return { props, calls, render, all: () => nodes(tree), by: fn => nodes(tree).find(fn), child: name => nodes(tree).find(n => n.type === children.get(name)) };
+  const flushEffects = () => effects.splice(0).forEach(effect => effect());
+  render(); flushEffects(); render();
+  return { props, calls, render, flushEffects, all: () => nodes(tree), by: fn => nodes(tree).find(fn), child: name => nodes(tree).find(n => n.type === children.get(name)) };
 }
 const cases = [], test = (name, fn) => cases.push([name, fn]);
 test('Every section delegates persistence without unrelated wrapper reads/writes or global save controls', () => {
@@ -65,6 +71,22 @@ test('Appearance is one dedicated instant-save surface', () => {
   const page = mount('appearance'); assert.equal(page.all().filter(n => n.type?.name === 'AppearanceSettings').length, 1);
   assert.equal(page.child('AppearanceSettings').props.state, page.props.appearanceState);
   assert.equal(page.all().some(n => /theme-swatch/.test(n.props.className ?? '')), false);
+});
+test('New sections begin at the top without resetting scroll for a blocked change', () => {
+  const page = mount('keyboard-shortcuts');
+  const pane = page.by(node => node.props.className === 'settings-right-content');
+  const scroll = { scrollTop: 420 };
+  pane.props.ref.current = scroll;
+  const clickGeneral = () => page.by(node => node.props['data-settings-panel-slug'] === 'general-settings').props.onClick();
+  const guardPage = mount('local-environments');
+  const guardedScroll = { scrollTop: 280 };
+  guardPage.by(node => node.props.className === 'settings-right-content').props.ref.current = guardedScroll;
+  guardPage.child('LocalEnvironmentSettings').props.onNavigationGuardChange(() => false);
+  guardPage.by(node => node.props['data-settings-panel-slug'] === 'general-settings').props.onClick();
+  guardPage.render(); guardPage.flushEffects();
+  assert.equal(guardedScroll.scrollTop, 280);
+  clickGeneral(); page.render(); page.flushEffects();
+  assert.equal(scroll.scrollTop, 0);
 });
 test('General keeps real external-open and Enter consumers without debug/reset cards', () => {
   const page = mount('general-settings'); assert.ok(page.child('GeneralOpenPreferences'));

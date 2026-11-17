@@ -64,7 +64,7 @@ export function StorageSettings({ scope, onOpenLibrary }: { scope: string; onOpe
       onClick={() => setRetry(value => value + 1)}>重试</button></p>}
     {!usage && !error && <p role="status">正在读取云端存储配额…</p>}
     {usage && <section className="card-section">
-      <h3>存储空间</h3>
+      <h3>云端配额</h3>
       <p>已使用 {formatStorageBytes(usage.usedBytes)} / {formatStorageBytes(usage.allowedBytes)}</p>
       <p>剩余 {formatStorageBytes(usage.remainingBytes)}</p>
       {usage.allowedBytes > 0 && <progress aria-label="云端存储空间已使用" max={usage.allowedBytes} value={Math.min(usage.usedBytes, usage.allowedBytes)} />}

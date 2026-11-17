@@ -162,8 +162,8 @@ export function McpSettings({ cwd, connectionIdentity, onConfigUpdated, onRestar
       </fieldset>
       <div className="mcp-detail-save"><button type="button" className="primary-btn" disabled={disabled || state.externalChange || !state.dirty || !draft.label.trim() || !(draft.transport === "stdio" ? draft.command.trim() : draft.url.trim())} onClick={() => void state.save()}>保存</button></div>
     </section>}
-    <dialog ref={dialog} className="codex-modal-dialog mcp-discard-dialog" onCancel={event => { event.preventDefault(); setConfirmation(null); cancelNavigation(pendingAction); restoreFocus(true); }}>
-      <h3>放弃未保存的更改？</h3><p>{confirmation === "reload" ? "重新读取将替换当前 MCP 草稿。" : "离开将放弃当前 MCP 草稿。"}</p>
+    <dialog ref={dialog} className="codex-modal-dialog mcp-discard-dialog" aria-labelledby="mcp-discard-title" aria-describedby="mcp-discard-description" onCancel={event => { event.preventDefault(); setConfirmation(null); cancelNavigation(pendingAction); restoreFocus(true); }}>
+      <h3 id="mcp-discard-title">放弃未保存的更改？</h3><p id="mcp-discard-description">{confirmation === "reload" ? "重新读取将替换当前 MCP 草稿。" : "离开将放弃当前 MCP 草稿。"}</p>
       <div className="mcp-detail-save"><button type="button" className="secondary-btn" autoFocus onClick={() => { setConfirmation(null); cancelNavigation(pendingAction); restoreFocus(true); }}>继续编辑</button>
         <button type="button" className="primary-btn" onClick={() => {
           if (currentContext.current !== context || !state.canNavigate()) return;

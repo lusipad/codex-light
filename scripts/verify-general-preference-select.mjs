@@ -77,6 +77,17 @@ const key = key => ({ key, nativeEvent: {}, preventDefault() {}, stopPropagation
   view.render(); assert.ok(menu(view));
   view.all()[0].props.onBlur({ currentTarget: { contains: () => false }, relatedTarget: null }); view.render(); assert.equal(menu(view), undefined);
 }
+for (const shiftKey of [false, true]) {
+  const view = mount();
+  trigger(view).props.onKeyDown(key('ArrowDown')); view.render();
+  assert.ok(view.all().filter(n => n.props.role === 'menuitemradio').every(n => n.props.tabIndex === -1));
+  let prevented = false;
+  menu(view).props.onKeyDown({ ...key('Tab'), shiftKey, preventDefault() { prevented = true; } }); view.render();
+  assert.equal(menu(view), undefined);
+  assert.equal(view.focus(), 'trigger');
+  assert.equal(prevented, false, 'native Tab continues from the original trigger');
+  assert.deepEqual(view.calls, []);
+}
 for (const props of [{ disabled: true }, { options: [] }]) {
   const view = mount(props); assert.equal(trigger(view).props.disabled, true);
   trigger(view).props.onClick(); view.render(); assert.equal(menu(view), undefined);

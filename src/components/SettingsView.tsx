@@ -190,6 +190,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [activeSection, commitActiveSection] =
     useState<SettingsSectionSlug>(initialSection === "providers-models" ? "agent" : initialSection === "experimental" ? "general-settings" : initialSection);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const activeSectionRef = useRef(activeSection);
   activeSectionRef.current = activeSection;
   const personalizationNavigationGuardRef = useRef<((action: () => void) => boolean) | null>(null);
@@ -240,6 +241,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     scope: JSON.stringify([connectionIdentity, accountIdentity]), connected: appServerStatus.connected });
   const [navSearch, setNavSearch] = useState("");
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
+  useEffect(() => {
+    if (contentRef.current) contentRef.current.scrollTop = 0;
+  }, [activeSection]);
   useEffect(() => {
     if (activeSection === "plugins-settings" && !parsePluginManagementLocation(window.location.href)) {
       window.history.replaceState(window.history.state, "", "/settings/plugins-settings");
@@ -316,6 +320,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   key={item.slug}
                   data-settings-panel-slug={item.slug}
                   type="button"
+                  title={item.label}
                   className={`settings-nav-item ${
                     activeSection === item.slug ? "active" : ""
                   }`}
@@ -332,7 +337,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       </aside>
 
       {/* Right Content Pane */}
-      <div className="settings-right-content">
+      <div className="settings-right-content" ref={contentRef}>
         {activeSection !== "codex-cloud" && activeSection !== "plugins-settings" && activeSection !== "appshots" && <div className="panel-page-header">
           <div>
             <h2>
@@ -357,7 +362,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         {activeSection === "general-settings" && (
           <div className="settings-scroll-container settings-general-content">
             <section className="settings-general-group" aria-labelledby="general-preferences-heading">
-              <h3 id="general-preferences-heading">常规</h3>
+              <h3 id="general-preferences-heading">文件与终端</h3>
               <GeneralOpenPreferences bottomPanelLauncher={bottomPanelLauncher} />
             </section>
             <section className="settings-general-group" aria-labelledby="composer-preferences-heading">

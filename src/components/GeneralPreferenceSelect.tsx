@@ -78,6 +78,10 @@ export const GeneralPreferenceSelect: React.FC<GeneralPreferenceSelectProps> = (
   };
   const handleMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+    if (event.key === "Tab") {
+      close();
+      return;
+    }
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
@@ -113,7 +117,7 @@ export const GeneralPreferenceSelect: React.FC<GeneralPreferenceSelectProps> = (
     </button>
     {open && !unavailable && createPortal(<div id={`${id}-menu`} ref={menuRef} role="menu" aria-label={label}
       className={`general-preference-menu ${className}`} style={position} onBlur={handleBlur} onKeyDown={handleMenuKeyDown}>
-      {options.map(option => <button type="button" key={option.value} role={plainItems ? "menuitem" : "menuitemradio"} title={option.title}
+      {options.map(option => <button type="button" key={option.value} role={plainItems ? "menuitem" : "menuitemradio"} title={option.title} tabIndex={-1}
         aria-checked={plainItems ? undefined : value === option.value} onClick={() => {
           close();
           if (!unavailable) {

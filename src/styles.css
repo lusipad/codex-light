@@ -1659,13 +1659,22 @@ button.file-change-name:hover { text-decoration: underline; }
   background: var(--bg-primary);
   border: 1px solid var(--border-default);
   border-radius: 16px;
-  width: 900px;
   max-width: 95vw;
-  height: 640px;
   max-height: 90vh;
   box-shadow: var(--shadow-lg);
+}
+
+.codex-modal-dialog:not(dialog) {
+  width: 900px;
+  height: 640px;
   display: flex;
   overflow: hidden;
+}
+
+dialog.codex-modal-dialog {
+  height: fit-content;
+  color: var(--text-primary);
+  overflow: auto;
 }
 
 .modal-sidebar-nav {

@@ -83,7 +83,7 @@ export function HooksSettings({ activeWorkspaceRoot, workspaceRoots, connectionI
   const indexGroups: [string, HookSourceId[]][] = [["来自配置", ["user", "admin"]], ["来自插件", ["plugin"]], ["来自项目配置文件", ["project"]], ["其他来源", ["sessionFlags", "unknown"]]];
   const issues = selected ? selected.warnings.length + selected.errors.length : 0;
   return <div className="settings-scroll-container hooks-settings">
-    <div className="hooks-settings-header"><h3>钩子</h3><button ref={reloadButton} type="button" className="secondary-btn" disabled={busy || !cwds.length} onClick={() => void run(() => listHooks(cwds))}>重新加载钩子</button></div>
+    <div className="hooks-settings-header"><h3>配置来源</h3><button ref={reloadButton} type="button" className="secondary-btn" disabled={busy || !cwds.length} onClick={() => void run(() => listHooks(cwds))}>重新加载钩子</button></div>
     {busy && !data && <p role="status">正在加载钩子…</p>}
     {!selection && error && <p role="alert" className="error-banner">无法加载钩子：{error}</p>}
     {data && !entries.length && <div className="hooks-empty"><strong>未找到钩子</strong><p>已配置的钩子将显示在此处</p></div>}
