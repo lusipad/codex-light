@@ -21,7 +21,7 @@ import { McpCallCard } from "./components/McpCallCard";
 import { extractTextFromItem } from "./threadText";
 import { appshotImageInputs, buildAppshotPrompt, type DraftAppshot } from "./appshotContext";
 import { restoreAppshotHistory } from "./appshotHistory";
-import { useAppshotsEntry } from "./useAppshotsEntry";
+import { useAppshotsEntry, type AppshotComposerInput } from "./useAppshotsEntry";
 import { AppshotAttachment, UserImageAttachments, dispatchImagePreviewZoom } from "./components/AppshotAttachment";
 import { fileChangeApprovalForItem, pendingRequestKey, requestThreadId, requestsForThread, type RequestResponseState } from "./approvalRequests";
 import { copyTextToClipboard } from "./clipboard";
@@ -32,7 +32,7 @@ import { installDeepLinkReceiver } from "./deepLinks";
 import { normalizeComposerEnterBehavior, normalizeFollowUpMode, type ComposerEnterBehavior, type FollowUpMode } from "./composerPreferences";
 import { CommandExecutionCard } from "./components/CommandExecutionCard";
 import { mergeTimelineItem, recordPatchAutoReviewDenial, ThreadHistoryBuffer, isCurrentThreadRequest } from "./threadTimeline";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { Bookmark } from "lucide-react";
 import {
@@ -1477,6 +1477,19 @@ export const App: React.FC = () => {
     setAppshotCaptureRevision(value => value + 1);
   }, []);
   const appshotScope = `${modelAccountIdentity}:${attachmentScopeRef.current}`;
+  const [appshotComposerInput, setAppshotComposerInput] = useState<AppshotComposerInput | null>(null);
+  const appshotInputMounted = useRef(true);
+  useLayoutEffect(() => {
+    appshotInputMounted.current = true;
+    return () => { appshotInputMounted.current = false; };
+  }, []);
+  const registerAppshotInput = useCallback((element: HTMLTextAreaElement) => {
+    const input = { element, scope: activeThreadId ? `thread:${activeThreadId}` : "home" };
+    setAppshotComposerInput(input);
+    return () => {
+      if (appshotInputMounted.current) setAppshotComposerInput(current => current === input ? null : current);
+    };
+  }, [appshotScope, activeThreadId]);
   const appshots = composerAppshotDrafts[appshotScope] ?? [];
   const setScopedAppshots = useCallback((key: string, update: React.SetStateAction<DraftAppshot[]>) => {
     setComposerAppshotDrafts(previous => {
@@ -1509,6 +1522,7 @@ export const App: React.FC = () => {
     enabled: isTauriRuntime() && navigator.platform.startsWith("Win") && !isQuickChatWindow && !isThreadWindow
       && appServerStatus.connected && accountInfo?.account?.type === "chatgpt",
     scope: attachmentScopeRef.current,
+    composerInput: appshotComposerInput,
     canAccept: (activeRoute === "home" && !homeCloud.active) || activeRoute === "thread",
     isNewChat: activeRoute === "home" && !activeThreadId,
     contextKey: JSON.stringify([modelAccountIdentity, shareAccessRevision, appServerStatus.connected,
@@ -6049,6 +6063,7 @@ export const App: React.FC = () => {
 
   const renderThreadComposer = () => (
     <ComposerBox
+      registerAppshotInput={registerAppshotInput}
       dictationSessionKey={promptDraftKey}
       composerEnterBehavior={composerEnterBehavior}
       followUpMode={followUpMode}
@@ -7095,6 +7110,7 @@ export const App: React.FC = () => {
 
               {!showPopoutModal && (
               <ComposerBox
+                registerAppshotInput={registerAppshotInput}
                   dictationSessionKey={homeCloud.active ? "home-cloud" : promptDraftKey}
                 composerEnterBehavior={composerEnterBehavior}
                 followUpMode={followUpMode}

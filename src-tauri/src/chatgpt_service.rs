@@ -59,6 +59,7 @@ pub use cloud_draft_save::CloudDraftSaveRequest;
 pub use cloud_publish::CloudPublishRequest;
 pub use cloud_drafts::{CloudConfigRequest, CloudConfigResponse, CloudDraftRequest, CloudDraftResponse};
 mod durable_models;
+mod work_models;
 pub use durable_models::{DurableModelsRequest, DurableModelsResponse};
 mod durable_thread;
 mod work_access;
@@ -106,6 +107,7 @@ pub enum ServiceOperation {
     GptsAvatar,
     GptsWorkspaceSettings,
     CloudWorkspaceSettings,
+    WorkModels,
     GptsDiscovery,
     GptsCategory,
     GptsSearch,
@@ -1778,7 +1780,7 @@ impl ChatgptService {
         let archive_tasks = matches!(request.operation, ServiceOperation::ArchiveCloudTasks);
         let gpts_read = matches!(request.operation, ServiceOperation::GptsDiscovery | ServiceOperation::GptsCategory | ServiceOperation::GptsSearch | ServiceOperation::GptsDetail | ServiceOperation::GptsAbout | ServiceOperation::GptsWorkspaceSettings);
         let sites_read = matches!(request.operation, ServiceOperation::SitesEntryAccess | ServiceOperation::SitesPinned | ServiceOperation::SitesPin | ServiceOperation::SitesAccess | ServiceOperation::SitesList | ServiceOperation::SitesShared | ServiceOperation::SitesDetail | ServiceOperation::SitesEnvironment | ServiceOperation::SitesDomains | ServiceOperation::SitesShareAccess | ServiceOperation::SitesPreferredLiveUrl | ServiceOperation::SitesWorkspaceSettings | ServiceOperation::SitesUsers | ServiceOperation::SitesGroups | ServiceOperation::SitesTeams);
-        let cloud_read = matches!(request.operation, ServiceOperation::CloudWorkspaceSettings);
+        let cloud_read = matches!(request.operation, ServiceOperation::CloudWorkspaceSettings | ServiceOperation::WorkModels);
         let repository_read = cloud_repositories::repository_read(&request.operation);
         let images_read = matches!(request.operation, ServiceOperation::ImagesInit | ServiceOperation::ImagesStyles | ServiceOperation::ImagesRecent | ServiceOperation::ImagesWorkspaceSettings);
         // Order snapshots before the session lock, not when a possibly late response arrives.
@@ -2692,6 +2694,7 @@ fn encode_segment(segment: &str) -> ServiceResult<String> {
 }
 
 fn resolve_read_route(operation: &ServiceOperation, params: &Value, identity: &ServiceIdentity) -> ServiceResult<String> {
+    if matches!(operation, ServiceOperation::WorkModels) { return work_models::route(params); }
     if matches!(operation, ServiceOperation::ImagesWorkspaceSettings | ServiceOperation::GptsWorkspaceSettings | ServiceOperation::CloudWorkspaceSettings | ServiceOperation::SitesWorkspaceSettings) {
         if !params.as_object().is_some_and(|params| params.is_empty()) {
             return Err(failure("invalid_request", "Workspace settings does not accept parameters"));
@@ -2835,7 +2838,7 @@ fn resolve_route(operation: &ServiceOperation, params: &Value) -> ServiceResult<
         ServiceOperation::SitesEntryAccess => ("/backend-api/codex/sites/access".into(), &[]),
         ServiceOperation::SitesPinned => ("/backend-api/websites/pinned".into(), &["limit", "query", "after"]),
         ServiceOperation::SitesAccess => ("/backend-api/websites/access".into(), &[]),
-        ServiceOperation::ImagesWorkspaceSettings | ServiceOperation::GptsWorkspaceSettings | ServiceOperation::CloudWorkspaceSettings | ServiceOperation::SitesWorkspaceSettings | ServiceOperation::SitesUsers | ServiceOperation::SitesGroups | ServiceOperation::SitesTeams | ServiceOperation::ShareAccounts | ServiceOperation::ShareUsers | ServiceOperation::ShareGroups => {
+        ServiceOperation::WorkModels | ServiceOperation::ImagesWorkspaceSettings | ServiceOperation::GptsWorkspaceSettings | ServiceOperation::CloudWorkspaceSettings | ServiceOperation::SitesWorkspaceSettings | ServiceOperation::SitesUsers | ServiceOperation::SitesGroups | ServiceOperation::SitesTeams | ServiceOperation::ShareAccounts | ServiceOperation::ShareUsers | ServiceOperation::ShareGroups => {
             return Err(failure("invalid_request", "Identity-bound share route required"));
         }
         ServiceOperation::GithubRepository => {

@@ -16,10 +16,13 @@ class CaptureClock extends Date {
 
 function fixture() {
   let active;
+  const observers = new Set();
+  const input = { isConnected: true, disabled: false, readOnly: false, inert: false,
+    closest: () => input.inert ? {} : null, ownerDocument: {} };
   const calls = [], captures = [], errors = [], listeners = new Map(), commits = [];
   let unmounted = false, unmountStateWrites = 0, renderStateWrites = 0, rendering = false, pausePassive = false;
   const config = { introAccepted: false, enabled: true, accept: null, access: null, claim: null,
-    configure: null, contexts: [], listen: null, stop: null, claimError: false, generation: 0 };
+    configure: null, contexts: [], listen: null, stop: null, claimError: false, generation: 0, beforeLayout: null };
   const react = {
     createElement: (type, props) => ({ type, props }),
     useRef(value) { const run = active, index = run.cursor++; return run.slots[index] ??= { current: value }; },
@@ -55,6 +58,11 @@ function fixture() {
   const module = { exports: {} };
   vm.runInNewContext(compile("src/useAppshotsEntry.ts"), {
     exports: module.exports, AbortController, Date: CaptureClock, console, document: { querySelector: () => null },
+    MutationObserver: class {
+      constructor(callback) { this.callback = callback; }
+      observe() { observers.add(this); }
+      disconnect() { observers.delete(this); }
+    },
     require(name) {
       if (name === "react") return react;
       if (name === "react-dom") return { flushSync: callback => {
@@ -105,6 +113,7 @@ function fixture() {
   });
   const run = { cursor: 0, slots: [], effects: [], layoutEffects: [], dirty: true, result: null,
     props: { enabled: true, scope: "thread:A", canAccept: true, isNewChat: false, contextKey: "account-7", captureGeneration: 0,
+      composerInput: { element: input, scope: "thread:A" },
       getCaptureGeneration: () => config.generation,
       onCapture: value => captures.push(clone(value)), onError: message => errors.push(message) } };
   const render = () => {
@@ -114,6 +123,7 @@ function fixture() {
       rendering = true;
       run.result = module.exports.useAppshotsEntry(run.props);
       rendering = false;
+      const beforeLayout = config.beforeLayout; config.beforeLayout = null; beforeLayout?.();
       run.layoutEffects.splice(0).forEach(effect => effect());
       if (!pausePassive) run.effects.splice(0).forEach(effect => effect());
     }
@@ -121,14 +131,21 @@ function fixture() {
   };
   const flush = async () => { for (let i = 0; i < 40; i++) { await Promise.resolve(); render(); } };
   render();
-  return { config, calls, captures, errors, commits, flush, get intro() { return render().intro; },
+  return { config, calls, captures, errors, commits, flush, input, get intro() { return render().intro; },
+    mutateInput(patch, notify = true) { Object.assign(input, patch); if (notify) for (const observer of [...observers]) observer.callback(); },
+    observerCount: () => observers.size,
+    observerCallbacks: () => [...observers].map(observer => observer.callback),
     get unmountStateWrites() { return unmountStateWrites; },
     get renderStateWrites() { return renderStateWrites; },
     get pendingIds() { const value = render().pendingIds; return value === undefined ? undefined : clone(value); },
     emit: event => { for (const callback of listeners.get("appshots:entry") ?? []) callback(event); },
     invalidate: () => { for (const callback of listeners.get("chatgpt-service:invalidated") ?? []) callback(8); },
     listenerCount: () => [...listeners.values()].reduce((count, set) => count + set.size, 0),
-    setProps(patch) { if (patch.captureGeneration !== undefined) config.generation = patch.captureGeneration; run.props = { ...run.props, ...patch }; run.dirty = true; render(); },
+    setProps(patch) {
+      if (patch.captureGeneration !== undefined) config.generation = patch.captureGeneration;
+      if (patch.scope !== undefined && !("composerInput" in patch)) patch = { ...patch, composerInput: { element: input, scope: patch.scope } };
+      run.props = { ...run.props, ...patch }; run.dirty = true; render();
+    },
     abortedRender(patch) {
       // React WIP shares ref objects, but changed memo/effect slots are discarded.
       const wip = { ...run, cursor: 0, slots: run.slots.slice(), effects: [], layoutEffects: [], props: { ...run.props, ...patch } };
@@ -157,6 +174,59 @@ const route = (id, patch = {}) => ({ type: "route", id, account, composer: "thre
 const captured = id => ({ type: "capture", id, account, composer: "thread:A", captureGeneration: 0, metadata: route(id).metadata,
   imageDataUrl: "data:image/png;base64,AA==", axTree: 'Window: "Actual title", App: "Editor"\nOffscreen' });
 const count = (fixture, command) => fixture.calls.filter(call => call.command === command).length;
+
+const noInput = fixture(); noInput.setProps({ composerInput: null }); await noInput.flush();
+assert.equal(noInput.calls.find(call => call.command === "appshots_entry_configure").args.request.canAccept, false,
+  "a home/thread route without an actual registered input is not a current capture consumer");
+noInput.emit(route("missing-input")); await noInput.flush();
+assert.equal(count(noInput, "appshots_entry_claim"), 0); noInput.unmount();
+
+for (const [property, blocked, restored] of [["inert", true, false], ["disabled", true, false], ["readOnly", true, false], ["isConnected", false, true]]) {
+  const f = fixture(); f.config.introAccepted = true; await f.flush();
+  f.emit(route(`before-${property}`)); await f.flush();
+  const claims = count(f, "appshots_entry_claim"), accepted = count(f, "appshots_entry_accept");
+  f.mutateInput({ [property]: blocked }, false);
+  f.emit(route(`sync-${property}`)); f.emit(captured(`before-${property}`));
+  assert.equal(f.captures.length, 0, `${property} blocks delivery synchronously before MutationObserver notification`);
+  await f.flush();
+  assert.equal(count(f, "appshots_entry_claim"), claims); assert.equal(count(f, "appshots_entry_accept"), accepted);
+  f.mutateInput({}); await f.flush();
+  assert.equal(f.calls.filter(call => call.command === "appshots_entry_context").at(-1).args.request.canAccept, false);
+  f.mutateInput({ [property]: restored }); await f.flush();
+  assert.equal(f.calls.filter(call => call.command === "appshots_entry_context").at(-1).args.request.canAccept, true);
+  f.emit(route(`restored-${property}`)); await f.flush(); f.emit(captured(`restored-${property}`)); await f.flush();
+  assert.equal(f.captures.length, 1); assert.equal(count(f, "appshots_entry_configure"), 1);
+  assert.equal(count(f, "appshots_entry_stop"), 1, "DOM readiness changes keep the original hotkey owner");
+  f.unmount(); assert.equal(f.observerCount(), 0);
+}
+
+const wrongInput = fixture(); wrongInput.setProps({ composerInput: { element: wrongInput.input, scope: "thread:other" } }); await wrongInput.flush();
+wrongInput.emit(route("mismatched-handler")); await wrongInput.flush();
+assert.equal(count(wrongInput, "appshots_entry_claim"), 0); wrongInput.unmount();
+
+const layoutInput = fixture(); await layoutInput.flush();
+layoutInput.config.beforeLayout = () => layoutInput.mutateInput({ inert: true }, false);
+layoutInput.setProps({ composerInput: { element: layoutInput.input, scope: "thread:A" } }); await layoutInput.flush();
+assert.equal(layoutInput.calls.filter(call => call.command === "appshots_entry_context").at(-1)?.args.request.canAccept, false,
+  "an input disabled by an earlier layout effect must be published even before the new observer starts");
+const queuedObservers = layoutInput.observerCallbacks(); layoutInput.unmount();
+layoutInput.mutateInput({ inert: false }, false); queuedObservers.forEach(callback => callback());
+assert.equal(layoutInput.unmountStateWrites, 0, "already queued DOM notifications cannot update an unmounted hook");
+
+const blockedIntro = fixture(); await blockedIntro.flush();
+blockedIntro.emit(route("input-disabled-in-intro")); await blockedIntro.flush();
+const oldInputIntro = blockedIntro.intro; assert.ok(oldInputIntro);
+blockedIntro.mutateInput({ inert: true }, false); oldInputIntro.props.onAccept(); await blockedIntro.flush();
+assert.equal(count(blockedIntro, "appshots_entry_accept"), 0, "old intro continuation checks actual input before observer notification");
+blockedIntro.unmount();
+
+const replacementInput = fixture(); await replacementInput.flush();
+replacementInput.emit(route("same-draft-replacement")); await replacementInput.flush();
+replacementInput.setProps({ composerInput: { element: { ...replacementInput.input }, scope: "thread:A" } });
+assert.equal(replacementInput.intro?.props.key, "same-draft-replacement", "same scope and generation retain the draft across an in-app input replacement");
+replacementInput.intro.props.onAccept(); await replacementInput.flush();
+replacementInput.emit(captured("same-draft-replacement")); await replacementInput.flush();
+assert.equal(replacementInput.captures.length, 1); replacementInput.unmount();
 
 const abandonedOwnerRender = fixture(); await abandonedOwnerRender.flush();
 abandonedOwnerRender.abortedRender({ contextKey: "uncommitted-owner-B" });
@@ -438,16 +508,45 @@ const failed = fixture(); failed.config.claimError = true; await failed.flush();
 assert.equal(count(failed, "appshots_entry_decline"), 1, "claim errors retire the native lease");
 assert.equal(failed.captures.length, 0); failed.unmount();
 const appSource = ts.createSourceFile("App.tsx", fs.readFileSync("src/App.tsx", "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-let canAccept;
+let canAccept, inputProperty, registrar;
+const composerRegistrations = [];
 function visit(node) {
   if (ts.isCallExpression(node) && node.expression.getText(appSource) === "useAppshotsEntry") {
     canAccept = node.arguments[0].properties.find(property => property.name?.getText(appSource) === "canAccept").initializer;
+    inputProperty = node.arguments[0].properties.find(property => property.name?.getText(appSource) === "composerInput").initializer;
+  }
+  if (ts.isVariableDeclaration(node) && node.name.getText(appSource) === "registerAppshotInput") registrar = node.initializer.arguments[0];
+  if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
+    if (node.tagName.getText(appSource) === "ComposerBox") composerRegistrations.push(node.attributes.properties.find(property => property.name?.getText(appSource) === "registerAppshotInput"));
   }
   ts.forEachChild(node, visit);
 }
 visit(appSource); assert.ok(canAccept);
+assert.equal(inputProperty.getText(appSource), "appshotComposerInput");
+assert.equal(composerRegistrations.length, 2);
+assert.ok(composerRegistrations.every(prop => prop?.initializer.expression.getText(appSource) === "registerAppshotInput"), "both actual home/thread Composer instances publish the production registrar");
+let registeredInput = null, registrarWrites = 0;
+const mounted = { current: true };
+const registrarModule = { exports: {} };
+const registrarContext = { exports: registrarModule.exports, activeThreadId: null, appshotInputMounted: mounted,
+  setAppshotComposerInput: value => { registrarWrites++; registeredInput = typeof value === "function" ? value(registeredInput) : value; } };
+vm.runInNewContext(ts.transpileModule(`exports.register = ${registrar.getText(appSource)};`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, {
+  ...registrarContext,
+});
+const firstInput = {}, nextInput = {};
+const releaseFirst = registrarModule.exports.register(firstInput);
+// The committed registrar closes over its rendered thread, not a ref mutated by WIP.
+const nextRegistrar = { exports: {} };
+vm.runInNewContext(ts.transpileModule(`exports.register = ${registrar.getText(appSource)};`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText,
+  { ...registrarContext, exports: nextRegistrar.exports, activeThreadId: "B" });
+const releaseNext = nextRegistrar.exports.register(nextInput);
+releaseFirst(); assert.equal(registeredInput.element, nextInput, "old input cleanup cannot clear a newer registered consumer");
+assert.equal(registeredInput.scope, "thread:B");
+releaseNext(); assert.equal(registeredInput, null);
+const releaseUnmounted = registrarModule.exports.register(nextInput), writesBeforeUnmount = registrarWrites;
+mounted.current = false; releaseUnmounted(); assert.equal(registrarWrites, writesBeforeUnmount, "parent layout-unmount fence prevents child cleanup state writes");
 for (const [activeRoute, cloudActive, expected] of [["home", true, false], ["home", false, true], ["thread", true, true], ["cloud-draft", true, false], ["settings", false, false]]) {
   assert.equal(vm.runInNewContext(canAccept.getText(appSource), { activeRoute, homeCloud: { active: cloudActive } }), expected,
     `production ${activeRoute} consumer must respect cloud mode`);
 }
-console.log("Appshots entry: abandoned owner/consumer renders, commit-before-passive and layout-unmount fences, zero render state writes, one owner registration, serialized real context ACKs, early matching route barrier, initial stop/listener/access/configure races, scope A10/B0/A10, consumer flag/generation retirement, synchronous pending commit, capture ranks, cancellation and one-time delivery, fresh qualification, identity/unmount abort and listener release passed (isolated bridge; no real service/model/native capture).");
+console.log("Appshots entry: actual Composer lease wiring, DOM readiness and pre-observer/layout fences, observer release, abandoned owner/consumer renders, commit-before-passive and layout-unmount fences, zero render state writes, one owner registration, serialized real context ACKs, early matching route barrier, initial stop/listener/access/configure races, scope A10/B0/A10, consumer flag/generation retirement, synchronous pending commit, capture ranks, cancellation and one-time delivery, fresh qualification, identity/unmount abort and listener release passed (isolated bridge; no real service/model/native capture).");

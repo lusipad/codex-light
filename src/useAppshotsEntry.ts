@@ -14,10 +14,12 @@ type EntryEvent = RouteEvent | CaptureEvent | { type: "retired"; id: string } | 
 interface Consumer { key: string; sequence: number; scope: string; canAccept: boolean; isNewChat: boolean; captureGeneration: number }
 interface ContextAck { composer: string; captureGeneration: number; canAccept: boolean; isNewChat: boolean }
 interface Flight { consumer: Consumer; route: RouteEvent; phase: "claiming" | "intro" | "accepting" | "accepted"; capture?: CaptureEvent; captureRequestedAt?: string; captureOrder?: number }
+export interface AppshotComposerInput { element: HTMLTextAreaElement; scope: string }
 interface EntryProps {
   enabled: boolean;
   scope: string;
   canAccept: boolean;
+  composerInput: AppshotComposerInput | null;
   isNewChat: boolean;
   contextKey: string;
   captureGeneration: number;
@@ -29,15 +31,35 @@ interface Intro { token: object; id: string; isCurrent: () => boolean; accept: (
 const sameIdentity = (left: ServiceIdentity, right: ServiceIdentity) => left.userId === right.userId && left.accountId === right.accountId && left.generation === right.generation;
 const metadataValid = (value: EntryMetadata | null | undefined) => value != null && typeof value.appName === "string" && !!value.appName.trim()
   && typeof value.bundleIdentifier === "string" && !!value.bundleIdentifier.trim() && (value.windowTitle === null || typeof value.windowTitle === "string");
+const inputReady = (input: AppshotComposerInput | null, scope: string) => input !== null && input.scope === scope
+  && input.element.isConnected && !input.element.disabled && !input.element.readOnly && !input.element.closest("[inert]");
 
 /** Main-window current-Composer consumer only. Work/new-chat access is not inferred
  * from Appshots gates, registration, or acceptance of the introduction. */
 export function useAppshotsEntry(props: EntryProps): { intro: ReactNode; pendingIds: string[] } {
+  const [, setInputRevision] = useState(0);
+  const inputAvailable = inputReady(props.composerInput, props.scope);
+  const canAccept = props.canAccept && inputAvailable;
+  useLayoutEffect(() => {
+    const input = props.composerInput;
+    if (!input) return;
+    let active = true, ready = inputAvailable;
+    const publish = () => {
+      if (!active) return;
+      const next = inputReady(input, props.scope);
+      if (ready !== next) { ready = next; setInputRevision(value => value + 1); }
+    };
+    const observer = new MutationObserver(publish);
+    observer.observe(input.element.ownerDocument, { subtree: true, childList: true,
+      attributes: true, attributeFilter: ["inert", "disabled", "readonly"] });
+    publish();
+    return () => { active = false; observer.disconnect(); };
+  }, [props.composerInput, props.scope]);
   const ownerKey = JSON.stringify([props.enabled, props.contextKey]);
   const ownerToken = useMemo(() => ({ key: ownerKey }), [ownerKey]);
-  const consumerKey = JSON.stringify([ownerKey, props.scope, props.canAccept, props.isNewChat, props.captureGeneration]);
+  const consumerKey = JSON.stringify([ownerKey, props.scope, canAccept, props.isNewChat, props.captureGeneration]);
   const token = useMemo<Consumer>(() => ({ key: consumerKey, sequence: 0, scope: props.scope,
-    canAccept: props.canAccept, isNewChat: props.isNewChat, captureGeneration: props.captureGeneration }), [ownerToken, consumerKey]);
+    canAccept, isNewChat: props.isNewChat, captureGeneration: props.captureGeneration }), [ownerToken, consumerKey]);
   const latest = useRef(props), lifetime = useRef<object | null>(ownerToken), consumer = useRef(token), consumerSequence = useRef(0);
   // Only committed frames change the live lease. Abandoned renders may create
   // pure tokens, but cannot retire the still-mounted owner's callbacks.
@@ -60,7 +82,8 @@ export function useAppshotsEntry(props: EntryProps): { intro: ReactNode; pending
     let acknowledged: Consumer | null = null, setup: Promise<void> = Promise.resolve(), contextTail: Promise<void> = Promise.resolve();
     const ownerCurrent = () => lifetime.current === ownerToken && !controller.signal.aborted && latest.current.enabled;
     const current = (value: Consumer) => ownerCurrent() && consumer.current === value
-      && latest.current.getCaptureGeneration() === value.captureGeneration;
+      && latest.current.getCaptureGeneration() === value.captureGeneration
+      && (!value.canAccept || inputReady(latest.current.composerInput, value.scope));
     const report = (message: string) => { if (ownerCurrent()) latest.current.onError(message); };
     const clearPending = (value: Consumer, id: string) => {
       if (ownerCurrent()) setPending(previous => previous?.token === value
@@ -229,7 +252,7 @@ export function useAppshotsEntry(props: EntryProps): { intro: ReactNode; pending
   }, [ownerToken]);
 
   useEffect(() => { contextAction.current?.update(token); }, [token]);
-  const consumerCurrent = props.enabled && props.getCaptureGeneration() === token.captureGeneration;
+  const consumerCurrent = props.enabled && props.getCaptureGeneration() === token.captureGeneration && canAccept;
   return { intro: intro?.token === token && consumerCurrent ? createElement(AppshotIntroDialog, {
     key: intro.id, isCurrent: intro.isCurrent, onAccept: intro.accept, onClose: intro.decline,
   }) : null, pendingIds: pending?.token === token && consumerCurrent ? pending.ids : [] };

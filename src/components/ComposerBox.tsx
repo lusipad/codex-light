@@ -118,6 +118,7 @@ export interface ComposerBoxProps {
   onAttachFiles: () => void;
   onAppshot?: () => void;
   onAddAttachedFiles?: (files: AttachedFileItem[]) => void;
+  registerAppshotInput?: (input: HTMLTextAreaElement) => () => void;
   onRemoveAttachedFile: (id: string) => void;
   workspaceFiles: string[];
   workspaceFileHits: WorkspaceFileHit[];
@@ -211,6 +212,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
   onAttachFiles,
   onAppshot,
   onAddAttachedFiles,
+  registerAppshotInput,
   onRemoveAttachedFile,
   workspaceFiles,
   workspaceFileHits,
@@ -220,6 +222,14 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
 }) => {
   const internalTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const actualTextareaRef = textareaRef || internalTextareaRef;
+  const hasAppshotAttachmentHandler = typeof onAddAttachedFiles === "function";
+  // Publish only the mounted handler lease. Its owner observes live DOM
+  // connected/inert/readonly/disabled state; send/model readiness is separate.
+  useLayoutEffect(() => {
+    const input = actualTextareaRef.current;
+    if (!input || !hasAppshotAttachmentHandler || !registerAppshotInput) return;
+    return registerAppshotInput(input);
+  }, [actualTextareaRef, attachmentScopeKey, hasAppshotAttachmentHandler, registerAppshotInput]);
   const composingRef = useRef(false);
   const commandPendingRef = useRef({ key: dictationSessionKey, pending: false });
   if (commandPendingRef.current.key !== dictationSessionKey) {

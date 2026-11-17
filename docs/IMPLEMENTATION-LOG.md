@@ -1,5 +1,12 @@
 # 实施日志（按轮次）
 
+## 2026-11-17 — Appshots 实际输入就绪与 Work 模型目录
+
+- 先核固定版实际输入publisher/handler及模型合同，直接snapshot资源/header/hash与输入39、模型19个精确片段全部匹配，未重算整包。按真实Composer挂载/附件handler发布scope lease，主窗已接入；observer与同步检查共同拒绝错scope、卸载/inert/disabled/readOnly输入，旧清理不清新lease，同草稿内置浮窗可继续接收。
+- 缺真实输入及初始layout变化均先红后绿；15个受影响UI/入口专项、共享服务wrapper和模型专项共17脚本通过。注册器不读WIP可改写ref；模型/发送pending不直接禁捕获。完整mode、host-setup、pending-request等差异继续登记。
+- Work merged目录固定GET沿现有身份/取消/网络策略，首次选择与host映射已有受限实现；独立复核修正3个字段/条目catch偏差，新增golden先红后绿。尚未接Work页面，不把reader当新聊天交接已完成。
+- 完整1057 Rust及TSC通过，release EXE/MSI/NSIS退出0，1030输入hash稳定，候选及未验见16.23A。浏览器恢复报os error3，真实DOM/原生/物理键/IME/官方像素未验；未跑本阶段整套标准/协议探针，CI/push继续暂停。
+
 ## 2026-11-17 — Appshots owner/consumer 实际分离与 Work 能力读取
 
 - 先核固定版全局注册与本地订阅两生命周期。主窗生产hook改用原owner的串行context更新，普通切换/附件代次/路由flags不重注册，旧flight仍cancel+await；原代次事件、真实ACK、独立ticket和consumer token共同隔离早到/晚回/ABA。scope独立计数允许下降，focus不退役，同值不循环State，poison不被换consumer清除。
