@@ -1,5 +1,13 @@
 # 实施日志（按轮次）
 
+## 2026-11-18 — 普通服务器列表与侧栏恢复入口（R10D）
+
+- 先核strict Chat能力、原始inventory计划、770/组织权限与实验功能全分页；普通列表及默认焦点补充20片段直接核当前安装asar。复用现有认证/profile/bootstrap/配置读取、受限GET和侧栏样式，无新依赖，不套Work或GPT额外角色资格。
+- 启动真实列表、offset分页/原子整组refresh/重试与空状态、visibility新鲜度、optimistic和serverID合并接主窗/侧栏；server-only项目路径复用R10C详情。新增generation真红修复避免旧身份永久拒发，draft迁移不覆盖新稿/不借新principal，延迟导航取最新refs并核功能scope。
+- 1158全Rust、60相关前端、TSC/前端构建通过；实际列表App10组、旧App14组、access10/list17/merge5/client17/visibility4。最终原生候选、hash/输入稳定、失败及限制见`.ref/parity/16/chat-list-r10d-20261118/verification-summary.json`与16.23A。
+- EXE/MSI/NSIS退出0，620输入稳定；候选`dist-artifacts/chat-list-r10d-20261118/CodexNative.exe` SHA-256 `c3b9cc1ad6102ceb286b7fcb4afe6694b58396e9467c2b5b95f4ae9c0ada5e4a`，17项既有Rust警告及Vite chunk警告保留。
+- 浏览器预览因kernel assets路径缺失无法初始化，未有DOM/截图/原生GUI/IME；无真实账号/模型、像素或用户验收。pins/project/并发title overlay、完整缓存重试、所有入口资格、地址/草稿持久化及实时流仍在队列；只本地阶段保存，CI/push暂停。
+
 ## 2026-11-18 — 普通服务器详情与冷路由恢复（R10C）
 
 - 先核完整详情/模型/父链/隐藏/异步合同；两份清单52个精确片段与当前安装asar核验通过，整包未重hash。专用受限GET不借归档资格/CLI、不发假owner或completion的MCP头，复用真实profile/认证/政策/取消。

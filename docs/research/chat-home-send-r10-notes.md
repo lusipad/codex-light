@@ -68,3 +68,19 @@
 本批不等于退出重开后自动找回全部聊天：服务端历史列表、星标/项目合并、上次窗口地址与草稿/图持久化仍未接。动态`num_turns`分页、版本图/活动分支合并、locked PIN、完整模型fallback条件/权限、远端resume/WS与实时取消、上传/工具等继续队列。临时冷路由的官方入口条件另有约束，本批未自动开放；底层temporary参数用例不代表临时恢复已完成。
 
 本地资源上限2048字节ID/8MiB响应、50秒读取仍是本项目约束，非官方限额。只读HTTP暂保一次请求，源`except-rate-limit`重试尚未全对齐。真实账号/模型、原生GUI/物理IME、官方配对像素、完整非Fast标准/全部协议探针和用户验收均未做，score=null；CI/push继续暂停。旧R10/R10B局部限制按本批已实现项更新，不用本批通过覆盖仍缺的恢复分支。
+
+## R10D 普通历史列表与可达恢复（2026-11-18）
+
+按[专项计划](chat-list-r10d-plan.md)继续。独立固定源合同/清单位于`.ref/parity/16/desktop-host-r1-20261116-current/chat-list-r10d-*`，4资源16片段；另`chat-list-focus-r10d-anchors.json`保存同版vendor默认焦点管理器4片段。资源bytes/SHA/header及精确UTF-16切片直接核当前安装asar通过，整包未重hash。
+
+- 普通列表固定GET `/backend-api/conversations`，实际offset/limit/total驱动20条分页，`expand=false`不省略；普通排除tpp/归档/星标，未多加flora过滤。includeProject=false省hide_snorlax，true才发false，不反转成true。保真实raw页，不用可见条目数猜结束。
+- source能力独立于Work：strict chatgpt认证、实际inventory选中账号的28项计划、条件770/19项组织权限与完整实验功能分页；缺in_app_chat只在全读完后允许，显式false禁用，读取/格式/未知权限错误可重试，不冒空列表。复用现有真实host bootstrap，不加GPT seat/layout/role等无关门槛。
+- 侧栏现在读取服务器记录，点击不要求已有内存会话，保gizmo路径并接R10C真实详情。optimistic在前，已列出server ID去重，服务title优先防旧本地缓存永久覆盖远端重命名；临时记录不进普通列表，已证本地/远端活动状态保留。
+- 刷新按原加载页数顺序重读，next以新页元数据计算，提前末页停止；整组成功才替换，中途失败保旧页。错误重试区分首次/下一页/refresh，pending合并不取消在途请求。默认visibilitychange按能力1分钟/列表5分钟的新鲜度重读，失败不刷新成功页时钟；不以timer造模型结果。
+- commit后的最新rows/能力/会话身份用于延迟导航；owner/host/功能scope改变或条目被移除时不导航。same-account/user换generation不复用旧会话，保草稿但不覆盖已有server稿，reset后同URL也强制cold读；不同principal不借稿，刷新主账号视图后重走。
+
+验证：后端6项、完整1158 Rust通过；source-shaped列表17组、能力10组、merge5组、客户端17组、实际列表App/Sidebar10组与默认可见刷新4组均通过，旧实际Chat App14组保留。集中60个相关前端脚本、TSC及前端生产构建通过，原生构建/输入hash最终结果见`.ref/parity/16/chat-list-r10d-20261118/verification-summary.json`。native stub、已确认principal换代次复用旧记录、merge丢远端活动均有真实红绿；夹具缺新refs/变量不当业务红。
+
+仍未完成：pins/custom section/project/catalog完整合并、源并发title overlay、完整query SDK缓存/预取/默认重试与429恢复计时、所有Chat入口统一能力消费、上次地址与草稿/图持久化、消息动态图分页/实时resume。完整Statsig delta/live evaluator未实现，当前只接受已核同身份完整快照，不能当官方强制has_updates条件。底层分页安全整数/8MiB/50秒及实验功能最多20页是本地适配边界，非官方限额。
+
+未调用真实账号HTTP/模型；CUA初始化实际返回kernel assets路径缺失（见本批browser-limit.md），未取得DOM/截图或启动原生候选，不安装/重配全局工具绕过。GUI/IME、官方同环境像素、完整非Fast/所有协议、用户验收均未验证，score=null；CI/push继续暂停。启动读取代码与离线组合通过不等于真实重启连续旅程已验收，也不等于整个Sidebar或14批完成。

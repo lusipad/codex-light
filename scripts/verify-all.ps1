@@ -221,6 +221,11 @@ try {
   Invoke-Step "ChatGPT route identity" { node scripts/verify-chatgpt-routes.mjs }
   Invoke-Step "ChatGPT complete history graph projection" { node scripts/verify-chatgpt-conversation-history.mjs }
   Invoke-Step "ChatGPT cold history model context" { node scripts/verify-chatgpt-history-model.mjs }
+  Invoke-Step "ChatGPT ordinary conversation access" { node scripts/verify-chatgpt-conversation-access.mjs }
+  Invoke-Step "ChatGPT ordinary list pagination" { node scripts/verify-chatgpt-conversation-list.mjs }
+  Invoke-Step "ChatGPT server and optimistic sidebar merge" { node scripts/verify-chatgpt-sidebar-merge.mjs }
+  Invoke-Step "ChatGPT actual list App and sidebar" { node scripts/verify-chatgpt-list-app.mjs }
+  Invoke-Step "ChatGPT source visibility refresh" { node scripts/verify-chatgpt-list-refresh.mjs }
   Invoke-Step "ChatGPT sidebar entries" { node scripts/verify-sidebar-chatgpt.mjs }
   Invoke-Step "ChatGPT actual App integration" { node scripts/verify-chatgpt-app.mjs }
   Invoke-Step "Rust ChatGPT incremental stream transport" { cargo test --locked --manifest-path src-tauri/Cargo.toml --lib stream_transport }

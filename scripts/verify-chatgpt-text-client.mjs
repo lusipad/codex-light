@@ -8,7 +8,7 @@ const foreign = { ...identity, generation: 8 };
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 function fixture(options = {}) {
   const calls = [], frames = [], accepted = [], channels = [], timers = new Map(), storage = new Map(options.deviceId ? [["codex.chatgpt-conversations.device-id", options.deviceId]] : []);
-  const submit = deferred(), stop = deferred(), history = deferred(), abort = new AbortController();
+  const submit = deferred(), stop = deferred(), history = deferred(), list = deferred(), abort = new AbortController();
   let uuid = 0, reads = 0, tick = 10, timerId = 0;
   const navigator = Object.assign(Object.create({ hardwareConcurrency: 8 }), { userAgent: "Actual WebView fixture UA", language: "zh-CN", languages: ["zh-CN", "en"],
     userAgentData: { brands: [{ brand: "WebView Test", version: "123" }], platform: "Windows" } });
@@ -39,6 +39,7 @@ function fixture(options = {}) {
         if (command === "chatgpt_text_submit") return submit.promise;
         if (command === "chatgpt_text_stop") return stop.promise;
         if (command === "chatgpt_conversation_history_read") return history.promise;
+        if (command === "chatgpt_conversation_list_read") return list.promise;
         if (command === "chatgpt_service_cancel") return;
         throw Error(`Forbidden ordinary CLI or unexpected command: ${command}`);
       } };
@@ -62,7 +63,7 @@ function fixture(options = {}) {
   const responsePacket = (sequence, overrides = {}) => packet(sequence, { kind: "response", responseStatus: 200, event: "", data: "", id: "", ...overrides });
   const respond = (sequence, overrides) => channels[0].emit(responsePacket(sequence, overrides));
   const receipt = (eventCount, overrides = {}) => ({ requestId: request("chatgpt_text_submit").requestId, identity: { ...identity }, status: "transport-complete", eventCount, ...overrides });
-  return { ...client, body, start, submit, stop, history, abort, calls, frames, accepted, channels, timers, storage, navigator, request, packet, emit, responsePacket, respond, receipt,
+  return { ...client, body, start, submit, stop, history, list, abort, calls, frames, accepted, channels, timers, storage, navigator, request, packet, emit, responsePacket, respond, receipt,
     get reads() { return reads; }, expire: () => { const pending = [...timers.values()]; timers.clear(); pending.forEach(fn => fn()); } };
 }
 const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
@@ -248,6 +249,37 @@ test("history invalid/local ID, stale identity, cancellation and bad receipt nev
       body: scenario === "shape" ? [] : { mapping: {}, current_node: null } });
     const error = await failed(result);
     if (scenario === "http") assert.equal(error.status, 423);
+    if (scenario === "cancel") assert.ok(h.calls.some(c => c.command === "chatgpt_service_cancel"));
+  }
+});
+
+test("ordinary list uses only safe offset and explicit project scope, retaining actual page metadata", async () => {
+  for (const offset of [-1, NaN, 0.5, Number.MAX_SAFE_INTEGER + 1, "20"]) {
+    const h = fixture(); await failed(rejection(h.readChatgptConversations(identity, offset, false, h.abort.signal)));
+    assert.equal(h.calls.length, 0); assert.equal(h.reads, 0);
+  }
+  for (const include of [false, true]) {
+    const h = fixture(), result = h.readChatgptConversations(identity, 20, include, h.abort.signal); await flush();
+    const request = h.request("chatgpt_conversation_list_read");
+    assert.equal(request.offset, 20); assert.equal(request.includeProjectConversations, include);
+    assert.equal(request.limit, undefined); assert.equal(request.cursor, undefined); assert.equal(request.isArchived, undefined);
+    const page = { items: [], offset: 20, limit: 20, total: 55, metadata: { preserved: true } };
+    h.list.resolve({ requestId: request.requestId, identity, status: 200, body: page });
+    assert.equal(await result, page); assert.equal(h.reads, 2); assert.equal(h.calls.length, 1);
+  }
+});
+test("list cancellation, stale owner, bad receipt and HTTP errors never become empty success", async () => {
+  for (const scenario of ["cancel", "owner", "request", "identity", "status", "shape", "http"]) {
+    const h = fixture(scenario === "owner" ? { readIdentity: count => count === 1 ? identity : foreign } : {});
+    const result = rejection(h.readChatgptConversations(identity, 0, false, h.abort.signal)); await flush();
+    const request = h.request("chatgpt_conversation_list_read");
+    if (scenario === "cancel") h.abort.abort();
+    if (scenario === "http") h.list.reject({ code: "http_error", status: 429, message: "retry later" });
+    else h.list.resolve({ requestId: scenario === "request" ? "other" : request.requestId,
+      identity: scenario === "identity" ? foreign : identity, status: scenario === "status" ? 500 : 200,
+      body: scenario === "shape" ? [] : { items: [], offset: 0, limit: 20, total: 0 } });
+    const error = await failed(result);
+    if (scenario === "http") assert.equal(error.status, 429);
     if (scenario === "cancel") assert.ok(h.calls.some(c => c.command === "chatgpt_service_cancel"));
   }
 });

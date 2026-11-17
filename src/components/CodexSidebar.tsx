@@ -52,10 +52,13 @@ export interface CodexSidebarProps {
   activeWorkspace: WorkspaceRootItem | null;
   threads: ThreadSummary[];
   cloudRecentChats?: CloudRecentChat[];
-  /** Actual in-memory Chats only; never native threads or a complete server history. */
+  /** Source-ordered, owner-scoped Chat rows; native threads remain separate. */
   chatgptConversations?: readonly { id: string; title: string; pending: boolean }[];
   activeChatgptConversationId?: string | null;
   onOpenChatgptConversation?: (id: string) => void;
+  chatgptListState?: { loaded: boolean; loading: boolean; error: string | null; hasMore: boolean };
+  onRetryChatgptList?: () => void;
+  onLoadMoreChatgptList?: () => void;
   activeCloudThreadId?: string;
   onSelectCloudChat?: (chat: CloudRecentChat) => void;
   onCloudRecentAction?: (chat: CloudRecentChat, action: CloudRecentAction) => void;
@@ -154,6 +157,9 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
   chatgptConversations,
   activeChatgptConversationId,
   onOpenChatgptConversation,
+  chatgptListState,
+  onRetryChatgptList,
+  onLoadMoreChatgptList,
   activeCloudThreadId,
   onSelectCloudChat,
   onCloudRecentAction,
@@ -1969,7 +1975,8 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
         </div>
 
         {(!activityOnly || activityPriorityVisible) && <div className="sidebar-section-list">
-          {recentRows.length === 0 && visibleChatgptConversations.length === 0 ? (
+          {recentRows.length === 0 && visibleChatgptConversations.length === 0
+            && (!chatgptListState || chatgptListState.loaded && !chatgptListState.loading && !chatgptListState.error && !chatgptListState.hasMore) ? (
             <div className="sidebar-project-empty" style={{ paddingLeft: 12 }}>
               {activityOnly
                 ? "暂无需要关注的聊天"
@@ -2015,6 +2022,17 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
             ) : renderThreadRow(row.thread, false, activityOnly ? undefined : recentOrderContext))}
             </>
           )}
+          {!activityOnly && chatgptListState && <>
+            {chatgptListState.loading && <div role="status" className="sidebar-project-empty">正在加载聊天…</div>}
+            {chatgptListState.error && <div role="alert" className="sidebar-project-empty">
+              {chatgptListState.error}
+              {onRetryChatgptList && <button type="button" className="sidebar-project-show-more"
+                disabled={chatgptListState.loading} onClick={onRetryChatgptList}>重试</button>}
+            </div>}
+            {!chatgptListState.error && chatgptListState.hasMore && onLoadMoreChatgptList
+              && <button type="button" className="sidebar-project-show-more" disabled={chatgptListState.loading}
+                onClick={onLoadMoreChatgptList}>加载更多聊天</button>}
+          </>}
         </div>}
         {showActivityPins && <>
           {activityPriorityVisible && <div className="sidebar-section-header-row" style={{ marginTop: 16 }}>

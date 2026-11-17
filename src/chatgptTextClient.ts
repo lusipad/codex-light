@@ -174,3 +174,29 @@ export async function readChatgptConversation(principal: ServiceIdentity, conver
     return result.body;
   } finally { signal.removeEventListener("abort", cancel); }
 }
+
+/** Ordinary Sidebar list. Message-history cursors and archive filters are separate. */
+export async function readChatgptConversations(principal: ServiceIdentity, offset: number,
+  includeProjectConversations: boolean, signal: AbortSignal): Promise<unknown> {
+  if (!Number.isSafeInteger(offset) || offset < 0 || typeof includeProjectConversations !== "boolean") throw Error("ChatGPT 历史列表分页参数无效。");
+  const identity = { ...principal };
+  signal.throwIfAborted();
+  if (!sameIdentity(identity, await serviceIdentity(signal))) throw Error("ChatGPT 账号已变化。");
+  signal.throwIfAborted();
+  const requestId = crypto.randomUUID(), cancel = () => { void tauriInvoke("chatgpt_service_cancel", { requestId }).catch(() => {}); };
+  signal.addEventListener("abort", cancel, { once: true });
+  try {
+    const result = await tauriInvoke<unknown>("chatgpt_conversation_list_read", { request: {
+      requestId, expectedIdentity: identity, profile: chatProfile(), offset, includeProjectConversations,
+    } });
+    signal.throwIfAborted();
+    if (!record(result) || result.requestId !== requestId || !record(result.identity)
+      || !sameIdentity(identity, result.identity as unknown as ServiceIdentity) || typeof result.status !== "number"
+      || !Number.isInteger(result.status) || result.status < 200 || result.status >= 300 || !record(result.body)) {
+      throw Error("ChatGPT 历史列表响应尚未确认。");
+    }
+    if (!sameIdentity(identity, await serviceIdentity(signal))) throw Error("读取聊天列表期间账号已变化。");
+    signal.throwIfAborted();
+    return result.body;
+  } finally { signal.removeEventListener("abort", cancel); }
+}

@@ -20,6 +20,9 @@ import { chatgptConversationPath, parseChatgptConversationLocation } from "./cha
 import { readChatgptConversation } from "./chatgptTextClient";
 import { decodeChatgptConversationHistory, getChatgptHistoryActivity, type ChatgptConversationHistory } from "./chatgptConversationHistory";
 import { readChatgptHistoryModelContext } from "./chatgptHistoryModel";
+import { readChatgptConversationAccess, type ChatgptConversationAccess } from "./chatgptConversationAccess";
+import { useChatgptConversationList } from "./chatgptConversationList";
+import { mergeChatgptSidebarConversations } from "./chatgptSidebarConversations";
 import { adaptWorkModelSelection, selectWorkHomeModel, readWorkModelCatalog, type WorkModelSelection, type WorkModelCatalog } from "./workModelCatalog";
 import { decideWorkModelPermissions } from "./workModelPermissionDecision";
 import { createWorkThreadModelSelectionController, type WorkThreadModelSnapshot } from "./workThreadModelSelection";
@@ -1830,11 +1833,58 @@ export const App: React.FC = () => {
     window.history.replaceState(window.history.state, "", path);
     return true;
   }, [setActiveRoute, writeChatDraft]);
+  const chatConversationIdentity = chatEntry?.owner === modelAccountIdentity ? chatEntry.identity : workHomeSession?.target?.identity ?? null;
+  const chatConversationIdentityRef = useRef(chatConversationIdentity);
+  useLayoutEffect(() => { chatConversationIdentityRef.current = chatConversationIdentity; }, [chatConversationIdentity]);
   const chatConversation = useChatgptTextConversation({
-    identity: chatEntry?.owner === modelAccountIdentity ? chatEntry.identity : workHomeSession?.target?.identity ?? null,
+    identity: chatConversationIdentity,
     ownerKey: JSON.stringify([modelAccountIdentity, workHostIdentity]),
     onOptimisticStart: navigateOptimisticChat, onAccepted: acceptChatPrompt, onRestore: restoreChatPrompt,
   });
+  const chatListScope = JSON.stringify([modelAccountIdentity, workHostIdentity, shareAccessRevision]);
+  const chatListScopeRef = useRef(chatListScope);
+  useLayoutEffect(() => { chatListScopeRef.current = chatListScope; }, [chatListScope]);
+  const [chatListAccessRetry, setChatListAccessRetry] = useState(0);
+  const [chatListAccess, setChatListAccess] = useState<{ scope: string; loading: boolean;
+    access: ChatgptConversationAccess | null; error: string | null; checkedAt: number } | null>(null);
+  useEffect(() => {
+    if (!appServerStatus.connected || isQuickChatWindow || isThreadWindow) { setChatListAccess(null); return; }
+    const request = new AbortController(), scope = chatListScope;
+    const current = () => !request.signal.aborted && chatListScopeRef.current === scope;
+    setChatListAccess(previous => ({ scope, loading: true, access: previous?.scope === scope ? previous.access : null,
+      error: null, checkedAt: previous?.scope === scope ? previous.checkedAt : 0 }));
+    void readChatgptConversationAccess(request.signal).then(access => {
+      if (current()) setChatListAccess({ scope, loading: false, access, error: null, checkedAt: Date.now() });
+    }).catch(error => {
+      if (current()) setChatListAccess({ scope, loading: false, access: null, error: serviceErrorMessage(error), checkedAt: Date.now() });
+    });
+    return () => request.abort();
+  }, [chatListScope, chatListAccessRetry, appServerStatus.connected, isQuickChatWindow, isThreadWindow]);
+  const currentChatListAccess = appServerStatus.connected && !isQuickChatWindow && !isThreadWindow
+    && chatListAccess?.scope === chatListScope ? chatListAccess : null;
+  const chatListAccessRef = useRef(currentChatListAccess);
+  useLayoutEffect(() => { chatListAccessRef.current = currentChatListAccess; }, [currentChatListAccess]);
+  const chatServerList = useChatgptConversationList({
+    identity: currentChatListAccess?.access?.status === "enabled" ? currentChatListAccess.access.identity : null,
+    ownerKey: chatListScope, includeProjectConversations: false,
+  });
+  const chatListUpdatedAt = useRef<{ scope: string; time: number } | null>(null);
+  useEffect(() => {
+    if (chatServerList.loaded) chatListUpdatedAt.current = { scope: chatListScope, time: Date.now() };
+  }, [chatListScope, chatServerList.pages, chatServerList.loaded]);
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "hidden" || chatListScopeRef.current !== chatListScope) return;
+      const now = Date.now();
+      if (currentChatListAccess && !currentChatListAccess.loading && now - currentChatListAccess.checkedAt >= 60_000) {
+        setChatListAccessRetry(value => value + 1);
+      }
+      if (chatServerList.loaded && chatListUpdatedAt.current?.scope === chatListScope
+        && now - chatListUpdatedAt.current.time >= 300_000) void chatServerList.refresh();
+    };
+    window.addEventListener("visibilitychange", onVisible);
+    return () => window.removeEventListener("visibilitychange", onVisible);
+  }, [chatListScope, currentChatListAccess, chatServerList.loaded, chatServerList.refresh]);
   const chatRouteLocation = activeRoute === "chatgpt-thread" ? parseChatgptConversationLocation(window.location.href) : null;
   const visibleChatConversation = !chatRouteLocation || chatConversation.conversation?.clientId === chatRouteLocation.id
     || chatConversation.conversation?.serverId === chatRouteLocation.id ? chatConversation.conversation : null;
@@ -6842,24 +6892,48 @@ export const App: React.FC = () => {
     pending: workHomeModels.pending || sendStartPendingRef.current.has(threadRequestRef.current),
     refresh: workHomeModels.refresh, onCommit: commitHomeWorkModel, onVersionPreference: commitHomeWorkVersion,
     contextKey: `${modelAccountIdentity}:${workHostIdentity}:${workHomeSession.key}` } : undefined;
-  const chatSidebarConversations = useMemo(() => chatConversation.conversations.map(conversation => ({
-    id: conversation.clientId, title: conversation.title ?? conversation.messages.find(message => message.raw.author &&
-      typeof message.raw.author === "object" && (message.raw.author as { role?: unknown }).role === "user")?.text ?? "新聊天",
-    pending: conversation.pending || !!conversation.history && ["active", "background"].includes(getChatgptHistoryActivity(conversation.history)),
-  })), [chatConversation.conversations]);
+  const chatSidebarConversations = useMemo(() => mergeChatgptSidebarConversations(chatConversation.conversations, chatServerList.items),
+    [chatConversation.conversations, chatServerList.items]);
+  const chatSidebarRowsRef = useRef<{ scope: string; rows: typeof chatSidebarConversations; memory: typeof chatConversation.conversations } | null>(null);
+  useLayoutEffect(() => {
+    const current = { scope: chatListScope, rows: chatSidebarConversations, memory: chatConversation.conversations };
+    chatSidebarRowsRef.current = current;
+    return () => { if (chatSidebarRowsRef.current === current) chatSidebarRowsRef.current = null; };
+  }, [chatListScope, chatSidebarConversations]);
+  const activeChatgptSidebarId = chatSidebarConversations.find(item => item.id === visibleChatConversation?.clientId
+    || item.id === visibleChatConversation?.serverId)?.id ?? null;
   const openChatgptConversation = (id: string) => {
     const origin = window.location.href, navigation = navigationRequestRef.current;
     const owner = committedWorkOwner.current, host = committedWorkHost.current;
+    const scope = chatListScope;
     let applied = false;
     const apply = () => {
       if (applied || window.location.href !== origin || navigationRequestRef.current !== navigation
-        || committedWorkOwner.current !== owner || committedWorkHost.current !== host) return;
-      const conversation = chatConversation.conversations.find(item => item.clientId === id);
-      if (!conversation || !chatConversation.open(id)) return;
+        || committedWorkOwner.current !== owner || committedWorkHost.current !== host || chatListScopeRef.current !== scope) return;
+      const current = chatSidebarRowsRef.current;
+      if (!current || current.scope !== scope) return;
+      const row = current.rows.find(item => item.id === id);
+      if (!row) return;
+      let conversation = current.memory.find(item => item.clientId === id || row.serverId !== null && item.serverId === row.serverId);
+      const oldIdentity = chatConversationIdentityRef.current, access = chatListAccessRef.current?.access;
+      const identity = access?.status === "enabled" ? access.identity : null;
+      const retired = !!conversation && identity && oldIdentity && (identity.accountId !== oldIdentity.accountId
+        || identity.userId !== oldIdentity.userId || identity.generation !== oldIdentity.generation);
+      if (retired && (identity.accountId !== oldIdentity.accountId || identity.userId !== oldIdentity.userId)) {
+        void refreshAccount(); return;
+      }
+      if ((!conversation || retired) && (!row.serverId || !/^[A-Za-z0-9_-]+$/.test(row.serverId))) return;
       applied = true;
+      if (retired && conversation && row.serverId) {
+        const drafts = chatDraftValues.current;
+        if (Object.hasOwn(drafts, conversation.clientId) && !Object.hasOwn(drafts, row.serverId)) writeChatDraft(row.serverId, drafts[conversation.clientId]);
+        chatConversation.reset(); conversation = undefined;
+        setChatHistoryRetry(value => value + 1);
+      } else if (conversation && !chatConversation.open(conversation.clientId)) return;
       activeThreadIdRef.current = null; setActiveThreadId(null); threadRequestRef.current++;
-      window.history.replaceState(window.history.state, "", chatgptConversationPath({ id: conversation.serverId ?? id,
-        projectId: conversation.projectId, temporary: conversation.isTemporaryChat }));
+      window.history.replaceState(window.history.state, "", chatgptConversationPath({ id: row.serverId ?? id,
+        projectId: row.gizmoId, temporary: conversation?.isTemporaryChat ?? false }));
+      setChatHistoryLocation(window.location.href);
       activeRouteRef.current = "chatgpt-thread"; commitActiveRoute("chatgpt-thread");
     };
     if (personalizationNavigationGuardRef.current?.(apply) === false) return;
@@ -7123,8 +7197,18 @@ export const App: React.FC = () => {
       {/* ── 2. Official Three-Section Codex Sidebar ── */}
       <CodexSidebar
         chatgptConversations={chatSidebarConversations}
-        activeChatgptConversationId={activeRoute === "chatgpt-thread" ? visibleChatConversation?.clientId : null}
+        activeChatgptConversationId={activeRoute === "chatgpt-thread" ? activeChatgptSidebarId : null}
         onOpenChatgptConversation={openChatgptConversation}
+        chatgptListState={!appServerStatus.connected || isQuickChatWindow || isThreadWindow || currentChatListAccess?.access?.status === "disabled" ? undefined : {
+          loading: !currentChatListAccess || currentChatListAccess.access === null && currentChatListAccess.loading || chatServerList.loading !== null,
+          loaded: chatServerList.loaded, error: currentChatListAccess?.error ?? chatServerList.error,
+          hasMore: chatServerList.nextOffset !== null,
+        }}
+        onRetryChatgptList={() => {
+          if (currentChatListAccess?.error) setChatListAccessRetry(value => value + 1);
+          else void chatServerList.retry();
+        }}
+        onLoadMoreChatgptList={() => { void chatServerList.loadMore(); }}
         collapsed={sidebarCollapsed}
         activeRoute={activeRoute}
         workspaces={workspaces}

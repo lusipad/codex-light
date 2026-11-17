@@ -18,10 +18,12 @@ function pure(file) {
   const exports = {};
   vm.runInNewContext(compile(fs.readFileSync(`src/${file}.ts`, "utf8")), { exports, URL, require: name => {
     if (name === "./workRunLocation") return pure("workRunLocation");
+    if (name === "./chatgptConversationHistory") return pure("chatgptConversationHistory");
     assert.equal(name, "./chatgptService"); return { readChatgptService: () => assert.fail("pure catalog must not perform HTTP") };
   } }); return exports;
 }
 const catalogApi = pure("workModelCatalog"), routeApi = pure("chatgptRoutes");
+const mergeApi = pure("chatgptSidebarConversations");
 function actualConversation(f) {
   const modules = new Map(), requests = []; let id = 0;
   function load(file) {
@@ -57,6 +59,8 @@ function fixture() {
       paths.push(path); const url = new URL(path, "https://app.test"); Object.assign(location, { pathname: url.pathname, search: url.search, href: url.href });
     } } },
     modelAccountIdentity: "owner", workHostIdentity: "host", committedWorkOwner: { current: "owner" }, committedWorkHost: { current: "host" },
+    chatListScope: "owner-host", chatListScopeRef: { current: "owner-host" },
+    setChatHistoryLocation: value => { state.historyLocation = value; },
     activeRoute: "home", activeRouteRef: { current: "home" }, activeThreadId: null, activeThreadIdRef: { current: null },
     threadRequestRef: { current: 2 }, navigationRequestRef: { current: 4 }, homePromptRevisionRef: { current: 5 },
     chatStart: { current: null }, chatSubmission: { current: new Map() }, chatDrafts: state.drafts,
@@ -90,6 +94,10 @@ function fixture() {
     context[name] = callback(name, context);
   for (const name of ["chatRouteLocation", "visibleChatConversation"]) Object.defineProperty(context, name, { configurable: true,
     get: () => evaluate(variable(name), context) });
+  context.chatSidebarRowsRef = { get current() { return { scope: context.chatListScope,
+    rows: mergeApi.mergeChatgptSidebarConversations(context.chatConversation.conversations, []), memory: context.chatConversation.conversations }; } };
+  context.chatConversationIdentityRef = { get current() { return evaluate(variable("chatConversationIdentity"), context); } };
+  context.chatListAccessRef = { current: null };
   return { context, state, calls, paths, notices, controls, target, catalog, location,
     cli: () => calls.filter(([kind]) => kind === "CLI" || kind === "native"), sends: () => calls.filter(([kind]) => kind === "chatSend") };
 }
@@ -247,7 +255,8 @@ test("actual Home Composer enables ready Chat independently of native Work prepa
 
 test("actual Chat sidebar and Composer handlers stay separate from native thread actions", async () => {
   const f = fixture(); f.context.activeRouteRef.current = "chatgpt-thread"; f.context.activeRoute = "chatgpt-thread";
-  f.context.chatConversation.conversation = { clientId: "known-chat", model: selection, projectId: null, pending: false, deliveryUnknown: false };
+  f.context.chatConversation.conversation = { clientId: "known-chat", serverId: null, messages: [], isTemporaryChat: false,
+    model: selection, projectId: null, pending: false, deliveryUnknown: false };
   f.context.chatConversation.conversations = [f.context.chatConversation.conversation];
   f.context.chatEntry = { identity, owner: "owner", catalog: f.catalog, plan: "plus" };
   f.context.writeChatDraft("known-chat", "followup");
@@ -274,7 +283,7 @@ test("actual sidebar navigation guard defers every mutation and retires stale ap
     const f = fixture(); let pending, asked = 0;
     f.context.activeRouteRef.current = "settings"; f.context.activeRoute = "settings"; f.state.route = "settings";
     f.context.activeThreadIdRef.current = "native-before"; f.context.activeThreadId = "native-before";
-    f.context.chatConversation.conversations = [{ clientId: "known-chat", serverId: null, projectId: null, isTemporaryChat: false }];
+    f.context.chatConversation.conversations = [{ clientId: "known-chat", serverId: null, messages: [], projectId: null, isTemporaryChat: false }];
     f.context.personalizationNavigationGuardRef.current = action => { asked++; pending = action; return false; };
     const open = evaluate(variable("openChatgptConversation"), f.context); open("known-chat");
     assert.equal(asked, 1); assert.equal(f.calls.filter(([kind]) => kind === "chatOpen").length, 0);
