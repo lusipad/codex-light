@@ -12,14 +12,19 @@ function fixture(){
     accounts:value=>value,payload:value=>value,envelope:value=>value,after:()=>{},account:value=>value,fail:null};
   const bridge={callAppServer:async(method,params)=>{
     calls.push({method,params:clone(params)});if(c.fail===method)throw Error('fixture read failed');let result;
-    if(method==='getAuthStatus'){assert.deepEqual(clone(params),{includeToken:false,refreshToken:false});result={authMethod:c.auth};}
-    else if(method==='account/read'){assert.deepEqual(clone(params),{refreshToken:false});result=c.account({account:{type:'chatgpt'},workspaceRouting:{chatgptAccountId:identity.accountId}});}
+    if(method==='getAuthStatus')throw Error('认证状态令牌只能由宿主服务读取');
+    if(method==='account/read'){assert.deepEqual(clone(params),{refreshToken:false});result=c.account({account:{type:'chatgpt'},workspaceRouting:{chatgptAccountId:identity.accountId}});}
     else if(method==='experimentalFeature/list'){result=c.featurePages[params.cursor==null?0:Number(params.cursor)];}
     else throw Error('unexpected protocol method');
     c.after(method);return result;
   },tauriInvoke:async(command,args)=>{
     calls.push({command,args:clone(args)});let result;
-    if(command==='chatgpt_service_identity')result=c.identity();
+    if(command==='chatgpt_auth_method'){
+      assert.deepEqual(clone(args),{});
+      if(c.fail===command)throw Error('fixture read failed');
+      result=c.auth;
+    }
+    else if(command==='chatgpt_service_identity')result=c.identity();
     else if(command==='chatgpt_service_cancel')return;
     else if(command==='share_thread_access'){
       assert.deepEqual(clone(args.request.expectedIdentity),identity);assert.equal('conversationId'in args.request,false);
@@ -81,7 +86,7 @@ await test('ordering aliases and first eligible account do not require unrelated
   for(const accounts of [null,[],{accounts:{},account_ordering:null},{accounts:{chosen:{account:{account_id:identity.accountId}}},account_ordering:['chosen']}]){const bad=fixture();bad.c.accounts=()=>accounts;await assert.rejects(bad.read(),/清单不完整|计划尚未确认/);}
 });
 await test('read failures and wrong envelopes throw for error/retry rather than disabling or enabling',async()=>{
-  for(const fail of ['getAuthStatus','account/read','share_accounts','experimentalFeature/list','gpts_workspace_settings']){const h=fixture();h.c.fail=fail;h.c.plan='business';h.c.gate=true;await assert.rejects(h.read());}
+  for(const fail of ['chatgpt_auth_method','account/read','share_accounts','experimentalFeature/list','gpts_workspace_settings']){const h=fixture();h.c.fail=fail;h.c.plan='business';h.c.gate=true;await assert.rejects(h.read());}
   const h=fixture();h.c.envelope=value=>({...value,identity:{...identity,generation:5}});await assert.rejects(h.read(),/账号发生变化/);
 });
 await test('account user generation routing and strict auth are fenced after async reads',async()=>{

@@ -1,4 +1,4 @@
-import { callAppServer } from "./bridge";
+import { callAppServer, tauriInvoke } from "./bridge";
 import { experimentalFeatureListAll } from "./config";
 import { readChatgptService, serviceIdentity, shareAccessBootstrap, type ServiceIdentity } from "./chatgptService";
 
@@ -16,11 +16,11 @@ const permissionPlans = new Set(["business", "enterprise", "enterprise_cbp_usage
 async function strictAuth(signal: AbortSignal): Promise<boolean> {
   signal.throwIfAborted();
   let value: unknown;
-  try { value = await callAppServer("getAuthStatus", { includeToken: false, refreshToken: false }); }
+  try { value = await tauriInvoke("chatgpt_auth_method", {}); }
   catch { throw Error("无法确认 Chat 账号认证状态，请重试。"); }
   signal.throwIfAborted();
-  if (!object(value) || !(value.authMethod === null || typeof value.authMethod === "string")) throw Error("Chat 认证状态不完整，请重试。");
-  return value.authMethod === "chatgpt";
+  if (value !== null && typeof value !== "string") throw Error("Chat 认证状态不完整，请重试。");
+  return value === "chatgpt";
 }
 
 function validIdentity(value: ServiceIdentity): void {

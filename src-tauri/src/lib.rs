@@ -165,6 +165,19 @@ async fn app_server_restart(
 }
 
 #[tauri::command]
+async fn chatgpt_auth_method(app: AppHandle, state: State<'_, AppState>) -> Result<Option<String>, String> {
+    let status = state.app_server.call(&app, "getAuthStatus", Some(json!({
+        "includeToken": false,
+        "refreshToken": false,
+    }))).await?;
+    match status.get("authMethod") {
+        Some(Value::Null) => Ok(None),
+        Some(Value::String(method)) => Ok(Some(method.clone())),
+        _ => Err("认证方式响应格式无效".into()),
+    }
+}
+
+#[tauri::command]
 async fn app_server_call(
     app: AppHandle,
     window: tauri::WebviewWindow,
@@ -3015,6 +3028,7 @@ pub fn run() {
             app_server_connect,
             app_server_restart,
             app_server_call,
+            chatgpt_auth_method,
             git_message_generate,
             git_message_generation_cancel,
             git_message_context,
