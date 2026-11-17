@@ -1,5 +1,12 @@
 # 实施日志（按轮次）
 
+## 2026-11-17 — Work 独立许可与同首页快照交接基础
+
+- 先核官方 Work 条件表、Desktop surface publisher、账号来源及 freshDraft 精确默认，新增独立许可投影/限定身份读取器，复用既有固定 GET、账号和 bootstrap，不新增依赖、权限门槛或代理服务。读取器尚未挂入产品，不以纯投影代表实际获准。
+- 官方允许复用未启动首页草稿；最小删除 runtime 一行不同 scope 限制，保留 Work=true、claim、账号/来源及一次消费。真实先红后绿验证同首页 handoff→reserve→commit 后仍消费原目标；不生成假 ID、不清稿、不发送模型。
+- 12组 Work 回归（含复审新增6个异步边界）、既有资格/入口、TSC及80项 Appshots Rust通过。runtime14项包含于80项；没有全库/全标准/新安装包或原生GUI，准确证据见16.23A。保留原生/像素/用户未验，CI和推送暂停。
+- 下一工作包是有效 Work 本地/云端消费者分派、模式/导航及同 flight 交接。已有普通本地聊天不能冒充此流程；当前 bridge 仍未知→skip，不提前放行“新聊天”。
+
 ## 2026-11-17 — B4 Appshots热键与目标设置（本地限定阶段）
 
 - 固定版B4/未知目标schema/布局继承取证后，新增真实settings client/controller/view与主窗命令：同步注册失败/磁盘失败回滚运行配置，异步失败保已存热键；目标用真实用户层版本写入/保存/effective/owner读回。复用现owner、global偏好、config协议、portal菜单和设置容器，无新依赖或替代音视频。

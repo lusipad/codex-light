@@ -199,6 +199,7 @@ try {
   Invoke-Step "Composer attachment draft scope regression" { node scripts/verify-composer-attachment-drafts.mjs }
   Invoke-Step "Appshot context serialization and image roundtrip" { node scripts/verify-appshot-context.mjs }
   Invoke-Step "Appshot account and local host qualification" { node scripts/verify-appshots-access.mjs }
+  Invoke-Step "Independent Work access decision tables and identity-bound reader" { node scripts/verify-work-access.mjs }
   Invoke-Step "Appshot native entry and scoped consumer lifecycle" { node scripts/verify-appshots-entry.mjs }
   Invoke-Step "Appshot pending Composer presentation" { node scripts/verify-appshots-pending-presentation.mjs }
   Invoke-Step "Appshots settings versioned client" { node scripts/verify-appshots-settings-client.mjs }

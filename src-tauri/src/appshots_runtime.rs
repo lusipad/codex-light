@@ -467,7 +467,6 @@ impl Owner {
                         .as_ref()
                         .is_some_and(|c| c.work_allowed == Some(true))
                     && from.account == to.account
-                    && from != to
                     && !to.composer.is_empty()
                     && self.flight.as_ref().is_some_and(|f| {
                         f.claimed
@@ -1030,6 +1029,103 @@ mod tests {
             scope("new"),
             reply
         )));
+    }
+
+    #[test]
+    fn new_chat_same_home_handoff_preserves_original_target_and_single_consumption() {
+        let (mut owner, id) = owner(Route::NewChat);
+        let home = scope("home");
+        owner.config.as_mut().unwrap().scope = home.clone();
+        owner.flight.as_mut().unwrap().scope = home.clone();
+        let metadata = owner.flight.as_ref().unwrap().metadata.clone();
+        assert!(boolean(&mut owner, |reply| Command::Claim(
+            id,
+            "main".into(),
+            home.clone(),
+            reply
+        )));
+        // An unchanged home client key does not supply Work permission.
+        assert!(!boolean(&mut owner, |reply| Command::Handoff(
+            id,
+            "main".into(),
+            home.clone(),
+            home.clone(),
+            reply
+        )));
+        owner.config.as_mut().unwrap().work_allowed = Some(true);
+        let foreign = Scope {
+            account: "other-account".into(),
+            composer: "home".into(),
+        };
+        assert!(!boolean(&mut owner, |reply| Command::Handoff(
+            id,
+            "main".into(),
+            home.clone(),
+            foreign,
+            reply
+        )));
+        assert!(!boolean(&mut owner, |reply| Command::Handoff(
+            id,
+            "main".into(),
+            scope("wrong-home"),
+            home.clone(),
+            reply
+        )));
+        assert!(
+            boolean(&mut owner, |reply| Command::Handoff(
+                id,
+                "main".into(),
+                home.clone(),
+                home.clone(),
+                reply
+            )),
+            "explicit Work handoff can reuse the existing home draft scope"
+        );
+        assert!(!boolean(&mut owner, |reply| Command::Handoff(
+            id,
+            "main".into(),
+            home.clone(),
+            home.clone(),
+            reply
+        )));
+        assert_eq!(owner.flight.as_ref().unwrap().metadata, metadata);
+        assert!(boolean(&mut owner, |reply| Command::Reserve(
+            id,
+            "main".into(),
+            home.clone(),
+            reply
+        )));
+        assert!(boolean(&mut owner, |reply| Command::Commit(
+            id,
+            "main".into(),
+            home.clone(),
+            reply
+        )));
+        // Still held: commit must not start a real capture worker in this test.
+        assert!(owner.flight.as_ref().unwrap().task.is_none());
+        assert!(!boolean(&mut owner, |reply| Command::Commit(
+            id,
+            "main".into(),
+            home.clone(),
+            reply
+        )));
+        owner
+            .controller
+            .up(
+                owner.generation,
+                1,
+                Destination::Automatic,
+                owner.config.as_ref().unwrap().primary.as_ref(),
+                now_ms(),
+                true,
+            )
+            .unwrap();
+        let target = owner.controller.start_capture(id, "main", &home).unwrap();
+        assert_eq!(
+            (target.hwnd, target.pid, target.process_creation_time),
+            (1, 2, 3)
+        );
+        assert!(owner.controller.start_capture(id, "main", &home).is_none());
     }
 
     #[test]
