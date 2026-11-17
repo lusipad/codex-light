@@ -12,6 +12,8 @@ struct NativeEvent {
     pid: u32,
     creation_filetime: u64,
     latched_filetime: u64,
+    input_epoch: u64,
+    reset_reason: u32,
 }
 
 #[cfg(windows)]
@@ -23,13 +25,37 @@ unsafe extern "C" {
         event: *mut NativeEvent,
     ) -> i32;
     fn codex_appshot_entry_stop(handle: *mut c_void);
+    fn codex_appshot_entry_epoch(handle: *mut c_void) -> u64;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ResetReason {
+    Desktop,
+    Lock,
+    Unlock,
+    Logoff,
+    Disconnect,
+    Connect,
+    RemoteControl,
+    DesktopReady,
 }
 
 #[derive(Debug)]
 pub(crate) enum EntryEvent {
-    Installed,
-    Down(Result<CaptureTarget, u32>),
-    Up,
+    Installed {
+        input_epoch: u64,
+    },
+    Down {
+        input_epoch: u64,
+        target: Result<CaptureTarget, u32>,
+    },
+    Up {
+        input_epoch: u64,
+    },
+    Reset {
+        input_epoch: u64,
+        reason: ResetReason,
+    },
     Failed(u32),
     Closed,
 }
@@ -78,6 +104,22 @@ impl NativeEntry {
             Some(EntryEvent::Closed)
         }
     }
+    /// Actual native atomic epoch, not a time-based estimate or cached event.
+    /// Reconcile it before using dequeued targets or late results: native Reset
+    /// may already have invalidated input before its queued event is consumed.
+    /// Zero invalidates the registration, not a Reset to pass to input_reset:
+    /// the native owner is not installed, stopping or closed. This cannot detect
+    /// Windows silently removing a low-level hook.
+    pub fn input_epoch(&self) -> u64 {
+        #[cfg(windows)]
+        unsafe {
+            codex_appshot_entry_epoch(self.0.as_ptr())
+        }
+        #[cfg(not(windows))]
+        {
+            0
+        }
+    }
 }
 impl Drop for NativeEntry {
     fn drop(&mut self) {
@@ -89,24 +131,51 @@ impl Drop for NativeEntry {
 }
 
 fn decode(event: NativeEvent) -> EntryEvent {
+    if matches!(event.phase, 1 | 2 | 3 | 5) && event.input_epoch == 0 {
+        return EntryEvent::Failed(13);
+    }
     match event.phase {
-        1 if event.error == 0 => EntryEvent::Installed,
-        2 => EntryEvent::Down(if event.error != 0 {
-            Err(event.error)
-        } else if event.hwnd == 0
-            || event.pid == 0
-            || event.creation_filetime == 0
-            || event.latched_filetime < event.creation_filetime
-        {
-            Err(1400)
-        } else {
-            Ok(CaptureTarget {
-                hwnd: event.hwnd,
-                pid: event.pid,
-                process_creation_time: event.creation_filetime,
-            })
-        }),
-        3 if event.error == 0 => EntryEvent::Up,
+        1 if event.error == 0 => EntryEvent::Installed {
+            input_epoch: event.input_epoch,
+        },
+        2 => EntryEvent::Down {
+            input_epoch: event.input_epoch,
+            target: if event.error != 0 {
+                Err(event.error)
+            } else if event.hwnd == 0
+                || event.pid == 0
+                || event.creation_filetime == 0
+                || event.latched_filetime < event.creation_filetime
+            {
+                Err(1400)
+            } else {
+                Ok(CaptureTarget {
+                    hwnd: event.hwnd,
+                    pid: event.pid,
+                    process_creation_time: event.creation_filetime,
+                })
+            },
+        },
+        3 if event.error == 0 => EntryEvent::Up {
+            input_epoch: event.input_epoch,
+        },
+        5 if event.error == 0 => {
+            let reason = match event.reset_reason {
+                1 => ResetReason::Desktop,
+                2 => ResetReason::Lock,
+                3 => ResetReason::Unlock,
+                4 => ResetReason::Logoff,
+                5 => ResetReason::Disconnect,
+                6 => ResetReason::Connect,
+                7 => ResetReason::RemoteControl,
+                8 => ResetReason::DesktopReady,
+                _ => return EntryEvent::Failed(13),
+            };
+            EntryEvent::Reset {
+                input_epoch: event.input_epoch,
+                reason,
+            }
+        }
         _ => EntryEvent::Failed(if event.error == 0 { 13 } else { event.error }),
     }
 }
@@ -116,24 +185,28 @@ mod tests {
     use super::*;
     #[test]
     fn appshots_native_entry_layout_and_decode_require_actual_target_identity() {
-        assert_eq!(std::mem::size_of::<NativeEvent>(), 40);
+        assert_eq!(std::mem::size_of::<NativeEvent>(), 56);
         assert_eq!(std::mem::offset_of!(NativeEvent, hwnd), 8);
         assert_eq!(std::mem::offset_of!(NativeEvent, pid), 16);
         assert_eq!(std::mem::offset_of!(NativeEvent, creation_filetime), 24);
         assert_eq!(std::mem::offset_of!(NativeEvent, latched_filetime), 32);
+        assert_eq!(std::mem::offset_of!(NativeEvent, input_epoch), 40);
+        assert_eq!(std::mem::offset_of!(NativeEvent, reset_reason), 48);
         assert!(matches!(
             decode(NativeEvent {
                 phase: 1,
+                input_epoch: 1,
                 ..Default::default()
             }),
-            EntryEvent::Installed
+            EntryEvent::Installed { input_epoch: 1 }
         ));
         assert!(matches!(
             decode(NativeEvent {
                 phase: 2,
+                input_epoch: 1,
                 ..Default::default()
             }),
-            EntryEvent::Down(Err(_))
+            EntryEvent::Down { target: Err(_), .. }
         ));
         let event = || NativeEvent {
             phase: 2,
@@ -141,9 +214,14 @@ mod tests {
             pid: 8,
             creation_filetime: 9,
             latched_filetime: 10,
+            input_epoch: 2,
             ..Default::default()
         };
-        let EntryEvent::Down(Ok(target)) = decode(event()) else {
+        let EntryEvent::Down {
+            input_epoch: 2,
+            target: Ok(target),
+        } = decode(event())
+        else {
             panic!("latched target expected")
         };
         assert_eq!(
@@ -155,25 +233,84 @@ mod tests {
                 creation_filetime: 11,
                 ..event()
             }),
-            EntryEvent::Down(Err(_))
+            EntryEvent::Down { target: Err(_), .. }
         ));
         assert!(matches!(
             decode(NativeEvent {
                 error: 5,
                 ..event()
             }),
-            EntryEvent::Down(Err(5))
+            EntryEvent::Down { target: Err(5), .. }
         ));
         assert!(matches!(
             decode(NativeEvent {
                 phase: 3,
+                input_epoch: 2,
                 ..Default::default()
             }),
-            EntryEvent::Up
+            EntryEvent::Up { input_epoch: 2 }
         ));
         assert!(matches!(
             decode(NativeEvent::default()),
             EntryEvent::Failed(13)
+        ));
+    }
+
+    #[test]
+    fn appshots_native_entry_reset_reasons_and_nonzero_business_epochs_are_strict() {
+        for phase in [1, 2, 3, 5] {
+            assert!(matches!(
+                decode(NativeEvent {
+                    phase,
+                    reset_reason: 1,
+                    ..Default::default()
+                }),
+                EntryEvent::Failed(13)
+            ));
+        }
+        for (code, reason) in [
+            (1, ResetReason::Desktop),
+            (2, ResetReason::Lock),
+            (3, ResetReason::Unlock),
+            (4, ResetReason::Logoff),
+            (5, ResetReason::Disconnect),
+            (6, ResetReason::Connect),
+            (7, ResetReason::RemoteControl),
+            (8, ResetReason::DesktopReady),
+        ] {
+            assert!(
+                matches!(decode(NativeEvent { phase: 5, input_epoch: 7, reset_reason: code, ..Default::default() }),
+                EntryEvent::Reset { input_epoch: 7, reason: actual } if actual == reason)
+            );
+        }
+        for code in [0, 9, u32::MAX] {
+            assert!(matches!(
+                decode(NativeEvent {
+                    phase: 5,
+                    input_epoch: 7,
+                    reset_reason: code,
+                    ..Default::default()
+                }),
+                EntryEvent::Failed(13)
+            ));
+        }
+        assert!(matches!(
+            decode(NativeEvent {
+                phase: 5,
+                input_epoch: 7,
+                reset_reason: 1,
+                error: 5,
+                ..Default::default()
+            }),
+            EntryEvent::Failed(5)
+        ));
+        assert!(matches!(
+            decode(NativeEvent {
+                phase: 4,
+                error: 6,
+                ..Default::default()
+            }),
+            EntryEvent::Failed(6)
         ));
     }
 }

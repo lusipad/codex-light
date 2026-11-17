@@ -38,7 +38,7 @@ cl.exe /nologo /std:c++20 /EHsc /O2 /MD /utf-8 "$testSource" /Fo"$testObject" /F
 if errorlevel 1 exit /b %errorlevel%
 "$testExe"
 if errorlevel 1 exit /b %errorlevel%
-cl.exe /nologo /std:c++20 /EHsc /O2 /MD /utf-8 "$entryTestSource" /Fo"$entryTestObject" /Fe"$entryTestExe" /link user32.lib
+cl.exe /nologo /std:c++20 /EHsc /O2 /MD /utf-8 "$entryTestSource" /Fo"$entryTestObject" /Fe"$entryTestExe" /link user32.lib wtsapi32.lib
 if errorlevel 1 exit /b %errorlevel%
 "$entryTestExe"
 if errorlevel 1 exit /b %errorlevel%

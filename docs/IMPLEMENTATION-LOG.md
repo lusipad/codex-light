@@ -1,5 +1,13 @@
 # 实施日志（按轮次）
 
+## 2026-11-17 — Appshots输入失效与有效epoch
+
+- 先核Microsoft desktop/session/WinEvent/WTS与零键状态歧义，接当前session隐藏非激活HWND、窄DesktopSwitch observer和Reset(inputEpoch)。GetAsyncKeyState零快照不作为松键依据，未知恢复仅可信非注入keyup解除屏障；首周期的运行时差异保留，不启用户入口。
+- 56字节C/Rust ABI双端offset回归、旧generation/epoch事件和worker结果退役；队列清旧手势且出队enrichment再核epoch。先红后绿修复Reset未清队列、失效状态仍返回旧epoch、跨session通知越界、终止错误未立即失效。32相关Rust/native SDK及debug编译最终0，完整992全Rust0在末尾单个C++终止fuse之前，未虚报所有全量步骤均在最后补丁后重跑。
+- 显式自有SDK三轮真实WTS/WinEvent/LL安装和注销、隐藏窗口销毁与join通过；默认CI测试仅自有消息/状态回放，不安装系统observer。没有锁屏/UAC、物理键、真实账号、截图或模型。证据`.ref/parity/16/appshots-input-loss-r3-20261117/`；保留39警告，未跑本轮整套前端/协议/安装包/GUI及托管CI，不标整页完成。
+- 只读PE取证确认固定版Appshots走Swift helper，导入事实不等于算法恢复，WTS/epoch明确为自有选择。Sites并行前置也已完成：当前owned/get主消费者改为Sites MCP，既有设置/域名/共享保留；Codex原线程编辑可独立推进，Work创作与桌面preview具体依赖另列。均未运行官方helper或访问真实服务/模型，见`.ref/parity/21/sites-r1-20261117/entry-contract.md`。
+- 下一继续B3实际owner/资格/route/intro/捕获与取消回收，保留物理输入恢复、通知缺失、安全桌面、hook静默移除及窗口复用未验；上次已推送c5b6e2a的CI由GitHub账单条件阻止启动，未用本地检查改称远端成功。本轮仅本地阶段提交，不自动重试该外部失败。
+
 ### 2026-11-17 推送交付
 
 用户最新要求“推送一版”，覆盖此前阶段暂不推送的执行选择，不包含发布或将未验项改成通过。推送前fetch确认master与origin/master无分叉，本地此前29个阶段提交待推；入口后端基础作为新阶段提交后一起普通推送，随后核同提交Windows CI。当前本地五组验证命令退出0、1000输入哈希稳定；托管结果须以新run终态为准，不沿用11月9日旧账单故障或11月8日旧成功结论。

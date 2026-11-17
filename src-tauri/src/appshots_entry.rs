@@ -45,6 +45,7 @@ pub(crate) struct State {
     pub supported: bool,
     pub configured_hotkey: Option<Hotkey>,
     pub registration: Registration,
+    pub input_epoch: u64,
 }
 pub(crate) struct RegistrationChange {
     pub generation: u64,
@@ -113,6 +114,7 @@ pub(crate) struct Controller {
     configured: Option<Hotkey>,
     registration: Registration,
     generation: u64,
+    input_epoch: u64,
     pressed: bool,
     flight: Option<Flight>,
 }
@@ -124,6 +126,7 @@ impl Default for Controller {
             configured: Some(Hotkey::DoubleAlt),
             registration: Registration::None,
             generation: 0,
+            input_epoch: 0,
             pressed: false,
             flight: None,
         }
@@ -136,6 +139,7 @@ impl Controller {
             supported: self.eligible == Some(true) && self.capable,
             configured_hotkey: self.configured,
             registration: self.registration,
+            input_epoch: self.input_epoch,
         }
     }
     /// Start an explicit registration replacement, not an unchanged-state poll.
@@ -149,6 +153,7 @@ impl Controller {
     ) -> RegistrationChange {
         let retired = self.retire();
         self.generation += 1;
+        self.input_epoch = 0;
         self.eligible = eligible;
         self.capable = capable;
         self.configured = configured;
@@ -165,12 +170,32 @@ impl Controller {
         }
     }
     /// Only the real native adapter's current registration ACK may call this.
-    pub fn registration_ready(&mut self, generation: u64) -> bool {
-        if generation != self.generation || self.registration != Registration::Pending {
+    pub fn registration_ready(&mut self, generation: u64, input_epoch: u64) -> bool {
+        if generation != self.generation
+            || self.registration != Registration::Pending
+            || input_epoch == 0
+        {
             return false;
         }
+        // Installed proves this registration, not the age of its input. A Reset
+        // observed first must not be undone by a delayed installation ACK.
+        self.input_epoch = self.input_epoch.max(input_epoch);
         self.registration = Registration::Ready;
         true
+    }
+    /// Reset may precede Installed, or follow Installed with the same epoch.
+    /// Only a newer native epoch invalidates a flight. This does not stop workers:
+    /// the owner must send cancellation and await the retired flight's task.
+    pub fn input_reset(&mut self, generation: u64, input_epoch: u64) -> Option<Uuid> {
+        if generation != self.generation
+            || self.registration == Registration::None
+            || input_epoch == 0
+            || input_epoch <= self.input_epoch
+        {
+            return None;
+        }
+        self.input_epoch = input_epoch;
+        self.retire()
     }
     /// Some(None) is a current failure without a flight; None is a stale event.
     pub fn registration_failed(&mut self, generation: u64) -> Option<Option<Uuid>> {
@@ -178,6 +203,7 @@ impl Controller {
             return None;
         }
         self.registration = Registration::None;
+        self.input_epoch = 0;
         self.capable = false;
         Some(self.retire())
     }
@@ -187,8 +213,15 @@ impl Controller {
     }
     /// Called only for the native adapter's proven simultaneous modifier down.
     /// target is already latched by that trusted adapter; never supplied by JS.
-    pub fn down(&mut self, generation: u64, target: CaptureTarget) -> Option<FlightStart> {
+    pub fn down(
+        &mut self,
+        generation: u64,
+        input_epoch: u64,
+        target: CaptureTarget,
+    ) -> Option<FlightStart> {
         if generation != self.generation
+            || input_epoch == 0
+            || input_epoch != self.input_epoch
             || self.registration != Registration::Ready
             || self.pressed
             || target.hwnd == 0
@@ -236,12 +269,17 @@ impl Controller {
     pub fn up(
         &mut self,
         generation: u64,
+        input_epoch: u64,
         destination: Destination,
         primary: Option<&PrimaryWindow>,
         now_ms: u64,
         work_allowed: bool,
     ) -> Option<(Uuid, Route)> {
-        if generation != self.generation || !self.pressed {
+        if generation != self.generation
+            || input_epoch == 0
+            || input_epoch != self.input_epoch
+            || !self.pressed
+        {
             return None;
         }
         self.pressed = false;
@@ -351,8 +389,167 @@ mod tests {
         let mut controller = Controller::default();
         let change = controller.reconcile(Some(true), true, Some(Hotkey::DoubleAlt));
         assert_eq!(controller.state().registration, Registration::Pending);
-        assert!(controller.registration_ready(change.generation));
+        assert!(controller.registration_ready(change.generation, 1));
         (controller, change.generation)
+    }
+
+    fn started(c: &mut Controller, generation: u64, epoch: u64) -> Uuid {
+        let id = c.down(generation, epoch, target(7)).unwrap().id;
+        assert!(c.claim(id, "window-a", "account-a"));
+        assert_eq!(
+            c.route_down(id, Destination::LastChat, Some(&primary()), 100),
+            Route::Current
+        );
+        assert!(c.consume(id, "window-a", &scope("thread-a")));
+        c.up(
+            generation,
+            epoch,
+            Destination::LastChat,
+            Some(&primary()),
+            100,
+            true,
+        )
+        .unwrap();
+        c.start_capture(id, "window-a", &scope("thread-a")).unwrap();
+        id
+    }
+
+    #[test]
+    fn appshots_entry_reset_retires_consumed_or_running_capture_not_configuration() {
+        for running in [false, true] {
+            let (mut c, generation) = ready();
+            let id = if running {
+                started(&mut c, generation, 1)
+            } else {
+                let id = c.down(generation, 1, target(7)).unwrap().id;
+                c.claim(id, "window-a", "account-a");
+                c.route_down(id, Destination::LastChat, Some(&primary()), 100);
+                assert!(c.consume(id, "window-a", &scope("thread-a")));
+                id
+            };
+            assert_eq!(
+                c.input_reset(generation, 2),
+                Some(id),
+                "owner must still cancel and await this retired worker"
+            );
+            assert_eq!(c.state().input_epoch, 2);
+            assert_eq!(c.state().eligible, Some(true));
+            assert!(c.state().supported);
+            assert_eq!(c.state().configured_hotkey, Some(Hotkey::DoubleAlt));
+            assert_eq!(c.state().registration, Registration::Ready);
+            assert!(!c.consume(id, "window-a", &scope("thread-a")));
+            assert!(c
+                .start_capture(id, "window-a", &scope("thread-a"))
+                .is_none());
+            assert!(!c.complete(id, "window-a", &scope("thread-a")));
+            assert!(c
+                .up(
+                    generation,
+                    1,
+                    Destination::LastChat,
+                    Some(&primary()),
+                    100,
+                    true
+                )
+                .is_none());
+            assert!(c.down(generation, 1, target(8)).is_none());
+            let fresh = started(&mut c, generation, 2);
+            assert_ne!(fresh, id);
+            assert!(c.complete(fresh, "window-a", &scope("thread-a")));
+        }
+    }
+
+    #[test]
+    fn appshots_entry_duplicate_and_old_resets_cannot_kill_new_epoch_flight() {
+        let (mut c, generation) = ready();
+        c.input_reset(generation, 2);
+        let fresh = started(&mut c, generation, 2);
+        for (old_generation, old_epoch) in [
+            (generation, 2),
+            (generation, 1),
+            (generation, 0),
+            (generation - 1, 99),
+        ] {
+            assert_eq!(c.input_reset(old_generation, old_epoch), None);
+            assert_eq!(c.state().input_epoch, 2);
+        }
+        assert!(c.complete(fresh, "window-a", &scope("thread-a")));
+        let previous = started(&mut c, generation, 2);
+        let next = c.reconcile(Some(true), true, Some(Hotkey::DoubleShift));
+        assert_eq!(next.retired, Some(previous));
+        assert!(c.registration_ready(next.generation, 1));
+        let current = started(&mut c, next.generation, 1);
+        assert_eq!(c.input_reset(generation, 100), None);
+        assert!(c.complete(current, "window-a", &scope("thread-a")));
+    }
+
+    #[test]
+    fn appshots_entry_installed_and_reset_order_preserves_latest_input_epoch() {
+        for reset_before_installed in [false, true] {
+            let mut c = Controller::default();
+            let change = c.reconcile(Some(true), true, Some(Hotkey::DoubleAlt));
+            assert!(!c.registration_ready(change.generation, 0));
+            if reset_before_installed {
+                assert_eq!(c.input_reset(change.generation, 3), None);
+                assert_eq!(c.state().registration, Registration::Pending);
+                assert!(c.registration_ready(change.generation, 3));
+            } else {
+                assert!(c.registration_ready(change.generation, 3));
+            }
+            let fresh = started(&mut c, change.generation, 3);
+            assert_eq!(c.input_reset(change.generation, 3), None);
+            assert!(c.complete(fresh, "window-a", &scope("thread-a")));
+        }
+        let mut c = Controller::default();
+        let change = c.reconcile(Some(true), true, Some(Hotkey::DoubleAlt));
+        c.input_reset(change.generation, 3);
+        assert!(
+            c.registration_ready(change.generation, 2),
+            "same registration installation ACK cannot undo a newer reset"
+        );
+        assert_eq!(c.state().input_epoch, 3);
+        assert!(c.down(change.generation, 2, target(1)).is_none());
+        assert!(c.down(change.generation, 3, target(1)).is_some());
+    }
+
+    #[test]
+    fn appshots_entry_queued_old_up_cannot_release_new_epoch_gesture() {
+        let (mut c, generation) = ready();
+        let old = c.down(generation, 1, target(7)).unwrap().id;
+        assert_eq!(c.input_reset(generation, 2), Some(old));
+        let fresh = c.down(generation, 2, target(8)).unwrap().id;
+        c.claim(fresh, "window-a", "account-a");
+        c.route_down(fresh, Destination::LastChat, Some(&primary()), 100);
+        c.consume(fresh, "window-a", &scope("thread-a"));
+        assert!(c
+            .up(
+                generation,
+                1,
+                Destination::LastChat,
+                Some(&primary()),
+                100,
+                true
+            )
+            .is_none());
+        assert!(c
+            .start_capture(fresh, "window-a", &scope("thread-a"))
+            .is_none());
+        assert!(c
+            .up(
+                generation,
+                2,
+                Destination::LastChat,
+                Some(&primary()),
+                100,
+                true
+            )
+            .is_some());
+        assert_eq!(
+            c.start_capture(fresh, "window-a", &scope("thread-a"))
+                .unwrap()
+                .hwnd,
+            8
+        );
     }
 
     #[test]
@@ -368,8 +565,8 @@ mod tests {
         ] {
             let change = c.reconcile(eligible, capable, key);
             assert_eq!(change.hotkey, None);
-            assert!(!c.registration_ready(change.generation));
-            assert!(c.down(change.generation, target(1)).is_none());
+            assert!(!c.registration_ready(change.generation, 1));
+            assert!(c.down(change.generation, 1, target(1)).is_none());
         }
         assert!(
             c.state().supported,
@@ -379,7 +576,7 @@ mod tests {
         let change = c.reconcile(Some(true), true, Some(Hotkey::DoubleShift));
         assert!(c.state().supported);
         assert!(
-            c.down(change.generation, target(1)).is_none(),
+            c.down(change.generation, 1, target(1)).is_none(),
             "saved configuration is not a native ready ACK"
         );
     }
@@ -387,16 +584,16 @@ mod tests {
     #[test]
     fn appshots_entry_old_registration_events_cannot_retire_current_generation() {
         let (mut c, old) = ready();
-        let first = c.down(old, target(1)).unwrap();
+        let first = c.down(old, 1, target(1)).unwrap();
         let change = c.reconcile(Some(true), true, Some(Hotkey::DoubleShift));
         assert_eq!(change.retired, Some(first.id));
-        assert!(!c.registration_ready(old));
+        assert!(!c.registration_ready(old, 1));
         assert!(c.registration_failed(old).is_none());
-        assert!(c.registration_ready(change.generation));
-        let current = c.down(change.generation, target(2)).unwrap();
-        assert!(c.down(old, target(3)).is_none());
+        assert!(c.registration_ready(change.generation, 1));
+        let current = c.down(change.generation, 1, target(2)).unwrap();
+        assert!(c.down(old, 1, target(3)).is_none());
         assert!(c
-            .up(old, Destination::LastChat, Some(&primary()), 100, true)
+            .up(old, 1, Destination::LastChat, Some(&primary()), 100, true)
             .is_none());
         assert_eq!(
             c.registration_failed(change.generation),
@@ -407,18 +604,18 @@ mod tests {
             !c.state().supported,
             "failed native bridge is not a supported host until an explicit successful retry"
         );
-        assert!(c.down(change.generation, target(4)).is_none());
+        assert!(c.down(change.generation, 1, target(4)).is_none());
         let retry = c.reconcile(Some(true), true, Some(Hotkey::DoubleAlt));
         assert!(c.state().supported);
         assert_eq!(c.state().registration, Registration::Pending);
-        assert!(c.registration_ready(retry.generation));
+        assert!(c.registration_ready(retry.generation, 1));
     }
 
     #[test]
     fn appshots_entry_down_up_deduplicate_and_new_flight_retires_old() {
         let (mut c, generation) = ready();
-        let first = c.down(generation, target(1)).unwrap();
-        assert!(c.down(generation, target(2)).is_none());
+        let first = c.down(generation, 1, target(1)).unwrap();
+        assert!(c.down(generation, 1, target(2)).is_none());
         assert_eq!(
             c.route_down(first.id, Destination::LastChat, Some(&primary()), 100),
             Route::Current
@@ -430,6 +627,7 @@ mod tests {
         assert_eq!(
             c.up(
                 generation,
+                1,
                 Destination::LastChat,
                 Some(&primary()),
                 100,
@@ -440,13 +638,14 @@ mod tests {
         assert!(c
             .up(
                 generation,
+                1,
                 Destination::LastChat,
                 Some(&primary()),
                 100,
                 true
             )
             .is_none());
-        let second = c.down(generation, target(2)).unwrap();
+        let second = c.down(generation, 1, target(2)).unwrap();
         assert_eq!(second.retired, Some(first.id));
         assert_ne!(second.id, first.id);
     }
@@ -454,7 +653,7 @@ mod tests {
     #[test]
     fn appshots_entry_origin_account_composer_and_once_only_target_are_enforced() {
         let (mut c, generation) = ready();
-        let flight = c.down(generation, target(7)).unwrap().id;
+        let flight = c.down(generation, 1, target(7)).unwrap().id;
         assert!(c.claim(flight, "window-a", "account-a"));
         assert!(!c.claim(flight, "window-b", "account-a"));
         c.route_down(flight, Destination::LastChat, Some(&primary()), 100);
@@ -477,6 +676,7 @@ mod tests {
         );
         c.up(
             generation,
+            1,
             Destination::LastChat,
             Some(&primary()),
             100,
@@ -508,12 +708,13 @@ mod tests {
     fn appshots_entry_cancel_and_retire_reject_late_capture_results() {
         let (mut c, generation) = ready();
         for cancel in [true, false] {
-            let id = c.down(generation, target(1)).unwrap().id;
+            let id = c.down(generation, 1, target(1)).unwrap().id;
             c.claim(id, "window-a", "account-a");
             c.route_down(id, Destination::LastChat, Some(&primary()), 100);
             c.consume(id, "window-a", &scope("thread-a"));
             c.up(
                 generation,
+                1,
                 Destination::LastChat,
                 Some(&primary()),
                 100,
@@ -535,7 +736,7 @@ mod tests {
     #[test]
     fn appshots_entry_intro_cancel_never_exposes_or_starts_the_locked_target() {
         let (mut c, generation) = ready();
-        let id = c.down(generation, target(1)).unwrap().id;
+        let id = c.down(generation, 1, target(1)).unwrap().id;
         c.claim(id, "window-a", "account-a");
         assert!(c.cancel(id, "window-a", &scope("thread-a")));
         assert!(!c.consume(id, "window-a", &scope("thread-a")));
@@ -545,6 +746,7 @@ mod tests {
         assert!(c
             .up(
                 generation,
+                1,
                 Destination::LastChat,
                 Some(&primary()),
                 100,
@@ -588,7 +790,7 @@ mod tests {
     #[test]
     fn appshots_entry_denied_new_chat_route_cannot_consume_target() {
         let (mut c, generation) = ready();
-        let id = c.down(generation, target(1)).unwrap().id;
+        let id = c.down(generation, 1, target(1)).unwrap().id;
         c.claim(id, "window-a", "account-a");
         assert!(
             !c.consume(id, "window-a", &scope("thread-a")),
@@ -601,6 +803,7 @@ mod tests {
         assert_eq!(
             c.up(
                 generation,
+                1,
                 Destination::NewChat,
                 Some(&primary()),
                 100,

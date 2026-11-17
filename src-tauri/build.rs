@@ -17,7 +17,7 @@ fn main() {
         println!("cargo:rustc-link-lib=static=system_fonts");
         println!("cargo:rustc-link-lib=static=appshots");
         println!("cargo:rustc-link-lib=static=appshots_entry_native");
-        for library in ["windowsapp", "ole32", "propsys", "shell32", "uuid", "advapi32", "dwrite", "d3d11", "dxgi", "windowscodecs", "oleaut32", "user32"] {
+        for library in ["windowsapp", "ole32", "propsys", "shell32", "uuid", "advapi32", "dwrite", "d3d11", "dxgi", "windowscodecs", "oleaut32", "user32", "wtsapi32"] {
             println!("cargo:rustc-link-lib=dylib={library}");
         }
     }
