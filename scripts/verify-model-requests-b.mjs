@@ -99,6 +99,7 @@ function queueFixture({ invalid = null, settingsFailure = false, response = { tu
   let finishSettings;
   const settings = new Promise(resolve => { finishSettings = resolve; });
   const context = {
+    activeRouteRef: { current: "thread" },
     executionIdentityRef: { current: "fixture-account" },
     threadExecutionRevisionsRef: { current: new Map() },
     threadsRef: { current: [{ id: "queue-thread", cwd: "D:/repo" }] }, workspaceHintsRef: { current: {} },

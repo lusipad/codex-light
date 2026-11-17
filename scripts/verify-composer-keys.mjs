@@ -90,6 +90,14 @@ function checkWiring(node) {
   if (ts.isJsxSelfClosingElement(node) && node.tagName.getText(appAst) === "ComposerBox") {
     const prop = name => node.attributes.properties.find(p => ts.isJsxAttribute(p) && p.name.getText(appAst) === name);
     assert.equal(prop("followUpMode")?.initializer?.expression?.getText(appAst), "followUpMode");
+    if (prop("chatgptMode") && !prop("chatgptMode").initializer) {
+      let notices = 0;
+      vm.runInNewContext(prop("onQueueMessage").initializer.expression.getText(appAst), {
+        showAppToast: message => { assert.match(message, /排队发送尚未接通/); notices++; },
+      })();
+      assert.equal(notices, 1, "ChatGPT queue shortcut reports its unsupported boundary without CLI or send");
+      return;
+    }
     assert.equal(prop("onQueueMessage")?.initializer?.expression?.getText(appAst), "handleEnqueueFollowup");
     sendBindings.set(prop("variant").initializer.text, prop("onSendMessage").initializer.expression.getText(appAst));
   }
@@ -114,7 +122,7 @@ assert.equal(vm.runInNewContext(sendBindings.get("home"), sendContext)(), true);
 assert.deepEqual(routes, ["cloud-draft"]);
 assert.equal(vm.runInNewContext(sendBindings.get("thread"), sendContext), localSend);
 assert.ok(!source.includes("Alt+Enter 加入队列"));
-console.log("PASS both actual App composers use the real queue handler without false Alt+Enter hints");
+console.log("PASS native App composers use the real queue handler; ChatGPT reports unsupported queue without sending");
 
 let sendClick;
 function findSendButton(node) {

@@ -17,6 +17,12 @@ pub(super) struct StreamFrame {
     pub id: String,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum StreamEvent {
+    Response(u16),
+    Frame(StreamFrame),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum StreamControl {
     Continue,
@@ -40,7 +46,7 @@ pub(super) async fn stream_request<F>(
     on_frame: &mut F,
 ) -> ServiceResult<StreamSummary>
 where
-    F: FnMut(StreamFrame) -> ServiceResult<StreamControl> + ?Sized,
+    F: FnMut(StreamEvent) -> ServiceResult<StreamControl> + ?Sized,
 {
     if !request.url.starts_with("https://") {
         return Err(failure("invalid_request", "Streaming requires HTTPS"));
@@ -56,7 +62,7 @@ async fn run_stream<F>(
     idle: Duration,
 ) -> ServiceResult<StreamSummary>
 where
-    F: FnMut(StreamFrame) -> ServiceResult<StreamControl> + ?Sized,
+    F: FnMut(StreamEvent) -> ServiceResult<StreamControl> + ?Sized,
 {
     if cancel.load(Ordering::SeqCst) {
         return Err(failure("cancelled", "Stream request cancelled"));
@@ -89,7 +95,11 @@ where
             "0",
             "--connect-timeout",
             "15",
-            "--include",
+            // --include can delay header output until body/EOF even with
+            // --no-buffer (observed on system curl 8.21.0). Dump's header
+            // callback flushes stdout, so acceptance precedes body arrival.
+            "--dump-header",
+            "-",
             "--suppress-connect-headers",
             "--compressed",
         ])
@@ -132,7 +142,7 @@ where
                 if count == 0 {
                     break;
                 }
-                response.feed(&buffer[..count], &mut |frame| {
+                response.feed_events(&buffer[..count], &mut |frame| {
                     if cancel.load(Ordering::SeqCst) {
                         return Err(failure("cancelled", "Stream request cancelled"));
                     }
@@ -321,9 +331,20 @@ struct ResponseParser {
     events: EventParser,
 }
 impl ResponseParser {
+    #[cfg(test)]
     fn feed<F>(&mut self, bytes: &[u8], on_frame: &mut F) -> ServiceResult<()>
     where
         F: FnMut(StreamFrame) -> ServiceResult<StreamControl> + ?Sized,
+    {
+        self.feed_events(bytes, &mut |event| match event {
+            StreamEvent::Response(_) => Ok(StreamControl::Continue),
+            StreamEvent::Frame(frame) => on_frame(frame),
+        })
+    }
+
+    fn feed_events<F>(&mut self, bytes: &[u8], on_event: &mut F) -> ServiceResult<()>
+    where
+        F: FnMut(StreamEvent) -> ServiceResult<StreamControl> + ?Sized,
     {
         let mut offset = 0;
         while self.summary.is_none() && offset < bytes.len() {
@@ -380,6 +401,12 @@ impl ResponseParser {
                 pending_frame: None,
             });
             self.header.clear();
+            if (200..300).contains(&parsed.status) {
+                if on_event(StreamEvent::Response(parsed.status))? == StreamControl::Stop {
+                    self.events.stopped = true;
+                    return Ok(());
+                }
+            }
         }
         if let Some(summary) = &mut self.summary {
             let body = &bytes[offset..];
@@ -393,7 +420,8 @@ impl ResponseParser {
                         "Stream exceeded local resource limit",
                     ));
                 }
-                self.events.feed(body, on_frame)?;
+                self.events
+                    .feed(body, &mut |frame| on_event(StreamEvent::Frame(frame)))?;
             } else {
                 if self.received > ERROR_LIMIT {
                     return Err(failure(
@@ -421,10 +449,37 @@ impl ResponseParser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    async fn run_fixture_stream<F>(
+        request: HttpRequest,
+        cancel: Arc<AtomicBool>,
+        sink: &mut F,
+        protocol: &'static str,
+        idle: Duration,
+    ) -> ServiceResult<StreamSummary>
+    where
+        F: FnMut(StreamFrame) -> ServiceResult<StreamControl> + ?Sized,
+    {
+        run_stream(
+            request,
+            cancel,
+            &mut |event| match event {
+                StreamEvent::Response(_) => Ok(StreamControl::Continue),
+                StreamEvent::Frame(frame) => sink(frame),
+            },
+            protocol,
+            idle,
+        )
+        .await
+    }
+
     #[test]
     fn sse_body_configuration_uses_its_own_local_bound_without_changing_buffered_requests() {
-        let mut request = HttpRequest { url: "https://chatgpt.com/backend-api/f/conversation".into(),
-            headers: BTreeMap::new(), method: HttpMethod::Post, body: vec![b'x'; 256 * 1024 + 1] };
+        let mut request = HttpRequest {
+            url: "https://chatgpt.com/backend-api/f/conversation".into(),
+            headers: BTreeMap::new(),
+            method: HttpMethod::Post,
+            body: vec![b'x'; 256 * 1024 + 1],
+        };
         assert!(curl_config(&request).is_err());
         assert!(curl_config_with_post_limit(&request, 2 * 1024 * 1024).is_ok());
         request.body.resize(2 * 1024 * 1024 + 1, b'x');
@@ -660,7 +715,7 @@ mod tests {
         let cancel = Arc::new(AtomicBool::new(false));
         let mut first = Some(first_tx);
         let mut frames = Vec::new();
-        let result = run_stream(
+        let result = run_fixture_stream(
             request(format!("http://{address}/fixture")),
             cancel,
             &mut |frame| {
@@ -703,7 +758,7 @@ mod tests {
             });
             let cancel = Arc::new(AtomicBool::new(false));
             let observer = cancel.clone();
-            let error = run_stream(
+            let error = run_fixture_stream(
                 request(format!("http://{address}/fixture")),
                 cancel,
                 &mut |_| {
@@ -743,7 +798,7 @@ mod tests {
             let mut socket = fixture_socket(listener).await;
             socket.write_all(b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 17\r\nConnection: close\r\n\r\n{\"error\":\"local\"}").await.unwrap();
         });
-        let summary = run_stream(
+        let summary = run_fixture_stream(
             request(format!("http://{address}/fixture")),
             Arc::new(AtomicBool::new(false)),
             &mut |_| panic!("401 dispatched event"),
@@ -781,7 +836,7 @@ mod tests {
         });
         let started = std::time::Instant::now();
         let mut delivered = 0;
-        let summary = run_stream(
+        let summary = run_fixture_stream(
             request(format!("http://{address}/fixture")),
             Arc::new(AtomicBool::new(false)),
             &mut |_| {
@@ -915,5 +970,90 @@ mod tests {
             )
             .unwrap();
         assert!(parser.finish().unwrap().pending_frame.is_none());
+    }
+    #[test]
+    fn sse_final_response_acceptance_precedes_frames_without_requiring_business_data() {
+        let mut parser = ResponseParser::default();
+        let mut events = Vec::new();
+        parser.feed_events(b"HTTP/1.1 103 Early Hints\r\n\r\nHTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nSet-Cookie: private-fixture\r\n\r\n",&mut |event|{events.push(event);Ok(StreamControl::Continue)}).unwrap();
+        assert_eq!(events, vec![StreamEvent::Response(200)]);
+        parser
+            .feed_events(b"data: first\n\n", &mut |event| {
+                events.push(event);
+                Ok(StreamControl::Continue)
+            })
+            .unwrap();
+        assert_eq!(events.len(), 2);
+        assert!(matches!(&events[1],StreamEvent::Frame(frame) if frame.data=="first"));
+    }
+    #[test]
+    fn sse_response_metadata_is_never_emitted_for_interim_errors_or_invalid_mime() {
+        for input in [
+            b"HTTP/1.1 103 Early Hints\r\n\r\n".as_slice(),
+            b"HTTP/1.1 401 Unauthorized\r\n\r\nerror",
+        ] {
+            let mut parser = ResponseParser::default();
+            parser
+                .feed_events(input, &mut |_| {
+                    panic!("unaccepted response emitted metadata")
+                })
+                .unwrap();
+        }
+        let mut parser = ResponseParser::default();
+        assert!(parser
+            .feed_events(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{}",
+                &mut |_| panic!("invalid MIME emitted metadata")
+            )
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn sse_real_response_metadata_arrives_before_body_and_failure_reaps_curl() {
+        for rejected in [false, true] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                let mut socket = fixture_socket(listener).await;
+                socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nSet-Cookie: fixture-private\r\nConnection: close\r\n\r\n").await.unwrap();
+                let mut byte = [0u8; 1];
+                matches!(
+                    tokio::time::timeout(Duration::from_secs(2), socket.read(&mut byte)).await,
+                    Ok(Ok(0)) | Ok(Err(_))
+                )
+            });
+            let mut received = 0;
+            let result = run_stream(
+                request(format!("http://{address}/fixture")),
+                Arc::new(AtomicBool::new(false)),
+                &mut |event| {
+                    assert_eq!(event, StreamEvent::Response(200));
+                    received += 1;
+                    if rejected {
+                        Err(failure(
+                            "fixture_response_rejected",
+                            "Response callback rejected",
+                        ))
+                    } else {
+                        Ok(StreamControl::Stop)
+                    }
+                },
+                "=http",
+                Duration::from_secs(5),
+            )
+            .await;
+            assert!(
+                server.await.unwrap(),
+                "response metadata must arrive while body is still pending"
+            );
+            assert_eq!(received, 1);
+            if rejected {
+                assert_eq!(result.unwrap_err().code, "fixture_response_rejected");
+            } else {
+                let summary = result.unwrap();
+                assert_eq!(summary.event_count, 0);
+                assert!(summary.pending_frame.is_none());
+            }
+        }
     }
 }

@@ -35,6 +35,7 @@ function mount(overrides = {}) {
   const tracker = createReviewResults(() => {});
   const execution = loadModule("executionPolicy");
   const context = {
+    activeRouteRef: { current: "thread" },
     ...execution,
     executionIdentityRef: { current: "fixture-account" },
     threadExecutionPoliciesRef: { current: new Map() },

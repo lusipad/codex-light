@@ -344,6 +344,7 @@ export interface InboxNotificationItem {
 export type MainViewRoute =
   | "home"
   | "thread"
+  | "chatgpt-thread"
   | "projects"
   | "inbox"
   | "scheduled"

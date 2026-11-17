@@ -29,10 +29,12 @@ function chatProfile() {
 
 export interface ChatgptTextReceipt {
   requestId: string; identity: ServiceIdentity; status: "transport-complete"; eventCount: number;
+  completionDispatched?: boolean;
 }
 interface ChatgptTextFailureReceipt {
   requestId: string; identity: ServiceIdentity; status: "transport-error"; eventCount: number;
   error: { code: string; message: string; status?: number | null };
+  completionDispatched?: boolean;
 }
 
 /** Per-request channel; no global listener, ordinary CLI fallback or paid retry.
@@ -40,14 +42,23 @@ interface ChatgptTextFailureReceipt {
 export async function submitChatgptText(input: {
   identity: ServiceIdentity; body: ReturnType<typeof createChatgptTextRequest>;
   signal: AbortSignal; onFrame: (frame: ChatgptStreamFrame) => void;
+  onResponseAccepted?: (status: number) => void;
 }): Promise<ChatgptTextReceipt> {
-  const identity = { ...input.identity }, signal = input.signal, body = structuredClone(input.body);
-  signal.throwIfAborted();
-  if (!sameIdentity(identity, await serviceIdentity(signal))) throw Error("ChatGPT 账号已变化。");
-  signal.throwIfAborted();
-  const profile = chatProfile(), requirementsKey = createChatgptRequirementsKey(collectChatgptRequirementsEnvironment());
+  const identity = { ...input.identity }, signal = input.signal;
+  let body: typeof input.body, profile: ReturnType<typeof chatProfile>, requirementsKey: string;
+  try {
+    body = structuredClone(input.body);
+    signal.throwIfAborted();
+    if (!sameIdentity(identity, await serviceIdentity(signal))) throw Error("ChatGPT 账号已变化。");
+    signal.throwIfAborted();
+    profile = chatProfile(); requirementsKey = createChatgptRequirementsKey(collectChatgptRequirementsEnvironment());
+  } catch (error) {
+    throw { code: record(error) && typeof error.code === "string" ? error.code : "chatgpt_preparation_failed",
+      message: error instanceof Error ? error.message : record(error) && typeof error.message === "string" ? error.message : "ChatGPT 准备失败。",
+      completionDispatched: false };
+  }
   const requestId = crypto.randomUUID();
-  let alive = true, sequence = 0, streamError: unknown = null, expectedCount: number | null = null;
+  let alive = true, sequence = 0, responseAccepted = false, streamError: unknown = null, expectedCount: number | null = null;
   let wake: (() => void) | null = null;
   const cancel = () => { void tauriInvoke("chatgpt_service_cancel", { requestId }).catch(() => {}); wake?.(); };
   const channel = new Channel<unknown>(packet => {
@@ -57,11 +68,22 @@ export async function submitChatgptText(input: {
         || !sameIdentity(identity, packet.identity as unknown as ServiceIdentity)
         || !Number.isSafeInteger(packet.sequence) || packet.sequence !== sequence + 1
         || expectedCount !== null && sequence >= expectedCount
+        || packet.kind !== "frame" && packet.kind !== "response"
         || typeof packet.event !== "string" || typeof packet.data !== "string" || typeof packet.id !== "string") {
         throw Error("ChatGPT 流作用域或顺序无法确认。");
       }
       sequence++;
-      input.onFrame({ event: packet.event, data: packet.data, id: packet.id });
+      if (packet.kind === "response") {
+        if (responseAccepted || typeof packet.responseStatus !== "number" || !Number.isInteger(packet.responseStatus)
+          || packet.responseStatus < 200 || packet.responseStatus >= 300 || packet.event !== "" || packet.data !== "" || packet.id !== "") {
+          throw Error("ChatGPT 响应接受状态无法确认。");
+        }
+        responseAccepted = true;
+        input.onResponseAccepted?.(packet.responseStatus);
+      } else {
+        if (packet.responseStatus !== undefined && packet.responseStatus !== null) throw Error("ChatGPT 流元数据无法确认。");
+        input.onFrame({ event: packet.event, data: packet.data, id: packet.id });
+      }
     } catch (error) { streamError = error; cancel(); }
     if (streamError !== null || expectedCount !== null && sequence >= expectedCount) wake?.();
   });
@@ -91,7 +113,7 @@ export async function submitChatgptText(input: {
     signal.throwIfAborted();
     if (streamError !== null) throw streamError;
     if (sequence !== expectedCount) throw Error("ChatGPT 流尾部尚未完整传递。");
-    if (result.status === "transport-error") throw result.error;
+    if (result.status === "transport-error") throw { ...result.error, completionDispatched: result.completionDispatched };
     if (!sameIdentity(identity, await serviceIdentity(signal))) throw Error("ChatGPT 流结束时账号已变化。");
     signal.throwIfAborted();
     if (streamError !== null) throw streamError;

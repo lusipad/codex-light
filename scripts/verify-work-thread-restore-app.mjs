@@ -153,7 +153,7 @@ for (const kind of ["work", "ordinary"]) {
 }
 for (const blocked of ["loading", "error", "ready"]) {
   let writes = 0, toggles = 0;
-  const context = { activeThreadId: "thread-1", loadingThread: blocked === "loading",
+  const context = { activeRouteRef: { current: "thread" }, activeThreadId: "thread-1", loadingThread: blocked === "loading",
     workThreadRestoreState: blocked === "error" ? { threadId: "thread-1", status: "error" } : null,
     workPermissionRevision: { current: 0 }, planModeRef: { current: false },
     setPlanMode() { toggles++; }, applyCollaborationMode: async () => { writes++; }, showAppToast() {} };

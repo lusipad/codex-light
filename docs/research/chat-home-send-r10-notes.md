@@ -1,6 +1,6 @@
 # R10 实施备注
 
-计划：[普通 ChatGPT 消息消费者](chat-home-send-r10-plan.md)。当前开发前取证/运输层阶段，尚未交付真实聊天消费者。
+计划：[普通 ChatGPT 消息消费者](chat-home-send-r10-plan.md)。R10基础之后继续R10B主窗文本消费者；下列旧记录保留其阶段语境，最新接线与验证见文末。整页仍未验收。
 
 ## 决策
 
@@ -31,3 +31,18 @@
 - 当前尚未接主窗owner/controller、首页/c/路由采纳与transcript。已核UI接受/optimistic/response accepted分立；后续需补真实响应头接受元数据与当前稿比较，不能把第一个业务frame或完整DONE无依据当同一接受时点。复用本项目UserMessageBubble/Markdown只是实现复用，官方气泡子树与像素仍未恢复。
 - `/f/conversation/prepare`与conduit预备、真实服务端投递existence核验、resume/WS、上传/工具/多模态、required挑战与native attestation、远端偏好同步及完整持久会话图仍在范围内。当前无prefetch的源stream_unprepared路径不代表可删除它们；无新UI交付、不升级R10完成状态。
 - SSE执行器的显式取消/Stop已做kill+wait回归；requirements/stop仍复用原有bounded JSON curl路径，外部future超时/drop与临时文件回收的真实原生边界未新增验证，不能将SSE专项外推到所有HTTP请求。
+
+## R10B 主窗接线（2026-11-18）
+
+修改前依据沿用固定源consumer合同CU01–CU21，区分optimistic插入、导航和HTTP接受，不以首个文本frame作为接受时点。安装版只读核对仍为26.1111.2228.0；本轮没有重新计算整包SHA。证据根为`.ref/parity/16/chat-home-ui-r10b-20261118/`。
+
+- 首页非Work模型及后续文本走独立ChatGPT controller/Channel，使用实际server ID接续；侧栏支持同owner的多个内存会话，后台流不依赖当前页面可见性。新聊天明确传`clientId:null`，跟进明确指定原clientId，退休目标零发送。
+- 收到成功HTTP与SSE MIME后、首个正文前派独立response元数据。curl真实回归发现`--include`未及时输出头，改`--dump-header -`后原严格用例通过；不是以延长等待或先造业务消息消除失败。
+- 草稿清空和失败恢复比较owner、原文及修订号，覆盖改过又改回的ABA。前置明确未发送的失败允许重试；已派送或未知结果不自动重发，partial保留。
+- `/c/`与`/g/.../c/`按真实ID替换。Home准备晚回时仍在后台发送A，但保留用户已打开B的选择和URL。设置拒绝离页时，侧栏打开聊天不会先修改选择/native ID；延期确认受owner/host/navigation/URL及一次执行限制。
+- Chat页面拒绝本地steer、队列启停/增删及代码审查入口，停止走独立Chat停止请求。队列、附件上传和Work模型转换尚未接通时明确提示并保留输入，不调用普通CLI替代。
+- transcript复用现有用户气泡与Markdown组件；这是实现复用，未知消息显式显示，不能当官方GSDP子树或像素还原证据。
+
+真实回归先红记录：`app-native-isolation-red`、`app-late-chat-route-red`、`controller-late-route-red`、`response-red`、`service-green-02`；另有旧AST夹具缺新增route ref导致失败，补齐真实native路由前置而未删除原断言。1145全Rust测试通过、0失败/忽略/过滤；实际App组合9组、controller30组及TSC/前端生产构建已通过。最终整组前端及原生构建结果另见本批验收记录，不以此句推断未完成命令。
+
+本阶段只接text-only内存会话。远端历史列表/持久图、冷启动恢复、prepare/conduit、resume/WS与存在性核验、附件/工具/多模态、required挑战/native attestation、远端偏好同步仍在总范围。真实账号/付费模型、原生GUI/物理IME、同环境官方宽窄配对像素及用户验收未做；visual verdict为unverified、score=null。不push，不触发、重跑或查询托管CI。

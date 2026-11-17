@@ -7,7 +7,7 @@ const identity = { accountId: "account-a", userId: "user-a", generation: 7 };
 const foreign = { ...identity, generation: 8 };
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 function fixture(options = {}) {
-  const calls = [], frames = [], channels = [], timers = new Map(), storage = new Map(options.deviceId ? [["codex.chatgpt-conversations.device-id", options.deviceId]] : []);
+  const calls = [], frames = [], accepted = [], channels = [], timers = new Map(), storage = new Map(options.deviceId ? [["codex.chatgpt-conversations.device-id", options.deviceId]] : []);
   const submit = deferred(), stop = deferred(), abort = new AbortController();
   let uuid = 0, reads = 0, tick = 10, timerId = 0;
   const navigator = Object.assign(Object.create({ hardwareConcurrency: 8 }), { userAgent: "Actual WebView fixture UA", language: "zh-CN", languages: ["zh-CN", "en"],
@@ -52,13 +52,16 @@ function fixture(options = {}) {
   const body = messages.createChatgptTextRequest({ model: "service-model", thinkingEffort: "extended", messages: [
     messages.createChatgptUserMessage({ id: "user-message", prompt: "  真实中文草稿  ", createdAt: 10000 }),
   ], parentMessageId: "client-created-root", timezone: "Asia/Shanghai", timezoneOffsetMinutes: -480, systemHints: ["hint"], isTemporaryChat: false });
-  const start = (onFrame = frame => frames.push(frame), owner = identity) => client.submitChatgptText({ identity: owner, body, signal: abort.signal, onFrame });
+  const start = (onFrame = frame => frames.push(frame), owner = identity, onResponseAccepted = status => accepted.push(status)) =>
+    client.submitChatgptText({ identity: owner, body, signal: abort.signal, onFrame, onResponseAccepted });
   const request = command => calls.find(call => call.command === command)?.args.request;
   const packet = (sequence, overrides = {}) => ({ requestId: request("chatgpt_text_submit").requestId, identity: { ...identity }, sequence,
-    event: "message", data: `frame-${sequence}`, id: `event-${sequence}`, ...overrides });
+    kind: "frame", event: "message", data: `frame-${sequence}`, id: `event-${sequence}`, ...overrides });
   const emit = (sequence, overrides) => channels[0].emit(packet(sequence, overrides));
+  const responsePacket = (sequence, overrides = {}) => packet(sequence, { kind: "response", responseStatus: 200, event: "", data: "", id: "", ...overrides });
+  const respond = (sequence, overrides) => channels[0].emit(responsePacket(sequence, overrides));
   const receipt = (eventCount, overrides = {}) => ({ requestId: request("chatgpt_text_submit").requestId, identity: { ...identity }, status: "transport-complete", eventCount, ...overrides });
-  return { ...client, body, start, submit, stop, abort, calls, frames, channels, timers, storage, navigator, request, packet, emit, receipt,
+  return { ...client, body, start, submit, stop, abort, calls, frames, accepted, channels, timers, storage, navigator, request, packet, emit, responsePacket, respond, receipt,
     get reads() { return reads; }, expire: () => { const pending = [...timers.values()]; timers.clear(); pending.forEach(fn => fn()); } };
 }
 const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
@@ -104,6 +107,44 @@ test("ordered Channel frames and late packets after cleanup", async () => {
   const h = fixture(), result = h.start(); await flush(); h.emit(1); h.emit(2); h.submit.resolve(h.receipt(2));
   assert.equal((await result).eventCount, 2); assert.deepEqual(h.frames.map(f => f.data), ["frame-1", "frame-2"]);
   h.emit(3); assert.equal(h.frames.length, 2); assert.equal(h.timers.size, 0);
+});
+
+test("response metadata shares delivery sequence but only signals real HTTP acceptance", async () => {
+  const h = fixture(), order = [], result = h.start(frame => { order.push("frame"); h.frames.push(frame); }, identity,
+    status => { order.push("response"); h.accepted.push(status); }); await flush();
+  h.respond(1); assert.deepEqual(h.accepted, [200]); assert.equal(h.frames.length, 0);
+  h.emit(2); h.submit.resolve(h.receipt(2)); assert.equal((await result).eventCount, 2);
+  assert.deepEqual(order, ["response", "frame"]); assert.deepEqual(h.frames.map(frame => frame.data), ["frame-2"]);
+
+  for (const patch of [{ identity: foreign }, { requestId: "foreign-request" }, { responseStatus: 199 }, { responseStatus: 300 },
+    { responseStatus: "200" }, { responseStatus: 200.5 }, { responseStatus: undefined }, { event: "message" }, { data: "fake-frame" }, { id: "fake-id" }]) {
+    const bad = fixture(), rejected = rejection(bad.start()); await flush(); bad.respond(1, patch);
+    assert.equal(bad.accepted.length, 0); assert.equal(bad.frames.length, 0);
+    assert.ok(bad.calls.some(call => call.command === "chatgpt_service_cancel"), "invalid metadata cancels native request");
+    bad.submit.resolve(bad.receipt(1)); await failed(rejected);
+  }
+  const duplicate = fixture(), rejected = rejection(duplicate.start()); await flush(); duplicate.respond(1); duplicate.respond(2);
+  assert.deepEqual(duplicate.accepted, [200]); assert.equal(duplicate.frames.length, 0);
+  assert.ok(duplicate.calls.some(call => call.command === "chatgpt_service_cancel"));
+  duplicate.submit.resolve(duplicate.receipt(2)); await failed(rejected);
+
+  const dead = fixture(), completed = dead.start(); await flush(); const queued = dead.channels[0].onmessage;
+  dead.submit.resolve(dead.receipt(0)); await completed; queued(dead.responsePacket(1));
+  assert.equal(dead.accepted.length, 0, "queued callback after cleanup cannot signal acceptance");
+  const aborted = fixture(), cancelled = rejection(aborted.start()); await flush(); const old = aborted.channels[0].onmessage;
+  aborted.abort.abort(); old(aborted.responsePacket(1)); aborted.submit.reject(Error("native cancelled")); await failed(cancelled);
+  assert.equal(aborted.accepted.length, 0);
+  const finalRead = deferred(), late = fixture({ readIdentity: count => count === 1 ? identity : finalRead.promise });
+  const retired = rejection(late.start()); await flush(); late.submit.resolve(late.receipt(0)); await flush();
+  assert.equal(late.reads, 2); late.respond(1); finalRead.resolve(foreign); await failed(retired);
+  assert.equal(late.accepted.length, 0, "metadata beyond the settled native count cannot run during late owner validation");
+  const optional = fixture(), withoutHandler = optional.submitChatgptText({ identity, body: optional.body, signal: optional.abort.signal,
+    onFrame: frame => optional.frames.push(frame) }); await flush(); optional.respond(1); optional.emit(2); optional.submit.resolve(optional.receipt(2));
+  await withoutHandler; assert.equal(optional.frames.length, 1, "metadata remains separate when the optional callback is absent");
+  const original = Error("acceptance consumer retired"), callback = fixture();
+  const callbackFailure = rejection(callback.start(undefined, identity, () => { throw original; })); await flush(); callback.respond(1);
+  assert.ok(callback.calls.some(call => call.command === "chatgpt_service_cancel")); callback.submit.resolve(callback.receipt(1));
+  assert.equal(await failed(callbackFailure), original); assert.equal(callback.frames.length, 0);
 });
 test("foreign request/identity and sequence gaps cancel native request", async () => {
   for (const overrides of [{ requestId: "foreign" }, { identity: foreign }, { sequence: 2 }, { event: 3 }]) {

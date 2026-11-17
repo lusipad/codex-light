@@ -65,6 +65,7 @@ export interface ComposerBoxProps {
   keyBindings?: KeyBinding[];
   submissionDisabled?: boolean;
   variant: "home" | "thread";
+  chatgptMode?: boolean;
   promptInput: string;
   onPromptInputChange: (val: string) => void;
   onSendMessage: () => void;
@@ -159,6 +160,7 @@ const PERMISSION_OPTIONS: Array<{
 ];
 
 export const ComposerBox: React.FC<ComposerBoxProps> = ({
+  chatgptMode = false,
   dictationSessionKey,
   composerEnterBehavior,
   keyBindings = [],
@@ -744,7 +746,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
         </div>
       )}
       {/* ── Tier 1: Attached Top Context Bar (Matches ref-1-home.png) ── */}
-      <div className="composer-context-topbar">
+      {!chatgptMode && <div className="composer-context-topbar">
         <div className="composer-context-left">
           {/* 1. Project Pill */}
           {!cloudActive && <div className="composer-dropdown-anchor">
@@ -1028,7 +1030,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
             </span>
           )}
         </div>
-      </div>
+      </div>}
 
       {/* ── Tier 2: Inner Input Surface ── */}
       <div className="composer-inner-surface" style={{ position: "relative" }}>
@@ -1120,7 +1122,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
                       <span className="popover-item-title">添加文件或图像...</span>
                     </div>
                   </button>
-                  {onAppshot && (
+                  {!chatgptMode && onAppshot && (
                     <button
                       type="button"
                       role="menuitem"
@@ -1136,7 +1138,7 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
                       </div>
                     </button>
                   )}
-                  <button
+                  {!chatgptMode && <><button
                     type="button"
                     role="menuitem"
                     className="popover-menu-item"
@@ -1167,12 +1169,12 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
                       <span className="popover-item-title">计划模式 (Plan Mode)</span>
                     </div>
                     {planMode && <CheckIcon size={13} />}
-                  </button>
+                  </button></>}
                 </div>
               )}
             </div>
 
-            <div className="composer-dropdown-anchor">
+            {!chatgptMode && <div className="composer-dropdown-anchor">
               <button
                 ref={(node) => {
                   menuTriggersRef.current.permission = node;
@@ -1234,8 +1236,8 @@ export const ComposerBox: React.FC<ComposerBoxProps> = ({
                   })}
                 </div>
               )}
-            </div>
-            {planMode && (
+            </div>}
+            {!chatgptMode && planMode && (
               <button type="button" className="composer-inline-pill composer-plan-indicator"
                 aria-label="计划" title="创建计划" onClick={onTogglePlanMode}>
                 <Lightbulb size={16} className="composer-plan-icon" aria-hidden="true" />

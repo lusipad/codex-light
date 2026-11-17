@@ -27,6 +27,9 @@ pub struct ConversationTextFrame {
     pub request_id: String,
     pub identity: ServiceIdentity,
     pub sequence: u64,
+    pub kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_status: Option<u16>,
     pub event: String,
     pub data: String,
     pub id: String,
@@ -39,6 +42,8 @@ pub struct ConversationTextResponse {
     pub identity: ServiceIdentity,
     pub status: &'static str,
     pub event_count: u64,
+    /// Completion adapter invoked; not proof of HTTP acceptance or model execution.
+    pub completion_dispatched: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<ServiceError>,
 }
@@ -299,7 +304,7 @@ fn validate_requirements_key(key: &str) -> ServiceResult<()> {
     Ok(())
 }
 
-type FrameSink<'a> = dyn FnMut(stream_transport::StreamFrame) -> ServiceResult<stream_transport::StreamControl>
+type FrameSink<'a> = dyn FnMut(stream_transport::StreamEvent) -> ServiceResult<stream_transport::StreamControl>
     + Send
     + 'a;
 type TextStreamFuture<'a> =
@@ -453,6 +458,7 @@ impl ChatgptService {
         let identity = &request.expected_identity;
         self.check_share_current(identity, &registration)?;
         let mut sequence = 0;
+        let mut completion_dispatched = false;
         // Await the stream's own cancellation path so curl is killed/reaped and
         // its private upload file is released before this request resolves.
         let result = async {
@@ -474,16 +480,23 @@ impl ChatgptService {
                 outgoing.body = serde_json::to_vec(&request.body).map_err(|_| invalid_body())?;
                 self.check_share_current(identity, &registration)?;
                 let mut done = false;
-                let mut deliver = |frame: stream_transport::StreamFrame| {
+                let mut deliver = |incoming: stream_transport::StreamEvent| {
                     self.check_share_current(identity, &registration)?;
                     let next = sequence + 1;
-                    let is_done = frame.data.trim() == "[DONE]";
+                    let (kind,response_status,frame)=match incoming {
+                        stream_transport::StreamEvent::Response(status)=>("response",Some(status),stream_transport::StreamFrame{event:String::new(),data:String::new(),id:String::new()}),
+                        stream_transport::StreamEvent::Frame(frame)=>("frame",None,frame),
+                    };
+                    let is_done = kind=="frame" && frame.data.trim() == "[DONE]";
                     on_frame(ConversationTextFrame { request_id:request.request_id.clone(), identity:identity.clone(), sequence: next,
-                        event:frame.event, data:frame.data, id:frame.id })?;
+                        kind,response_status,event:frame.event, data:frame.data, id:frame.id })?;
                     sequence = next;
                     done = is_done;
                     Ok(if is_done { stream_transport::StreamControl::Stop } else { stream_transport::StreamControl::Continue })
                 };
+                // Coarse local dispatch boundary: stream startup may still fail
+                // before bytes reach the service. Never replay it automatically.
+                completion_dispatched = true;
                 let summary = stream.stream(outgoing, registration.cancelled.clone(), &mut deliver).await?;
                 self.check_share_current(identity, &registration)?;
                 if !(200..300).contains(&summary.status) {
@@ -493,21 +506,22 @@ impl ChatgptService {
                 // WvOS parses a final valid JSON data buffer at EOF. A pending
                 // raw [DONE] is not JSON and cannot certify a normal terminal.
                 if let Some(frame) = summary.pending_frame.filter(|frame| serde_json::from_str::<Value>(&frame.data).is_ok()) {
-                    deliver(frame)?;
+                    deliver(stream_transport::StreamEvent::Frame(frame))?;
                 }
                 drop(deliver);
                 if !done { return Err(failure("conversation_stream_incomplete", "Chat stream ended without DONE; delivery and partial response remain unconfirmed")); }
                 // Recheck fresh principal/routing/network before returning a summary;
                 // the already-delivered stream remains owned by its original identity.
                 self.conversation_request("/backend-api/f/conversation", identity, &request.profile, &registration, &call).await?;
-                Ok(ConversationTextResponse { request_id:request.request_id.clone(), identity:identity.clone(), status:"transport-complete", event_count:sequence, error:None })
+                Ok(ConversationTextResponse { request_id:request.request_id.clone(), identity:identity.clone(), status:"transport-complete", event_count:sequence, completion_dispatched, error:None })
         }.await;
         match result {
-            Err(error) if sequence > 0 => Ok(ConversationTextResponse {
+            Err(error) => Ok(ConversationTextResponse {
                 request_id: request.request_id.clone(),
                 identity: identity.clone(),
                 status: "transport-error",
                 event_count: sequence,
+                completion_dispatched,
                 error: Some(error),
             }),
             result => result,
@@ -709,6 +723,7 @@ mod tests {
         invalidate_at: Option<usize>,
         cancel_at: Option<usize>,
         pending_data: Option<&'static str>,
+        retire_before_response: Option<&'static str>,
     }
     impl<'a> FixtureStream<'a> {
         fn new(service: &'a ChatgptService, frames: Vec<&'static str>) -> Self {
@@ -720,6 +735,7 @@ mod tests {
                 invalidate_at: None,
                 cancel_at: None,
                 pending_data: None,
+                retire_before_response: None,
             }
         }
     }
@@ -738,6 +754,12 @@ mod tests {
                 self.requests.lock().unwrap().push(request);
                 let mut event_count = 0;
                 if (200..300).contains(&self.status) {
+                    match self.retire_before_response {
+                        Some("owner")=>{self.service.invalidate();},
+                        Some("cancel")=>{cancel.store(true,Ordering::SeqCst);},
+                        _=>{}
+                    }
+                    sink(stream_transport::StreamEvent::Response(self.status))?;
                     for (index, data) in self.frames.iter().enumerate() {
                         if self.invalidate_at == Some(index) {
                             self.service.invalidate();
@@ -745,11 +767,11 @@ mod tests {
                         if self.cancel_at == Some(index) {
                             cancel.store(true, Ordering::SeqCst);
                         }
-                        let control = sink(stream_transport::StreamFrame {
+                        let control = sink(stream_transport::StreamEvent::Frame(stream_transport::StreamFrame {
                             event: "message".into(),
                             data: (*data).into(),
                             id: format!("event-{index}"),
-                        })?;
+                        }))?;
                         event_count += 1;
                         if matches!(control, stream_transport::StreamControl::Stop) {
                             break;
@@ -889,19 +911,25 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status, "transport-complete");
-        assert_eq!(response.event_count, 2);
-        assert_eq!(frames.len(), 2);
+        assert!(response.completion_dispatched);
+        assert_eq!(response.event_count, 3);
+        assert_eq!(frames.len(), 3);
         assert_eq!(
             frames
                 .iter()
                 .map(|frame| frame.sequence)
                 .collect::<Vec<_>>(),
-            vec![1, 2]
+            vec![1, 2, 3]
         );
         assert_eq!(frames[0].identity, identity());
         assert_eq!(frames[0].request_id, "text-fixture");
-        assert_eq!(frames[0].data, "{\"actual\":\"片段\"}");
-        assert_eq!(frames[1].data, "[DONE]");
+        assert_eq!(frames[0].kind, "response");
+        assert_eq!(frames[0].response_status, Some(200));
+        assert_eq!(frames[0].data, "");
+        assert_eq!(frames[1].kind, "frame");
+        assert_eq!(frames[1].response_status, None);
+        assert_eq!(frames[1].data, "{\"actual\":\"片段\"}");
+        assert_eq!(frames[2].data, "[DONE]");
         let requests = http.requests.lock().unwrap();
         assert_eq!(requests.len(), 1);
         assert_eq!(
@@ -949,14 +977,16 @@ mod tests {
             json!([]),
         ] {
             let service = ChatgptService::default();
+            let required_challenge=challenge.get("proofofwork").is_some() || challenge.get("turnstile").is_some();
             let http = FixtureHttp::new(challenge);
             let stream = FixtureStream::new(&service, vec![]);
-            assert!(service
+            let receipt=service
                 .conversation_text_with(request(), rpc, &http, &stream, &mut |_| panic!(
-                    "no frame before completion dispatch"
-                ))
-                .await
-                .is_err());
+                    "no event before completion dispatch"
+                )).await.unwrap();
+            assert_eq!(receipt.status,"transport-error");assert_eq!(receipt.event_count,0);
+            assert!(!receipt.completion_dispatched);assert!(receipt.error.is_some());
+            if required_challenge {assert_eq!(receipt.error.unwrap().code,"requirements_challenge_unsupported");}
             assert!(stream.requests.lock().unwrap().is_empty());
             assert_eq!(http.requests.lock().unwrap().len(), 1);
         }
@@ -998,7 +1028,7 @@ mod tests {
             .conversation_text_with(request(), rpc, &http, &stream, &mut |_| Ok(()))
             .await
             .unwrap();
-        assert_eq!(result.event_count, 1);
+        assert_eq!(result.event_count, 2);
         assert!(stream.requests.lock().unwrap()[0]
             .headers
             .keys()
@@ -1035,9 +1065,8 @@ mod tests {
             service
                 .conversation_text_with(request(), rpc, &http, &stream, &mut |_| Ok(()))
                 .await
-                .err()
                 .unwrap()
-                .code,
+                .error.unwrap().code,
             "cancelled"
         );
         assert!(
@@ -1061,7 +1090,8 @@ mod tests {
             );
             let mut delivered = 0;
             let response = service
-                .conversation_text_with(request(), rpc, &http, &stream, &mut |_| {
+                .conversation_text_with(request(), rpc, &http, &stream, &mut |frame| {
+                    if frame.kind == "response" { return Ok(()); }
                     if callback_failure && delivered == 1 {
                         return Err(failure("channel_closed", "fixture consumer closed"));
                     }
@@ -1072,7 +1102,8 @@ mod tests {
                 .unwrap();
             let response = serde_json::to_value(response).unwrap();
             assert_eq!(response["status"], "transport-error");
-            assert_eq!(response["eventCount"], 1);
+            assert_eq!(response["eventCount"], 2);
+            assert_eq!(response["completionDispatched"],true);
             assert_eq!(delivered, 1);
             assert_eq!(
                 response["error"]["code"],
@@ -1094,13 +1125,13 @@ mod tests {
         let mut frames = Vec::new();
         let response = service
             .conversation_text_with(request(), rpc, &http, &stream, &mut |frame| {
-                frames.push(frame.data);
+                if frame.kind == "frame" { frames.push(frame.data); }
                 Ok(())
             })
             .await
             .unwrap();
         assert_eq!(response.status, "transport-complete");
-        assert_eq!(response.event_count, 1);
+        assert_eq!(response.event_count, 2);
         assert_eq!(frames, vec![" \t[DONE]\n"]);
     }
 
@@ -1121,16 +1152,20 @@ mod tests {
             if pending.starts_with("{\"partial\":\"") {
                 let response = result.unwrap();
                 assert_eq!(response.status, "transport-error");
-                assert_eq!(response.event_count, 1);
+                assert_eq!(response.event_count, 2);
                 assert_eq!(
                     response.error.unwrap().code,
                     "conversation_stream_incomplete"
                 );
-                assert_eq!(frames[0].sequence, 1);
-                assert_eq!(frames[0].data, pending);
+                assert_eq!(frames[0].kind, "response");
+                assert_eq!(frames[1].sequence, 2);
+                assert_eq!(frames[1].data, pending);
             } else {
-                assert_eq!(result.err().unwrap().code, "conversation_stream_incomplete");
-                assert!(frames.is_empty());
+                let response=result.unwrap();
+                assert_eq!(response.error.unwrap().code, "conversation_stream_incomplete");
+                assert!(response.completion_dispatched);
+                assert_eq!(response.event_count,1);
+                assert_eq!(frames.len(),1);assert_eq!(frames[0].kind,"response");
             }
         }
     }
@@ -1145,20 +1180,21 @@ mod tests {
             let mut delivered = Vec::new();
             let result = service
                 .conversation_text_with(request(), rpc, &http, &stream, &mut |frame| {
-                    delivered.push(frame.data);
+                    if frame.kind == "frame" { delivered.push(frame.data); }
                     Ok(())
                 })
                 .await;
             if status == 200 {
                 let response = result.unwrap();
                 assert_eq!(response.status, "transport-error");
-                assert_eq!(response.event_count, 1);
+                assert_eq!(response.event_count, 2);
                 let error = response.error.unwrap();
                 assert_eq!(error.code, "conversation_stream_incomplete");
                 assert_eq!(delivered, vec!["partial"]);
             } else {
-                let error = result.err().unwrap();
-                assert_eq!(error.status, Some(status));
+                let receipt = result.unwrap();
+                assert!(receipt.completion_dispatched);assert_eq!(receipt.event_count,0);
+                assert_eq!(receipt.error.unwrap().status, Some(status));
                 assert!(delivered.is_empty());
             }
             assert_eq!(stream.requests.lock().unwrap().len(), 1);
@@ -1172,9 +1208,9 @@ mod tests {
                 Err(failure("channel_closed", "Original consumer closed"))
             })
             .await
-            .err()
             .unwrap();
-        assert_eq!(error.code, "channel_closed");
+        assert_eq!(error.event_count,0);assert!(error.completion_dispatched);
+        assert_eq!(error.error.unwrap().code, "channel_closed");
         assert_eq!(stream.requests.lock().unwrap().len(), 1);
     }
 
@@ -1192,13 +1228,13 @@ mod tests {
             let mut frames = Vec::new();
             let response = service
                 .conversation_text_with(request(), rpc, &http, &stream, &mut |frame| {
-                    frames.push(frame.data);
+                    if frame.kind == "frame" { frames.push(frame.data); }
                     Ok(())
                 })
                 .await
                 .unwrap();
             assert_eq!(response.status, "transport-error");
-            assert_eq!(response.event_count, 1);
+            assert_eq!(response.event_count, 2);
             assert_eq!(
                 response.error.unwrap().code,
                 if retirement == "owner" {
@@ -1226,9 +1262,8 @@ mod tests {
             service
                 .conversation_text_with(request(), policy, &http, &stream, &mut |_| Ok(()))
                 .await
-                .err()
                 .unwrap()
-                .code,
+                .error.unwrap().code,
             "network_restricted"
         );
         assert!(http.requests.lock().unwrap().is_empty());
@@ -1248,10 +1283,8 @@ mod tests {
                 rpc(method, params)
             }
         };
-        assert!(service
-            .conversation_text_with(request(), call, &http, &stream, &mut |_| Ok(()))
-            .await
-            .is_err());
+        let receipt=service.conversation_text_with(request(), call, &http, &stream, &mut |_| Ok(())).await.unwrap();
+        assert!(!receipt.completion_dispatched);assert_eq!(receipt.event_count,0);assert!(receipt.error.is_some());
         assert_eq!(http.requests.lock().unwrap().len(), 1);
         assert!(stream.requests.lock().unwrap().is_empty());
     }
@@ -1307,4 +1340,28 @@ mod tests {
         );
         assert!(http.requests.lock().unwrap().is_empty());
     }
+    #[tokio::test]
+    async fn conversation_text_response_acceptance_is_distinct_from_business_or_completion() {
+        let service=ChatgptService::default();let http=FixtureHttp::new(json!({"token":"fixture"}));
+        let stream=FixtureStream::new(&service,vec![]);let mut events=Vec::new();
+        let response=service.conversation_text_with(request(),rpc,&http,&stream,&mut |event|{events.push(event);Ok(())}).await.unwrap();
+        assert_eq!(response.status,"transport-error");assert!(response.completion_dispatched);assert_eq!(response.event_count,1);
+        assert_eq!(response.error.unwrap().code,"conversation_stream_incomplete");
+        assert_eq!(events.len(),1);let event=serde_json::to_value(&events[0]).unwrap();
+        assert_eq!(event["kind"],"response");assert_eq!(event["responseStatus"],200);assert_eq!(event["sequence"],1);
+        assert_eq!(event["data"],"");assert_eq!(event["event"],"");assert_eq!(event["id"],"");
+        assert!(event.get("headers").is_none());assert_eq!(events[0].identity,identity());
+    }
+
+    #[tokio::test]
+    async fn conversation_text_response_acceptance_checks_owner_and_cancel_before_channel_delivery() {
+        for retirement in ["owner","cancel"] {
+            let service=ChatgptService::default();let http=FixtureHttp::new(json!({"token":"fixture"}));
+            let mut stream=FixtureStream::new(&service,vec!["[DONE]"]);stream.retire_before_response=Some(retirement);
+            let response=service.conversation_text_with(request(),rpc,&http,&stream,&mut |_|panic!("retired response reached renderer")).await.unwrap();
+            assert_eq!(response.status,"transport-error");assert!(response.completion_dispatched);assert_eq!(response.event_count,0);
+            assert_eq!(response.error.unwrap().code,if retirement=="owner"{"account_changed"}else{"cancelled"});
+        }
+    }
+
 }

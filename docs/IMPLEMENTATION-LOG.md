@@ -1,5 +1,12 @@
 # 实施日志（按轮次）
 
+## 2026-11-18 — 普通 ChatGPT 主窗文本接线（R10B）
+
+- 沿用固定源UI/草稿/网络合同，接主窗多会话owner、/c/与项目路由、transcript、侧栏及独立Composer/停止。复用既有模型目录、气泡、Markdown、认证、curl和Channel，无新依赖。
+- 独立HTTP接受通知替代“首正文等于接受”的假设；修订比较保护编辑ABA与失败恢复。明确发送目标，后台晚回不抢新聊天；导航guard取消不改变旧上下文，Chat入口不触发本地steer/队列/审查。
+- curl头缓冲、五个native旁路及晚回抢页有真实红绿记录。49个相关前端脚本、1145全Rust、实际App9组、controller30组、TSC/前端构建通过；Pane最终补修unsupported后4组及TSC/构建重验通过。原生构建结果见`.ref/parity/16/chat-home-ui-r10b-20261118/verification-summary.json`及16.23A，不冒完整标准/协议或GUI通过。
+- 当前仍仅内存text-only；持久历史/冷恢复、prepare/conduit/resume、挑战、上传/工具、远端偏好及原生/视觉仍继续。阶段本地保存，CI/push保持暂停，整页无用户验收。
+
 ## 2026-11-18 — 普通 ChatGPT 真实流基础层（R10，主窗未接）
 
 - 先用kickoff参考提取补主入口、网络/requirements、首聊parent、事件、UI草稿与独立远端偏好合同。重新读本机Store仍26.1111.2228.0，22清单资源与安装asar byte/SHA/header匹配；369官方切片、5历史本地映射及4本地UI快照核验通过，不冒整包新hash。

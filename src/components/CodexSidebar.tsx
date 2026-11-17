@@ -52,6 +52,10 @@ export interface CodexSidebarProps {
   activeWorkspace: WorkspaceRootItem | null;
   threads: ThreadSummary[];
   cloudRecentChats?: CloudRecentChat[];
+  /** Actual in-memory Chats only; never native threads or a complete server history. */
+  chatgptConversations?: readonly { id: string; title: string; pending: boolean }[];
+  activeChatgptConversationId?: string | null;
+  onOpenChatgptConversation?: (id: string) => void;
   activeCloudThreadId?: string;
   onSelectCloudChat?: (chat: CloudRecentChat) => void;
   onCloudRecentAction?: (chat: CloudRecentChat, action: CloudRecentAction) => void;
@@ -147,6 +151,9 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
   activeWorkspace,
   threads,
   cloudRecentChats,
+  chatgptConversations,
+  activeChatgptConversationId,
+  onOpenChatgptConversation,
   activeCloudThreadId,
   onSelectCloudChat,
   onCloudRecentAction,
@@ -196,6 +203,12 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
 }) => {
   const [showSearchInput, setShowSearchInput] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const committedChatgptRows = useRef<{ conversations: NonNullable<CodexSidebarProps["chatgptConversations"]>; open: (id: string) => void } | null>(null);
+  useLayoutEffect(() => {
+    const current = chatgptConversations && onOpenChatgptConversation ? { conversations: chatgptConversations, open: onOpenChatgptConversation } : null;
+    committedChatgptRows.current = current;
+    return () => { if (committedChatgptRows.current === current) committedChatgptRows.current = null; };
+  }, [chatgptConversations, onOpenChatgptConversation]);
   const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>(() => {
     try {
       const saved = JSON.parse(localStorage.getItem("codex_sidebar_project_expansion_v1") || "{}");
@@ -678,6 +691,8 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
   const orderedMainThreads = !activityOnly && chatSortMode === "manual"
     ? applySidebarOrder(mainChatThreads, manualOrders.recent, true)
     : mainChatThreads;
+  const visibleChatgptConversations = activityOnly ? [] : (chatgptConversations ?? [])
+    .filter(conversation => conversation.title.toLowerCase().includes(searchQuery.trim().toLowerCase()));
   const recentRows = [
     ...orderedMainThreads.map(thread => ({ thread, time: thread.recencyAt ?? thread.updatedAt ?? thread.createdAt ?? 0 })),
     ...(activityOnly ? [] : (cloudRecentChats ?? [])
@@ -1954,14 +1969,27 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
         </div>
 
         {(!activityOnly || activityPriorityVisible) && <div className="sidebar-section-list">
-          {recentRows.length === 0 ? (
+          {recentRows.length === 0 && visibleChatgptConversations.length === 0 ? (
             <div className="sidebar-project-empty" style={{ paddingLeft: 12 }}>
               {activityOnly
                 ? "暂无需要关注的聊天"
                 : "暂无聊天"}
             </div>
           ) : (
-            recentRows.map(row => "chat" in row ? (
+            <>
+            {visibleChatgptConversations.map(conversation => <div key={`chatgpt:${conversation.id}`} data-chat-host="chatgpt"
+              className={`sidebar-thread-row${activeChatgptConversationId === conversation.id ? " active" : ""}`}>
+              <button type="button" className="sidebar-cloud-thread-button sidebar-thread-title"
+                aria-current={activeChatgptConversationId === conversation.id ? "page" : undefined}
+                onClick={() => {
+                  const current = committedChatgptRows.current;
+                  if (current?.conversations.includes(conversation) && current.open === onOpenChatgptConversation) current.open(conversation.id);
+                }}>
+                {conversation.pending && <span className="sidebar-thread-status-spinner" title="正在运行..." />}
+                {conversation.title || "新聊天"}
+              </button>
+            </div>)}
+            {recentRows.map(row => "chat" in row ? (
               <div key={`durable:${row.chat.session.threadId}`} data-chat-host="durable"
                 className={`sidebar-thread-row${activeCloudThreadId === row.chat.session.threadId ? " active" : ""}`}>
                 <button type="button" className="sidebar-cloud-thread-button sidebar-thread-title"
@@ -1984,7 +2012,8 @@ export const CodexSidebar: React.FC<CodexSidebarProps> = ({
                     }} />
                 </div>}
               </div>
-            ) : renderThreadRow(row.thread, false, activityOnly ? undefined : recentOrderContext))
+            ) : renderThreadRow(row.thread, false, activityOnly ? undefined : recentOrderContext))}
+            </>
           )}
         </div>}
         {showActivityPins && <>

@@ -1,0 +1,9 @@
+.chatgpt-conversation-pane { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; height: 100%; }
+.chatgpt-conversation-pane > .timeline-scroll-pane { min-height: 0; padding-bottom: 24px; }
+.chatgpt-conversation-pane .timeline-content-wrapper { padding-bottom: 0; }
+.chatgpt-conversation-composer { flex-shrink: 0; min-width: 0; }
+.chatgpt-conversation-pending { color: var(--text-tertiary); }
+.chatgpt-conversation-error { color: var(--accent-red); white-space: pre-wrap; overflow-wrap: anywhere; }
+.chatgpt-conversation-unsupported { min-width: 0; }
+.chatgpt-conversation-unsupported summary { color: var(--text-secondary); }
+.chatgpt-conversation-unsupported pre { max-width: 100%; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }

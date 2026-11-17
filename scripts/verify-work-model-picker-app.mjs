@@ -201,10 +201,13 @@ const nativeAttribute = name => (ts.isJsxSelfClosingElement(nativeComposer) ? na
 }
 for (const pending of ["home", "thread", "chat"]) {
   const f = mountProjectContext({ threadId: pending === "thread" ? "existing" : null });
+  let chatCalls = 0;
+  f.context.handleSendChatgptText = async () => { chatCalls++; };
   if (pending === "home") f.context.workHomeModelCommitting.current = true;
   if (pending === "thread") f.context.workModelCommitting.current.set("existing", 1);
   if (pending === "chat") { f.context.workHomeSession = { key: "chat-selection" }; f.context.workHomePickerRef.current = { pending: false, isWorkModel: false }; }
   await f.send(); assert.equal(f.calls.filter(([method]) => method !== "toast").length, 0, `${pending} selection cannot dispatch ordinary CLI with an old model`); assert.equal(f.state.promptInput, "hello");
+  assert.equal(chatCalls, pending === "chat" ? 1 : 0, "non-Work home delegates only to the ChatGPT consumer");
 }
 {
   const f = mountProjectContext({ threadId: "existing" }), read = deferred(); f.context.readWorkThreadProvenance = () => read.promise;
@@ -212,7 +215,7 @@ for (const pending of ["home", "thread", "chat"]) {
   assert.equal(f.calls.some(([method]) => method === "turn/start" || method === "thread/start"), false, "model revision changes during preflight retire the old submit");
 }
 {
-  const context = { activeThreadId: "thread-one", loadingThread: false, workThreadRestoreState: { threadId: "thread-one", status: "error" },
+  const context = { activeRouteRef: { current: "thread" }, activeThreadId: "thread-one", loadingThread: false, workThreadRestoreState: { threadId: "thread-one", status: "error" },
     workPermissionRevision: { current: 4 }, planModeRef: { current: false }, setPlanMode: () => assert.fail("restore guard must keep Plan unchanged"),
     applyCollaborationMode: () => assert.fail("restore guard must not write mode"), showAppToast() {} };
   await callback("handleTogglePlanMode", context)(); assert.equal(context.workPermissionRevision.current, 4);

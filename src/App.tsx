@@ -14,7 +14,10 @@ import { useModelSelection } from "./modelSelection";
 import { executionThreadConfig, readThreadExecutionPolicy, resolveConfiguredExecutionPolicy, resolvePresetExecutionPolicy, type ExecutionPolicy } from "./executionPolicy";
 import { configRead, configRequirementsRead } from "./config";
 import { useWorkHomeModelSelection } from "./useWorkHomeModelSelection";
-import { adaptWorkModelSelection, type WorkModelSelection } from "./workModelCatalog";
+import { useChatgptTextConversation } from "./useChatgptTextConversation";
+import { ChatgptConversationPane } from "./components/ChatgptConversationPane";
+import { chatgptConversationPath, parseChatgptConversationLocation } from "./chatgptRoutes";
+import { adaptWorkModelSelection, selectWorkHomeModel, readWorkModelCatalog, type WorkModelSelection, type WorkModelCatalog } from "./workModelCatalog";
 import { decideWorkModelPermissions } from "./workModelPermissionDecision";
 import { createWorkThreadModelSelectionController, type WorkThreadModelSnapshot } from "./workThreadModelSelection";
 import { createNotificationDispatcher, notificationRequestCategory, shouldNotifyTurn, useNotificationPreferences, type NotificationEvent } from "./notificationPreferences";
@@ -29,7 +32,7 @@ import { useAppshotsEntry, type AppshotComposerInput, type AppshotWorkPlan } fro
 import { activateWorkHome } from "./chatgptService";
 import { readLocalWorkAccess } from "./workAccess";
 import { parseWorkHomePreferences } from "./workHomePreferences";
-import { readWorkCaptureTarget, type WorkCaptureTarget, type WorkLocalSubmissionPreparation } from "./workHomePreparation";
+import { readWorkCaptureTarget, readWorkHomeModelPreparation, type WorkCaptureTarget, type WorkLocalSubmissionPreparation } from "./workHomePreparation";
 import { awaitGuardedNavigation } from "./navigationContinuation";
 import { useWorkCustomInstructions } from "./useWorkCustomInstructions";
 import { readWorkLocalMessagePreparation, type WorkLocalMessagePreparation } from "./workLocalMessagePreparation";
@@ -392,6 +395,7 @@ export const App: React.FC = () => {
   const [activeRoute, commitActiveRoute] = useState<MainViewRoute>(() => window.location.pathname === "/code-review" ? "code-review"
     : !isQuickChatWindow && !isThreadWindow && /^\/settings\/plugins-settings(?:\/|$)/.test(window.location.pathname) ? "settings"
     : !isQuickChatWindow && !isThreadWindow && parsePluginDirectoryLocation(window.location.href) ? "plugins"
+    : parseChatgptConversationLocation(window.location.href) ? "chatgpt-thread"
     : parseSitesLocation(window.location.href) ? "sites"
       : libraryFileId ? "library-file"
         : !isQuickChatWindow && !isThreadWindow && parseLibraryLocation(window.location.href) ? "library" : "home");
@@ -1519,6 +1523,20 @@ export const App: React.FC = () => {
   const [workHomeSession, setWorkHomeSession] = useState<{
     key: string; owner: string; navigation: number | null; target: WorkCaptureTarget | null;
   } | null>(null);
+  const [chatEntry, setChatEntry] = useState<{ identity: ServiceIdentity; owner: string; catalog: WorkModelCatalog; plan: string | null; target: WorkCaptureTarget | null; homeKey: string } | null>(null);
+  const [chatDrafts, setChatDrafts] = useState<Record<string, string>>({});
+  const chatDraftValues = useRef<Record<string, string>>({});
+  const chatDraftRevisions = useRef(new Map<string, number>());
+  const writeChatDraft = useCallback((id: string, value: string) => {
+    chatDraftRevisions.current.set(id, (chatDraftRevisions.current.get(id) ?? 0) + 1);
+    chatDraftValues.current = { ...chatDraftValues.current, [id]: value };
+    setChatDrafts(chatDraftValues.current);
+  }, []);
+  const chatSubmission = useRef(new Map<string, { owner: string; prompt: string; homeRevision: number | null; clearedRevision: number | null; draftRevision: number; clearedDraftRevision: number | null }>());
+  const chatStart = useRef<{ owner: string; prompt: string; navigation: number; location: string; homeRevision: number | null; draftRevision: number | null; projectId: string | null } | null>(null);
+  const chatPreparing = useRef(false);
+  const chatPreparationTicket = useRef(0);
+  const [chatPreparingState, setChatPreparingState] = useState(false);
   const committedWorkOwner = useRef(modelAccountIdentity);
   useLayoutEffect(() => { committedWorkOwner.current = modelAccountIdentity; }, [modelAccountIdentity]);
   const workNewChatFactory = useRef<((id: string, identity: ServiceIdentity, signal: AbortSignal) => Promise<AppshotWorkPlan>) | null>(null);
@@ -1763,6 +1781,66 @@ export const App: React.FC = () => {
     appServerVersion: appServerStatus.appServerVersion, hasAttachments: attachedFiles.length > 0 || appshots.length > 0,
     confirmNativeSelection: confirmHomeWorkModel, onApplied: onWorkHomeModelApplied });
   useLayoutEffect(() => { workHomePickerRef.current = workHomeSession ? workHomeModels : null; }, [workHomeSession, workHomeModels]);
+  const acceptChatPrompt = useCallback((prompt: string, clientId: string) => {
+    const original = chatSubmission.current.get(clientId);
+    if (!original || original.owner !== committedWorkOwner.current || original.prompt !== prompt) return;
+    if (chatDraftValues.current[clientId] === prompt && chatDraftRevisions.current.get(clientId) === original.draftRevision) {
+      writeChatDraft(clientId, ""); original.clearedDraftRevision = chatDraftRevisions.current.get(clientId)!;
+    }
+    if (original.homeRevision !== null && original.homeRevision === homePromptRevisionRef.current) {
+      setThreadPrompt(null, current => current === prompt ? "" : current);
+      original.clearedRevision = homePromptRevisionRef.current;
+    }
+  }, [setThreadPrompt, writeChatDraft]);
+  const restoreChatPrompt = useCallback((prompt: string, clientId: string) => {
+    const original = chatSubmission.current.get(clientId);
+    if (!original || original.owner !== committedWorkOwner.current || original.prompt !== prompt) return;
+    if (chatDraftValues.current[clientId] === "" && original.clearedDraftRevision !== null
+      && chatDraftRevisions.current.get(clientId) === original.clearedDraftRevision) writeChatDraft(clientId, prompt);
+    if (original.clearedRevision !== null && original.clearedRevision === homePromptRevisionRef.current) {
+      setThreadPrompt(null, current => current === "" ? prompt : current);
+    }
+  }, [setThreadPrompt, writeChatDraft]);
+  const navigateOptimisticChat = useCallback((clientId: string) => {
+    const origin = chatStart.current;
+    if (!origin || origin.owner !== committedWorkOwner.current) return false;
+    if (!Object.hasOwn(chatDraftValues.current, clientId)) writeChatDraft(clientId, origin.prompt);
+    chatSubmission.current.set(clientId, { owner: origin.owner, prompt: origin.prompt, homeRevision: origin.homeRevision, clearedRevision: null,
+      draftRevision: origin.draftRevision ?? chatDraftRevisions.current.get(clientId) ?? 0, clearedDraftRevision: null });
+    if (origin.navigation !== navigationRequestRef.current || origin.location !== window.location.pathname + window.location.search) return false;
+    setActiveRoute("chatgpt-thread");
+    if (activeRouteRef.current !== "chatgpt-thread") return false;
+    activeThreadIdRef.current = null; setActiveThreadId(null); threadRequestRef.current++;
+    const path = chatgptConversationPath({ id: clientId, projectId: origin.projectId, temporary: false });
+    window.history.replaceState(window.history.state, "", path);
+    return true;
+  }, [setActiveRoute, writeChatDraft]);
+  const chatConversation = useChatgptTextConversation({
+    identity: chatEntry?.owner === modelAccountIdentity ? chatEntry.identity : workHomeSession?.target?.identity ?? null,
+    ownerKey: JSON.stringify([modelAccountIdentity, workHostIdentity]),
+    onOptimisticStart: navigateOptimisticChat, onAccepted: acceptChatPrompt, onRestore: restoreChatPrompt,
+  });
+  const previousChatRoute = useRef(activeRoute);
+  useEffect(() => {
+    const previous = previousChatRoute.current; previousChatRoute.current = activeRoute;
+    if (previous === "chatgpt-thread" && activeRoute === "home" && chatEntry?.owner === modelAccountIdentity && chatEntry.target) {
+      if (parseChatgptConversationLocation(window.location.href)) window.history.replaceState(window.history.state, "", "/");
+      setWorkHomeSession({ owner: chatEntry.owner, key: chatEntry.homeKey, target: chatEntry.target, navigation: null });
+    }
+  }, [activeRoute, chatEntry, modelAccountIdentity]);
+  useEffect(() => {
+    if (chatEntry && chatEntry.owner !== modelAccountIdentity) {
+      setChatEntry(null); setChatDrafts({}); chatSubmission.current.clear(); chatStart.current = null;
+      chatDraftValues.current = {}; chatDraftRevisions.current.clear();
+      if (activeRouteRef.current === "chatgpt-thread") setActiveRoute("home");
+    }
+  }, [modelAccountIdentity, chatEntry, setActiveRoute]);
+  useEffect(() => {
+    const conversation = chatConversation.conversation;
+    if (activeRoute !== "chatgpt-thread" || !conversation) return;
+    const path = chatgptConversationPath({ id: conversation.serverId ?? conversation.clientId, projectId: conversation.projectId, temporary: conversation.isTemporaryChat });
+    if (window.location.pathname + window.location.search !== path) window.history.replaceState(window.history.state, "", path);
+  }, [activeRoute, chatConversation.conversation]);
   const commitHomeWorkModel = useCallback(async (selection: WorkModelSelection) => {
     if (workHomeModelCommitting.current || sendStartPendingRef.current.has(threadRequestRef.current)) return false;
     workHomeModelRevision.current++; workHomeModelCommitting.current = true;
@@ -4057,6 +4135,7 @@ export const App: React.FC = () => {
 
   const handleTogglePlanMode = useCallback(
     async () => {
+      if (activeRouteRef.current === "chatgpt-thread") return;
       if (activeThreadId && (loadingThread || workThreadRestoreState?.threadId === activeThreadId)) {
         showAppToast("会话配置尚未恢复，暂时无法切换计划模式。", "error");
         return;
@@ -4087,6 +4166,7 @@ export const App: React.FC = () => {
   // Quick reviews use ordinary turns; commit/custom retain the existing review RPC.
   const handleStartCodeReview = useCallback(
     async (req: ReviewRequest) => {
+      if (activeRouteRef.current === "chatgpt-thread") return;
       if (reviewStartPendingRef.current) return;
       const cwd = activeWorkspace?.path;
       if (!cwd) {
@@ -4268,15 +4348,57 @@ export const App: React.FC = () => {
     ]
   );
 
+  const handleSendChatgptText = useCallback(async (overrideText?: string) => {
+    const home = activeRouteRef.current === "home";
+    const conversation = chatConversation.conversation;
+    const prompt = overrideText ?? (home ? promptInput : conversation ? chatDrafts[conversation.clientId] ?? "" : "");
+    if (!prompt.trim() || chatPreparing.current || conversation?.pending && !home) return;
+    if (attachedFiles.length || appshots.length) { showAppToast("ChatGPT 附件上传尚未接通，输入已保留。", "error"); return; }
+    const target = home ? workHomeSession?.target : null;
+    const identity = home ? target?.identity : chatEntry?.identity;
+    const selection = home ? workHomeModels.selection : conversation?.model;
+    const owner = modelAccountIdentity, host = workHostIdentity;
+    if (!identity || !selection || home && (workHomeModels.loading || workHomeModels.pending || workHomeModels.isWorkModel !== false)) return;
+    const origin = { owner, prompt, navigation: navigationRequestRef.current,
+      location: window.location.pathname + window.location.search, homeRevision: home ? homePromptRevisionRef.current : null,
+      draftRevision: home || !conversation ? null : chatDraftRevisions.current.get(conversation.clientId) ?? 0,
+      projectId: home ? target?.selectedChatGptProjectId ?? null : conversation?.projectId ?? null };
+    const ticket = ++chatPreparationTicket.current;
+    chatPreparing.current = true; setChatPreparingState(true);
+    const preparation = new AbortController();
+    try {
+      let catalog: WorkModelCatalog, plan = chatEntry?.plan ?? null;
+      if (home && target) {
+        const ready = await readWorkHomeModelPreparation(target, { appServerVersion: appServerStatus.appServerVersion }, preparation.signal);
+        if (ready.status !== "ready" || ready.isWorkModel || ready.selection.slug !== selection.slug
+          || ready.selection.thinkingEffort !== selection.thinkingEffort || (ready.selection.versionId ?? null) !== (selection.versionId ?? null)) throw Error("ChatGPT 模型输入已变化，请重新选择。");
+        catalog = ready.catalog; plan = target.orchestration.accountInfo.plan;
+      } else catalog = await readWorkModelCatalog(identity, preparation.signal);
+      if (owner !== committedWorkOwner.current || host !== committedWorkHost.current) throw Error("ChatGPT 账号或宿主已变化。");
+      const chosen = selectWorkHomeModel(catalog, { homeSelection: null, lastSelection: null, temporarySelection: selection, plan });
+      if (!chosen.hasExplicitSelection || chosen.isWorkModel) throw Error("此模型当前不适用于 ChatGPT 聊天。");
+      setChatEntry({ identity, owner, catalog, plan, target: home ? target ?? null : chatEntry?.target ?? null,
+        homeKey: home ? workHomeSession?.key ?? "" : chatEntry?.homeKey ?? "" });
+      chatStart.current = origin;
+      const sending = chatConversation.send({ clientId: home ? null : conversation!.clientId, prompt, selection, projectId: home ? target?.selectedChatGptProjectId ?? null : conversation?.projectId,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, timezoneOffsetMinutes: new Date().getTimezoneOffset() });
+      if (ticket === chatPreparationTicket.current) { chatPreparing.current = false; setChatPreparingState(false); }
+      await sending;
+    } catch (error) { showAppToast(`ChatGPT 请求未完成：${serviceErrorMessage(error)}`, "error"); }
+    finally { if (ticket === chatPreparationTicket.current) { chatPreparing.current = false; setChatPreparingState(false); } }
+  }, [chatConversation, promptInput, chatDrafts, attachedFiles, appshots, workHomeSession, workHomeModels, chatEntry,
+    modelAccountIdentity, workHostIdentity, appServerStatus.appServerVersion, showAppToast]);
+
   // Send or Steer Message
   const handleSendMessage = useCallback(async (overrideText?: string) => {
+    if (activeRouteRef.current === "chatgpt-thread") { await handleSendChatgptText(overrideText); return; }
     if (activeRouteRef.current === "cloud-draft" || activeRouteRef.current === "cloud-new-chat") return;
     if (activeRouteRef.current === "home" && homeCloud.active) return;
     if (workHomeModelCommitting.current || activeThreadIdRef.current && workModelCommitting.current.has(activeThreadIdRef.current)) {
       showAppToast("正在应用模型选择，输入已保留。", "error"); return;
     }
     if (activeRouteRef.current === "home" && workHomeSession && workHomePickerRef.current?.isWorkModel === false) {
-      showAppToast("ChatGPT 聊天暂不可用，输入已保留，请选择 Work 模型继续。", "error"); return;
+      await handleSendChatgptText(overrideText); return;
     }
     if (activeThreadIdRef.current && (loadingThread || workThreadRestoreState?.threadId === activeThreadIdRef.current)) {
       showAppToast("会话配置尚未恢复，输入已保留，请重新读取。", "error");
@@ -4682,6 +4804,7 @@ export const App: React.FC = () => {
   }, [
     promptInput,
     homeCloud.active,
+    handleSendChatgptText,
     workHomeSession,
     workHostIdentity,
     workCustomInstructions,
@@ -4871,6 +4994,7 @@ export const App: React.FC = () => {
   }, [showAppToast]);
 
   const handleInterruptTurn = useCallback(async () => {
+    if (activeRouteRef.current === "chatgpt-thread") { await chatConversation.stop(); return; }
     if (activeRouteRef.current === "cloud-draft" || activeRouteRef.current === "cloud-new-chat") return;
     const work = workActiveSend.current;
     work?.abort();
@@ -4891,6 +5015,7 @@ export const App: React.FC = () => {
 
   const handleSteerTurn = useCallback(
     async (text: string, queued?: QueuedFollowupPrompt) => {
+      if (activeRouteRef.current === "chatgpt-thread") return;
       const tid = activeThreadIdRef.current;
       const turnId = activeTurnIdRef.current;
       const request = threadRequestRef.current;
@@ -5038,6 +5163,7 @@ export const App: React.FC = () => {
 
   // 服务端在空闲时会自动消费队首消息；这里只提供「立即发送队首」的显式操作。
   const handleStartServerQueue = useCallback(async () => {
+    if (activeRouteRef.current === "chatgpt-thread") return;
     const tid = activeThreadIdRef.current;
     const first = followupQueue[0];
     if (!tid || !first || queueMutationThreadsRef.current.has(tid) || steeredQueueItemsRef.current.has(`${tid}:${first.id}`)) return;
@@ -5092,6 +5218,7 @@ export const App: React.FC = () => {
   }, [followupQueue, isStreaming, handleSteerTurn, refreshThreadQueue, showAppToast, getModelConfiguration, trackModelTurn, resolveExecutionContext, captureThreadExecutionPolicy]);
 
   const handleEnqueueFollowup = useCallback(async () => {
+    if (activeRouteRef.current === "chatgpt-thread") return;
     const sendAppshotGeneration = appshotCaptureGenerations.current[appshotScope] ?? 0;
     const tid = activeThreadIdRef.current;
     const text = promptInput;
@@ -5138,6 +5265,7 @@ export const App: React.FC = () => {
   }, [promptInput, attachedFiles, appshots, appshotScope, clearSentAppshots, refreshThreadQueue, showAppToast, setPromptInput]);
 
   const handleCancelQueuedFollowup = useCallback(async (item: QueuedFollowupPrompt) => {
+    if (activeRouteRef.current === "chatgpt-thread") return;
     const tid = activeThreadIdRef.current;
     if (!tid || !item || queueMutationThreadsRef.current.has(tid)) return;
     const request = threadRequestRef.current;
@@ -6624,6 +6752,54 @@ export const App: React.FC = () => {
     pending: workHomeModels.pending || sendStartPendingRef.current.has(threadRequestRef.current),
     refresh: workHomeModels.refresh, onCommit: commitHomeWorkModel, onVersionPreference: commitHomeWorkVersion,
     contextKey: `${modelAccountIdentity}:${workHostIdentity}:${workHomeSession.key}` } : undefined;
+  const chatSidebarConversations = useMemo(() => chatConversation.conversations.map(conversation => ({
+    id: conversation.clientId, title: conversation.title ?? conversation.messages.find(message => message.raw.author &&
+      typeof message.raw.author === "object" && (message.raw.author as { role?: unknown }).role === "user")?.text ?? "新聊天", pending: conversation.pending,
+  })), [chatConversation.conversations]);
+  const openChatgptConversation = (id: string) => {
+    const origin = window.location.href, navigation = navigationRequestRef.current;
+    const owner = committedWorkOwner.current, host = committedWorkHost.current;
+    let applied = false;
+    const apply = () => {
+      if (applied || window.location.href !== origin || navigationRequestRef.current !== navigation
+        || committedWorkOwner.current !== owner || committedWorkHost.current !== host) return;
+      if (!chatConversation.open(id)) return;
+      applied = true;
+      activeThreadIdRef.current = null; setActiveThreadId(null); threadRequestRef.current++;
+      activeRouteRef.current = "chatgpt-thread"; commitActiveRoute("chatgpt-thread");
+    };
+    if (personalizationNavigationGuardRef.current?.(apply) === false) return;
+    apply();
+  };
+  const renderChatgptComposer = () => {
+    const conversation = chatConversation.conversation;
+    return <ComposerBox chatgptMode variant="thread" dictationSessionKey={conversation?.clientId ?? "chatgpt"}
+      followUpMode={followUpMode}
+      composerEnterBehavior={composerEnterBehavior} keyBindings={keyboardState.bindings}
+      promptInput={conversation ? chatDrafts[conversation.clientId] ?? "" : ""}
+      onPromptInputChange={value => { if (conversation) writeChatDraft(conversation.clientId, value); }}
+      onSendMessage={() => { void handleSendChatgptText(); }}
+      onQueueMessage={() => showAppToast("ChatGPT 排队发送尚未接通，输入已保留。", "error")}
+      onInterruptTurn={() => { void chatConversation.stop(); }} isStreaming={!!conversation?.pending}
+      submissionDisabled={!conversation || chatPreparingState || conversation.pending || conversation.deliveryUnknown}
+      workspaces={[]} activeWorkspace={null} onSelectWorkspace={() => {}} onPickNewFolder={() => {}}
+      gitStatus={null} gitBranches={[]} onSwitchBranch={() => {}} onCreateBranch={() => {}}
+      useWorktree={false} onSetUseWorktree={() => {}} permissionMode="custom" onSelectPermissionMode={() => {}}
+      models={[]} selectedModelId="" defaultModelSelected={false} onSelectModel={() => {}}
+      reasoningEffort={conversation?.model.thinkingEffort ?? ""} onSelectReasoningEffort={() => {}}
+      fastMode={false} onToggleFastMode={() => {}} planMode={false} onTogglePlanMode={() => {}}
+      attachedFiles={[]} onAttachFiles={() => showAppToast("ChatGPT 附件上传尚未接通，输入已保留。", "error")}
+      onRemoveAttachedFile={() => {}} workspaceFiles={[]} workspaceFileHits={[]} skills={[]}
+      workModelPicker={{ catalog: chatEntry?.catalog ?? null, selection: conversation?.model ?? null, loading: !chatEntry,
+        pending: !!conversation?.pending, refresh: () => {}, contextKey: conversation?.clientId ?? null,
+        onCommit: async selection => {
+          const chosen = chatEntry && selectWorkHomeModel(chatEntry.catalog, { homeSelection: null, lastSelection: null,
+            temporarySelection: selection, plan: chatEntry.plan });
+          if (!chosen?.hasExplicitSelection || chosen.isWorkModel) { showAppToast("此模型的 Work 会话切换尚未接通，原选择已保留。", "error"); return false; }
+          return chatConversation.selectModel(selection);
+        } }} />;
+  };
+
   const renderThreadComposer = () => (
     <ComposerBox
       registerAppshotInput={registerAppshotInput}
@@ -6850,6 +7026,9 @@ export const App: React.FC = () => {
 
       {/* ── 2. Official Three-Section Codex Sidebar ── */}
       <CodexSidebar
+        chatgptConversations={chatSidebarConversations}
+        activeChatgptConversationId={activeRoute === "chatgpt-thread" ? chatConversation.conversation?.clientId : null}
+        onOpenChatgptConversation={openChatgptConversation}
         collapsed={sidebarCollapsed}
         activeRoute={activeRoute}
         workspaces={workspaces}
@@ -6943,7 +7122,7 @@ export const App: React.FC = () => {
           }}
         >
           <div className="top-nav-left">
-            {activeRoute === "thread" && activeThreadId ? (
+            {activeRoute === "chatgpt-thread" ? <span className="thread-header-title">{chatConversation.conversation?.title ?? "新聊天"}</span> : activeRoute === "thread" && activeThreadId ? (
               <>
                 {editingThreadTitle ? (
                   <input
@@ -7092,7 +7271,7 @@ export const App: React.FC = () => {
           </div>
 
           {/* Top Right Panel Toggle Icons & Environment Actions */}
-          {!isCloudChatRoute && <div className="top-nav-right">
+          {!isCloudChatRoute && activeRoute !== "chatgpt-thread" && <div className="top-nav-right">
             <div className={`thread-header-actions-group ${activeRoute === "home" || turns.length === 0 ? "home-active" : ""}`}>
               {(activeRoute === "thread" || activeRoute === "home") && <EnvironmentActions
                 cwd={(activeThreadId ? activeThreadObj?.cwd || workspaceHintsRef.current[activeThreadId] : null) || activeWorkspace?.path || ""}
@@ -7623,6 +7802,10 @@ export const App: React.FC = () => {
               }}
             />
           </div>
+        ) : activeRoute === "chatgpt-thread" ? (
+          <ChatgptConversationPane messages={chatConversation.conversation?.messages ?? []}
+            pending={!!chatConversation.conversation?.pending} error={chatConversation.conversation?.error ?? (!chatConversation.conversation ? "聊天尚未恢复，请从首页打开聊天。" : null)}
+            composer={renderChatgptComposer()} />
         ) : activeRoute === "home" || (!activeThreadId && turns.length === 0) ? (
           /* ── Home / New Task View ── */
           <div className="home-hero-container">
@@ -7681,14 +7864,15 @@ export const App: React.FC = () => {
 
               {!showPopoutModal && (
               <ComposerBox
+                chatgptMode={!!workHomeSession && workHomeModels.isWorkModel === false}
                 registerAppshotInput={registerAppshotInput}
                   dictationSessionKey={homeCloud.active ? "home-cloud" : promptDraftKey}
                 composerEnterBehavior={composerEnterBehavior}
                 followUpMode={followUpMode}
                 keyBindings={keyboardState.bindings}
                 submissionDisabled={homeCloud.active ? !homeCloud.canSend : workHomeSession
-                  ? !appServerStatus.connected || workHomeModels.loading || workHomeModels.pending || workHomeModels.isWorkModel !== true
-                    || workMessagePreparation?.status !== "ready" || sendStartPendingRef.current.has(threadRequestRef.current)
+                  ? !appServerStatus.connected || workHomeModels.loading || workHomeModels.pending || chatPreparingState
+                    || (workHomeModels.isWorkModel !== false && workMessagePreparation?.status !== "ready") || sendStartPendingRef.current.has(threadRequestRef.current)
                   : queueBusy || modelSelection.selectionPending || !!modelSelection.selectionDisabledReason || sendStartPendingRef.current.has(threadRequestRef.current)}
               variant="home"
               homeCloud={homeCloud}
@@ -7738,7 +7922,7 @@ export const App: React.FC = () => {
               serviceTierAccess={modelSelection.serviceTierAccess}
               modelEligibilityContext={modelSelection.eligibilityContext}
               selectionPending={workHomeSession ? !workMessagePreparation && !workMessageError : modelSelection.selectionPending}
-              selectionError={workHomeSession ? workHomeModels.isWorkModel === false ? "ChatGPT 聊天暂不可用，请选择 Work 模型继续。"
+              selectionError={workHomeSession ? workHomeModels.isWorkModel === false ? workHomeModels.error
                 : workHomeModels.error || workMessageError || (workMessagePreparation?.status === "not-ready" ? "Work 所需的模型或设置暂时不可用，请重新读取。" : null) : modelSelection.selectionError}
               selectionDisabledReason={workHomeSession ? null : modelSelection.selectionDisabledReason}
               recentModelConfigurations={modelSelection.recentModelConfigurations}

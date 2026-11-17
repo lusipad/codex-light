@@ -700,14 +700,19 @@ function visit(node) {
   }
   if (ts.isVariableDeclaration(node) && node.name.getText(appSource) === "registerAppshotInput") registrar = node.initializer.arguments[0];
   if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
-    if (node.tagName.getText(appSource) === "ComposerBox") composerRegistrations.push(node.attributes.properties.find(property => property.name?.getText(appSource) === "registerAppshotInput"));
+    if (node.tagName.getText(appSource) === "ComposerBox") composerRegistrations.push({
+      registration: node.attributes.properties.find(property => property.name?.getText(appSource) === "registerAppshotInput"),
+      chat: node.attributes.properties.some(property => property.name?.getText(appSource) === "chatgptMode" && !property.initializer),
+    });
   }
   ts.forEachChild(node, visit);
 }
 visit(appSource); assert.ok(canAccept);
 assert.equal(inputProperty.getText(appSource), "appshotComposerInput");
-assert.equal(composerRegistrations.length, 2);
-assert.ok(composerRegistrations.every(prop => prop?.initializer.expression.getText(appSource) === "registerAppshotInput"), "both actual home/thread Composer instances publish the production registrar");
+assert.equal(composerRegistrations.filter(item => !item.chat).length, 2);
+assert.ok(composerRegistrations.filter(item => !item.chat).every(item => item.registration?.initializer.expression.getText(appSource) === "registerAppshotInput"), "both actual home/thread Composer instances publish the production registrar");
+assert.equal(composerRegistrations.filter(item => item.chat).length, 1);
+assert.ok(composerRegistrations.filter(item => item.chat).every(item => !item.registration), "text-only Chat does not claim an unimplemented Appshot upload consumer");
 let registeredInput = null, registrarWrites = 0;
 const mounted = { current: true };
 const registrarModule = { exports: {} };

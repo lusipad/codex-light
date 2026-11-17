@@ -216,6 +216,11 @@ try {
   Invoke-Step "ChatGPT actual browser requirements envelope" { node scripts/verify-chatgpt-requirements.mjs }
   Invoke-Step "ChatGPT delta stream state and terminal boundaries" { node scripts/verify-chatgpt-stream-state.mjs }
   Invoke-Step "ChatGPT per-request Channel and partial result delivery" { node scripts/verify-chatgpt-text-client.mjs }
+  Invoke-Step "ChatGPT conversation ownership and background delivery" { node scripts/verify-chatgpt-text-conversation.mjs }
+  Invoke-Step "ChatGPT transcript pane" { node scripts/verify-chatgpt-conversation-pane.mjs }
+  Invoke-Step "ChatGPT route identity" { node scripts/verify-chatgpt-routes.mjs }
+  Invoke-Step "ChatGPT sidebar entries" { node scripts/verify-sidebar-chatgpt.mjs }
+  Invoke-Step "ChatGPT actual App integration" { node scripts/verify-chatgpt-app.mjs }
   Invoke-Step "Rust ChatGPT incremental stream transport" { cargo test --locked --manifest-path src-tauri/Cargo.toml --lib stream_transport }
   Invoke-Step "Rust ChatGPT restricted text completion and stop" { cargo test --locked --manifest-path src-tauri/Cargo.toml --lib conversation_text_ }
   Invoke-Step "Work owner-bound home preferences" { node scripts/verify-work-home-preferences.mjs }

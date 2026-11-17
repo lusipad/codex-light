@@ -32,7 +32,7 @@
 
 ### 当前起点与下一工作包
 
-R10已补普通ChatGPT的独立requirements/SSE/stop宿主、源消息与流投影、真实WebView初始环境和逐请求Channel；基础层1140全Rust、44相关前端/TSC及非测试debug编译通过。主窗owner/controller、响应接受/稿件生命周期、/c/路由与transcript尚未接，不能将这些内部检查称为Chat页面可用。下一继续本页真实主旅程，再推进下文远端同步/权限等队列；完整范围及未验项见16.23A的R10记录，不用基础层替代整页完成。
+R10基础后，R10B已接普通ChatGPT主窗文本controller、独立响应接受/稿件生命周期、/c/与项目路由、transcript及多会话侧栏；后台晚回不抢当前会话，Chat入口不旁路到CLI。1145全Rust及实际App组合回归已通过，最终检查范围见16.23A的R10B记录。当前仅内存文本会话，尚缺持久历史/冷恢复、prepare/conduit、resume/WS、挑战/上传/工具等真实主旅程；原生GUI、真实账号、官方配对像素与用户验收仍未完成。下一继续本页持久历史/恢复及源渲染对照，再推进远端同步/权限等队列，不把阶段接线当整页或14批完成。
 
 当前已接Work资格、owner模式/导航、原flight交接、本机项目首条/跟进及R8真实冷恢复。R9继续接首页merged模型菜单、本机线程真实下一轮模型更新及独立owner home/version持久化；不再统一只读，但guardian/全权限确认、Speed/Daybreak/location条件控件仍缺，不能叫完整选择器。准确检查、构建及未验边界见[16.23A](antigravity/acceptance/16.23A.md)R9节。下一工作包先补ChatGPT真实消息消费者和后台偏好同步、权限确认分支，再接g-p materialization/目录分配；非Work选择不能冒普通CLI发送。未准备目录、未接排队/目标/会话内审查仍保明确边界。Work-cloud独立接，不用现homeCloud替代。真实服务/迁移库/原生GUI/IME与官方配对像素尚未实测；legacy完整迁移/live SDK/工具链继续分项登记。CI/push暂停，整页及14批总目标未验收。
 

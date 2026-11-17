@@ -28,6 +28,7 @@ const until = async predicate => {
 let queue = [], draft = "hello", toasts = [], calls = [], rpc;
 const appshotClears = [];
 const ctx = vm.createContext({
+  activeRouteRef: { current: "thread" },
   console, Date, Set, Map, crypto, isCurrentThreadRequest, buildAppshotPrompt, appshotImageInputs,
   executionIdentityRef: { current: "account-a" }, appshots: [], appshotScope: "account-a:thread:a",
   appshotCaptureGenerations: { current: {} },
