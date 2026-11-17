@@ -91,8 +91,17 @@ export interface WorkHomeState {
 }
 
 export async function readWorkHomeState(identity: ServiceIdentity, signal: AbortSignal): Promise<WorkHomeState> {
+  return requestWorkHomeState("work_home_preferences", identity, signal);
+}
+
+/** Explicit Work action only; cancellation after a committed write is not rollback. */
+export async function activateWorkHome(identity: ServiceIdentity, signal: AbortSignal): Promise<WorkHomeState> {
+  return requestWorkHomeState("work_home_activate", identity, signal);
+}
+
+async function requestWorkHomeState(command: "work_home_preferences" | "work_home_activate", identity: ServiceIdentity, signal: AbortSignal): Promise<WorkHomeState> {
   const expected = { ...identity }, requestId = crypto.randomUUID();
-  const result = await invokeService<WorkHomeState & { requestId: string }>("work_home_preferences", requestId,
+  const result = await invokeService<WorkHomeState & { requestId: string }>(command, requestId,
     { request: { requestId, expectedIdentity: expected } }, signal);
   if (result?.requestId !== requestId || result.identity?.accountId !== expected.accountId
     || result.identity?.userId !== expected.userId || result.identity?.generation !== expected.generation

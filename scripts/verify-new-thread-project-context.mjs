@@ -34,6 +34,7 @@ vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/executionPolicy.ts", 
 export function mountProjectContext({ pending = null, membership = metadata, workspace = root, threadId = null, start, turn, worktree = false, projectless = false, configuration, selectionPending = false } = {}) {
   const calls = [], state = { promptInput: "hello", turns: [] };
   const context = {
+    workHomeSession: null,
     ...module.exports, ...executionModule.exports, ...appshotModule.exports, promptInput: "hello", attachedFiles: [], isStreaming: false,
     appshots: [], appshotScope: `fixture-account:thread:${threadId}`, modelAccountIdentity: "fixture-account",
     appshotCaptureGenerations: { current: {} },

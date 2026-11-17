@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
-let sequence = 0, pending, failure, transform = value => value;
+let sequence = 0, pending, failure, transform = value => value, expectedCommand = "work_home_preferences";
 const calls = [], identity = { userId: "work-user", accountId: "work-account", generation: 4 };
 const preferences = { owner: "bound", atoms: { "work-run-location-v1": "local" }, unboundAtoms: [],
   selectedProject: { placement: "owner-value", binding: "confirmed", value: null }, localProjects: { placement: "missing" } };
@@ -15,7 +15,7 @@ vm.runInNewContext(compile("src/chatgptService.ts"), {
   require: name => name === "./bridge" ? { tauriInvoke: async (command, args) => {
     calls.push({ command, args });
     if (command === "chatgpt_service_cancel") return;
-    assert.equal(command, "work_home_preferences");
+    assert.equal(command, expectedCommand);
     if (failure) throw failure;
     const result = transform({ requestId: args.request.requestId, identity: { ...identity }, preferences });
     if (pending) return new Promise(resolve => { pending.resolve = () => resolve(result); });
@@ -53,4 +53,16 @@ pending.resolve(); const result = await mutableRead; pending = null;
 assert.equal(result.identity.accountId, identity.accountId);
 assert.equal(JSON.stringify(calls).includes("authToken"), false);
 assert.equal(calls.some(call => call.command === "desktop_state_get"), false);
+expectedCommand = "work_home_activate";
+const activated = await service.activateWorkHome(identity, new AbortController().signal);
+assert.equal(activated.identity.userId, identity.userId);
+assert.equal(calls.at(-1).command, "work_home_activate");
+transform = value => ({ ...value, requestId: "wrong-activation" });
+await assert.rejects(service.activateWorkHome(identity, new AbortController().signal));
+transform = value => value;
+pending = {}; const activationAbort = new AbortController();
+const activating = service.activateWorkHome(identity, activationAbort.signal);
+activationAbort.abort(); pending.resolve();
+await assert.rejects(activating, /取消/); pending = null;
+assert.equal(calls.filter(call => call.command === "work_home_activate").length, 3); // no retry or fake rollback.
 console.log("PASS actual Work preference client pipeline: restricted native command, identity/request ACK, value validation, no raw fallback, immutable request, RPC failure, pre/inflight cancellation and late-result rejection; isolated bridge, no real account or service.");

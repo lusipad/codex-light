@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { tauriInvoke } from "../bridge";
 import { usePublicProfileSettings } from "../publicProfileSettings";
+import { cancelNavigation, deferNavigation, takeNavigation } from "../navigationContinuation";
 import "./ProfileSettings.css";
 
 function remoteUrl(value: string | null | undefined) {
@@ -29,11 +30,11 @@ export function ProfileSettings({ accountIdentity, connectionIdentity, onNavigat
   const guard = (action: () => void) => {
     if (!latest.current.canNavigate()) return false;
     if (!latest.current.isDirty()) return true;
-    pendingAction.current = action; setConfirmation("discard"); return false;
+    deferNavigation(pendingAction, action); setConfirmation("discard"); return false;
   };
   useEffect(() => {
-    epoch.current++; setConfirmation(null); setLinkError(null); pendingAction.current = null;
-    return () => { epoch.current++; };
+    epoch.current++; setConfirmation(null); setLinkError(null); cancelNavigation(pendingAction);
+    return () => { epoch.current++; cancelNavigation(pendingAction); };
   }, [editorContext]);
   useEffect(() => {
     onNavigationGuardChange?.(guard);
@@ -99,15 +100,15 @@ export function ProfileSettings({ accountIdentity, connectionIdentity, onNavigat
         <button type="button" className="primary-btn" disabled={invalid || state.saving || state.pending || state.externalChange || !state.canEdit} onClick={() => void state.save()}>保存</button></div>
     </dialog>
     <dialog ref={discardDialog} className="codex-modal-dialog public-profile-discard-dialog" aria-labelledby="public-profile-discard-title"
-      onCancel={event => { event.preventDefault(); setConfirmation(null); pendingAction.current = null; restoreFocus(true); }}>
+      onCancel={event => { event.preventDefault(); setConfirmation(null); cancelNavigation(pendingAction); restoreFocus(true); }}>
       <h3 id="public-profile-discard-title">放弃未保存的更改？</h3>
       <p>{confirmation === "reload" ? "重新加载将放弃当前个人资料草稿。" : "离开将放弃当前个人资料草稿。"}</p>
-      <div className="public-profile-edit-actions"><button type="button" className="secondary-btn" autoFocus onClick={() => { setConfirmation(null); pendingAction.current = null; restoreFocus(true); }}>继续编辑</button>
+      <div className="public-profile-edit-actions"><button type="button" className="secondary-btn" autoFocus onClick={() => { setConfirmation(null); cancelNavigation(pendingAction); restoreFocus(true); }}>继续编辑</button>
         <button type="button" className="primary-btn" onClick={() => {
           if (!state.canNavigate()) return;
-          const action = pendingAction.current, replace = confirmation === "reload";
-          pendingAction.current = null; setConfirmation(null);
-          if (replace) { void state.reload(true).then(() => restoreFocus(true)); return; }
+          const action = takeNavigation(pendingAction), replace = confirmation === "reload";
+          setConfirmation(null);
+          if (replace) { action?.onCancelled?.(); void state.reload(true).then(() => restoreFocus(true)); return; }
           state.discard(); action?.();
         }}>放弃更改</button></div>
     </dialog>

@@ -110,6 +110,9 @@ function compare(a: Version, b: Version): number {
   }
   return 0;
 }
+export function compareWorkRuntimeVersions(left: string | null, right: string | null): number | null {
+  const a = version(left), b = version(right); return a && b ? compare(a, b) : null;
+}
 function merge(a: unknown, b: RecordValue): RecordValue {
   const result = record(a) ? { ...a } : {};
   for (const [key, value] of Object.entries(b)) {

@@ -51,11 +51,12 @@ export function createMcpSettingsHarness(options = {}) {
     return exports;
   }
   const status = load("src/mcpStatus.ts", { "./bridge": bridge });
+  const navigation = load("src/navigationContinuation.ts", {});
   const core = load("src/mcpSettingsState.ts", { "./bridge": bridge, "./mcpStatus": status, "./mcpSettings": {
     readMcpSettings: cwd => { calls.push(["read-config", cwd]); return read(cwd); },
     writeMcpServer: (before, action) => { calls.push(["write-config", before, action]); return write(before, action); },
   } });
-  const { McpSettings } = load("src/components/McpSettings.tsx", { "../mcpSettingsState": { ...core, useMcpSettingsState: args => (state = core.useMcpSettingsState(args)) },
+  const { McpSettings } = load("src/components/McpSettings.tsx", { "../navigationContinuation": navigation, "../mcpSettingsState": { ...core, useMcpSettingsState: args => (state = core.useMcpSettingsState(args)) },
     "../bridge": bridge, "./Icons": { CloseIcon: () => null } });
   const nodes = node => node && typeof node === "object" ? [node, ...(node.children || []).flatMap(nodes)] : [];
   const text = node => typeof node === "string" ? node : (node?.children || []).map(text).join("");

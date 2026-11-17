@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { isTauriRuntime, tauriInvoke } from "../bridge";
 import { useMcpSettingsState, type McpDraft, type McpPair } from "../mcpSettingsState";
 import { CloseIcon } from "./Icons";
+import { cancelNavigation, deferNavigation, takeNavigation } from "../navigationContinuation";
 import "./McpSettings.css";
 
 type Guard = (action: () => void) => boolean;
@@ -34,11 +35,11 @@ export function McpSettings({ cwd, connectionIdentity, onConfigUpdated, onRestar
   const guard: Guard = action => {
     if (!latest.current.canNavigate()) return false;
     if (!latest.current.isDirty()) return true;
-    pendingAction.current = action; setConfirmation("discard"); return false;
+    deferNavigation(pendingAction, action); setConfirmation("discard"); return false;
   };
   useEffect(() => {
-    epoch.current++; setConfirmation(null); pendingAction.current = null; setLinkError(null);
-    return () => { epoch.current++; };
+    epoch.current++; setConfirmation(null); cancelNavigation(pendingAction); setLinkError(null);
+    return () => { epoch.current++; cancelNavigation(pendingAction); };
   }, [context]);
   useEffect(() => {
     onNavigationGuardChange?.(guard);
@@ -161,13 +162,13 @@ export function McpSettings({ cwd, connectionIdentity, onConfigUpdated, onRestar
       </fieldset>
       <div className="mcp-detail-save"><button type="button" className="primary-btn" disabled={disabled || state.externalChange || !state.dirty || !draft.label.trim() || !(draft.transport === "stdio" ? draft.command.trim() : draft.url.trim())} onClick={() => void state.save()}>保存</button></div>
     </section>}
-    <dialog ref={dialog} className="codex-modal-dialog mcp-discard-dialog" onCancel={event => { event.preventDefault(); setConfirmation(null); pendingAction.current = null; restoreFocus(true); }}>
+    <dialog ref={dialog} className="codex-modal-dialog mcp-discard-dialog" onCancel={event => { event.preventDefault(); setConfirmation(null); cancelNavigation(pendingAction); restoreFocus(true); }}>
       <h3>放弃未保存的更改？</h3><p>{confirmation === "reload" ? "重新读取将替换当前 MCP 草稿。" : "离开将放弃当前 MCP 草稿。"}</p>
-      <div className="mcp-detail-save"><button type="button" className="secondary-btn" autoFocus onClick={() => { setConfirmation(null); pendingAction.current = null; restoreFocus(true); }}>继续编辑</button>
+      <div className="mcp-detail-save"><button type="button" className="secondary-btn" autoFocus onClick={() => { setConfirmation(null); cancelNavigation(pendingAction); restoreFocus(true); }}>继续编辑</button>
         <button type="button" className="primary-btn" onClick={() => {
           if (currentContext.current !== context || !state.canNavigate()) return;
-          const action = pendingAction.current, replace = confirmation === "reload"; pendingAction.current = null; setConfirmation(null);
-          if (replace) { void state.reload(true).then(() => restoreFocus(true)); return; }
+          const action = takeNavigation(pendingAction), replace = confirmation === "reload"; setConfirmation(null);
+          if (replace) { action?.onCancelled?.(); void state.reload(true).then(() => restoreFocus(true)); return; }
           state.discard(); action?.();
         }}>放弃更改</button></div>
     </dialog>

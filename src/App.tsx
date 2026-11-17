@@ -21,7 +21,12 @@ import { McpCallCard } from "./components/McpCallCard";
 import { extractTextFromItem } from "./threadText";
 import { appshotImageInputs, buildAppshotPrompt, type DraftAppshot } from "./appshotContext";
 import { restoreAppshotHistory } from "./appshotHistory";
-import { useAppshotsEntry, type AppshotComposerInput } from "./useAppshotsEntry";
+import { useAppshotsEntry, type AppshotComposerInput, type AppshotWorkPlan } from "./useAppshotsEntry";
+import { activateWorkHome } from "./chatgptService";
+import { readLocalWorkAccess } from "./workAccess";
+import { parseWorkHomePreferences } from "./workHomePreferences";
+import { readWorkCaptureTarget, type WorkCaptureTarget } from "./workHomePreparation";
+import { awaitGuardedNavigation } from "./navigationContinuation";
 import { AppshotAttachment, UserImageAttachments, dispatchImagePreviewZoom } from "./components/AppshotAttachment";
 import { fileChangeApprovalForItem, pendingRequestKey, requestThreadId, requestsForThread, type RequestResponseState } from "./approvalRequests";
 import { copyTextToClipboard } from "./clipboard";
@@ -1491,6 +1496,28 @@ export const App: React.FC = () => {
     };
   }, [appshotScope, activeThreadId]);
   const appshots = composerAppshotDrafts[appshotScope] ?? [];
+  const [workHomeSession, setWorkHomeSession] = useState<{
+    key: string; owner: string; navigation: number | null; target: WorkCaptureTarget | null;
+  } | null>(null);
+  const committedWorkOwner = useRef(modelAccountIdentity);
+  useLayoutEffect(() => { committedWorkOwner.current = modelAccountIdentity; }, [modelAccountIdentity]);
+  const workNewChatFactory = useRef<((id: string, identity: ServiceIdentity, signal: AbortSignal) => Promise<AppshotWorkPlan>) | null>(null);
+  const readAppshotWorkAccess = useCallback(async (identity: ServiceIdentity, signal: AbortSignal): Promise<boolean | null> => {
+    const access = await readLocalWorkAccess(signal, { supportedSurface: true, workCloudSupportedSurface: true });
+    if (access.identity.accountId !== identity.accountId || access.identity.userId !== identity.userId
+      || access.identity.generation !== identity.generation) throw Error("Work 账号已变化，请重新操作。");
+    return access.combined?.status === "allowed" ? true : access.combined?.status === "denied" ? false : null;
+  }, []);
+  const prepareAppshotWork = useCallback(async (id: string, identity: ServiceIdentity, signal: AbortSignal): Promise<AppshotWorkPlan> => {
+    if (!workNewChatFactory.current) throw Error("Work 主页尚未就绪。");
+    return workNewChatFactory.current(id, identity, signal);
+  }, []);
+  useLayoutEffect(() => {
+    if (workHomeSession && (workHomeSession.owner !== modelAccountIdentity
+      || workHomeSession.navigation !== null && (workHomeSession.navigation !== navigationRequestRef.current || activeRoute !== "home"))) {
+      setWorkHomeSession(null);
+    }
+  }, [activeRoute, modelAccountIdentity, workHomeSession]);
   const setScopedAppshots = useCallback((key: string, update: React.SetStateAction<DraftAppshot[]>) => {
     setComposerAppshotDrafts(previous => {
       const current = previous[key] ?? [];
@@ -1523,7 +1550,10 @@ export const App: React.FC = () => {
       && appServerStatus.connected && accountInfo?.account?.type === "chatgpt",
     scope: attachmentScopeRef.current,
     composerInput: appshotComposerInput,
-    canAccept: (activeRoute === "home" && !homeCloud.active) || activeRoute === "thread",
+    canAccept: (activeRoute === "home" && !homeCloud.active && (!workHomeSession || workHomeSession.target?.location === "local")) || activeRoute === "thread",
+    readNewChatAccess: readAppshotWorkAccess,
+    prepareNewChat: prepareAppshotWork,
+    workContextKey: workHomeSession?.key ?? null,
     isNewChat: activeRoute === "home" && !activeThreadId,
     contextKey: JSON.stringify([modelAccountIdentity, shareAccessRevision, appServerStatus.connected,
       appServerStatus.binaryPath, appServerStatus.appServerVersion]),
@@ -3244,7 +3274,11 @@ export const App: React.FC = () => {
   // Thread Navigation & Lifecycle
   // Call only from a navigation continuation after its guard accepts.
   const commitNewThreadNavigation = useCallback(
-    async (workspacePath?: string, project?: SidebarLocalProject, projectless = false): Promise<number | null> => {
+    async (workspacePath?: string, project?: SidebarLocalProject, projectless = false,
+      workCapture?: { owner: string; generation: number; signal: AbortSignal }): Promise<number | null> => {
+      const workCurrent = () => !workCapture || !workCapture.signal.aborted && workCapture.owner === committedWorkOwner.current
+        && (appshotCaptureGenerations.current[`${workCapture.owner}:home`] ?? 0) === workCapture.generation;
+      if (!workCurrent()) return null;
       if (project && (!project.serverProjectId || project.rootPaths.length === 0)) {
         showAppToast("暂时无法在此项目中新建聊天，请重试。", "error");
         return null;
@@ -3274,12 +3308,15 @@ export const App: React.FC = () => {
       }
       let committed = false;
       const finalCommit = (): number | null => {
-        if (committed || navigation !== navigationRequestRef.current) return null;
+        if (committed || navigation !== navigationRequestRef.current || !workCurrent()) return null;
         committed = true;
-        retireAppshotCapture(`${executionIdentityRef.current}:home`);
-        pendingNewThreadProjectRef.current = project ?? null;
-        pendingProjectlessRef.current = projectless;
-        setPermissionModes(previous => Object.fromEntries(Object.entries(previous).filter(([key]) => !key.includes(":draft:"))));
+        if (!workCapture) {
+          setWorkHomeSession(null);
+          retireAppshotCapture(`${executionIdentityRef.current}:home`);
+          pendingNewThreadProjectRef.current = project ?? null;
+          pendingProjectlessRef.current = projectless;
+          setPermissionModes(previous => Object.fromEntries(Object.entries(previous).filter(([key]) => !key.includes(":draft:"))));
+        }
         threadRequestRef.current += 1;
         threadHistoryBufferRef.current.discard();
         finishedTurnIdsRef.current.clear();
@@ -3302,7 +3339,7 @@ export const App: React.FC = () => {
         setThreadUsage(null);
         activeRouteRef.current = "home";
         commitActiveRoute("home");
-        setComposerFocusRequest(request => request + 1);
+        if (!workCapture) setComposerFocusRequest(request => request + 1);
         return navigation;
       };
       // Project selection crossed an await: the current form may now have unsaved changes.
@@ -3311,6 +3348,46 @@ export const App: React.FC = () => {
     },
     [handleSelectWorkspace, showAppToast, retireAppshotCapture]
   );
+
+  useLayoutEffect(() => {
+    const prepare = async (id: string, identity: ServiceIdentity, signal: AbortSignal): Promise<AppshotWorkPlan> => {
+      const owner = modelAccountIdentity, navigation = navigationRequestRef.current;
+      const generation = appshotCaptureGenerations.current[`${owner}:home`] ?? 0;
+      const current = () => !signal.aborted && committedWorkOwner.current === owner
+        && (appshotCaptureGenerations.current[`${owner}:home`] ?? 0) === generation;
+      if (!current() || await readAppshotWorkAccess(identity, signal) !== true) throw Error("无法确认 Work 访问资格。");
+      return { key: id, scope: "home", captureGeneration: generation, activate: async activationSignal => {
+        const valid = () => current() && !activationSignal.aborted;
+        if (!valid() || navigation !== navigationRequestRef.current) return false;
+        if (await readAppshotWorkAccess(identity, activationSignal) !== true || !valid()) return false;
+        const saved = await activateWorkHome(identity, activationSignal);
+        if (!valid()) return false;
+        const preferences = parseWorkHomePreferences(saved, identity);
+        if (preferences.mode.status !== "value" || preferences.mode.value !== "work") throw Error("Work 模式尚未保存，请重新读取。");
+        const accepted = await awaitGuardedNavigation(personalizationNavigationGuardRef.current, async () => {
+          if (!valid() || navigation !== navigationRequestRef.current) return false;
+          if (!homeCloud.setActive(false)) throw Error("云端消息仍在发送，请完成后重新添加快照。");
+          flushSync(() => {
+            setWorkHomeSession({ key: id, owner, navigation: null, target: null });
+          });
+          const committed = await commitNewThreadNavigation(undefined, undefined, false, { owner, generation, signal: activationSignal });
+          if (committed === null || !valid()) return false;
+          setWorkHomeSession(previous => previous?.key === id ? { ...previous, navigation: committed } : previous);
+          const target = await readWorkCaptureTarget({ identity }, activationSignal);
+          if (!valid() || committed !== navigationRequestRef.current || activeRouteRef.current !== "home") return false;
+          if (target.status !== "ready") throw Error(`Work 主页尚未就绪：${target.missingInputs.join("、")}`);
+          if (target.preferences.mode.status !== "value" || target.preferences.mode.value !== "work") throw Error("Work 模式已变化，请重新操作。");
+          if (target.location !== "local") throw Error(target.location === "cloud"
+            ? "当前 Work 使用云端运行位置，云端快照接收尚未接通。" : "当前项目没有可用的 Work 运行位置。");
+          setWorkHomeSession(previous => previous?.key === id ? { ...previous, target } : previous);
+          return true;
+        }, activationSignal);
+        return accepted && valid();
+      } };
+    };
+    workNewChatFactory.current = prepare;
+    return () => { if (workNewChatFactory.current === prepare) workNewChatFactory.current = null; };
+  }, [modelAccountIdentity, readAppshotWorkAccess, commitNewThreadNavigation, homeCloud.setActive]);
 
   const startNewThread = useCallback(async (workspacePath?: string, project?: SidebarLocalProject, projectless = false): Promise<void> => {
     const apply = async () => {
@@ -3909,6 +3986,10 @@ export const App: React.FC = () => {
   // Send or Steer Message
   const handleSendMessage = useCallback(async (overrideText?: string) => {
     if (activeRouteRef.current === "cloud-draft" || activeRouteRef.current === "cloud-new-chat") return;
+    if (activeRouteRef.current === "home" && workHomeSession) {
+      showAppToast("暂时无法发送 Work 消息，草稿已保留。", "error");
+      return;
+    }
     if (activeRouteRef.current === "home" && homeCloud.active) return;
     const rawText = (typeof overrideText === "string" ? overrideText : promptInput).trim();
     const sendAppshotGeneration = appshotCaptureGenerations.current[appshotScope] ?? 0;
@@ -4158,6 +4239,7 @@ export const App: React.FC = () => {
   }, [
     promptInput,
     homeCloud.active,
+    workHomeSession,
     setPromptInput,
     setThreadPrompt,
     moveHomePromptToThread,

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { isTauriRuntime, tauriInvoke, tauriListen } from "../bridge";
 import { ChevronRightIcon } from "./Icons";
 import { MemorySettings } from "./MemorySettings";
+import { cancelNavigation, deferNavigation, takeNavigation } from "../navigationContinuation";
 import "./PersonalizationSettings.css";
 
 interface PersonalInstructions {
@@ -98,7 +99,7 @@ export function PersonalizationSettings({ active, accountIdentity, connectionIde
     if (operation.current) return;
     setDraftValue(currentSnapshot.current?.contents ?? "");
     currentEditing.current = false; setEditing(false); setError(null); setExternalChange(false);
-    pendingNavigation.current = null; setConfirmation(null); restoreFocus(true);
+    cancelNavigation(pendingNavigation); setConfirmation(null); restoreFocus(true);
   };
   const guard: NavigationGuard = action => {
     if (currentIdentity.current !== identity) return true;
@@ -106,7 +107,7 @@ export function PersonalizationSettings({ active, accountIdentity, connectionIde
     if (!currentActive.current || !currentEditing.current) return true;
     if (operation.current) return false;
     if (!dirtyNow()) return true;
-    pendingNavigation.current = action; setConfirmation("discard"); return false;
+    deferNavigation(pendingNavigation, action); setConfirmation("discard"); return false;
   };
   const save = async () => {
     const initial = currentSnapshot.current;
@@ -140,7 +141,7 @@ export function PersonalizationSettings({ active, accountIdentity, connectionIde
     generation.current++; operation.current = null; refreshQueued.current = false;
     currentSnapshot.current = null; currentDraft.current = ""; currentEditing.current = false;
     setSnapshot(null); setDraft(""); setEditing(false); setBusy(false); setError(null); setLinkError(null);
-    setSaved(false); setExternalChange(false); setConfirmation(null); pendingNavigation.current = null;
+    setSaved(false); setExternalChange(false); setConfirmation(null); cancelNavigation(pendingNavigation);
     setViewIdentity(identity);
     let disposed = false, unlisten: (() => void) | undefined;
     const context = identity;
@@ -158,10 +159,11 @@ export function PersonalizationSettings({ active, accountIdentity, connectionIde
     window.addEventListener("focus", onFocus);
     return () => {
       disposed = true; generation.current++; operation.current = null; refreshQueued.current = false;
-      pendingNavigation.current = null; unlisten?.(); window.removeEventListener("focus", onFocus);
+      cancelNavigation(pendingNavigation); unlisten?.(); window.removeEventListener("focus", onFocus);
     };
   }, [identity]);
   useEffect(() => {
+    if (!active) cancelNavigation(pendingNavigation);
     onNavigationGuardChange?.(active ? guard : null);
     return () => onNavigationGuardChange?.(null);
   }, [active, identity, onNavigationGuardChange]);
@@ -188,7 +190,7 @@ export function PersonalizationSettings({ active, accountIdentity, connectionIde
 
   if (!active) return null;
   const visible = viewIdentity === identity;
-  const cancelConfirmation = () => { setConfirmation(null); pendingNavigation.current = null; restoreFocus(); };
+  const cancelConfirmation = () => { setConfirmation(null); cancelNavigation(pendingNavigation); restoreFocus(); };
   return <div className="settings-scroll-container personalization-settings" onKeyDown={visible && editing ? event => {
     if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.altKey && !event.nativeEvent.isComposing && event.keyCode !== 229 && !operation.current && dirtyNow()) {
       event.preventDefault(); void saveCurrent.current();
@@ -232,9 +234,9 @@ export function PersonalizationSettings({ active, accountIdentity, connectionIde
         <button type="button" className="secondary-btn" autoFocus onClick={cancelConfirmation}>继续编辑</button>
         <button type="button" className="primary-btn" onClick={() => {
           if (operation.current) return;
-          const action = pendingNavigation.current, reload = confirmation === "reload";
-          pendingNavigation.current = null; setConfirmation(null);
-          if (reload) { void load(true); return; }
+          const action = takeNavigation(pendingNavigation), reload = confirmation === "reload";
+          setConfirmation(null);
+          if (reload) { action?.onCancelled?.(); void load(true); return; }
           closeEditor(); action?.();
         }}>放弃更改</button>
       </div>

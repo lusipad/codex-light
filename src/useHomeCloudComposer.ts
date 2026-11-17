@@ -128,7 +128,9 @@ export function useHomeCloudComposer(scope: string | null) {
         item.repositories.some(({ id }) => (choice.repositoryNames.get(id) ?? id).toLocaleLowerCase().includes(search)));
     },
     setActive: (active: boolean) => {
-      if (!sending.current && (!active || choice.identity)) update({ active, error: null });
+      if (sending.current || active && !choice.identity) return false;
+      update({ active, error: null });
+      return true;
     },
     setPrompt: (prompt: string) => {
       if (!sending.current && !choice.entry) update({ prompt });

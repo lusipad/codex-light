@@ -35,7 +35,8 @@ export function createEnvironmentHarness() {
     { exports, require: name => name === "react" ? react : name === "lucide-react" ? new Proxy({}, { get: (_, key) => String(key) }) : name.endsWith(".css") ? {} : imports[name], window, crypto: { randomUUID }, requestAnimationFrame: callback => frames.push(callback) }); return exports; };
   const client = load("src/localEnvironments.ts", { "./bridge": { tauriInvoke: invoke } });
   const actions = load("src/environmentActions.ts", { "./bridge": { tauriInvoke: invoke } });
-  const { LocalEnvironmentSettings } = load("src/components/LocalEnvironmentSettings.tsx", { "../environmentActions": actions, "../localEnvironments": client, "../bridge": { tauriInvoke: invoke } });
+  const navigation = load("src/navigationContinuation.ts", {});
+  const { LocalEnvironmentSettings } = load("src/components/LocalEnvironmentSettings.tsx", { "../navigationContinuation": navigation, "../environmentActions": actions, "../localEnvironments": client, "../bridge": { tauriInvoke: invoke } });
   const nodes = node => node && typeof node === "object" ? [node, ...(node.children || []).flatMap(nodes)] : [];
   const text = node => typeof node === "string" || typeof node === "number" ? String(node) : (node?.children || []).map(text).join("");
   const modal = { open: false, showModal() { this.open = true; }, close() { this.open = false; } };

@@ -36,7 +36,8 @@ impl ChatgptService {
         F: Fn(&'static str, Value) -> Fut,
         Fut: Future<Output = Result<Value, String>>,
     {
-        self.with_work_account_info(request, call, Ok).await
+        self.with_work_account_info(request, call, |account, _| Ok(account))
+            .await
     }
 
     pub async fn work_home_preferences<F, Fut>(
@@ -45,19 +46,88 @@ impl ChatgptService {
         state: &crate::state::DesktopStateManager,
         call: F,
     ) -> ServiceResult<WorkHomePreferencesResponse>
-    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>> {
-        self.with_work_account_info(request, call, |account| {
-            let preferences = state.work_home_preferences(&account.identity)
-                .map_err(|_| failure("invalid_work_preferences", "Work preferences could not be confirmed"))?;
-            Ok(WorkHomePreferencesResponse {request_id:account.request_id, identity:account.identity, preferences})
-        }).await
+    where
+        F: Fn(&'static str, Value) -> Fut,
+        Fut: Future<Output = Result<Value, String>>,
+    {
+        self.with_work_account_info(request, call, |account, _| {
+            let preferences = state
+                .work_home_preferences(&account.identity)
+                .map_err(|_| {
+                    failure(
+                        "invalid_work_preferences",
+                        "Work preferences could not be confirmed",
+                    )
+                })?;
+            Ok(WorkHomePreferencesResponse {
+                request_id: account.request_id,
+                identity: account.identity,
+                preferences,
+            })
+        })
+        .await
+    }
+
+    pub async fn work_home_activate<F, Fut>(
+        &self,
+        request: WorkAccountInfoRequest,
+        state: &crate::state::DesktopStateManager,
+        call: F,
+    ) -> ServiceResult<WorkHomePreferencesResponse>
+    where
+        F: Fn(&'static str, Value) -> Fut,
+        Fut: Future<Output = Result<Value, String>>,
+    {
+        self.work_home_activate_with(request, call, |identity, current| {
+            state.activate_work_home(identity, current)
+        })
+        .await
+    }
+
+    async fn work_home_activate_with<F, Fut>(
+        &self,
+        request: WorkAccountInfoRequest,
+        call: F,
+        write: impl FnOnce(&ServiceIdentity, &dyn Fn() -> Result<(), String>) -> Result<Value, String>,
+    ) -> ServiceResult<WorkHomePreferencesResponse>
+    where
+        F: Fn(&'static str, Value) -> Fut,
+        Fut: Future<Output = Result<Value, String>>,
+    {
+        self.with_work_account_info(request, call, |account, registration| {
+            let current = || {
+                self.check_share_current(&account.identity, registration)
+                    .map_err(|_| "Work 激活动作所属账号或请求已失效。".to_owned())
+            };
+            let preferences = write(&account.identity, &current).map_err(|_| {
+                self.check_share_current(&account.identity, registration)
+                    .err()
+                    .unwrap_or_else(|| {
+                        failure(
+                            "work_preferences_write_failed",
+                            "Work mode could not be persisted",
+                        )
+                    })
+            })?;
+            Ok(WorkHomePreferencesResponse {
+                request_id: account.request_id,
+                identity: account.identity,
+                preferences,
+            })
+        })
+        .await
     }
 
     async fn with_work_account_info<F, Fut, T>(
-        &self, request: WorkAccountInfoRequest, call: F,
-        read: impl FnOnce(WorkAccountInfoResponse) -> ServiceResult<T>,
+        &self,
+        request: WorkAccountInfoRequest,
+        call: F,
+        read: impl FnOnce(WorkAccountInfoResponse, &Registration<'_>) -> ServiceResult<T>,
     ) -> ServiceResult<T>
-    where F: Fn(&'static str, Value) -> Fut, Fut: Future<Output = Result<Value, String>> {
+    where
+        F: Fn(&'static str, Value) -> Fut,
+        Fut: Future<Output = Result<Value, String>>,
+    {
         let registration = self.register(&request.request_id)?;
         self.check_share_current(&request.expected_identity, &registration)?;
         let result = tokio::select! {
@@ -93,7 +163,7 @@ impl ChatgptService {
             } => result,
         };
         self.check_share_current(&request.expected_identity, &registration)?;
-        let value = read(result?)?;
+        let value = read(result?, &registration)?;
         self.check_share_current(&request.expected_identity, &registration)?;
         Ok(value)
     }
@@ -263,39 +333,245 @@ mod tests {
 
     #[tokio::test]
     async fn work_home_preferences_returns_only_the_authenticated_owner_view() {
-        let service=ChatgptService::default();let owner=crate::appshots_preferences::owner_key(&identity()).unwrap();
+        let service = ChatgptService::default();
+        let owner = crate::appshots_preferences::owner_key(&identity()).unwrap();
         let state=crate::state::DesktopStateManager::fixture_for_appshots_preferences(json!({
             owner:{"home-composer-mode-v1":"work"},
             "electron-persisted-atom-state":{"work-run-location-v1":"cloud","unrelated-secret":"private"}
         }).as_object().unwrap().clone());
-        let before=state.get_value("electron-persisted-atom-state");
-        let fresh=auth(Some(json!("plus")));let rpc=Rpc::new(vec![fresh.clone(),account(),fresh]);
-        let result=service.work_home_preferences(request("owner-view"),&state,|method,params|rpc.call(method,params)).await.unwrap();
-        assert_eq!(result.request_id,"owner-view");assert_eq!(result.identity,identity());
-        assert_eq!(result.preferences["atoms"]["home-composer-mode-v1"],"work");
-        assert_eq!(result.preferences["unboundAtoms"],json!(["work-run-location-v1"]));
-        let serialized=serde_json::to_string(&result).unwrap();
-        assert!(!serialized.contains("private")&&!serialized.contains("authToken")&&!serialized.contains("cloud"));
-        assert_eq!(state.get_value("electron-persisted-atom-state"),before);
-        rpc.assert_calls();assert_eq!(rpc.calls.lock().unwrap().len(),3);
+        let before = state.get_value("electron-persisted-atom-state");
+        let fresh = auth(Some(json!("plus")));
+        let rpc = Rpc::new(vec![fresh.clone(), account(), fresh]);
+        let result = service
+            .work_home_preferences(request("owner-view"), &state, |method, params| {
+                rpc.call(method, params)
+            })
+            .await
+            .unwrap();
+        assert_eq!(result.request_id, "owner-view");
+        assert_eq!(result.identity, identity());
+        assert_eq!(result.preferences["atoms"]["home-composer-mode-v1"], "work");
+        assert_eq!(
+            result.preferences["unboundAtoms"],
+            json!(["work-run-location-v1"])
+        );
+        let serialized = serde_json::to_string(&result).unwrap();
+        assert!(
+            !serialized.contains("private")
+                && !serialized.contains("authToken")
+                && !serialized.contains("cloud")
+        );
+        assert_eq!(state.get_value("electron-persisted-atom-state"), before);
+        rpc.assert_calls();
+        assert_eq!(rpc.calls.lock().unwrap().len(), 3);
     }
 
     #[tokio::test]
     async fn work_home_snapshot_callback_stays_inside_authentication_and_retirement_fences() {
-        let service=ChatgptService::default();let read=AtomicBool::new(false);
-        let rpc=Rpc::new(vec![json!({"authMethod":"apikey"})]);
-        assert!(service.with_work_account_info(request("no-auth-state"),|method,params|rpc.call(method,params),|_|{
-            read.store(true,Ordering::SeqCst);Ok(Value::Null)
-        }).await.is_err());
-        assert!(!read.load(Ordering::SeqCst),"state is not read before fresh authentication succeeds");
-        for cancel in [false,true] {
-            let service=ChatgptService::default();let fresh=auth(None);let rpc=Rpc::new(vec![fresh.clone(),account(),fresh]);
-            let result=service.with_work_account_info(request("retire-state"),|method,params|rpc.call(method,params),|_|{
-                if cancel {service.cancel("retire-state");} else {service.invalidate();}
-                Ok(json!({"must-not-return":true}))
-            }).await;
-            assert!(result.is_err(),"retirement during the atomic state read cannot release its response");
+        let service = ChatgptService::default();
+        let read = AtomicBool::new(false);
+        let rpc = Rpc::new(vec![json!({"authMethod":"apikey"})]);
+        assert!(service
+            .with_work_account_info(
+                request("no-auth-state"),
+                |method, params| rpc.call(method, params),
+                |_, _| {
+                    read.store(true, Ordering::SeqCst);
+                    Ok(Value::Null)
+                }
+            )
+            .await
+            .is_err());
+        assert!(
+            !read.load(Ordering::SeqCst),
+            "state is not read before fresh authentication succeeds"
+        );
+        for cancel in [false, true] {
+            let service = ChatgptService::default();
+            let fresh = auth(None);
+            let rpc = Rpc::new(vec![fresh.clone(), account(), fresh]);
+            let result = service
+                .with_work_account_info(
+                    request("retire-state"),
+                    |method, params| rpc.call(method, params),
+                    |_, _| {
+                        if cancel {
+                            service.cancel("retire-state");
+                        } else {
+                            service.invalidate();
+                        }
+                        Ok(json!({"must-not-return":true}))
+                    },
+                )
+                .await;
+            assert!(
+                result.is_err(),
+                "retirement during the atomic state read cannot release its response"
+            );
         }
+    }
+
+    #[tokio::test]
+    async fn work_home_activate_fresh_auth_persists_and_returns_same_owner_readback() {
+        let root =
+            std::env::temp_dir().join(format!("work-service-activate-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("state.json");
+        let state = crate::state::DesktopStateManager::fixture_for_appshots_preferences(json!({
+            "electron-persisted-atom-state":{"work-run-location-v1":"local","unrelated-secret":"private",
+            "selected-project":{"projectId":"legacy"}}
+        }).as_object().unwrap().clone());
+        let service = ChatgptService::default();
+        let fresh = auth(Some(json!("plus")));
+        let rpc = Rpc::new(vec![fresh.clone(), account(), fresh]);
+        let ack = service
+            .work_home_activate_with(
+                request("activate"),
+                |method, params| rpc.call(method, params),
+                |identity, current| state.activate_work_home_fixture(identity, &path, current),
+            )
+            .await
+            .unwrap();
+        assert_eq!(ack.identity, identity());
+        assert_eq!(ack.request_id, "activate");
+        assert_eq!(ack.preferences["atoms"]["home-composer-mode-v1"], "work");
+        assert_eq!(ack.preferences["atoms"]["work-run-location-v1"], "local");
+        let disk: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(
+            disk[crate::appshots_preferences::owner_key(&identity()).unwrap()]
+                ["home-composer-mode-v1"],
+            "work"
+        );
+        assert_eq!(
+            state.work_home_preferences(&identity()).unwrap(),
+            ack.preferences
+        );
+        let text = serde_json::to_string(&ack).unwrap();
+        assert!(
+            !text.contains("unrelated-secret")
+                && !text.contains("private")
+                && !text.contains("authToken")
+        );
+        rpc.assert_calls();
+        assert_eq!(rpc.calls.lock().unwrap().len(), 3);
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_dir(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn work_home_activate_wrong_identity_or_precancel_never_reaches_persistence() {
+        let service = ChatgptService::default();
+        let called = AtomicBool::new(false);
+        let mut wrong = request("wrong-activate");
+        wrong.expected_identity.user_id = "foreign".into();
+        let rpc = Rpc::new(vec![auth(None)]);
+        let result = service
+            .work_home_activate_with(
+                wrong,
+                |method, params| rpc.call(method, params),
+                |_, _| {
+                    called.store(true, Ordering::SeqCst);
+                    panic!("wrong identity reached persistence")
+                },
+            )
+            .await;
+        assert_eq!(result.unwrap_err().code, "account_changed");
+        assert!(!called.load(Ordering::SeqCst));
+        service.cancel("cancel-activate");
+        let result = service
+            .work_home_activate_with(
+                request("cancel-activate"),
+                |_, _| async { panic!("precancel reached RPC") },
+                |_, _| {
+                    called.store(true, Ordering::SeqCst);
+                    panic!("precancel reached persistence")
+                },
+            )
+            .await;
+        assert_eq!(result.unwrap_err().code, "cancelled");
+        assert!(!called.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn work_home_activate_precommit_scope_changes_write_nothing_and_late_cancel_cannot_succeed(
+    ) {
+        for phase in ["cancel-before", "identity-before", "cancel-after"] {
+            let root =
+                std::env::temp_dir().join(format!("work-service-retire-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir(&root).unwrap();
+            let path = root.join("state.json");
+            let state = crate::state::DesktopStateManager::fixture_for_appshots_preferences(
+                serde_json::Map::new(),
+            );
+            let service = ChatgptService::default();
+            let fresh = auth(None);
+            let rpc = Rpc::new(vec![fresh.clone(), account(), fresh]);
+            let result = service
+                .work_home_activate_with(
+                    request("retire-activate"),
+                    |method, params| rpc.call(method, params),
+                    |identity, current| {
+                        if phase == "cancel-before" {
+                            service.cancel("retire-activate");
+                        }
+                        if phase == "identity-before" {
+                            service.invalidate();
+                        }
+                        let ack = state.activate_work_home_fixture(identity, &path, current)?;
+                        if phase == "cancel-after" {
+                            service.cancel("retire-activate");
+                        }
+                        Ok(ack)
+                    },
+                )
+                .await;
+            assert_eq!(
+                result.unwrap_err().code,
+                if phase == "identity-before" {
+                    "account_changed"
+                } else {
+                    "cancelled"
+                }
+            );
+            if phase == "cancel-after" {
+                assert!(
+                    path.exists(),
+                    "already committed local state is not falsely undone by late cancellation"
+                );
+                assert_eq!(
+                    state.work_home_preferences(&identity()).unwrap()["atoms"]
+                        ["home-composer-mode-v1"],
+                    "work"
+                );
+                std::fs::remove_file(&path).unwrap();
+            } else {
+                assert!(!path.exists());
+                assert_eq!(
+                    state.get_optional_value("codex-native-work-content-owner"),
+                    None
+                );
+            }
+            std::fs::remove_dir(root).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn work_home_activate_persist_failure_is_sanitized_and_does_not_change_memory() {
+        let service = ChatgptService::default();
+        let fresh = auth(None);
+        let rpc = Rpc::new(vec![fresh.clone(), account(), fresh]);
+        let error = service
+            .work_home_activate_with(
+                request("failed-write"),
+                |method, params| rpc.call(method, params),
+                |_, _| Err("private-path-and-token-must-not-cross".into()),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "work_preferences_write_failed");
+        assert!(!serde_json::to_string(&error)
+            .unwrap()
+            .contains("private-path"));
     }
 
     #[tokio::test]

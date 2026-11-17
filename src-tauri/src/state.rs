@@ -1427,6 +1427,30 @@ impl DesktopStateManager {
         crate::work_home_preferences::project(&snapshot, identity)
     }
 
+    pub(crate) fn activate_work_home<F>(&self, identity: &crate::chatgpt_service::ServiceIdentity, current: F) -> Result<Value, String>
+    where F: Fn() -> Result<(), String> {
+        self.activate_work_home_at_path(identity, &desktop_global_state_path(), current)
+    }
+
+    fn activate_work_home_at_path<F>(&self, identity: &crate::chatgpt_service::ServiceIdentity, path: &Path, current: F) -> Result<Value, String>
+    where F: Fn() -> Result<(), String> {
+        let mut guard = self.state_map.lock().map_err(|_| "Work 偏好写入线程不可用。")?;
+        current()?;
+        let next = crate::work_home_preferences::activate(&guard, identity)?;
+        current()?;
+        if next != *guard {
+            persist_state_map(&next, path)?;
+            *guard = next;
+        }
+        crate::work_home_preferences::project(&guard, identity)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn activate_work_home_fixture<F>(&self, identity: &crate::chatgpt_service::ServiceIdentity, path: &Path, current: F) -> Result<Value, String>
+    where F: Fn() -> Result<(), String> {
+        self.activate_work_home_at_path(identity, path, current)
+    }
+
     pub(crate) fn get_optional_value(&self, key: &str) -> Option<Value> {
         self.state_map.lock().unwrap().get(key).cloned()
     }

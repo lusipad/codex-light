@@ -210,6 +210,10 @@ try {
   Invoke-Step "Work preference native client pipeline" { node scripts/verify-work-home-state-client.mjs }
   Invoke-Step "Work selected-project and cloud compatibility" { node scripts/verify-work-project-access.mjs }
   Invoke-Step "Work execution assignment and effective settings" { node scripts/verify-work-execution-preparation.mjs }
+  Invoke-Step "Work capture destination and submission preparation" { node scripts/verify-work-home-preparation.mjs }
+  Invoke-Step "Work local request protocol builders" { node scripts/verify-work-local-request.mjs }
+  Invoke-Step "Deferred navigation continuation lifecycle" { node scripts/verify-navigation-continuation.mjs }
+  Invoke-Step "Work actual App home navigation" { node scripts/verify-work-home-app.mjs }
   Invoke-Step "Appshot native entry and scoped consumer lifecycle" { node scripts/verify-appshots-entry.mjs }
   Invoke-Step "Appshot actual Composer input registration" { node scripts/verify-appshot-composer-input.mjs }
   Invoke-Step "Appshot pending Composer presentation" { node scripts/verify-appshots-pending-presentation.mjs }

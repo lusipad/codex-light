@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, Play, Wrench, Bug, FlaskConical } from "luci
 import { environmentDraft, environmentDraftError, environmentFromDraft, environmentPlatforms, lifecyclePreview, listLocalEnvironments, readLocalEnvironment, saveLocalEnvironment, getLocalEnvironmentSelection, selectLocalEnvironment, localEnvironmentAction,
   type EnvironmentDraft, type EnvironmentSnapshot, type EnvironmentList, type EnvironmentSelection, type EnvironmentPlatform, type EnvironmentIcon } from "../localEnvironments";
 import { getEnvironmentRuntime, selectEnvironmentRuntime, environmentActionItems, environmentActionRequest, type EnvironmentActionRunRequest } from "../environmentActions";
+import { cancelNavigation, deferNavigation, takeNavigation, type NavigationAction } from "../navigationContinuation";
 import "./LocalEnvironmentSettings.css";
 
 type Project = { path: string; name: string };
@@ -29,7 +30,7 @@ export function LocalEnvironmentSettings({ cwd, projects, connectionIdentity = "
   const current = useRef(view); current.current = view;
   const currentContext = useRef(context); currentContext.current = context;
   const generation = useRef(0), detailRequest = useRef(0), mounted = useRef(false), operation = useRef(false), actionId = useRef(0);
-  const requests = useRef(new Map<string, number>()), pendingAction = useRef<(() => void) | null>(null);
+  const requests = useRef(new Map<string, number>()), pendingAction = useRef<NavigationAction | null>(null);
   const dialog = useRef<HTMLDialogElement>(null), keepEditing = useRef<HTMLButtonElement>(null), nameInput = useRef<HTMLInputElement>(null);
   const updateView = (next: View | null) => { current.current = next; setView(next); };
   const valid = (ticket: number, key: string) => mounted.current && generation.current === ticket && currentContext.current === key;
@@ -38,7 +39,7 @@ export function LocalEnvironmentSettings({ cwd, projects, connectionIdentity = "
   const guard: Guard = action => {
     if (operation.current) return false;
     if (!dirty()) return true;
-    pendingAction.current = action; setConfirmation(true); return false;
+    deferNavigation(pendingAction, action); setConfirmation(true); return false;
   };
   const navigate = (action: () => void) => { if (guard(action)) action(); };
   const back = () => navigate(() => { detailRequest.current++; updateView(null); setError(null); setMessage(null); setSelectionFailed(false); });
@@ -59,10 +60,10 @@ export function LocalEnvironmentSettings({ cwd, projects, connectionIdentity = "
     finally { if (valid(ticket, key) && request === detailRequest.current) setLoadingDetail(false); }
   };
   useEffect(() => {
-    mounted.current = true; generation.current++; detailRequest.current++; operation.current = false; setBusy(false); setLoadingDetail(false); setCatalogs({}); setError(null); setMessage(null); setConfirmation(false); pendingAction.current = null;
+    mounted.current = true; generation.current++; detailRequest.current++; operation.current = false; setBusy(false); setLoadingDetail(false); setCatalogs({}); setError(null); setMessage(null); setConfirmation(false); cancelNavigation(pendingAction);
     if (!dirty()) updateView(null);
     projectList.forEach(project => { void loadProject(project); });
-    return () => { mounted.current = false; generation.current++; detailRequest.current++; operation.current = false; };
+    return () => { mounted.current = false; generation.current++; detailRequest.current++; operation.current = false; cancelNavigation(pendingAction); };
   }, [context]);
   useEffect(() => { onNavigationGuardChange?.(guard); return () => onNavigationGuardChange?.(null); }, [context, onNavigationGuardChange]);
   useEffect(() => {
@@ -188,11 +189,11 @@ export function LocalEnvironmentSettings({ cwd, projects, connectionIdentity = "
         </section></>}
       {error && !view.snapshot && !view.editing && <><button type="button" className="secondary-btn" onClick={back}>返回</button>{view.requestedPath && <button type="button" className="secondary-btn" onClick={() => void loadDetail(view.project, view.requestedPath!)}>重试</button>}</>}
     </>}
-    <dialog ref={dialog} className="local-environment-discard" aria-labelledby="local-environment-discard-title" onCancel={event => { event.preventDefault(); setConfirmation(false); pendingAction.current = null; focusEditor(); }}>
+    <dialog ref={dialog} className="local-environment-discard" aria-labelledby="local-environment-discard-title" onCancel={event => { event.preventDefault(); setConfirmation(false); cancelNavigation(pendingAction); focusEditor(); }}>
       <h3 id="local-environment-discard-title">是否放弃本地环境草稿？</h3><p>你对该本地环境做出的所有更改都将丢失</p><div>
-        <button ref={keepEditing} type="button" className="secondary-btn" onClick={() => { setConfirmation(false); pendingAction.current = null; focusEditor(); }}>继续编辑</button>
-        <button type="button" className="secondary-btn" onClick={() => { const action = pendingAction.current; pendingAction.current = null; if (current.current) updateView({ ...current.current, editing: false, draft: null, initial: null }); setConfirmation(false); action?.(); }}>放弃</button>
-        <button type="button" className="primary-btn" disabled={busy || !!validation} onClick={async () => { const action = pendingAction.current; pendingAction.current = null; const ok = await save(); setConfirmation(false); if (ok) action?.(); }}>保存并继续</button>
+        <button ref={keepEditing} type="button" className="secondary-btn" onClick={() => { setConfirmation(false); cancelNavigation(pendingAction); focusEditor(); }}>继续编辑</button>
+        <button type="button" className="secondary-btn" onClick={() => { const action = takeNavigation(pendingAction); if (current.current) updateView({ ...current.current, editing: false, draft: null, initial: null }); setConfirmation(false); action?.(); }}>放弃</button>
+        <button type="button" className="primary-btn" disabled={busy || !!validation} onClick={async () => { const action = pendingAction.current; const ok = await save(); if (pendingAction.current !== action) return; const continuation = takeNavigation(pendingAction); setConfirmation(false); if (ok) continuation?.(); else continuation?.onCancelled?.(); }}>保存并继续</button>
       </div>
     </dialog>
   </div>;

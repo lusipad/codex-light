@@ -28,6 +28,10 @@ const react = {
 };
 const mod = { exports: {} };
 const MemorySettings = Symbol("MemorySettings");
+const navigation = {};
+vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/navigationContinuation.ts", "utf8"), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+}).outputText, { exports: navigation });
 vm.runInNewContext(ts.transpileModule(source, {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React, esModuleInterop: true },
 }).outputText, {
@@ -39,7 +43,7 @@ vm.runInNewContext(ts.transpileModule(source, {
       const handlers = hostListeners.get(name) || new Set(); hostListeners.set(name, handlers); handlers.add(handler);
       return () => { handlers.delete(handler); };
     },
-  } : name === "./MemorySettings" ? { MemorySettings } : name.endsWith(".css") ? {} : { ChevronRightIcon: () => null },
+  } : name === "./MemorySettings" ? { MemorySettings } : name === "../navigationContinuation" ? navigation : name.endsWith(".css") ? {} : { ChevronRightIcon: () => null },
   window: {
     addEventListener(name, handler) { const handlers = listeners.get(name) || new Set(); listeners.set(name, handlers); handlers.add(handler); },
     removeEventListener(name, handler) { listeners.get(name)?.delete(handler); },

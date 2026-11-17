@@ -32,6 +32,7 @@ function mount({ select = async () => snapshot, persist = async () => ({ errors:
     attachedFiles: [{ id: "draft", persisted: false }], activeRoute: "thread", activeThreadId: "old",
   };
   const context = {
+    setWorkHomeSession: value => { state.workHomeSession = value; },
     executionIdentityRef: { current: "account" },
     retireAppshotCapture: scope => calls.push(["retireAppshotCapture", scope]),
     worktreeCreationControllersRef: { current: new Map() },

@@ -1,5 +1,13 @@
 # 实施日志（按轮次）
 
+## 2026-11-17 — Work-local 实际主窗快照交接（R6）
+
+- 先补固定26.1111的capture/model与request来源；本轮重核6份清单，资源存在重叠，精确片段分别16/10/32/4/15/15，整包未重算。后续项目指令IzQ→aI→aR已取证，未冒充实现。
+- 实际App接独立Work N、显式模式保存、导航确认、真实项目/地点及目标input就绪；保首页草稿/附件/project/generation，不提前focus/intro。entry在原claim上计划过渡并调用原子handoff，错/丢ACK双tuple退役和有界CAS恢复，失败硬屏障，不重新注册或重拍原窗口。Work-cloud尚缺消费者；Work发送明确阻断普通Codex回退。
+- owner模式写仅显式操作触发，限定5个Work atom与首次legacy选择绑定，单锁clone/persist/commit，同值不写、失败不改内存、不把旧选择给新owner。取消若发生于真实落盘后返回取消，不假回滚。
+- 4设置叶子接deferred/cancel握手，确认、继续编辑、Escape、覆盖、卸载和保存失败都settle等待。审查发现云端发送中setActive会拒绝，已让真实setter返回结果并在Work导航前核验；实际hook及App回归通过。
+- 1083项Rust全库与27前端专项通过；扩大检查时补2个旧AST夹具的Work state默认输入，原断言保留。首次本地构建失败为本轮重复ServiceIdentity类型导入，修复并保失败日志，TSC重验0；夹具补齐后重新冻结1046输入，release EXE/MSI/NSIS退出0且前后hash稳定。候选`dist-artifacts/work-local-consumer-r6-20261117/CodexNative.exe`，SHA256 `89bb06c8624efe776710d8a35314c98a95b8122084b6c53ab75584af8df8176a`。完整标准/协议探针、真实HTTP/模型、原生GUI/IME/官方像素及用户验收未跑；不推送、不触发托管CI，整页与14批目标未完成。
+
 ## 2026-11-17 — Work owner/项目/执行producer与原子handoff宿主
 
 - 固定版取证先行：owner4资源16片段、项目3资源10片段、执行5资源32片段逐一核header/hash/exact slice，不重算整包、不将重叠资源相加。新owner读口复用fresh认证/取消，单锁白名单快照，legacy未绑定不假默认、不泄值、不迁移；保五atom、原项目placement和detail存在性。

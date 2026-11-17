@@ -15,7 +15,7 @@ export interface WorkOrchestrationCapabilityInput {
 export interface WorkLockdown { state: "disabled" | "loading" | "enabled"; loaded: boolean; error: boolean }
 export interface LocalWorkOrchestration {
   identity: ServiceIdentity; accountInfo: WorkAccountInfo; capability: CapabilityFlags | null;
-  lockdown: WorkLockdown; gates: { gate246: boolean | null; gate355: boolean | null }; missingInputs: string[];
+  lockdown: WorkLockdown; gates: { gate246: boolean | null; gate355: boolean | null; gate288: boolean | null }; missingInputs: string[];
 }
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
 const flags = (isCapable: boolean, isLoading = false, isError = false): CapabilityFlags => ({ isLoading, isError, isCapable });
@@ -76,8 +76,8 @@ export function projectWorkLockdown(query: WorkCapabilityQuery): WorkLockdown {
     loaded, error: query.isError || !loaded && !query.isLoading };
 }
 
-type Gates = { gate306: boolean | null; gate131: boolean | null; gate368: boolean | null; gate246: boolean | null; gate355: boolean | null };
-const unknownGates = (): Gates => ({ gate306: null, gate131: null, gate368: null, gate246: null, gate355: null });
+type Gates = { gate306: boolean | null; gate131: boolean | null; gate368: boolean | null; gate246: boolean | null; gate355: boolean | null; gate288: boolean | null };
+const unknownGates = (): Gates => ({ gate306: null, gate131: null, gate368: null, gate246: null, gate355: null, gate288: null });
 function decodeGates(bootstrap: unknown, identity: ServiceIdentity): Gates {
   if (!object(bootstrap) || typeof bootstrap.statsigPayload !== "string") return unknownGates();
   let payload: unknown; try { payload = JSON.parse(bootstrap.statsigPayload); } catch { return unknownGates(); }
@@ -92,7 +92,7 @@ function decodeGates(bootstrap: unknown, identity: ServiceIdentity): Gates {
     const entry = entries[key] ?? entries[String(hash)], value = object(entry) ? entry[format === "init-v2" ? "v" : "value"] : undefined;
     return typeof value === "boolean" ? value : null;
   };
-  return { gate306: gate("3063076119"), gate131: gate("1315865107"), gate368: gate("3683713372"), gate246: gate("2465577016"), gate355: gate("3559027740") };
+  return { gate306: gate("3063076119"), gate131: gate("1315865107"), gate368: gate("3683713372"), gate246: gate("2465577016"), gate355: gate("3559027740"), gate288: gate("2880010779") };
 }
 const changed = () => Object.assign(Error("读取期间 Work 能力账号、认证或套餐发生变化。"), { code: "account_changed" });
 function accountRoute(raw: unknown): string {
@@ -143,5 +143,5 @@ export async function readLocalWorkOrchestration(signal: AbortSignal): Promise<L
   const state = projectWorkLockdown(lockdown);
   if (!state.loaded) missingInputs.push("lockdown");
   return { identity: { ...identity }, accountInfo, capability: projected.capability, lockdown: state,
-    gates: { gate246: gates.gate246, gate355: gates.gate355 }, missingInputs };
+    gates: { gate246: gates.gate246, gate355: gates.gate355, gate288: gates.gate288 }, missingInputs };
 }

@@ -40,7 +40,8 @@ const client = { decodePublicProfile: shared.decodePublicProfile,
   loadAccountProfile: signal => { reads.push(signal); return read(signal); },
   updatePublicProfile: (edits, identity, signal) => { writes.push({ edits, identity, signal }); return write(edits, identity, signal); } };
 const core = load("src/publicProfileSettings.ts", { "./accountProfile": client, "./bridge": bridge, "./chatgptService": service });
-const { ProfileSettings } = load("src/components/ProfileSettings.tsx", { "../publicProfileSettings": core, "../bridge": bridge });
+const navigationModule = load("src/navigationContinuation.ts", {});
+const { ProfileSettings } = load("src/components/ProfileSettings.tsx", { "../navigationContinuation": navigationModule, "../publicProfileSettings": core, "../bridge": bridge });
 assert.deepEqual(JSON.parse(JSON.stringify(core.publicProfileEdits({ displayName: "A", bio: "old" }, { displayName: " A ", bio: "  " }))), { bio: "" });
 const nodes = node => node && typeof node === "object" ? [node, ...(node.children || []).flatMap(nodes)] : [];
 const text = node => typeof node === "string" ? node : (node?.children || []).map(text).join("");

@@ -22,7 +22,9 @@ function fixture() {
   const calls = [], captures = [], errors = [], listeners = new Map(), commits = [];
   let unmounted = false, unmountStateWrites = 0, renderStateWrites = 0, rendering = false, pausePassive = false;
   const config = { introAccepted: false, enabled: true, accept: null, access: null, claim: null,
-    configure: null, contexts: [], listen: null, stop: null, claimError: false, generation: 0, beforeLayout: null };
+    configure: null, contexts: [], handoff: null, handoffApplied: true, handoffAccepted: true,
+    listen: null, stop: null, claimError: false, generation: 0, beforeLayout: null };
+  let nativeContext = null;
   const react = {
     createElement: (type, props) => ({ type, props }),
     useRef(value) { const run = active, index = run.cursor++; return run.slots[index] ??= { current: value }; },
@@ -94,14 +96,27 @@ function fixture() {
             return config.accept ? config.accept.promise : true;
           }
           if (command === "appshots_entry_configure" || command === "appshots_entry_context") {
+            if (command === "appshots_entry_context") {
+              assert.ok(nativeContext, "context requires a real configured owner");
+              if (nativeContext.composer !== args.request.previousComposer || nativeContext.captureGeneration !== args.request.previousCaptureGeneration) throw Error("fixture previous context mismatch");
+            }
+            const { composer, captureGeneration, canAccept, isNewChat } = args.request;
+            nativeContext = { composer, captureGeneration, canAccept, isNewChat };
             const wait = command === "appshots_entry_configure" ? config.configure : config.contexts.shift();
             if (wait) {
               const override = await wait.promise;
               if (override !== undefined) return override;
             }
-            const { composer, captureGeneration, canAccept, isNewChat } = args.request;
             return { supported: true, registration: "ready", introAccepted: config.introAccepted,
               composer, captureGeneration, canAccept, isNewChat };
+          }
+          if (command === "appshots_entry_handoff") {
+            assert.equal(args.request.composer, nativeContext.composer); assert.equal(args.request.captureGeneration, nativeContext.captureGeneration);
+            const target = { composer: args.request.targetComposer, captureGeneration: args.request.targetCaptureGeneration,
+              canAccept: args.request.canAccept, isNewChat: args.request.isNewChat };
+            if (config.handoffApplied) nativeContext = target;
+            if (config.handoff) { const result = await config.handoff.promise; if (result !== undefined) return result; }
+            return { ...target, supported: true, registration: "ready", accepted: config.handoffAccepted, introAccepted: config.introAccepted };
           }
           if (command === "appshots_entry_decline") return true;
           assert.equal(command, "appshots_entry_stop");
@@ -174,6 +189,174 @@ const route = (id, patch = {}) => ({ type: "route", id, account, composer: "thre
 const captured = id => ({ type: "capture", id, account, composer: "thread:A", captureGeneration: 0, metadata: route(id).metadata,
   imageDataUrl: "data:image/png;base64,AA==", axTree: 'Window: "Actual title", App: "Editor"\nOffscreen' });
 const count = (fixture, command) => fixture.calls.filter(call => call.command === command).length;
+
+const workHandoff = fixture();
+workHandoff.setProps({ canAccept: false, composerInput: null,
+  readNewChatAccess: async () => true,
+  prepareNewChat: async () => ({ key: "work-handoff-plan", scope: "home:work", captureGeneration: 10,
+    activate: async () => {
+      workHandoff.setProps({ workContextKey: "work-handoff-plan", scope: "home:work", captureGeneration: 10, canAccept: false, isNewChat: true });
+      await Promise.resolve();
+      workHandoff.setProps({ canAccept: true }); return true;
+    } }),
+});
+await workHandoff.flush();
+assert.equal(workHandoff.calls.find(call => call.command === "appshots_entry_configure").args.request.workAllowed, true,
+  "independent Work access is configured separately from Appshots eligibility");
+workHandoff.emit(route("work-original", { route: "new-chat" })); await workHandoff.flush();
+assert.equal(count(workHandoff, "appshots_entry_claim"), 1, "new chat claims the original target even without an active input");
+assert.equal(count(workHandoff, "appshots_entry_handoff"), 1); assert.equal(count(workHandoff, "appshots_entry_context"), 0);
+assert.ok(workHandoff.intro, "intro starts only after actual Work input handoff ACK");
+workHandoff.intro.props.onAccept(); await workHandoff.flush();
+workHandoff.emit({ ...captured("work-original"), composer: "home:work", captureGeneration: 10 }); await workHandoff.flush();
+assert.equal(workHandoff.captures.length, 1); assert.equal(workHandoff.captures[0].context.bundleIdentifier, route("work-original").metadata.bundleIdentifier);
+assert.equal(count(workHandoff, "appshots_entry_configure"), 1); assert.equal(count(workHandoff, "appshots_entry_stop"), 1);
+workHandoff.unmount();
+
+function workFixture(options = {}) {
+  const f = fixture(), control = { readCalls: 0, prepareCalls: 0, activateCalls: 0, signal: null,
+    key: "planned-work", scope: "home:planned", generation: 5, allowed: true, activateResult: true, ...options };
+  f.setProps({ canAccept: false, composerInput: null,
+    readNewChatAccess: async (_identity, signal) => {
+      control.readCalls++; signal.throwIfAborted(); if (control.readError) throw Error("fixture Work unavailable"); return control.allowed;
+    },
+    prepareNewChat: async (_id, expected, signal) => {
+      control.prepareCalls++; control.signal = signal; assert.deepEqual(clone(expected), identity);
+      if (control.prepareGate) await control.prepareGate.promise;
+      if (control.prepareError) throw Error("fixture Work preparation failed");
+      return { key: control.key, scope: control.scope, captureGeneration: control.generation,
+        activate: async activeSignal => {
+          assert.equal(activeSignal, signal); control.activateCalls++;
+          if (control.originGate) {
+            f.setProps({ workContextKey: control.key, canAccept: false });
+            await control.originGate.promise;
+          }
+          f.setProps({ workContextKey: control.key, scope: control.scope, captureGeneration: control.generation, canAccept: false, isNewChat: true });
+          if (control.activateGate) await control.activateGate.promise;
+          return control.activateResult;
+        } };
+    },
+  });
+  return Object.assign(f, { control, ready() { f.setProps({ canAccept: true, composerInput: { element: f.input, scope: control.scope } }); } });
+}
+
+for (const options of [{ allowed: null }, { allowed: false }, { readError: true }]) {
+  const f = workFixture(options); f.setProps({ canAccept: true, composerInput: { element: f.input, scope: "thread:A" } });
+  f.config.introAccepted = true; await f.flush();
+  const configured = f.calls.find(call => call.command === "appshots_entry_configure").args.request;
+  assert.equal(configured.workAllowed, options.allowed === false ? false : null);
+  f.emit(route("unavailable-new-chat", { route: "new-chat" })); await f.flush();
+  assert.equal(f.control.prepareCalls, 0); assert.equal(count(f, "appshots_entry_claim"), 0);
+  f.emit(route("ordinary-still-works")); await f.flush(); f.emit(captured("ordinary-still-works")); await f.flush();
+  assert.equal(f.captures.length, 1, "unavailable Work access never disables ordinary current capture"); f.unmount();
+}
+const partialWork = fixture(); let partialReads = 0;
+partialWork.setProps({ readNewChatAccess: async () => { partialReads++; return true; } }); await partialWork.flush();
+assert.equal(partialReads, 0); assert.equal(partialWork.calls.find(call => call.command === "appshots_entry_configure").args.request.workAllowed, null); partialWork.unmount();
+
+const workBarrier = workFixture({ activateGate: deferred() }); workBarrier.config.handoff = deferred(); await workBarrier.flush();
+workBarrier.emit(route("work-barrier", { route: "new-chat" })); workBarrier.emit(route("work-barrier", { route: "new-chat" })); await workBarrier.flush();
+assert.equal(workBarrier.control.prepareCalls, 1); assert.equal(workBarrier.control.activateCalls, 1);
+assert.equal(workBarrier.intro, null); assert.equal(count(workBarrier, "appshots_entry_context"), 0);
+workBarrier.ready(); await workBarrier.flush(); assert.equal(count(workBarrier, "appshots_entry_handoff"), 0, "ready input alone cannot bypass pending activate ACK");
+workBarrier.control.activateGate.resolve(); await workBarrier.flush();
+assert.equal(count(workBarrier, "appshots_entry_handoff"), 1); assert.equal(workBarrier.intro, null, "intro waits for real handoff ACK");
+workBarrier.emit({ ...captured("work-barrier"), composer: workBarrier.control.scope, captureGeneration: workBarrier.control.generation }); await workBarrier.flush();
+assert.equal(workBarrier.captures.length, 0, "handoff is not capture acceptance");
+workBarrier.config.handoff.resolve(); await workBarrier.flush(); assert.ok(workBarrier.intro);
+workBarrier.intro.props.onAccept(); await workBarrier.flush();
+const acceptedWork = workBarrier.calls.find(call => call.command === "appshots_entry_accept").args.request;
+assert.deepEqual([acceptedWork.composer, acceptedWork.captureGeneration], [workBarrier.control.scope, workBarrier.control.generation]);
+workBarrier.emit({ ...captured("work-barrier"), composer: workBarrier.control.scope, captureGeneration: workBarrier.control.generation });
+workBarrier.emit({ ...captured("work-barrier"), composer: workBarrier.control.scope, captureGeneration: workBarrier.control.generation }); await workBarrier.flush();
+assert.equal(workBarrier.captures.length, 1); assert.equal(count(workBarrier, "appshots_entry_configure"), 1); assert.equal(count(workBarrier, "appshots_entry_stop"), 1); workBarrier.unmount();
+
+const sameHome = workFixture({ scope: "thread:A", generation: 0 }); await sameHome.flush();
+sameHome.emit(route("same-home", { route: "new-chat" })); await sameHome.flush();
+assert.equal(count(sameHome, "appshots_entry_handoff"), 0); sameHome.ready(); await sameHome.flush();
+assert.ok(sameHome.intro); assert.equal(count(sameHome, "appshots_entry_handoff"), 1);
+assert.equal(count(sameHome, "appshots_entry_context"), 0, "planned same-home key transition preserves the original native flight"); sameHome.unmount();
+
+const originTransition = workFixture({ originGate: deferred() }); await originTransition.flush();
+originTransition.emit(route("planned-origin", { route: "new-chat" })); await originTransition.flush();
+assert.equal(originTransition.control.signal.aborted, false); assert.equal(count(originTransition, "appshots_entry_context"), 0, "same plan key may wait on original tuple during mode preparation");
+originTransition.control.originGate.resolve(); await originTransition.flush();
+originTransition.setProps({ isNewChat: false }); originTransition.ready(); await originTransition.flush();
+assert.equal(count(originTransition, "appshots_entry_handoff"), 0, "target input must actually be the new-chat consumer");
+originTransition.setProps({ isNewChat: true }); await originTransition.flush(); assert.ok(originTransition.intro); originTransition.unmount();
+
+for (const failure of ["prepare", "activate-false", "unplanned-scope", "wrong-key", "identity", "unmount"]) {
+  const prepareGate = failure === "prepare" ? deferred() : null, activateGate = failure !== "prepare" ? deferred() : null;
+  const f = workFixture({ prepareGate, activateGate }); await f.flush();
+  f.emit(route(`cancel-${failure}`, { route: "new-chat" })); await f.flush(); assert.ok(f.control.signal);
+  if (failure === "prepare") f.setProps({ scope: "thread:unplanned" });
+  else if (failure === "activate-false") f.control.activateResult = false;
+  else if (failure === "unplanned-scope") f.setProps({ scope: "thread:unplanned" });
+  else if (failure === "wrong-key") f.setProps({ workContextKey: "not-the-plan" });
+  else if (failure === "identity") f.invalidate();
+  else f.unmountLayout();
+  if (failure !== "activate-false") assert.equal(f.control.signal.aborted, true, `${failure} aborts Work preparation at the commit/owner fence`);
+  prepareGate?.resolve(); activateGate?.resolve(); await f.flush();
+  assert.equal(count(f, "appshots_entry_handoff"), 0); assert.equal(count(f, "appshots_entry_accept"), 0); assert.equal(f.captures.length, 0);
+  if (!["identity", "unmount"].includes(failure)) assert.ok(count(f, "appshots_entry_decline") >= 1, "cancelled plan declines original opaque id");
+  f.unmount(); await f.flush(); assert.equal(f.unmountStateWrites, 0); assert.equal(f.listenerCount(), 0);
+}
+
+for (const failure of ["lost-ack", "wrong-ack", "unplanned-during-ack"]) {
+  const f = workFixture(); f.config.handoff = deferred(); await f.flush();
+  f.emit(route(`handoff-${failure}`, { route: "new-chat" })); await f.flush(); f.ready(); await f.flush();
+  assert.equal(count(f, "appshots_entry_handoff"), 1);
+  if (failure === "unplanned-during-ack") f.setProps({ scope: "thread:after-plan", workContextKey: null });
+  if (failure === "wrong-ack") f.config.handoff.resolve({ accepted: true, introAccepted: false, composer: "wrong", captureGeneration: 5, canAccept: true, isNewChat: true });
+  else f.config.handoff.reject(Error("fixture lost handoff ACK"));
+  await f.flush();
+  assert.ok(count(f, "appshots_entry_decline") >= 2, "unknown handoff completion checks both original and attempted tuples");
+  assert.equal(count(f, "appshots_entry_configure"), 1); assert.equal(count(f, "appshots_entry_stop"), 1, "handoff failure never recreates the native owner");
+  assert.equal(f.intro, null); assert.equal(f.captures.length, 0);
+  const scope = failure === "unplanned-during-ack" ? "thread:after-plan" : f.control.scope;
+  f.emit(route(`after-recovery-${failure}`, { composer: scope, captureGeneration: f.control.generation })); await f.flush();
+  assert.ok(f.intro, "only a real CAS recovery ACK re-enables the ordinary consumer"); f.unmount();
+}
+
+const blockedRecovery = workFixture(); blockedRecovery.config.handoff = deferred(); await blockedRecovery.flush();
+blockedRecovery.emit(route("blocked-recovery", { route: "new-chat" })); await blockedRecovery.flush(); blockedRecovery.ready(); await blockedRecovery.flush();
+const failedCas = deferred(); blockedRecovery.config.contexts.push(failedCas);
+blockedRecovery.config.handoff.reject(Error("fixture unknown handoff result")); await blockedRecovery.flush();
+failedCas.reject(Error("fixture cannot confirm target context")); await blockedRecovery.flush();
+const blockedClaims = count(blockedRecovery, "appshots_entry_claim");
+blockedRecovery.emit(route("unconfirmed-current", { composer: blockedRecovery.control.scope, captureGeneration: blockedRecovery.control.generation })); await blockedRecovery.flush();
+blockedRecovery.setProps({ scope: "thread:other" }); await blockedRecovery.flush();
+blockedRecovery.setProps({ scope: blockedRecovery.control.scope }); await blockedRecovery.flush();
+blockedRecovery.emit(route("unconfirmed-ABA", { composer: blockedRecovery.control.scope, captureGeneration: blockedRecovery.control.generation })); await blockedRecovery.flush();
+assert.equal(count(blockedRecovery, "appshots_entry_claim"), blockedClaims, "failed bounded CAS leaves a barrier that ordinary ABA cannot bypass");
+assert.equal(count(blockedRecovery, "appshots_entry_configure"), 1); assert.equal(count(blockedRecovery, "appshots_entry_stop"), 1); blockedRecovery.unmount();
+
+const abandonedWork = workFixture({ activateGate: deferred() }); await abandonedWork.flush();
+abandonedWork.emit(route("committed-plan", { route: "new-chat" })); await abandonedWork.flush();
+abandonedWork.abortedRender({ workContextKey: "abandoned-unplanned-key", contextKey: "abandoned-owner" });
+assert.equal(abandonedWork.control.signal.aborted, false, "discarded speculative navigation cannot abort a committed Work plan");
+abandonedWork.ready(); abandonedWork.control.activateGate.resolve(); await abandonedWork.flush();
+assert.ok(abandonedWork.intro); abandonedWork.unmount(); await abandonedWork.flush(); assert.equal(abandonedWork.unmountStateWrites, 0);
+
+const workOwnerRetired = workFixture(); workOwnerRetired.config.handoff = deferred(); await workOwnerRetired.flush();
+workOwnerRetired.emit(route("retired-owner-handoff", { route: "new-chat" })); await workOwnerRetired.flush(); workOwnerRetired.ready(); await workOwnerRetired.flush();
+workOwnerRetired.setProps({ contextKey: "new-actual-owner", scope: "thread:new", workContextKey: null }); await workOwnerRetired.flush();
+const recoveryBefore = count(workOwnerRetired, "appshots_entry_context"), stopsAfterNewOwner = count(workOwnerRetired, "appshots_entry_stop");
+workOwnerRetired.config.handoff.resolve(); await workOwnerRetired.flush();
+assert.equal(count(workOwnerRetired, "appshots_entry_context"), recoveryBefore, "old owner late handoff ACK never compensates over the new owner");
+assert.equal(count(workOwnerRetired, "appshots_entry_stop"), stopsAfterNewOwner); assert.equal(workOwnerRetired.intro, null); assert.equal(workOwnerRetired.captures.length, 0); workOwnerRetired.unmount();
+
+for (const duringAck of [false, true]) {
+  const f = workFixture(); if (duringAck) f.config.handoff = deferred(); await f.flush();
+  f.emit(route("epoch-retired", { route: "new-chat" })); await f.flush();
+  f.ready(); if (duringAck) await f.flush();
+  f.emit({ type: "retired", id: "epoch-retired" }); await f.flush();
+  if (duringAck) { f.config.handoff.resolve(); await f.flush(); }
+  assert.equal(f.intro, null); assert.equal(f.captures.length, 0); assert.equal(f.control.signal.aborted, true);
+  f.emit(route("after-epoch-current", { composer: f.control.scope, captureGeneration: f.control.generation })); await f.flush();
+  assert.ok(f.intro, "native flight retirement restores a real ordinary target context without reviving the retired id");
+  assert.equal(count(f, "appshots_entry_configure"), 1); assert.equal(count(f, "appshots_entry_stop"), 1); f.unmount();
+}
 
 const noInput = fixture(); noInput.setProps({ composerInput: null }); await noInput.flush();
 assert.equal(noInput.calls.find(call => call.command === "appshots_entry_configure").args.request.canAccept, false,
@@ -546,7 +729,11 @@ releaseNext(); assert.equal(registeredInput, null);
 const releaseUnmounted = registrarModule.exports.register(nextInput), writesBeforeUnmount = registrarWrites;
 mounted.current = false; releaseUnmounted(); assert.equal(registrarWrites, writesBeforeUnmount, "parent layout-unmount fence prevents child cleanup state writes");
 for (const [activeRoute, cloudActive, expected] of [["home", true, false], ["home", false, true], ["thread", true, true], ["cloud-draft", true, false], ["settings", false, false]]) {
-  assert.equal(vm.runInNewContext(canAccept.getText(appSource), { activeRoute, homeCloud: { active: cloudActive } }), expected,
+  assert.equal(vm.runInNewContext(canAccept.getText(appSource), { activeRoute, homeCloud: { active: cloudActive }, workHomeSession: null }), expected,
     `production ${activeRoute} consumer must respect cloud mode`);
 }
-console.log("Appshots entry: actual Composer lease wiring, DOM readiness and pre-observer/layout fences, observer release, abandoned owner/consumer renders, commit-before-passive and layout-unmount fences, zero render state writes, one owner registration, serialized real context ACKs, early matching route barrier, initial stop/listener/access/configure races, scope A10/B0/A10, consumer flag/generation retirement, synchronous pending commit, capture ranks, cancellation and one-time delivery, fresh qualification, identity/unmount abort and listener release passed (isolated bridge; no real service/model/native capture).");
+for (const [target, expected] of [[null, false], [{ location: "local" }, true], [{ location: "cloud" }, false]]) {
+  assert.equal(vm.runInNewContext(canAccept.getText(appSource), { activeRoute: "home", homeCloud: { active: false }, workHomeSession: { target } }), expected,
+    "production Work home only advertises the actually selected local capture consumer");
+}
+console.log("Appshots entry: independent Work access, planned/same-home handoff, activate/input/ACK barriers, cancellation and bounded real-CAS recovery, epoch retirement, original-target one-time delivery; actual Composer lease wiring, DOM/layout/abandoned-render fences, one owner registration, serial context ACKs, A10/B0/A10, pending capture ranks, identity/unmount abort and listener release passed (isolated bridge; no real service/model/native capture).");
