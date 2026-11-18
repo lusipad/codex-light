@@ -64,11 +64,15 @@ console.log("PASS old account Steer acknowledgement preserves new account scope"
 let interrupt;
 const findInterrupt=node=>{if(ts.isVariableDeclaration(node)&&node.name.getText(ast)==="handleInterruptTurn")interrupt=node.initializer.arguments[0].getText(ast);ts.forEachChild(node,findInterrupt)};findInterrupt(ast);assert.ok(interrupt);
 let interruptRequests=0;
-const interruptEnv={...env,activeRouteRef:{current:"cloud-draft"},activeThreadIdRef:{current:"a"},activeTurnIdRef:{current:"turn-a"},threadRequestRef:{current:1},setIsStreaming:()=>{throw Error("must await completion event")},callAppServer:async()=>{interruptRequests++;throw Error("interrupt timed out")}};
+const interruptEnv={...env,activeRouteRef:{current:"cloud-draft"},activeThreadIdRef:{current:"a"},activeTurnIdRef:{current:"turn-a"},threadRequestRef:{current:1},workActiveSend:{current:null},workSendPreparing:{current:null},pendingTurnIdRef:{current:null},setIsStreaming:()=>{throw Error("must await completion event")},callAppServer:async()=>{interruptRequests++;throw Error("interrupt timed out")}};
 let warnings=0;interruptEnv.showAppToast=()=>{warnings++};
 const stop=new Function(...Object.keys(interruptEnv),ts.transpileModule(`return (${interrupt});`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText)(...Object.values(interruptEnv));
 await stop();assert.equal(interruptRequests,0,"cloud draft must never interrupt a local turn");assert.equal(warnings,0);
 interruptEnv.activeRouteRef.current="thread";
 await stop();assert.equal(interruptRequests,1);assert.equal(warnings,1);
+const workSend=new AbortController(),workPreparation=new AbortController();
+interruptEnv.workActiveSend.current=workSend;interruptEnv.workSendPreparing.current=workPreparation;interruptEnv.pendingTurnIdRef.current="turn-a";
+await stop();assert.equal(workSend.signal.aborted,true);assert.equal(workPreparation.signal.aborted,true);assert.equal(interruptRequests,1,"a pending Work turn must not interrupt a different server turn");
+interruptEnv.workActiveSend.current=null;interruptEnv.workSendPreparing.current=null;
 interruptEnv.activeThreadIdRef.current=null;await stop();assert.equal(interruptRequests,1);assert.equal(warnings,1);
 console.log("PASS interrupt errors are visible without faking turn completion");
