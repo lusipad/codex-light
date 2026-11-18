@@ -173,7 +173,7 @@ pub async fn open_thread_window(
     app.state::<ThreadWindowState>().register(&label)?;
     app.state::<crate::AppState>().terminal.reopen_owner(&label);
     let window = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(url.into()))
-        .title("Codex")
+        .title("Codex Light")
         .inner_size(1440.0, 920.0)
         .min_inner_size(960.0, 640.0)
         .resizable(true)

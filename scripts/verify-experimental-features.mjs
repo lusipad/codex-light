@@ -90,7 +90,7 @@ assert.equal(saves, 1, "synchronous lock prevents double submit before rerender"
 render(true); assert.equal(checkbox().props.disabled, true);
 release({ enabled: true, overridden: false }); await first; render(true);
 assert.equal(checkbox().props.checked, true);
-assert.match(JSON.stringify(tree), /重启 Codex Native/);
+assert.match(JSON.stringify(tree), /重启 Codex Light/);
 save = async () => { throw Error("readback unavailable"); };
 await checkbox().props.onChange(); render(true);
 assert.equal(checkbox().props.disabled, true);

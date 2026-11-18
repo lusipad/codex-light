@@ -364,7 +364,7 @@ pub fn build_app_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> 
         "Help",
         true,
         &[
-            &item(app, "about", "About Codex Native", None)?,
+            &item(app, "about", "About Codex Light", None)?,
             &item(app, "open-config-toml", "Open config.toml", None)?,
         ],
     )?;
@@ -386,15 +386,15 @@ pub fn build_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let tray_menu = Menu::with_items(
         app,
         &[
-            &item(app, "tray-open", "Open Codex", None)?,
+            &item(app, "tray-open", "Open Codex Light", None)?,
             &item(app, "tray-new-chat", "New Chat", None)?,
             &PredefinedMenuItem::separator(app)?,
-            &item(app, "tray-quit", "Quit Codex", None)?,
+            &item(app, "tray-quit", "Quit Codex Light", None)?,
         ],
     )?;
 
     let mut builder = TrayIconBuilder::with_id(TRAY_ICON_ID)
-        .tooltip("Codex Native")
+        .tooltip("Codex Light")
         .menu(&tray_menu)
         .show_menu_on_left_click(false)
         .on_tray_icon_event(|tray, event| {

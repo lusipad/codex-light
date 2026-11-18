@@ -1,4 +1,4 @@
-# 开发交接：Codex Native
+# 开发交接：Codex Light
 
 更新时间：2026-10-27（Asia/Shanghai）。工作目录：`D:\Repos\codex-desktop-native`。
 
@@ -17,7 +17,7 @@
 ## 2. Git 与未提交工作
 
 - 当前分支：`master`。
-- 远端：`https://github.com/lusipad/codex-desktop-native.git`。
+- 远端：`https://github.com/lusipad/codex-light.git`。
 - 最近提交：`380c32c7b6e3d1ce6cabcf49c7b5ca07b1b76ec7`，`Preserve user intent while aligning desktop conversation behavior`。
 - 上述提交已按用户要求推送。编写本文前，`HEAD...origin/master` 为 `0 0`；这是本地远端跟踪引用的状态，后续推送前仍需 fetch。
 - 最近两轮修复在该提交之后；不要 reset、checkout 覆盖或误当成可丢弃的工作。

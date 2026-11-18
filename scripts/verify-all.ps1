@@ -1,5 +1,5 @@
 #!/usr/bin/env pwsh
-# One-shot verification for codex-desktop-native.
+# One-shot verification for codex-light.
 #
 #   pwsh -NoProfile -File ./scripts/verify-all.ps1           # full verification
 #   pwsh -NoProfile -File ./scripts/verify-all.ps1 -Fast     # skip protocol probes

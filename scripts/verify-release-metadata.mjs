@@ -4,6 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
+const app = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json', 'utf8'));
+assert.equal(app.identifier, 'com.codex.native.tauri', 'Keep the existing application data identity across renames');
+assert.equal(app.bundle.windows.wix.upgradeCode.toLowerCase(), '8dddee38-dad1-57eb-b04f-85cc566678c1', 'Keep the upgrade code from the original Windows MSI');
+
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-release-metadata-'));
 const output = path.join(dir, 'outputs');
 const script = path.resolve('scripts/prepare-github-release.mjs');

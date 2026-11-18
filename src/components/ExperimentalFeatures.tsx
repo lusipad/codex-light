@@ -40,8 +40,8 @@ export function ExperimentalFeatures({ connected }: { connected: boolean }) {
       if (version !== generation.current) return;
       setFeatures(previous => previous.map(item => item.name === feature.name ? { ...item, enabled: result.enabled } : item));
       setNotice(result.overridden
-        ? "已保存，但当前值被其他配置层覆盖。重启 Codex Native 以应用实验功能更改。"
-        : "重启 Codex Native 以应用实验功能更改。");
+        ? "已保存，但当前值被其他配置层覆盖。重启 Codex Light 以应用实验功能更改。"
+        : "重启 Codex Light 以应用实验功能更改。");
     } catch (error) {
       if (version === generation.current) { setError(String(error)); setReady(false); }
     } finally {

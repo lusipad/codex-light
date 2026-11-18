@@ -417,7 +417,7 @@ impl AppServerManager {
         let init_params = json!({
             "clientInfo": {
                 "name": "codex-tauri-native",
-                "title": "Codex Native (Tauri)",
+                "title": "Codex Light",
                 "version": "0.1.0"
             },
             "capabilities": {

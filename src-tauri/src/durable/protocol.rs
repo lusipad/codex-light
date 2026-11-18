@@ -11,7 +11,7 @@ pub(super) fn initialize() -> Value {
         "id":"__codex_initialize__",
         "method":"initialize",
         "params":{
-            "clientInfo":{"name":"codex-tauri-native","title":"Codex Native","version":env!("CARGO_PKG_VERSION")},
+            "clientInfo":{"name":"codex-tauri-native","title":"Codex Light","version":env!("CARGO_PKG_VERSION")},
             "capabilities":serde_json::from_str::<Value>(include_str!("capabilities.json")).expect("bundled initialize capabilities")
         }
     })

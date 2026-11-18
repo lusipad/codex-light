@@ -86,7 +86,7 @@ function mount(accountInfo, overrides = {}) {
 
 const chat = mount({ account: { type: "chatgpt", email: "parity@example.invalid", planType: "plus" }, requiresOpenaiAuth: true });
 assert.ok(text(chat.menu()).includes("parity@example.invalid"), "profile must use real account/read identity");
-assert.ok(!text(chat.menu()).includes("Codex Native"));
+assert.ok(!text(chat.menu()).includes("Codex Light"));
 assert.ok(!text(chat.menu()).includes("app-server"));
 assert.ok(text(chat.menu()).includes("使用情况"));
 for (const [type, label] of [["apiKey", "已通过 API 密钥登录"], ["amazonBedrock", "已使用 Amazon Bedrock 登录"]]) {
@@ -97,7 +97,7 @@ for (const [type, label] of [["apiKey", "已通过 API 密钥登录"], ["amazonB
 for (const info of [null, { account: null, requiresOpenaiAuth: true }]) {
   const view = mount(info);
   assert.ok(text(view.menu()).includes("设置"));
-  assert.ok(!text(view.menu()).includes("Codex Native"));
+  assert.ok(!text(view.menu()).includes("Codex Light"));
   assert.ok(!text(view.menu()).includes("使用情况"));
 }
 const disconnected = mount(chat.props.accountInfo, { appServerConnected: false });

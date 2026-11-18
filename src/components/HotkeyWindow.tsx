@@ -22,7 +22,7 @@ export interface HotkeyWindowProps {
 }
 
 export const HotkeyWindow: React.FC<HotkeyWindowProps> = ({
-  threadId, turns, isStreaming, loading, error, native = false, title = "Codex", notice, composer, approvals, onNewChat, onClose, onOpenMainApp,
+  threadId, turns, isStreaming, loading, error, native = false, title = "Codex Light", notice, composer, approvals, onNewChat, onClose, onOpenMainApp,
 }) => {
   const dialogRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -34,7 +34,7 @@ export const HotkeyWindow: React.FC<HotkeyWindowProps> = ({
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ block: "nearest" }); }, [turns, isStreaming]);
 
   return (
-    <div ref={dialogRef} className={`hotkey-window-container${native ? " native" : ""}`} role="dialog" aria-modal="true" aria-label="Codex 快捷提问窗口"
+    <div ref={dialogRef} className={`hotkey-window-container${native ? " native" : ""}`} role="dialog" aria-modal="true" aria-label="Codex Light 快捷提问窗口"
       data-thread-id={threadId ?? undefined} onKeyDown={event => {
         if (event.defaultPrevented || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
         if (event.key === "Escape" && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
@@ -54,7 +54,7 @@ export const HotkeyWindow: React.FC<HotkeyWindowProps> = ({
         {native && threadId && <div className="hotkey-header-left">
           <button type="button" className="hotkey-btn-icon" onClick={onClose} title="关闭弹出窗口" aria-label="关闭弹出窗口"><CloseIcon size={13} /></button>
         </div>}
-        <span className="hotkey-brand-badge">{native && threadId ? <strong title={title}>{title}</strong> : <><SparklesIcon size={13} /><strong>Codex</strong></>}</span>
+        <span className="hotkey-brand-badge">{native && threadId ? <strong title={title}>{title}</strong> : <><SparklesIcon size={13} /><strong>Codex Light</strong></>}</span>
         <div className="hotkey-header-right">
           <button type="button" className="hotkey-btn-icon" onClick={onNewChat} title="开始新对话" aria-label="开始新对话"><MessagePlusIcon size={13} /></button>
           <button type="button" className="hotkey-btn-icon" onClick={onOpenMainApp} title="在主窗口中打开" aria-label="在主窗口中打开"><ExternalWindowIcon size={13} /></button>

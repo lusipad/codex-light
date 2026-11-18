@@ -2785,7 +2785,7 @@ pub fn run() {
             Ok(None) => return,
             Err(error) => {
                 eprintln!("应用实例启动失败：{error}");
-                rfd::MessageDialog::new().set_title("无法启动 Codex")
+                rfd::MessageDialog::new().set_title("无法启动 Codex Light")
                     .set_description(&error).set_level(rfd::MessageLevel::Error).show();
                 return;
             }

@@ -103,7 +103,7 @@ static hstring tag_for(hstring const& id) {
 static void register_identity(const wchar_t* executable, const wchar_t* shortcut) {
     auto link = create_instance<IShellLinkW>(CLSID_ShellLink);
     check_hresult(link->SetPath(executable));
-    check_hresult(link->SetDescription(L"Codex Native"));
+    check_hresult(link->SetDescription(L"Codex Light"));
     auto store = link.as<IPropertyStore>();
     PROPVARIANT value;
     check_hresult(InitPropVariantFromString(app_id.c_str(), &value));

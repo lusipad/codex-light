@@ -75,7 +75,7 @@ const MENU_SECTIONS: Array<{ id: string; label: string; entries: MenuEntry[] }> 
     entries: [
       { type: "item", id: "documentation", label: "文档" },
       { type: "item", id: "open-config-toml", label: "打开 config.toml" },
-      { type: "item", id: "about", label: "关于 Codex Native" },
+      { type: "item", id: "about", label: "关于 Codex Light" },
     ],
   },
 ];

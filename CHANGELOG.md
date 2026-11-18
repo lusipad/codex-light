@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to **Codex Native** (Tauri v2 + React 19 + Rust) are documented here.
+All notable changes to **Codex Light** (Tauri v2 + React 19 + Rust) are documented here.
 
 ## v0.1.0 — 2026-10-23
 

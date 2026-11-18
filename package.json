@@ -1,5 +1,5 @@
 {
-  "name": "codex-tauri",
+  "name": "codex-light",
   "private": true,
   "version": "0.2.0",
   "description": "High-performance native Tauri v2 + React 19 client for OpenAI Codex App-Server",

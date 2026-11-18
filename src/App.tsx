@@ -6088,7 +6088,7 @@ export const App: React.FC = () => {
       return;
     }
     if (command === "about") {
-      showAppToast("Codex Native · Tauri v2 + React 19 · 对标官方 Codex App", "info");
+      showAppToast("Codex Light · Tauri v2 + React 19 · 对标官方 Codex App", "info");
       return;
     }
     if (command === "open") {
@@ -7061,7 +7061,7 @@ export const App: React.FC = () => {
     return <>
       <HotkeyWindow
         native
-        title={activeWorkspace?.label || activeThreadObj?.name || "Codex"}
+        title={activeWorkspace?.label || activeThreadObj?.name || undefined}
         threadId={activeThreadId}
         turns={turns}
         isStreaming={isStreaming}

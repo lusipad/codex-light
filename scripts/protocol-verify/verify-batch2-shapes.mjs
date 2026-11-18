@@ -78,7 +78,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 try {
   const init = await rpc("initialize", {
-    clientInfo: { name: "codex-tauri-native", title: "Codex Native (Tauri)", version: "0.1.0" },
+    clientInfo: { name: "codex-tauri-native", title: "Codex Light", version: "0.1.0" },
     capabilities: { experimentalApi: true, requestAttestation: false },
   });
   record("initialize (isolated home)", !init.error, errText(init));

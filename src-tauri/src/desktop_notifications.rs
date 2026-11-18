@@ -201,7 +201,7 @@ mod platform {
             let executable = std::env::current_exe().map_err(|error| error.to_string())?;
             unsafe { codex_notification_callback(event); }
             call(json!({"command":"initialize", "appId":app.config().identifier,
-                "executable":executable, "shortcut":directory.join("Codex Native Notifications.lnk")})).map(|_| ())
+                "executable":executable, "shortcut":directory.join("Codex Light Notifications.lnk")})).map(|_| ())
         }).clone()
     }
 }

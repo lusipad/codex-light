@@ -1,9 +1,10 @@
-# Codex Native (Tauri v2 + React 19 + Rust)
+# Codex Light
 
-[![CI Build & Release](https://github.com/lusipad/codex-desktop-native/actions/workflows/ci.yml/badge.svg)](https://github.com/lusipad/codex-desktop-native/actions/workflows/ci.yml)
+[![CI Build & Release](https://github.com/lusipad/codex-light/actions/workflows/ci.yml/badge.svg)](https://github.com/lusipad/codex-light/actions/workflows/ci.yml)
 
-基于 [`codex-app-offline`](../README.md) 协议与能力契约重写的全功能、轻量化原生 **Codex 桌面客户端**。
-对标本机官方 **Codex App（Electron）** 的 Codex 模式基线能力（不含 ChatGPT 云端专属：Artifacts/云浏览器/实时语音/计费团队等）。
+Codex Light 是基于 Tauri、React 和 Rust 的 Windows 原生客户端，通过 `codex app-server` 工作，目标是与官方 Codex App 的功能和交互保持一致。
+
+从旧版 Codex Native 迁移时，MSI 用户可继续使用 MSI 安装包。如果旧版使用 `-setup.exe`（NSIS）安装，请先退出并卸载旧版，保持「删除应用数据」未勾选，再安装 Codex Light。
 
 > **阶段性交付报告：[docs/FINAL-REPORT.md](docs/FINAL-REPORT.md)**。对标差距分析、官方功能面清单与逐轮实施记录：
 > [`docs/CODEX-APP-PARITY-GAP.md`](docs/CODEX-APP-PARITY-GAP.md) ｜

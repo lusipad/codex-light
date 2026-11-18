@@ -49,7 +49,7 @@ function sessionPeer(socket) {
       assert.equal(typeof message.id, "string");
       assert.equal(message.jsonrpc, undefined);
       assert.equal(message.params.clientInfo.name, "codex-tauri-native");
-      assert.equal(message.params.clientInfo.title, "Codex Native");
+      assert.equal(message.params.clientInfo.title, "Codex Light");
       assert.ok(message.params.clientInfo.version);
       const caps = message.params.capabilities;
       assert.equal(caps.requestAttestation, true);
