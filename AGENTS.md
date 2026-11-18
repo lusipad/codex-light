@@ -1,10 +1,12 @@
-# 项目协作与 Codex App 对齐约定
+# Codex Light 项目协作与官方 Codex App 对齐约定
 
 适用范围：本仓库全部文件。所有面向用户的回复必须使用中文。
 
-当前复刻纠偏执行入口：[Antigravity 详细执行计划](docs/antigravity/README.md)。接手时先阅读其首页逐控件规格、动作合同和分层验收标准；旧“全批次自验完成”记录保留为待复核声明，不自动放行后续页面。本计划发布不表示已执行或已验收。
+接手时先读[完整复刻总计划](docs/FULL-REPLICA-PLAN.md)。阶段顺序、依赖和验收门槛由总计划维护；逐控件规格、动作合同与证据格式见[Antigravity 执行资料](docs/antigravity/README.md)。
 
-当前优先级（2026-11-16）：[完整复刻总计划](docs/FULL-REPLICA-PLAN.md)为阶段顺序、依赖和验收门槛的唯一总入口，[功能缺口清单](docs/PRODUCT-GAP-INVENTORY-20261116.md)为现状依据。先R0/R1插件整页合同及Computer Use/Appshots/浏览器/Sites宿主可行性，再按R2–R9执行。首页01H仍未验收，保留成果与缺口，不用局部修补代表全软件进度；旧整页/全页面记录保留方法与历史。缺能力不造替代界面或默认扩大远端写链；功能、界面、原生与用户验收分别记录。
+2026-11-18 的优先级是 Windows 本地工作流与设置分区。继续设置界面前，先读[工作台原生实测](docs/antigravity/acceptance/11-local-workbench-native.md)、[设置原生走查](docs/antigravity/acceptance/16-settings-native-coverage.md)和当前分区的官方对照记录。[功能缺口清单](docs/PRODUCT-GAP-INVENTORY-20261116.md)保留 11 月 16 日的盘点结果。按单元分别记录功能、界面、原生与用户验收。
+
+首页 01H 仍待验收，旧“全批次自验完成”记录仍需逐项复核。启动页面开发前，阅读对应逐控件规格、动作合同和分层验收标准。缺少宿主能力时记录缺口，禁止以替代界面冒充可用功能或默认扩大远端写入范围。
 
 ## 1. 项目目标与完成口径
 
@@ -13,7 +15,7 @@
 目标是对固定版本的官方 Windows Codex App 达到可观察的功能、交互、数据结果和像素界面一致。Electron 与 Tauri 内部实现可以不同，外部行为必须有对照证据。
 
 - 先功能文档调研，再开发；禁止先凭印象实现，再补依据。
-- 按页面/验收单元推进，顺序与范围见 [逐页计划](docs/PAGE-PARITY-PLAN.md)。设置按分区单独验收。
+- 按总计划确定工作顺序，按[逐页计划](docs/PAGE-PARITY-PLAN.md)定位页面编号和验收范围。设置按分区单独验收。
 - 同时检查功能、视觉、原生行为。路由存在、接口可调用、构建成功均不等于完成 1:1。
 - 未解释的差异必须登记；未实测、服务受限、账号不支持的功能不能标为通过。
 - 不以模拟回复、固定计时器、演示数据、本地占位结果冒充真实执行、上传、生成或部署成功。
@@ -59,7 +61,7 @@
 
 优先阅读：
 
-1. `docs/PAGE-PARITY-PLAN.md`：当前逐页工作队列和验收流程。
+1. `docs/FULL-REPLICA-PLAN.md`：当前工作队列。`docs/PAGE-PARITY-PLAN.md`：页面编号与验收流程。
 2. `docs/research/codex-app-full-surface.md`：已有官方页面与能力总表。
 3. `docs/research/home-shell-composer-parity.md`：首页和 Composer 已有证据与限制。
 4. 当前页面对应的调研文档、源码、测试及历史实施记录。
@@ -200,7 +202,7 @@ git diff --check
 ```
 
 - 先运行与改动直接相关的回归；页面交付前运行完整标准检查及原生、视觉验收。
-- 当前 `verify-all.ps1` 的 Rust 单测使用 `automations` 过滤，并非全部 Rust 测试；修改其他 Rust 模块需补跑相应测试或全量 `cargo test`。
+- `verify-all.ps1` 按模块运行 Rust 回归，包括自动化、Git、工作树与终端。需要全库结果时单独运行未加过滤条件的 `cargo test --locked --manifest-path src-tauri/Cargo.toml`。
 - `-Fast` 跳过协议探针，不能报告为协议验证通过。
 - 标准脚本不包含完整原生 UI、视觉回归和事件回放，不能用 `ALL CHECKS PASSED` 代表整页完成。
 - 协议写验证使用隔离 `CODEX_HOME` 和测试目录，不修改真实 `~/.codex` 或真实账号数据。

@@ -7,4 +7,4 @@
 - TypeScript、117 项发布回放及 EXE、MSI、NSIS 构建通过。EXE SHA-256 为 `ecda202b2b85fb102c609c4130b9d5fd74512d806647b59e4c73f41ead2d7cd8`。原始定位、启动和磁盘证据位于 `.ref/parity/10/actual/scheduled-open-run-read/`。
 - 本地 `verify-all.ps1 -Fast` 执行 319 步，314 通过、5 失败，退出码 1，协议探针跳过。语音、聊天分页、工作区刷新、Composer 跟进键盘和归档用例均在以 `55dac6f` 产品源码重放时复现。失败日志和基线复跑保存在同一证据目录。
 
-官方同环境像素对照、完整历史运行列表及聊天内任务面板待验。远端 Windows 作业因账户付款或支出上限未启动，发布以对应提交的远端 CI 成功为准。[作业记录](https://github.com/lusipad/codex-desktop-native/actions/runs/42511523252)
+官方同环境像素对照、完整历史运行列表及聊天内任务面板待验。远端 Windows 作业因账户付款或支出上限未启动，发布以对应提交的远端 CI 成功为准。[作业记录](https://github.com/lusipad/codex-light/actions/runs/42511523252)

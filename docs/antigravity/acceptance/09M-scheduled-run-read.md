@@ -6,4 +6,4 @@
 - 前端回放验证新字段的去重、旧后端缺字段以及 Tauri 命令参数与响应校验。全库 725 项 Rust 和 117 项前端回放通过。发布元数据与 Windows 通知适配器检查通过。
 - Windows EXE、MSI、NSIS 打包通过。使用该 EXE 在隔离目录触发两次任务，原生调度器收到离线夹具的完成事件后，两条聊天均保存独立的完成时间，初始已读时间为空。未调用真实模型。EXE SHA-256 为 `a9024f5679d85caa873b057a409cc23900573de81f9ecbb318700caad9f63fb9`。证据位于 `.ref/parity/09/actual/09M-run-read/`。
 
-本阶段为本地数据及接口。活动页尚未调用该回执，回执写入由 Rust 测试验证。官方跨账号作用域、配对视觉验收和完整协议探针仍待验证。GitHub Windows 作业因账户付款或支出上限未启动，发布等待对应提交的远端 CI 成功。[作业记录](https://github.com/lusipad/codex-desktop-native/actions/runs/42511523252)
+本阶段为本地数据及接口。活动页尚未调用该回执，回执写入由 Rust 测试验证。官方跨账号作用域、配对视觉验收和完整协议探针仍待验证。GitHub Windows 作业因账户付款或支出上限未启动，发布等待对应提交的远端 CI 成功。[作业记录](https://github.com/lusipad/codex-light/actions/runs/42511523252)

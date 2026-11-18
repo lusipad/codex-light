@@ -6,4 +6,4 @@
 - 最终 Windows EXE 在隔离 app-server 中归档 12 条聊天，其中首项已读。提示在工具下一次点击前消失，原生撤销点击仍待验。随后用同一私有数据库和 CLI 0.165.0 执行生产回调回放，获得 12 条真实取消归档回执，首条已读聊天回到原位置。SQLite 复核 12 条会话、0 条归档、11 条未读、0 模型用量。回放替代了 Tauri 调用边界，置顶写入仍由既有生产回归覆盖。
 - 最终 117 项前端回放、TypeScript 和 Windows EXE、MSI、NSIS 打包通过。测试 EXE SHA-256 为 `700292641fc5fd518be899ff12fff0e123634f2c746fdced1373b03e4f2233d2`。证据位于 `.ref/parity/09/actual/09G-activity-undo/`。
 
-官方全局撤销与重做、原生撤销点击、同环境像素和用户验收待补。本阶段未重跑 Rust 全库和完整协议探针。远端 Windows 作业仍因账户付款或支出上限未启动。[GitHub Actions 记录](https://github.com/lusipad/codex-desktop-native/actions/runs/42511523252)
+官方全局撤销与重做、原生撤销点击、同环境像素和用户验收待补。本阶段未重跑 Rust 全库和完整协议探针。远端 Windows 作业仍因账户付款或支出上限未启动。[GitHub Actions 记录](https://github.com/lusipad/codex-light/actions/runs/42511523252)

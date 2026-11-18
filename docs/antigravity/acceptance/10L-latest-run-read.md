@@ -6,4 +6,4 @@
 - 原生隔离测试预置三条共享聊天的完成记录。打开列表未写回执。首次打开详情时注入文件写入失败，页面显示拒绝访问，状态文件哈希相同。解除故障并重开，只给该任务的最新运行写入已读时间，同任务较早运行和另一任务的运行保持未读。重启并重新打开详情后，回执时间保持原值。测试没有发起模型轮次。
 - 726 项 Rust、123 项前端发布回放、发布元数据和 Windows EXE、MSI、NSIS 打包通过。EXE SHA-256 为 `d8a2a5c0811aead9226a3386253f3048024125dc27ce8bff0f931be047bdda2b`。原始资料与验证日志保存在 `.ref/parity/10/actual/10L-latest-run-read/`。
 
-本阶段对齐本地详情已读行为，完整持久运行历史、标准脚本及协议探针和官方配对像素仍待验。GitHub Windows 作业因账户付款或支出上限未启动，发布仍等待对应提交的远端 CI 成功。[作业记录](https://github.com/lusipad/codex-desktop-native/actions/runs/42511523252)
+本阶段对齐本地详情已读行为，完整持久运行历史、标准脚本及协议探针和官方配对像素仍待验。GitHub Windows 作业因账户付款或支出上限未启动，发布仍等待对应提交的远端 CI 成功。[作业记录](https://github.com/lusipad/codex-light/actions/runs/42511523252)

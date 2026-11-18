@@ -13,4 +13,4 @@
 
 官方同环境配对截图、窄窗对照、官方运行时入口条件和用户验收待补。活动分组开关、清除已读、批量归档及远端会话仍在队列。此次复用通用弹层样式，官方菜单宽度与图标待配对校准。完整标准协议探针未在本阶段重跑。
 
-GitHub 最近的 Windows 作业仍因账户付款或支出上限未能启动。阶段提交保留在本地，发版等待对应提交的远端 Windows CI 通过。[GitHub Actions 记录](https://github.com/lusipad/codex-desktop-native/actions/runs/42511523252)
+GitHub 最近的 Windows 作业仍因账户付款或支出上限未能启动。阶段提交保留在本地，发版等待对应提交的远端 Windows CI 通过。[GitHub Actions 记录](https://github.com/lusipad/codex-light/actions/runs/42511523252)

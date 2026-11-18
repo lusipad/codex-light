@@ -10,7 +10,7 @@
 
 ## 原生对象与身份
 
-- 当前 EXE 注册本产品独立 AUMID（Tauri identifier），通过开始菜单 `Codex Native Notifications.lnk` 设置 `PKEY_AppUserModel_ID`，不借用 PowerShell 身份。此为产品通知注册，不修改官方包或 Windows 全局通知开关。
+- EXE 使用 Tauri identifier 注册本产品的 AUMID，通过开始菜单快捷方式设置 `PKEY_AppUserModel_ID`。本轮记录中的快捷方式为 `Codex Native Notifications.lnk`，当前名称为 `Codex Light Notifications.lnk`。注册逻辑见[通知适配器](../../../src-tauri/src/desktop_notifications.rs)。
 - Tag 为完整业务 ID 的 SHA-256 前 16 hex，Group 固定 `codex-native`，符合 Windows 长度限制。活动登记检查同 Tag 不同业务 ID 冲突并拒绝覆盖。Tag 稳定，可跨进程精确移除已知 ID；截断哈希不是数学无碰撞保证。
 - 保留 ToastNotification 对象及 Activated/Dismissed/Failed 事件 token。相同 ID 替换先释放旧 token，Rust generation 再过滤晚到事件。
 - TimedOut 仅代表 banner 结束，保留对象供 Action Center 激活；UserCanceled/ApplicationHidden 与 Failed 释放原生及 Rust 登记。显式 hide 先解绑回调，Hide 对象，再 History.Remove(tag,group,AUMID)。全清使用 History.Clear(AUMID)，包含前一进程的中心条目，只清本产品身份。

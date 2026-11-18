@@ -16,4 +16,4 @@
 
 新版 EXE SHA-256 为 `3fbbdaba873db9b71acbc4370a3ef155190e234231dbe97bb8eeac9e9309246b`。在 1442×914 原生窗口锁定隔离任务文件后，删除实际返回 Windows 错误 32，弹层保留，磁盘哈希一致。解除锁后原地重试，弹层关闭，列表和磁盘目录同步移除。无模型轮次。截图和读回在同一证据目录的 `button-*` 文件中。本次按钮改动未重新打包 MSI、NSIS。
 
-GitHub 最新 Windows 作业因付款或支出上限未启动。发布等待目标提交在远端通过完整 CI。[GitHub Actions 作业](https://github.com/lusipad/codex-desktop-native/actions/runs/42511523252)
+GitHub 最新 Windows 作业因付款或支出上限未启动。发布等待目标提交在远端通过完整 CI。[GitHub Actions 作业](https://github.com/lusipad/codex-light/actions/runs/42511523252)

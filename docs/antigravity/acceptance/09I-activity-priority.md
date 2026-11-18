@@ -6,4 +6,4 @@
 - Windows 原生隔离测试验证默认勾选、关闭分区、共用分页、菜单归到首个日期标题。展开后八天前的优先聊天仍显示，同龄普通聊天保持排除。全部标为已读和归档均禁用。关闭应用后重启读回关闭状态，重新勾选恢复分区。SQLite 仍为 12 条会话、9 条未读、0 条归档。
 - 117 项前端回放、TypeScript 及 Windows EXE、MSI、NSIS 打包通过。实测 EXE SHA-256 为 `232ae9e4fddc6519c1c76903eeb8a11333b584b4e8301b1946293929ce5ccaeb`，两个测试窗口已退出。证据位于 `.ref/parity/09/actual/09I-activity-priority/`。
 
-同环境像素、多窗口同步实测、其他显示选项及用户验收仍待推进。本阶段未重跑 Rust 全库或完整协议探针。GitHub 作业仍因账户付款或支出上限未能启动，发版等待对应提交的 Windows CI 成功。[作业记录](https://github.com/lusipad/codex-desktop-native/actions/runs/42511523252)
+同环境像素、多窗口同步实测、其他显示选项及用户验收仍待推进。本阶段未重跑 Rust 全库或完整协议探针。GitHub 作业仍因账户付款或支出上限未能启动，发版等待对应提交的 Windows CI 成功。[作业记录](https://github.com/lusipad/codex-light/actions/runs/42511523252)

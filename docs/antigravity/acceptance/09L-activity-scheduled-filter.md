@@ -6,4 +6,4 @@
 - Windows 原生隔离测试用真实 CLI 0.165.0 建立 12 条聊天，私有调度状态标记其中两条为同一任务的历史运行。默认隐藏两条，开启后未读项进入优先事项、已读项进入日期列表。批量已读只处理八条普通聊天，SQLite 唯一剩余未读属于计划任务，归档数为 0。重启后读取到开启状态，仅剩计划任务未读时批量已读禁用。再次关闭后两条记录和活动提示均隐藏。两次窗口均已退出。
 - 117 项前端回放、TypeScript、Windows EXE、MSI、NSIS 打包通过。实测 EXE SHA-256 为 `bbaabbd159e5e4158713ebd7884fa23c2a2bed21b87639fc6ba213b02d530012`。证据位于 `.ref/parity/09/actual/09L-activity-scheduled/`。
 
-独立运行未读回执、静默关联任务、远端和同环境配对像素继续待验。09K 的 Rust 全库结果保留为后端历史证据，本阶段未重跑全库或协议探针。GitHub Windows 作业仍因账户付款或支出上限未启动，发版等待对应提交的远端 CI 通过。[作业记录](https://github.com/lusipad/codex-desktop-native/actions/runs/42511523252)
+独立运行未读回执、静默关联任务、远端和同环境配对像素继续待验。09K 的 Rust 全库结果保留为后端历史证据，本阶段未重跑全库或协议探针。GitHub Windows 作业仍因账户付款或支出上限未启动，发版等待对应提交的远端 CI 通过。[作业记录](https://github.com/lusipad/codex-light/actions/runs/42511523252)

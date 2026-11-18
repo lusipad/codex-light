@@ -19,4 +19,4 @@
 - 左键拖动改变了窗口位置。最终构建中，双击标题栏进入稳定最大化状态，再双击恢复到 1442×914。原生测试进程已退出。最终 EXE SHA-256 为 `3c64ec93b237ee03b1a2a62da74058f8da951a414fc3f381aa7c4732e4db69d7`。
 - 117 项前端回放和 TypeScript 检查通过，722 项 Rust 全库测试通过，最终 Windows EXE、MSI 和 NSIS 构建通过。前端专项覆盖物理坐标换算、键盘定位、重复打开拦截、组合输入和编辑控件排除。证据位于 `.ref/parity/07/actual/07M-header-context-menu/`。
 - 待验证同环境官方配对截图、多窗实时同步、物理菜单键、原生中文输入法与用户验收。
-- GitHub Actions 最近一次作业因账户付款或支出上限未启动。此阶段保留本地提交，发布等待对应提交的远端 Windows CI 成功。[作业记录](https://github.com/lusipad/codex-desktop-native/actions/runs/42511523252)
+- GitHub Actions 最近一次作业因账户付款或支出上限未启动。此阶段保留本地提交，发布等待对应提交的远端 Windows CI 成功。[作业记录](https://github.com/lusipad/codex-light/actions/runs/42511523252)

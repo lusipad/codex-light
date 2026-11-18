@@ -1,6 +1,10 @@
-# Codex App 逐页开发与验收计划
+# Codex Light 逐页开发与验收记录
 
-**2026-11-15 最新计划**为[整页复刻执行计划](WHOLE-PAGE-DELIVERY-PLAN.md)。当前从首页与公共壳开展整页对照、集中开发与交付，历史逐项增量不计为整页完成。
+页面编号、验收方法和历史执行记录保留在此。当前工作顺序以[完整复刻总计划](FULL-REPLICA-PLAN.md)为准。11 月 18 日的 Windows 本地工作流和设置进展见[工作台原生实测](antigravity/acceptance/11-local-workbench-native.md)和[设置原生走查](antigravity/acceptance/16-settings-native-coverage.md)。
+
+## 2026 年 10–11 月的逐页计划与执行快照
+
+11 月 15 日采用的[整页复刻执行计划](WHOLE-PAGE-DELIVERY-PLAN.md)保留了当时的组织方式。以下各条的“当前”“下一步”均指记录当日。
 
 制定日期：2026-10-25。目标：以用户实际安装的 Windows Codex App 为基准，逐页达到功能、交互和像素布局一致。
 
@@ -255,7 +259,7 @@ docs/research/pages/<编号>-<页面>.md   # 来源、功能、差距、实现�
 
 2026-11-03：16.21A[语音纠偏](antigravity/acceptance/16-21A.md)限定增量待验，完整官方语音能力仍阻塞。下一16.22–16.24按原包分别核对电脑操控、Appshots、浏览器，复用可用入口并撤无执行器表单。
 
-2026-11-03：16.22A–16.24A限定纠偏待验，见[电脑操控](antigravity/acceptance/16-22A.md)、[Appshots](antigravity/acceptance/16-23A.md)、[浏览器](antigravity/acceptance/16-24A.md)。撤无执行器表单，插件入口和截图可靠性有实际回归，完整官方服务仍阻塞，原生像素未验。下一16.25宠物、16.26云端偏好原包已初步提取，尚未开发/验收。
+2026-11-03：16.22A–16.24A限定纠偏待验，见[电脑操控](antigravity/acceptance/16.22A.md)、[Appshots](antigravity/acceptance/16.23A.md)、[浏览器](antigravity/acceptance/16.24A.md)。撤无执行器表单，插件入口和截图可靠性有实际回归，完整官方服务仍阻塞，原生像素未验。下一16.25宠物、16.26云端偏好原包已初步提取，尚未开发/验收。
 
 2026-11-03：16.25A宠物本地偏好/资源与消费者、16.26A云端偏好纠偏限定增量自验完成、待用户验收。独立overlay/云端能力和原生像素未完成。下一17 Quick Chat/独立窗口：先原包核对，纠正固定延时/伪成功链。
 

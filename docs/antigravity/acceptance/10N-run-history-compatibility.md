@@ -8,4 +8,4 @@
 
 728 项 Rust 测试、123 项发布前端回放和 Windows EXE、MSI、NSIS 打包通过。完整标准脚本与协议探针本轮未重跑。
 
-旧版可读取任务和关联聊天。若旧版重写文件，其未知的无聊天历史字段可能被移除。取证目录为 `.ref/parity/10/actual/10N-history-compat/`。本轮没有界面改动。GitHub Windows 作业因付款或支出上限未启动，发布等待对应提交通过远端 CI。[作业记录](https://github.com/lusipad/codex-desktop-native/actions/runs/42511523252)
+旧版可读取任务和关联聊天。若旧版重写文件，其未知的无聊天历史字段可能被移除。取证目录为 `.ref/parity/10/actual/10N-history-compat/`。本轮没有界面改动。GitHub Windows 作业因付款或支出上限未启动，发布等待对应提交通过远端 CI。[作业记录](https://github.com/lusipad/codex-light/actions/runs/42511523252)

@@ -66,7 +66,7 @@ fresh官方 `h_t` 和实际宿主证明 `share_accounts` 返回 `{account_orderi
 
 19E与20E已推送到master；tag `v0.2.0-preview.7` 精确指向 `6ecee66160df74b0a89d89ccf6b4d8ae347d2436`。run42253579875/job128014726569 completed/success，72前端、562全库Rust零失败/忽略/过滤、通知适配器、EXE/MSI/NSIS、发布与缓存收尾均成功。实际四文件下载核API大小/digest及SHA256SUMS，ZIP六文件和五许可对精确提交blob通过；便携EXE SHA256 `426a080b44a410540fd994c647286f9b432aa809184f25cdf75a5f93b92590b8`。未运行下载EXE。
 
-[实际发布页](https://github.com/lusipad/codex-desktop-native/releases/tag/v0.2.0-preview.7)。证据`.ref/releases/v0.2.0-preview.7/verification.json`及关键日志。22E云环境本轮工作树不在该标签内。远端全库成功补齐20E末次裸详情修复后的全库验证；仍不能替代官方像素、真实账号HTTP、物理IME、多窗和用户验收。
+[实际发布页](https://github.com/lusipad/codex-light/releases/tag/v0.2.0-preview.7)。证据`.ref/releases/v0.2.0-preview.7/verification.json`及关键日志。22E云环境本轮工作树不在该标签内。远端全库成功补齐20E末次裸详情修复后的全库验证；仍不能替代官方像素、真实账号HTTP、物理IME、多窗和用户验收。
 
 ## 详情功能列表
 

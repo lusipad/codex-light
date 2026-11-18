@@ -7,4 +7,4 @@
 - 第二个隔离实例确认 12 条全部归档。原生操作时提示消失早于点击撤销，原生撤销仍待验证。两个隔离窗口均已退出。
 - 117 项前端回放、TypeScript 与 Windows EXE、MSI、NSIS 打包通过。两次原生使用 EXE SHA-256 `f345bda3cd1b3e6e54de113b347ad0d5eb6e42002e68a596e9746ef126c3b0c4`。证据位于 `.ref/parity/09/actual/09F-activity-archive/`。
 
-仍待实测运行中停止、关联计划任务、官方配对像素及用户验收。撤销复用现有提示入口，已读条目恢复后的原活动排序和官方全局撤销／重做待对齐。本轮未重跑 Rust 全库与完整协议探针。GitHub 作业仍受账户付款或支出上限影响，版本发布等待对应提交的远端 Windows CI 成功。[作业记录](https://github.com/lusipad/codex-desktop-native/actions/runs/42511523252)
+仍待实测运行中停止、关联计划任务、官方配对像素及用户验收。撤销复用现有提示入口，已读条目恢复后的原活动排序和官方全局撤销／重做待对齐。本轮未重跑 Rust 全库与完整协议探针。GitHub 作业仍受账户付款或支出上限影响，版本发布等待对应提交的远端 Windows CI 成功。[作业记录](https://github.com/lusipad/codex-light/actions/runs/42511523252)

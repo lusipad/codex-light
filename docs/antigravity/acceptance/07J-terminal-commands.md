@@ -21,4 +21,4 @@
 
 - 隔离 Windows 构建中，Ctrl+J 首次打开底部终端。把首个终端移到右侧，再按 Ctrl+J 会在底部创建第二个终端。从底部 PowerShell 输入焦点按 Ctrl+J，只收起底部。Ctrl+反引号恢复并聚焦原会话，重复按仍保持可见。菜单的两项分别实测，恢复后标签 ID 和两个 PowerShell PID 保持一致，底部提示行未出现首轮的续行状态。
 - 发布元数据、117 项前端回归、722 项 Rust 全库测试、通知适配器和 EXE/MSI/NSIS 打包通过。最终产物哈希与进程号对照保存在证据目录的 `final/`。两次隔离窗口均通过标题栏关闭，模拟 Alt+F4 的结果待人工复核。
-- 同环境官方配对像素、原生中文输入法、右侧默认位置偏好与用户验收待验证。最新远端 [Windows CI](https://github.com/lusipad/codex-desktop-native/actions/runs/42511523252) 的账单或额度限制仍使作业在执行前停止。
+- 同环境官方配对像素、原生中文输入法、右侧默认位置偏好与用户验收待验证。最新远端 [Windows CI](https://github.com/lusipad/codex-light/actions/runs/42511523252) 的账单或额度限制仍使作业在执行前停止。

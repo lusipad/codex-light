@@ -6,4 +6,4 @@
 - Windows 原生隔离测试用真实 CLI 0.165.0 建立 12 条聊天和 9 条未读回执。用私有数据库构造今天、昨天和八天前各一条已读。首屏显示 9 条优先事项与 1 条今天，展开后出现昨天，八天前条目未进入活动。昨天的行打开了对应聊天。批量归档确认仅显示 9 条，Escape 后 SQLite 仍为 12 条会话、9 条未读、0 条归档。测试窗口已退出。
 - 117 项前端回放、TypeScript 检查、Windows EXE、MSI 和 NSIS 打包通过。实测 EXE SHA-256 为 `7f61dcd35b5a6286e68c0e72cf47afa8fee076ba0b88090cb5c43bad7ea70d9b`。证据位于 `.ref/parity/09/actual/09H-activity-recent/`。
 
-跨午夜真实运行、独立置顶和计划任务分组、远端目录、同环境像素及用户验收待补。本阶段未重跑 Rust 全库或完整协议探针。GitHub Windows 作业仍因账户付款或支出上限未启动，发布等待对应提交的远端 CI 成功。[作业记录](https://github.com/lusipad/codex-desktop-native/actions/runs/42511523252)
+跨午夜真实运行、独立置顶和计划任务分组、远端目录、同环境像素及用户验收待补。本阶段未重跑 Rust 全库或完整协议探针。GitHub Windows 作业仍因账户付款或支出上限未启动，发布等待对应提交的远端 CI 成功。[作业记录](https://github.com/lusipad/codex-light/actions/runs/42511523252)

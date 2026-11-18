@@ -12,4 +12,4 @@
 - 反向隐藏底部后，右侧继续显示。隐藏最后一个可见分组，再用 Ctrl+` 恢复右侧。关闭右侧最后一个标签会自动显示仍在运行的底部标签。隔离窗口已关闭。
 - 专项回归验证隐藏状态仍接收输出、恢复复用 xterm 和 PTY、工作区命令先显示目标组、环境动作重跑保留位置。前端完整回归中的常规设置测试也覆盖新终端显示底部。
 - 类型检查、发布元数据、117 项前端回归、Windows 通知适配器、Rust 全库 722 项及 EXE、MSI、NSIS 构建通过。产物 SHA-256 记录在证据目录的 `installer-hashes.json`。
-- 同环境官方截图对、原生 IME、跨窗口与重启恢复、用户验收仍待验证。远端 [Windows 作业](https://github.com/lusipad/codex-desktop-native/actions/runs/42511523252) 受 GitHub 账单或额度限制，在执行步骤前停止。
+- 同环境官方截图对、原生 IME、跨窗口与重启恢复、用户验收仍待验证。远端 [Windows 作业](https://github.com/lusipad/codex-light/actions/runs/42511523252) 受 GitHub 账单或额度限制，在执行步骤前停止。

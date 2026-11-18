@@ -1,7 +1,7 @@
-# 对标官方 Codex App：完整差距分析（界面 + 功能 + 协议）
+# Codex Light 对照官方 Codex App 的早期差距分析
 
-> 生成时间：2026-10-23
-> 分析对象：`codex-desktop-native`（Tauri v2 + React 19 + Rust）↔ 本机已安装的官方 **Codex App（Electron）26.928.x**
+> 生成时间：2026-10-23。下列比例、缺陷和版本仅描述当时的样本。当前开发顺序与后续证据见[完整复刻总计划](FULL-REPLICA-PLAN.md)。
+> 分析对象为 Codex Light（当时仓库名为 `codex-desktop-native`）与本机已安装的官方 **Codex App（Electron）26.928.x**。
 > 结论一句话：**界面骨架已对齐约 6~7 成，但"功能真实度"只有约 1/3；协议（app-server）只接了 16%，设置页约一半开关是"只写 JSON 不生效"。核心对话链路还有 4 个必坏点，本轮已修 3 类。**
 
 详细取证资料（本次从官方 `app.asar` 与真实 app-server 提取，全部可复现）：

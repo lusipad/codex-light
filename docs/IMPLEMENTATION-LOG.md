@@ -1,5 +1,7 @@
 # 实施日志（按轮次）
 
+文中的 `.ref/`、`.omx/` 和 `dist-artifacts/` 指各轮测试机器上的原始证据和本地构建。仓库内可查阅相应的验收记录，已发布安装包见[GitHub Releases](https://github.com/lusipad/codex-light/releases)。
+
 ## 2026-11-18 — 外观模式图与主题菜单
 
 - 按固定官方 Windows 26.1111.2228.0 取证调整模式图、主题卡与高级布局，接入两级主题预设菜单、导入和复制图标及成功反馈。
@@ -426,7 +428,7 @@
 ## 2026-11-08 — 04J 项目聊天行与操作
 
 - 按当前官方包对齐聊天行、窄窗时间隐藏和独立打开入口，重命名与复制复用现有组件和处理器。106 个前端重放、Windows 安装包构建、隔离浏览器与原生操作均已验证。[阶段验收](antigravity/acceptance/04E-project-sort.md)
-- [preview.24 发布任务](https://github.com/lusipad/codex-desktop-native/actions/runs/42485942064) 第二次运行成功，校验了四个发布文件及对应构建产物。该标签早于本轮项目编辑、移除与聊天行改动。
+- [preview.24 发布任务](https://github.com/lusipad/codex-light/actions/runs/42485942064) 第二次运行成功，校验了四个发布文件及对应构建产物。该标签早于本轮项目编辑、移除与聊天行改动。
 
 ## 2026-11-08 — 04I 本地项目移除确认
 
@@ -434,7 +436,7 @@
 
 ## 2026-11-08 — Windows durable 测试夹具就绪等待
 
-- [preview.24 标签流水线](https://github.com/lusipad/codex-desktop-native/actions/runs/42485942064) 首次作业 691 过、1 失败。失败在 Node 进程就绪信号，尚未执行该用例的会话复用断言。旧日志合并了超时、通道断开与读错，无法确认远端子进程当时的具体退出状态。
+- [preview.24 标签流水线](https://github.com/lusipad/codex-light/actions/runs/42485942064) 首次作业 691 过、1 失败。失败在 Node 进程就绪信号，尚未执行该用例的会话复用断言。旧日志合并了超时、通道断开与读错，无法确认远端子进程当时的具体退出状态。
 - 在私有子进程使用 6 秒 Node 启动延迟，旧 5 秒门限复现同一错误。测试改用有界 30 秒就绪等待并输出具体错误和清理前进程状态，同样延迟下用例通过。保留真实 HTTP/TLS 监听就绪检查和会话断言。
 
 ## 2026-11-08 — 04H 本地项目编辑弹窗
@@ -482,7 +484,7 @@
 
 ## 2026-11-08 — Windows 环境脚本取消测试的启动等待
 
-- [分支 CI 42473078999](https://github.com/lusipad/codex-desktop-native/actions/runs/42473078999) 的下载回归通过，Rust 全量 689 过、1 失败。失败用例在 8 秒内未观察到启动标记，未执行原本要验证的取消断言。日志未区分 PowerShell 启动慢和脚本提前退出。
+- [分支 CI 42473078999](https://github.com/lusipad/codex-light/actions/runs/42473078999) 的下载回归通过，Rust 全量 689 过、1 失败。失败用例在 8 秒内未观察到启动标记，未执行原本要验证的取消断言。日志未区分 PowerShell 启动慢和脚本提前退出。
 - 测试改用工作树绝对路径写标记，分离启动等待和取消耗时。标记缺失时先取消并收束子进程，再输出工作线程结果。保留真正运行中的脚本取消和读取器退出断言。产品脚本执行路径及 CI 测试范围保持一致。
 
 ## 2026-11-08 — 18F 资料库不可预览状态
@@ -608,7 +610,7 @@
 ## 2026-11-07 — preview.9自动发布核验与21J开发前补证
 
 - 累计21G/H/I及附注标签复核修复已推送，preview.9精确指向524b1098f330157cdd0864b2703a7096ef62b13c。tag run42301352561/job128179653827、branch run42301352720最终均success：88前端、602全库Rust零失败/忽略/过滤、通知SDK、EXE/MSI/NSIS、远端标签复核、自动发布及缓存收尾全部通过。原preview.8未移动或覆盖。
-- [preview.9](https://github.com/lusipad/codex-desktop-native/releases/tag/v0.2.0-preview.9)四实际资源核API大小/摘要、清单、ZIP六成员与五份精确标签许可；原始CI产物13544358998摘要匹配API，四内部载荷与发布下载逐字节一致。便携EXE产品版本0.2.0、SHA256 `85e043d05608dcf70a343b8cd954417f471a8eba3435c8c15858cf4a77e0556a`；未运行下载程序。证据`.ref/releases/v0.2.0-preview.9/`，没有把发布成功当整软件1:1或用户验收。
+- [preview.9](https://github.com/lusipad/codex-light/releases/tag/v0.2.0-preview.9)四实际资源核API大小/摘要、清单、ZIP六成员与五份精确标签许可；原始CI产物13544358998摘要匹配API，四内部载荷与发布下载逐字节一致。便携EXE产品版本0.2.0、SHA256 `85e043d05608dcf70a343b8cd954417f471a8eba3435c8c15858cf4a77e0556a`；未运行下载程序。证据`.ref/releases/v0.2.0-preview.9/`，没有把发布成功当整软件1:1或用户验收。
 - 下一[21J共享参与者/邀请规格](antigravity/specs/21J-sites-sharing-members.md)仅只读取证，11份不重复资源、基础55及补充28锚点核验无误。明确viewer/group/editor权限分支、PATCH/ACK、移除确认512px及缺译defaultMessage回退；第一闭环为已有参与者移除，其后角色变更、邀请、groups/teams、外部邮箱仍保留。没有开发21J、真实HTTP或GUI，不以规格发布解锁gate或宣称功能通过。
 
 ## 2026-11-07 — 21I Sites共享权限与模式保存
@@ -627,7 +629,7 @@
 ## 2026-11-06 — preview.6实际发布核验
 
 - 18G–I累计提交469b74fc4d30ff491cbf947a1bc3c0d683622019已推送；run42229513333/job127931493107最终success，66前端、531全库Rust零失败/忽略/过滤、原生release/MSI/NSIS和发布全通过，标签精确指向该提交。
-- 四实际下载资源核API大小/SHA256，三个载荷核SHA256SUMS；ZIP六文件及五许可对精确标签Git blob核验，PE版本0.2.0。云端便携EXE SHA256 `82231c78466c42c8579f002c8fa78426bb03c5844b9175473a15110ca87b02c0`，未运行下载二进制。证据`.ref/releases/v0.2.0-preview.6/verification.json`；[发布页](https://github.com/lusipad/codex-desktop-native/releases/tag/v0.2.0-preview.6)。
+- 四实际下载资源核API大小/SHA256，三个载荷核SHA256SUMS；ZIP六文件及五许可对精确标签Git blob核验，PE版本0.2.0。云端便携EXE SHA256 `82231c78466c42c8579f002c8fa78426bb03c5844b9175473a15110ca87b02c0`，未运行下载二进制。证据`.ref/releases/v0.2.0-preview.6/verification.json`；[发布页](https://github.com/lusipad/codex-light/releases/tag/v0.2.0-preview.6)。
 - 后续19E纯模型、准入/metadata及宿主网络修复属于标签之后开发，未混入preview.6；官方像素、真实账号、物理IME及用户验收缺口继续明确保留。
 
 ## 2026-11-06 — 18I资料库动态Header与自动分页
@@ -2800,7 +2802,7 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 ## 2026-11-07 — preview.7实际发布与下载核验
 
 - tag v0.2.0-preview.7精确指向已推送6ecee66160df74b0a89d89ccf6b4d8ae347d2436，包含19E/20E，不含本轮22E。run42253579875/job128014726569最终success，72前端、562全库Rust零失败/忽略/过滤、SDK、原生release/MSI/NSIS与发布均成功。
-- 四个实际下载文件核API size/digest、SHA256SUMS、ZIP成员及五许可精确tag blob，退出0；便携EXE SHA256 426a080b44a410540fd994c647286f9b432aa809184f25cdf75a5f93b92590b8。未运行下载EXE。证据`.ref/releases/v0.2.0-preview.7/verification.json`；[发布页](https://github.com/lusipad/codex-desktop-native/releases/tag/v0.2.0-preview.7)。不把发布当全软件1:1或用户验收。
+- 四个实际下载文件核API size/digest、SHA256SUMS、ZIP成员及五许可精确tag blob，退出0；便携EXE SHA256 426a080b44a410540fd994c647286f9b432aa809184f25cdf75a5f93b92590b8。未运行下载EXE。证据`.ref/releases/v0.2.0-preview.7/verification.json`；[发布页](https://github.com/lusipad/codex-light/releases/tag/v0.2.0-preview.7)。不把发布当全软件1:1或用户验收。
 - 22E最终668输入稳定：563全库Rust零失败/忽略/过滤，75前端，完整非Fast330段/32探针和当前原生debug构建全部退出0。生产EXE设置快捷键→Unicode搜索→Codex云端入口、Explore独立入口及两处真实未登录重试、退出和0会话通过；SHA256 884effe0eb79e4827b2d0f2c1b6d5c820019bbe425d3c2292de2132f75456d63。正常原生组件中止记录及HTTP/IME/像素/用户验收缺口保留，完整写链继续待实现。
 - 21E Sites开发前fresh108资源、1170定位、350中文、13真实export、hash/UTF16往返0错误已完成，只新增[详细规格](antigravity/specs/21E-sites.md)，未修改Sites产品。后续按完整权限、目录/详情/创建编辑发布、设置写链和子页推进，不因本轮只读合同收窄原目标。
 
@@ -2879,7 +2881,7 @@ custom由有效config和服务真实会话权限驱动，显式preset独立，se
 
 ## 2026-11-07 — preview.11 发布与 22H 草稿恢复
 
-- [preview.11](https://github.com/lusipad/codex-desktop-native/releases/tag/v0.2.0-preview.11) 精确指向 `25f290a6d75d2e5c867f932540ef7f470c17daa5`。分支 42340977060 与标签 42341884129 均终态 success，93 前端、650 全库 Rust、Windows 打包、上传和发布门槛均核验；四个实际下载与标签 CI 产物逐字节一致。详见[发布回执](antigravity/acceptance/22G-durable-host.md#发布回执)。
+- [preview.11](https://github.com/lusipad/codex-light/releases/tag/v0.2.0-preview.11) 精确指向 `25f290a6d75d2e5c867f932540ef7f470c17daa5`。分支 42340977060 与标签 42341884129 均终态 success，93 前端、650 全库 Rust、Windows 打包、上传和发布门槛均核验；四个实际下载与标签 CI 产物逐字节一致。详见[发布回执](antigravity/acceptance/22G-durable-host.md#发布回执)。
 - [22H](antigravity/specs/22H-cloud-draft-session.md) 先重验整包哈希，新增 111 个精确锚点和 33 组原函数隔离回放。已有编辑保留服务端权限、不发 onboarding turn；历史先读 turn 再读 items；侧栏可与恢复并行。
 - 本地实现草稿回执持久绑定、同身份私有草稿读回和最终恢复参数适配，复用原读取及解析。两项专项、原云环境回归、TypeScript 和前端构建通过，与 6 个官方参数输出逐项匹配。尚未纳入 preview.11，也未启用未闭环编辑入口；运行时配置准备、原生派发和侧栏待接。
 - 22H 后续接通固定 durable 会话、恢复、配置和历史 RPC，复用模型目录的原生连接与身份检查。历史聚合保留包装条目的完成状态、时间戳和游标。Windows 回环与 652 项全库 Rust 通过，无参请求收尾后复验 24 项 durable 专项。前端 95 项回归及生产构建通过。当前工作树继续用于运行时配置准备、编辑入口和侧栏接入。

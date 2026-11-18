@@ -91,7 +91,7 @@
 
 ## 2026-11-06 后续增量
 
-- [13F草稿](acceptance/13F-skill-trial-drafts.md)与[13G推荐预览](acceptance/13G-recommended-preview.md)：13G接真实只读正文、默认安装、复制/发现状态与元数据换卡，复用既有预览和已装卡片。完整标准在末轮UI修正前exit0/32探针；最终47组前端、构建及私有原生真实安装/键盘/重启通过，622输入稳定。后续已推送93c3b38并发布[preview.4](https://github.com/lusipad/codex-desktop-native/releases/tag/v0.2.0-preview.4)：run42187721866全部成功，最终47组前端/512 Rust通过，四个下载文件API digest/SHA256SUMS与实际hash匹配。官方配对像素、物理IME、网络安装与用户验收未通过。
+- [13F草稿](acceptance/13F-skill-trial-drafts.md)与[13G推荐预览](acceptance/13G-recommended-preview.md)：13G接真实只读正文、默认安装、复制/发现状态与元数据换卡，复用既有预览和已装卡片。完整标准在末轮UI修正前exit0/32探针；最终47组前端、构建及私有原生真实安装/键盘/重启通过，622输入稳定。后续已推送93c3b38并发布[preview.4](https://github.com/lusipad/codex-light/releases/tag/v0.2.0-preview.4)：run42187721866全部成功，最终47组前端/512 Rust通过，四个下载文件API digest/SHA256SUMS与实际hash匹配。官方配对像素、物理IME、网络安装与用户验收未通过。
 - [09C活动会话](acceptance/09C-activity-session.md)：后续已开发本地session保留、唯一priority行、10条显示分页与完整集合最新revision回执；归档无event入口、服务吞错、并发记录覆盖与旧目录晚回一并窄修。独立复核及52组前端通过；完整非Fast标准32探针、全库Rust515项及当前原生构建退出0，私有12会话分页/归档/批量已读和重启读回通过，未纳入preview.4。完整root/子会话、官方gate/分组/过滤、配对像素和用户验收未完成。
 
 - [15I云端删除](acceptance/15I-cloud-delete.md)：后续已接固定DELETE及来源差异的确认/404/Retry，阶段完整非Fast385项、32协议探针及全库512 Rust通过；原生仅未登录路径，真实账号删除/配对像素/物理IME与完整viewer/cache广播仍未验。本地阶段不包含于preview.2，拟随13E一并发布preview.3，发布结果另核。
@@ -105,7 +105,7 @@
 - [15H云端恢复](acceptance/15H-cloud-unarchive.md)：后续已按固定来源接入两类取消归档，补操作身份、重复点击与不确定结果保护。最终完整非Fast382项、32协议探针及原生未登录限定路径通过；内部查看、云端删除、真实账号HTTP、自动刷新保留后页与官方像素仍有缺口。15G以上“仅取证”是当时状态，本阶段更新不改变用户验收状态。04E及15E–15H拟纳入preview.2，尚待远端发布终态。
 
 - [18E目录导航](acceptance/18E-library-navigation.md)：按同版12条目/25锚点及CSS补证恢复目录与祖先链，复用现有reader和菜单；三项身份/旧回调红转绿，58组前端与全库Rust519项通过，完整标准32探针/最终构建退出0，私有原生未登录导航/重试/标题栏往返通过。[18F预览合同](specs/18F-library-preview.md)后续已推进普通图片/文本/Markdown真metadata/bytes与右侧面板，阶段状态见[18F-A记录](acceptance/18F-library-preview.md)；PDF/Office/HTML/special全矩阵、真实账号与官方像素仍未完成，不把子范围当整页通过。
-- 09C、18E及18F-A后续已随b45727a推送并发布[preview.5](https://github.com/lusipad/codex-desktop-native/releases/tag/v0.2.0-preview.5)：run42208606694最终success，61组前端/全库527 Rust、通知适配器、原生安装包与发布全通过；四个实际下载文件API digest/清单hash一致，ZIP五份许可对标签Git blob规范化后匹配。发布不改变真实账号/像素/原生认证预览与用户验收缺口。[18G搜索](specs/18G-library-search.md)为该标签之后的本地开发，不计入preview.5。
+- 09C、18E及18F-A后续已随b45727a推送并发布[preview.5](https://github.com/lusipad/codex-light/releases/tag/v0.2.0-preview.5)：run42208606694最终success，61组前端/全库527 Rust、通知适配器、原生安装包与发布全通过；四个实际下载文件API digest/清单hash一致，ZIP五份许可对标签Git blob规范化后匹配。发布不改变真实账号/像素/原生认证预览与用户验收缺口。[18G搜索](specs/18G-library-search.md)为该标签之后的本地开发，不计入preview.5。
 - [18G普通资料库搜索](acceptance/18G-library-search.md)：已接根/目录真实q请求、分页与取消，搜索替换保留预览及首次返回位置，补标题/中文空态/窄窗结构。两项持续加载缺陷先红后绿；62组前端、完整非Fast319段/32探针、当前原生构建及私有未登录路径通过。原生组件夹具另验中文输入/清空焦点；真实账号、官方配对像素、物理IME、完整URL路由/GridList及用户验收仍未完成。阶段本地提交，不计入preview.5。
 - [18H普通浏览](acceptance/18H-library-browse.md)：已实现默认推荐、四标签、分类/来源、账号隔离显示偏好、grid/list与三态排序；宽窄及64前端、当前原生构建/未登录子路径通过。完整非Fast321段/32探针首轮ENOSPC退出1保留，20失败目标最终通过，不能称单次标准exit0。Header滚动、自动分页及图标细节仍有差异，真实HTTP/像素/物理IME/用户验收未完成；18I滚动/哨兵合同已取证待开发。阶段仅本地提交，不计入preview.5。[19E图像页](specs/19E-images.md)仅完成同版取证和开发前合同，主根页面尚未恢复；不得把旧19C整包合入或用Codex turn冒充ChatGPT图像生成。
 
@@ -147,7 +147,7 @@
 
 21F最终本地阶段：680输入稳定，累计81前端、全库580 Rust、完整非Fast335段/32探针及原生debug构建退出0。完整检查后删除弹窗三文件有限增量另跑81前端、类型/Vite/原生构建，最终EXE SHA256 `1b02207603f729820ea17537658a6846161df0cec4ecbadf508c31caa75ab6e5`。宽窄/92vw、命名弹窗及原生取消焦点已复验；生产EXE私有未登录/sites重试/退出、0会话通过。真实账号HTTP、官方配对像素、物理IME和用户验收仍待完成，主题/危险按钮等视觉差异已列明。
 
-发布补记（2026-11-07）：[preview.8](https://github.com/lusipad/codex-desktop-native/releases/tag/v0.2.0-preview.8)已发布，精确源码2aef033，包含22E/21E/21F。分支CI42273942594成功；标签CI42273942595最后标签复核失败，未自动发布。使用成功分支的原始artifact核digest、精确许可、四发布资源实际下载后补发；未移动原标签。附注标签复核修复b25cb71暂留本地，完整自动tag流程修后尚待新标签实跑。
+发布补记（2026-11-07）：[preview.8](https://github.com/lusipad/codex-light/releases/tag/v0.2.0-preview.8)已发布，精确源码2aef033，包含22E/21E/21F。分支CI42273942594成功；标签CI42273942595最后标签复核失败，未自动发布。使用成功分支的原始artifact核digest、精确许可、四发布资源实际下载后补发；未移动原标签。附注标签复核修复b25cb71暂留本地，完整自动tag流程修后尚待新标签实跑。
 
 ## 21G（2026-11-07）Sites URL与域名分阶段推进
 
@@ -171,7 +171,7 @@
 
 21I最终本地结果：699输入稳定、原生debug构建退出0；对应EXE私有未登录/sites入口/重试/退出及0线程通过。限定本地自验完成，待用户验收；共享整页仍开发中。本阶段先本地提交，不推送、不创建发布标签。
 
-发布补记（2026-11-07）：[preview.9](https://github.com/lusipad/codex-desktop-native/releases/tag/v0.2.0-preview.9)已自动发布，精确源码524b109，包含21G/H/I及附注标签复核修复。标签42301352561和分支42301352720 CI均success，88前端、602全库Rust及原生安装包/发布全通过；四实际下载资源、原始CI产物摘要、载荷等同和精确标签许可均核验。发布不改变上文真实服务、原生共享、官方配对像素及用户验收缺口。
+发布补记（2026-11-07）：[preview.9](https://github.com/lusipad/codex-light/releases/tag/v0.2.0-preview.9)已自动发布，精确源码524b109，包含21G/H/I及附注标签复核修复。标签42301352561和分支42301352720 CI均success，88前端、602全库Rust及原生安装包/发布全通过；四实际下载资源、原始CI产物摘要、载荷等同和精确标签许可均核验。发布不改变上文真实服务、原生共享、官方配对像素及用户验收缺口。
 
 ## 21J（2026-11-07）共享参与者与邀请开发前规格
 
@@ -185,7 +185,7 @@
 
 最终93前端、620全库Rust、完整非Fast347段/32探针和原生debug构建退出0，710输入稳定；生产EXE私有未登录Sites重试/退出、SQLite0线程通过。完整Sites仍开发中，真实服务、正常共享原生、配对像素/IME/用户验收待做，ACK/pending时序仍待官方对照校准。preview.10仅候选，须先分支CI成功，再标签CI发布并核对实际资源；不以本地通过代替远端结论。
 
-[preview.10](https://github.com/lusipad/codex-desktop-native/releases/tag/v0.2.0-preview.10) 已发布。分支 42328860252 与标签 42330508331 均在 `2d57418` 通过 93 项前端回放、620 项 Rust 测试及 Windows 打包。四个发布文件已下载，分别与标签 CI 的产物逐字节校验。
+[preview.10](https://github.com/lusipad/codex-light/releases/tag/v0.2.0-preview.10) 已发布。分支 42328860252 与标签 42330508331 均在 `2d57418` 通过 93 项前端回放、620 项 Rust 测试及 Windows 打包。四个发布文件已下载，分别与标签 CI 的产物逐字节校验。
 
 ## 21L（2026-11-07）Sites 待处理邀请
 

@@ -14,5 +14,5 @@
 - 按钮和 Ctrl+J 复用既有底部面板命令，按下态由终端组实际可见性更新。设置复用现有桌面状态读写，保存失败时保留此前确认的显示状态。关掉入口不改变已保存的终端位置，之后打开终端和新环境操作读取同一入口状态。
 - 隔离 Windows 应用中，点击按钮打开、再次点击隐藏、Ctrl+J 恢复同一个 PowerShell 标签。关掉设置时，已有底部终端继续显示。再次打开终端落到右侧，Ctrl+J 仍独立收起底部。私有状态文件读回 `false`，重启后标题栏入口继续隐藏且终端首开仍在右侧。
 - 最终包从关闭状态启动，预置环境操作在右侧输出 `placement-fixture-ok`。重新开启设置后，默认位置「底部」恢复，标题栏提示显示 Ctrl+J。点击按钮打开底部 PowerShell，右侧输出保持可见。隔离窗口已关闭。
-- 发布元数据、117 项前端回归、722 项 Rust 全库测试、类型检查及 Windows EXE、MSI、NSIS 打包通过。最新远端 [Windows CI](https://github.com/lusipad/codex-desktop-native/actions/runs/42511523252) 仍受账单或额度限制，作业没有启动。
+- 发布元数据、117 项前端回归、722 项 Rust 全库测试、类型检查及 Windows EXE、MSI、NSIS 打包通过。最新远端 [Windows CI](https://github.com/lusipad/codex-light/actions/runs/42511523252) 仍受账单或额度限制，作业没有启动。
 - 官方标题栏右键入口、完整工作区门控、多窗口即时同步、原生 IME 和同环境像素对照仍待验。取证、检查输出与产物哈希在 `.ref/parity/07/actual/07L-bottom-launcher/`。

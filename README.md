@@ -1,93 +1,46 @@
 # Codex Light
 
-[![CI Build & Release](https://github.com/lusipad/codex-light/actions/workflows/ci.yml/badge.svg)](https://github.com/lusipad/codex-light/actions/workflows/ci.yml)
+Codex Light 是一个 Windows 桌面客户端，把 Codex 会话、文件编辑器、Git 差异和终端放在同一个项目窗口里。你可以为一个改动创建独立工作树，在那里编辑文件、检查差异、运行命令，重开应用后再回到同一个会话。
 
-Codex Light 是基于 Tauri、React 和 Rust 的 Windows 原生客户端，通过 `codex app-server` 工作，目标是与官方 Codex App 的功能和交互保持一致。
+## 开始使用
 
-从旧版 Codex Native 迁移时，MSI 用户可继续使用 MSI 安装包。如果旧版使用 `-setup.exe`（NSIS）安装，请先退出并卸载旧版，保持「删除应用数据」未勾选，再安装 Codex Light。
+1. 在 Windows x64 上准备好 Git 和 Codex CLI。如果已经安装 npm，可用 `npm install -g @openai/codex` 安装 CLI。在 PowerShell 中运行 `codex app-server --help` 确认服务可用。
+2. 从 GitHub Releases 选择一个 Windows x64 版本，下载安装 MSI 或 `-setup.exe`。下文介绍的是 `master` 上的工作台，可以从源码运行。[下载安装包](https://github.com/lusipad/codex-light/releases)
+3. 启动应用，选择一个本地 Git 仓库并创建会话。文件面板用于浏览和编辑，变更面板显示 Git 差异，底部终端可在同一工作目录运行命令。
 
-> **阶段性交付报告：[docs/FINAL-REPORT.md](docs/FINAL-REPORT.md)**。对标差距分析、官方功能面清单与逐轮实施记录：
-> [`docs/CODEX-APP-PARITY-GAP.md`](docs/CODEX-APP-PARITY-GAP.md) ｜
-> [`docs/IMPLEMENTATION-LOG.md`](docs/IMPLEMENTATION-LOG.md) ｜
-> [`docs/research/parity-summary-v2.md`](docs/research/parity-summary-v2.md) ｜
-> [`docs/research/current-audit-v2.md`](docs/research/current-audit-v2.md)
->
-> **最新复核（Round 11）**：[`docs/research/home-shell-composer-parity.md`](docs/research/home-shell-composer-parity.md)，包含首页/Composer 实测、真实交互和未完成的模拟页面差距。
+如果应用未找到 CLI，可以将环境变量 `CODEX_CLI_PATH` 设为本机 `codex.exe` 的完整路径，然后重新启动应用。模型请求需要可用的账号配置。本地文件、Git 和终端操作可以独立使用。
 
-## 核心特性（截至 Round 7）
+## 工作台
 
-1. **原生 Rust `codex app-server` 桥接 (`src-tauri/src/app_server.rs`)**
-   - 自动发现本机/离线包内 `codex` CLI 并拉起 `codex app-server --listen stdio://`（无窗口）
-   - JSON-RPC 2.0 双向通信；通用桥接层可透传任意 app-server 方法（前端已引用 **71 个 client 方法、35 个通知、7/10 类 server request**）
-   - 审批中心：命令 / 文件变更 / 权限 / 提问 / MCP elicitation / legacy `execCommandApproval`+`applyPatchApproval`，按官方 wire shape 应答（含 execpolicy 记忆、网络策略、权限 scope）
-2. **会话与流式渲染**
-   - 发送 / 中断 / Steer / 服务端消息队列（`thread/queue/*`，Up next 栏）
-   - 流式 agent 消息、reasoning（summary+原始）、plan、command 输出、fileChange patch、MCP 工具进度、turn diff / plan / token 用量
-   - 长会话 `thread/turns/list` 分页 +「加载更早的轮次」；turn 完成合并权威 items
-   - fork（含从指定轮次）/ revert / compact / 重命名 / 置顶 / 归档 / 删除 / 派生
-3. **Diff 审阅与 Git (`src-tauri/src/git.rs` + `DiffDrawer`)**
-   - Unified / Split diff、Staged/Unstaged/分支对比、Stage/Unstage/Discard、Commit、分支创建切换、Push、PR
-   - Worktree 列表/创建/删除（`~/.codex/worktrees`），项目文件树 + 内联编辑 + 行内评论
-4. **文件系统与工作区 (`src/fsClient.ts`)**
-   - `fs/*` 协议读写（base64）+ `fs/watch` 实时刷新（防抖、重连续订）
-   - 资源管理器：新建文件/文件夹、重命名、删除、复制路径；图片/二进制预览
-   - 模糊文件搜索（`fuzzyFileSearch`）接入 Ctrl+K/Ctrl+P 命令面板
-5. **设置中心（22 分区，协议驱动）**
-   - `config/read|value/write|batchWrite`（`reloadUserConfig`）+ `configRequirements`、MCP 热重载
-   - 实验特性 152 项开关、账号与额度（只读）、Hooks（真实 hooks 列表 + 实时运行记录）
-   - 模型/推理档/approval policy/sandbox/web search/verbosity 等真实可写；删除 codex 不认识的伪造参数
-   - 原生菜单 + 托盘 + 23 组快捷键（含缩放，快捷键分区展示真实注册表）
-6. **Codex 生态能力**
-   - **Goal**：`thread/goal/*` 服务端驱动自主推进（替代自研 loop）
-   - **自定义分区**：`threadSection/*` 侧栏分组 + 会话移动
-   - **项目实体**：`project/*` 创建/编辑/排序/删除
-   - **插件/市场/Apps/Skills/MCP**：`plugin/*`、`marketplace/*`、`app/list|installed`、`skills/list|config/write`
-   - **Code Review**：`review/start` 四种目标（未提交/分支/提交/自定义）
-   - **Windows 沙箱**：`windowsSandbox/readiness|setupStart`
-7. **自动化调度执行器 (`src-tauri/src/automations.rs`)**
-   - 应用运行期间每 30s 扫描 `~/.codex/automations`，自研 RRULE 解析（HOURLY/DAILY/WEEKLY/MONTHLY/YEARLY + INTERVAL/BYHOUR/BYMINUTE/BYDAY/BYMONTHDAY/WKST）+ chrono 本地墙钟计算
-   - `.run-jitter-salt` 稳定抖动、`~/.codex/.codex-native/scheduler-state.json` 原子状态、事件 `automation:run-started|finished`
-   - Automations 页：调度状态条、下次/上次运行、运行历史、立即运行；17 个单元测试
-8. **多标签 PTY 终端 (`src-tauri/src/terminal.rs`)**
-   - portable-pty + xterm.js，多标签 PowerShell/Shell，代码块「运行」直达终端
-9. **收件箱 / 归档 / 通知**
-   - Inbox 持久化（turn 完成、自动化完成、审批请求入箱）
-   - 已归档会话页（`thread/list{archived}` + 恢复/删除）
-   - 应用内 Toast + 提示音；自动审批审查状态横幅
+| 你想做什么 | 在应用里可以怎样做 |
+| --- | --- |
+| 继续一项任务 | 从项目打开已有会话，查看消息和执行输出，在会话中处理审批请求或中断当前轮次。 |
+| 隔离一组改动 | 从仓库创建 Git 工作树，在独立目录中开始会话，再从工作树列表重开。 |
+| 检查文件改动 | 在编辑器保存文件，在变更面板查看差异、暂存或取消暂存。文件在磁盘上被其他程序修改时，保存会提示冲突并保留草稿。 |
+| 验证代码 | 打开项目终端，在实际工作目录中运行构建、测试或 Git 命令，并查看命令输出。 |
+| 配置本机环境 | 在设置里选择 Shell、切换浅色或深色主题、恢复归档会话、管理钩子和本地 MCP 连接。 |
 
-## 验证
+本地工作流优先开发，界面和交互以官方 Codex App 为参照。电脑操控和浏览器的执行能力、Sites 的站点创建与发布仍在开发中。已在 Windows 原生应用中验证的操作见[本地工作台实测](docs/antigravity/acceptance/11-local-workbench-native.md)和[设置分区实测](docs/antigravity/acceptance/16-settings-native-coverage.md)。
 
-一键全量验证（类型检查 / 前端构建 / Rust 编译 / 单测 / 真实 app-server 协议探测）：
+## 从源码运行
+
+在 Windows 上准备 Git、Node.js 和 npm、Rust 的 MSVC 工具链、Visual Studio C++ x64 Build Tools、Windows SDK，以及 Microsoft Edge WebView2 Runtime。桌面外壳使用 Tauri v2，界面使用 React 和 TypeScript，Rust 后端负责连接本机 `codex app-server`、Git 和 PTY。
 
 ```powershell
-pwsh -NoProfile -File ./scripts/verify-all.ps1          # 完整验证
-pwsh -NoProfile -File ./scripts/verify-all.ps1 -Fast    # 跳过协议探测
-```
-
-- `npx tsc --noEmit` ✅
-- `npm run build` ✅
-- `cargo check --manifest-path src-tauri/Cargo.toml` ✅（0 error / 0 warning）
-- `cargo test --manifest-path src-tauri/Cargo.toml automations` ✅（17 passed）
-- `scripts/protocol-verify/*.mjs`：对真实 `codex app-server` 的请求/响应形状校验（隔离 `CODEX_HOME`，不触碰 `~/.codex`）——9/9、22/22、28/28、16/16、12/12，共 87/87 通过
-
-## 开发与构建命令
-
-```powershell
-# 1. 安装前端依赖
-npm install
-
-# 2. 启动 Tauri 开发模式 (自动启动 Vite + 编译并打开 Rust 桌面窗口)
+git clone https://github.com/lusipad/codex-light.git
+cd codex-light
+npm ci
 npm run tauri dev
-
-# 3. 构建生产级独立安装包 / 单文件 EXE
-npm run tauri build
 ```
 
-## 已知限制
+要生成 Windows 安装包，在仓库根目录运行 `npm run tauri build`。构建结束时，Tauri 会打印 MSI 和 NSIS 安装包的实际路径。
 
-- 自动化调度器仅在应用运行时工作（无 OS 服务）；`run-finished` 表示成功发起 turn。
-- 官方 `thread/start` 无 `projectId` 参数 → 新建会话暂无法挂到项目实体。
-- 部分设置分区（Computer use / Appshots / Browser / Voice / Pets）依赖官方插件/服务，当前为本地偏好 UI。
-- 实时语音、账号登录/登出、多窗口、系统级通知与自动更新、`command/exec`/`process/*` 尚未接入（详见差距报告）。
-- Library / Images / Sites 当前仍有演示数据或模拟实现，不是官方云端功能；Quick Chat 尚非完整流式独立窗口。
-- Appearance 尚无 Light / Dark / System 模式入口；当前仅提供深色配色主题。
+## 开发与验证
+
+| 命令 | 用途 |
+| --- | --- |
+| `npm run build` | 运行 TypeScript 检查并构建前端。 |
+| `cargo test --locked --manifest-path src-tauri/Cargo.toml` | 运行 Rust 测试。 |
+| `pwsh -NoProfile -File ./scripts/verify-all.ps1` | 运行项目标准检查，包含前端回归、选定的 Rust 测试和隔离的真实协议探针。加 `-Fast` 可跳过协议探针。 |
+
+开发顺序和验收条件见[完整复刻计划](docs/FULL-REPLICA-PLAN.md)。接手开发可从[交接文档](handoff.md)开始，各版本的发布信息见[更新日志](CHANGELOG.md)。

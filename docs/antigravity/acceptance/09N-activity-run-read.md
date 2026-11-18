@@ -16,4 +16,4 @@ EXE SHA-256 为 `e003512260f12202e14d464655209a9ddce2d1e69822aad3fc1942350058e95
 
 - 发布元数据检查、117 项前端回放、725 项全库 Rust 测试、TypeScript 和 Windows EXE、MSI、NSIS 打包通过。回放涵盖鼠标和 Enter、导航守卫、可见性、有效修订号、写入失败和账号切换。09M 的 Rust 用例覆盖同一聊天晚到完成的回执上限。
 - 额外执行标准脚本调用的代理提交检查时，旧测试夹具缺少 `homeCloud`，使用本轮改动前的 `App.tsx` 重放可复现同一错误。该脚本不在 GitHub 当前发布回放清单。
-- 官方同环境配对像素、原生键盘和任务页其他入口待验。视觉记录有本地状态观察和官方静态定位，缺配对分数。GitHub Windows 作业因账户付款或支出上限未启动，发布等待对应提交远端 CI 成功。[作业记录](https://github.com/lusipad/codex-desktop-native/actions/runs/42511523252)
+- 官方同环境配对像素、原生键盘和任务页其他入口待验。视觉记录有本地状态观察和官方静态定位，缺配对分数。GitHub Windows 作业因账户付款或支出上限未启动，发布等待对应提交远端 CI 成功。[作业记录](https://github.com/lusipad/codex-light/actions/runs/42511523252)

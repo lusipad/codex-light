@@ -13,4 +13,4 @@ Windows 隔离实测从全部项目切换到无项目的“聊天”范围后，
 
 EXE SHA-256 为 `658ba411e95314ffbc296910230655c5bbd5d9cbb80d69e3dda4c6ee2b0b56e2`。证据位于 `.ref/parity/15/actual/15M-archive-source-label/`。
 
-为确认运行器是否恢复，重跑主分支 [CI 42511523252](https://github.com/lusipad/codex-desktop-native/actions/runs/42511523252) 的失败作业。第 2 次的 Windows job `128870679640` 无执行步骤，注解仍指向账户付款失败或支出限额。此次重跑对应远端旧提交 `6842d91`，本地阶段继续等待远端 CI。
+为确认运行器是否恢复，重跑主分支 [CI 42511523252](https://github.com/lusipad/codex-light/actions/runs/42511523252) 的失败作业。第 2 次的 Windows job `128870679640` 无执行步骤，注解仍指向账户付款失败或支出限额。此次重跑对应远端旧提交 `6842d91`，本地阶段继续等待远端 CI。

@@ -4,7 +4,7 @@
 - **原始快照生成时间**：2026-10-27T02:14:49.479Z
 - **工作目录**：`D:\Repos\codex-desktop-native`
 - **Git 分支**：`master`
-- **关联远程分支**：`origin/master` (`https://github.com/lusipad/codex-desktop-native.git`)
+- **关联远程分支**：`origin/master`（[仓库现址](https://github.com/lusipad/codex-light)）。
 - **HEAD 提交哈希**：`380c32c7b6e3d1ce6cabcf49c7b5ca07b1b76ec7`
 - **HEAD 提交信息**：`Preserve user intent while aligning desktop conversation behavior`
 - **远端同步状态**：`HEAD...origin/master` 一致 (ahead 0, behind 0，基于本地远程跟踪分支)

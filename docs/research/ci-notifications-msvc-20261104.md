@@ -8,14 +8,14 @@
 
 | 提交 | Run | Job |
 |---|---|---|
-| c18f609 | [41742172490](https://github.com/lusipad/codex-desktop-native/actions/runs/41742172490) | 126286125170 |
-| f60de30 | [41738206495](https://github.com/lusipad/codex-desktop-native/actions/runs/41738206495) | 126272772120 |
-| 4a3047f | [41725147365](https://github.com/lusipad/codex-desktop-native/actions/runs/41725147365) | 126227862454 |
-| bc1a1f3 | [41700100762](https://github.com/lusipad/codex-desktop-native/actions/runs/41700100762) | 126140808829 |
-| 025db72 | [41695671775](https://github.com/lusipad/codex-desktop-native/actions/runs/41695671775) | 126125411203 |
-| 74bdae7 | [41688907150](https://github.com/lusipad/codex-desktop-native/actions/runs/41688907150) | 126101941323 |
-| 121b957 | [41683388974](https://github.com/lusipad/codex-desktop-native/actions/runs/41683388974) | 126082629672 |
-| 07d98eb | [41673247624](https://github.com/lusipad/codex-desktop-native/actions/runs/41673247624) | 126046896670 |
+| c18f609 | [41742172490](https://github.com/lusipad/codex-light/actions/runs/41742172490) | 126286125170 |
+| f60de30 | [41738206495](https://github.com/lusipad/codex-light/actions/runs/41738206495) | 126272772120 |
+| 4a3047f | [41725147365](https://github.com/lusipad/codex-light/actions/runs/41725147365) | 126227862454 |
+| bc1a1f3 | [41700100762](https://github.com/lusipad/codex-light/actions/runs/41700100762) | 126140808829 |
+| 025db72 | [41695671775](https://github.com/lusipad/codex-light/actions/runs/41695671775) | 126125411203 |
+| 74bdae7 | [41688907150](https://github.com/lusipad/codex-light/actions/runs/41688907150) | 126101941323 |
+| 121b957 | [41683388974](https://github.com/lusipad/codex-light/actions/runs/41683388974) | 126082629672 |
+| 07d98eb | [41673247624](https://github.com/lusipad/codex-light/actions/runs/41673247624) | 126046896670 |
 
 CI镜像windows-2025-vs2026，MSVC路径14.51.36231；最新日志2026-11-03T23:56:44Z（北京时间11-04 07:56:44）报错来自include/experimental/coroutine(37)，提示实验协程头已弃用，应改标准C++20 coroutine。Node20弃用与Vite大chunk是警告，不是这8次的退出原因。
 
@@ -48,4 +48,4 @@ CI镜像windows-2025-vs2026，MSVC路径14.51.36231；最新日志2026-11-03T23:
 
 后续实际追踪run41747410523：新通知SDK编译/执行成功，解除原编译阻断；完整Rust测试暴露了11项路径/编码失败，说明整轮尚未通过，详见[第二层诊断与修复](ci-runner-paths-20261104.md)。
 
-2026-11-06补记：第二批修复后的[run 41750917173](https://github.com/lusipad/codex-desktop-native/actions/runs/41750917173)已最终成功，云端MSVC14.51.36231实际编译/SDK、464项Rust测试和安装包全通过。此为提交 `0e6e712` 的终态，不代表之后的E阶段或全部原生UI验收。
+2026-11-06补记：第二批修复后的[run 41750917173](https://github.com/lusipad/codex-light/actions/runs/41750917173)已最终成功，云端MSVC14.51.36231实际编译/SDK、464项Rust测试和安装包全通过。此为提交 `0e6e712` 的终态，不代表之后的E阶段或全部原生UI验收。

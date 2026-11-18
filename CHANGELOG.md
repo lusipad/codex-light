@@ -1,6 +1,21 @@
-# Changelog
+# Codex Light 更新日志
 
-All notable changes to **Codex Light** (Tauri v2 + React 19 + Rust) are documented here.
+## master 分支 · 尚未发布
+
+- 项目由 Codex Native 更名为 Codex Light。主窗口、托盘、「关于」菜单和 Windows 安装包使用新名称。可从源码构建改名后的应用。[构建说明](README.md)
+- 本地工作台支持在隔离 Git 仓库中创建并重开会话和工作树、编辑保存文件、查看差异、暂存与取消暂存，以及运行 Windows 终端命令。原生实测核对了工作目录、磁盘内容和 Git 索引，也覆盖了外部修改引起的保存冲突。[本地工作台实测记录](docs/antigravity/acceptance/11-local-workbench-native.md)
+- 设置调整了导航、常规控件和外观预览。导入、恢复本地归档、钩子偏好和本地 MCP 连接已有原生操作及重启读回记录。整页像素对照仍待验收。[设置实测记录](docs/antigravity/acceptance/16-settings-native-coverage.md) · [外观对照记录](docs/antigravity/acceptance/16-appearance-reference-windows.md)
+
+**旧版迁移**　MSI 沿用原升级标识，应用继续使用原数据标识。使用旧版 NSIS（`-setup.exe`）的用户，请先退出并卸载 Codex Native，保持「删除应用数据」未勾选，再安装 Codex Light。
+
+## 已发布的 Windows 版本
+
+| 版本 | 下载与变更 |
+| --- | --- |
+| `v0.2.0-preview.27` · 预览版 | 调整定时任务摘要与分钟级调度。发布时的安装包和便携包沿用 `Codex-Native_` 前缀，附 `SHA256SUMS.txt` 供校验。[下载预览版](https://github.com/lusipad/codex-light/releases/tag/v0.2.0-preview.27) · [版本说明](docs/releases/v0.2.0-preview.27.md) |
+| `v0.1.0` · 正式版 | 首个 Windows 正式版，功能及当时的限制见下文。[下载正式版](https://github.com/lusipad/codex-light/releases/tag/v0.1.0) |
+
+其他预览版本的说明与附件可在[全部发布记录](https://github.com/lusipad/codex-light/releases)中查看。
 
 ## v0.1.0 — 2026-10-23
 

@@ -1,4 +1,4 @@
-# CURRENT-AUDIT — codex-desktop-native 前端功能真实度逐项审计
+# Codex Light 前端功能审计（2026-10-23）
 
 > 审计对象：`D:\Repos\codex-desktop-native`（Tauri v2 + React 19 原生 Codex 客户端）
 > 审计时间：2026-10-23

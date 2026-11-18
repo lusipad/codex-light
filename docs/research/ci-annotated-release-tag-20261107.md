@@ -10,4 +10,4 @@
 
 原自动标签发布仍保留failure记录；该次补发不证明修后完整tag工作流已经实跑成功。后续标签发布需再观察实际自动发布路径；不能靠移动旧标签或跳过校验消除失败。源与日志摘录、实际红绿、下载校验均在 `.ref/releases/v0.2.0-preview.8/`。
 
-最终补发核验通过：[preview.8](https://github.com/lusipad/codex-desktop-native/releases/tag/v0.2.0-preview.8)四资源逐一对API digest/size与SHA256SUMS复核，且逐字节哈希等于成功CI artifact载荷；便携EXE SHA256 `632b155e5393b5d9a11e87fa13d36fe9eb26f721807defc3ce85121b5cbe038f`。未运行下载的二进制；真实账号/像素/物理IME和用户验收缺口不变。
+最终补发核验通过：[preview.8](https://github.com/lusipad/codex-light/releases/tag/v0.2.0-preview.8)四资源逐一对API digest/size与SHA256SUMS复核，且逐字节哈希等于成功CI artifact载荷；便携EXE SHA256 `632b155e5393b5d9a11e87fa13d36fe9eb26f721807defc3ce85121b5cbe038f`。未运行下载的二进制；真实账号/像素/物理IME和用户验收缺口不变。

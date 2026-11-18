@@ -6,4 +6,4 @@
 - Windows 原生用真实 CLI 0.165.0 创建 12 条测试聊天。在客户端置顶一条已读和一条未读，验证默认关闭、开启后分组顺序与普通侧栏相同。折叠置顶后「昨天」进入首屏。归档确认只包含 8 条优先聊天，随后取消。批量已读后 SQLite 只保留置顶聊天的未读回执，归档数为 0。重启后置顶分组仍开启且保持折叠，展开后顺序一致。
 - 117 项前端回放、TypeScript 和 Windows EXE、MSI、NSIS 打包通过。两个隔离窗口均已退出，实测 EXE SHA-256 为 `8cb53d6dcf1cd7059b5b9af61d4be56ac712e961bbe4e92ff9e9a4709602593c`。证据位于 `.ref/parity/09/actual/09J-activity-pinned/`。
 
-浏览器内容标签、远端置顶、普通侧栏共享折叠、恢复默认及官方配对像素待对齐。完整 Rust 和协议探针未在本阶段重跑。GitHub Windows 作业仍因付款或支出上限未启动，版本发布等待对应提交的远端 CI 成功。[作业记录](https://github.com/lusipad/codex-desktop-native/actions/runs/42511523252)
+浏览器内容标签、远端置顶、普通侧栏共享折叠、恢复默认及官方配对像素待对齐。完整 Rust 和协议探针未在本阶段重跑。GitHub Windows 作业仍因付款或支出上限未启动，版本发布等待对应提交的远端 CI 成功。[作业记录](https://github.com/lusipad/codex-light/actions/runs/42511523252)

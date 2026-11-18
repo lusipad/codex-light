@@ -7,4 +7,4 @@
 - Windows EXE、MSI 和 NSIS 打包通过。原生隔离任务先收到一次 `thread/start` 拒绝，再收到一次完成终态。重启后在 1442×914 和 949×866 窗口均看到最新成功、历史失败及其原始原因，只有成功提供聊天入口。磁盘两条记录保持一致。使用离线协议夹具，EXE SHA-256 为 `83f079b9e9ca6ded5fb59dcc28e03b0845a4fdef7ccaf2f284f1413088c8c223`。
 - 此版本新增无聊天记录时，旧构建会拒绝缺少聊天字段的文件。随后在 [10N](10N-run-history-compatibility.md) 修复并验证启动迁移。启动恢复时推断的未知状态仍沿用现有最新状态路径。
 
-官方历史展开正文、归档、独立历史回执与同环境配对像素仍待验。完整标准脚本与协议探针未在本轮重跑。GitHub Windows 作业因账户付款或支出上限未启动，发布等待对应提交的远端 CI 成功。[作业记录](https://github.com/lusipad/codex-desktop-native/actions/runs/42511523252)
+官方历史展开正文、归档、独立历史回执与同环境配对像素仍待验。完整标准脚本与协议探针未在本轮重跑。GitHub Windows 作业因账户付款或支出上限未启动，发布等待对应提交的远端 CI 成功。[作业记录](https://github.com/lusipad/codex-light/actions/runs/42511523252)

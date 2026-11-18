@@ -1,10 +1,16 @@
-# 发给 Antigravity 的启动任务
+# Codex Light 开发接手指引
 
-以下正文可直接复制。第一轮只交付纠偏与官方规格，不允许先改产品再补调研。
+在当前克隆的仓库根目录工作。先读[项目协作约定](../../AGENTS.md)、[开发交接](../../handoff.md)和[完整复刻总计划](../FULL-REPLICA-PLAN.md)，用 `git status --short --branch` 核对本地分支和已有改动。
+
+2026-11-18 的开发顺序优先 Windows 本地功能和设置界面。继续前先看[本地工作台实测](acceptance/11-local-workbench-native.md)及[设置原生走查](acceptance/16-settings-native-coverage.md)。设置外壳、常规和外观的固定官方基准、已有测量和待补场景分别见[外壳与常规](acceptance/16-settings-reference-shell.md)和[外观](acceptance/16-appearance-reference-windows.md)。选定分区后先核对官方来源和待验动作，再开发、实测并记录差异。远端 CI 目前暂停。
+
+## 2026-10-27 首页初审任务原文
+
+以下内容用于查阅当时 AG-00 首页规格的来源与交付范围。
 
 ---
 
-你接手的是 `D:\Repos\codex-desktop-native`。目标为固定版本官方 Windows Codex App 的界面、动作与呈现效果复刻。必须中文回复。
+首次审计的本地工作目录为 `D:\Repos\codex-desktop-native`。目标为固定版本官方 Windows Codex App 的界面、动作与呈现效果复刻。必须中文回复。
 
 先阅读：
 

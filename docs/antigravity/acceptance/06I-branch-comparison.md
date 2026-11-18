@@ -18,4 +18,4 @@
 
 ## 发布门槛
 
-GitHub Actions [最近一次 Windows 作业](https://github.com/lusipad/codex-desktop-native/actions/runs/42511523252) 第 2 次尝试在任何步骤启动前结束。GitHub 注释指出付款或支出上限问题。当前阶段的远端 Windows CI 待恢复后验证，发布以对应提交的完整远端结果为准。
+GitHub Actions [最近一次 Windows 作业](https://github.com/lusipad/codex-light/actions/runs/42511523252) 第 2 次尝试在任何步骤启动前结束。GitHub 注释指出付款或支出上限问题。当前阶段的远端 Windows CI 待恢复后验证，发布以对应提交的完整远端结果为准。

@@ -6,4 +6,4 @@
 - 原生 EXE SHA-256 为 `c7577e49f93a8ec0227f133be87e0184d270b30cc828e5e998522a05625faeaf`。宽窗实测“引导”默认、两项菜单、发送快捷键说明更新和选择排队。退出后在隔离 `.codex-global-state.json` 读回 `queue` 与 `cmdAlways`。重启后的 949×866 窗口恢复选中，Escape 关闭菜单并显示触发器焦点环。
 - 本地类型检查、124 项发布前端回放和 `npm run tauri build -- --ci` 通过，生成 EXE、MSI 和 NSIS。首次发布回放发现旧设置夹具缺少新入参，补齐入参与动作断言后完整重跑。原生截图、读回、构建和回放日志位于 `.ref/parity/16.01/actual/16K-followup/`。
 
-隔离桥无模型轮次，实验功能列表返回了夹具不支持的响应。真实运行中的消息链、物理中文 IME、官方配对像素和用户验收仍待验证。GitHub 发布等待目标提交的 Windows CI 通过。[远端作业记录](https://github.com/lusipad/codex-desktop-native/actions/runs/42511523252)
+隔离桥无模型轮次，实验功能列表返回了夹具不支持的响应。真实运行中的消息链、物理中文 IME、官方配对像素和用户验收仍待验证。GitHub 发布等待目标提交的 Windows CI 通过。[远端作业记录](https://github.com/lusipad/codex-light/actions/runs/42511523252)

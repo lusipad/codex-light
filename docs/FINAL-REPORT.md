@@ -1,8 +1,8 @@
-# 阶段性交付报告：官方 Codex App 功能与界面对标
+# Codex Light 前十轮交付报告（2026-10-25）
 
 > 原报告时间：2026-10-25（Round 1 ~ Round 10）
 > 当前口径：**历史阶段性记录，不能作为整个 App 已完成 1:1 复刻的证明**
-> 最新复核：[首页、侧栏与 Composer 对标调研](research/home-shell-composer-parity.md)
+> 当期复核见[首页、侧栏与 Composer 对标调研](research/home-shell-composer-parity.md)。继续开发请从[完整复刻总计划](FULL-REPLICA-PLAN.md)和[当前交接](../handoff.md)进入。
 > 原验证口径：TypeScript / Vite / Cargo / 17 项 Rust 测试 / 5 套协议探针；这些结果不覆盖所有 UI 与云端业务链路。
 
 ---

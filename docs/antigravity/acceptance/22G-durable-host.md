@@ -28,6 +28,6 @@ F04 的草稿会话恢复、聊天主链按宿主分派、模型缓存隔离及�
 
 ## 发布回执
 
-[preview.11](https://github.com/lusipad/codex-desktop-native/releases/tag/v0.2.0-preview.11) 已由标签 CI 自动发布。精确源提交 `25f290a6d75d2e5c867f932540ef7f470c17daa5`，远端注解标签对象 `00dc28f05cc3eed010e32865c8e1429ecf6058fc`。[分支 CI](https://github.com/lusipad/codex-desktop-native/actions/runs/42340977060) 和 [标签 CI](https://github.com/lusipad/codex-desktop-native/actions/runs/42341884129) 均终态 success，分别有 93 项前端回归、650 项全库 Rust 零失败/忽略/过滤，以及 Windows 打包、上传和收尾证据。更早的 `51b370e` 流水线由包含发布说明的新提交替代并取消。
+[preview.11](https://github.com/lusipad/codex-light/releases/tag/v0.2.0-preview.11) 已由标签 CI 自动发布。精确源提交 `25f290a6d75d2e5c867f932540ef7f470c17daa5`，远端注解标签对象 `00dc28f05cc3eed010e32865c8e1429ecf6058fc`。[分支 CI](https://github.com/lusipad/codex-light/actions/runs/42340977060) 和 [标签 CI](https://github.com/lusipad/codex-light/actions/runs/42341884129) 均终态 success，分别有 93 项前端回归、650 项全库 Rust 零失败/忽略/过滤，以及 Windows 打包、上传和收尾证据。更早的 `51b370e` 流水线由包含发布说明的新提交替代并取消。
 
 实际下载的四个发布文件与标签 CI 产物 `13561988850` 逐字节匹配。已核原始 CI ZIP 大小和 SHA-256、发布 API 摘要、SHA256SUMS、便携 ZIP 及五份许可；未运行下载的二进制。证据保存在 `.ref/releases/v0.2.0-preview.11/`。发布不改变本阶段的真实云端、页面和像素待验状态。

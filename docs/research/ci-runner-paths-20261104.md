@@ -1,6 +1,6 @@
 # CI 第二层问题：临时目录别名及终端编码
 
-2026-11-04，承接[编译问题诊断](ci-notifications-msvc-20261104.md)。修复编译后实际跟进[run 41747410523](https://github.com/lusipad/codex-desktop-native/actions/runs/41747410523)，新通知SDK步骤成功；Rust完整测试452通过、11失败，0忽略。这是此前编译中断所遮挡的问题，不能说C++20修复后整轮CI已绿。
+2026-11-04，承接[编译问题诊断](ci-notifications-msvc-20261104.md)。修复编译后实际跟进[run 41747410523](https://github.com/lusipad/codex-light/actions/runs/41747410523)，新通知SDK步骤成功；Rust完整测试452通过、11失败，0忽略。这是此前编译中断所遮挡的问题，不能说C++20修复后整轮CI已绿。
 
 ## 已观察到与修复合同
 
@@ -30,4 +30,4 @@
 
 接近CI目录深度的真实8.3 TEMP/TMP完整测试已退出0：464通过、0失败、0忽略、0过滤；binary及doc-tests均0用例通过。该轮包括全部11个此前失败用例和新增真实短路径用例；输出与退出码已保留。git diff --check通过。新云端结果待提交后核验，不能沿用上一run的SDK通过代替这批测试通过。
 
-2026-11-06补记：已核验修复提交 `0e6e7120b646ff089e323c10640d250a8dc50c83` 的[云端 run 41750917173](https://github.com/lusipad/codex-desktop-native/actions/runs/41750917173)最终 completed/success。该轮完整464 Rust用例、通知SDK和原生安装包均通过，普通分支push未发布Release；最终日志/资产清单留在 `.ref/ci/20261104-notifications/final-result.json`。本补记与本次E阶段新提交的CI结果分开，不能沿用为新版本通过证明。
+2026-11-06补记：已核验修复提交 `0e6e7120b646ff089e323c10640d250a8dc50c83` 的[云端 run 41750917173](https://github.com/lusipad/codex-light/actions/runs/41750917173)最终 completed/success。该轮完整464 Rust用例、通知SDK和原生安装包均通过，普通分支push未发布Release；最终日志/资产清单留在 `.ref/ci/20261104-notifications/final-result.json`。本补记与本次E阶段新提交的CI结果分开，不能沿用为新版本通过证明。
