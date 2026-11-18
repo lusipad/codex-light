@@ -125,16 +125,44 @@ jobs:
           }
           $exe = Join-Path $release 'codex-tauri.exe'
           if (!(Test-Path -LiteralPath $exe -PathType Leaf)) { throw "Missing required artifact: $exe" }
-          Copy-Item -LiteralPath $exe -Destination $portable
+          $standalone = Join-Path $out "Codex-Light_${version}_x64-portable.exe"
+          Copy-Item -LiteralPath $exe -Destination $standalone
+          Copy-Item -LiteralPath $exe -Destination (Join-Path $portable 'Codex-Light.exe')
           foreach ($name in @('THIRD-PARTY-NOTICES','SHIKI-THEMES-LICENSE','GITHUB-LICENSE','DRACULA-LICENSE','SOURCES.md')) {
             Copy-Item -LiteralPath "src/themes/$name" -Destination "$portable/licenses/themes/$name"
           }
-          Compress-Archive -Path "$portable/*" -DestinationPath "$out/Codex-Light_${version}_windows-x64.zip"
+          $archive = Join-Path $out "Codex-Light_${version}_windows-x64.zip"
+          Compress-Archive -Path "$portable/*" -DestinationPath $archive
+          ./scripts/verify-portable-package.ps1 -ArchivePath $archive -ExecutablePath $standalone
           Get-ChildItem -LiteralPath $out -File | Sort-Object Name | ForEach-Object {
             "$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
           } | Set-Content -LiteralPath "$out/SHA256SUMS.txt" -Encoding utf8NoBOM
           Get-ChildItem -LiteralPath $out -File | Select-Object Name,Length
 
+      - name: Verify Portable App Startup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $exe = Join-Path $env:GITHUB_WORKSPACE "dist-artifacts/Codex-Light_${version}_x64-portable.exe"
+          $env:CODEX_HOME = Join-Path $env:RUNNER_TEMP 'codex-light-portable-smoke'
+          $env:WEBVIEW2_USER_DATA_FOLDER = Join-Path $env:RUNNER_TEMP 'codex-light-portable-webview'
+          New-Item -ItemType Directory -Force -Path $env:CODEX_HOME,$env:WEBVIEW2_USER_DATA_FOLDER | Out-Null
+          $process = Start-Process -FilePath $exe -PassThru
+          try {
+            $deadline = [DateTime]::UtcNow.AddSeconds(45)
+            do {
+              Start-Sleep -Milliseconds 500
+              $process.Refresh()
+              if ($process.HasExited) { throw "Portable app exited before opening its window: $($process.ExitCode)" }
+            } while ($process.MainWindowTitle -ne 'Codex Light' -and [DateTime]::UtcNow -lt $deadline)
+            if ($process.MainWindowTitle -ne 'Codex Light') { throw "Portable app did not open its main window: $($process.MainWindowTitle)" }
+            Write-Host 'PASS portable executable opened the Codex Light window'
+          } finally {
+            if (!$process.HasExited) {
+              if (!$process.CloseMainWindow() -or !$process.WaitForExit(5000)) { Stop-Process -Id $process.Id -Force }
+            }
+          }
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -150,7 +178,7 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
           RELEASE_PRERELEASE: ${{ inputs.prerelease }}
         run: |
-          node scripts/prepare-github-release.mjs --revalidate-remote
+          node scripts/prepare-github-release.mjs --create-remote-tag --revalidate-remote
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v') || inputs.create_release == true

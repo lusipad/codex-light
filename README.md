@@ -5,7 +5,7 @@ Codex Light 是一个 Windows 桌面客户端，把 Codex 会话、文件编辑�
 ## 开始使用
 
 1. 在 Windows x64 上准备好 Git 和 Codex CLI。如果已经安装 npm，可用 `npm install -g @openai/codex` 安装 CLI。在 PowerShell 中运行 `codex app-server --help` 确认服务可用。
-2. 从 GitHub Releases 选择一个 Windows x64 版本，下载安装 MSI 或 `-setup.exe`。下文介绍的是 `master` 上的工作台，可以从源码运行。[下载安装包](https://github.com/lusipad/codex-light/releases)
+2. 从 GitHub Releases 下载 Windows x64 版本：运行 `-setup.exe` 或 MSI 安装，也可直接运行 `-portable.exe`。便携 ZIP 需先解压，再运行其中的 `Codex-Light.exe`；Source code ZIP 是源码包。[下载安装包](https://github.com/lusipad/codex-light/releases)
 3. 启动应用，选择一个本地 Git 仓库并创建会话。文件面板用于浏览和编辑，变更面板显示 Git 差异，底部终端可在同一工作目录运行命令。
 
 如果应用未找到 CLI，可以将环境变量 `CODEX_CLI_PATH` 设为本机 `codex.exe` 的完整路径，然后重新启动应用。模型请求需要可用的账号配置。本地文件、Git 和终端操作可以独立使用。

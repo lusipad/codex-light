@@ -29,7 +29,15 @@ if (publish) {
     const target = git(['rev-parse', `refs/tags/${tag}^{commit}`]);
     if (target.status !== 0 || target.stdout.trim() !== sha) throw Error('Existing release tag points to a different commit');
   } else if (existing.status !== 1) throw Error('Cannot verify release tag');
-  if (process.argv.includes('--revalidate-remote')) {
+  const createRemoteTag = process.argv.includes('--create-remote-tag');
+  if (createRemoteTag) {
+    const remote = git(['ls-remote', '--exit-code', '--refs', 'origin', `refs/tags/${tag}`]);
+    if (remote.status === 2) {
+      const push = git(['push', 'origin', `HEAD:refs/tags/${tag}`]);
+      if (push.status !== 0) throw Error('Cannot create remote release tag');
+    } else if (remote.status !== 0) throw Error('Cannot inspect remote release tag');
+  }
+  if (createRemoteTag || process.argv.includes('--revalidate-remote')) {
     const remoteRef = `refs/codex-release-tags/${tag}`;
     const fetch = git(['fetch', '--no-tags', 'origin', `refs/tags/${tag}:${remoteRef}`]);
     if (fetch.status !== 0) throw Error('Cannot fetch remote release tag');

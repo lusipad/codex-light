@@ -80,6 +80,16 @@ git(['-C', remote, 'tag', '-f', publish.RELEASE_TAG, sha]);
 assert.equal(run(publish, ['--revalidate-remote']).status, 0, 'matching remote lightweight tag is supported');
 git(['-C', remote, 'tag', '-d', publish.RELEASE_TAG]);
 assert.notEqual(run(publish, ['--revalidate-remote']).status, 0, 'missing remote tag must block publication');
+const createTag = ['--create-remote-tag', '--revalidate-remote'];
+const created = run(publish, createTag);
+assert.equal(created.status, 0, created.stderr);
+assert.equal(git(['-C', remote, 'rev-parse', `refs/tags/${publish.RELEASE_TAG}^{commit}`]), sha, 'new tag must point to the tested commit');
+git(['-C', remote, 'tag', '-d', publish.RELEASE_TAG]);
+git(['-C', remote, '-c', 'user.name=Release Test', '-c', 'user.email=release-test@example.invalid', 'tag', '-a', '-m', 'existing annotated tag', publish.RELEASE_TAG, sha]);
+assert.equal(run(publish, createTag).status, 0, 'matching annotated tags remain unchanged');
+git(['-C', remote, 'tag', '-f', publish.RELEASE_TAG, first]);
+assert.notEqual(run(publish, createTag).status, 0, 'a different existing remote tag must block release');
+assert.equal(git(['-C', remote, 'rev-parse', `refs/tags/${publish.RELEASE_TAG}^{commit}`]), first, 'release must never move an existing tag');
 // Only remove this test's newly created, verified private root.
 assert.equal(path.dirname(path.resolve(dir)), path.resolve(os.tmpdir()));
 assert.ok(path.basename(dir).startsWith('codex-release-metadata-'));
